@@ -1,14 +1,18 @@
 import { GitHubSyncStatus, type GitHubSyncStatusProps } from './GitHubSyncStatus';
 import { inspectionData } from '../lib/inspection-cache';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, ChevronUp, X, Loader2, Check, AlertCircle } from 'lucide-react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X, Loader2 } from 'lucide-react';
 import { isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
+import { activityCapsule, seenKeys } from '../lib/activity-capsule';
+import { TaskRows, TaskStatusGlyph, type TaskRowModel } from './TaskRows';
+import { explanationRows, taskRowStatus, useElapsed } from './ExplanationBuild';
 import { PROVIDERS } from '../lib/models';
 import { createActivityCompletionTracker } from '../lib/activity-notifications';
 import { toast } from './ui/toast';
 
 const kindLabels = {
-  review: 'Guided review',
+  review: 'Explanation',
   briefing: 'Briefing',
   exploration: 'Interactive explanation',
   github: 'GitHub update',
@@ -59,16 +63,44 @@ function Progress({ task }: { task: ActivityTask }) {
     </div>
   );
 }
+const SEEN_KEY = 'gnosis-activity-seen';
+function readSeen() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SEEN_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(saved) ? saved.filter((key): key is string => typeof key === 'string') : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+const mac = () => window.electronAPI.platform === 'darwin';
+export const ACTIVITY_SHORTCUT = { keys: () => (mac() ? '⌘⇧A' : 'Ctrl+Shift+A'), aria: () => (mac() ? 'Meta+Shift+A' : 'Control+Shift+A') };
+const isActivityShortcut = (event: KeyboardEvent) =>
+  event.shiftKey && !event.altKey && (mac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) && event.key.toLowerCase() === 'a';
+
+/** An explanation's elapsed time, which keeps ticking only while it runs. */
+function Elapsed({ task }: { task: ActivityTask }) {
+  const elapsed = useElapsed(task);
+  return elapsed ? <span className="activity-elapsed">{elapsed}</span> : null;
+}
+
+/**
+ * Background work, shown as a capsule in the title bar while something runs or a result is unseen,
+ * and as Task Rows in a panel below it. The panel opens from the capsule, the account menu,
+ * ⌘⇧A / Ctrl+Shift+A, and every "View activity" action.
+ */
 export const ActivityDrawer = memo(function ActivityDrawer({
   syncStatus,
   onOpen,
   open,
   onOpenChange: setOpen,
+  capsuleTarget,
 }: {
   syncStatus?: GitHubSyncStatusProps;
   onOpen: (task: ActivityTask) => Promise<void>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The title bar's trailing cluster; the capsule renders there, before Search. */
+  capsuleTarget?: HTMLElement | null;
 }) {
   const [remoteTasks, setRemoteTasks] = useState<ActivityTask[]>([]);
   const [preloadTask, setPreloadState] = useState<ActivityTask>();
@@ -91,6 +123,10 @@ export const ActivityDrawer = memo(function ActivityDrawer({
   const alive = useRef(true);
   const trigger = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const headingId = useId();
+  const [seen, setSeen] = useState(readSeen);
   const refresh = useCallback(
     (force = false): Promise<void> => {
       // Local preparation stays observable even while backend activity is busy.
@@ -169,16 +205,58 @@ export const ActivityDrawer = memo(function ActivityDrawer({
       stopPreload();
     };
   }, [refresh, setPreloadTask]);
-  const close = () => {
+  const close = useCallback(() => {
     setOpen(false);
-    trigger.current?.focus();
-  };
+    const target = trigger.current ?? returnFocus.current;
+    if (target?.isConnected) target.focus({ preventScroll: true });
+  }, [setOpen]);
   useEffect(() => {
     if (open) {
+      const active = document.activeElement;
+      returnFocus.current = active instanceof HTMLElement && active !== document.body ? active : null;
       closeButton.current?.focus();
       void refresh();
     }
   }, [open, refresh]);
+  // Opening Activity is seeing its results, which quiets the capsule.
+  useEffect(() => {
+    if (!open) return;
+    const keys = seenKeys(tasks);
+    setSeen((previous) => {
+      if (keys.every((key) => previous.has(key))) return previous;
+      // Keep only keys for tasks still listed, so the set stays small.
+      const next = new Set([...previous].filter((key) => tasks.some((task) => key.startsWith(task.id + '@'))));
+      for (const key of keys) next.add(key);
+      try {
+        sessionStorage.setItem(SEEN_KEY, JSON.stringify([...next]));
+      } catch {
+        /* Seen state is a courtesy; the capsule still works without storage. */
+      }
+      return next;
+    });
+  }, [open, tasks]);
+  // A click elsewhere closes the panel, like other popovers in the title bar.
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target || panel.current?.contains(target) || trigger.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('[data-radix-popper-content-wrapper], [role=dialog], .app-toasts')) return;
+      setOpen(false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [open, setOpen]);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (!isActivityShortcut(event) || event.isComposing) return;
+      event.preventDefault();
+      if (openRef.current) close();
+      else setOpen(true);
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [close, setOpen]);
   async function act(task: ActivityTask, action: ActivityAction | 'open') {
     if (pendingActions.current.has(task.id)) return;
     pendingActions.current.add(task.id);
@@ -218,32 +296,180 @@ export const ActivityDrawer = memo(function ActivityDrawer({
     ]
       .filter(Boolean)
       .join(' · ') || 'No active tasks';
-  return (
-    <div className="activity-shell">
-      <button
-        ref={trigger}
-        className="activity-trigger"
-        aria-expanded={open}
-        aria-controls="activity-drawer"
-        onClick={() => setOpen(!open)}
-      >
-        <Activity size={14} />
-        <span>Activity</span>
-        <span className="activity-summary" aria-live="polite">
-          {summary}
-        </span>
-        {running.length > 0 && (
-          <span className="activity-mini-progress">
-            <Progress task={running[0]} />
+  const capsule = useMemo(() => activityCapsule(tasks, seen), [tasks, seen]);
+  const models = useMemo(
+    () =>
+      new Map(
+        Object.values(PROVIDERS).flatMap((p) => p.models.map((m) => [m.id as string, `${p.label} · ${m.label}`] as const))
+      ),
+    []
+  );
+  const rows = [...tasks]
+    .sort(
+      (a, b) =>
+        Number(a.kind === 'preload') - Number(b.kind === 'preload') ||
+        order[a.status] - order[b.status] ||
+        b.updatedAt.localeCompare(a.updatedAt)
+    )
+    .map((task): TaskRowModel => {
+      const explanation = task.kind === 'review' && (!!task.steps?.length || isActiveTask(task));
+      const steps = explanation
+        ? explanationRows(task, { onRetry: () => void act(task, 'retry'), pending: pending.has(task.id) })
+        : undefined;
+      const stepError = steps?.some((step) => step.error || step.subtasks?.some((topic) => topic.error));
+      const model = task.model && (models.get(task.model) ?? task.model);
+      const status =
+        task.status === 'failed'
+          ? 'Failed'
+          : task.status === 'completed' && task.kind !== 'github' && task.kind !== 'pr-action' && task.kind !== 'preload'
+            ? completedLabels[task.kind]
+            : task.detail;
+      const progress =
+        task.kind !== 'preload' && task.status === 'running' && task.progress && !explanation
+          ? ` · ${task.progress.completed} of ${task.progress.total} ${task.progress.unit ?? 'topics'} complete`
+          : '';
+      return {
+        id: task.id,
+        className: 'activity-task',
+        dataStatus: task.warnings?.length ? 'warning' : task.status,
+        status: taskRowStatus(task),
+        title: (
+          <>
+            <span className="activity-kind">
+              {kindLabels[task.kind]}
+              {model && <span className="activity-model"> · {model}</span>}
+            </span>
+            <h3 title={task.title}>{task.title}</h3>
+          </>
+        ),
+        meta: explanation ? <Elapsed task={task} /> : undefined,
+        error: task.status === 'failed' && !stepError ? task.detail : undefined,
+        subtasks: steps,
+        collapsed: task.status === 'completed' && !!steps,
+        collapsedLabel: steps && `${steps.length} steps`,
+        footer: (
+          <>
+            {!(explanation && task.status === 'running') && (
+              <p className="activity-task-status">
+                {status}
+                {progress}
+              </p>
+            )}
+            {!!task.warnings?.length && (
+              <details className="activity-failure">
+                <summary>What could not be updated</summary>
+                {task.warnings.map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </details>
+            )}
+            {task.kind === 'preload' && task.progress && (
+              <p className="activity-task-status tabular-nums">
+                {task.progress.completed} prepared · {task.progress.total - task.progress.completed} pending
+              </p>
+            )}
+            {((task.status === 'running' && !explanation) || (task.kind === 'preload' && task.status === 'paused')) && (
+              <Progress task={task} />
+            )}
+          </>
+        ),
+        actions: (
+          <span className="activity-actions">
+            {task.canCancel && (
+              <button disabled={pending.has(task.id)} onClick={() => void act(task, 'cancel')}>
+                Cancel
+              </button>
+            )}
+            {task.canRetry && (
+              <button disabled={pending.has(task.id)} onClick={() => void act(task, 'retry')}>
+                Retry
+              </button>
+            )}
+            {task.status === 'completed' &&
+              task.kind !== 'github' &&
+              task.kind !== 'file-chat' &&
+              task.kind !== 'pr-action' &&
+              task.kind !== 'preload' && (
+                <button disabled={pending.has(task.id)} onClick={() => void act(task, 'open')}>
+                  {openLabels[task.kind]}
+                </button>
+              )}
+            {pending.has(task.id) && <Loader2 size={12} className="animate-spin" aria-label="Working" />}
+            {!isActiveTask(task) && (
+              <button
+                className="activity-dismiss"
+                disabled={pending.has(task.id)}
+                aria-label={`Dismiss ${task.title}`}
+                title="Dismiss"
+                onClick={() => void act(task, 'dismiss')}
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            )}
           </span>
+        ),
+      };
+    });
+  const capsuleLabel = `Activity: ${capsule.label || summary}`;
+  return (
+    <>
+      {capsuleTarget &&
+        (capsule.visible || open) &&
+        createPortal(
+          <button
+            ref={trigger}
+            className="activity-trigger activity-capsule"
+            data-tone={capsule.visible ? capsule.tone : 'idle'}
+            aria-expanded={open}
+            aria-controls="activity-drawer"
+            aria-label={capsuleLabel}
+            aria-keyshortcuts={ACTIVITY_SHORTCUT.aria()}
+            title={`${capsuleLabel} (${ACTIVITY_SHORTCUT.keys()})`}
+            onClick={() => (open ? close() : setOpen(true))}
+          >
+            {capsule.running > 0 && (
+              <span className="activity-capsule-part" data-tone="running">
+                <TaskStatusGlyph status="running" />
+                {capsule.running} running
+              </span>
+            )}
+            {capsule.queued > 0 && (
+              <span className="activity-capsule-part" data-tone={capsule.running ? 'muted' : 'running'}>
+                {!capsule.running && <TaskStatusGlyph status="queued" />}
+                {capsule.queued} queued
+              </span>
+            )}
+            {capsule.unseenFailed > 0 && (
+              <span className="activity-capsule-part" data-tone="failed">
+                <TaskStatusGlyph status="failed" />
+                {capsule.running || capsule.queued ? capsule.unseenFailed : `${capsule.unseenFailed} failed`}
+              </span>
+            )}
+            {capsule.unseenReady > 0 && (
+              <span className="activity-capsule-part" data-tone="ready">
+                <TaskStatusGlyph status="done" />
+                {capsule.running || capsule.queued || capsule.unseenFailed ? capsule.unseenReady : `${capsule.unseenReady} ready`}
+              </span>
+            )}
+            {capsule.running > 0 && capsule.seenFailed > 0 && !capsule.unseenFailed && (
+              <span className="activity-capsule-part" data-tone="muted">
+                {capsule.seenFailed} failed
+              </span>
+            )}
+            {!capsule.visible && <span className="activity-capsule-part">Activity</span>}
+          </button>,
+          capsuleTarget
         )}
-        <ChevronUp size={13} className={open ? 'rotate-180' : ''} />
-      </button>
+      {/* Phase changes and results are announced once, never each progress tick. */}
+      <span className="sr-only" role="status">
+        {capsule.visible ? capsule.label : ''}
+      </span>
       {open && (
         <section
+          ref={panel}
           id="activity-drawer"
           className="activity-drawer"
-          aria-label="Background activity"
+          aria-labelledby={headingId}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               e.stopPropagation();
@@ -252,8 +478,8 @@ export const ActivityDrawer = memo(function ActivityDrawer({
           }}
         >
           <header>
-            <h2>Activity</h2>
-            <span>{summary}</span>
+            <h2 id={headingId}>Activity</h2>
+            <span className="activity-summary">{summary}</span>
             <button ref={closeButton} className="workbench-icon" aria-label="Close activity" onClick={close}>
               <X size={15} />
             </button>
@@ -265,104 +491,14 @@ export const ActivityDrawer = memo(function ActivityDrawer({
             </p>
           )}
           <div className="activity-list">
-            {!tasks.length && (
-              <p className="activity-empty">
-                No activity yet. GitHub updates and AI generation appear here.
-              </p>
+            {!tasks.length ? (
+              <p className="activity-empty">No activity yet. GitHub updates and AI generation appear here.</p>
+            ) : (
+              <TaskRows rows={rows} label="Background tasks" className="activity-rows" />
             )}
-            {[...tasks]
-              .sort((a, b) => Number(a.kind === 'preload') - Number(b.kind === 'preload') || order[a.status] - order[b.status] || b.updatedAt.localeCompare(a.updatedAt))
-              .map((task) => {
-                const label =
-                  Object.values(PROVIDERS)
-                    .flatMap((p) => p.models.map((m) => ({ id: m.id, label: `${p.label} · ${m.label}` })))
-                    .find((m) => m.id === task.model)?.label ?? task.model;
-                return (
-                  <article
-                    className="activity-task"
-                    key={task.id}
-                    data-status={task.warnings?.length ? 'warning' : task.status}
-                  >
-                    <div className="activity-task-meta">
-                      <span>{kindLabels[task.kind]}</span>
-                      {label && <span>{label}</span>}
-                      {!isActiveTask(task) && (
-                        <button
-                          className="workbench-icon"
-                          disabled={pending.has(task.id)}
-                          aria-label={`Dismiss ${task.title}`}
-                          onClick={() => void act(task, 'dismiss')}
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
-                    </div>
-                    <h3>{task.title}</h3>
-                    <div className="activity-task-status">
-                      {task.status === 'running' ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : task.warnings?.length ? (
-                        <AlertCircle size={13} />
-                      ) : task.status === 'completed' ? (
-                        <Check size={13} />
-                      ) : task.status === 'failed' ? (
-                        <AlertCircle size={13} />
-                      ) : null}
-                      <span>
-                        {task.status === 'failed'
-                          ? 'Failed'
-                          : task.status === 'completed' && task.kind !== 'github' && task.kind !== 'pr-action' && task.kind !== 'preload'
-                            ? completedLabels[task.kind]
-                            : task.detail}
-                        {task.kind !== 'preload' && task.status === 'running' && task.progress
-                          ? ` · ${task.progress.completed} of ${task.progress.total} ${task.progress.unit ?? 'topics'} complete`
-                          : ''}
-                      </span>
-                    </div>
-                    {task.status === 'failed' && (
-                      <details className="activity-failure">
-                        <summary>Error details</summary>
-                        <p>{task.detail}</p>
-                      </details>
-                    )}
-                    {!!task.warnings?.length && (
-                      <details className="activity-failure">
-                        <summary>What could not be updated</summary>
-                        {task.warnings.map((warning) => (
-                          <p key={warning}>{warning}</p>
-                        ))}
-                      </details>
-                    )}
-                    {task.kind === 'preload' && task.progress && (
-                      <p className="mt-2 text-xs text-muted-foreground tabular-nums">
-                        {task.progress.completed} prepared · {task.progress.total - task.progress.completed} pending
-                      </p>
-                    )}
-                    {(task.status === 'running' || (task.kind === 'preload' && task.status === 'paused')) && <Progress task={task} />}
-                    <div className="activity-actions">
-                      {task.canCancel && (
-                        <button disabled={pending.has(task.id)} onClick={() => void act(task, 'cancel')}>
-                          Cancel
-                        </button>
-                      )}
-                      {task.canRetry && (
-                        <button disabled={pending.has(task.id)} onClick={() => void act(task, 'retry')}>
-                          Retry
-                        </button>
-                      )}
-                      {task.status === 'completed' && task.kind !== 'github' && task.kind !== 'file-chat' && task.kind !== 'pr-action' && task.kind !== 'preload' && (
-                        <button disabled={pending.has(task.id)} onClick={() => void act(task, 'open')}>
-                          {openLabels[task.kind]}
-                        </button>
-                      )}
-                      {pending.has(task.id) && <Loader2 size={12} className="animate-spin" />}
-                    </div>
-                  </article>
-                );
-              })}
           </div>
         </section>
       )}
-    </div>
+    </>
   );
 });

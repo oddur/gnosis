@@ -4,6 +4,30 @@ import { LoadingState, LoadingIndicator } from '../../components/LoadingState';
 import { WorkflowGraphState } from '../../components/WorkflowGraphState';
 import { LoadingScreen } from '../../components/LoadingScreen';
 import { Button } from '../../components/ui/button';
+import { ExplanationBuild } from '../../components/ExplanationBuild';
+import { explanationSteps, initialExplanationProgress, reduceExplanationProgress, type ExplanationEvent } from '../../lib/explanation-progress';
+import type { ActivityTask } from '../../lib/activity';
+
+const events: ExplanationEvent[] = [
+  { type: 'context', files: 48, imports: 12 },
+  { type: 'phase', phase: 'Planning review structure' },
+  { type: 'plan', topics: [{ id: 'slide-1', title: 'Retry scheduling moves to the consumer' }, { id: 'slide-2', title: 'Backoff configuration' }, { id: 'slide-3', title: 'Tests' }] },
+  { type: 'phase', phase: 'Writing topics', completed: 1, total: 3 },
+  { type: 'topic', id: 'slide-1', status: 'done' },
+  { type: 'topic', id: 'slide-2', status: 'writing' },
+];
+const build: ActivityTask = {
+  id: 'review:fixture',
+  kind: 'review',
+  title: 'Fix reconnect',
+  detail: 'Writing topics',
+  status: 'running',
+  steps: explanationSteps(events.reduce(reduceExplanationProgress, initialExplanationProgress())),
+  startedAt: new Date(Date.now() - 102_000).toISOString(),
+  updatedAt: new Date().toISOString(),
+  canCancel: true,
+  canRetry: false,
+};
 import '../../src/globals.css';
 function Fixture() {
   const [waiting, setWaiting] = useState(true);
@@ -46,6 +70,9 @@ function Fixture() {
               <LoadingIndicator>Requesting reruns… 2/4</LoadingIndicator>
             </Button>
           </div>
+        </section>
+        <section style={{ gridColumn: '1 / -1', padding: 16 }}>
+          <ExplanationBuild task={build} subject="#150 Fix reconnect" actions={{ onRead: () => {} }} />
         </section>
       </div>
       <div id="offscreen" style={{ marginTop: '100vh' }}>

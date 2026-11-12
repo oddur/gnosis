@@ -25,6 +25,7 @@ import { parseOpenTargets, type OpenTarget } from '../lib/pr-open-targets';
 import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
 import { openReviewCheckpoint, reviewFingerprint, collectReviewTopics } from './review-checkpoint';
+import { createExplanationBuilds } from './explanation-builds';
 import { stackDependencyOrder } from '../lib/stack-overview';
 import { createConflictResolutionService } from './conflict-resolution-service';
 import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-resolution';
@@ -1014,6 +1015,7 @@ async function repairReviewsIndex(): Promise<void> {
 
 const activities = createActivityService(Date.now, () => notifyLocalChange('activity-changed'));
 const activeGenerations = new Map<string, { abortController?: AbortController; prUrl?: string }>();
+const explanationBuilds = createExplanationBuilds(activities);
 
 /** Cancel any in-flight generation for the same PR URL. */
 function cancelExistingGenerationForPr(prUrl: string): void {
@@ -1099,6 +1101,7 @@ function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
 
 function reportReviewPhase(payload: {reviewId:string;phase:string;completed?:number;total?:number}): void {
   activities.update(`review:${payload.reviewId}`,payload.phase,payload.total !== undefined ? {completed:payload.completed ?? 0,total:payload.total} : undefined);
+  explanationBuilds.event(payload.reviewId, { type: 'phase', phase: payload.phase, completed: payload.completed, total: payload.total });
   broadcastToAllWindows('review-phase',payload);
 }
 
@@ -1503,6 +1506,22 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   }
   const prefs = loadPreferences();
   await reRenderAllHunks(review, prefs.codeTheme);
+  return review;
+});
+
+const REVIEW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Topics finished so far in a running explanation, or null once it has finished or stopped. */
+ipcMain.handle('load-draft-review', async (_event, id: unknown) => {
+  if (typeof id !== 'string' || !REVIEW_ID.test(id)) throw new Error('Invalid explanation.');
+  const review = explanationBuilds.draft(id);
+  if (!review) return null;
+  if (workbench.isMutedReview(review)) throw new Error('This review contains a muted PR. Restore it from Muted PRs first.');
+  includeImageChanges(review);
+  for (const slide of review.slides) {
+    slide.fileSummaries = normalizeFileSummaries(slide.fileSummaries, slide.diffHunks);
+    slide.inlineExplanations = normalizeInlineExplanations(slide.inlineExplanations, slide.diffHunks, review.changedFiles);
+  }
+  await reRenderAllHunks(review, loadPreferences().codeTheme);
   return review;
 });
 
@@ -2079,7 +2098,9 @@ async function runBackgroundGeneration(
   const instructions = explanationInstructions(options, request.instructions);
   const educationMode = options.style === 'educational';
   const generationAccount = cachedLogin;
-  activities.start({id:`review:${reviewId}`,kind:'review',title:prData.title,detail:'Preparing review',model:request.model,reviewId}, {
+  // Activity names the PR by number, so similar titles stay distinct when truncated.
+  const prNumber = reviewSnapshot?.subject.kind === 'stack' ? undefined : /\/pull\/(\d+)/.exec(request.prUrl)?.[1];
+  activities.start({id:`review:${reviewId}`,kind:'review',title:prNumber ? `#${prNumber} ${prData.title}` : prData.title,detail:'Preparing review',model:request.model,reviewId}, {
     cancel:()=>activeGenerations.get(reviewId)?.abortController?.abort('User cancelled'),
     retry:()=>startReview(request),
   });
@@ -2169,6 +2190,7 @@ async function runBackgroundGeneration(
       );
     }
 
+    explanationBuilds.event(reviewId, { type: 'context', files: normalFiles.length, imports: Object.keys(neighborFiles).length });
     reportReviewPhase( { reviewId, phase: 'Building context' });
 
     const prefs = loadPreferences();
@@ -2252,6 +2274,27 @@ async function runBackgroundGeneration(
       const sortedTopics = [...plan.topics].sort((a, b) => a.order - b.order);
       const storyArc = plan.storyArc;
       let completedSections = 0;
+      explanationBuilds.event(reviewId, { type: 'plan', topics: sortedTopics.map((topic, idx) => ({ id: `slide-${idx + 1}`, title: topic.title })) });
+      explanationBuilds.draftBase(reviewId, {
+        snapshot: reviewSnapshot,
+        prTitle: prData.title,
+        prDescription: prData.description,
+        prUrl,
+        author: prData.author,
+        summary: plan.summary,
+        riskLevel: plan.riskLevel,
+        riskRationale: plan.riskRationale,
+        totalFilesChanged: allChangedFiles.length,
+        totalLinesChanged: allChangedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0),
+        neighborFileCount: Object.keys(neighborFiles).length,
+        excludedFiles: [...excludedPaths],
+        explanationOptions: options,
+        headSha: prData.headSha,
+        baseSha: prData.baseSha,
+        headRepo: prData.headRepo,
+        baseRepo: prData.baseRepo,
+        imageFiles: changedFiles.filter((f) => imageMimeType(f.filename)).map((f) => f.filename),
+      });
       reportReviewPhase({reviewId,phase:'Writing topics',completed:0,total:sortedTopics.length});
 
       // Fire all writers in parallel — the CLI/API handles its own rate limiting
@@ -2267,7 +2310,10 @@ async function runBackgroundGeneration(
             );
 
             const topicKey = reviewFingerprint({ topicCtx, topic, version: 8 });
-            const writerOutput = checkpoint!.get(topicKey) ?? await generateSlide({
+            const topicId = `slide-${slideNum}`;
+            const saved = checkpoint!.get(topicKey);
+            if (!saved) explanationBuilds.event(reviewId, { type: 'topic', id: topicId, status: 'writing' });
+            const writerOutput = saved ?? await generateSlide({
               validateIllustration: validateSvgIllustrationInBrowser,
               topicContext: topicCtx,
               providerName: provider,
@@ -2284,14 +2330,17 @@ async function runBackgroundGeneration(
               onChunk: (chunk, isThinking) =>
                 broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
               signal,
+            }).catch((error: unknown) => {
+              // Cancellation stops every writer; only a topic's own failure is shown on its row.
+              if (!signal.aborted) explanationBuilds.event(reviewId, { type: 'topic', id: topicId, status: 'failed', error: error instanceof Error ? error.message : String(error) });
+              throw error;
             });
 
             await checkpoint!.set(topicKey, writerOutput);
             completedSections++;
-            reportReviewPhase({reviewId,phase:'Writing topics',completed:completedSections,total:sortedTopics.length});
             const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
 
-            return {
+            const slide = {
               id: `slide-${slideNum}`,
               slideNumber: slideNum,
               title: writerOutput.title || topic.title,
@@ -2313,6 +2362,11 @@ async function runBackgroundGeneration(
               educationNotes: writerOutput.educationNotes,
               importance: topic.importance,
             } satisfies Slide;
+            // A finished topic can be read at once. Its draft shows the inline notes that will display.
+            explanationBuilds.topicWritten(reviewId, { ...slide, inlineExplanations: resolveGeneratedInlineExplanations(slide.inlineExplanations, slide.diffHunks, allChangedFiles) });
+            explanationBuilds.event(reviewId, { type: 'topic', id: topicId, status: 'done' });
+            reportReviewPhase({reviewId,phase:'Writing topics',completed:completedSections,total:sortedTopics.length});
+            return slide;
         }), signal
       );
 
@@ -2554,6 +2608,7 @@ async function runBackgroundGeneration(
     });
 
     await checkpoint?.clear().catch(error => console.warn('[main] Could not remove generation checkpoint:', error));
+    explanationBuilds.event(reviewId, { type: 'finish', status: 'completed' });
     activities.finish(`review:${reviewId}`, 'completed', 'Explanation ready');
     const muted = workbench.isMutedReview(reviewGuide);
     if (!muted) broadcastToAllWindows('review-completed', { reviewId });
@@ -2580,10 +2635,12 @@ async function runBackgroundGeneration(
       error: errorMessage,
     });
 
+    explanationBuilds.event(reviewId, { type: 'finish', status: isCancelled ? 'cancelled' : 'failed', error: errorMessage });
     activities.finish(`review:${reviewId}`, isCancelled ? 'cancelled' : 'failed', errorMessage);
     broadcastToAllWindows('review-failed', { reviewId, error: errorMessage });
   } finally {
     optionalMetadata?.finish();
+    explanationBuilds.clear(reviewId);
     activeGenerations.delete(reviewId);
   }
 }

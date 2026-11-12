@@ -391,7 +391,7 @@ function PrSummaryContent({
       if (
         target?.isContentEditable ||
         target?.closest(
-          'input, textarea, select, summary, [role="combobox"], [role="dialog"], [role="menu"], .review-breadcrumbs, .activity-shell, .workbench-help'
+          'input, textarea, select, summary, [role="combobox"], [role="dialog"], [role="menu"], .review-breadcrumbs, .activity-drawer, .activity-capsule, .workbench-help'
         )
       )
         return;

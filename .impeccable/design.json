@@ -612,6 +612,16 @@
         "purpose": "Progress when completion is unknown; disabled under reduced motion."
       },
       {
+        "name": "task-row-running",
+        "value": "rotate 1.4s linear infinite",
+        "purpose": "The Task Rows running mark; rests as a half-filled circle under reduced motion."
+      },
+      {
+        "name": "activity-capsule",
+        "value": "160ms ease-out",
+        "purpose": "The title bar Activity capsule and its panel appearing; disabled under reduced motion."
+      },
+      {
         "name": "dialog",
         "value": "200ms",
         "purpose": "Existing dialog entry and exit duration."

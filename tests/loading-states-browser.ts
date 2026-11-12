@@ -74,6 +74,15 @@ void app.whenReady().then(async () => {
         `Array.from(document.querySelectorAll('.loading-signal,.loading-spinner')).every(el=>getComputedStyle(el).animationName==='none')`
       )
     );
+    // Task Rows keep their running mark as a still half-filled circle.
+    assert.ok(await js(`!!document.querySelector('.task-glyph[data-status=running]')`));
+    assert.ok(
+      await js(
+        `Array.from(document.querySelectorAll('.task-glyph')).every(el=>getComputedStyle(el).animationName==='none')`
+      ),
+      'Reduced motion stops the running mark'
+    );
+    assert.equal(await js(`document.querySelector('.explanation-build [role=status]').textContent`), 'Writing topics');
     assert.ok(await js(`document.querySelector('[role=status]').textContent.includes('Loading changed files')`));
     await js(`document.querySelector('button').click()`);
     await wait(`document.body.innerText.includes('Changes are ready.')`);
