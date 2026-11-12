@@ -113,6 +113,21 @@ export function fingerprint(subject: ReviewSubject): string {
     edges: subject.edges,
   });
 }
+const memberIds = new WeakMap<ReviewMember, number>();
+let nextMemberId = 0;
+/**
+ * A short, process-local identity for a subject's members and edges. Only for callers whose members
+ * are replaced rather than edited in place (the main-process queue state): there, equal identities
+ * mean equal fingerprints, so derived values such as briefing keys can be reused.
+ */
+export function fingerprintIdentity(subject: ReviewSubject): string {
+  const ids = subject.members.map((m) => {
+    let id = memberIds.get(m);
+    if (id === undefined) memberIds.set(m, (id = nextMemberId++));
+    return id;
+  });
+  return `${ids.join(',')}|${JSON.stringify(subject.edges ?? null)}`;
+}
 export function snapshot(subject: ReviewSubject): ReviewSnapshot {
   return { version: 1, subject, fingerprint: fingerprint(subject), capturedAt: new Date().toISOString() };
 }

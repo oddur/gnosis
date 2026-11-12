@@ -48,6 +48,7 @@ import {
   isDependabot,
   briefingModel,
   fingerprint,
+  fingerprintIdentity,
   attentionFor,
   type ReviewSubject,
   type ReviewMember,
@@ -237,12 +238,19 @@ export function createWorkbenchService(deps: Deps) {
     fs.renameSync(temp, cachePath());
   }
   const modelSettings = (preferences = deps.preferences()) => briefingModel(preferences);
+  // Hashing every description on each queue view cost tens of milliseconds on large queues.
+  // Equal member identities and settings give an equal key, so the hash is reused.
+  const keys = new Map<string, string>();
   function key(subject: ReviewSubject, p = modelSettings()) {
-    return createHash('sha256')
-      // Keep existing low/high cache keys so upgrading does not regenerate briefings.
-      .update(JSON.stringify([fingerprint(subject), p.provider, p.model, p.effort !== 'low', 'briefing-v2',
-        ...(['low', 'high'].includes(p.effort) ? [] : [p.effort])]))
-      .digest('hex');
+    const settings = [p.provider, p.model, p.effort !== 'low', 'briefing-v2', ...(['low', 'high'].includes(p.effort) ? [] : [p.effort])];
+    const identity = `${fingerprintIdentity(subject)}|${JSON.stringify(settings)}`;
+    const known = keys.get(identity);
+    if (known !== undefined) return known;
+    // Keep existing low/high cache keys so upgrading does not regenerate briefings.
+    const value = createHash('sha256').update(JSON.stringify([fingerprint(subject), ...settings])).digest('hex');
+    if (keys.size >= 5000) keys.clear();
+    keys.set(identity, value);
+    return value;
   }
   const limit = (preferences = deps.preferences()) => Math.min(100, Math.max(0, (preferences.briefingDailyLimit ?? 10) || 0));
   const queueSets = (s = load()): QueueSets => ({
@@ -366,7 +374,8 @@ export function createWorkbenchService(deps: Deps) {
       briefingBudget: briefingBudget(preferences, [...preferences.watchedRepos, ...Object.keys(preferences.repositorySettings ?? {}), ...allMembers.map(m => m.repo)], s.used, s.repositoryUsed ?? {}, now()),
       filters,
       savedViews: { ...structuredClone(views), counts },
-    }, visible.history);
+      // Queue state replaces members rather than editing them, so member hashes are reused.
+    }, visible.history, { reuseMembers: true });
   }
   async function fetchMember(
     octokit: Octokit,

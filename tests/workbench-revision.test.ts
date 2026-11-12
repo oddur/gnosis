@@ -140,3 +140,15 @@ void test('memoizes frozen inputs only', () => {
   const frozenHistory = Object.freeze([...history]);
   assert.equal(stampQueue(queue(), frozenHistory).historyRevision, stampQueue(queue(), history).historyRevision);
 });
+
+void test('an item revision follows replaced members, and only opted-in callers reuse member hashes', () => {
+  const first = item(1);
+  const before = itemRevision(first, true);
+  assert.equal(itemRevision(first), before, 'reuse does not change the revision value');
+  assert.equal(itemRevision({ ...first, subject: { ...first.subject } }, true), before);
+  const replaced = { ...first, subject: { ...first.subject, members: first.subject.members.map((m) => ({ ...m, description: `${m.description ?? ''} edited` })) } };
+  assert.notEqual(itemRevision(replaced, true), before);
+  // Callers that edit members in place must not see a reused hash.
+  first.subject.members[0].headSha = 'edited-in-place';
+  assert.notEqual(itemRevision(first), before);
+});
