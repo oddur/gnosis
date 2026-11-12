@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { readReviewState, writeReviewState } from './renderer-review-state';
+import { readReviewState, scheduleReviewStateWrite, writeReviewState } from './renderer-review-state';
 import { captureDiffLineAnchor, diffLineAnchorTop, followScrollAnchor } from './diff-layout';
 
 export function explanationPositionKey(id: string, pane: string) {
@@ -97,7 +97,7 @@ export function useExplanationScroll(key: string, active = true) {
   const node = useRef<HTMLDivElement | null>(null);
   const restoredKey = useRef<string | undefined>(undefined);
   const position = useRef<ExplanationPosition>({ top: 0, left: 0 });
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancelSave = useRef<(() => void) | undefined>(undefined);
   const pending = useRef(Promise.resolve());
   const observer = useRef<ResizeObserver | null>(null);
   const stopRestore = useRef<(() => void) | undefined>(undefined);
@@ -213,8 +213,9 @@ export function useExplanationScroll(key: string, active = true) {
     if (!active || !node.current || node.current.clientHeight === 0) return;
     position.current = { ...position.current, top: node.current.scrollTop, left: node.current.scrollLeft };
     positions.set(key, { ...position.current });
-    clearTimeout(timer.current);
-    timer.current = setTimeout(save, 300);
+    cancelSave.current?.();
+    // Quit runs a pending save at once, so the last scroll survives a quick quit.
+    cancelSave.current = scheduleReviewStateWrite(save, 300);
   }, [save, active]);
   useLayoutEffect(() => {
     const element = node.current;
@@ -232,7 +233,7 @@ export function useExplanationScroll(key: string, active = true) {
   }, [active, key, capture]);
   useEffect(
     () => () => {
-      clearTimeout(timer.current);
+      cancelSave.current?.();
       save();
     },
     [save]

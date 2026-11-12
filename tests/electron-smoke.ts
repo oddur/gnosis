@@ -65,7 +65,8 @@ void app.whenReady().then(async () => {
         else if(Date.now()>deadline)reject(Error('Navigation IPC timed out'));else setTimeout(check,20)};check();
     })`);
     assert.deepEqual(await contents.executeJavaScript('window.smokeEvents'), [-1, 1, -1, 1]);
-    await contents.executeJavaScript('window.unsubscribeSmoke()');
+    // Unsubscribing must not hand ipcRenderer (or anything else) back across the context bridge.
+    assert.equal(await contents.executeJavaScript('window.unsubscribeSmoke() === undefined'), true);
     console.log(
       'PASS: Electron window, isolated production preload, IPC, SQLite worker persistence, native navigation bridge'
     );

@@ -76,6 +76,7 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
           progressWrites.push(value);
           return store.saveFileProgress(value);
         },
+        onFlushReviewState: () => {},
       },
     },
   });

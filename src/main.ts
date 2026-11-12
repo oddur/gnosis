@@ -54,6 +54,7 @@ import { loadReviewContents, startReviewFileMetadata } from '../lib/review-prepa
 import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from '../lib/github-cache-settings';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import { createAppDataStore } from './app-data-store';
+import { createRendererFlush, saveWorkBeforeQuit } from './quit-flush';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
@@ -855,6 +856,8 @@ function maintainStorage(): Promise<void> {
 
 let cacheFlushed = false;
 let cacheFlushing = false;
+const rendererFlush = createRendererFlush();
+ipcMain.on('review-state-flushed', (_event, id: unknown) => rendererFlush.acknowledge(id));
 app.on('before-quit', (event) => {
   if (!quitConfirmed && activeGenerations.size > 0) {
     event.preventDefault();
@@ -884,7 +887,12 @@ app.on('before-quit', (event) => {
     if (!cacheFlushing) {
       cacheFlushing = true;
       // User drafts and progress must finish before quitting; only disposable cache has a deadline.
-      void appData.close()
+      // Windows send their pending review state first, so the final flush includes it.
+      void saveWorkBeforeQuit({
+        targets: BrowserWindow.getAllWindows().map((win) => win.webContents),
+        flush: (targets) => rendererFlush.flush(targets),
+        close: () => appData.close(),
+      })
         .then(() => Promise.race([githubClients.closeStorage(), new Promise(resolve => setTimeout(resolve, 1500))])
           .catch((error: unknown) => console.warn('Disposable cache flush failed:',error)))
         .then(() => { cacheFlushed = true; app.quit(); })

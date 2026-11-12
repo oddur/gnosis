@@ -79,6 +79,8 @@ declare global {
       loadReviewState: (legacy: Record<string,string>) => Promise<Record<string,unknown>>;
       saveReviewState: (value: ReviewStateWrite) => Promise<void>;
       saveFileProgress: (value: FileProgressPatch) => Promise<void>;
+      /** Main calls this at quit, before it closes saved data. The promise ends when pending saves are answered. */
+      onFlushReviewState: (callback: () => Promise<void>) => void;
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
       workbenchSnapshot: (withSignals?: boolean) => Promise<WorkbenchQueue>;
