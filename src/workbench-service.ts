@@ -2,7 +2,7 @@ import { responseNeeded } from '../lib/response-needed';
 import { stampQueue } from '../lib/workbench-revision';
 import { timed } from '../lib/perf-trace';
 import type { GitHubReviewThreads } from '../lib/review-threads';
-import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock } from '../lib/repository-settings';
+import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock, automaticBriefingBlockReason } from '../lib/repository-settings';
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
 import { focusStackPr } from '../lib/stack-workspace';
 import { createMemoryStorage, type StateStorage } from './app-data-store';
@@ -317,6 +317,7 @@ export function createWorkbenchService(deps: Deps) {
       const briefing: Briefing = !cached || cached.status === 'paused' ? {
         ...(cached ?? {}), key: k,
         status: activeSubjects.has(subject) && (manual || !block) ? (cached?.status ?? 'queued') : 'paused',
+        pauseReason: manual ? undefined : !activeSubjects.has(subject) ? 'manual' : block ? automaticBriefingBlockReason(block) : undefined,
         pauseDetail: manual ? undefined : block,
         updatedAt: cached?.updatedAt ?? new Date(now()).toISOString(),
       } : cached;
@@ -337,7 +338,7 @@ export function createWorkbenchService(deps: Deps) {
           !subject.members.some(
             (member) => member.state === 'open' && !member.merged && matchesInvolvement(member, filters.involvement, deps.auth().login)
           )) ||
-          (filters.briefingScope === 'matches' && !matchesQueueFilters(item, filters, now(), deps.auth().login)))
+          (filters.briefingScope === 'matches' && !matchesQueueFilters(item, { ...filters, briefing: 'all' }, now(), deps.auth().login)))
       )
         return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
       return item;

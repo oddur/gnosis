@@ -2,7 +2,7 @@ import { needsResponse } from './response-needed';
 import { DEFAULT_LABEL_FILTER, normalizeLabelFilter, labelFilterActive, matchesLabelFilter, describeLabelFilter, type PrLabelFilter } from './pr-label-filter';
 import { DEFAULT_PR_SORT, normalizePrListSort, sortQueueItems, type PrListSort } from './pr-list-sort';
 import type { QueueSignals } from './queue-signals';
-import { fingerprint, type QueueItem, type ReviewMember } from './workbench';
+import { fingerprint, type Briefing, type QueueItem, type ReviewMember } from './workbench';
 
 export interface QueueFilters {
   sort: PrListSort;
@@ -21,7 +21,50 @@ export interface QueueFilters {
   kind: 'all' | 'stack' | 'pr';
   explanation: 'all' | 'none' | 'ready' | 'outdated' | 'generating' | 'failed';
   attention: 'all' | QueueItem['attention'];
+  /** Briefing status. It narrows the list only; it never decides which briefings run. */
+  briefing: 'all' | BriefingState;
   briefingScope: 'matches' | 'all';
+}
+export const BRIEFING_STATES = ['generating', 'queued', 'ready', 'paused', 'failed'] as const;
+export type BriefingState = (typeof BRIEFING_STATES)[number];
+export type BriefingPause = 'limit' | 'filter' | 'manual' | 'waiting';
+/** Cancelled and missing briefings have no state of their own; they count only toward All. */
+export function briefingState(briefing: Briefing | undefined): BriefingState | undefined {
+  const status = briefing?.status;
+  return status === 'cancelled' ? undefined : status;
+}
+/** Older snapshots and fixtures carry only the detail text, so fall back to it. */
+export function briefingPause(briefing: Briefing): BriefingPause {
+  if (briefing.pauseReason) return briefing.pauseReason;
+  if (/limit reached/i.test(briefing.pauseDetail ?? '')) return 'limit';
+  if (/automatic briefings are off/i.test(briefing.pauseDetail ?? '')) return 'manual';
+  return 'waiting';
+}
+export interface BriefingCounts {
+  all: number;
+  generating: number;
+  queued: number;
+  ready: number;
+  paused: number;
+  failed: number;
+  pauses: Record<BriefingPause, number>;
+}
+/** Counts briefing states of entries that are already filtered. */
+export function tallyBriefings(items: readonly QueueItem[]): BriefingCounts {
+  const counts: BriefingCounts = { all: 0, generating: 0, queued: 0, ready: 0, paused: 0, failed: 0, pauses: { limit: 0, filter: 0, manual: 0, waiting: 0 } };
+  for (const item of items) {
+    counts.all++;
+    const state = briefingState(item.briefing);
+    if (!state) continue;
+    counts[state]++;
+    if (state === 'paused' && item.briefing) counts.pauses[briefingPause(item.briefing)]++;
+  }
+  return counts;
+}
+/** Counts for the briefing chips. Every other filter applies, so a chip's count is what clicking it shows. */
+export function countBriefings(items: readonly QueueItem[], filters: QueueFilters, now = Date.now(), login?: string | null): BriefingCounts {
+  const scope = filters.briefing === 'all' ? filters : { ...filters, briefing: 'all' as const };
+  return tallyBriefings(items.filter((item) => matchesQueueFilters(item, scope, now, login)));
 }
 export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
   sort: DEFAULT_PR_SORT,
@@ -39,6 +82,7 @@ export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
   kind: 'all',
   explanation: 'all',
   attention: 'all',
+  briefing: 'all',
   briefingScope: 'matches',
 };
 export const RECENCY_DAYS = [0, 7, 14, 30, 90, 180, 365] as const;
@@ -67,6 +111,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     kind: raw.attention === 'blocking' ? 'stack' : choice('kind', ['all', 'stack', 'pr'], 'all'),
     explanation: choice('explanation', ['all', 'none', 'ready', 'outdated', 'generating', 'failed'], 'all'),
     attention: choice('attention', ['all', 'updated', 'requested', 'other'], 'all'),
+    briefing: choice('briefing', ['all', ...BRIEFING_STATES], 'all'),
     briefingScope: choice('briefingScope', ['matches', 'all'], 'matches'),
   };
 }
@@ -127,6 +172,7 @@ export function matchesQueueFilters(
   const { subject, review } = item;
   if (filters.attention !== 'all' && item.attention !== filters.attention) return false;
   if (filters.kind !== 'all' && subject.kind !== filters.kind) return false;
+  if (filters.briefing !== 'all' && briefingState(item.briefing) !== filters.briefing) return false;
   if (filters.explanation !== 'all') {
     const state = !review
       ? 'none'
@@ -173,6 +219,8 @@ export function prioritizeBriefings(
   signals: QueueSignals[] = []
 ): QueueItem[] {
   items = sortQueueItems(items, filters.sort, signals);
+  // The briefing filter follows briefing state, so it must not decide which briefing runs next.
+  if (filters.briefing !== 'all') filters = { ...filters, briefing: 'all' };
   const matching = items.filter((item) => matchesQueueFilters(item, filters, now, login));
   return filters.briefingScope === 'matches'
     ? matching
@@ -204,6 +252,7 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
         failed: 'generation failed',
       }[filters.explanation]
     }`,
+    briefing: `Briefing: ${{ all: 'any state', generating: 'generating', queued: 'queued', ready: 'ready', paused: 'paused', failed: 'failed' }[filters.briefing]}`,
     attention: {
       all: 'All changes',
       requested: 'Review requested',
