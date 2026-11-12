@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createPrReadStore } from '../src/pr-read-store';
+import { createAppDataStore, createMemoryStorage, type StateStorage } from '../src/app-data-store';
 import { applyPendingGitHubCacheClear, requestGitHubCacheClear } from '../src/github-cache-reset';
 import { DEFAULT_QUEUE_FILTERS, matchesQueueFilters, normalizeQueueFilters } from '../lib/queue-filters';
 import { groupSubjects, type ReviewMember } from '../lib/workbench';
@@ -46,10 +47,8 @@ function member(n = 1, overrides: Partial<ReviewMember> = {}): ReviewMember {
 function harness() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-read-'));
   let time = Date.parse('2026-10-26T10:00:00Z');
-  const store = createPrReadStore(
-    () => dir,
-    () => time
-  );
+  const saved = new Map<string, string>();
+  const store = createPrReadStore(createMemoryStorage(saved), () => time);
   const state = (n = 1) => store.snapshot('me')[member(n).url];
   const mark = (read = true, receipts = [state()]) => store.mark('me', { account: 'me', read, receipts });
   const signal = (patch: Partial<QueueSignals> = {}): QueueSignals => ({
@@ -63,6 +62,8 @@ function harness() {
   return {
     dir,
     store,
+    /** The same saved progress, read by a new store as after a restart. */
+    restart: () => createPrReadStore(createMemoryStorage(saved)),
     state,
     mark,
     signal,
@@ -113,13 +114,19 @@ void test('acknowledgments are pinned to observed versions, including manual unr
 });
 void test('read progress persists per account, survives cache clearing, and is keyed by PR rather than stack', async () => {
   const h = harness();
+  let data = createAppDataStore();
   try {
-    h.store.observe('Alice', [member(), member(2)], true);
-    const receipt = h.store.snapshot('alice')[member(2).url];
-    h.store.mark('ALICE', { account: 'alice', read: false, receipts: [receipt] });
+    await data.open(h.dir);
+    const store = createPrReadStore(data);
+    store.observe('Alice', [member(), member(2)], true);
+    const receipt = store.snapshot('alice')[member(2).url];
+    store.mark('ALICE', { account: 'alice', read: false, receipts: [receipt] });
+    await data.close();
     requestGitHubCacheClear(h.dir);
-    await applyPendingGitHubCacheClear(h.dir, () => Promise.resolve());
-    const restarted = createPrReadStore(() => h.dir);
+    data = createAppDataStore();
+    await data.open(h.dir);
+    await applyPendingGitHubCacheClear(h.dir, () => Promise.resolve(), () => data.clearGitHub());
+    const restarted = createPrReadStore(data);
     assert.deepEqual(restarted.snapshot('alice')[member(2).url].unread, ['manual']);
     assert.deepEqual(restarted.snapshot('bob'), {});
     assert.throws(() => restarted.mark('bob', { account: 'alice', read: true, receipts: [receipt] }));
@@ -130,6 +137,7 @@ void test('read progress persists per account, survives cache clearing, and is k
       [2]
     );
   } finally {
+    await data.close();
     h.cleanup();
   }
 });
@@ -210,21 +218,24 @@ void test('unread filter combines all member conditions and is normalized for sa
   assert.equal(normalizeQueueFilters({}).readStatus, 'all');
   assert.equal(unreadDescription(['commits', 'comments']), 'New commits and new comments since your last visit');
 });
-void test('failed writes preserve prior read progress in memory and on disk', () => {
-  const h = harness();
-  try {
-    let directory = h.dir;
-    const store = createPrReadStore(() => directory);
-    store.observe('me', [member()], true);
-    const receipts = [store.snapshot('me')[member().url]];
-    directory = path.join(h.dir, 'file');
-    fs.writeFileSync(directory, 'blocked');
-    assert.throws(() => store.mark('me', { account: 'me', read: false, receipts }));
-    assert.deepEqual(store.snapshot('me')[member().url].unread, []);
-    assert.deepEqual(createPrReadStore(() => h.dir).snapshot('me')[member().url].unread, []);
-  } finally {
-    h.cleanup();
-  }
+void test('a rejected change preserves prior read progress in memory and in saved data', () => {
+  const saved = new Map<string, string>();
+  let blocked = false;
+  const memory = createMemoryStorage(saved);
+  const storage: StateStorage = {
+    ...memory,
+    patch: (name, change) => {
+      if (blocked) throw new Error('Saved work is still loading');
+      memory.patch(name, change);
+    },
+  };
+  const store = createPrReadStore(storage);
+  store.observe('me', [member()], true);
+  const receipts = [store.snapshot('me')[member().url]];
+  blocked = true;
+  assert.throws(() => store.mark('me', { account: 'me', read: false, receipts }));
+  assert.deepEqual(store.snapshot('me')[member().url].unread, []);
+  assert.deepEqual(createPrReadStore(createMemoryStorage(saved)).snapshot('me')[member().url].unread, []);
 });
 
 void test('observing unchanged metadata does not clone the complete unread state on every queue poll', (t) => {

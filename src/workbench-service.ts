@@ -5,7 +5,7 @@ import type { GitHubReviewThreads } from '../lib/review-threads';
 import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock } from '../lib/repository-settings';
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
 import { focusStackPr } from '../lib/stack-workspace';
-import type { StateStorage } from './app-data-store';
+import { createMemoryStorage, type StateStorage } from './app-data-store';
 import { createPrReadStore } from './pr-read-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { QueueSignals, QueueSignalRequest } from '../lib/queue-signals';
@@ -133,11 +133,13 @@ class BriefingPaused extends Error {
 }
 export function createWorkbenchService(deps: Deps) {
   const now = deps.now ?? Date.now;
-  const reads = createPrReadStore(deps.directory, now, deps.storage);
+  // Without saved data, as in tests, user stores live in memory for this service.
+  const storage = deps.storage ?? createMemoryStorage();
+  const reads = createPrReadStore(storage, now);
   const readBaselines = new Set<string>();
-  const savedViews = createSavedViewStore(deps.directory);
-  const stars = createStarredPrStore(deps.directory, now);
-  const mutes = deps.mutes ?? createMutedPrStore(deps.directory, now);
+  const savedViews = createSavedViewStore(storage);
+  const stars = createStarredPrStore(storage, now);
+  const mutes = deps.mutes ?? createMutedPrStore(storage, now);
   const mutedUrls = () => mutes.index(deps.auth().login ?? 'guest').urls;
   const visibleMemo = new WeakMap<readonly ReviewHistoryEntry[], { urls: ReadonlySet<string>; value: VisibleHistory }>();
   /**

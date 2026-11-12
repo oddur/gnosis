@@ -104,7 +104,8 @@ void test('cached-only reads never request GitHub, including stale snapshots; ex
   await h.get(h.client, [request], { force: true });
   assert.equal(h.calls(), 2);
   h.advance();
-  assert.deepEqual(await h.get(h.client, [request], { cachedOnly: true }), original);
+  // The cache stores JSON, so fields set to `undefined` are absent, as after a restart.
+  assert.deepEqual(await h.get(h.client, [request], { cachedOnly: true }), JSON.parse(JSON.stringify(original)));
   assert.equal(h.calls(), 2);
   h.fail();
   await h.get(h.client, [request], { force: true });
@@ -134,7 +135,7 @@ void test('rate limiting preserves dated snapshots without retry traffic', async
   const [original] = await h.get(h.client, [request]);
   h.advance();
   h.fail();
-  assert.deepEqual(await h.get(h.client, [request]), [original]);
+  assert.deepEqual(await h.get(h.client, [request]), [JSON.parse(JSON.stringify(original))]);
   assert.equal(h.calls(), 2);
   await h.get(h.client, [request]);
   assert.equal(h.calls(), 2);

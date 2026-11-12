@@ -62,12 +62,27 @@ export function ReviewBreadcrumbs({ base, scope }: { base: ReviewCrumb[]; scope:
     const root = container.current,
       natural = measure.current;
     if (!root || !natural) return;
-    const check = () => setCollapsed(crumbs.length > 2 && natural.scrollWidth > root.clientWidth);
-    const observer = new ResizeObserver(check);
+    // Widths come from the observer entries (the measuring list is max-content wide), and the decision waits for the
+    // next frame, so a window resize reads no layout here.
+    let available = root.clientWidth;
+    let needed = natural.scrollWidth;
+    let frame = 0;
+    const check = () => setCollapsed(crumbs.length > 2 && needed > available);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === root) available = Math.round(entry.contentBoxSize[0].inlineSize);
+        else needed = Math.round(entry.borderBoxSize[0].inlineSize);
+      }
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(check);
+    });
     observer.observe(root);
     observer.observe(natural);
     check();
-    return () => observer.disconnect();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, [signature]);
   const visible = collapsed ? [crumbs[0], crumbs[crumbs.length - 1]] : crumbs;
   return (

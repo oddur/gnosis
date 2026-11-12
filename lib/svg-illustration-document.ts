@@ -163,7 +163,8 @@ const SVG_PLAYER_RUNTIME = String.raw`
       }catch(error){notify('error',{message:String(error.message).slice(0,700)});}
     });
     addEventListener('pagehide',()=>motion.pause());
-    addEventListener('resize',()=>motion.sync());
+    let resizeTimer=0;
+    addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>motion.sync(),120);});
     document.fonts.ready.then(()=>notify('ready',{width:extent[2],height:extent[3],bounds:bounds()}));
   }catch(error){notify('error',{message:String(error.message).slice(0,700)});}
 })();`;

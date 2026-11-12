@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { mechanismFrame, normalizeMechanism, type MechanismEvidence, type MechanismScene } from '../lib/mechanism';
 import { layoutMechanism, NODE_WIDTH, pointOnRoute } from '../lib/mechanism-layout';
 import './mechanism-diagram.css';
+import { settledObserver } from '../lib/resize-activity';
 
 // Measure the actual font; wrapping happens only when content/fonts change, not each animation tick.
 function wrap(text: string, width: number, font: string) {
@@ -137,7 +138,7 @@ function Player({
   const inlineHeight = useRef(0);
   const [compact, setCompact] = useState(true);
   useEffect(() => {
-    const observer = new ResizeObserver((entries) => setCompact(entries[0].contentRect.width < 700));
+    const observer = settledObserver((entries) => setCompact(entries[entries.length - 1].contentRect.width < 700));
     if (container.current) observer.observe(container.current);
     return () => observer.disconnect();
   }, []);

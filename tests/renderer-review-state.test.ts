@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createAppDataStore } from '../src/app-data-store';
 import { initializeReviewState, readReviewState, writeReviewState } from '../lib/renderer-review-state';
+import { readExplanationPosition } from '../lib/use-explanation-scroll';
 import { readReviewDrafts, updateReviewDrafts, type ChangesReviewDraft } from '../lib/changes-review-drafts';
 import { markFileViewed, markFilesViewed, isFileViewed } from '../lib/file-view-progress';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
@@ -94,6 +95,8 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
       ['first', 'second', 'third']
     );
     await writeReviewState('gnosis-explanation-position:review-a:reading', { top: 840, left: 0 });
+    const anchored = { top: 52_000, left: 0, anchor: { section: 9, filePath: 'docs/a b.md', offset: 120.5 } };
+    await writeReviewState('gnosis-explanation-position:review-a:anchored', anchored);
     await writeReviewState('gnosis-explanation-position:review-a:code:section-b', { top: 320, left: 48 });
     await writeReviewState('gnosis-feedback-options:v1:alice', false);
     assert.equal(readReviewState('gnosis-feedback-options:v1:alice'), false);
@@ -126,6 +129,21 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
     await store.open(directory);
     const restored = await store.loadReviewState({});
     assert.deepEqual(restored['gnosis-explanation-position:review-a:reading'], { top: 840, left: 0 });
+    // The anchor survives saving and reopening, and older records without one still restore their offset.
+    assert.deepEqual(readExplanationPosition(restored['gnosis-explanation-position:review-a:anchored']), {
+      top: 52_000,
+      left: 0,
+      anchor: { section: 9, filePath: 'docs/a b.md', offset: 120.5 },
+    });
+    assert.deepEqual(readExplanationPosition(restored['gnosis-explanation-position:review-a:reading']), {
+      top: 840,
+      left: 0,
+    });
+    assert.deepEqual(readExplanationPosition({ top: -5, left: 'x', anchor: { section: 1.5, offset: 3 } }), {
+      top: 0,
+      left: 0,
+    });
+    assert.deepEqual(readExplanationPosition(undefined), { top: 0, left: 0 });
     assert.deepEqual(restored['gnosis-explanation-position:review-a:code:section-b'], { top: 320, left: 48 });
     assert.equal(restored['gnosis-feedback-options:v1:alice'], false, 'Feedback filter survives reopening SQLite');
     assert.equal((restored[key] as unknown[]).length, 3);

@@ -4,6 +4,7 @@ import { Maximize2 } from 'lucide-react';
 import { DiagramViewport } from './DiagramViewport';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { renderMermaid } from '../lib/mermaid';
+import { settledObserver } from '../lib/resize-activity';
 
 export function MermaidDiagram({
   chart,
@@ -32,7 +33,8 @@ export function MermaidDiagram({
       if (boundary.clientHeight > 0) setPreviewHeight(Math.max(96, Math.min(320, boundary.clientHeight - 100)));
     };
     measure();
-    const observer = new ResizeObserver(measure);
+    // The preview keeps its height while the window is dragged and fits again once the resize settles.
+    const observer = settledObserver(measure);
     observer.observe(boundary);
     return () => observer.disconnect();
   }, []);

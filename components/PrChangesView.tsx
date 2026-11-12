@@ -36,6 +36,7 @@ import type { AgentBriefView } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
 import type { Preferences } from '../lib/types';
 import { usePrDiscussions } from '../lib/use-pr-discussions';
+import { countRender } from '../lib/render-count';
 
 interface Position {
   selected: string;
@@ -107,6 +108,7 @@ export function PrChangesView({
   onOpenBrief?: () => void;
   initialFile?: ChangesInitialFile;
 }) {
+  countRender('PrChangesView');
   const positionId = combined ? `combined:${subject.id}` : commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const stream = useRef<CommitDiffStreamHandle>(null);
   const workspace = useRef<HTMLElement>(null);

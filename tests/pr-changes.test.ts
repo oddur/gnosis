@@ -341,8 +341,10 @@ void test('refresh reuses immutable files but persists reopened and retargeted P
     0
   );
   const reader = createPrChangesService();
-  assert.deepEqual((await reader.manifest(client, url)).metadata, reopened.metadata, 'latest disk snapshot');
-  assert.deepEqual(reader.cached(client, url, closed.metadata)?.metadata, reopened.metadata, 'revision disk snapshot');
+  // The cache stores JSON, so fields set to `undefined` are absent, as after a restart.
+  const saved = JSON.parse(JSON.stringify(reopened.metadata)) as typeof reopened.metadata;
+  assert.deepEqual((await reader.manifest(client, url)).metadata, saved, 'latest disk snapshot');
+  assert.deepEqual(reader.cached(client, url, closed.metadata)?.metadata, saved, 'revision disk snapshot');
   assert.equal(closed.metadata.state, 'closed', 'already displayed snapshot remains immutable');
 });
 

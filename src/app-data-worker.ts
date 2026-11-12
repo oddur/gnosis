@@ -26,7 +26,7 @@ let file = '';
 const maintenance: MaintainState = {};
 type Request = { id: number } & (
   | { method: 'open'; args: { directory: string } }
-  | { method: 'write'; args: [string, unknown][] }
+  | { method: 'write'; args: { states: [string, unknown][]; patches: [string, unknown][] } }
   | { method: 'close' | 'clear-github'; args?: undefined }
   | { method: 'search'; args: SearchRequest }
   | { method: 'search-feeds'; args: { account: string } }
@@ -49,7 +49,11 @@ function transaction<T>(fn: () => T): T {
     throw error;
   }
 }
-/** Separate queue subjects, briefings and unread receipts into independently updated rows. */
+/** States saved as a header row plus one `entry:<id>` row per entry, read as `{ ...header, entries }`. */
+const rowState = (name: string) => /^(?:pr-read-|muted-prs:|starred-prs:)/.test(name);
+/** The row states that accept patches: unread progress, mutes and stars. */
+const patchable = /^(?:pr-read-[a-f0-9]{64}\.json|(?:muted|starred)-prs:[a-f0-9]{64})$/;
+/** Separate queue subjects, briefings, unread receipts, mutes and stars into independently updated rows. */
 function rows(name: string, value: unknown): Map<string, string> {
   if (name.startsWith('renderer:')) {
     const result = new Map<string, string>();
@@ -86,8 +90,8 @@ function rows(name: string, value: unknown): Map<string, string> {
       result.set('subject:' + subject.id, JSON.stringify({ index, value: subject }));
     }
     for (const [key, brief] of Object.entries(value.briefs)) result.set('brief:' + key, JSON.stringify(brief));
-  } else if (name.startsWith('pr-read-')) {
-    if (!record(value.entries)) throw new Error('Invalid unread progress');
+  } else if (rowState(name)) {
+    if (!record(value.entries)) throw new Error(`Invalid saved entries: ${name}`);
     delete header.entries;
     for (const [key, entry] of Object.entries(value.entries)) result.set('entry:' + key, JSON.stringify(entry));
   }
@@ -128,7 +132,7 @@ function read(name: string): unknown {
     value.briefs = Object.fromEntries(
       saved.filter((row) => row.id.startsWith('brief:')).map((row) => [row.id.slice(6), JSON.parse(row.payload)])
     );
-  } else if (name.startsWith('pr-read-')) {
+  } else if (rowState(name)) {
     value.entries = Object.fromEntries(
       saved.filter((row) => row.id.startsWith('entry:')).map((row) => [row.id.slice(6), JSON.parse(row.payload)])
     );
@@ -146,6 +150,80 @@ function write(name: string, value: unknown) {
   const remove = db.prepare('DELETE FROM records WHERE name=? AND id=?');
   for (const [id, payload] of next) if (previous.get(id) !== payload) put.run(name, id, payload);
   for (const id of previous.keys()) if (!next.has(id)) remove.run(name, id);
+}
+/** Changes only the listed rows. The header row is created when missing. */
+function patch(name: string, change: unknown) {
+  if (!patchable.test(name) || !record(change)) throw new Error(`Invalid saved change: ${name}`);
+  const { header, put = [], remove = [] } = change;
+  if ((header !== undefined && !record(header)) || !Array.isArray(put) || !Array.isArray(remove))
+    throw new Error(`Invalid saved change: ${name}`);
+  const upsert = db.prepare(
+    'INSERT INTO records(name,id,payload) VALUES(?,?,?) ON CONFLICT(name,id) DO UPDATE SET payload=excluded.payload'
+  );
+  if (header) upsert.run(name, 'header', JSON.stringify(header));
+  else db.prepare("INSERT OR IGNORE INTO records(name,id,payload) VALUES(?,'header','{}')").run(name);
+  for (const row of put as unknown[]) {
+    if (!Array.isArray(row) || typeof row[0] !== 'string' || row[1] === undefined) throw new Error(`Invalid saved entry: ${name}`);
+    upsert.run(name, 'entry:' + row[0], JSON.stringify(row[1]));
+  }
+  const drop = db.prepare('DELETE FROM records WHERE name=? AND id=?');
+  for (const id of remove as unknown[]) {
+    if (typeof id !== 'string') throw new Error(`Invalid saved entry: ${name}`);
+    drop.run(name, 'entry:' + id);
+  }
+}
+/**
+ * Imports muted PRs, starred PRs and saved views from their JSON files. An unreadable file is skipped and
+ * left in place. Imported files are renamed to `*.json.migrated` after the commit and kept as backups:
+ * muted PR descriptions cannot be downloaded again.
+ */
+function importLegacyStores(directory: string) {
+  const imported: string[] = [];
+  transaction(() => {
+    for (const file of fs.readdirSync(directory)) {
+      const match = /^(muted-prs|starred-prs|queue-views)-([a-f0-9]{64})\.json$/.exec(file);
+      if (!match) continue;
+      let value: unknown;
+      try {
+        value = JSON.parse(fs.readFileSync(path.join(directory, file), 'utf8'));
+      } catch (error) {
+        console.warn(`Could not import ${file}. It has been left in place:`, error instanceof Error ? error.message : error);
+        continue;
+      }
+      const name = `${match[1]}:${match[2]}`;
+      if (match[1] === 'queue-views') {
+        if (!record(value)) {
+          console.warn(`Could not import ${file}. It has been left in place.`);
+          continue;
+        }
+        write(name, value);
+      } else {
+        if (!Array.isArray(value)) {
+          console.warn(`Could not import ${file}. It has been left in place.`);
+          continue;
+        }
+        // Structure only; the stores validate members when they load. `seq` keeps the saved order.
+        const entries = new Map<string, Record<string, unknown>>();
+        value.forEach((entry: unknown, index) => {
+          if (!record(entry) || !record(entry.member) || typeof entry.member.url !== 'string') return;
+          const url = entry.member.url;
+          entries.set(url, { ...entry, seq: entries.get(url)?.seq ?? index });
+        });
+        write(name, { entries: Object.fromEntries(entries) });
+      }
+      imported.push(file);
+    }
+    db.prepare('INSERT INTO migrations VALUES (?)').run('legacy-stores-v1');
+  });
+  // After the commit. A crash before the rename is harmless: the migration never runs again.
+  for (const file of imported) {
+    const source = path.join(directory, file);
+    try {
+      fs.renameSync(source, source + '.migrated');
+    } catch (error) {
+      console.warn(`Could not rename ${file} after importing it:`, error instanceof Error ? error.message : error);
+    }
+  }
 }
 function states() {
   return Object.fromEntries(
@@ -184,10 +262,12 @@ port.on('message', (request: Request) => {
             }
             db.prepare('INSERT INTO migrations VALUES (?)').run('legacy-state-v1');
           });
+        if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('legacy-stores-v1')) importLegacyStores(args.directory);
         result = states();
       } else if (method === 'write') {
         transaction(() => {
-          for (const [name, value] of args) write(name, value);
+          for (const [name, value] of args.states) write(name, value);
+          for (const [name, change] of args.patches) patch(name, change);
         });
       } else if (method === 'clear-github') {
         transaction(() => {

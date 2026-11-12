@@ -7,13 +7,15 @@ import type { Octokit } from '@octokit/rest';
 import { groupSubjects, snapshot, type ReviewMember } from '../lib/workbench';
 import type { ReviewHistoryEntry } from '../lib/types';
 import { createMutedPrStore, type MutedPrStore } from '../src/muted-pr-store';
+import { createMemoryStorage } from '../src/app-data-store';
 import { createWorkbenchService } from '../src/workbench-service';
 import type { WorkbenchPreferences } from '../src/workbench-service';
 import { createActivityService } from '../src/activity-service';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 import type { getProvider } from '../lib/provider';
 
-function setup(generate: () => Promise<string>, auto = true) {
+/** With `saved`, user stores and the queue are saved there, and a new service reads them as after a restart. */
+function setup(generate: () => Promise<string>, auto = true, saved?: Map<string, string>) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-workbench-unit-'));
   let busy = false;
   const prefs = {
@@ -90,6 +92,8 @@ function setup(generate: () => Promise<string>, auto = true) {
     client: () => client,
     provider,
   };
+  // A getter, so each service opens the saved stores afresh.
+  if (saved) Object.defineProperty(deps, 'storage', { get: () => createMemoryStorage(saved), enumerable: true });
   return {
     service: createWorkbenchService(deps),
     deps,
@@ -1307,7 +1311,7 @@ void test('switching to my PRs stops an in-flight full discovery before it reads
 });
 
 void test('saved-view counts use saved filters and switching views shares discovery without extra GitHub reads', async () => {
-  const s = setup(() => Promise.resolve(''), false);
+  const s = setup(() => Promise.resolve(''), false, new Map());
   let reads = 0;
   const original = s.deps.client().pulls.get;
   Object.assign(s.deps.client().pulls, {
@@ -1499,7 +1503,8 @@ void test('archived watched repositories stop after one listing page without rea
 });
 
 void test('archive changes evict cached and starred work, persist, and reverse on unarchive without PR timestamp changes', async () => {
-  const s = setup(() => Promise.resolve(''), false);
+  const saved = new Map<string, string>();
+  const s = setup(() => Promise.resolve(''), false, saved);
   s.prefs.watchedRepos = ['owner/repo'];
   const search = s.deps.client().search.issuesAndPullRequests;
   try {
@@ -1516,7 +1521,7 @@ void test('archive changes evict cached and starred work, persist, and reverse o
     assert.deepEqual(restarted.cached().items, []);
     assert.deepEqual(restarted.cached().starredItems, []);
     const { createStarredPrStore } = await import('../src/starred-pr-store');
-    assert.equal(createStarredPrStore(s.deps.directory).load('reviewer').length, 1, 'Keep the bookmark on disk');
+    assert.equal(createStarredPrStore(createMemoryStorage(saved)).load('reviewer').length, 1, 'Keep the saved bookmark');
     s.pr.base.repo.archived = false;
     Object.assign(s.deps.client().search, { issuesAndPullRequests: search });
     const restored = await restarted.queue(true);
@@ -2054,7 +2059,7 @@ function localQueue(subjects: number, muted: number, history: () => readonly Rev
       JSON.stringify({ account: 'me', subjects: groupSubjects(members), overrides: [], briefs: {}, day: '', used: 0 })
     );
   write(Array.from({ length: subjects }, (_, i) => pr(i + 1)));
-  const store = createMutedPrStore(() => directory);
+  const store = createMutedPrStore(createMemoryStorage());
   if (muted) store.set('me', { muted: true, members: Array.from({ length: muted }, (_, i) => pr(10_000 + i, 'x'.repeat(4000))) });
   let indexReads = 0;
   const mutes: MutedPrStore = {

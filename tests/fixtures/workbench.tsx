@@ -774,6 +774,31 @@ if (new URLSearchParams(location.search).has('checks')) {
     readiness: value.readiness ? { ...value.readiness, mergeState: 'BLOCKED' } : undefined,
   }));
 }
+if (new URLSearchParams(location.search).has('saved-signals')) {
+  // Saved status ten minutes old arrives with the first snapshot only, as main sends it. GitHub never
+  // answers here, so every badge on screen came from the snapshot.
+  const savedAt = Date.now() - 10 * 60_000;
+  const readSignals = mocks.getQueueSignals;
+  const readSnapshot = mocks.workbenchSnapshot;
+  mocks.getQueueSignals = () => new Promise(() => {});
+  mocks.workbenchSnapshot = async (withSignals?: boolean) => {
+    const queue = await readSnapshot();
+    if (!withSignals) return queue;
+    const members = queue.items.flatMap(item => item.subject.members.map(({ url, headSha }) => ({ url, headSha })));
+    const values = (await readSignals(members)).map(value => ({ ...value, checkedAt: savedAt }));
+    return { ...queue, savedSignals: { account: 'oddur', values } };
+  };
+  // Record the first commit that shows queue rows, before the browser paints it.
+  const observer = new MutationObserver(() => {
+    const rows = document.querySelectorAll('.queue-item');
+    if (!rows.length) return;
+    observer.disconnect();
+    Object.assign(window, { firstQueueFrame: { rows: rows.length, checks: [...document.querySelectorAll('.queue-checks')].map(element => ({
+      text: element.textContent, label: element.getAttribute('aria-label'), stale: element.classList.contains('is-stale'),
+    })) } });
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+}
 if (new URLSearchParams(location.search).has('github-sync')) {
   const { installSyncFixture } = await import('./github-sync');
   installSyncFixture(mocks, items);

@@ -1,14 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Maximize2, Pause, Play, RotateCcw } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import type { MechanismEvidence } from '../lib/mechanism';
 import { normalizeSvgIllustration, type SvgIllustration as Illustration } from '../lib/svg-illustration';
 import { buildSvgIllustrationDocument } from '../lib/svg-illustration-document';
-import { DiagramExplorer, DiagramInspector } from './DiagramExplorer';
+import { DiagramInspector } from './DiagramInspector';
+import { lazyComponent } from '../lib/lazy-screen';
 import { diagramFocus, type DiagramEntityBounds } from '../lib/diagram-exploration';
 import './mechanism-diagram.css';
 import './svg-illustration.css';
+
+// xyflow loads with the explorer, when an explorable diagram is about to open, not with the review page.
+const DiagramExplorer = lazyComponent(() => import('./DiagramExplorer').then((module) => module.DiagramExplorer));
 
 export function SvgIllustration({
   illustration,
@@ -88,6 +92,17 @@ function IllustrationPlayer({
       '*'
     );
   }
+  const explorable = !!illustration.exploration;
+  // Load the explorer while the window is idle, so opening the dialog rarely waits for it.
+  useEffect(() => {
+    if (!explorable) return;
+    if (typeof requestIdleCallback === 'function') {
+      const id = requestIdleCallback(() => void DiagramExplorer.preload(), { timeout: 5000 });
+      return () => cancelIdleCallback(id);
+    }
+    const timer = setTimeout(() => void DiagramExplorer.preload(), 1000);
+    return () => clearTimeout(timer);
+  }, [explorable]);
   useEffect(() => {
     setReady(false);
     setPlaying(false);
@@ -356,6 +371,8 @@ function IllustrationPlayer({
           aria-label={illustration.exploration ? 'Explore diagram' : 'Expand illustration'}
           aria-expanded={open}
           aria-haspopup="dialog"
+          onPointerEnter={explorable ? () => void DiagramExplorer.preload() : undefined}
+          onFocus={explorable ? () => void DiagramExplorer.preload() : undefined}
           onClick={() => {
             inlineHeight.current = inline.current?.getBoundingClientRect().height ?? 0;
             setPlaying(false);
@@ -406,16 +423,19 @@ function IllustrationPlayer({
               {controls}
               {illustration.exploration && !error ? (
                 <div className="diagram-explorer-workspace">
-                  <DiagramExplorer
-                    key={`${extent.width}x${extent.height}`}
-                    drawing={drawing}
-                    width={extent.width}
-                    height={extent.height}
-                    bounds={entityBounds}
-                    exploration={illustration.exploration}
-                    selected={selection}
-                    onSelect={setSelection}
-                  />
+                  {/* The dialog opens on request, so this fallback never replaces content a reader was viewing. */}
+                  <Suspense fallback={<div className="diagram-explorer-canvas" aria-busy="true" />}>
+                    <DiagramExplorer
+                      key={`${extent.width}x${extent.height}`}
+                      drawing={drawing}
+                      width={extent.width}
+                      height={extent.height}
+                      bounds={entityBounds}
+                      exploration={illustration.exploration}
+                      selected={selection}
+                      onSelect={setSelection}
+                    />
+                  </Suspense>
                   {inspector(false)}
                 </div>
               ) : (

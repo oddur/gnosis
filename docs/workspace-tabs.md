@@ -92,6 +92,9 @@ Queue scroll position is captured before a workspace becomes hidden, including s
 [Unit tests](../tests/workspace-tabs.test.ts) cover tab transitions, shortcuts, and saved records.
 [Browser checks](../tests/workspace-tabs-browser.ts) cover background opening, retained Changes, explanation positions, independent composers, restoration, and account reset.
 [Hardening checks](../tests/workspace-tabs-hardening-browser.ts) cover 40 tabs, long multilingual titles, keyboard menus, focus recovery, close others, network retry, renderer recovery, hint dismissal, and a narrow window at 150% zoom.
+
+Status badges in a PR age on one shared clock (`lib/status-clock.ts`). It ticks every 30 seconds, when the window gains focus or becomes visible, and when the PR's status or a status refresh error changes. A tick re-renders only the components that show status, never the PR page, its kept tabs or the explanation. Markdown renders again only when its text or options change. Browser checks count renders by component name when `window.__countRenders` is set.
+
 The strip skips rerenders when only reading-position metadata changes. The hardening fixture includes a React Profiler benchmark; set `GNOSIS_TABS_BENCH=1` to run only the measurement.
 Browser checks run through Docker, as required by [AGENTS.md](../AGENTS.md).
 

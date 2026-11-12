@@ -29,6 +29,14 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
+    // Saved status arrives with the first snapshot, so the first commit with rows has its badges.
+    await loadWorkbenchPage(win, url + '?saved-signals');
+    await wait('!!window.firstQueueFrame');
+    const first = await js<{ rows: number; checks: { text: string; label: string; stale: boolean }[] }>('window.firstQueueFrame');
+    assert.ok(first.checks.length > 0, 'The first queue frame shows check badges: ' + JSON.stringify(first));
+    assert.ok(first.checks.every((check) => !check.text.includes('Checks not loaded')), 'No badge waits for GitHub: ' + JSON.stringify(first.checks));
+    assert.ok(first.checks.every((check) => check.stale && /Last checked/.test(check.label)), 'Old saved status is marked out of date: ' + JSON.stringify(first.checks));
+    console.log(`Saved badges in the first queue frame: ${first.checks.length} of ${first.rows} rows.`);
     await loadWorkbenchPage(win, url + '?polish');
     win.webContents.setZoomFactor(1);
     await wait("!!document.querySelector('.queue-checks.is-success')");

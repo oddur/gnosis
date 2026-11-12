@@ -23,12 +23,20 @@ function useScrollMargin(scrollElement: HTMLElement | null, container: RefObject
     if (!parent || !element || !enabled) return;
     const measure = () => setMargin(element.getBoundingClientRect().top - parent.getBoundingClientRect().top + parent.scrollTop);
     measure();
-    const observer = new ResizeObserver(measure);
+    // The margin is a position, not a size. Read it once per frame, after the observers have run, not in each callback.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    });
     observer.observe(parent);
     observer.observe(element);
     // Onboarding can expand above the virtual list without resizing the scrollport.
     for (const sibling of parent.children) if (sibling !== element) observer.observe(sibling);
-    return () => observer.disconnect();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, [enabled, scrollElement, container]);
   return margin;
 }

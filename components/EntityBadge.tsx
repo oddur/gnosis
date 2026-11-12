@@ -1,17 +1,11 @@
 import { RepositoryIcon } from './RepositoryAppearance';
-import { subjectIcons } from '../lib/interface-icons';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import type { PrBadgePreview } from '../lib/pr-badge-preview';
 import { PrBadgeTooltip } from './PrBadgeTooltip';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  Check,
-  Copy,
-  ExternalLink,
-  X,
-} from 'lucide-react';
+import { Copy, ExternalLink } from 'lucide-react';
 import { useCopyToClipboard } from '../lib/use-copy';
 import { setEntryMenuOpen } from '../lib/entry-menu-state';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -31,13 +25,6 @@ const names: Record<Kind, string> = {
   branch: 'branch name',
   commit: 'full commit SHA',
   user: 'username',
-};
-const icons = {
-  pr: subjectIcons.pr,
-  repository: subjectIcons.repository,
-  branch: subjectIcons.branch,
-  commit: subjectIcons.commit,
-  user: subjectIcons.user,
 };
 
 /** Metadata is a copy control. Navigation belongs to the surrounding title or breadcrumb. */
@@ -84,7 +71,6 @@ export function EntityBadge({
   };
   const action = `Copy ${names[kind]}`;
   const feedback = state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Try again.' : action;
-  const Icon = icons[kind];
   const split = label.length > 24 ? label.length - 12 : label.length;
   return (
     <ContextMenu
@@ -125,16 +111,7 @@ export function EntityBadge({
                   }}
                 >
                   <span className="entity-badge-icon" aria-hidden="true">
-                    <span className="entity-badge-identity">{icon ?? <Icon size={13} />}</span>
-                    <span className="entity-badge-copy">
-                      {state === 'copied' ? (
-                        <Check size={12} />
-                      ) : state === 'failed' ? (
-                        <X size={12} />
-                      ) : (
-                        <Copy size={12} />
-                      )}
-                    </span>
+                    <span className="entity-badge-identity">{icon ?? <span className="icon-mask" />}</span>
                   </span>
                   <span className="entity-badge-value" aria-hidden="true">
                     <span className="entity-badge-start">{label.slice(0, split)}</span>

@@ -1,9 +1,20 @@
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { SearchableSelect } from './SearchableSelect';
 import { Markdown } from './Markdown';
 import { Button } from './ui/button';
 import { explanationPositionKey, useExplanationScroll } from '../lib/use-explanation-scroll';
+import { createColumnLayout, type ColumnLayout } from '../lib/explanation-column-layout';
+import { estimateCodeColumnHeight } from '../lib/review-diff';
 import type { ReviewGuide, Slide } from '../lib/types';
 
 export interface ExplanationReaderHandle {
@@ -42,6 +53,17 @@ export function ExplanationReader({
 }: Props) {
   const id = `${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`;
   const reading = useExplanationScroll(explanationPositionKey(id, 'reading'), active);
+  // One observer and one frame of writes for every sticky column, instead of one forced layout per section.
+  // Ref cleanups unobserve each element, so a hidden or closed tab leaves nothing observed.
+  const [columnLayout] = useState(() => createColumnLayout());
+  const readingRef = reading.ref;
+  const documentRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      readingRef(element);
+      columnLayout.viewport(element);
+    },
+    [readingRef, columnLayout]
+  );
   const [section, setSection] = useState(0);
   const frame = useRef(0);
   const navigationFrame = useRef(0);
@@ -87,6 +109,16 @@ export function ExplanationReader({
     ],
     [review]
   );
+  // Unmounted code reserves its estimated height, so the scrollbar and saved positions stay close to the real page.
+  const reserves = useMemo(() => {
+    const statuses = new Map(review.changedFiles?.map((file) => [file.filename, file.status]));
+    return review.slides.map((slide) =>
+      estimateCodeColumnHeight(slide.diffHunks, {
+        status: (path) => statuses.get(path),
+        viewed: (path) => viewedFiles.has(path),
+      })
+    );
+  }, [review, viewedFiles]);
   const covered = useMemo(() => new Set(review.slides.flatMap((s) => s.diffHunks.map((h) => h.filePath))), [review]);
   const remaining = files.filter((f) => !viewedFiles.has(f));
   const uncovered = files.filter((f) => !covered.has(f));
@@ -154,7 +186,7 @@ export function ExplanationReader({
   const document = (
     <div
       className="explanation-document"
-      ref={reading.ref}
+      ref={documentRef}
       onScroll={trackReading}
       onWheelCapture={() => {
         navigating.current = false;
@@ -196,6 +228,8 @@ export function ExplanationReader({
           narrative={renderSection(s, i + 1)}
           code={renderCode(s, i + 1)}
           tool={inspected === i + 1 ? tool : undefined}
+          layout={columnLayout}
+          reserve={reserves[i]}
         />
       ))}
       <section className="explanation-ending" aria-label="End of explanation">
@@ -293,7 +327,11 @@ function PairedSection({
   narrative,
   code,
   tool,
+  layout,
+  reserve,
 }: {
+  layout: ColumnLayout;
+  reserve: number;
   index: number;
   title: string;
   hasCode: boolean;
@@ -324,25 +362,10 @@ function PairedSection({
     observer.observe(element);
     return () => observer.disconnect();
   }, [ready, forceReady]);
-  useEffect(() => {
-    const element = host.current;
-    const viewport = element?.closest('.explanation-document');
-    if (!element || !viewport) return;
-    const columns = [...element.querySelectorAll<HTMLElement>(':scope > .explanation-column')];
-    const update = () => {
-      const height = viewport.clientHeight;
-      const offsets = columns.map((column) => `${Math.min(16, height - column.offsetHeight - 16)}px`);
-      columns.forEach((column, index) => {
-        if (column.style.getPropertyValue('--column-top') !== offsets[index])
-          column.style.setProperty('--column-top', offsets[index]);
-      });
-    };
-    const observer = new ResizeObserver(update);
-    observer.observe(viewport);
-    columns.forEach((column) => observer.observe(column));
-    update();
-    return () => observer.disconnect();
-  }, [mounted, hasCode]);
+  const column = useCallback(
+    (element: HTMLDivElement | null) => (element ? layout.column(index, element) : undefined),
+    [layout, index]
+  );
   return (
     <section
       ref={host}
@@ -352,12 +375,23 @@ function PairedSection({
       data-has-code={hasCode || undefined}
       tabIndex={-1}
     >
-      <div className="explanation-column explanation-section-text">{narrative}</div>
+      <div ref={column} className="explanation-column explanation-section-text">
+        {narrative}
+      </div>
       {(hasCode || tool) && (
-        <div className="explanation-column explanation-section-code" role="region" aria-label={`Code for ${title}`}>
+        <div
+          ref={column}
+          className="explanation-column explanation-section-code"
+          role="region"
+          aria-label={`Code for ${title}`}
+        >
           {hasCode && (
             <div hidden={!!tool}>
-              {mounted ? code : <div className="explanation-code-reserve" aria-hidden="true" />}
+              {mounted ? (
+                code
+              ) : (
+                <div className="explanation-code-reserve" style={{ height: reserve }} aria-hidden="true" />
+              )}
             </div>
           )}
           {tool && <div className="review-tool-slot">{tool}</div>}

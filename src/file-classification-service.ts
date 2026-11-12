@@ -52,13 +52,16 @@ export function createFileClassificationService(
       key = storageKey(snapshot);
     let value = s.records.get(key);
     if (!value) {
-      value = (async () =>
-        (await githubCacheFor(client)?.getPrepared(key, valid)) ?? {
+      // Classification fills this record in place; the cached value is frozen and shared.
+      value = (async () => {
+        const saved = await githubCacheFor(client)?.getPrepared(key, valid);
+        return saved ? structuredClone(saved) : {
           version: 1 as const,
           kinds: {},
           headers: {},
           declared: {},
-        })();
+        };
+      })();
       s.records.set(key, value);
       while (s.records.size > 150) {
         const oldest = s.records.keys().next().value;

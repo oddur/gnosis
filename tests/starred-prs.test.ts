@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createStarredPrStore } from '../src/starred-pr-store';
+import { createMemoryStorage, type StateStorage } from '../src/app-data-store';
 import { createWorkbenchService } from '../src/workbench-service';
 import { groupSubjects, type ReviewMember, type QueueItem } from '../lib/workbench';
 import { orderQueueItems } from '../lib/starred-prs';
@@ -47,17 +48,18 @@ function fixture() {
 void test('stars persist independently of queue discovery, stay account scoped and are idempotent', () => {
   const f = fixture();
   try {
-    const store = createStarredPrStore(
-      () => f.directory,
-      () => 1_000_000
-    );
+    const saved = new Map<string, string>();
+    const store = createStarredPrStore(createMemoryStorage(saved), () => 1_000_000);
     store.set('Alice', { members: [member(1), member(2)], starred: true });
     store.set('alice', { members: [member(1)], starred: true });
-    const restart = createStarredPrStore(() => f.directory);
+    const restart = createStarredPrStore(createMemoryStorage(saved));
     assert.equal(restart.load('ALICE').length, 2);
     assert.deepEqual(restart.load('bob'), []);
-    const copy = restart.load('alice');
-    copy[0].member.title = 'Changed outside store';
+    const shared = restart.load('alice');
+    assert.equal(restart.load('alice'), shared, 'Reads share one list until a change is saved');
+    assert.throws(() => {
+      (shared[0].member as { title: string }).title = 'Changed outside store';
+    }, TypeError);
     assert.equal(restart.load('alice')[0].member.title, 'PR 1');
     restart.set('alice', { members: [member(1)], starred: false });
     assert.deepEqual(
@@ -71,22 +73,49 @@ void test('stars persist independently of queue discovery, stay account scoped a
     f.cleanup();
   }
 });
-void test('failed writes leave the previous bookmark set intact', () => {
-  const f = fixture();
-  let directory = f.directory;
-  try {
-    const store = createStarredPrStore(() => directory);
-    store.set('me', { members: [member(1)], starred: true });
-    directory = path.join(f.directory, 'not-a-directory');
-    fs.writeFileSync(directory, 'blocked');
-    assert.throws(() => store.set('me', { members: [member(2)], starred: true }));
-    assert.deepEqual(
-      store.load('me').map((e) => e.member.number),
-      [1]
-    );
-  } finally {
-    f.cleanup();
-  }
+void test('a rejected change leaves the previous bookmark set intact', () => {
+  let blocked = false;
+  const memory = createMemoryStorage();
+  const storage: StateStorage = {
+    ...memory,
+    patch: (name, change) => {
+      if (blocked) throw new Error('Saved work is still loading');
+      memory.patch(name, change);
+    },
+  };
+  const store = createStarredPrStore(storage);
+  store.set('me', { members: [member(1)], starred: true });
+  blocked = true;
+  assert.throws(() => store.set('me', { members: [member(2)], starred: true }));
+  assert.deepEqual(
+    store.load('me').map((e) => e.member.number),
+    [1]
+  );
+});
+void test('update saves only changed members and copies them from the live queue', () => {
+  const saved = new Map<string, string>();
+  const patches: unknown[] = [];
+  const memory = createMemoryStorage(saved);
+  const store = createStarredPrStore({
+    ...memory,
+    patch: (name, change) => {
+      patches.push(change);
+      memory.patch(name, change);
+    },
+  });
+  store.set('me', { members: [member(1), member(2)], starred: true });
+  const before = store.load('me');
+  store.update('me', [member(1), member(2), member(3)]);
+  assert.equal(store.load('me'), before, 'Unchanged members save nothing');
+  const live = { ...member(2), title: 'Renamed' };
+  store.update('me', [member(1), live]);
+  assert.deepEqual(patches.at(-1), { put: { [live.url]: { seq: 1, member: live, starredAt: before[1].starredAt } }, remove: [] });
+  live.title = 'Changed later in the queue';
+  assert.equal(store.load('me')[1].member.title, 'Renamed');
+  assert.deepEqual(
+    createStarredPrStore(createMemoryStorage(saved)).load('me').map((entry) => entry.member.title),
+    ['PR 1', 'Renamed']
+  );
 });
 void test('starred PRs precede every attention category while keeping existing order within groups', () => {
   const items: QueueItem[] = groupSubjects([member(1), member(2), member(3), member(4)]).map((subject, i) => ({
@@ -106,9 +135,13 @@ void test('starring uses no GitHub reads, pins stacks and retains completed PRs 
       child = { ...member(2), baseBranch: parent.headBranch };
     const subjects = groupSubjects([parent, child, member(3)]);
     const state = { account: 'me', subjects, overrides: [], briefs: {}, day: '', used: 0 };
-    fs.writeFileSync(path.join(f.directory, 'workbench.json'), JSON.stringify(state));
+    const saved = new Map([['workbench:me', JSON.stringify(state)]]);
     const deps = {
       directory: () => f.directory,
+      // Each service reads the saved stores afresh, as after a restart.
+      get storage() {
+        return createMemoryStorage(saved);
+      },
       auth: () => ({ login: 'me', token: 'token' }),
       preferences: () => ({
         provider: 'claude' as const,
@@ -142,7 +175,7 @@ void test('starring uses no GitHub reads, pins stacks and retains completed PRs 
     );
     service.starPrs({ members: [parent], starred: true });
     service.updateStarredMetadata({ ...child, state: 'closed', merged: true });
-    fs.writeFileSync(path.join(f.directory, 'workbench.json'), JSON.stringify({ ...state, subjects: [] }));
+    saved.set('workbench:me', JSON.stringify({ ...state, subjects: [] }));
     const restarted = createWorkbenchService(deps);
     const retained = restarted.cached();
     assert.equal(retained.starredPrs?.length, 2);
