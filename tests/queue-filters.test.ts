@@ -9,8 +9,11 @@ import {
   matchesTargetBranch,
   normalizeQueueFilters,
   prioritizeBriefings,
+  countBriefings,
+  tallyBriefings,
+  briefingPause,
 } from '../lib/queue-filters';
-import { groupSubjects, snapshot, type ReviewMember, type QueueItem } from '../lib/workbench';
+import { groupSubjects, snapshot, type Briefing, type ReviewMember, type QueueItem } from '../lib/workbench';
 const now = Date.parse('2026-10-22T12:00:00Z');
 const member = (n: number, patch: Partial<ReviewMember> = {}): ReviewMember => ({
   number: n,
@@ -242,4 +245,69 @@ void test('needs my response matches one authored open stack member and survives
   a.state = 'closed'; a.merged = true;
   stack.starredUrls = [a.url];
   assert.equal(matchesQueueFilters(stack, { ...filters, starredOnly: true }, now, 'alice'), false);
+});
+
+const briefed = (n: number, briefing?: Partial<Briefing>, patch: Partial<ReviewMember> = {}): QueueItem => ({
+  ...item([member(n, patch)]),
+  briefing: briefing && { key: `b${n}`, status: 'ready', updatedAt: 'now', ...briefing },
+});
+void test('briefing counts cover every state and name the reasons for paused briefings', () => {
+  const entries = [
+    briefed(1, { status: 'ready' }),
+    briefed(2, { status: 'ready' }),
+    briefed(3, { status: 'generating' }),
+    briefed(4, { status: 'queued' }),
+    briefed(5, { status: 'paused', pauseReason: 'limit' }),
+    briefed(6, { status: 'paused', pauseReason: 'filter' }),
+    // Snapshots without a reason still report the daily limit from the detail text.
+    briefed(7, { status: 'paused', pauseDetail: 'Overall daily automatic briefing limit reached. Resets at midnight.' }),
+    briefed(8, { status: 'paused', pauseDetail: 'Automatic briefings are off for owner/repo. You can generate a briefing manually.' }),
+    briefed(9, { status: 'paused' }),
+    briefed(10, { status: 'failed', error: 'boom' }),
+    briefed(11, { status: 'cancelled' }),
+    briefed(12),
+  ];
+  assert.deepEqual(tallyBriefings(entries), {
+    all: 12,
+    generating: 1,
+    queued: 1,
+    ready: 2,
+    paused: 5,
+    failed: 1,
+    pauses: { limit: 2, filter: 1, manual: 1, waiting: 1 },
+  });
+  assert.equal(briefingPause({ key: 'x', status: 'paused', pauseReason: 'manual', pauseDetail: 'limit reached', updatedAt: 'now' }), 'manual');
+});
+void test('briefing counts apply every other filter, so each count is what its chip shows', () => {
+  const entries = [
+    briefed(1, { status: 'ready' }),
+    briefed(2, { status: 'generating' }, { author: 'bob' }),
+    briefed(3, { status: 'generating' }),
+    briefed(4, { status: 'paused', pauseReason: 'limit' }),
+  ];
+  const alice = { ...DEFAULT_QUEUE_FILTERS, author: 'alice' };
+  const counts = countBriefings(entries, alice, now);
+  assert.equal(counts.all, 3);
+  assert.equal(counts.generating, 1);
+  // A briefing filter never changes its own counts.
+  assert.deepEqual(countBriefings(entries, { ...alice, briefing: 'paused' }, now), counts);
+  for (const state of ['generating', 'ready', 'paused'] as const) {
+    const shown = entries.filter((entry) => matchesQueueFilters(entry, { ...alice, briefing: state }, now));
+    assert.equal(shown.length, counts[state], state);
+    assert.ok(shown.every((entry) => entry.briefing?.status === state));
+  }
+  assert.equal(matchesQueueFilters(briefed(5, { status: 'cancelled' }), { ...DEFAULT_QUEUE_FILTERS, briefing: 'failed' }, now), false);
+  assert.equal(matchesQueueFilters(briefed(6), { ...DEFAULT_QUEUE_FILTERS, briefing: 'all' }, now), true);
+});
+void test('the briefing filter is a saved, removable queue filter that never decides which briefing runs', () => {
+  assert.equal(normalizeQueueFilters({}).briefing, 'all');
+  assert.equal(normalizeQueueFilters({ briefing: 'paused' }).briefing, 'paused');
+  assert.equal(normalizeQueueFilters({ briefing: 'cancelled' }).briefing, 'all');
+  const filters = { ...DEFAULT_QUEUE_FILTERS, briefing: 'ready' as const };
+  assert.equal(activeQueueFilterCount(filters), 1);
+  assert.deepEqual(describeQueueFilters(filters), [{ key: 'briefing', label: 'Briefing: ready' }]);
+  const queued = briefed(1, { status: 'queued' });
+  const ready = briefed(2, { status: 'ready' });
+  // Filtering the list to ready briefings must not skip the queued briefing that runs next.
+  assert.deepEqual(prioritizeBriefings([queued, ready], filters, now).map((entry) => entry.subject.id), [queued.subject.id, ready.subject.id]);
 });

@@ -197,6 +197,7 @@ Keep the visible focus outline and library focus ring. Disabled buttons use half
 Briefing tags have thin borders and compact padding. Settings option chips distinguish selection with an underline and ring.
 The queue search field uses a panel surface, muted icon, and 12px input text.
 Focus outlines the search container. Keep an accessible input label even when placeholder text is present.
+Briefing status chips sit in one quiet row below the queue toolbar: All, Generating, Ready, and Paused always; Queued and Failed only when present. They use the title bar pill treatment (24px, 6px radius, muted text, tonal hover and pressed fills) with a small semantic dot and a tabular count. Paused names its reason when there is one. Counts come from the loaded snapshot with every other filter applied; a chip sets the shared `briefing` queue filter, so saved views, Filters, and Clear filters include it. The row ends with the automatic budget and a Briefing settings button; narrow windows keep the chips on one fading, scrolling line and move the budget into the button tooltip. A row whose briefing is generating shows a 1px shimmer on its lower edge, static under reduced motion.
 
 ### Copyable entity badges
 

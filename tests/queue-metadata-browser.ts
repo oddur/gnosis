@@ -110,6 +110,37 @@ void app.whenReady().then(async () => {
     win.webContents.setZoomFactor(2);
     await capture('zoom');
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
+    win.webContents.setZoomFactor(1);
+    win.setSize(1280, 800);
+    // Briefing chips: counts from the loaded snapshot that filter the queue through the shared filters.
+    await loadWorkbenchPage(win, url + '?briefing-chips');
+    await wait("document.querySelectorAll('.briefing-chip').length >= 5 && document.querySelectorAll('.queue-item').length > 0");
+    const chipLabels = () => js<string[]>("[...document.querySelectorAll('.briefing-chip')].map(chip => chip.getAttribute('aria-label'))");
+    const before = await chipLabels();
+    const total = await js<number>("document.querySelectorAll('.queue-item').length");
+    assert.deepEqual(before, [`All briefings: ${total}`, 'Generating: 1', 'Queued: 1', 'Ready: 2', 'Paused: 2, daily limit', 'Failed: 1']);
+    assert.equal(await js("!!document.querySelector('.workbench-footer')"), false, 'Budget details moved into the chips row');
+    assert.equal(await js("document.querySelector('.briefing-chips-budget').textContent"), '0 automatic left · resets at midnight');
+    assert.match(await js<string>("document.querySelector('.briefing-chips-budget').title"), /0 of 10 automatic attempts left overall · Resets at midnight/);
+    assert.equal(await js("document.querySelectorAll('.queue-item.is-briefing-generating').length"), 1);
+    assert.equal(await js("getComputedStyle(document.querySelector('.queue-item.is-briefing-generating'), '::after').animationName"), 'briefing-shimmer');
+    await js("document.querySelector('.briefing-chip[data-state=paused]').click()");
+    await wait("document.querySelectorAll('.queue-item').length === 2");
+    assert.equal(await js("document.querySelector('.briefing-chip[data-state=paused]').getAttribute('aria-pressed')"), 'true');
+    assert.deepEqual(await chipLabels(), before, 'A briefing filter keeps its own counts');
+    assert.match(await js<string>("document.querySelector('.queue-filter-toggle').textContent"), /Filters \(1\)/);
+    assert.ok(await js("!!document.querySelector('[aria-label=\"Remove Briefing: paused filter\"]')"));
+    await capture('briefing-paused');
+    await js("document.querySelector('.briefing-chip[data-state=paused]').click()");
+    await wait(`document.querySelectorAll('.queue-item').length === ${total}`);
+    await js("document.querySelector('.briefing-chip[data-state=generating]').click()");
+    await wait("document.querySelectorAll('.queue-item').length === 1 && !!document.querySelector('.queue-item.is-briefing-generating')");
+    await js("[...document.querySelectorAll('.queue-active-filters button')].find(button => button.textContent === 'Clear filters').click()");
+    await wait(`document.querySelectorAll('.queue-item').length === ${total} && document.querySelector('.briefing-chip[data-state=all]').getAttribute('aria-pressed') === 'true'`);
+    win.webContents.debugger.attach();
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    assert.equal(await js("getComputedStyle(document.querySelector('.queue-item.is-briefing-generating'), '::after').animationName"), 'none');
+    win.webContents.debugger.detach();
     console.log(
       'Queue metadata passed: familiar identity, counts, all PR/check states, visible-only batching, cache reuse, themes and zoom.'
     );

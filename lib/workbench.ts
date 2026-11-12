@@ -39,7 +39,8 @@ export interface Briefing {
   systems?: string[];
   priorities?: string[];
   error?: string;
-  pauseReason?: 'filter';
+  /** Why an automatic briefing waits: the daily limit, the queue filters, or automatic briefings are off. */
+  pauseReason?: 'filter' | 'limit' | 'manual';
   pauseDetail?: string;
   updatedAt: string;
 }
