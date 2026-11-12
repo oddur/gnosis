@@ -2,11 +2,11 @@ import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { RepositorySettingsProvider } from '../components/RepositorySettingsProvider';
 import { RecentlyViewedContext } from '../components/RecentlyViewed';
 import { ConflictWorkspaceHost } from '../components/ConflictWorkspaceHost';
-import { ActivityDrawer } from '../components/ActivityDrawer';
+import { ActivityDrawer, ACTIVITY_SHORTCUT } from '../components/ActivityDrawer';
 import type { GitHubSyncStatusProps } from '../components/GitHubSyncStatus';
 import { WorkspaceErrorBoundary } from '../components/WorkspaceErrorBoundary';
 import { WorkspaceTabs } from '../components/WorkspaceTabs';
-import { TitlebarRoot, TitlebarScope, useWindowChrome } from '../components/AppTitlebar';
+import { ActivityMenuContext, TitlebarRoot, TitlebarScope, useWindowChrome } from '../components/AppTitlebar';
 import { LoadingState } from '../components/LoadingState';
 import { toast, Toaster } from '../components/ui/toast';
 import { createRecentlyViewed, type RecentVisit } from '../lib/recently-viewed';
@@ -273,6 +273,7 @@ export function App() {
     await controllers.current.get(latest.current.active)?.openActivity(task);
   }, []);
   const navigation = useMemo(() => ({ open }), [open]);
+  const activityMenu = useMemo(() => ({ open: () => setActivityOpen(true), shortcut: ACTIVITY_SHORTCUT.keys() }), []);
   const recentNavigation = useMemo(
     () => ({
       store: recentlyViewed,
@@ -284,6 +285,7 @@ export function App() {
   );
   return (
     <RepositorySettingsProvider>
+      <ActivityMenuContext.Provider value={activityMenu}>
       <RecentlyViewedContext.Provider value={recentNavigation}>
         <WorkspaceNavigation.Provider value={navigation}>
           <CommandCenter
@@ -374,12 +376,14 @@ export function App() {
               open={activityOpen}
               onOpenChange={setActivityOpen}
               onOpen={openActivity}
+              capsuleTarget={titlebarTrailing}
             />
             <ConflictWorkspaceHost />
             <Toaster />
           </CommandCenter>
         </WorkspaceNavigation.Provider>
       </RecentlyViewedContext.Provider>
+      </ActivityMenuContext.Provider>
     </RepositorySettingsProvider>
   );
 }

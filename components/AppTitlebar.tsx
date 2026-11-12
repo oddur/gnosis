@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { DropdownMenu } from 'radix-ui';
-import { ChevronLeft, ChevronRight, CircleHelp, Inbox, Search, Settings, UserRound } from 'lucide-react';
+import { Activity, ChevronLeft, ChevronRight, CircleHelp, Inbox, Search, Settings, UserRound } from 'lucide-react';
 import { RecentlyViewed } from './RecentlyViewed';
 import { WorkbenchHelp } from './WorkbenchHelp';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
@@ -39,6 +39,8 @@ interface TitlebarSlots {
   active: boolean;
 }
 const TitlebarContext = createContext<TitlebarSlots>({ leading: null, trailing: null, active: false });
+/** Opens Activity from the account menu, which stays available when the title bar capsule is hidden. */
+export const ActivityMenuContext = createContext<{ open: () => void; shortcut: string } | null>(null);
 
 /** Provides the row's leading and trailing containers to the scopes below. */
 export function TitlebarRoot({
@@ -155,6 +157,7 @@ export function WorkspaceMenu({
   account: { login?: string | null; onClick: () => void };
 }) {
   const mac = window.electronAPI.platform === 'darwin';
+  const activity = useContext(ActivityMenuContext);
   const [helpOpen, setHelpOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   // Help opens once the menu has returned focus, so that focus change does not dismiss it.
@@ -224,6 +227,13 @@ export function WorkspaceMenu({
                 <Inbox size={15} aria-hidden="true" />
                 <span>Review queue</span>
               </DropdownMenu.Item>
+              {activity && (
+                <DropdownMenu.Item className="workspace-menu-item" data-activity onSelect={activity.open}>
+                  <Activity size={15} aria-hidden="true" />
+                  <span>Activity</span>
+                  <kbd className="workspace-menu-shortcut">{activity.shortcut}</kbd>
+                </DropdownMenu.Item>
+              )}
               <DropdownMenu.Separator className="workspace-menu-separator" />
               <DropdownMenu.Item className="workspace-menu-item" data-github-account onSelect={account.onClick}>
                 <GitHubIcon width={15} height={15} />

@@ -106,7 +106,7 @@ void app.whenReady().then(async () => {
       0,
       'resuming views uses local snapshot, not discovery'
     );
-    assert.equal(await js('document.querySelectorAll(".activity-shell").length'), 1, 'one global Activity surface');
+    assert.equal(await js('document.querySelectorAll(".activity-capsule").length'), 1, 'one global Activity surface');
     // Browser history belongs to this PR tab; switching to the queue must not
     // make its Back command change the PR tab's position.
     await click('Summary');

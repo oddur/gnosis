@@ -46,8 +46,10 @@ void app.whenReady().then(async () => {
       await win.loadURL(url);
       await wait('document.querySelectorAll(".workspace-tab").length===12');
       await waitForWorkbenchQueue(win.webContents);
+      // The Activity capsule is in the row too, with its widest fixture label.
+      await wait("document.querySelector('.app-titlebar .activity-capsule')?.getAttribute('aria-label')?.includes('2 ready')");
       await new Promise((resolve) => setTimeout(resolve, 300));
-      const drag = await js<{ region: string; gap: number; interactive: number; width: number; zone: boolean }>(`(()=>{
+      const drag = await js<{ region: string; gap: number; interactive: number; width: number; zone: boolean; capsule: boolean }>(`(()=>{
         const row=document.querySelector('.app-titlebar');
         const r=row.getBoundingClientRect();
         const region=el=>getComputedStyle(el).getPropertyValue('-webkit-app-region');
@@ -68,13 +70,15 @@ void app.whenReady().then(async () => {
         // The widest run sits between New tab and Search.
         const plus=document.querySelector('[aria-label="New tab"]').getBoundingClientRect();
         const search=[...row.querySelectorAll('.workspace-menu-search')].find(b=>b.checkVisibility()).getBoundingClientRect();
-        return {region:region(row),gap,interactive,width:innerWidth,zone:end-gap+1>=plus.right&&end<=search.left};
+        const capsule=row.querySelector('.activity-capsule').getBoundingClientRect();
+        return {region:region(row),gap,interactive,width:innerWidth,zone:end-gap+1>=plus.right&&end<=capsule.left,capsule:capsule.width>0&&capsule.right<=search.left};
       })()`);
       assert.equal(drag.region, 'drag', 'The title bar row is a drag region');
       assert.equal(drag.width, 1100);
       assert.equal(drag.interactive, 0, 'Every visible title bar control opts out of dragging');
       assert.ok(drag.gap >= 120, `At least 120px of contiguous drag area with 12 tabs, saw ${drag.gap}`);
-      assert.ok(drag.zone, 'The reserved drag area sits between New tab and Search');
+      assert.ok(drag.capsule, 'The Activity capsule is visible, just before Search');
+      assert.ok(drag.zone, 'The reserved drag area sits between New tab and the Activity capsule');
       await capture('drag-zone-12-tabs');
       win.setContentSize(1280, 850);
     }

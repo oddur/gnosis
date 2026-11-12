@@ -226,7 +226,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.explanation-setup-footer')");
     await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
     await wait("!document.querySelector('.explanation-setup-dialog')");
-    await wait("document.querySelector('.explanation-generating')?.textContent.includes('Generating explanation')");
+    await wait("document.querySelector('.explanation-generating .explanation-build')?.textContent.includes('Explaining')");
     assert.equal(await js('window.generationCalls.length'), 1);
     await click('Summary');
     assert.equal(await js("!!document.querySelector('.pr-description')"), true, 'Description remains readable while generating');
