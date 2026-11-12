@@ -48,6 +48,15 @@ import { isLocalUrl } from '../../lib/local-url';
 import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId } from '../../lib/types';
 import { DEFAULT_FAST_CLAUDE_MODEL, PROVIDERS } from '../../lib/models';
 
+export interface ChangesFileTarget {
+  url: string;
+  headSha?: string;
+  path: string;
+  line?: number;
+  endLine?: number;
+  side?: 'before' | 'after';
+}
+
 interface Props {
   review: ReviewGuide;
   origin?: { name: string; reviews: { id: string; title: string }[] };
@@ -56,6 +65,8 @@ interface Props {
   active?: boolean;
   initialPreferences?: Preferences;
   onOpenChanges?: () => void;
+  /** Opens one file, optionally at a line range, in the PR's Changes view. */
+  onOpenChangesFile?: (target: ChangesFileTarget) => void;
   onBack: () => void;
   /** Opens a queue destination in this workspace; the title bar uses it for home, setup and account actions. */
   onNavigateHome?: (target: Extract<SearchDestination, { kind: 'home' }>) => void;
@@ -107,6 +118,7 @@ function ReviewPageContent({
   active = true,
   initialPreferences,
   onOpenChanges,
+  onOpenChangesFile,
   origin,
   onSelectReview,
 }: Props) {
@@ -1044,6 +1056,19 @@ function ReviewPageContent({
             onSend={(text, selection) => void slideChat.send(currentSlide, text, selection)}
             onRetry={(id) => void slideChat.retry(currentSlide, id)}
             onStop={() => slideChat.stop(currentSlide)}
+            onOpenTraceStep={
+              onOpenChangesFile &&
+              ((step) =>
+                step.path &&
+                onOpenChangesFile({
+                  url: review.prUrl,
+                  headSha: review.headSha,
+                  path: step.path,
+                  line: step.startLine,
+                  endLine: step.endLine,
+                  side: step.side,
+                }))
+            }
             modelLabel={PROVIDERS[chatProvider].models.find((model) => model.id === chatModel)?.label ?? chatModel}
             quotedCode={chatQuotedCode}
             onQuotedCodeConsumed={() => setChatQuotedCode(null)}

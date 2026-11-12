@@ -6,6 +6,17 @@ import { useSlideChat } from '../../lib/use-slide-chat';
 import { DEFAULT_CLAUDE_MODEL } from '../../lib/models';
 import type { Preferences, ReviewGuide } from '../../lib/types';
 import '../../src/globals.css';
+import { createClaudeEventHandler } from '../../lib/providers/claude-events';
+import { toolCallStep, type ChatTraceStep } from '../../lib/chat-trace';
+const opened: ChatTraceStep[] = [];
+let toolCalls = 0;
+const claudeEvents = createClaudeEventHandler({
+  onToolCall: (call) =>
+    (window as unknown as { chatFixture: { trace: (s: ChatTraceStep[]) => void } }).chatFixture.trace([
+      toolCallStep(call, toolCalls++),
+    ]),
+});
+const traceListeners = new Set<(event: { requestId?: string; steps: ChatTraceStep[] }) => void>();
 const fileListeners = new Set<(event: { requestId: string; chunk: string }) => void>();
 let progress: ((chunk: string) => void) | undefined;
 let finish: ((content: string) => void) | undefined;
@@ -20,8 +31,10 @@ const api: Partial<Window['electronAPI']> = {
   offChatProgress: () => {
     progress = undefined;
   },
-  onChatToolUse: () => {},
-  offChatToolUse: () => {},
+  onChatTrace: (callback) => {
+    traceListeners.add(callback);
+    return () => traceListeners.delete(callback);
+  },
   onFileChatProgress: (callback) => {
     fileListeners.add(callback);
     return () => fileListeners.delete(callback);
@@ -60,6 +73,15 @@ Object.assign(window, {
     finish(text: string) {
       finish?.(text);
     },
+    /** Replays trace steps as the main process sends them for the active request. */
+    trace(steps: ChatTraceStep[]) {
+      for (const listener of traceListeners) listener({ requestId, steps });
+    },
+    /** Replays a recorded Claude stream-json line through the real parser. */
+    claudeLine(line: string) {
+      claudeEvents.processLine(line);
+    },
+    opened,
     fail() {
       fail?.(Error('Connection lost. Try again.'));
     },
@@ -74,11 +96,26 @@ const review = {
       title: 'Preserve queue order',
       narrative: 'Each worker acknowledges its command.',
       affectedFiles: ['src/queue.ts'],
-      diffHunks: [],
+      diffHunks: [
+        {
+          filePath: 'src/queue.ts',
+          hunkHeader: '@@ -38,6 +40,81 @@',
+          content: '+await queue.dispatch(command);',
+          language: 'ts',
+          renderedHtml: '',
+        },
+        {
+          filePath: 'src/worker.ts',
+          hunkHeader: '@@ -10,4 +10,5 @@',
+          content: '+worker.acknowledge(id);',
+          language: 'ts',
+          renderedHtml: '',
+        },
+      ],
       reviewFocus: null,
     },
   ],
-  summary: '',
+  summary: 'Keeps queue order across worker restarts.',
   prDescription: '',
   prTitle: 'Preserve queue order',
 } as unknown as ReviewGuide;
@@ -116,6 +153,7 @@ function Fixture() {
             onSend={(text, selection) => void chat.send(1, text, selection)}
             onRetry={(id) => void chat.retry(1, id)}
             onStop={() => chat.stop(1)}
+            onOpenTraceStep={(step) => opened.push(step)}
             modelLabel="Claude Opus 5.5"
             quotedCode={quote}
             onQuotedCodeConsumed={() => setQuote(null)}
@@ -126,6 +164,7 @@ function Fixture() {
             preferences={{ provider: 'claude', model: DEFAULT_CLAUDE_MODEL } as Preferences}
             selection="return command.result;"
             onClose={() => setMode('topic')}
+            onOpenTraceStep={(step) => opened.push(step)}
           />
         )}
       </div>

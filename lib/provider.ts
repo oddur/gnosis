@@ -17,6 +17,8 @@ export interface GenerateOptions {
   effort?: import('./effort').Effort;
   onChunk?: (chunk: string, isThinking: boolean) => void;
   onToolUse?: (toolName: string) => void;
+  /** Complete tool calls with their input, as the CLI stream reports them. */
+  onToolCall?: (call: import('./chat-trace').AgentToolCall) => void;
   mcpConfigPath?: string;
   allowedTools?: string[];
   /** Directory the CLI runs in. When set, project-local config

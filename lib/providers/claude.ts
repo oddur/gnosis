@@ -3,6 +3,9 @@ import { harnessEnvironment } from './environment';
 import os from 'os';
 import { CLAUDE_MODELS } from '../models';
 import type { LLMProvider } from '../provider';
+import { createClaudeEventHandler } from './claude-events';
+
+export { createClaudeEventHandler };
 import { resolveBinaryPath, spawnCliStreaming, spawnCliQuick } from './shared';
 
 const INSTALL_HINT = 'Install it from claude.ai/code and authenticate with `claude auth`.';
@@ -23,6 +26,7 @@ export const claudeProvider: LLMProvider = {
     effort,
     onChunk,
     onToolUse,
+    onToolCall,
     mcpConfigPath,
     allowedTools,
     cwd,
@@ -32,46 +36,8 @@ export const claudeProvider: LLMProvider = {
     images,
   }) {
     const claudePath = resolveClaudePath();
-    let fullText = '';
-
-    let streamError = '';
-
-    function processLine(line: string): void {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      try {
-        const outer = JSON.parse(trimmed) as Record<string, unknown>;
-        if (outer.type === 'result') {
-          if (outer.is_error === true && typeof outer.result === 'string') {
-            streamError = outer.result;
-          } else if (typeof outer.result === 'string') {
-            fullText = outer.result;
-          }
-          return;
-        }
-        if (outer.type !== 'stream_event') return;
-        const inner = outer.event as Record<string, unknown> | undefined;
-        if (!inner) return;
-        if (inner.type === 'content_block_start') {
-          const block = inner.content_block as Record<string, unknown> | undefined;
-          if (block?.type === 'tool_use' && typeof block.name === 'string') {
-            onToolUse?.(block.name);
-          }
-          return;
-        }
-        if (inner.type !== 'content_block_delta') return;
-        const delta = inner.delta as Record<string, unknown> | undefined;
-        if (!delta) return;
-        if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
-          onChunk?.(delta.thinking, true);
-        } else if (delta.type === 'text_delta' && typeof delta.text === 'string') {
-          fullText += delta.text;
-          onChunk?.(delta.text, false);
-        }
-      } catch {
-        // not a JSON event
-      }
-    }
+    const events = createClaudeEventHandler({ onChunk, onToolUse, onToolCall });
+    const processLine = (line: string) => events.processLine(line);
 
     const toolArgs: string[] = [];
     if (isolated) {
@@ -132,6 +98,7 @@ export const claudeProvider: LLMProvider = {
       signal,
       handleExitError: (stderr: string) => {
         const stderrTrimmed = stderr.trim();
+        const streamError = events.getError();
         if (streamError && stderrTrimmed && !stderrTrimmed.includes(streamError)) {
           return new Error(`${streamError} — ${stderrTrimmed.slice(0, 200)}`);
         }
@@ -141,7 +108,7 @@ export const claudeProvider: LLMProvider = {
       },
     });
 
-    return fullText.trim();
+    return events.getText().trim();
   },
 
   async quick({ content, systemPrompt, model, cwd }) {

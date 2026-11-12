@@ -6,14 +6,19 @@ import path from 'path';
 import { CODEX_MODELS } from '../models';
 import type { GenerateOptions, LLMProvider } from '../provider';
 import { resolveBinaryPath, spawnCliStreaming } from './shared';
+import { codexItemToolCall } from '../chat-trace';
 
 const INSTALL_HINT = 'Install with `npm install -g @openai/codex`, then sign in with `codex login`.';
 
 /** Codex exec emits complete items, rather than Claude's text deltas. */
-export function createCodexEventHandler(onChunk?: GenerateOptions['onChunk']) {
+export function createCodexEventHandler(
+  onChunk?: GenerateOptions['onChunk'],
+  onToolCall?: GenerateOptions['onToolCall']
+) {
   let failure: string | undefined;
   let hasAgentMessage = false;
   const seen = new Set<string>();
+  const calls = new Set<string>();
   return {
     processLine: (line: string) => {
       let event: Record<string, unknown>;
@@ -27,6 +32,18 @@ export function createCodexEventHandler(onChunk?: GenerateOptions['onChunk']) {
       if (event.type === 'turn.failed') {
         const error = event.error as { message?: unknown } | undefined;
         failure = typeof error?.message === 'string' ? error.message : 'Codex generation failed.';
+      }
+      // Work items report at start so the trace grows live; completion repeats the same id.
+      if (
+        (event.type === 'item.started' || event.type === 'item.completed') &&
+        event.item &&
+        typeof event.item === 'object'
+      ) {
+        const call = codexItemToolCall(event.item as Record<string, unknown>);
+        if (call && !(call.id && calls.has(call.id))) {
+          if (call.id) calls.add(call.id);
+          onToolCall?.(call);
+        }
       }
       // Top-level error events can be transient retries; turn.failed is terminal.
       if (event.type !== 'item.completed' || !event.item || typeof event.item !== 'object') return;
@@ -63,7 +80,7 @@ async function generate(opts: GenerateOptions): Promise<string> {
       await fs.writeFile(imagePath, Buffer.from(image.base64, 'base64'), { mode: 0o600 });
       imageArgs.push('--image', imagePath);
     }
-    const events = createCodexEventHandler(opts.onChunk);
+    const events = createCodexEventHandler(opts.onChunk, opts.onToolCall);
     await spawnCliStreaming({
       binPath: resolveBinaryPath('codex', [path.join(os.homedir(), '.volta/bin/codex')]),
       cliName: 'Codex',

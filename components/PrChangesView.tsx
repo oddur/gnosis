@@ -68,6 +68,8 @@ export interface ChangesInitialFile {
   url: string;
   path: string;
   line?: number;
+  /** Last line of a range, such as the lines a chat answer used. */
+  endLine?: number;
   headSha?: string;
   side?: 'before' | 'after';
   /** Set when jumping from an agent brief comment, which belongs to the view it was written in. */
@@ -115,6 +117,10 @@ export function PrChangesView({
   const workspace = useRef<HTMLElement>(null);
   const [chatFocusRequest, setChatFocusRequest] = useState(0);
   const [chatEntry, setChatEntry] = useState<Entry>();
+  // A chat trace chip jumps like an incoming `initialFile`, without leaving the view.
+  const [chatJump, setChatJump] = useState<ChangesInitialFile>();
+  useEffect(() => setChatJump(undefined), [initialFile]);
+  const jump = chatJump ?? initialFile;
   const [position] = useState<Position>(() => structuredClone(loadPosition(positionId)));
   const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() =>
     combined ? [] : subject.members.flatMap((member) => inspectionData.peekChanges(member) ?? [])
@@ -780,8 +786,9 @@ export function PrChangesView({
                   <PrFileInspection
                     key={viewKey(e)}
                     entry={e}
-                    sourceLine={initialFile?.url === e.snapshot.url && initialFile.path === e.file.path && initialFile.headSha === e.snapshot.metadata.headSha ? initialFile.line : undefined}
-                    sourceSide={initialFile?.side}
+                    sourceLine={jump?.url === e.snapshot.url && jump.path === e.file.path && jump.headSha === e.snapshot.metadata.headSha ? jump.line : undefined}
+                    sourceEndLine={jump?.endLine}
+                    sourceSide={jump?.side}
                     briefSubject={commit ? undefined : subject}
                     onOpenBrief={onOpenBrief}
                     preferences={prefs}
@@ -854,6 +861,23 @@ export function PrChangesView({
             preferences={prefs}
             selection={selection}
             onClose={() => setChatOpen(false)}
+            onOpenTraceStep={(step) => {
+              const target = chatEntry && entries.find((e) => e.snapshot === chatEntry.snapshot && (e.file.path === step.path || e.file.previousPath === step.path));
+              if (!target || !step.path) return;
+              void select(target.key);
+              // Clear first so repeating the same jump scrolls again.
+              setChatJump(undefined);
+              requestAnimationFrame(() =>
+                setChatJump({
+                  url: target.snapshot.url,
+                  path: target.file.path,
+                  headSha: target.snapshot.metadata.headSha,
+                  line: step.startLine,
+                  endLine: step.endLine,
+                  side: step.side,
+                })
+              );
+            }}
           />
         )}
       </div>

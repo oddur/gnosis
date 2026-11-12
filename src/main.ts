@@ -133,6 +133,7 @@ import { parseDiffLines } from '../lib/diff-lines';
 import { setBinaryOverride, detectBinaryPath, checkCliInstalled } from '../lib/providers/shared';
 import { getProvider } from '../lib/provider';
 import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
+import { fileChatTrace, toolCallStep, type ChatTraceStep } from '../lib/chat-trace';
 import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHunks } from '../lib/diff-parse';
 import { filterDiff } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
@@ -2816,6 +2817,7 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
     const chatProvider = getProvider(req.provider);
     const systemPrompt = buildSlideChatSystemPrompt();
     const userMessage = buildSlideChatUserMessage(req);
+    let toolCalls = 0;
 
     const prefs = loadPreferences();
     let allowedTools: string[] | undefined;
@@ -2845,9 +2847,9 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
           _event.sender.send('chat-progress', { chunk });
         }
       },
-      onToolUse: (toolName) => {
+      onToolCall: (call) => {
         if (!run.controller.signal.aborted && !_event.sender.isDestroyed())
-          _event.sender.send('chat-tool-use', { toolName });
+          _event.sender.send('chat-trace', { requestId: req.requestId, steps: [toolCallStep(call, toolCalls++)] });
       },
       mcpConfigPath,
       allowedTools,
@@ -3547,6 +3549,23 @@ handleInteractive('ask-pr-file', async (_event, request: FileChatRequest) => {
     const { snapshot, file } = await waitForChatContext(() => source.find(client, request), controller.signal);
     const contents = await waitForChatContext(() => source.content(client, request), controller.signal);
     controller.signal.throwIfAborted();
+    // The trace reports exactly what this handler puts in the prompt below.
+    const sendTrace = (steps: ChatTraceStep[]) => {
+      if (request.requestId && !controller.signal.aborted && !_event.sender.isDestroyed())
+        _event.sender.send('chat-trace', { requestId: request.requestId, steps });
+    };
+    sendTrace(
+      fileChatTrace({
+        path: file.path,
+        before: contents.before.kind,
+        after: contents.after.kind,
+        truncated: [contents.before, contents.after].some((side) => side.kind === 'text' && side.content.length > 120000),
+        selection: request.selection,
+        description: snapshot.metadata.description,
+        historyCount: Math.min(request.history.length, 20),
+      }).steps
+    );
+    let toolCalls = 0;
     workbench.interrupt();
     activeForegroundChats++;
     foreground = true;
@@ -3560,6 +3579,7 @@ handleInteractive('ask-pr-file', async (_event, request: FileChatRequest) => {
         if (!thinking && request.requestId && !controller.signal.aborted && !_event.sender.isDestroyed())
           _event.sender.send('file-chat-progress', { requestId: request.requestId, chunk });
       },
+      onToolCall: (call) => sendTrace([toolCallStep(call, toolCalls++)]),
       model: request.model,
       thinking: false,
       effort: request.effort ?? loadPreferences().effort,

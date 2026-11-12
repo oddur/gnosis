@@ -1,4 +1,5 @@
 import { chatQuestion } from './chat-context';
+import { appendTraceSteps, slideChatTrace, type ChatTrace, type ChatTraceStep } from './chat-trace';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ReviewGuide, Provider, ModelId, SendSlideChatRequest } from './types';
 
@@ -7,7 +8,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
-  toolCalls?: string[];
+  /** What the answer was built from: assembled context, plus any tool calls the AI reported. */
+  trace?: ChatTrace;
   error?: string;
   stopped?: boolean;
   selection?: string;
@@ -24,7 +26,7 @@ const anyStreaming = () =>
 type Action =
   | { type: 'SEND'; slideIndex: number; userMessage: ChatMessage; assistantMessage: ChatMessage; retryId?: string }
   | { type: 'APPEND_CHUNK'; slideIndex: number; assistantId: string; chunk: string }
-  | { type: 'TOOL_USE'; slideIndex: number; assistantId: string; toolName: string }
+  | { type: 'TRACE'; slideIndex: number; assistantId: string; steps: ChatTraceStep[] }
   | { type: 'FINALIZE'; slideIndex: number; assistantId: string; content: string }
   | { type: 'ERROR'; slideIndex: number; assistantId: string; error: string }
   | { type: 'STOP'; slideIndex: number; assistantId: string }
@@ -53,17 +55,12 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
       );
       return next;
     }
-    case 'TOOL_USE': {
+    case 'TRACE': {
       const msgs = next.get(action.slideIndex);
       if (!msgs) return state;
       next.set(
         action.slideIndex,
-        msgs.map((m) => {
-          if (m.id !== action.assistantId) return m;
-          const existing = m.toolCalls ?? [];
-          if (existing.includes(action.toolName)) return m;
-          return { ...m, toolCalls: [...existing, action.toolName] };
-        })
+        msgs.map((m) => (m.id === action.assistantId ? { ...m, trace: appendTraceSteps(m.trace, action.steps) } : m))
       );
       return next;
     }
@@ -155,19 +152,7 @@ export function useSlideChat(
       )
         return;
 
-      const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: question, selection };
-      const assistantMsg: ChatMessage = {
-        id: retryId ?? crypto.randomUUID(),
-        role: 'assistant',
-        content: '',
-        isStreaming: true,
-      };
-
       const run = { requestId: crypto.randomUUID(), stopped: false };
-      runs.set(`${key}:${slideIndex}`, run);
-      dispatch({ type: 'SEND', slideIndex, userMessage: userMsg, assistantMessage: assistantMsg, retryId });
-      isStreamingRef.current = true;
-
       const history = existingMessages
         // Failed output is evidence for the user, never a completed model answer.
         .filter(
@@ -180,32 +165,48 @@ export function useSlideChat(
             !existingMessages[i + 1]?.stopped
         )
         .map((m) => ({ role: m.role, content: chatQuestion(m.content, m.selection) }));
+      const diffContent = slide.diffHunks.map((h) => `--- ${h.filePath}\n${h.hunkHeader}\n${h.content}`).join('\n\n');
+      const req: SendSlideChatRequest = {
+        requestId: run.requestId,
+        prTitle: review.prTitle,
+        prDescription: review.prDescription,
+        summary: review.summary,
+        slideTitle: slide.title,
+        slideNarrative: slide.narrative,
+        slideReviewFocus: slide.reviewFocus,
+        affectedFiles: slide.affectedFiles,
+        diffContent,
+        history,
+        question: chatQuestion(question, selection),
+        provider,
+        model,
+        effort,
+      };
 
+      const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: question, selection };
+      const assistantMsg: ChatMessage = {
+        id: retryId ?? crypto.randomUUID(),
+        role: 'assistant',
+        content: '',
+        isStreaming: true,
+        // This renderer assembles the topic prompt, so its context is known before the model starts.
+        trace: slideChatTrace(req, slide.diffHunks, selection),
+      };
+
+      runs.set(`${key}:${slideIndex}`, run);
+      dispatch({ type: 'SEND', slideIndex, userMessage: userMsg, assistantMessage: assistantMsg, retryId });
+      isStreamingRef.current = true;
+
+      let offTrace: (() => void) | undefined;
       try {
         window.electronAPI.onChatProgress((chunk) => {
           if (!run.stopped) dispatch({ type: 'APPEND_CHUNK', slideIndex, assistantId: assistantMsg.id, chunk });
         });
-        window.electronAPI.onChatToolUse((toolName) => {
-          if (!run.stopped) dispatch({ type: 'TOOL_USE', slideIndex, assistantId: assistantMsg.id, toolName });
+        // Older browser fixtures predate traces; production preload always supplies this.
+        offTrace = (window.electronAPI as Partial<Window['electronAPI']>).onChatTrace?.((event) => {
+          if (event.requestId === run.requestId && !run.stopped)
+            dispatch({ type: 'TRACE', slideIndex, assistantId: assistantMsg.id, steps: event.steps });
         });
-        const diffContent = slide.diffHunks.map((h) => `--- ${h.filePath}\n${h.hunkHeader}\n${h.content}`).join('\n\n');
-
-        const req: SendSlideChatRequest = {
-          requestId: run.requestId,
-          prTitle: review.prTitle,
-          prDescription: review.prDescription,
-          summary: review.summary,
-          slideTitle: slide.title,
-          slideNarrative: slide.narrative,
-          slideReviewFocus: slide.reviewFocus,
-          affectedFiles: slide.affectedFiles,
-          diffContent,
-          history,
-          question: chatQuestion(question, selection),
-          provider,
-          model,
-          effort,
-        };
 
         const content = await window.electronAPI.sendSlideChat(req);
         // Progress may include commentary or omit the final text. The returned
@@ -218,7 +219,7 @@ export function useSlideChat(
         if (run.stopped) dispatch({ type: 'STOP', slideIndex, assistantId: assistantMsg.id });
         runs.delete(`${key}:${slideIndex}`);
         window.electronAPI.offChatProgress();
-        window.electronAPI.offChatToolUse();
+        offTrace?.();
         isStreamingRef.current = false;
       }
     },
