@@ -45,6 +45,12 @@ void app.whenReady().then(async () => {
     await js(`window.releaseSettings()`);
     await wait(`!document.querySelector('[role=dialog]')`);
     await loadWorkbenchPage(win, new URL('/tests/fixtures/loading-states.html', base).href);
+    // macOS and Windows CI desktops prefer reduced motion, which removes the animation. Test each preference
+    // explicitly instead of inheriting the host's.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
     await wait(`document.querySelector('.loading-signal')?.getAnimations().length === 1`);
     await wait(`document.querySelector('#offscreen [data-loading-visible]')?.dataset.loadingVisible==='false'`);
     assert.equal(
@@ -65,7 +71,6 @@ void app.whenReady().then(async () => {
     await wait(`innerWidth <= 380 && document.documentElement.scrollWidth <= innerWidth`);
     await capture('zoom-dark');
     win.webContents.setZoomFactor(1);
-    win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
     });
