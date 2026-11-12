@@ -375,6 +375,22 @@ void test('patches coalesce and survive a failed flush', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+void test('close reports a failed final save and still stops the worker', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  try {
+    await store.open(dir);
+    store.patch('workbench:alice', { put: { a: 1 } }); // rejected by the worker on every flush
+    await assert.rejects(store.close(), /Invalid saved change/);
+    // The worker is gone, so the database is released (Windows refuses to delete an open file).
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+  } finally {
+    await store.close().catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 void test('take hands over without a copy', async () => {
   const dir = fixture();
   let store = createAppDataStore();
