@@ -112,6 +112,8 @@ declare global {
       savePat: (token: string, prUrl?: string) => Promise<string>;
       listReviews: () => Promise<ReviewHistoryEntry[]>;
       loadReview: (id: string) => Promise<ReviewGuide>;
+      /** Finished topics of a running explanation, with placeholders; null once it has finished. */
+      loadDraftReview: (id: string) => Promise<ReviewGuide | null>;
       deleteReview: (id: string) => Promise<void>;
       deleteAllReviews: () => Promise<void>;
       exportReview: (id: string) => Promise<string | null>;

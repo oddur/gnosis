@@ -82,25 +82,31 @@ void app.whenReady().then(async () => {
       false
     );
     await capture('failed-first-generation');
-    // Generation uses the same animated empty state as Checks and live, review-scoped activity.
+    // Generation shows its stages as Task Rows, built from the same events the main process reduces.
     await js(`(async()=>{
       window.originalListActivity=window.electronAPI.listActivity;
       window.originalActivityListener=window.electronAPI.onActivityChanged;
+      window.originalLoadReview=window.electronAPI.loadReview;
       window.generationListeners=new Set();
       window.electronAPI.onActivityChanged=callback=>{window.generationListeners.add(callback);return ()=>window.generationListeners.delete(callback)};
-      window.generationTask={id:'review:first-generation',kind:'review',reviewId:'first-generation',status:'running',detail:'Writing topics',progress:{completed:1,total:3}};
-      window.electronAPI.listActivity=async()=>[{...window.generationTask,reviewId:'different-review',detail:'Wrong review'},structuredClone(window.generationTask)];
+      window.progressModel=await import('/lib/explanation-progress.ts');
+      window.buildState=window.progressModel.initialExplanationProgress();
+      window.generationTask={id:'review:first-generation',kind:'review',title:'#150 Fix reconnect handling after transport shutdown',reviewId:'first-generation',status:'running',detail:'Writing topics',progress:{completed:1,total:3},startedAt:new Date(Date.now()-102000).toISOString(),updatedAt:new Date().toISOString(),canCancel:true,canRetry:false};
+      window.emit=(...events)=>{for(const e of events){window.buildState=window.progressModel.reduceExplanationProgress(window.buildState,e);if(e.type==='phase')window.generationTask.detail=e.phase}window.generationTask.steps=window.progressModel.explanationSteps(window.buildState);window.generationTask.updatedAt=new Date().toISOString();window.generationListeners.forEach(f=>f())};
+      window.electronAPI.listActivity=async()=>[{...window.generationTask,reviewId:'different-review',detail:'Wrong review',steps:undefined},structuredClone(window.generationTask)];
       const q=await window.electronAPI.workbenchQueue();
       q.items.find(i=>i.subject.title.includes('Fix reconnect')).review={id:'first-generation',prUrl:'https://github.com/klang/engine/pull/150',prTitle:'Fix reconnect',author:'lena',status:'generating',savedAt:new Date().toISOString()};
     })()`);
-    await wait("document.querySelector('.explanation-generating')?.textContent.includes('1 of 3 topics complete')");
-    assert.equal(await js("!!document.querySelector('.explanation-generating .loading-motif')"), true);
+    // A task without structured steps still renders rows from its single progress line.
+    await wait(
+      "[...document.querySelectorAll('.explanation-generating .task-row[data-status=running]')].some(r=>r.textContent.includes('Write topics')&&r.textContent.includes('1 of 3'))"
+    );
     assert.equal(
       await js("document.querySelector('.explanation-generating').textContent.includes('Wrong review')"),
       false
     );
     assert.equal(await js("!!document.querySelector('.explanation-empty')"), false);
-    await capture('generating-topics');
+    assert.match(await js<string>("document.querySelector('.explanation-build-elapsed').textContent"), /^1m 4\ds$/);
     await js(`window.activityReads=0;window.activityWaiters=[];
       window.electronAPI.listActivity=()=>{window.activityReads++;return new Promise(resolve=>window.activityWaiters.push(()=>resolve([structuredClone(window.generationTask)])))};
       for(let i=0;i<100;i++)window.generationListeners.forEach(f=>f());void 0;`);
@@ -119,16 +125,74 @@ void app.whenReady().then(async () => {
 
     assert.equal(burstReads, 1, 'Coalesce bursts while an activity request is in flight');
     assert.equal(settledReads, 2, 'One catch-up fetch receives the latest activity after a burst');
-    await js('window.generationTask.progress.completed=2;window.generationListeners.forEach(f=>f())');
-    await wait("document.querySelector('.explanation-generating')?.textContent.includes('2 of 3 topics complete')");
-    await js(
-      "window.generationTask.detail='Writing overview';delete window.generationTask.progress;window.generationListeners.forEach(f=>f())"
+    // Structured events: context, the planned topics in order, then each topic's own status.
+    await js(`window.emit(
+      {type:'phase',phase:'Fetching PR data'},{type:'context',files:48,imports:12},{type:'phase',phase:'Building context'},
+      {type:'phase',phase:'Planning review structure'},
+      {type:'plan',topics:[{id:'slide-1',title:'Retry scheduling moves to the consumer'},{id:'slide-2',title:'Delivery counts no longer burn on transient errors'},{id:'slide-3',title:'Backoff configuration'},{id:'slide-4',title:'Metrics and alerts'},{id:'slide-5',title:'Tests'}]},
+      {type:'phase',phase:'Writing topics',completed:0,total:5},
+      {type:'topic',id:'slide-1',status:'writing'},{type:'topic',id:'slide-2',status:'writing'},{type:'topic',id:'slide-3',status:'writing'},
+      {type:'topic',id:'slide-1',status:'done'},{type:'topic',id:'slide-2',status:'done'})`);
+    await wait("document.querySelectorAll('.explanation-generating .task-subrows > .task-row').length===5");
+    assert.deepEqual(
+      await js(
+        "[...document.querySelectorAll('.explanation-generating .explanation-build-rows > .task-row')].map(r=>r.dataset.status+':'+r.querySelector('.task-row-title').textContent+':'+(r.querySelector(':scope > .task-row-line > .task-row-meta')?.textContent??''))"
+      ),
+      [
+        'done:Read PR and context:48 files · 12 imports',
+        'done:Planned 5 topics:',
+        'running:Write topics:2 of 5',
+        'queued:Check explanation text:',
+        'queued:Write overview:',
+        'queued:Render code:',
+      ]
     );
-    await wait("document.querySelector('.explanation-generating')?.textContent.includes('Writing overview')");
     assert.equal(
-      await js("document.querySelector('.explanation-generating').textContent.includes('topics complete')"),
+      await js("[...document.querySelectorAll('.explanation-generating button')].filter(b=>b.textContent==='Read').length"),
+      2,
+      'Each finished topic can be read at once'
+    );
+    assert.equal(
+      await js("document.querySelector('.explanation-build [role=status]').textContent"),
+      'Writing topics',
+      'Announce the phase, not each tick'
+    );
+    await capture('generating-topics');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('generating-topics-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    // A topic's own failure is inline on its row, with the real error, while the rest keep writing.
+    await js(
+      "window.emit({type:'topic',id:'slide-4',status:'failed',error:'Anthropic API: overloaded (529). The topic was not written.'})"
+    );
+    await wait(
+      "document.querySelector('.explanation-generating .task-subrows .task-row[data-status=failed] .task-row-error')?.textContent.includes('overloaded (529)')"
+    );
+    assert.equal(
+      await js("document.querySelector('.explanation-generating').textContent.includes('could not be completed')"),
       false
     );
+    await capture('topic-failed');
+    // The same rows are the explanation's expanded view in Activity, opened from the title bar capsule.
+    await wait("document.querySelector('.activity-capsule')?.getAttribute('aria-label')?.includes('1 running')");
+    await js("document.querySelector('.activity-capsule').click()");
+    await wait("!!document.querySelector('.activity-drawer .activity-task .task-subrows .task-subrows .task-row[data-status=failed]')");
+    assert.match(
+      await js<string>("document.querySelector('.activity-drawer .activity-task').textContent"),
+      /Explanation.*#150 Fix reconnect.*Write topics.*2 of 5 · 1 failed/
+    );
+    // One line with the PR number; the full title is the tooltip.
+    assert.equal(
+      await js("(()=>{const h=document.querySelector('.activity-drawer .activity-task h3');return h.title===h.textContent&&h.getClientRects().length===1&&getComputedStyle(h).whiteSpace==='nowrap'})()"),
+      true
+    );
+    await capture('activity-open');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('activity-open-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await js("document.querySelector('.activity-drawer').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await wait("!document.querySelector('.activity-drawer') && document.activeElement===document.querySelector('.activity-capsule')");
+    // Lost progress keeps the last rows and offers a retry.
     await js(
       "window.electronAPI.listActivity=async()=>{throw Error('Activity unavailable')};window.generationListeners.forEach(f=>f())"
     );
@@ -136,14 +200,90 @@ void app.whenReady().then(async () => {
     await capture('generation-progress-unavailable');
     await js('window.electronAPI.listActivity=async()=>[structuredClone(window.generationTask)];void 0;');
     await click('Retry progress');
-    await wait("document.querySelector('.explanation-generating')?.textContent.includes('Writing overview')");
+    await wait("!document.querySelector('.explanation-build-notice') && !!document.querySelector('.explanation-generating .task-row')");
+    // A failed build keeps its rows: the failed stage and topic show their errors and Retry reuses written topics.
+    await js(`(async()=>{
+      window.firstState=window.buildState;window.firstTask=structuredClone(window.generationTask);
+      window.buildState=window.progressModel.initialExplanationProgress();
+      window.generationTask={...window.generationTask,id:'review:failed-build',reviewId:'failed-build',status:'running',canCancel:true,canRetry:false,startedAt:new Date(Date.now()-251000).toISOString()};
+      window.emit({type:'phase',phase:'Building context'},{type:'plan',topics:[{id:'slide-1',title:'Retry scheduling moves to the consumer'},{id:'slide-2',title:'Metrics and alerts'}]},{type:'phase',phase:'Writing topics',completed:0,total:2},{type:'topic',id:'slide-1',status:'done'},{type:'topic',id:'slide-2',status:'failed',error:'Anthropic API: overloaded (529).'},{type:'finish',status:'failed',error:'1 of 2 topics saved. Retry this explanation to reuse completed topics. Anthropic API: overloaded (529).'});
+      Object.assign(window.generationTask,{status:'failed',canCancel:false,canRetry:true,detail:'1 of 2 topics saved.',updatedAt:new Date().toISOString()});
+      window.retries=[];window.originalActivityAction=window.electronAPI.activityAction;window.electronAPI.activityAction=async(id,action)=>{window.retries.push(id+':'+action)};
+      const q=await window.electronAPI.workbenchQueue();
+      q.items.find(i=>i.subject.title.includes('Fix reconnect')).review={id:'failed-build',prUrl:'https://github.com/klang/engine/pull/150',prTitle:'Fix reconnect',author:'lena',status:'failed',error:'1 of 2 topics saved.',savedAt:new Date().toISOString()};
+    })()`);
+    await wait("!!document.querySelector('.explanation-build[data-status=failed]')");
+    assert.match(
+      await js<string>("document.querySelector('.explanation-build-rows > .task-row[data-status=failed] > .task-row-error').textContent"),
+      /1 of 2 topics saved/
+    );
+    assert.match(
+      await js<string>("document.querySelector('.task-subrows .task-row[data-status=failed]').textContent"),
+      /Metrics and alerts.*Retry.*overloaded \(529\)/
+    );
+    assert.equal(await js("document.querySelector('.explanation-build [role=status]')?.textContent"), 'Explanation failed at Write topics');
+    await capture('failed-build');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('failed-build-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await click('Retry Metrics and alerts. Topics already written are reused.');
+    await wait("window.retries[0]==='review:failed-build:retry'");
+    // Back to the running build.
+    await js(`(async()=>{
+      window.electronAPI.activityAction=window.originalActivityAction;
+      window.buildState=window.firstState;window.generationTask=window.firstTask;
+      const q=await window.electronAPI.workbenchQueue();
+      q.items.find(i=>i.subject.title.includes('Fix reconnect')).review={id:'first-generation',prUrl:'https://github.com/klang/engine/pull/150',prTitle:'Fix reconnect',author:'lena',status:'generating',savedAt:new Date().toISOString()};
+      window.emit();
+    })()`);
+    await wait("document.querySelectorAll('.explanation-generating .task-subrows .task-row[data-status=failed]').length===1 && !document.querySelector('.explanation-build[data-status=failed]')");
+    // Read early: a finished topic opens in the reader; unwritten topics are placeholders.
+    await js(`(async()=>{
+      const base=await window.originalLoadReview('workbench-review');
+      window.draftReads=0;
+      window.draftReview=()=>({...structuredClone(base),reviewId:'first-generation',draft:{completed:2,total:3},slides:[
+        {...structuredClone(base.slides[0]),id:'slide-1',slideNumber:1,title:'Retry scheduling moves to the consumer'},
+        {id:'slide-2',slideNumber:2,title:'Delivery counts no longer burn on transient errors',slideType:'feature',narrative:'',reviewFocus:null,diffHunks:[],contextSnippets:[],affectedFiles:[],dependsOn:[],draftStatus:'writing'},
+        {id:'slide-3',slideNumber:3,title:'Metrics and alerts',slideType:'feature',narrative:'',reviewFocus:null,diffHunks:[],contextSnippets:[],affectedFiles:[],dependsOn:[],draftStatus:'failed',draftError:'Anthropic API: overloaded (529).'}]});
+      window.electronAPI.loadDraftReview=async id=>{window.draftReads++;return id==='first-generation'?window.draftReview():null};
+      window.electronAPI.loadReview=async id=>id==='first-generation'?{...structuredClone(base),reviewId:'first-generation'}:window.originalLoadReview(id);
+    })()`);
+    await click('Read Retry scheduling moves to the consumer');
+    await wait("!!document.querySelector('.explanation-reader') && document.querySelectorAll('.draft-topic').length===2");
+    assert.match(await js<string>("document.querySelector('.explanation-status').textContent"), /Reading early/);
+    // The error shows once, on its progress row; the reader keeps a quiet placeholder.
+    assert.match(
+      await js<string>("document.querySelector('.draft-topic[data-draft-status=failed]').textContent"),
+      /This topic wasn’t written\.See progress/
+    );
+    assert.equal(await js("document.querySelector('.explanation-reader').textContent.includes('overloaded')"), false);
+    await capture('read-early');
+    await click('See progress');
+    await wait("!!document.querySelector('.explanation-build-inline .task-row')");
+    await capture('read-early-progress');
+    await click('Hide progress');
+    // The next finished topic refreshes the draft in place.
+    const reads = await js<number>('window.draftReads');
+    await js("window.emit({type:'topic',id:'slide-3',status:'done'})");
+    await wait(`window.draftReads>${reads}`);
+    // Completion swaps the saved explanation in, keeping the reader mounted.
+    await js(`(async()=>{
+      document.querySelector('.explanation-reader').dataset.kept='yes';
+      window.emit({type:'finish',status:'completed'});
+      window.generationTask.status='completed';
+      const q=await window.electronAPI.workbenchQueue();
+      q.items.find(i=>i.subject.title.includes('Fix reconnect')).review.status='completed';
+    })()`);
+    await wait("!document.querySelector('.draft-topic') && !document.querySelector('.explanation-status .loading-indicator')");
+    assert.equal(await js("document.querySelector('.explanation-reader')?.dataset.kept"), 'yes', 'Updated in place');
+    await capture('completed-in-place');
     await js(`(async()=>{
       const q=await window.electronAPI.workbenchQueue();
-      q.items.find(i=>i.subject.title.includes('Fix reconnect')).review.status='failed';
+      q.items.find(i=>i.subject.title.includes('Fix reconnect')).review={id:'failed-first-review',prUrl:'https://github.com/klang/engine/pull/150',prTitle:'Fix reconnect',author:'lena',status:'failed',savedAt:new Date().toISOString()};
     })()`);
     await wait("!document.querySelector('.explanation-generating')");
     await js(
-      'window.electronAPI.listActivity=window.originalListActivity;window.electronAPI.onActivityChanged=window.originalActivityListener;void 0;'
+      'window.electronAPI.listActivity=window.originalListActivity;window.electronAPI.onActivityChanged=window.originalActivityListener;window.electronAPI.loadReview=window.originalLoadReview;void 0;'
     );
     // Existing viewer drafts migrate to the shared per-PR store, with revision and source intact.
     await js(`(async()=>{
@@ -507,7 +647,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.explanation-status')?.textContent.includes('Generating explanation')");
     assert.equal(await js("!!document.querySelector('.review-narrative')"), true);
     await js("window.reviewHistory[0].status='failed'");
-    await wait("document.querySelector('.explanation-status')?.textContent.includes('could not be completed')");
+    await wait("document.querySelector('.explanation-status')?.textContent.includes('stopped before it finished. Your saved version is still available')");
     await capture('failed-update');
     await click('Retry generation');
     await wait("!!document.querySelector('.explanation-setup-footer')");

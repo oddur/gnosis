@@ -45,7 +45,7 @@ import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
-import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId } from '../../lib/types';
+import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId, Slide } from '../../lib/types';
 import { DEFAULT_FAST_CLAUDE_MODEL, PROVIDERS } from '../../lib/models';
 
 export interface ChangesFileTarget {
@@ -72,6 +72,8 @@ interface Props {
   onNavigateHome?: (target: Extract<SearchDestination, { kind: 'home' }>) => void;
   onReReview: (prUrl: string, previousReviewId?: string) => void;
   regenerating?: boolean;
+  /** While reading a draft: reveals the build's progress rows. */
+  onShowDraftProgress?: () => void;
   initialSlideId?: string;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'review' }>; nonce: number };
   exploreInitially?: boolean;
@@ -110,6 +112,7 @@ function ReviewPageContent({
   onNavigateHome,
   onReReview,
   regenerating = false,
+  onShowDraftProgress,
   initialSlideId,
   commandDestination,
   exploreInitially,
@@ -131,7 +134,10 @@ function ReviewPageContent({
       setReview(initialReview);
     }
   }, [initialReview]);
-  useEffect(() => rememberExplanation(review), [review]);
+  // A draft is replaced by the saved explanation, so it must never answer a later load.
+  useEffect(() => {
+    if (!review.draft) rememberExplanation(review);
+  }, [review]);
   const [consumedCommand, setConsumedCommand] = useSessionDraft('review-command', 0);
   const { viewedFiles, setFileViewed } = useViewedFiles(review);
   const reader = useRef<ExplanationReaderHandle>(null);
@@ -999,17 +1005,22 @@ function ReviewPageContent({
             }}
             onOpenChanges={onOpenChanges}
             onReview={isLocal ? undefined : () => setShowSubmitDialog(true)}
-            renderSection={(slide, index) => (
+            renderSection={(slide, index) =>
+              slide.draftStatus ? (
+                <DraftTopic slide={slide} onShowProgress={onShowDraftProgress} />
+              ) : (
               <SlideView
                 {...sharedSlideProps}
                 presentation="narrative"
                 slide={slide}
                 slideNumber={index}
                 onInspectCode={(path, line) => inspectCode(index, path, line)}
-                onExplore={review.reviewId ? () => openExplainer(index) : undefined}
+                onExplore={review.reviewId && !review.draft ? () => openExplainer(index) : undefined}
               />
-            )}
-            renderCode={(slide, index) => (
+              )
+            }
+            renderCode={(slide, index) =>
+              slide.draftStatus ? null : (
               <SlideView
                 {...sharedSlideProps}
                 presentation="code"
@@ -1022,9 +1033,10 @@ function ReviewPageContent({
                   openChat();
                 }}
               />
-            )}
+              )
+            }
             tool={
-              exploreOpen && review.reviewId ? (
+              exploreOpen && review.reviewId && !review.draft ? (
                 <ExplainerView
                   key={`${review.reviewId}:${inspectedSlide.id}`}
                   reviewId={review.reviewId}
@@ -1101,5 +1113,29 @@ export function ReviewPage(props: Props) {
     <ReviewBreadcrumbProvider>
       <ReviewPageContent {...props} />
     </ReviewBreadcrumbProvider>
+  );
+}
+
+/** A topic that is still being written, shown in place so the reader keeps its order. */
+function DraftTopic({ slide, onShowProgress }: { slide: Slide; onShowProgress?: () => void }) {
+  return (
+    <div className="draft-topic" data-draft-status={slide.draftStatus}>
+      <h2 className="draft-topic-title">{slide.title}</h2>
+      <p className="draft-topic-status">
+        {slide.draftStatus === 'failed' ? (
+          // The error itself is shown once, on the topic's row in the progress.
+          <>
+            This topic wasn’t written.
+            {onShowProgress && (
+              <button type="button" onClick={onShowProgress}>
+                See progress
+              </button>
+            )}
+          </>
+        ) : slide.draftStatus === 'writing'
+            ? 'Being written. It appears here when it is ready.'
+            : 'Waiting to be written.'}
+      </p>
+    </div>
   );
 }

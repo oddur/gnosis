@@ -87,7 +87,7 @@ void app.whenReady().then(async () => {
       'Notification has reserved space above the controls'
     );
     await capture('notification');
-    await js("document.querySelector('.activity-trigger').click()");
+    await js("(document.querySelector('.activity-trigger')?.click() ?? window.dispatchEvent(new KeyboardEvent('keydown',{key:'a',shiftKey:true,metaKey:window.electronAPI.platform==='darwin',ctrlKey:window.electronAPI.platform!=='darwin'})))");
     await wait("document.querySelector('.activity-drawer')");
     assert.equal(await js("getComputedStyle(document.querySelector('.app-toasts')).top"), '0px');
     assert.equal(await js("getComputedStyle(document.querySelector('.app-toasts')).maxHeight"), '120px');

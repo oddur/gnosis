@@ -1,4 +1,4 @@
-import { ACTIVITY_RETENTION_MS, isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
+import { ACTIVITY_RETENTION_MS, isActiveTask, sanitizeSteps, type ActivityAction, type ActivityTask } from '../lib/activity';
 
 interface Actions {
   cancel?: () => void;
@@ -10,8 +10,9 @@ export function createActivityService(now = () => Date.now(), changed: () => voi
   return {
     start(task: Omit<ActivityTask, 'status' | 'updatedAt' | 'canCancel' | 'canRetry'>, actions: Actions) {
       changed();
+      const started = stamp();
       tasks.set(task.id, {
-        task: { ...task, status: 'running', updatedAt: stamp(), canCancel: !!actions.cancel, canRetry: false },
+        task: { startedAt: started, ...task, status: 'running', updatedAt: started, canCancel: !!actions.cancel, canRetry: false },
         actions,
       });
     },
@@ -19,6 +20,14 @@ export function createActivityService(now = () => Date.now(), changed: () => voi
       changed();
       const entry = tasks.get(id);
       if (entry?.task.status === 'running') Object.assign(entry.task, { detail, progress, updatedAt: stamp() });
+    },
+    /** Structured stages; kept through pauses and the final status so failures stay explained. */
+    steps(id: string, steps: ActivityTask['steps']) {
+      const entry = tasks.get(id);
+      if (!entry) return;
+      changed();
+      entry.task.steps = sanitizeSteps(steps);
+      entry.task.updatedAt = stamp();
     },
     finish(id: string, status: 'completed' | 'failed' | 'cancelled', detail: string, warnings?: string[]) {
       changed();
@@ -67,7 +76,7 @@ export function createActivityService(now = () => Date.now(), changed: () => voi
           now() - Date.parse(task.updatedAt) > ACTIVITY_RETENTION_MS
         )
           tasks.delete(id);
-      return [...tasks.values()].map(({ task }) => ({ ...task }));
+      return [...tasks.values()].map(({ task }) => ({ ...task, ...(task.steps ? { steps: structuredClone(task.steps) } : {}) }));
     },
     async act(id: string, action: ActivityAction) {
       changed();

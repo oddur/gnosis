@@ -69,17 +69,24 @@ export const WorkspaceTabs = memo(
         else delete node.dataset.overflow;
       };
       update();
-      // A narrower strip keeps the active tab in view.
+      // A narrower strip keeps the active tab in view. The overflow state shows or hides the
+      // open-tabs menu, which resizes the strip again, so it waits a frame instead of looping
+      // inside this observer (for example when the Activity capsule appears beside Search).
+      let frame = 0;
       const observer = new ResizeObserver(() => {
-        node
-          .querySelector('[aria-selected=true]')
-          ?.closest('.workspace-tab')
-          ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        update();
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => {
+          node
+            .querySelector('[aria-selected=true]')
+            ?.closest('.workspace-tab')
+            ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          update();
+        });
       });
       observer.observe(node);
       node.addEventListener('scroll', update, { passive: true });
       return () => {
+        cancelAnimationFrame(frame);
         observer.disconnect();
         node.removeEventListener('scroll', update);
       };

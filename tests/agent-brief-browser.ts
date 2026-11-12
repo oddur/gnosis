@@ -42,7 +42,7 @@ void app.whenReady().then(async () => {
     );
     await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Open stack overview'&&b.checkVisibility())");
     await click('Open stack overview');
-    await wait("!!document.querySelector('.pr-overview-tabs')");
+    await wait("!!document.querySelector('.pr-overview-tabs')?.checkVisibility()");
   };
   const setup = () =>
     js(`(async()=>{
@@ -232,7 +232,8 @@ void app.whenReady().then(async () => {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&keep-progress`);
     await waitForWorkbenchQueue(win.webContents);
     await setup();
-    await openStack();
+    // Open workspace tabs are restored on reload, so the stack is already in front.
+    await wait("!!document.querySelector('.pr-overview-tabs')?.checkVisibility()");
     await wait("document.querySelector('.brief-tab-count')?.textContent==='3'");
     await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
     await wait("document.querySelectorAll('.agent-brief-comment').length===3");
@@ -253,7 +254,7 @@ void app.whenReady().then(async () => {
       await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
       await wait("!!document.querySelector('.agent-brief-empty')");
       assert.equal(await js("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top"), top, 'A PR keeps the same navigation position between Explanation and Local notes');
-      await capture('stable-notes-header-'+width);
+      await capture(`stable-notes-header-${width}`);
     }
     win.setContentSize(1280, 800);
     await click('Open Changes');
@@ -347,11 +348,10 @@ void app.whenReady().then(async () => {
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
     assert.equal(await js("document.querySelector('.agent-brief').scrollWidth<=document.querySelector('.agent-brief').clientWidth"), true);
     console.log('agent brief browser test passed');
+    app.exit(0);
   } catch (error) {
     console.error(error);
     await capture('failure').catch(() => {});
-    process.exitCode = 1;
-  } finally {
-    app.quit();
+    app.exit(1);
   }
 });

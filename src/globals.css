@@ -1864,47 +1864,104 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media(max-width:620px) { .queue-content:has(.briefing-panel) .queue-list{display:none;} .briefing-panel{width:100%;max-width:100%;border-left:0;} .queue-toolbar p{display:none;} .queue-filters{padding:0 12px 12px;flex-wrap:wrap;} .workbench-overview{padding:16px;} .review-toolbar select{max-width:200px;} }
 
 
-/* A stable status bar keeps background work visible without moving page content. */
-#main-content { height:calc(100dvh - 34px); }
-.activity-shell { position:fixed; inset:auto 0 0; height:34px; z-index:45; display:flex; justify-content:flex-end; background:var(--card); border-top:1px solid var(--border); }
-.activity-trigger { display:flex; align-items:center; gap:8px; padding:0 14px; font-size:var(--type-control); min-width:180px; }
-.activity-trigger:hover { background:var(--accent); }
-.activity-summary { color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
-.activity-mini-progress { width:50px; }
-.activity-drawer { position:absolute; bottom:33px; right:12px; width:min(430px,calc(100vw - 24px)); max-height:min(600px,calc(100dvh - 90px)); display:flex; flex-direction:column; background:var(--card); border:1px solid var(--border); border-radius:8px 8px 0 0; overflow:hidden; }
-.activity-drawer header { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--border); }
-.activity-drawer header h2 { font-size:var(--type-body); font-weight:600; }
-.activity-drawer header>span { flex:1; font-size:var(--type-caption); color:var(--muted-foreground); }
-.activity-list { overflow:auto; overscroll-behavior:contain; }
-.activity-task { padding:12px 14px; border-bottom:1px solid var(--border); }
-.activity-task:last-child { border-bottom:0; }
-.activity-task-meta { display:flex; align-items:center; gap:8px; color:var(--muted-foreground); font-size:var(--type-caption); margin-bottom:5px; }
-.activity-task-meta>span:first-child { font-weight:600; }
-.activity-task-meta .workbench-icon { margin-left:auto; }
-.activity-task h3 { font-size:var(--type-body); line-height:1.5; font-weight:600; overflow-wrap:anywhere; }
-.activity-task-status { overflow-wrap:anywhere; display:flex; align-items:center; gap:6px; margin-top:6px; font-size:var(--type-control); color:var(--muted-foreground); }
-.activity-task-status svg { flex-shrink:0; }
-.activity-task-status span { min-width:0; }
-.activity-task[data-status=failed] .activity-task-status { color:var(--color-danger); }
-.activity-task[data-status=running] .activity-task-status { color:var(--ring); }
-.activity-task[data-status=completed] .activity-task-status { color:var(--color-success); }
-.activity-task[data-status=warning] .activity-task-status { color:var(--color-warning); }
-.activity-progress { height:3px; background:var(--muted); border-radius:2px; overflow:hidden; margin-top:9px; }
-.activity-progress span { display:block; height:100%; background:var(--ring); transition:width 180ms ease-out; }
-.activity-mini-progress .activity-progress { margin:0; }
-.activity-progress.indeterminate span { width:35%; animation:activity-progress 1.5s ease-in-out infinite; }
+/* The workspace fills the window below the title bar; Activity lives in the title bar. */
+#main-content { height:100%; }
 @keyframes activity-progress { from { transform:translateX(-100%); } to { transform:translateX(290%); } }
-.activity-actions { display:flex; align-items:center; gap:14px; margin-top:8px; font-size:var(--type-control); }
-.activity-actions:empty { display:none; }
-.activity-actions button { color:var(--ring); }
+
+/*
+ * Task Rows: a status mark, a title, facts at the end, and nested subtasks. Status never relies on
+ * color alone: each mark has its own shape and a text label for assistive technology.
+ */
+.task-rows { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.task-row-line { display:flex; align-items:center; gap:10px; min-height:30px; padding:3px 0; font-size:var(--type-control); line-height:1.45; }
+.task-row-title { flex:1; min-width:0; color:var(--foreground); overflow-wrap:anywhere; }
+.task-row[data-status=queued] > .task-row-line > .task-row-title,
+.task-row[data-status=cancelled] > .task-row-line > .task-row-title { color:var(--muted-foreground); }
+.task-row-meta { flex-shrink:0; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+.task-row[data-status=failed] > .task-row-line > .task-row-meta { color:var(--color-danger); }
+.task-row[data-status=running] > .task-row-line > .task-row-meta { color:var(--ring); }
+.task-row-meta-failed { color:var(--color-danger); }
+.task-row-actions { flex-shrink:0; display:flex; align-items:center; gap:6px; }
+.task-row-action { height:22px; padding:0 8px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--primary); font-size:var(--type-caption); font-weight:550; transition:background-color 120ms ease-out, border-color 120ms ease-out; }
+.task-row-action:hover:not(:disabled) { background:var(--accent); border-color:color-mix(in srgb, var(--ring) 35%, var(--border)); color:var(--accent-foreground); }
+.task-row-action:disabled { opacity:.5; cursor:wait; }
+.task-row-action:focus-visible,.task-row-toggle:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+.task-row-toggle { display:inline-flex; align-items:center; gap:3px; flex-shrink:0; padding:1px 6px 1px 3px; border-radius:4px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.task-row-toggle:hover { background:var(--secondary); color:var(--foreground); }
+.task-row-toggle svg { transition:transform 150ms ease-out; }
+.task-row-toggle[aria-expanded=true] svg { transform:rotate(90deg); }
+.task-row-error { margin:2px 0 6px 26px; padding:6px 10px; border-radius:5px; background:var(--status-danger-bg); color:var(--color-danger); font-size:var(--type-caption); line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
+.task-subrows { margin:0 0 4px 7px; padding-left:18px; border-left:1px solid color-mix(in srgb, var(--border) 75%, transparent); }
+.task-glyph { position:relative; flex:none; width:16px; height:16px; display:inline-grid; place-items:center; border-radius:50%; box-sizing:border-box; }
+.task-glyph[data-status=queued] { border:1.5px solid var(--input); }
+.task-glyph[data-status=cancelled] { border:1.5px dashed var(--input); }
+.task-glyph[data-status=done] { background:var(--color-success); color:var(--card); }
+.task-glyph[data-status=failed] { background:var(--color-danger); color:var(--card); }
+.task-glyph[data-status=paused] { border:1.5px solid var(--color-warning); color:var(--color-warning); }
+.task-glyph[data-status=warning] { color:var(--color-warning); }
+/* Running: a half-filled ring that turns; with reduced motion it rests as ◐. */
+.task-glyph[data-status=running] { border:1.5px solid var(--ring); padding:2px; background:conic-gradient(var(--ring) 0 50%, transparent 0) content-box; animation:task-glyph-turn 1.4s linear infinite; }
+@keyframes task-glyph-turn { to { transform:rotate(1turn); } }
+
+/* An explanation build: what is done, what is running, and which topic failed and why. */
+.explanation-generating { align-items:stretch; justify-content:flex-start; overflow:auto; padding:min(8vh,56px) 24px 32px; }
+.explanation-build { width:100%; max-width:640px; margin:0 auto; }
+.explanation-build-header { display:flex; align-items:center; gap:10px; padding-bottom:12px; margin-bottom:8px; border-bottom:1px solid var(--border); }
+.explanation-build-header h2 { flex:1; min-width:0; font-size:var(--type-body); line-height:1.45; font-weight:600; overflow-wrap:anywhere; }
+.explanation-build-subject { color:var(--muted-foreground); font-weight:500; }
+.explanation-build-elapsed { flex-shrink:0; color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+.explanation-build-rows > .task-row > .task-row-line { min-height:32px; }
+.explanation-build-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); }
+.explanation-build-notice { margin:4px 0 8px; padding:6px 10px; border-radius:5px; background:var(--status-warning-bg); color:var(--color-warning); font-size:var(--type-caption); }
+.explanation-build-error { color:var(--color-danger); font-size:var(--type-caption); }
+.explanation-build-inline { flex-shrink:0; max-height:min(45vh,420px); overflow:auto; padding:14px var(--pr-frame-inset) 16px; border-bottom:1px solid var(--border); background:var(--sidebar); }
+.explanation-build-inline .explanation-build { max-width:720px; margin:0; }
+.draft-topic-title { font-size:1.25rem; line-height:1.4; font-weight:650; letter-spacing:-.02em; color:var(--muted-foreground); }
+.draft-topic-status { margin-top:14px; padding:14px 16px; border:1px dashed var(--input); border-radius:8px; color:var(--muted-foreground); font-size:var(--type-body); line-height:1.55; }
+.draft-topic-status button { margin-left:6px; color:var(--primary); font-weight:500; text-decoration:underline; text-underline-offset:3px; }
+
+/* Activity: a panel below the title bar capsule. Borders and tonal layers, no shadow. */
+.activity-drawer { position:fixed; z-index:60; top:calc(var(--app-titlebar-height) + 6px); right:10px; width:min(440px,calc(100vw - 24px)); max-height:calc(100dvh - var(--app-titlebar-height) - 24px); display:flex; flex-direction:column; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; overflow:hidden; animation:activity-panel-in 140ms ease-out; }
+@keyframes activity-panel-in { from { opacity:0; transform:translateY(-4px); } }
+.activity-drawer header { display:flex; align-items:center; gap:10px; padding:8px 8px 8px 14px; border-bottom:1px solid var(--border); }
+.activity-drawer header h2 { font-size:var(--type-body); font-weight:600; }
+.activity-drawer header>span { flex:1; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.activity-list { overflow:auto; overscroll-behavior:contain; }
+.activity-rows > .activity-task { padding:10px 12px 10px 14px; border-bottom:1px solid var(--border); }
+.activity-rows > .activity-task:last-child { border-bottom:0; }
+.activity-task > .task-row-line { align-items:flex-start; }
+.activity-task > .task-row-line > .task-glyph { margin-top:2px; }
+.activity-task > .task-row-line > .task-row-meta { margin-top:1px; }
+.activity-kind { display:block; color:var(--muted-foreground); font-size:var(--type-caption); line-height:1.4; }
+.activity-model { font-weight:400; }
+/* One line: the PR number and as much of the title as fits; the full title is the tooltip and accessible name. */
+.activity-task h3 { margin-top:1px; font-size:var(--type-control); line-height:1.45; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.activity-elapsed { font-variant-numeric:tabular-nums; }
+.activity-task-status { margin:2px 0 0 26px; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); overflow-wrap:anywhere; }
+.activity-task[data-status=running] > .activity-task-status { color:var(--ring); }
+.activity-task[data-status=completed] > .activity-task-status { color:var(--color-success); }
+.activity-task[data-status=warning] > .activity-task-status { color:var(--color-warning); }
+.activity-task[data-status=failed] > .activity-task-status { color:var(--color-danger); }
+/* A task's stages sit under its title by indent alone; only topics keep the hairline, as in the Explanation tab. */
+.activity-task > .task-subrows { margin-top:6px; margin-left:0; padding-left:26px; border-left:0; }
+.activity-progress { height:3px; margin:8px 0 0 26px; background:var(--muted); border-radius:2px; overflow:hidden; }
+.activity-progress span { display:block; height:100%; background:var(--ring); transition:width 180ms ease-out; }
+.activity-progress.indeterminate span { width:35%; animation:activity-progress 1.5s ease-in-out infinite; }
+.activity-actions { display:flex; align-items:center; gap:12px; font-size:var(--type-caption); }
+.activity-actions button { color:var(--ring); font-weight:500; }
 .activity-actions button:hover { text-decoration:underline; text-underline-offset:3px; }
 .activity-actions button:disabled { opacity:.5; cursor:wait; }
+.activity-actions .activity-dismiss { display:inline-grid; place-items:center; width:22px; height:22px; margin-right:-4px; border-radius:4px; color:var(--muted-foreground); }
+.activity-actions .activity-dismiss:hover { background:var(--secondary); color:var(--foreground); text-decoration:none; }
 .activity-empty, .activity-error { padding:16px; font-size:var(--type-body); line-height:1.6; color:var(--muted-foreground); }
 .activity-error { color:var(--destructive); }
-.activity-failure { font-size:var(--type-control); margin-top:8px; color:var(--muted-foreground); }
+.activity-failure { margin:6px 0 0 26px; font-size:var(--type-caption); color:var(--muted-foreground); }
 .activity-failure summary { cursor:pointer; }
 .activity-failure p { margin-top:6px; overflow-wrap:anywhere; white-space:pre-wrap; }
-@media(prefers-reduced-motion:reduce) { .activity-shell * { animation:none!important; transition:none!important; } }
+@media(prefers-reduced-motion:reduce) {
+  .task-glyph, .activity-drawer, .activity-capsule, .task-row-toggle svg, .task-row-action { animation:none!important; transition:none!important; }
+  .activity-drawer * { animation:none!important; transition:none!important; }
+}
 
 /* Persistent context and task-based controls in the review workbench. */
 /* Each file group is its own stacking context under content-visibility, so the header only has to clear Pierre's own layers (z-index up to 4). */
@@ -2075,8 +2132,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .queue-meta>span { overflow-wrap:anywhere; }
 
 /* Notifications stay above Activity and never take keyboard focus on arrival. */
-.app-toasts { max-height:calc(100dvh - 58px); overflow-y:auto; overscroll-behavior:contain; position:fixed; right:12px; bottom:46px; z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
-body:has(.activity-drawer) .app-toasts:not([data-inline]) { bottom:auto; top:64px; max-height:calc(100dvh - 76px); }
+.app-toasts { max-height:calc(100dvh - var(--app-titlebar-height) - 24px); overflow-y:auto; overscroll-behavior:contain; position:fixed; right:12px; bottom:12px; z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
 .app-toast { flex-shrink:0; pointer-events:auto; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; transition:opacity 180ms ease-out,transform 180ms ease-out; }
 .app-toast[data-starting-style],.app-toast[data-ending-style] { opacity:0; transform:translateY(8px); }
 .app-toast[data-limited] { display:none; }

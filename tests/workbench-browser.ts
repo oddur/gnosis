@@ -99,14 +99,26 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     await wait("!document.querySelector('[role=dialog]')");
 
-    await wait("document.querySelector('.activity-summary')?.textContent.includes('2 running')");
+    // Activity is a capsule in the title bar, before Search; the workspace reaches the window's bottom edge.
+    await wait("document.querySelector('.activity-capsule')?.getAttribute('aria-label')?.includes('2 running · 1 queued · 1 failed · 2 ready')");
+    assert.equal(
+      await js(
+        "(()=>{const c=document.querySelector('.app-titlebar .activity-capsule').getBoundingClientRect();const s=[...document.querySelectorAll('.workspace-menu-search')].find(b=>b.checkVisibility()).getBoundingClientRect();return c.right<=s.left&&c.top>=0&&c.bottom<=document.querySelector('.app-titlebar').getBoundingClientRect().bottom})()"
+      ),
+      true,
+      'The capsule sits in the title bar, just before Search'
+    );
+    assert.equal(await js("Math.round(document.querySelector('.workspace-shell').getBoundingClientRect().bottom)===innerHeight"), true);
     const toolbarY = await js("document.querySelector('.queue-toolbar').getBoundingClientRect().y");
     await js("document.querySelector('.activity-trigger').click()");
     await wait("document.querySelectorAll('.activity-task').length === 6");
     assert.equal(await js("document.querySelector('.queue-toolbar').getBoundingClientRect().y"), toolbarY);
-    assert.equal(
-      await js("document.querySelector('.activity-list [role=progressbar]').getAttribute('aria-valuenow')"),
-      String((4 / 15) * 100)
+    // A running explanation expands into its stages; other running work keeps its progress bar.
+    assert.match(
+      await js<string>(
+        "[...document.querySelectorAll('.activity-task')].find(t=>t.textContent.includes('Improve worker recovery')).querySelector('.task-subrows > .task-row[data-status=running]').textContent"
+      ),
+      /Write topics.*4 of 15/
     );
     assert.equal(
       await js("document.querySelectorAll('.activity-list [role=progressbar]:not([aria-valuenow])').length"),
@@ -119,6 +131,8 @@ void app.whenReady().then(async () => {
       "document.querySelector('.activity-drawer').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
     assert.equal(await js("document.activeElement === document.querySelector('.activity-trigger')"), true);
+    // Having seen the results, only running work remains in the capsule.
+    await wait("document.querySelector('.activity-capsule')?.getAttribute('aria-label')==='Activity: 2 running · 1 queued'");
     await js("document.querySelector('.activity-trigger').click()");
     await js(
       "[...document.querySelectorAll('.activity-task')].find(t=>t.textContent.includes('Improve worker recovery')).querySelector('.activity-actions button').click()"
@@ -133,7 +147,7 @@ void app.whenReady().then(async () => {
     await click('Open AI explanation');
     await wait("!!document.querySelector('.explanation-reader')");
     await capture('overview-dark');
-    assert.ok(await js("document.querySelector('.activity-summary')?.textContent.includes('2 running')"));
+    assert.ok(await js("document.querySelector('.activity-capsule')?.getAttribute('aria-label')?.includes('2 running')"));
     await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("!!document.querySelector('.review-narrative')");
     assert.equal(await js("document.querySelectorAll('.source-attribution').length"), 1);
@@ -367,9 +381,9 @@ void app.whenReady().then(async () => {
     const sticky = await js<{ offset: number; text: string }>(`(() => {
       const pane = document.querySelector('.explanation-document');
       const header = document.querySelector('.review-file-context');
-      return { offset: header.getBoundingClientRect().top - pane.getBoundingClientRect().top, text: header.textContent };
+      return { offset: header.getBoundingClientRect().top - pane.getBoundingClientRect().top, text: header.textContent, top: pane.scrollTop, max: pane.scrollHeight - pane.clientHeight, group: header.parentElement.getBoundingClientRect().bottom - pane.getBoundingClientRect().top };
     })()`);
-    assert.ok(Math.abs(sticky.offset) < 2, 'Source header must stay pinned during diff scroll');
+    assert.ok(Math.abs(sticky.offset) < 2, `Source header must stay pinned during diff scroll: ${JSON.stringify({ ...sticky, text: undefined })}`);
     assert.equal(await js("document.querySelector('.review-file-context .source-attribution .entity-badge')?.textContent"), '#121');
     assert.match(sticky.text, /command-queue.ts/);
     assert.match(sticky.text, /Limits pending commands/);
@@ -555,13 +569,14 @@ void app.whenReady().then(async () => {
         return Promise.resolve();
       };
     })()`);
-    await js("document.querySelector('.activity-trigger').click()");
+    // A GitHub refresh alone never raises the capsule; the keyboard shortcut still opens Activity.
+    await js("(document.querySelector('.activity-trigger')?.click() ?? window.dispatchEvent(new KeyboardEvent('keydown',{key:'a',shiftKey:true,metaKey:window.electronAPI.platform==='darwin',ctrlKey:window.electronAPI.platform!=='darwin'})))");
     await wait("document.querySelector('.activity-task')?.textContent.includes('Updating GitHub information')");
     assert.equal(
       await js("document.querySelector('.activity-list [role=progressbar]').getAttribute('aria-valuetext')"),
       '3 of 8 PRs complete'
     );
-    assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);
+    assert.equal(await js("document.querySelectorAll('.activity-actions button:not(.activity-dismiss)').length"), 0);
     await js("document.documentElement.classList.remove('dark')");
     await capture('github-activity-light');
     window.setSize(1024, 700);
@@ -580,13 +595,13 @@ void app.whenReady().then(async () => {
       "void (window.githubTask = Object.assign({}, window.githubTask, {status: 'completed', detail: 'GitHub information updated', warnings: [], canRetry: false}))"
     );
     await wait("document.querySelector('.activity-summary')?.textContent.includes('GitHub updated')");
-    assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);
+    assert.equal(await js("document.querySelectorAll('.activity-actions button:not(.activity-dismiss)').length"), 0);
     assert.ok(await js("document.querySelector('.activity-task').textContent.includes('GitHub information updated')"));
     await js(
       "void (window.githubTask = Object.assign({}, window.githubTask, {status: 'paused', detail: 'GitHub’s API limit was reached. GitHub requests can resume after 11:17 PM. Updates will resume automatically while the queue is open.', canRetry: false, canCancel: false}))"
     );
     await wait("document.querySelector('.activity-summary')?.textContent.includes('1 paused')");
-    assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);
+    assert.equal(await js("document.querySelectorAll('.activity-actions button:not(.activity-dismiss)').length"), 0);
     assert.ok(
       await js("document.querySelector('.activity-task-status').textContent.includes('resume after 11:17 PM')")
     );
@@ -866,7 +881,7 @@ void app.whenReady().then(async () => {
     window.setSize(1280, 800);
     await loadWorkbenchPage(window, fixtureUrl + '?notifications');
     await wait("document.querySelectorAll('.queue-item').length === 7");
-    await wait("document.querySelector('.activity-summary')?.textContent.includes('2 running')");
+    await wait("document.querySelector('.activity-capsule')?.getAttribute('aria-label')?.includes('2 running')");
     assert.equal(await js("document.querySelectorAll('[data-slot=toast]').length"), 0, 'No historical ready toasts');
     await js(`(async () => {
       const review = await window.electronAPI.loadReview('workbench-review');
@@ -924,7 +939,7 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     assert.equal(
       await js(
-        "document.querySelector('.app-toasts').getBoundingClientRect().bottom < document.querySelector('.activity-shell').getBoundingClientRect().top"
+        "(()=>{const t=document.querySelector('.app-toasts').getBoundingClientRect();return t.bottom<=innerHeight&&t.top>=document.querySelector('.app-titlebar').getBoundingClientRect().bottom})()"
       ),
       true
     );
