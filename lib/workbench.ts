@@ -87,6 +87,11 @@ export interface WorkbenchQueue {
   items: QueueItem[];
   warnings: string[];
   remaining: number;
+  /**
+   * Saved PR status for the first rows, sent only with the first snapshot a window requests. The
+   * renderer removes it before storing the queue, so it never changes revisions or identity.
+   */
+  savedSignals?: { account: string; values: import('./queue-signals').QueueSignals[] };
 }
 export interface GroupingOverride {
   parent: string;

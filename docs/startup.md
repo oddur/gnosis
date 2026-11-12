@@ -26,9 +26,9 @@ Add a handler to a list only if it reads nothing that loads later. The `pr-open-
 
 ## Renderer
 
-The renderer waits only for review state before its first render. Preferences are read once and applied when they arrive. The saved queue is requested at the same time as review state, so the first queue render has its rows.
+The renderer waits only for review state before its first render. Preferences are read once and applied when they arrive. The saved queue is requested at the same time as review state, so the first queue render has its rows. That first snapshot also carries the rows' saved status, so their check and review badges show in the same render. See [GitHub sync](github-sync.md).
 
-The review page, the PR summary, settings, Markdown and the conflict editor load on first use. After the queue paints, the others load one at a time while the window is idle. A screen that can show a diff must load through `lazyScreen` in `lib/lazy-screen.ts`. It configures the diff highlighter before the screen resolves, because Pierre allows one highlighter backend per thread. `npm run check:startup-bundle` fails if diffs, shiki, Markdown or xyflow reach the startup bundle.
+The review page, the PR summary, settings, Markdown and the conflict editor load on first use. After the queue paints, the others load one at a time while the window is idle. A screen that can show a diff must load through `lazyScreen` in `lib/lazy-screen.ts`. It configures the diff highlighter before the screen resolves, because Pierre allows one highlighter backend per thread. The diagram explorer, which uses xyflow, loads when its dialog is about to open, not with the review page. `npm run check:startup-bundle` fails if diffs, shiki, Markdown or xyflow reach the startup bundle, or if xyflow loads with the review page. It also prints the size of each lazy screen with the chunks it imports beyond the startup bundle.
 
 ## Measuring
 
@@ -47,6 +47,7 @@ Electron Forge needs stdin kept open. Main logs each mark in milliseconds since 
 | `cache-open.worker` | Time the cache worker spent opening the database and reading rows. |
 | `first-render` | The app rendered for the first time. |
 | `snapshot-ipc` | The first saved queue snapshot arrived. |
+| `snapshot-signals` | Main read the saved status for the first snapshot. Logs the PR count, the values found and the milliseconds taken. |
 | `queue-painted` | The first frame that shows queue rows or the empty state. |
 | `search-apply` | One batch of search-index changes: feeds, documents, evictions and worker time. |
 | `storage` | One maintenance step: the store, its file size, free pages and whether it converted. |

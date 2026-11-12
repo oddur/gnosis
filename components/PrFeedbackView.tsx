@@ -34,6 +34,7 @@ import { replaceDiscussionThread, refreshDiscussion } from '../lib/review-discus
 import { useSessionDraft, ReviewDraftBoundary } from '../lib/session-drafts';
 import type { ReviewSubject } from '../lib/workbench';
 import { timeAgo } from '../lib/utils';
+import { countRender } from '../lib/render-count';
 
 const excerpt = (item: FeedbackItem) =>
   item.comments[0]?.body
@@ -73,6 +74,7 @@ export function PrFeedbackView({
   onIntentHandled?: () => void;
   onSource: (item: FeedbackItem) => void;
 }) {
+  countRender('PrFeedbackView');
   const discussions = useEvidenceDiscussions(subject, account, true, true);
   const scope = `${account}:${subject.id}`;
   const [actionHost, setActionHost] = useState<HTMLDivElement | null>(null);

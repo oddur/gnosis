@@ -1,47 +1,25 @@
 import { watchGitHub } from './watch-github';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { QUEUE_SIGNALS_TTL, queueSignalKey, type QueueSignalRequest, type QueueSignals } from './queue-signals';
+import {
+  publishQueueSignals,
+  signalAccount,
+  signalStamp,
+  signalValues,
+  updates,
+  type SignalEntry,
+} from './queue-signal-store';
 
-interface Entry {
-  value?: QueueSignals;
-  expires: number;
-  pending?: Promise<QueueSignals | undefined>;
-}
-interface BatchItem {
-  request: QueueSignalRequest;
-  resolve: (value: QueueSignals | undefined) => void;
-}
-// Only rows intersecting the scrollport enter this queue. Coalesce their IPC and GitHub reads.
-const accounts = new Map<
-  string,
-  { entries: Map<string, Entry>; batch: Map<string, BatchItem>; timer?: ReturnType<typeof setTimeout> }
->();
-const updates = new EventTarget();
-export function publishQueueSignals(scope: string, values: QueueSignals[]) {
-  let account = accounts.get(scope);
-  if (!account) {
-    account = { entries: new Map(), batch: new Map() };
-    accounts.set(scope, account);
-  }
-  for (const value of values) {
-    const key = queueSignalKey(value);
-    const entry = account.entries.get(key);
-    if (entry?.value && entry.value.checkedAt > value.checkedAt) continue;
-    account.entries.set(key, { ...entry, value, expires: value.checkedAt + QUEUE_SIGNALS_TTL });
-  }
-  updates.dispatchEvent(new Event(scope));
-}
+export { publishQueueSignals } from './queue-signal-store';
+
+// Only rows intersecting the scrollport enter the batch. Coalesce their IPC and GitHub reads.
 function read(scope: string, request: QueueSignalRequest): Promise<QueueSignals | undefined> {
-  let account = accounts.get(scope);
-  if (!account) {
-    account = { entries: new Map(), batch: new Map() };
-    accounts.set(scope, account);
-  }
+  const account = signalAccount(scope);
   const key = queueSignalKey(request);
   const current = account.entries.get(key);
   if (current?.pending) return current.pending;
   if (current && current.expires > Date.now()) return Promise.resolve(current.value);
-  const entry: Entry = { value: current?.value, expires: 0 };
+  const entry: SignalEntry = { value: current?.value, expires: 0 };
   entry.pending = new Promise((resolve) => account.batch.set(key, { request, resolve }));
   account.entries.set(key, entry);
   const state = account;
@@ -75,34 +53,50 @@ function read(scope: string, request: QueueSignalRequest): Promise<QueueSignals 
   }, 150);
   return entry.pending;
 }
+/**
+ * Publish saved status, including expired status, for members without a value. The first queue
+ * snapshot usually brought it already. Resolves false if cancelled.
+ */
+async function restoreSaved(scope: string, members: QueueSignalRequest[], cancelled: () => boolean) {
+  if (signalValues(scope, members).length < members.length)
+    for (let i = 0; i < members.length; i += 25) {
+      const cached = await window.electronAPI.getQueueSignals(members.slice(i, i + 25), { cachedOnly: true }).catch(() => []);
+      if (cancelled()) return false;
+      publishQueueSignals(scope, cached);
+    }
+  return !cancelled();
+}
+/**
+ * Values for these PR revisions, read during render. Saved values published before the first queue
+ * commit show in that commit, and a row renders again only when one of its own values changes.
+ */
+function useSignalValues(scope: string | null, key: string) {
+  const subscribe = useCallback((listener: () => void) => {
+    if (!scope) return () => {};
+    updates.addEventListener(scope, listener);
+    return () => updates.removeEventListener(scope, listener);
+  }, [scope]);
+  const members = useMemo(() => (key ? (JSON.parse(key) as QueueSignalRequest[]) : []), [key]);
+  const stamp = useSyncExternalStore(subscribe, () => (scope ? signalStamp(scope, members) : ''));
+  // The stamp changes whenever a member's value does.
+  return useMemo(() => (scope ? signalValues(scope, members) : NO_SIGNALS), [scope, members, stamp]);
+}
 export function useQueueSignals(scope: string | null, requests: QueueSignalRequest[]) {
   const ref = useRef<HTMLDivElement>(null);
-  const [values, setValues] = useState<QueueSignals[]>([]);
   const [loaded, setLoaded] = useState(false);
   const key = JSON.stringify(requests);
+  const values = useSignalValues(scope, key);
   useEffect(() => {
-    setValues([]);
     setLoaded(false);
     const element = ref.current;
     if (!element || !scope) return;
     const members = JSON.parse(key) as QueueSignalRequest[];
-    const update = () =>
-      setValues(
-        members.flatMap((request) => {
-          const value = accounts.get(scope)?.entries.get(queueSignalKey(request))?.value;
-          return value ? [value] : [];
-        })
-      );
-    update();
-    updates.addEventListener(scope, update);
     let visible = false,
       cancelled = false;
     const load = () => {
       if (!visible || document.visibilityState === 'hidden') return;
-      update();
-      void Promise.all(members.map((request) => read(scope, request))).then((results) => {
+      void Promise.all(members.map((request) => read(scope, request))).then(() => {
         if (cancelled) return;
-        setValues(results.filter((v): v is QueueSignals => !!v));
         setLoaded(true);
       });
     };
@@ -114,17 +108,10 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
         stop ??= watchGitHub({ kind: 'signals', priority: 'visible', targets: members }, update => {
           if (update.kind === 'signals') { publishQueueSignals(scope, [update.value]); setLoaded(true); }
         });
-        // Restore persisted snapshots before waiting on GitHub, including expired snapshots.
-        void (async () => {
-          for (let i = 0; i < members.length; i += 25) {
-            const cached = await window.electronAPI
-              .getQueueSignals(members.slice(i, i + 25), { cachedOnly: true })
-              .catch(() => []);
-            if (cancelled) return;
-            publishQueueSignals(scope, cached);
-          }
-          if (!stop) load(); else { update(); setLoaded(true); }
-        })();
+        // Restore saved status before waiting on GitHub.
+        void restoreSaved(scope, members, () => cancelled).then((current) => {
+          if (current) { if (!stop) load(); else setLoaded(true); }
+        });
       }
     });
     observer.observe(element);
@@ -137,7 +124,6 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
       stop?.();
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibility);
-      updates.removeEventListener(scope, update);
     };
   }, [scope, key]);
   return { ref, values, loaded };
@@ -146,24 +132,13 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
 /** Observe cached status for sorting; this hook never requests a GitHub refresh. */
 const NO_SIGNALS: QueueSignals[] = [];
 export function useCachedQueueSignals(scope: string | null, requests: QueueSignalRequest[], enabled: boolean) {
-  const [state, setState] = useState<{ scope: string | null; key: string; values: QueueSignals[] }>({ scope: null, key: '', values: [] });
   const key = enabled ? JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha }))) : '';
+  const values = useSignalValues(scope && key ? scope : null, key);
   useEffect(() => {
-    setState({ scope, key, values: [] });
     if (!scope || !key) return;
-    const members = JSON.parse(key) as QueueSignalRequest[];
-    const lifecycle = { cancelled: false };
-    const update = () => setState({ scope, key, values: members.flatMap(member => accounts.get(scope)?.entries.get(queueSignalKey(member))?.value ?? []) });
-    update();
-    updates.addEventListener(scope, update);
-    void (async () => {
-      for (let i = 0; i < members.length; i += 25) {
-        const cached = await window.electronAPI.getQueueSignals(members.slice(i, i + 25), { cachedOnly: true }).catch(() => []);
-        if (lifecycle.cancelled) return;
-        publishQueueSignals(scope, cached);
-      }
-    })();
-    return () => { lifecycle.cancelled = true; updates.removeEventListener(scope, update); };
+    let cancelled = false;
+    void restoreSaved(scope, JSON.parse(key) as QueueSignalRequest[], () => cancelled);
+    return () => { cancelled = true; };
   }, [scope, key]);
-  return state.scope === scope && state.key === key ? state.values : NO_SIGNALS;
+  return values;
 }

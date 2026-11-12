@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { githubMarkdownUrl } from '../lib/github-markdown';
+import { githubMarkdownUrl, sameGitHubSource, sameMarkdownProps } from '../lib/github-markdown';
 
 const source = { repo: 'owner/fork', ref: 'abc123' };
 void test('PR Markdown resolves images and source links at the reviewed revision', () => {
@@ -41,4 +41,18 @@ void test('image blob URLs preserve owners or repositories named blob', () => {
     githubMarkdownUrl('https://github.com/blob/blob/blob/main/demo.png', true, source),
     'https://raw.githubusercontent.com/blob/blob/main/demo.png'
   );
+});
+
+void test('equal githubSource fields compare equal', () => {
+  assert.equal(sameGitHubSource({ repo: 'owner/fork', ref: 'abc123' }, { repo: 'owner/fork', ref: 'abc123' }), true);
+  assert.equal(sameGitHubSource({ repo: 'owner/fork', ref: 'abc123' }, { repo: 'owner/fork', ref: 'def456' }), false);
+  assert.equal(sameGitHubSource({ repo: 'o/r', ref: 'a', path: 'docs/a.md' }, { repo: 'o/r', ref: 'a' }), false);
+  assert.equal(sameGitHubSource(undefined, undefined), true);
+  assert.equal(sameGitHubSource({ repo: 'o/r', ref: 'a' }, undefined), false);
+  // PR details build a new source on each render; every other prop must still be compared.
+  const props = { children: 'Text', githubSource: { repo: 'o/r', ref: 'a' }, headingLevel: 3 };
+  assert.equal(sameMarkdownProps(props, { ...props, githubSource: { repo: 'o/r', ref: 'a' } }), true);
+  assert.equal(sameMarkdownProps(props, { ...props, children: 'Changed' }), false);
+  assert.equal(sameMarkdownProps(props, { ...props, headingLevel: 4 }), false);
+  assert.equal(sameMarkdownProps<{ githubSource?: { repo: string; ref: string }; className?: string }>(props, { ...props, className: 'x' }), false);
 });

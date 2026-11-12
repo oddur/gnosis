@@ -9,6 +9,7 @@ import { PrReadiness } from './PrReadiness';
 import { DiffStats } from './DiffStats';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReactNode } from 'react';
+import { countRender } from '../lib/render-count';
 
 export interface PrOverviewContent {
   evidence: ReactNode;
@@ -45,6 +46,7 @@ export function PrDetails({
   showIdentity?: boolean;
   overview?: PrOverviewContent;
 }) {
+  countRender('PrDetails');
   const SectionHeading = showTitle ? 'h3' : 'h2';
   const meta = status ?? m;
   const state = m.merged ? 'Merged' : m.state === 'closed' ? 'Closed' : m.isDraft ? 'Draft' : 'Open';

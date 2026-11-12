@@ -2,13 +2,13 @@ import { SubjectIcon } from './SubjectIcon';
 import { StackDependencyChain } from './StackDependencyChain';
 import { useCachedQueueSignals } from '../lib/use-queue-signals';
 import type { ReviewSubject } from '../lib/workbench';
+import { useStatusNow } from '../lib/status-clock';
 
 /** Sibling navigation reuses local evidence; expanding it does not poll GitHub. */
 export function StackContext({
   subject,
   currentUrl,
   account,
-  now,
   onOpen,
   onStack,
   compact = false,
@@ -16,12 +16,12 @@ export function StackContext({
   subject: ReviewSubject;
   currentUrl: string;
   account: string | null;
-  now: number;
   onOpen: (url: string) => void;
   onStack: () => void;
   compact?: boolean;
 }) {
   const signals = useCachedQueueSignals(account, subject.members, true);
+  const now = useStatusNow();
   return (
     <details className={`stack-context ${compact ? 'stack-context-compact' : ''}`}>
       <summary>

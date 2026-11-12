@@ -2633,7 +2633,27 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   }
   return workbench.queue(force);
 });
-ipcMain.handle('workbench-snapshot', () => workbench.snapshot());
+// The first snapshot a window reads can carry the saved status for its rows, so their badges show at
+// once. Added here, after the revision is stamped, so it never changes the queue's revisions.
+const SAVED_SIGNAL_LIMIT = 300;
+ipcMain.handle('workbench-snapshot', (_event, withSignals?: unknown) => {
+  if (withSignals !== undefined && typeof withSignals !== 'boolean') throw new Error('Invalid snapshot request.');
+  const queue = workbench.snapshot();
+  const token = getResolvedToken();
+  const account = cachedLogin;
+  if (!withSignals || !token || !account) return queue;
+  const started = performance.now();
+  const members = new Map<string, QueueSignalRequest>();
+  for (const item of [...queue.items, ...(queue.starredItems ?? [])]) {
+    for (const { url, headSha } of item.subject.members) {
+      if (members.size >= SAVED_SIGNAL_LIMIT) break;
+      members.set(`${url}@${headSha}`, { url, headSha });
+    }
+  }
+  const values = cachedQueueSignals(getGitHubClient(token), [...members.values()]);
+  note('snapshot-signals', { members: members.size, values: values.length, ms: Math.round((performance.now() - started) * 10) / 10 });
+  return { ...queue, savedSignals: { account, values } };
+});
 ipcMain.handle('workbench-rename-stack', (_event, id: string, name: string, account?: string) => workbench.renameStack(id, name, account));
 ipcMain.handle('pr-badge-preview', (_event, url: string) => {
   if (typeof url !== 'string' || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) return null;

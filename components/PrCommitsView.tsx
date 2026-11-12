@@ -33,6 +33,7 @@ import type { PrChanges } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
 import type { ReviewSubject } from '../lib/workbench';
 import { timeAgo } from '../lib/utils';
+import { countRender } from '../lib/render-count';
 
 interface Position {
   selection?: CommitSelection;
@@ -57,6 +58,7 @@ export function PrCommitsView({
   preferences: Preferences;
   onOpenCurrentFile: (url: string, path: string) => void;
 }) {
+  countRender('PrCommitsView');
   const progress = useFileProgress();
   const [position] = useState(() => restore(subject.id));
   const [lists, setLists] = useState(() =>

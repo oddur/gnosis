@@ -26,8 +26,14 @@ export function InspectionFailureNotice({
 }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (!failure.retryAt) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const retryAt = failure.retryAt;
+    if (!retryAt) return;
+    // Count down to the retry, then stop: the notice stops changing once the time has passed.
+    const timer = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= retryAt) clearInterval(timer);
+    }, 1000);
     return () => clearInterval(timer);
   }, [failure.retryAt]);
   const seconds = Math.max(0, Math.ceil(((failure.retryAt ?? 0) - now) / 1000));

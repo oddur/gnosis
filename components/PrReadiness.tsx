@@ -9,6 +9,7 @@ import { githubFailureMessage } from '../lib/github-feedback';
 import type { QueueSignals } from '../lib/queue-signals';
 import { mergeReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
+import { useStatusNow } from '../lib/status-clock';
 
 export function PrReadiness({
   member,
@@ -29,7 +30,9 @@ export function PrReadiness({
 }) {
   const currentSignals =
     signals && (!status?.signals || signals.checkedAt >= status.signals.checkedAt) ? signals : status?.signals;
-  const readiness = mergeReadiness(member, currentSignals);
+  // The same clock as the page header, so both agree on whether this status is out of date.
+  const now = useStatusNow();
+  const readiness = mergeReadiness(member, currentSignals, now);
   const rollup = currentSignals?.headSha === member.headSha ? currentSignals.checks : undefined;
   const checks = rollup
     ? !rollup.total
