@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { electronTestShim } from './electron-test-build.mjs';
+import { electronTestShim, suiteExitCode, suiteResultVariable } from './electron-test-build.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,7 +35,7 @@ try {
     external: ['electron'],
     plugins: [electronTestShim],
   });
-  const env = { ...process.env };
+  const env = { ...process.env, [suiteResultVariable]: path.join(dir, 'result') };
   delete env.ELECTRON_RUN_AS_NODE;
   const code = await new Promise((resolve, reject) => {
     const child = spawn(electron, [outfile], { env, stdio: 'inherit' });
@@ -52,7 +52,7 @@ try {
       resolve(code);
     });
   });
-  if (code !== 0) process.exitCode = 1;
+  if (suiteExitCode(code, env[suiteResultVariable]) !== 0) process.exitCode = 1;
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }

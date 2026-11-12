@@ -526,3 +526,30 @@ void test('writes made while close runs join the final flush; later ones are cou
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+void test('the worker exiting after a clean close does not fail the closed store', async () => {
+  const dir = fixture();
+  const store = createAppDataStore();
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await store.open(dir);
+    const closing = store.close();
+    // Hold the main thread once the close request is posted, so its reply and the worker's exit arrive
+    // together. The exit then fires before close() resumes, which must not count as a crash.
+    await new Promise<void>((resolve) =>
+      setTimeout(() => {
+        const until = Date.now() + 300;
+        while (Date.now() < until);
+        resolve();
+      })
+    );
+    await closing;
+    store.write('workbench:late', queue('late'));
+    assert.equal(store.lostWrites(), 1);
+    assert.deepEqual(store.read('workbench:late'), queue('late'));
+  } finally {
+    console.warn = warn;
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

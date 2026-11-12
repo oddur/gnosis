@@ -83,15 +83,15 @@ void app.whenReady().then(async () => {
     console.log(
       'Image comparison browser checks passed: raster/SVG, two columns, added/deleted, source, safe SVG, retry, Viewed, zoom and focus.'
     );
+    win.destroy();
+    app.exit(0);
   } catch (error) {
     console.error(error);
     fs.writeFileSync(
       path.join(os.tmpdir(), 'gnosis-images-failure.png'),
       (await win.webContents.capturePage()).toPNG()
     );
-    process.exitCode = 1;
-  } finally {
     win.destroy();
-    app.quit();
+    app.exit(1);
   }
 });

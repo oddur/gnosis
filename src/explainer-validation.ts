@@ -101,16 +101,16 @@ export async function validateSvgIllustrationInBrowser(
         const issues: unknown = await window.webContents.executeJavaScript(`new Promise(resolve=>{
           document.body.style='margin:0';
           const frame=document.createElement('iframe');frame.id='illustration';frame.setAttribute('sandbox','allow-scripts');frame.style='width:440px;height:300px;border:0';
-          let theme=0;
+          let theme=0,size;
           const send=(command,extra={})=>frame.contentWindow.postMessage({type:'gnosis-illustration-control',token:${JSON.stringify(token)},command,...extra},'*');
           addEventListener('message',event=>{
             if(event.source!==frame.contentWindow||event.data?.token!==${JSON.stringify(token)})return;
             const d=event.data;
             if(d.event==='error')resolve([d.message]);
-            if(d.event==='ready'){frame.style.height=Math.min(480,440*d.height/d.width)+'px';send('validate');}
+            if(d.event==='ready'){size={width:440,height:Math.min(480,440*d.height/d.width)};frame.style.height=size.height+'px';send('validate',{size});}
             if(d.event==='validated'){
               if(d.issues.length||theme++)resolve(d.issues);
-              else{send('theme',{dark:true});send('validate');}
+              else{send('theme',{dark:true});send('validate',{size});}
             }
           });
           frame.srcdoc=${JSON.stringify(html)};document.body.append(frame);
