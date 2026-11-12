@@ -40,6 +40,7 @@ import {
   splitIntoProseChecks,
 } from '@/lib/review-checks';
 import { useCopyToClipboard } from '@/lib/use-copy';
+import { countRender } from '@/lib/render-count';
 import { extractShikiStyles, type CommentCallbacks } from '@/components/shared-diff-utils';
 import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
@@ -445,6 +446,7 @@ export function SlideView({
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
 }: SlideViewProps) {
+  countRender('SlideView');
   const [diagramOpen, setDiagramOpen] = useState(false);
   useEffect(() => setDiagramOpen(false), [slide.id]);
   const narrativeScroll = useSessionScroll(`${slide.id}:narrative`);
@@ -487,14 +489,17 @@ export function SlideView({
       ),
     [slide.inlineExplanations, slide.diffHunks, review?.changedFiles, fileMetadataMap]
   );
-  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 1000px)').matches);
+  const [narrow, setNarrow] = useState(() => !presentation && window.matchMedia('(max-width: 1000px)').matches);
   const [narrowPane, setNarrowPane] = useState<'explanation' | 'code'>('explanation');
   useEffect(() => {
+    // A single presentation, as in the Explanation, never switches panes. Re-rendering every section and its diffs
+    // when the window crosses 1000px cost about 450 ms in one resize step.
+    if (presentation) return;
     const media = window.matchMedia('(max-width: 1000px)');
     const update = () => setNarrow(media.matches);
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
-  }, []);
+  }, [presentation]);
   const hasRightSlot = !!rightSlot;
   useEffect(() => {
     if (hasRightSlot) setNarrowPane('code');
