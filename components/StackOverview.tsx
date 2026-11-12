@@ -19,9 +19,9 @@ import { StackMemberDetails } from './StackMergeDetails';
 import { Button } from './ui/button';
 import { stackMergePlan } from '../lib/stack-merge-plan';
 import { StackMergePlan } from './StackMergePlan';
+import { useStatusNow } from '../lib/status-clock';
 
 export function StackOverview({
-  now,
   account,
   checking,
   onRefresh,
@@ -36,7 +36,6 @@ export function StackOverview({
   onChecks,
   onFeedback,
 }: {
-  now: number;
   account: string | null;
   checking: boolean;
   onRefresh: () => void;
@@ -54,6 +53,7 @@ export function StackOverview({
   const { subject } = item;
   const discussions = useEvidenceDiscussions(subject, account, false);
   const linear = stackDependencyOrder(subject).linear;
+  const now = useStatusNow();
   const plan = stackMergePlan(subject, signals, checks, now);
   const progress = useFileProgress();
   useSyncExternalStore(inspectionData.subscribe, inspectionData.getVersion);

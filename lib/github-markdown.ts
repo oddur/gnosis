@@ -38,3 +38,16 @@ export function githubMarkdownUrl(url: string, image: boolean, source: GitHubMar
   const directory = source.path?.split('/').slice(0, -1).map(encodeURIComponent).join('/');
   return new URL(safe.replace(/^\//, ''), base + (!safe.startsWith('/') && directory ? directory + '/' : '')).href;
 }
+
+/** Equal when every field is equal. Callers often build a new source object on each render. */
+export function sameGitHubSource(a?: GitHubMarkdownSource, b?: GitHubMarkdownSource) {
+  return a === b || (!!a && !!b && a.repo === b.repo && a.ref === b.ref && a.path === b.path);
+}
+
+/** Props are equal when each one is identical, except that sources compare by their fields. */
+export function sameMarkdownProps<P extends { githubSource?: GitHubMarkdownSource }>(a: P, b: P) {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof P>;
+  return [...keys].every((key) =>
+    key === 'githubSource' ? sameGitHubSource(a.githubSource, b.githubSource) : Object.is(a[key], b[key])
+  );
+}

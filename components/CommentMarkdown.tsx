@@ -1,9 +1,13 @@
 import { markdownHeadings } from './MarkdownHeadings';
-import { Children, isValidElement } from 'react';
+import { Children, isValidElement, memo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MarkdownImage } from './Markdown';
 import { nameMarkdownTasks } from '../lib/markdown-tasks';
+import { countRender } from '../lib/render-count';
+
+const REMARK = [remarkGfm];
+const REHYPE = [nameMarkdownTasks];
 
 const commentComponents: Components = {
   ...markdownHeadings,
@@ -34,13 +38,17 @@ const commentComponents: Components = {
   },
 };
 
-/** The same rendering policy for a draft preview and a saved GitHub comment. */
-export function CommentMarkdown({ children }: { children: string }) {
+/**
+ * The same rendering policy for a draft preview and a saved GitHub comment. react-markdown parses on
+ * every render, so the comment renders only when its text changes.
+ */
+export const CommentMarkdown = memo(function CommentMarkdown({ children }: { children: string }) {
+  countRender('CommentMarkdown');
   return (
     <div className="github-comment-body select-text">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[nameMarkdownTasks]}
+        remarkPlugins={REMARK}
+        rehypePlugins={REHYPE}
         skipHtml
         components={commentComponents}
       >
@@ -48,4 +56,4 @@ export function CommentMarkdown({ children }: { children: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});

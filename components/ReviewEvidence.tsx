@@ -18,6 +18,7 @@ import type { ReviewSubject } from '../lib/workbench';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { PrChecks } from '../lib/pr-checks';
 import { timeAgo } from '../lib/utils';
+import { useStatusNow } from '../lib/status-clock';
 
 export function ReviewEvidence({
   subject,
@@ -25,7 +26,6 @@ export function ReviewEvidence({
   checks,
   checkErrors,
   account,
-  now,
   onChecks,
   onFeedback,
   onRefresh,
@@ -38,7 +38,6 @@ export function ReviewEvidence({
   checks: Partial<Record<string, PrChecks>>;
   checkErrors: Partial<Record<string, string>>;
   account: string | null;
-  now: number;
   onFeedback?: (url: string) => void;
   onChecks: (url: string, id?: string) => void;
   onRefresh: () => void;
@@ -46,6 +45,7 @@ export function ReviewEvidence({
   refreshError?: string;
   compact?: boolean;
 }) {
+  const now = useStatusNow();
   const [expanded, setExpanded] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const focusDetails = useRef(false);

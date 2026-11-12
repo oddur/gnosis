@@ -14,6 +14,7 @@ import { Button } from './ui/button';
 import { readReviewState } from '../lib/renderer-review-state';
 import { explanationPositionKey } from '../lib/use-explanation-scroll';
 import { isActiveTask, type ActivityTask } from '../lib/activity';
+import { countRender } from '../lib/render-count';
 
 export function PrExplanation({
   item,
@@ -44,6 +45,7 @@ export function PrExplanation({
   onBack: () => void;
   onOpenChanges: () => void;
 }) {
+  countRender('PrExplanation');
   useSyncExternalStore(inspectionData.subscribe, inspectionData.getVersion);
   const limited = item.subject.members.filter((member) => {
     const snapshot = inspectionData.peekChanges(member);

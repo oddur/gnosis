@@ -3,16 +3,18 @@ import { LoadingIndicator } from './LoadingState';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
-import { Children, isValidElement, useState, type ComponentProps } from 'react';
+import { Children, isValidElement, memo, useMemo, useState, type ComponentProps } from 'react';
+import type { PluggableList } from 'unified';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
-import { githubMarkdownUrl, type GitHubMarkdownSource } from '../lib/github-markdown';
+import { githubMarkdownUrl, sameMarkdownProps, type GitHubMarkdownSource } from '../lib/github-markdown';
 import { isGitHubImageUrl } from '../lib/github-image';
 import { cn } from '@/lib/utils';
 import { nameMarkdownTasks } from '../lib/markdown-tasks';
 import { scopeMarkdownHeadings } from '../lib/markdown-headings';
 import { MermaidDiagram } from './MermaidDiagram';
 import { D2Diagram } from './D2Diagram';
+import { countRender } from '../lib/render-count';
 
 interface Props {
   children: string;
@@ -161,33 +163,47 @@ const githubComponents: Components = {
   ),
 };
 
-export function Markdown({ children, className, githubSource, headingLevel }: Props) {
+// Plugin lists are module constants, so react-markdown sees the same configuration on every render.
+const REMARK: PluggableList = [remarkGfm];
+const PLAIN: PluggableList = [nameMarkdownTasks];
+const GITHUB: PluggableList = [rehypeRaw, rehypeSanitize, nameMarkdownTasks];
+const githubWithHeadings = new Map<number, PluggableList>();
+function githubPlugins(headingLevel?: number): PluggableList {
+  if (!headingLevel) return GITHUB;
+  let plugins = githubWithHeadings.get(headingLevel);
+  if (!plugins) {
+    plugins = [...GITHUB, [scopeMarkdownHeadings, { startLevel: headingLevel }]];
+    githubWithHeadings.set(headingLevel, plugins);
+  }
+  return plugins;
+}
+
+/**
+ * react-markdown parses its text on every render, so Markdown renders only when a prop changes. A
+ * GitHub source compares by its fields, because callers often build a new one on each render.
+ */
+export const Markdown = memo(function Markdown({ children, className, githubSource, headingLevel }: Props) {
+  countRender('Markdown');
+  const repo = githubSource?.repo,
+    ref = githubSource?.ref,
+    path = githubSource?.path;
+  const urlTransform = useMemo(
+    () =>
+      repo === undefined || ref === undefined
+        ? undefined
+        : (url: string, key: string) => githubMarkdownUrl(url, key === 'src', { repo, ref, path }),
+    [repo, ref, path]
+  );
   return (
     <div className={cn('markdown-body select-text', className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={
-          githubSource
-            ? [
-                rehypeRaw,
-                rehypeSanitize,
-                nameMarkdownTasks,
-                ...(headingLevel
-                  ? [
-                      [scopeMarkdownHeadings, { startLevel: headingLevel }] as [
-                        typeof scopeMarkdownHeadings,
-                        { startLevel: number },
-                      ],
-                    ]
-                  : []),
-              ]
-            : [nameMarkdownTasks]
-        }
-        urlTransform={githubSource ? (url, key) => githubMarkdownUrl(url, key === 'src', githubSource) : undefined}
+        remarkPlugins={REMARK}
+        rehypePlugins={githubSource ? githubPlugins(headingLevel) : PLAIN}
+        urlTransform={urlTransform}
         components={githubSource ? githubComponents : components}
       >
         {children}
       </ReactMarkdown>
     </div>
   );
-}
+}, sameMarkdownProps);

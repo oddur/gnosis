@@ -15,7 +15,7 @@ import { stackScopeChoices } from '../lib/stack-workspace';
 import { Button } from './ui/button';
 import { PrChecksView, type CheckFocus } from './PrChecksView';
 import { usePrChecks } from '../lib/use-pr-checks';
-import { checkCounts } from '../lib/pr-checks';
+import { checkCounts, type PrChecks } from '../lib/pr-checks';
 import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { PrActions } from './PrActions';
@@ -38,7 +38,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
-import { type QueueItem } from '../lib/workbench';
+import { type QueueItem, type ReviewSubject } from '../lib/workbench';
+import type { QueueSignals } from '../lib/queue-signals';
+import { statusClock, useStatusNow } from '../lib/status-clock';
+import { countRender } from '../lib/render-count';
 import type { PrStatus } from '../lib/types';
 import { timeAgo } from '../lib/utils';
 import { useQueueSignals } from '../lib/use-queue-signals';
@@ -236,6 +239,7 @@ function PrSummaryContent({
   positions: Map<string, PrReadingPosition>;
   shortcutsEnabled?: boolean;
 }) {
+  countRender('PrSummaryContent');
   usePrReadVisit(item.subject.members, tab === 'summary' && item.subject.kind === 'pr', 'summary');
   // Tabs stay mounted once visited. The set only grows while this PR is shown.
   const [visited, setVisited] = useState<ReadonlySet<WorkspaceTab>>(() => new Set([tab]));
@@ -324,21 +328,10 @@ function PrSummaryContent({
     account,
     item.subject.members.map((m) => ({ url: m.url, headSha: m.headSha }))
   );
-  // Use one render-time clock for the entire workspace. Child-only cache updates
-  // must not age member badges while leaving the header claiming fresh status.
-  const [, tickStatus] = useState(0);
-  useEffect(() => {
-    const tick = () => tickStatus(value => value + 1);
-    const timer = setInterval(tick, 30_000);
-    // Sync pushes no longer re-render unchanged views, so returning to the window re-ages status at once.
-    document.addEventListener('visibilitychange', tick);
-    window.addEventListener('focus', tick);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
-  }, []);
-  const statusNow = Date.now();
-  const stackStatus = stacked ? stackMergeStatus(item.subject, signals, checks.values, statusNow) : undefined;
-  const mergePlan = stacked ? stackMergePlan(item.subject, signals, checks.values, statusNow) : undefined;
-  const readiness = stackStatus?.summary ?? subjectReadiness(item.subject, signals, statusNow);
+  // Status ages on the shared status clock in lib/status-clock.ts. Only the components that show
+  // status read it, so a tick re-renders them and not this page, its kept tabs or the explanation.
+  // New status, or a failed refresh, is aged at once: every status component reads the new time.
+  useEffect(() => statusClock.tick(), [statuses, statusErrors]);
   const commonRepo = stacked && new Set(item.subject.members.map(m => m.repo)).size === 1 ? first.repo : undefined;
   const state = first.merged ? 'Merged' : first.state === 'closed' ? 'Closed' : first.isDraft ? 'Draft' : 'Open';
   useEffect(() => {
@@ -427,7 +420,6 @@ function PrSummaryContent({
       key={`${account}:${item.subject.id}`}
       subject={item.subject}
       account={account}
-      now={statusNow}
       signals={[...signals, ...item.subject.members.flatMap(member => statuses[member.url]?.signals ?? [])]}
       checks={checks.values}
       checkErrors={checks.errors}
@@ -494,7 +486,7 @@ function PrSummaryContent({
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
             {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
             {actions}
-            {stacked && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} mergeReady={readiness.ready} onChanged={onRetryStatus} />}
+            {stacked && <StackMergeActions subject={item.subject} signals={signals} checks={checks.values} onChanged={onRetryStatus} />}
           </div>
           {renaming && <form className="stack-name-form" onSubmit={event => {
             event.preventDefault(); if (!onRenameStack || nameBusy) return;
@@ -534,10 +526,8 @@ function PrSummaryContent({
           </div>
         </header>}</PrEntryActions>
         <div ref={statusRef} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
-          {!stacked && <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} />}
-          {(stacked || tab !== 'summary') && <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />}
-          {(stacked || tab !== 'summary') && (stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} updating={item.subject.members.some(member => statuses[member.url]?.stale && !statusErrors[member.url])} />)}
-          {mergePlan && <StackChecksFreshness plan={mergePlan} now={statusNow} delayed={Object.values(checks.errors).some(Boolean)} />}
+          <PrStatusLine subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} checks={checks.values} checkErrors={checks.errors}
+            showReadiness={stacked || tab !== 'summary'} updating={item.subject.members.some(member => statuses[member.url]?.stale && !statusErrors[member.url])} />
           {stacked && <button aria-label="Refresh status" title="Refresh status" disabled={statusRefreshing || !account} onClick={onRetryStatus}><RefreshCw size={14} className={statusRefreshing ? 'animate-spin' : undefined} /></button>}
           {!stacked && <div className="pr-summary-review-actions" inert={tab !== 'summary'} style={{ visibility: tab === 'summary' ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>}
         </div>
@@ -625,7 +615,7 @@ function PrSummaryContent({
             ))}
             {stacked ? <div className="stack-summary-layout">
               <div className="stack-summary-main">
-                <StackOverview account={account} now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
+                <StackOverview account={account} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
                   onFeedback={member => { setFeedbackPr(member.url); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }} onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
                 {evidence}
                 <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
@@ -634,7 +624,7 @@ function PrSummaryContent({
               overview={{
                 evidence,
                 onChanges: () => onTabChange('changes'),
-                stackContext: parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} now={statusNow} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} compact />,
+                stackContext: parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} compact />,
                 briefing: item.briefing?.status === 'ready' && <details className="pr-briefing"><summary>AI briefing</summary><Markdown>{item.briefing.summary ?? ''}</Markdown></details>,
               }}
               generationActions={generationActions}
@@ -663,6 +653,42 @@ function PrSummaryContent({
       </main>
     </Tabs.Root>
   );
+}
+
+/** Review status and merge readiness in the page header. It re-renders on each status clock tick. */
+function PrStatusLine({ subject, signals, checking, checks, checkErrors, showReadiness, updating }: {
+  subject: ReviewSubject;
+  signals: QueueSignals[];
+  checking: boolean;
+  checks: Partial<Record<string, PrChecks>>;
+  checkErrors: Partial<Record<string, string>>;
+  showReadiness: boolean;
+  updating: boolean;
+}) {
+  countRender('PrStatusLine');
+  const now = useStatusNow();
+  const stacked = subject.kind === 'stack';
+  const stackStatus = stacked ? stackMergeStatus(subject, signals, checks, now) : undefined;
+  const mergePlan = stacked ? stackMergePlan(subject, signals, checks, now) : undefined;
+  const readiness = stackStatus?.summary ?? subjectReadiness(subject, signals, now);
+  return <>
+    {!stacked && <SubjectReviewStatus subject={subject} signals={signals} checking={checking} now={now} />}
+    {showReadiness && <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />}
+    {showReadiness && (stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} updating={updating} />)}
+    {mergePlan && <StackChecksFreshness plan={mergePlan} now={now} delayed={Object.values(checkErrors).some(Boolean)} />}
+  </>;
+}
+
+/** Merge actions for a whole stack. Whether it can merge depends on the status clock. */
+function StackMergeActions({ subject, signals, checks, onChanged }: {
+  subject: ReviewSubject;
+  signals: QueueSignals[];
+  checks: Partial<Record<string, PrChecks>>;
+  onChanged: () => void;
+}) {
+  const now = useStatusNow();
+  const ready = stackMergeStatus(subject, signals, checks, now).summary.ready;
+  return <PrActions member={subject.members[subject.members.length - 1]} stackMembers={subject.members} mergeReady={ready} onChanged={onChanged} />;
 }
 
 export function PrSummary(props: ComponentProps<typeof PrSummaryContent>) {

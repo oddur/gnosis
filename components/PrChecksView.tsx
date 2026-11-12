@@ -33,6 +33,7 @@ import { CheckJobSteps } from './CheckJobSteps';
 import { Markdown } from './Markdown';
 import { Button } from './ui/button';
 import { timeAgo } from '../lib/utils';
+import { countRender } from '../lib/render-count';
 export interface CheckFocus {
   url: string;
   id?: string;
@@ -63,6 +64,7 @@ export function PrChecksView({
   focus?: CheckFocus;
   onSource: (url: string, path: string, line: number, headSha: string) => void;
 }) {
+  countRender('PrChecksView');
   const [view, setView] = useState<ChecksView>(preferredChecksView);
   const [graphDetails, setGraphDetails] = useState(false);
   const [graphVisited, setGraphVisited] = useState(() => preferredChecksView() === 'graph');
