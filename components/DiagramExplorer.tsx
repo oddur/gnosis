@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import type { DiagramEntityBounds, DiagramExploration } from '../lib/diagram-exploration';
 import '@xyflow/react/dist/style.css';
 import './diagram-explorer.css';
+import { settledObserver } from '../lib/resize-activity';
 
 type DrawingNode = Node<{ drawing: ReactNode }, 'drawing'>;
 type EntityNode = Node<{ label: string; active: boolean; select: () => void }, 'entity'>;
@@ -53,7 +54,8 @@ export function DiagramExplorer({
   useEffect(() => {
     if (!flow || !canvas.current) return;
     let frame = 0;
-    const observer = new ResizeObserver(() => {
+    // Fit once the window resize settles, instead of animating the view on every step of a drag.
+    const observer = settledObserver(() => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => void flow.fitView({ padding: 0.12, maxZoom: 1.5 }));
     });

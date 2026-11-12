@@ -143,7 +143,9 @@ const RUNTIME = String.raw`
   }
   new ResizeObserver(scheduleLayout).observe(root);
   new MutationObserver(scheduleLayout).observe(root, {subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['viewBox']});
-  addEventListener('resize', scheduleLayout);
+  // A dragged window fits the drawing once it settles, not on every step.
+  let resizeTimer = 0;
+  addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(scheduleLayout, 120); });
   root.addEventListener('input', scheduleLayout);
   root.addEventListener('change', scheduleLayout);
   motion = createExplainerMotion(root, motionPreference);
