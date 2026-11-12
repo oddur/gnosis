@@ -27,6 +27,7 @@
 //   --profile           print the top self-time functions from a CPU profile of the last run
 //   --json              print one JSON object instead of text
 //   --steps             print every step's time, work, layouts and style recalcs
+//   --count-renders     report the app's render counters (lib/render-count.ts) for each sweep
 /* global console, fetch, WebSocket */
 import process from 'node:process';
 import { setTimeout } from 'node:timers';
@@ -199,6 +200,7 @@ async function sweep(withProfile) {
       await send('Profiler.setSamplingInterval', { interval: 200 });
       await send('Profiler.start');
     }
+    if (flag('count-renders')) await evaluate('window.__countRenders = true; window.__renderCounts = {}; 0');
     const before = await metrics();
     const steps = [];
     let previous = before;
@@ -218,6 +220,11 @@ async function sweep(withProfile) {
       previous = sample;
     }
     const after = previous;
+    const renders = flag('count-renders')
+      ? await evaluate(
+          '(() => { const counts = window.__renderCounts; window.__countRenders = false; return counts; })()'
+        )
+      : undefined;
     const profile = withProfile ? (await send('Profiler.stop')).profile : undefined;
     const d = (k) => ((after[k] ?? 0) - (before[k] ?? 0)) * 1000;
     const times = steps.map((s) => s.ms).sort((a, b) => a - b);
@@ -240,6 +247,7 @@ async function sweep(withProfile) {
       maxStylesPerStep: Math.max(...steps.map((s) => s.styles)),
       profile,
       detail: steps,
+      renders,
     };
   } finally {
     await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
@@ -268,6 +276,7 @@ try {
     results.push(result);
     log(`[${label}] run ${run + 1}/${runs} page=${JSON.stringify(result.shape)}`);
     log(`[${label}] run ${run + 1}/${runs} steps=${result.steps} ${fmt(result)}`);
+    if (result.renders) log(`[${label}] run ${run + 1}/${runs} renders=${JSON.stringify(result.renders)}`);
     if (flag('steps'))
       for (const step of result.detail)
         log(
