@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1100, height: 760, show: true, webPreferences: { backgroundThrottling: false } });
@@ -43,7 +44,8 @@ void app.whenReady().then(async () => {
       void window.preloadCache.flush();
     })()`);
     await wait('!!window.releaseFirst');
-    await js("document.querySelector('.activity-trigger').click()");
+    // The account menu opens Activity whether or not the title bar capsule is showing.
+    await js(chooseWorkspaceMenuItem('[data-activity]'));
     await wait("document.querySelector('.activity-task h3')?.textContent==='Preparing PRs for instant opening'");
     assert.match(await js<string>("document.querySelector('.activity-task').textContent"), /example\/engine #1.*Changed files.*0 prepared.*2 pending/);
     assert.equal(await js("document.querySelector('.activity-task [role=progressbar]').getAttribute('aria-valuenow')"), '0');
