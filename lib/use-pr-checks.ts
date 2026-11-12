@@ -22,6 +22,10 @@ export function usePrChecks(
   }>({ scope, values: {}, errors: {}, busy: false });
   const [attempt, setAttempt] = useState<{ nonce: number; url?: string }>({ nonce: 0 });
   const previousAttempt = useRef(0);
+  const latestStatuses = useRef(statuses);
+  latestStatuses.current = statuses;
+  // One opened read per mount, for members that have nothing to show yet.
+  const openedRead = useRef(false);
   const values = state.scope === scope && account ? { ...state.values } : {};
   if (account)
     for (const member of subject.members) {
@@ -38,25 +42,28 @@ export function usePrChecks(
       if (live)
         setState((current) => fn(current.scope === scope ? current : { scope, values: {}, errors: {}, busy: false }));
     };
-    const load = async (cachedOnly: boolean, force = false) => {
+    const shown = new Set<string>();
+    const load = async (cachedOnly: boolean, force = false, members = subject.members, opened = false) => {
       if (!live || loading || document.visibilityState === 'hidden') return;
       loading = true;
       if (!cachedOnly) update((current) => ({ ...current, busy: true }));
       await Promise.allSettled(
-        subject.members
+        members
           .filter((member) => !force || !attempt.url || member.url === attempt.url)
           .map(async (member) => {
             try {
               const value = await window.electronAPI.getPrChecks(
                 { url: member.url, headSha: member.headSha },
-                { cachedOnly, force, background: !force }
+                { cachedOnly, force, background: !force, ...(opened ? { opened } : {}) }
               );
-              if (value)
+              if (value) {
+                shown.add(member.url);
                 update((current) =>
                   value.checkedAt >= (current.values[value.url]?.checkedAt ?? -1)
                     ? { ...current, values: { ...current.values, [value.url]: value } }
                     : current
                 );
+              }
               if (!cachedOnly)
                 update((current) => {
                   const errors = { ...current.errors };
@@ -109,8 +116,22 @@ export function usePrChecks(
         ...current,
         busy: subject.members.some((member) => !current.values[member.url] && !current.errors[member.url]),
       }));
-    void load(true).then(() => {
-      if (!stop || force) return load(false, force);
+    void load(true).then(async () => {
+      // With nothing saved and no status seed, the first read joins the status read at interactive priority.
+      const empty = subject.members.filter(
+        (member) =>
+          !shown.has(member.url) && latestStatuses.current[member.url]?.checkSnapshot?.headSha !== member.headSha
+      );
+      const opened = active && !force && !openedRead.current && empty.length > 0;
+      if (opened) {
+        openedRead.current = true;
+        await load(false, false, empty, true);
+      }
+      if (!stop || force) {
+        const rest = opened ? subject.members.filter((member) => !empty.includes(member)) : subject.members;
+        if (rest.length) await load(false, force, rest);
+        return;
+      }
       update((current) => ({
         ...current,
         busy: subject.members.some((member) => !current.values[member.url] && !current.errors[member.url]),

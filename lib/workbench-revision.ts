@@ -30,21 +30,41 @@ function canonical(value: unknown): string {
       : entry
   );
 }
-const hash = (value: unknown) => contentHash(canonical(value));
+const frozenHashes = new WeakMap<object, string>();
+/** Frozen inputs cannot change, so their hash is computed once per object. */
+const hash = (value: unknown) => {
+  const frozen = !!value && typeof value === 'object' && Object.isFrozen(value);
+  const known = frozen ? frozenHashes.get(value) : undefined;
+  if (known !== undefined) return known;
+  const result = contentHash(canonical(value));
+  if (frozen) frozenHashes.set(value, result);
+  return result;
+};
 
 /**
  * Content identity for one queue entry. `briefing.updatedAt` is excluded because an uncached
  * briefing reports the current time on every read.
  */
-export function itemRevision(item: QueueItem): string {
+export function itemRevision(item: QueueItem, reuseMembers = false): string {
   return hash({
     ...item,
+    subject: item.subject && { ...item.subject, members: item.subject.members.map(m => memberRevision(m, reuseMembers)) },
     revision: undefined,
     briefing: item.briefing && { ...item.briefing, updatedAt: undefined },
   });
 }
+// Members carry full PR descriptions; re-serializing them on every main-process view dominated
+// stamping. The main queue state replaces members rather than editing them, so it may reuse a
+// member's hash by identity. Other callers can edit members in place and always rehash.
+const memberRevisions = new WeakMap<object, string>();
+function memberRevision(member: QueueItem['subject']['members'][number], reuse: boolean): string {
+  if (!reuse) return contentHash(canonical(member));
+  let revision = memberRevisions.get(member);
+  if (revision === undefined) memberRevisions.set(member, (revision = contentHash(canonical(member))));
+  return revision;
+}
 
-export function historyRevision(history: ReviewHistoryEntry[]): string {
+export function historyRevision(history: readonly ReviewHistoryEntry[]): string {
   return hash(history);
 }
 
@@ -52,11 +72,15 @@ export function historyRevision(history: ReviewHistoryEntry[]): string {
  * Stamp a snapshot with content revisions. Item revisions are written onto the entries in place,
  * so callers that hold the same entries see current revisions; the queue itself is copied.
  */
-export function stampQueue(queue: WorkbenchQueue, history?: ReviewHistoryEntry[]): WorkbenchQueue {
+export function stampQueue(
+  queue: WorkbenchQueue,
+  history?: readonly ReviewHistoryEntry[],
+  options: { reuseMembers?: boolean } = {}
+): WorkbenchQueue {
   const stamped = new Set<QueueItem>();
   const stamp = (item: QueueItem) => {
     if (!stamped.has(item)) {
-      item.revision = itemRevision(item);
+      item.revision = itemRevision(item, options.reuseMembers);
       stamped.add(item);
     }
     return item.revision;

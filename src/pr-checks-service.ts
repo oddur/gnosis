@@ -1,6 +1,6 @@
 import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
-import { readChecksGraphQL } from './pr-checks-graphql';
+import { CheckHeadChanged, readChecksGraphQL } from './pr-checks-graphql';
 import {
   checkKey,
   checkVersion,
@@ -25,6 +25,28 @@ export async function readPrChecks(
   options: { cachedOnly?: boolean; force?: boolean } = {}
 ): Promise<PrChecks | undefined> {
   return (await readPrChecksBatch(client, [input], options))[0];
+}
+
+/**
+ * Network read for the Checks view. A valid caller head is read directly, because the checks query
+ * verifies the head itself. A moved head, a forced read or a missing head reads `head` first.
+ */
+export async function readCurrentPrChecks(
+  client: Octokit,
+  input: CheckTarget,
+  options: { force?: boolean },
+  head: (fresh: boolean) => Promise<string>
+): Promise<PrChecks | undefined> {
+  let moved = false;
+  if (!options.force && typeof input.headSha === 'string' && /^[a-f\d]{40}$/i.test(input.headSha)) {
+    try {
+      return await readPrChecks(client, input, options);
+    } catch (error) {
+      if (!(error instanceof CheckHeadChanged)) throw error;
+      moved = true;
+    }
+  }
+  return readPrChecks(client, { url: input.url, headSha: await head(!!options.force || moved) }, options);
 }
 
 /** Local data only. The saved check list for one PR revision and whether a write marked it stale. */

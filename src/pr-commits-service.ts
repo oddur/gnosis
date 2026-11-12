@@ -17,6 +17,7 @@ import {
   type CommitSelection,
 } from '../lib/pr-commits';
 import type { PrChanges, PrChangeFile, PrFileRequest } from '../lib/pr-changes';
+import type { PrMetadata } from '../lib/types';
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function target(url: string) {
   if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) throw new Error('Choose a GitHub PR.');
@@ -169,6 +170,36 @@ export function createPrCommitsService(clones = localClones) {
   }
   const listKey = (url: string, base: string, head: string) => `pr-commits:v1:${url}:${base}:${head}`;
   const latestKey = (url: string) => `pr-commits:v1:${url}:latest`;
+  const unique = (commits: PrCommit[]) => new Set(commits.map((c) => c.sha)).size === commits.length;
+  /** GitHub's PR-commits endpoint is capped at 250. Comparison pagination covers larger PRs. */
+  async function fetchCommits(
+    client: Octokit,
+    t: ReturnType<typeof target>,
+    revision: { baseSha: string; headSha: string },
+    large: boolean
+  ): Promise<PrCommit[]> {
+    if (!large)
+      return (
+        await client.paginate(client.pulls.listCommits, {
+          ...t,
+          per_page: 100,
+          headers: { 'cache-control': 'no-cache' },
+        })
+      ).map(normalize);
+    const commits: PrCommit[] = [];
+    for (let page = 1; ; page++) {
+      const { data, headers } = await client.repos.compareCommits({
+        owner: t.owner,
+        repo: t.repo,
+        base: revision.baseSha,
+        head: revision.headSha,
+        per_page: 100,
+        page,
+      });
+      commits.push(...data.commits.map(normalize));
+      if (!headers.link?.includes('rel="next"')) return commits;
+    }
+  }
   async function list(client: Octokit, url: string, refresh = false, options: InspectionLoadOptions = {}, signal?: AbortSignal): Promise<PrCommits> {
     const t = target(url);
     return share(client, `list:${url}:${refresh}:${options.revision ? changesRevision(options.revision) : ''}`, async () => {
@@ -187,7 +218,24 @@ export function createPrCommitsService(clones = localClones) {
         save(client, latestKey(url), value, version);
         return value;
       }
-      const metadata = await getPrMetadataForClone(client, t.owner, t.repo, t.pull_number, options.revision, clones);
+      let metadata: PrMetadata | undefined;
+      let speculated: PrCommit[] | undefined;
+      const revision = options.revision;
+      if (revision && !exact && isSha(revision.baseSha) && isSha(revision.headSha) && !clones.has(`${t.owner}/${t.repo}`)) {
+        // List first for the known revision, then confirm it with one fresh metadata read.
+        const known = (revision as Partial<PrMetadata>).commitCount;
+        const listed = await fetchCommits(client, t, revision, typeof known === 'number' && known > 250).then(
+          (commits) => ({ commits }),
+          (error: unknown) => ({ error })
+        );
+        metadata = await getPrMetadata(client, t.owner, t.repo, t.pull_number, true);
+        // A moved revision or an incomplete list continues below from the fresh metadata.
+        if (changesRevision(metadata) === changesRevision(revision)) {
+          if ('error' in listed) throw listed.error;
+          if (unique(listed.commits) && listed.commits.length === metadata.commitCount) speculated = listed.commits;
+        }
+      }
+      metadata ??= await getPrMetadataForClone(client, t.owner, t.repo, t.pull_number, revision, clones);
       const key = listKey(url, metadata.baseSha, metadata.headSha);
       const known = read(client, key, isList) ?? await githubCacheFor(client)?.getPrepared(key, isList);
       if (known) {
@@ -196,7 +244,14 @@ export function createPrCommitsService(clones = localClones) {
         save(client, latestKey(url), current, version);
         return current;
       }
-      const local = await clones.read(`${t.owner}/${t.repo}`, (clone) => clone.commits(metadata.baseSha, metadata.headSha));
+      if (speculated) {
+        const value: PrCommits = { version: 1, url, metadata, commits: speculated, fetchedAt: Date.now() };
+        save(client, key, value, version);
+        save(client, latestKey(url), value, version);
+        return value;
+      }
+      const current = metadata;
+      const local = await clones.read(`${t.owner}/${t.repo}`, (clone) => clone.commits(current.baseSha, current.headSha));
       // A different count means the clone and GitHub disagree about the PR's base. GitHub decides.
       if (local && local.length === metadata.commitCount) {
         const value: PrCommits = { version: 1, url, metadata, commits: local, fetchedAt: Date.now() };
@@ -204,33 +259,8 @@ export function createPrCommitsService(clones = localClones) {
         save(client, latestKey(url), value, version);
         return value;
       }
-      let commits: PrCommit[] = [];
-      // GitHub's PR-commits endpoint is capped at 250. Comparison pagination covers larger PRs.
-      if (metadata.commitCount > 250) {
-        let page = 1;
-        for (;;) {
-          const { data, headers } = await client.repos.compareCommits({
-            owner: t.owner,
-            repo: t.repo,
-            base: metadata.baseSha,
-            head: metadata.headSha,
-            per_page: 100,
-            page,
-          });
-          commits.push(...data.commits.map(normalize));
-          if (!headers.link?.includes('rel="next"')) break;
-          page++;
-        }
-      } else {
-        commits = (
-          await client.paginate(client.pulls.listCommits, {
-            ...t,
-            per_page: 100,
-            headers: { 'cache-control': 'no-cache' },
-          })
-        ).map(normalize);
-      }
-      if (new Set(commits.map((c) => c.sha)).size !== commits.length || commits.length !== metadata.commitCount)
+      const commits = await fetchCommits(client, t, metadata, metadata.commitCount > 250);
+      if (!unique(commits) || commits.length !== metadata.commitCount)
         throw new Error(
           'GitHub returned an incomplete commit list. Update commits to retry, or open the PR on GitHub.'
         );

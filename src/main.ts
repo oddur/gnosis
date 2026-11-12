@@ -40,7 +40,7 @@ import { createHarnessEnvironmentStore } from './harness-environment-store';
 import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
 import type { EnvironmentVariable } from '../lib/harness-environment';
 import { createChatRuns, waitForChatContext } from './chat-runs';
-import { readPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks, savedPrChecks } from './pr-checks-service';
+import { readPrChecks, readCurrentPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks, savedPrChecks } from './pr-checks-service';
 import { checkGroup, type CheckTarget, type CheckSelection, type ChecksOptions } from '../lib/pr-checks';
 import { createMarkdownReviewService } from './markdown-review-service';
 import type { MarkdownReviewRequest } from '../lib/markdown-review';
@@ -105,7 +105,11 @@ import { createDiffSource } from '../lib/diffSource';
 import type { DiffSource } from '../lib/diffSource';
 import { isLocalUrl } from '../lib/local-url';
 import type { PrMetadata, PrSearchResult, PrStatus, PrStatusOptions } from '../lib/types';
-import { createPrStatusService } from './pr-status-service';
+import { createPrStatusService, PR_STATUS_MAX_STALE_MS } from './pr-status-service';
+import { createStatCache } from './stat-cache';
+import { timed } from '../lib/perf-trace';
+import { deepFreeze } from '../lib/deep-freeze';
+import { isDeepStrictEqual } from 'node:util';
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_FAST_CLAUDE_MODEL,
@@ -826,38 +830,46 @@ function suggestArchiveName(entry: ReviewHistoryEntry): string {
   return `${base}.gr`;
 }
 
-function readReviewsIndex(): ReviewHistoryEntry[] {
+const reviewsIndex = createStatCache(getReviewsIndexPath, (exists) => timed('reviews index read', (): readonly ReviewHistoryEntry[] => {
+  if (!exists) return Object.freeze([]);
   try {
     const entries = JSON.parse(fs.readFileSync(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
     // Backward compat: entries without status are completed
-    return entries.map((e) => ({ ...e, status: e.status ?? 'completed' }));
+    return deepFreeze(entries.map((e) => ({ ...e, status: e.status ?? 'completed' })));
   } catch {
-    return [];
+    return Object.freeze([]);
   }
+}, (entries) => `entries=${entries.length}`));
+/** Frozen and shared until the file changes. Copy entries before changing them, then write the copy. */
+function readReviewsIndex(): readonly ReviewHistoryEntry[] {
+  return reviewsIndex.get();
+}
+function writeReviewsIndex(next: readonly ReviewHistoryEntry[]): void {
+  // New and changed entries are copied before freezing, so objects a caller still holds stay mutable.
+  const value = Object.freeze(next.map((entry) => (Object.isFrozen(entry) ? entry : deepFreeze(structuredClone(entry)))));
+  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(value, null, 2));
+  reviewsIndex.set(value);
 }
 
 /** One-time migration: backfill summary from full review JSON into
  *  the index for entries that predate the summary field. Runs once
  *  at startup and persists results so subsequent reads are fast. */
 function backfillSummaries(): void {
-  const index = readReviewsIndex();
-  let dirty = false;
-  for (const entry of index) {
+  const saved = readReviewsIndex();
+  const index = saved.map((entry) => {
     if (!entry.summary && entry.status === 'completed') {
       try {
         const reviewPath = path.join(getReviewsDir(), `${entry.id}.json`);
         const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
-        if (review.summary) {
-          entry.summary = review.summary;
-          dirty = true;
-        }
+        if (review.summary) return { ...entry, summary: review.summary };
       } catch {
         // Review file missing or unreadable — skip
       }
     }
-  }
-  if (dirty) {
-    fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+    return entry;
+  });
+  if (index.some((entry, i) => entry !== saved[i])) {
+    writeReviewsIndex(index);
   }
 }
 
@@ -902,9 +914,7 @@ function createPendingHistoryEntry(
     prHeadSha,
     ...(unread ? { unread: true } : {}),
   };
-  const index = readReviewsIndex();
-  index.unshift(entry);
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  writeReviewsIndex([entry, ...readReviewsIndex()]);
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 }
@@ -913,8 +923,10 @@ function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): v
   const index = readReviewsIndex();
   const idx = index.findIndex((e) => e.id === id);
   if (idx === -1) return;
-  index[idx] = { ...index[idx], ...updates };
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  const current = index[idx];
+  // An update that changes no field writes nothing and notifies nobody.
+  if (Object.entries(updates).every(([key, value]) => isDeepStrictEqual(current[key as keyof ReviewHistoryEntry], value))) return;
+  writeReviewsIndex(index.map((entry, i) => (i === idx ? { ...entry, ...updates } : entry)));
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 }
@@ -986,33 +998,41 @@ function initTrayIfEnabled(): void {
     }
   } else if (raw.trayEnabled) {
     createTray();
-    rebuildTrayMenu();
+    rebuildTrayMenuNow();
   }
 }
 
+/** History changes come in bursts during generation, so the tray rebuilds once they settle. */
+let trayRebuild: ReturnType<typeof setTimeout> | undefined;
 function rebuildTrayMenu(): void {
-  updateTrayMenu(readReviewsIndex().filter(entry => !workbench.isMutedReview(entry)), {
-    onShowWindow: showOrCreateWindow,
-    onNavigateToReview: navigateToReview,
-    onOpenExternal: (url: string) => {
-      try { if (new URL(url).protocol === 'https:') void shell.openExternal(url); } catch {}
-    },
-    onQuit: () => app.quit(),
-  });
+  if (trayRebuild) return;
+  trayRebuild = setTimeout(() => {
+    trayRebuild = undefined;
+    rebuildTrayMenuNow();
+  }, 250);
+}
+function rebuildTrayMenuNow(): void {
+  clearTimeout(trayRebuild);
+  trayRebuild = undefined;
+  timed('tray', () => {
+    const reviews = workbench.visibleHistory();
+    updateTrayMenu(reviews, {
+      onShowWindow: showOrCreateWindow,
+      onNavigateToReview: navigateToReview,
+      onOpenExternal: (url: string) => {
+        try { if (new URL(url).protocol === 'https:') void shell.openExternal(url); } catch {}
+      },
+      onQuit: () => app.quit(),
+    });
+    return reviews.length;
+  }, (reviews) => `reviews=${reviews}`);
 }
 
 function cleanupStaleGeneratingEntries(): void {
   const index = readReviewsIndex();
-  let changed = false;
-  for (const entry of index) {
-    if (entry.status === 'generating') {
-      entry.status = 'failed';
-      entry.error = 'Generation was interrupted';
-      changed = true;
-    }
-  }
-  if (changed) {
-    fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  if (index.some((entry) => entry.status === 'generating')) {
+    writeReviewsIndex(index.map((entry) =>
+      entry.status === 'generating' ? { ...entry, status: 'failed', error: 'Generation was interrupted' } : entry));
   }
 }
 
@@ -1070,7 +1090,14 @@ function applyBinaryOverrides(prefs: Preferences): void {
   setBinaryOverride('codex', prefs.codexPath);
 }
 
+/** Parsed and normalized `preferences.json`, frozen and shared until the file changes. */
+const preferencesFile = createStatCache(getPreferencesPath, (exists) => timed('preferences read', () =>
+  deepFreeze(structuredClone(exists ? readPreferencesFile() : DEFAULT_PREFERENCES))));
+/** A copy whose top-level keys a caller may replace. Nested values are frozen: replace them, never change them. */
 function loadPreferences(): Preferences {
+  return { ...preferencesFile.get() };
+}
+function readPreferencesFile(): Preferences {
   try {
     const stored = JSON.parse(fs.readFileSync(getPreferencesPath(), 'utf-8')) as Record<string, unknown>;
     // Backward compat: rename autoReviewOnRequest → proactiveMode
@@ -1105,7 +1132,7 @@ function savePreferences(prefs: Preferences): void {
   try {
   fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
     fs.renameSync(temporary, file);
-  } finally { fs.rmSync(temporary, { force: true }); }
+  } finally { fs.rmSync(temporary, { force: true }); preferencesFile.clear(); }
 }
 
 // ── MCP tools constants ─────────────────────────────────────────
@@ -1294,7 +1321,7 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   // Toggle tray on/off
   if (prefs.trayEnabled) {
     createTray();
-    rebuildTrayMenu();
+    rebuildTrayMenuNow();
   } else {
     destroyTray();
   }
@@ -1313,7 +1340,7 @@ ipcMain.handle('check-cli-installed', (_event, provider: string, refresh = false
 });
 
 ipcMain.handle('list-reviews', () => {
-  return readReviewsIndex().filter(entry => !workbench.isMutedReview(entry));
+  return workbench.visibleHistory();
 });
 
 ipcMain.handle('load-review', async (_event, id: string) => {
@@ -1353,7 +1380,7 @@ ipcMain.handle('mark-review-read', (_event, id: string) => {
   const index = readReviewsIndex().map((e) =>
     e.id === id ? { ...e, unread: false, autoUpdated: false } : e
   );
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  writeReviewsIndex(index);
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 });
@@ -1363,8 +1390,7 @@ ipcMain.handle('delete-review', (_event, id: string) => {
   const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
   if (fs.existsSync(reviewPath)) fs.unlinkSync(reviewPath);
   if (fs.existsSync(promptPath)) fs.unlinkSync(promptPath);
-  const index = readReviewsIndex().filter((e) => e.id !== id);
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  writeReviewsIndex(readReviewsIndex().filter((e) => e.id !== id));
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 });
@@ -1423,9 +1449,7 @@ ipcMain.handle('import-review', async (event): Promise<ReviewHistoryEntry | null
     imported: true,
     status: 'completed',
   };
-  const index = readReviewsIndex();
-  index.unshift(entry);
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  writeReviewsIndex([entry, ...readReviewsIndex()]);
   rebuildTrayMenu();
   broadcastToAllWindows('new-review-in-history');
   return entry;
@@ -1438,7 +1462,7 @@ ipcMain.handle('delete-all-reviews', () => {
       if (file.endsWith('.json') || file.endsWith('-prompt.md')) fs.unlinkSync(path.join(dir, file));
     }
   }
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify([], null, 2));
+  writeReviewsIndex([]);
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 });
@@ -1513,13 +1537,13 @@ const prStatus = createPrStatusService({
   signals: (client, requests, options) => getQueueSignals(client, requests, options),
 });
 
-async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | null> {
+async function fetchPrStatus(prUrl: string, force = false, expectedHead?: string): Promise<PrStatus | null> {
   // Local reviews have no CI, no reviewers, no mergeability — return null so
   // callers that render PR status chrome simply show nothing.
   if (isLocalUrl(prUrl)) return null;
   const token = getResolvedToken();
   if (!token) return null;
-  const { status, metadata } = await prStatus.read(getGitHubClient(token), prUrl, force);
+  const { status, metadata } = await prStatus.read(getGitHubClient(token), prUrl, force, expectedHead);
   try {
     if (getResolvedToken() !== token) return null;
     workbench.updatePrMetadata(metadata);
@@ -1544,6 +1568,14 @@ handleInteractive('load-pr-image', (_event, url: string) => {
   return loadPrImage(getGitHubClient(token), url);
 });
 
+/** Local data only. Whether a saved status for this head can be shown while GitHub is read again. */
+function showablePrStatus(prUrl: string, headSha: string | undefined) {
+  const token = getResolvedToken();
+  const saved = token && headSha ? prStatus.saved(getGitHubClient(token), prUrl) : undefined;
+  const age = saved ? Date.now() - saved.checkedAt : -1;
+  return !!saved && saved.headSha === headSha && !saved.revalidate && age >= 0 && age < PR_STATUS_MAX_STALE_MS;
+}
+
 ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = false, options?: PrStatusOptions): Promise<PrStatus | null> => {
   if (isLocalUrl(prUrl)) {
     throw new Error('Local review — no PR status available');
@@ -1554,8 +1586,12 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = f
     if (!token || typeof options.headSha !== 'string') return null;
     return (await prStatus.cached(getGitHubClient(token), prUrl, options.headSha)) ?? null;
   }
-  // Opening a PR is user-driven, so its read is exempt from automatic pacing.
-  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force), { automatic: !(force || options?.opened) });
+  // Opening a PR is user-driven, so its read is exempt from automatic pacing. With nothing to show
+  // yet, it is also interactive, so it does not wait behind background reads.
+  const opened = options?.opened === true;
+  const headSha = opened && typeof options.headSha === 'string' && /^[a-f\d]{40}$/i.test(options.headSha) ? options.headSha : undefined;
+  const priority = force || (opened && !showablePrStatus(prUrl, headSha)) ? 'interactive' : 'foreground';
+  const status = await withGitHubPriority(priority, () => fetchPrStatus(prUrl, force, headSha), { automatic: !(force || opened) });
   if (!status) throw new Error('Not authenticated');
   return status;
 });
@@ -2434,7 +2470,8 @@ ipcMain.handle('save-review-state', (_event, value: ReviewStateWrite) => appData
 ipcMain.handle('save-file-progress', (_event, value: FileProgressPatch) => appData.saveFileProgress(value));
 ipcMain.handle('list-activity', () => {
   prMergeMonitor.tick();
-  const hiddenReviews = new Set(readReviewsIndex().filter(entry => workbench.isMutedReview(entry)).map(entry => entry.id));
+  const visibleReviews = new Set(workbench.visibleHistory().map(entry => entry.id));
+  const hiddenReviews = new Set(readReviewsIndex().flatMap(entry => visibleReviews.has(entry.id) ? [] : [entry.id]));
   return [...activities.list().filter(task => (!task.account || task.account === cachedLogin) && (!task.reviewId || !hiddenReviews.has(task.reviewId))), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
 });
 handleInteractive('activity-action', async (_event, id:string, action:ActivityAction) => {
@@ -3208,17 +3245,19 @@ async function checkAccount<T>(read: (client: ReturnType<typeof changesClient>) 
   if (token !== getResolvedToken()) throw new Error('Your GitHub account changed. Open Checks again.');
   return value;
 }
-ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions = {}) =>
-  withGitHubPriority(options.background ? 'foreground' : 'interactive', () => checkAccount(async client => {
+ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions = {}) => {
+  const automatic = !!options.background && !options.opened;
+  return withGitHubPriority(automatic ? 'foreground' : 'interactive', () => checkAccount(async client => {
     if (options.cachedOnly) {
       const value = await readPrChecks(client, input, options);
       return value && withCachedCheckDetails(client, value);
     }
     const { owner, repo, pullNumber } = parsePrUrl(input.url);
-    const metadata = await getPrMetadata(client, owner, repo, pullNumber, !!options.force);
-    const value = await readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
+    const value = await readCurrentPrChecks(client, input, options,
+      async fresh => (await getPrMetadata(client, owner, repo, pullNumber, fresh)).headSha);
     return value && withCachedCheckDetails(client, value);
-  }), { automatic: options.background }));
+  }), { automatic });
+});
 ipcMain.handle('prepare-workflow-graph', (_event, target?: CheckTarget) => {
   workflowWarmAccount = cachedToken;
   workflowGraphPreload.setTarget(target);
@@ -3274,9 +3313,14 @@ function runInspection<T>(event: Electron.IpcMainInvokeEvent, options: Inspectio
 ipcMain.handle('cancel-inspection', (event, id: string) => {
   if (event.senderFrame === event.sender.mainFrame && typeof id === 'string') inspectionRequests.cancel(event.sender.id, id);
 });
-const withKnownMember = (url: string, options: InspectionLoadOptions): InspectionLoadOptions => {
-  const member = options.revision && workbench.knownMember(url);
-  return member && options.revision && changesRevision(member) === changesRevision(options.revision) ? { ...options, revision: member } : options;
+/**
+ * The queue member describes the revision a read can start from. "Update changes" starts from the
+ * newest known member, and the service confirms it against GitHub before using anything it read.
+ */
+const withKnownMember = (url: string, refresh: boolean, options: InspectionLoadOptions): InspectionLoadOptions => {
+  const member = (refresh || options.revision) && workbench.knownMember(url);
+  if (!member) return options;
+  return refresh || (options.revision && changesRevision(member) === changesRevision(options.revision)) ? { ...options, revision: member } : options;
 };
 ipcMain.handle('stack-changes', (event, subject: ReviewSubject, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
@@ -3286,11 +3330,11 @@ ipcMain.handle('stack-changes', (event, subject: ReviewSubject, refresh: boolean
 ipcMain.handle('pr-changes', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
     const client = changesClient();
-    return classifySnapshot(client, await prChanges.manifest(client, url, refresh, withKnownMember(url, options), signal));
+    return classifySnapshot(client, await prChanges.manifest(client, url, refresh, withKnownMember(url, refresh, options), signal));
   })));
 ipcMain.handle('pr-commits', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options,
-    signal => prCommits.list(changesClient(), url, refresh, withKnownMember(url, options), signal))));
+    signal => prCommits.list(changesClient(), url, refresh, withKnownMember(url, refresh, options), signal))));
 const inspectionPrefetchGuard = (background: boolean) => {
   const token = getResolvedToken();
   return background ? () => {

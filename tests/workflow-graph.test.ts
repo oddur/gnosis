@@ -207,9 +207,11 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
   let stepData: WorkflowJob['steps'] | undefined;
   let workflow = source,
     failSource = false,
-    pause: Promise<void> | undefined;
+    pause: Promise<void> | undefined,
+    // Without an answer, a source query finds nothing and every file falls back to REST.
+    graphql: (query: string) => unknown = () => ({ data: { rateLimit: { cost: 1 } } });
   const pool = createGitHubClientPool({
-    fetch: (async (address: string) => {
+    fetch: (async (address: string, init?: RequestInit) => {
       calls.push(address);
       if (pause) await pause;
       const url = new URL(address);
@@ -234,6 +236,8 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
             })
           ),
         };
+      else if (url.pathname === '/graphql')
+        data = graphql((JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { query: string }).query);
       else if (url.pathname.includes('/contents/')) {
         const body = files[decodeURIComponent(url.pathname.split('/contents/')[1])] ?? workflow;
         if (failSource) {
@@ -281,6 +285,9 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
     },
     pause: (p: Promise<void>) => {
       pause = p;
+    },
+    graphql: (respond: (query: string) => unknown) => {
+      graphql = respond;
     },
   };
 }
@@ -1223,4 +1230,88 @@ void test('job step expansion reroutes locally and supports REST timestamps in e
   assert.equal(workflowJobSteps(node.jobs[0])[0].startedAt, steps[0].started_at);
   assert.ok(expanded?.edges.every((e) => e.points?.length));
   assert.equal(h.calls.length, calls, 'Expand must not refetch jobs or definitions');
+});
+
+/** Answers each aliased blob from `files`, as GitHub's `object(expression:)` would. */
+function blobAnswer(files: Partial<Record<string, string | null>>, oversize: string[] = []) {
+  return (query: string) => {
+    const data: Record<string, Record<string, unknown>> = {};
+    for (const repo of query.matchAll(
+      /(r\d+): repository\(owner:"([^"]+)",name:"([^"]+)"\) \{(.*?)\} \}(?=\s*(?:r\d+:|\}$))/gs
+    )) {
+      const fields: Record<string, unknown> = {};
+      for (const field of repo[4].matchAll(/(f\d+): object\(expression:"[a-f\d]{40}:([^"]+)"\)/g)) {
+        const text = files[field[2]];
+        fields[field[1]] =
+          typeof text !== 'string'
+            ? null
+            : {
+                text,
+                byteSize: oversize.includes(field[2]) ? 300_000 : text.length,
+                isTruncated: false,
+                isBinary: false,
+              };
+      }
+      data[repo[1]] = fields;
+    }
+    return { data: { rateLimit: { cost: 1 }, ...data } };
+  };
+}
+void test('primes all referenced sources in one query', async () => {
+  const h = harness(),
+    reference = 'external/shared/.github/workflows/reuse.yml@main';
+  const files = {
+    '.github/workflows/ci.yml': `jobs:\n  local:\n    uses: ./.github/workflows/child.yml\n  shared:\n    uses: ${reference}\n`,
+    '.github/workflows/child.yml': 'jobs:\n  leaf:\n    name: Child\n',
+    '.github/workflows/reuse.yml': 'jobs:\n  leaf:\n    name: Shared\n',
+  };
+  h.files(files);
+  h.graphql(blobAnswer(files));
+  h.run.referenced_workflows = [
+    { path: `o/r/.github/workflows/child.yml@${sha}`, sha },
+    { path: reference, sha: 'b'.repeat(40) },
+  ];
+  const graph = await readWorkflowGraph(h.client, { ...input, expanded: ['local', 'shared'] });
+  assert.ok(graph);
+  assert.ok(!graph.warnings.some((w) => w.includes('unavailable')), graph.warnings.join('\n'));
+  assert.ok(graph.nodes.some((n) => n.name === 'Child') && graph.nodes.some((n) => n.name === 'Shared'));
+  assert.equal(h.calls.filter((c) => c.endsWith('/graphql')).length, 1, 'One query reads every source');
+  assert.equal(h.calls.filter((c) => c.includes('/contents/')).length, 0, 'No per-file REST reads');
+});
+void test('falls back to REST for oversize or failed blobs', async () => {
+  const h = harness();
+  const files = {
+    '.github/workflows/ci.yml':
+      'jobs:\n  big:\n    uses: ./.github/workflows/big.yml\n  gone:\n    uses: ./.github/workflows/gone.yml\n',
+    '.github/workflows/big.yml': 'jobs:\n  leaf:\n    name: Big\n',
+    '.github/workflows/gone.yml': 'jobs:\n  leaf:\n    name: Gone\n',
+  };
+  h.files(files);
+  h.graphql(blobAnswer({ ...files, '.github/workflows/gone.yml': null }, ['.github/workflows/big.yml']));
+  h.run.referenced_workflows = ['big', 'gone'].map((name) => ({
+    path: `o/r/.github/workflows/${name}.yml@${sha}`,
+    sha,
+  }));
+  const graph = await readWorkflowGraph(h.client, { ...input, expanded: ['big', 'gone'] });
+  assert.ok(graph);
+  assert.ok(!graph.warnings.some((w) => w.includes('unavailable')), graph.warnings.join('\n'));
+  assert.ok(graph.nodes.some((n) => n.name === 'Big') && graph.nodes.some((n) => n.name === 'Gone'));
+  assert.deepEqual(
+    h.calls
+      .filter((c) => c.includes('/contents/'))
+      .map((c) => decodeURIComponent(new URL(c).pathname).split('/contents/')[1])
+      .sort(),
+    ['.github/workflows/big.yml', '.github/workflows/gone.yml'],
+    'Only the oversize and missing blobs use REST'
+  );
+  const failed = harness();
+  failed.files(files);
+  failed.graphql(() => {
+    throw Error('GraphQL unavailable');
+  });
+  assert.ok(!(await readWorkflowGraph(failed.client, input))?.warnings.some((w) => w.includes('unavailable')));
+  assert.ok(
+    failed.calls.some((c) => c.includes('/contents/')),
+    'A failed query falls back to REST'
+  );
 });

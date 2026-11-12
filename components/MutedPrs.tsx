@@ -2,8 +2,7 @@ import { PrBadge, RepositoryBadge } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Search, VolumeX } from 'lucide-react';
-import type { MutedPr } from '../lib/muted-prs';
-import type { ReviewMember } from '../lib/workbench';
+import type { MutedPr, MutedPrSummary } from '../lib/muted-prs';
 import { Button } from './ui/button';
 
 export function MutedPrs({
@@ -12,10 +11,10 @@ export function MutedPrs({
   error,
   onUnmute,
 }: {
-  entries: MutedPr[];
+  entries: readonly MutedPr[];
   busy: boolean;
   error: string;
-  onUnmute: (members: ReviewMember[]) => void;
+  onUnmute: (members: MutedPrSummary[]) => void;
 }) {
   const [query, setQuery] = useState('');
   const section = useRef<HTMLElement>(null);

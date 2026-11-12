@@ -12,6 +12,7 @@ import {
   type ReadVersions,
 } from '../lib/pr-read-state';
 import type { PrMetadata } from '../lib/types';
+import { deepFreeze } from '../lib/deep-freeze';
 import type { QueueSignals } from '../lib/queue-signals';
 
 type Basis = ReturnType<typeof prReadMetadata> & {
@@ -35,6 +36,12 @@ interface Entry {
 interface State {
   initialized: boolean;
   entries: Partial<Record<string, Entry>>;
+}
+/** A change in progress. `entry` copies an entry on first use, so only touched entries are compared. */
+interface Draft {
+  initialized: boolean;
+  entry(url: string): Entry | undefined;
+  add(url: string, entry: Entry): void;
 }
 const validUrl = (url: string) => /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url);
 /** Durable user progress. Cache eviction and stack regrouping never change its identity. */
@@ -85,11 +92,33 @@ export function createPrReadStore(directory: () => string, now = Date.now, stora
     if (!state) throw new Error('Unread progress was not loaded.');
     return state;
   }
-  function edit(account: string, fn: (state: State) => void) {
-    const previous = load(account),
-      next = structuredClone(previous);
-    fn(next);
-    if (JSON.stringify(next) === JSON.stringify(previous)) return false;
+  const snapshots = new WeakMap<State, Readonly<Record<string, PrReadState>>>();
+  function edit(account: string, fn: (draft: Draft) => void) {
+    const previous = load(account);
+    const entries = { ...previous.entries };
+    const touched = new Set<string>();
+    const draft: Draft = {
+      initialized: previous.initialized,
+      entry(url) {
+        if (!touched.has(url)) {
+          touched.add(url);
+          const entry = previous.entries[url];
+          if (entry) entries[url] = structuredClone(entry);
+        }
+        return entries[url];
+      },
+      add(url, entry) {
+        touched.add(url);
+        entries[url] = entry;
+      },
+    };
+    fn(draft);
+    const next: State = { initialized: draft.initialized, entries };
+    if (
+      next.initialized === previous.initialized &&
+      [...touched].every((url) => JSON.stringify(entries[url]) === JSON.stringify(previous.entries[url]))
+    )
+      return false;
     if (storage) storage.write(path.basename(file(account)), next);
     else {
       fs.mkdirSync(directory(), { recursive: true });
@@ -104,10 +133,10 @@ export function createPrReadStore(directory: () => string, now = Date.now, stora
     entry.versions[reason]++;
     if (own && wasRead) entry.read[reason] = entry.versions[reason];
   };
-  function observeMetadata(state: State, meta: PrMetadata, own = false) {
+  function observeMetadata(state: Draft, meta: PrMetadata, own = false) {
     if (!validUrl(meta.url)) return;
     const metadataKey = JSON.stringify(prReadMetadata(meta));
-    let entry = state.entries[meta.url];
+    let entry = state.entry(meta.url);
     if (!entry) {
       entry = {
         basis: prReadMetadata(meta),
@@ -118,7 +147,7 @@ export function createPrReadStore(directory: () => string, now = Date.now, stora
         metadataKey,
       };
       if (state.initialized && !own) bump(entry, 'new');
-      state.entries[meta.url] = entry;
+      state.add(meta.url, entry);
       return;
     }
     // A late response or saved explanation must not roll observed state backwards.
@@ -165,8 +194,11 @@ export function createPrReadStore(directory: () => string, now = Date.now, stora
     signals(account: string, values: QueueSignals[]) {
       return edit(account, (state) => {
         for (const signal of values) {
-          const entry = state.entries[signal.url];
-          if (!entry || signal.headSha !== entry.basis.headSha || signal.checkedAt <= (entry.signalsAt ?? 0)) continue;
+          // Read the saved entry first, so a signal that changes nothing copies nothing.
+          const saved = load(account).entries[signal.url];
+          if (!saved || signal.headSha !== saved.basis.headSha || signal.checkedAt <= (saved.signalsAt ?? 0)) continue;
+          const entry = state.entry(signal.url);
+          if (!entry) continue;
           entry.signalsAt = signal.checkedAt;
           if (entry.basis.comments !== undefined && signal.comments > entry.basis.comments) bump(entry, 'comments');
           entry.basis.comments = signal.comments;
@@ -216,7 +248,7 @@ export function createPrReadStore(directory: () => string, now = Date.now, stora
     },
     ownReview(account: string, url: string, inlineComments: number, until = now(), reviewUrl?: string) {
       return edit(account, (state) => {
-        const entry = state.entries[url];
+        const entry = state.entry(url);
         if (!entry) return;
         if (reviewUrl) entry.ownReviewIds = [...(entry.ownReviewIds ?? []), reviewUrl].slice(-100);
         else entry.ownReviewUntil = until;
@@ -224,24 +256,32 @@ export function createPrReadStore(directory: () => string, now = Date.now, stora
         entry.ownInlineUntil = until;
       });
     },
-    snapshot(account: string): Record<string, PrReadState> {
-      return Object.fromEntries(
-        Object.entries(load(account).entries).flatMap(([url, entry]) =>
-          entry
-            ? [
-                [
-                  url,
-                  {
+    /** Frozen and shared until the next saved change. */
+    snapshot(account: string): Readonly<Record<string, PrReadState>> {
+      const state = load(account);
+      const known = snapshots.get(state);
+      if (known) return known;
+      const value = deepFreeze(
+        Object.fromEntries(
+          Object.entries(state.entries).flatMap(([url, entry]) =>
+            entry
+              ? [
+                  [
                     url,
-                    headSha: entry.basis.headSha,
-                    versions: { ...entry.versions },
-                    unread: READ_REASONS.filter((reason) => entry.versions[reason] > entry.read[reason]),
-                  },
-                ],
-              ]
-            : []
+                    {
+                      url,
+                      headSha: entry.basis.headSha,
+                      versions: { ...entry.versions },
+                      unread: READ_REASONS.filter((reason) => entry.versions[reason] > entry.read[reason]),
+                    },
+                  ],
+                ]
+              : []
+          )
         )
       );
+      snapshots.set(state, value);
+      return value;
     },
     mark(account: string, request: MarkPrReadRequest) {
       /* eslint-disable @typescript-eslint/no-unnecessary-condition -- IPC is an untrusted runtime boundary */
@@ -266,7 +306,7 @@ export function createPrReadStore(directory: () => string, now = Date.now, stora
       /* eslint-enable @typescript-eslint/no-unnecessary-condition */
       return edit(account, (state) => {
         for (const receipt of request.receipts) {
-          const entry = state.entries[receipt.url];
+          const entry = state.entry(receipt.url);
           if (!entry) continue;
           if (!request.read) {
             bump(entry, 'manual');

@@ -128,6 +128,8 @@ export interface ChecksOptions {
   cachedOnly?: boolean;
   force?: boolean;
   background?: boolean;
+  /** The user opened these checks and nothing is shown yet, so the read is interactive and not paced. */
+  opened?: boolean;
 }
 
 /** Includes attempt timestamps: a rerun can reuse a check ID on the same commit. */

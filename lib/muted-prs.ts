@@ -1,14 +1,17 @@
 import type { ReviewMember, ReviewSubject } from './workbench';
 import type { ReviewHistoryEntry } from './types';
 
+/** The fields the Muted PRs page and its listings show. The full PR stays on disk for an unmute. */
+export type MutedPrSummary = Pick<
+  ReviewMember,
+  'url' | 'repo' | 'number' | 'title' | 'author' | 'state' | 'merged' | 'isDraft'
+>;
 export interface MutedPr {
-  member: ReviewMember;
+  member: MutedPrSummary;
   mutedAt: string;
 }
-export interface MutePrRequest {
-  members: ReviewMember[];
-  muted: boolean;
-}
+/** Muting sends the PRs to save. Unmuting needs only their URLs: the saved PRs are restored. */
+export type MutePrRequest = { muted: true; members: ReviewMember[] } | { muted: false; urls: string[] };
 
 export function isMutedReview(
   entry: Pick<ReviewHistoryEntry, 'prUrl' | 'snapshot'>,

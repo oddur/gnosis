@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Octokit } from '@octokit/rest';
-import type { ReviewMember } from '../lib/workbench';
+import { groupSubjects, snapshot, type ReviewMember } from '../lib/workbench';
+import type { ReviewHistoryEntry } from '../lib/types';
+import { createMutedPrStore, type MutedPrStore } from '../src/muted-pr-store';
 import { createWorkbenchService } from '../src/workbench-service';
 import type { WorkbenchPreferences } from '../src/workbench-service';
 import { createActivityService } from '../src/activity-service';
@@ -2012,5 +2014,147 @@ void test('snapshot revisions ignore the clock and change with content', async (
     assert.equal(starred.parts?.filters, first.parts?.filters);
   } finally {
     s.cleanup();
+  }
+});
+
+/** A local queue of single-PR subjects and saved mutes, with no GitHub access. */
+function localQueue(subjects: number, muted: number, history: () => readonly ReviewHistoryEntry[] = () => Object.freeze([])) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-workbench-local-'));
+  const pr = (n: number, description = 'A queued PR'): ReviewMember => ({
+    number: n,
+    repo: 'owner/repo',
+    headRepo: 'owner/repo',
+    baseRepo: 'owner/repo',
+    url: `https://github.com/owner/repo/pull/${n}`,
+    title: `PR ${n}`,
+    description,
+    author: 'author',
+    role: 'watched',
+    baseBranch: 'main',
+    headBranch: `feature-${n}`,
+    baseSha: 'base',
+    headSha: `head-${n}`,
+    merged: false,
+    state: 'open',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    labels: [],
+    mergeable: null,
+    isDraft: false,
+    commitCount: 1,
+    requestedReviewers: [],
+    requestedTeams: [],
+    mergeableState: null,
+    autoMerge: null,
+    milestone: null,
+  });
+  const write = (members: ReviewMember[]) =>
+    fs.writeFileSync(
+      path.join(directory, 'workbench.json'),
+      JSON.stringify({ account: 'me', subjects: groupSubjects(members), overrides: [], briefs: {}, day: '', used: 0 })
+    );
+  write(Array.from({ length: subjects }, (_, i) => pr(i + 1)));
+  const store = createMutedPrStore(() => directory);
+  if (muted) store.set('me', { muted: true, members: Array.from({ length: muted }, (_, i) => pr(10_000 + i, 'x'.repeat(4000))) });
+  let indexReads = 0;
+  const mutes: MutedPrStore = {
+    ...store,
+    index: (account) => {
+      indexReads++;
+      return store.index(account);
+    },
+  };
+  const deps = {
+    directory: () => directory,
+    auth: () => ({ token: 'fixture', login: 'me' }),
+    preferences: () => ({ provider: 'claude' as const, model: DEFAULT_CLAUDE_MODEL, watchedRepos: [], autoBriefings: false, briefingDailyLimit: 10 }),
+    history,
+    busy: () => true,
+    client: () => {
+      throw new Error('Unexpected GitHub request');
+    },
+    mutes,
+  };
+  return {
+    pr,
+    write,
+    deps,
+    service: createWorkbenchService(deps),
+    indexReads: () => indexReads,
+    cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
+  };
+}
+void test('view reads the muted index once and never clones per member', (t) => {
+  const clonesFor = (subjects: number) => {
+    const q = localQueue(subjects, 649);
+    try {
+      q.service.cached();
+      const reads = q.indexReads();
+      const clone = t.mock.method(globalThis, 'structuredClone');
+      const queue = q.service.cached();
+      const count = clone.mock.callCount();
+      t.mock.restoreAll();
+      assert.equal(queue.items.length, subjects);
+      assert.equal(queue.mutedPrs?.length, 649);
+      assert.ok(Object.isFrozen(queue.mutedPrs), 'Muted rows are shared, not copied');
+      assert.ok(q.indexReads() - reads <= 1, 'One muted index read per view');
+      return count;
+    } finally {
+      t.mock.restoreAll();
+      q.cleanup();
+    }
+  };
+  assert.equal(clonesFor(400), clonesFor(40), 'Clones do not grow with the queue');
+});
+void test('view matches history by subject id, then by earliest member entry', () => {
+  const history: ReviewHistoryEntry[] = [];
+  const q = localQueue(0, 0, () => history);
+  try {
+    const stacked = groupSubjects([q.pr(1), { ...q.pr(2), baseBranch: 'feature-1' }])[0];
+    const other = groupSubjects([q.pr(4), { ...q.pr(5), baseBranch: 'feature-4' }])[0];
+    assert.equal(stacked.kind, 'stack');
+    q.write([...stacked.members, ...other.members]);
+    const entry = (id: string, prUrl: string, subject?: typeof stacked): ReviewHistoryEntry => ({
+      id,
+      prUrl,
+      prTitle: id,
+      author: 'author',
+      riskLevel: 'low',
+      savedAt: new Date().toISOString(),
+      status: 'completed',
+      ...(subject ? { snapshot: snapshot(subject) } : {}),
+    });
+    history.push(
+      entry('member-entry', q.pr(1).url),
+      entry('stack-entry', q.pr(1).url, stacked),
+      entry('second-member-first', q.pr(5).url),
+      entry('first-member-later', q.pr(4).url)
+    );
+    Object.freeze(history);
+    const fresh = createWorkbenchService(q.deps);
+    const review = (id: string) => fresh.cached().items.find((item) => item.subject.id === id)?.review?.id;
+    assert.equal(review(stacked.id), 'stack-entry', 'A subject id match wins over an earlier member entry');
+    assert.equal(review(other.id), 'second-member-first', 'Otherwise the earliest entry for any member wins');
+  } finally {
+    q.cleanup();
+  }
+});
+void test('unmute restores the full member and keeps the briefing key', () => {
+  const q = localQueue(1, 0);
+  try {
+    const member = { ...q.pr(1), description: 'A long description that is part of the briefing key' };
+    q.write([member]);
+    const before = createWorkbenchService(q.deps).cached().items[0];
+    q.service.mutePrs({ muted: true, members: [member] });
+    // The PR leaves discovery while muted, so only the saved mute knows it.
+    q.write([]);
+    const restarted = createWorkbenchService(q.deps);
+    assert.equal(restarted.cached().items.length, 0);
+    const restored = restarted.mutePrs({ muted: false, urls: [member.url] }).items[0];
+    assert.equal(restored.subject.members[0].description, member.description);
+    assert.equal(restored.briefing?.key, before.briefing?.key, 'The briefing is not generated again');
+    assert.ok(!Object.isFrozen(restored.subject.members[0]), 'The queue keeps its own copy');
+  } finally {
+    q.cleanup();
   }
 });

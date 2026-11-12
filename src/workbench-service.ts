@@ -1,5 +1,6 @@
 import { responseNeeded } from '../lib/response-needed';
 import { stampQueue } from '../lib/workbench-revision';
+import { timed } from '../lib/perf-trace';
 import type { GitHubReviewThreads } from '../lib/review-threads';
 import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock } from '../lib/repository-settings';
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
@@ -9,7 +10,7 @@ import { createPrReadStore } from './pr-read-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { QueueSignals, QueueSignalRequest } from '../lib/queue-signals';
 import { normalizePrInactivityDays, isPrRecentlyUpdated } from '../lib/pr-inactivity';
-import { createMutedPrStore } from './muted-pr-store';
+import { createMutedPrStore, type MutedPrStore } from './muted-pr-store';
 import { isMutedReview, withoutMutedMembers, type MutePrRequest } from '../lib/muted-prs';
 import { createSavedViewStore } from './saved-view-store';
 import { createStarredPrStore } from './starred-pr-store';
@@ -47,6 +48,7 @@ import {
   isDependabot,
   briefingModel,
   fingerprint,
+  fingerprintIdentity,
   attentionFor,
   type ReviewSubject,
   type ReviewMember,
@@ -95,8 +97,10 @@ interface Deps {
   directory: () => string;
   auth: () => { token: string | null; login: string | null };
   preferences: () => WorkbenchPreferences;
-  history: () => ReviewHistoryEntry[];
+  history: () => readonly ReviewHistoryEntry[];
   busy: () => boolean;
+  /** Tests inject a store to count its reads. */
+  mutes?: MutedPrStore;
   activities?: ActivityService;
   client?: () => Octokit;
   cachedDiscussion?: (url: string) => GitHubReviewThreads | undefined;
@@ -104,6 +108,17 @@ interface Deps {
   signals?: (client: Octokit, requests: QueueSignalRequest[]) => Promise<QueueSignals[]>;
   provider?: typeof getProvider;
   now?: () => number;
+}
+interface VisibleHistory {
+  history: readonly ReviewHistoryEntry[];
+  bySubject: ReadonlyMap<string, ReviewHistoryEntry>;
+  byUrl: ReadonlyMap<string, { entry: ReviewHistoryEntry; index: number }>;
+}
+/** Local queue state that `includeSubject` reads, built once per `view()`. */
+interface QueueSets {
+  archived: ReadonlySet<string>;
+  retired: ReadonlySet<string>;
+  retained: ReadonlySet<string>;
 }
 class DiscoverySuperseded extends Error {}
 class BriefingCancelled extends Error {
@@ -122,8 +137,40 @@ export function createWorkbenchService(deps: Deps) {
   const readBaselines = new Set<string>();
   const savedViews = createSavedViewStore(deps.directory);
   const stars = createStarredPrStore(deps.directory, now);
-  const mutes = createMutedPrStore(deps.directory, now);
-  const mutedUrls = () => new Set(mutes.load(deps.auth().login ?? 'guest').map(entry => entry.member.url));
+  const mutes = deps.mutes ?? createMutedPrStore(deps.directory, now);
+  const mutedUrls = () => mutes.index(deps.auth().login ?? 'guest').urls;
+  const visibleMemo = new WeakMap<readonly ReviewHistoryEntry[], { urls: ReadonlySet<string>; value: VisibleHistory }>();
+  /**
+   * Saved reviews without muted PRs, indexed for queue lookups. In both maps the first entry wins.
+   * Memoized while the history array is frozen and the muted URLs are unchanged.
+   */
+  function visibleHistory(urls = mutedUrls()): VisibleHistory {
+    const all = deps.history();
+    const memo = visibleMemo.get(all);
+    if (memo?.urls === urls) return memo.value;
+    const history = Object.freeze(all.filter(entry => !isMutedReview(entry, urls)));
+    const bySubject = new Map<string, ReviewHistoryEntry>();
+    const byUrl = new Map<string, { entry: ReviewHistoryEntry; index: number }>();
+    history.forEach((entry, index) => {
+      const id = entry.snapshot?.subject.id ?? entry.prUrl;
+      if (!bySubject.has(id)) bySubject.set(id, entry);
+      if (!byUrl.has(entry.prUrl)) byUrl.set(entry.prUrl, { entry, index });
+    });
+    const value: VisibleHistory = Object.freeze({ history, bySubject, byUrl });
+    if (Object.isFrozen(all)) visibleMemo.set(all, { urls, value });
+    return value;
+  }
+  /** The saved review for a subject: by subject id, otherwise the earliest entry for any member. */
+  function reviewFor(subject: ReviewSubject, visible: VisibleHistory) {
+    const exact = visible.bySubject.get(subject.id);
+    if (exact) return exact;
+    let found: { entry: ReviewHistoryEntry; index: number } | undefined;
+    for (const member of subject.members) {
+      const candidate = visible.byUrl.get(member.url);
+      if (candidate && (!found || candidate.index < found.index)) found = candidate;
+    }
+    return found?.entry;
+  }
   let cooldown: { account: string; error: GitHubBackoffError } | undefined;
   let state: State | undefined;
   let refresh: GitHubWork<WorkbenchQueue> | undefined;
@@ -191,30 +238,46 @@ export function createWorkbenchService(deps: Deps) {
     fs.renameSync(temp, cachePath());
   }
   const modelSettings = (preferences = deps.preferences()) => briefingModel(preferences);
+  // Hashing every description on each queue view cost tens of milliseconds on large queues.
+  // Equal member identities and settings give an equal key, so the hash is reused.
+  const keys = new Map<string, string>();
   function key(subject: ReviewSubject, p = modelSettings()) {
-    return createHash('sha256')
-      // Keep existing low/high cache keys so upgrading does not regenerate briefings.
-      .update(JSON.stringify([fingerprint(subject), p.provider, p.model, p.effort !== 'low', 'briefing-v2',
-        ...(['low', 'high'].includes(p.effort) ? [] : [p.effort])]))
-      .digest('hex');
+    const settings = [p.provider, p.model, p.effort !== 'low', 'briefing-v2', ...(['low', 'high'].includes(p.effort) ? [] : [p.effort])];
+    const identity = `${fingerprintIdentity(subject)}|${JSON.stringify(settings)}`;
+    const known = keys.get(identity);
+    if (known !== undefined) return known;
+    // Keep existing low/high cache keys so upgrading does not regenerate briefings.
+    const value = createHash('sha256').update(JSON.stringify([fingerprint(subject), ...settings])).digest('hex');
+    if (keys.size >= 5000) keys.clear();
+    keys.set(identity, value);
+    return value;
   }
   const limit = (preferences = deps.preferences()) => Math.min(100, Math.max(0, (preferences.briefingDailyLimit ?? 10) || 0));
-  function isArchived(member: ReviewMember) {
-    return member.repoArchived === true || (load().archivedRepos ?? []).includes(member.repo.toLowerCase());
+  const queueSets = (s = load()): QueueSets => ({
+    archived: new Set(s.archivedRepos ?? []),
+    retired: new Set(s.retiredIds ?? []),
+    retained: new Set(s.retainedInactiveIds ?? []),
+  });
+  function isArchived(member: ReviewMember, archived: ReadonlySet<string> = new Set(load().archivedRepos ?? [])) {
+    return member.repoArchived === true || archived.has(member.repo.toLowerCase());
   }
   const inactivityDays = (preferences = deps.preferences()) => discoveryInactivityDays(preferences);
   const withinInactivity = (subject: ReviewSubject, starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) => subjectRecentlyUpdated(subject, preferences, now(), starred);
-  function includeSubject(subject: ReviewSubject, muted = mutedUrls(), starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) {
-    if (load().retiredIds?.includes(subject.id)) return false;
-    if (load().retainedInactiveIds?.includes(subject.id) && !subject.members.some(member =>
+  function includeSubject(subject: ReviewSubject, muted = mutedUrls(), starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences(), sets = queueSets()) {
+    if (sets.retired.has(subject.id)) return false;
+    if (sets.retained.has(subject.id) && !subject.members.some(member =>
       isMyPr(member, deps.auth().login) || preferences.watchedRepos.some(repo => repo.toLowerCase() === member.repo.toLowerCase()) || starred.has(member.url)
     )) return false;
     // Retain necessary parent context when a human-authored change depends on a bot PR.
-    return withinInactivity(subject, starred, preferences) && !subject.members.some(m => muted.has(m.url) || isArchived(m)) && subject.members.some(
+    return withinInactivity(subject, starred, preferences) && !subject.members.some(m => muted.has(m.url) || isArchived(m, sets.archived)) && subject.members.some(
       (m) => m.state === 'open' && (!repositorySettings(preferences, m.repo).ignoreDependabotPrs || !isDependabot(m.author))
     );
   }
   function view(includeHidden = false): WorkbenchQueue {
+    return timed('view', () => buildView(includeHidden), (queue) =>
+      `items=${queue.items.length} muted=${queue.mutedPrs?.length ?? 0} history=${deps.history().length}`);
+  }
+  function buildView(includeHidden: boolean): WorkbenchQueue {
     const preferences = deps.preferences();
     const s = load();
     const allMembers = [...new Map([...stars.load(s.account).map(entry => entry.member), ...s.subjects.flatMap(subject => subject.members)].map(member => [member.url, member])).values()];
@@ -223,17 +286,18 @@ export function createWorkbenchService(deps: Deps) {
     reads.observe(s.account, allMembers, !readBaselines.has(s.account) && allMembers.length > 0);
     readBaselines.add(s.account);
     const readStates: WorkbenchQueue['readStates'] = reads.snapshot(s.account);
-    const mutedPrs = mutes.load(s.account);
-    const muted = new Set(mutedPrs.map(entry => entry.member.url));
-    const hiddenUrls = new Set([...muted, ...s.subjects.flatMap(subject => subject.members.filter(isArchived).map(member => member.url))]);
+    const mutedIndex = mutes.index(s.account);
+    const muted = mutedIndex.urls;
+    const sets = queueSets(s);
+    const hiddenUrls = new Set([...muted, ...s.subjects.flatMap(subject => subject.members.filter(member => isArchived(member, sets.archived)).map(member => member.url))]);
     const visibleSubjects = s.subjects.flatMap(subject => { const visible = withoutMutedMembers(subject, hiddenUrls); return visible ? [visible] : []; });
-    const starredPrs = stars.load(s.account).filter(entry => !muted.has(entry.member.url) && !isArchived(entry.member));
+    const starredPrs = stars.load(s.account).filter(entry => !muted.has(entry.member.url) && !isArchived(entry.member, sets.archived));
     const starredUrls = new Set(starredPrs.map((entry) => entry.member.url));
-    const history = deps.history().filter(entry => !isMutedReview(entry, muted));
+    const visible = visibleHistory(muted);
     const filters = normalizeQueueFilters(s.filters);
     const selection = modelSettings(preferences);
     const knownUrls = new Set(s.subjects.flatMap((subject) => subject.members.map((m) => m.url)));
-    const activeSubjects = new Set(visibleSubjects.filter(subject => includeSubject(subject, muted, starredUrls, preferences)));
+    const activeSubjects = new Set(visibleSubjects.filter(subject => includeSubject(subject, muted, starredUrls, preferences, sets)));
     const subjects = [
       ...visibleSubjects,
       ...groupSubjects(
@@ -243,9 +307,7 @@ export function createWorkbenchService(deps: Deps) {
     ];
     const responseSignals = new Map((deps.cachedSignals?.(allMembers.filter(member => member.author.toLowerCase() === s.account.toLowerCase())) ?? []).map(value => [value.url, value]));
     const allItems = subjects.map((subject) => {
-      const review =
-        history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
-        history.find((h) => subject.members.some((m) => m.url === h.prUrl));
+      const review = reviewFor(subject, visible);
       const k = key(subject, selection);
       const cached = s.briefs[k];
       const block = automaticBriefingBlock(subject, preferences, s.used, s.repositoryUsed ?? {});
@@ -305,14 +367,15 @@ export function createWorkbenchService(deps: Deps) {
       readStates,
       starredPrs,
       starredItems,
-      mutedPrs,
+      mutedPrs: mutedIndex.rows,
       warnings,
       sync: sync ?? { status: 'idle', checkedAt: s.discoveredAt },
       remaining: Math.max(0, limit(preferences) - s.used),
       briefingBudget: briefingBudget(preferences, [...preferences.watchedRepos, ...Object.keys(preferences.repositorySettings ?? {}), ...allMembers.map(m => m.repo)], s.used, s.repositoryUsed ?? {}, now()),
       filters,
       savedViews: { ...structuredClone(views), counts },
-    }, history);
+      // Queue state replaces members rather than editing them, so member hashes are reused.
+    }, visible.history, { reuseMembers: true });
   }
   async function fetchMember(
     octokit: Octokit,
@@ -467,8 +530,9 @@ export function createWorkbenchService(deps: Deps) {
       ) => {
         const repo = (() => { const p = parsePrUrl(url); return `${p.owner}/${p.repo}`.toLowerCase(); })();
         if (s.archivedRepos?.includes(repo)) return;
-        const muted = mutes.load(s.account).find(entry => entry.member.url === url);
-        if (muted) { members.set(url, previousMembers.get(url) ?? muted.member); return; }
+        const muted = mutes.member(s.account, url);
+        // The saved member is frozen and shared; the queue keeps its own copy.
+        if (muted) { members.set(url, previousMembers.get(url) ?? structuredClone(muted)); return; }
         const withListedLabels = (member: ReviewMember): ReviewMember => {
           // A reused PR can predate label-color support or a repository label
           // edit. Enrich it from the listing we already need for stack discovery.
@@ -1010,9 +1074,11 @@ export function createWorkbenchService(deps: Deps) {
     },
     cached: () => view(true),
     snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view()
-      : stampQueue({ items: [], warnings: [], remaining: 0 }, deps.history().filter(entry => !isMutedReview(entry, mutedUrls()))),
+      : stampQueue({ items: [], warnings: [], remaining: 0 }, visibleHistory().history),
     queue,
     mutedUrls,
+    /** Saved reviews without muted PRs. Frozen and shared while the index and mutes are unchanged. */
+    visibleHistory: () => visibleHistory().history,
     markPrRead(request: MarkPrReadRequest) {
       const account = deps.auth().login;
       if (!account || !deps.auth().token) throw new Error('Connect GitHub to save unread progress.');
@@ -1030,11 +1096,16 @@ export function createWorkbenchService(deps: Deps) {
     isMutedReview: (entry: Pick<ReviewHistoryEntry, 'prUrl' | 'snapshot'>) => isMutedReview(entry, mutedUrls()),
     mutePrs(request: MutePrRequest) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to mute PRs.');
-      mutes.set(load().account, request);
+      const account = load().account;
+      // Unmuting restores the full saved PRs, so their briefing keys are unchanged. IPC input is untrusted.
+      const restored = !request.muted && Array.isArray(request.urls)
+        ? request.urls.flatMap(url => { const member = mutes.member(account, url); return member ? [structuredClone(member)] : []; })
+        : [];
+      mutes.set(account, request);
       if (!request.muted) {
         const s = load();
         const members = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
-        for (const member of request.members) if (!members.has(member.url)) members.set(member.url, member);
+        for (const member of restored) if (!members.has(member.url)) members.set(member.url, member);
         s.subjects = groupSubjects([...members.values()], s.overrides, s.subjects);
         try { save(); } catch (error) { console.warn('Could not refresh queue cache after unmuting:', error); }
       }

@@ -154,6 +154,17 @@ task dev       # starts the Electron dev server
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 
+### Performance trace
+
+Set `GNOSIS_PERF_TRACE` to any non-empty value to log timings for main-process work, such as queue rebuilds:
+
+```bash
+GNOSIS_PERF_TRACE=1 npm start
+# [perf] view 9.3ms items=400 muted=649 history=512
+```
+
+The trace covers queue rebuilds (`view`), tray rebuilds (`tray`), and reads of `preferences.json` and the saved-review index after they change. Without the variable, nothing is timed. `npm run benchmark:queue` times queue rebuilds on generated data; see [Queue rebuild benchmark](docs/benchmarks/queue-rebuild.md).
+
 ## Build
 
 ```bash

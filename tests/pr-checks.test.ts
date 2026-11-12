@@ -7,6 +7,7 @@ import { createGitHubClientPool } from './cache-test-pool';
 import { readCommitChecks } from '../lib/github-checks';
 import {
   readPrChecks,
+  readCurrentPrChecks,
   readPrChecksBatch,
   readCheckDetails,
   cachedCheckDetails,
@@ -14,6 +15,7 @@ import {
   readCheckLog,
   rerunChecks,
 } from '../src/pr-checks-service';
+import { CheckHeadChanged } from '../src/pr-checks-graphql';
 import { checkSummary, checkCounts, orderedChecks, checkDuration, type PrCheck } from '../lib/pr-checks';
 const sha = 'a'.repeat(40),
   url = 'https://github.com/o/r/pull/1';
@@ -469,6 +471,48 @@ void test('head changes and page failures never overwrite a complete cached snap
   scenario = 'pagination';
   await assert.rejects(readPrChecks(h.client, input, { force: true }), /Offline/);
   assert.deepEqual(await readPrChecks(h.client, input, { cachedOnly: true }), original);
+});
+
+void test('uses the supplied head without a metadata read', async () => {
+  const h = harness();
+  const heads: boolean[] = [];
+  const value = await readCurrentPrChecks(h.client, { url, headSha: sha }, {}, (fresh) => {
+    heads.push(fresh);
+    return Promise.resolve(sha);
+  });
+  assert.equal(value?.headSha, sha);
+  assert.deepEqual(heads, [], 'The checks query verifies the head itself');
+  assert.deepEqual(
+    h.calls.map((call) => call.path),
+    ['/graphql']
+  );
+});
+
+void test('falls back on CheckHeadChanged', async () => {
+  const moved = 'b'.repeat(40);
+  const h = harness((p, init) => {
+    if (p !== '/graphql') return;
+    const body = typeof init.body === 'string' ? init.body : '';
+    const data = graphResponse(body);
+    // GitHub's PR has moved to `moved`; its only commit is `moved`.
+    data.p0.pullRequest.headRefOid = moved;
+    data.p0.pullRequest.commits.nodes[0].commit.oid = moved;
+    return new Response(JSON.stringify({ data }), { headers: { 'content-type': 'application/json' } });
+  });
+  await assert.rejects(readPrChecks(h.client, { url, headSha: sha }), CheckHeadChanged);
+  const heads: boolean[] = [];
+  const value = await readCurrentPrChecks(h.client, { url, headSha: sha }, {}, (fresh) => {
+    heads.push(fresh);
+    return Promise.resolve(moved);
+  });
+  assert.deepEqual(heads, [true], 'A moved head reads fresh metadata');
+  assert.equal(value?.headSha, moved, 'The result is labelled with the head it describes');
+  const forced: boolean[] = [];
+  await readCurrentPrChecks(h.client, { url, headSha: sha }, { force: true }, (fresh) => {
+    forced.push(fresh);
+    return Promise.resolve(moved);
+  });
+  assert.deepEqual(forced, [true], 'A forced read keeps the metadata-first path');
 });
 
 void test('completed detail cache is revision/account scoped, coalesces reads, and invalidates reruns', async () => {

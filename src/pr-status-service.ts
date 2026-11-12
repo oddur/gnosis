@@ -117,23 +117,32 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
   const pending = new WeakMap<Octokit, Map<string, GitHubWork<StatusRead>>>();
   const preloading = new WeakMap<Octokit, Map<string, Promise<unknown>>>();
   const key = (url: string) => `pr-status:v1:${url}`;
-  async function fetchStatus(client: Octokit, url: string, force: boolean): Promise<StatusRead> {
+  async function fetchStatus(client: Octokit, url: string, force: boolean, expectedHead?: string): Promise<StatusRead> {
     const cache = githubCacheFor(client);
     const version = cache?.version();
     const checkedAt = now();
     const { owner, repo, pullNumber } = parsePrUrl(url);
+    // Checks and signals need only the head SHA. With the queue's head, they start beside the metadata read.
+    const secondStage = (headSha: string) => {
+      let ciError: string | undefined;
+      return Promise.all([
+        checks(client, { url, headSha }, { force }).catch((error: unknown) => {
+          ciError = error instanceof Error ? error.message : String(error);
+          return undefined;
+        }),
+        signals(client, [{ url, headSha }], { force, active: true }),
+      ]).then(([checkSnapshot, [prSignals]]) => ({ checkSnapshot, prSignals, ciError }));
+    };
+    const speculative = expectedHead ? secondStage(expectedHead) : undefined;
+    void speculative?.catch(() => {});
     const [prData, reviewSummary] = await Promise.all([
       metadata(client, owner, repo, pullNumber, force),
       reviews(client, owner, repo, pullNumber),
     ]);
-    let ciError: string | undefined;
-    const [checkSnapshot, [prSignals]] = await Promise.all([
-      checks(client, { url, headSha: prData.headSha }, { force }).catch((error: unknown) => {
-        ciError = error instanceof Error ? error.message : String(error);
-        return undefined;
-      }),
-      signals(client, [{ url, headSha: prData.headSha }], { force, active: true }),
-    ]);
+    // A moved head discards the speculative results; they never describe another revision.
+    const { checkSnapshot, prSignals, ciError } = await (speculative && prData.headSha === expectedHead
+      ? speculative
+      : secondStage(prData.headSha));
     const core: StatusCore = {
       labels: prData.labels,
       isDraft: prData.isDraft,
@@ -171,9 +180,12 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
     };
   }
   return {
-    /** Reads GitHub. Concurrent non-forced reads of a PR share one operation. */
-    read(client: Octokit, url: string, force = false): Promise<StatusRead> {
-      if (force) return fetchStatus(client, url, true);
+    /**
+     * Reads GitHub. Concurrent non-forced reads of a PR share one operation. With `expectedHead`, checks
+     * and signals for that head start at once and are used only when GitHub reports the same head.
+     */
+    read(client: Octokit, url: string, force = false, expectedHead?: string): Promise<StatusRead> {
+      if (force) return fetchStatus(client, url, true, expectedHead);
       let work = pending.get(client);
       if (!work) {
         work = new Map();
@@ -181,7 +193,7 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
       }
       const existing = work.get(url);
       if (existing) return joinGitHubWork(existing).then((result) => structuredClone(result));
-      const current = createGitHubWork(() => fetchStatus(client, url, false));
+      const current = createGitHubWork(() => fetchStatus(client, url, false, expectedHead));
       work.set(url, current);
       const owner = work;
       void current.promise

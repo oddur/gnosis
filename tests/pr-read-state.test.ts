@@ -237,3 +237,29 @@ void test('observing unchanged metadata does not clone the complete unread state
     assert.equal(clone.mock.callCount(), 0);
   } finally { t.mock.restoreAll(); h.cleanup(); }
 });
+void test('a no-op signal does not write', (t) => {
+  const h = harness();
+  try {
+    const members = Array.from({ length: 50 }, (_, i) => member(i + 1));
+    h.store.observe('me', members, true);
+    const seen = h.signal({ comments: 2 });
+    assert.equal(h.store.signals('me', [seen]), true);
+    const before = h.store.snapshot('me');
+    const write = t.mock.method(fs, 'writeFileSync');
+    const clone = t.mock.method(globalThis, 'structuredClone');
+    assert.equal(h.store.signals('me', [seen]), false, 'A repeated signal changes nothing');
+    assert.equal(h.store.signals('me', [h.signal({ headSha: 'another-head', comments: 9 })]), false);
+    assert.equal(write.mock.callCount(), 0);
+    assert.equal(clone.mock.callCount(), 0, 'Unchanged entries are never copied');
+    assert.equal(h.store.snapshot('me'), before, 'The snapshot is shared until a change is saved');
+    assert.ok(Object.isFrozen(before) && Object.isFrozen(before[member().url]));
+    t.mock.restoreAll();
+    assert.equal(h.store.signals('me', [h.signal({ comments: 3 })]), true);
+    assert.notEqual(h.store.snapshot('me'), before);
+    assert.deepEqual(h.state().unread, ['comments']);
+    assert.deepEqual(h.state(2).unread, [], 'Untouched entries keep their state');
+  } finally {
+    t.mock.restoreAll();
+    h.cleanup();
+  }
+});
