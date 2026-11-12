@@ -394,8 +394,12 @@ export function createSearchIndexer(deps: IndexerDeps) {
         scheduleFlush();
         return;
       }
-      const response = change.value === undefined ? undefined : searchableResponse(change.value);
-      const threads = change.value === undefined || response ? undefined : savedThreads(change.value);
+      // A non-owned cache `set` passes the caller's object, which it may still change. Documents are built
+      // later, at flush, so keep a private copy of only the responses and threads that are indexed.
+      const matched = change.value === undefined ? undefined : searchableResponse(change.value);
+      const response = matched && structuredClone(matched);
+      const saved = change.value === undefined || response ? undefined : savedThreads(change.value);
+      const threads = saved && structuredClone(saved);
       if (threads) {
         const feed = `threads:${threads.url}`;
         threadIds.set(change.id, feed);

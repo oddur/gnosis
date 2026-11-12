@@ -242,6 +242,22 @@ void test('does not resend an evicted unchanged feed', async () => {
   }
 });
 
+void test('indexes the response as it was cached, even if the caller changes its object before the flush', async () => {
+  const state = { queue: { items: [], warnings: [], remaining: 0 } as WorkbenchQueue };
+  const { db, indexer } = harness(state);
+  try {
+    await indexer.start();
+    const cached = { response: { status: 200, url: 'https://api.github.com/repos/acme/core/pulls/6', headers: {}, data: { title: 'Original six', body: '' } }, freshUntil: 0 };
+    indexer.cacheChanged({ scope: 's', id: 's:six', value: cached });
+    cached.response.data.title = 'Edited after caching';
+    await indexer.flush();
+    assert.equal((await indexer.search('Original six')).hits.length, 1);
+    assert.equal((await indexer.search('Edited after caching')).hits.length, 0);
+  } finally {
+    db.close();
+  }
+});
+
 void test('hides a cached PR when the queue has the same URL', async () => {
   const state = { queue: { items: [item('stack', [member(1), member(2)])], warnings: [], remaining: 0 } as WorkbenchQueue };
   const { db, indexer } = harness(state);

@@ -958,7 +958,14 @@ void test('cache change hook fires on set, delete and clear, not on eviction', a
   scope.set('one', value);
   assert.equal(changes.length, 1);
   assert.deepEqual(changes[0].value, value);
-  assert.notEqual(changes[0].value, value, 'the stored copy, not the caller object');
+  // Without `owned` the cache stores serialized text and hands listeners the caller's object; the search
+  // indexer copies what it keeps. An owned value is frozen and shared.
+  const owned = { response: { url: 'o', data: [2] } };
+  scope.set('owned', owned, true);
+  assert.equal(changes[1].value, owned);
+  assert.ok(Object.isFrozen(changes[1].value));
+  scope.delete('owned');
+  changes.splice(1, 2);
   scope.delete('one');
   assert.deepEqual(changes[1], { scope: 'a'.repeat(64), id: changes[0].id });
   scope.set('two', 2);
