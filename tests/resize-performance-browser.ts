@@ -24,10 +24,12 @@ void app.whenReady().then(async () => {
       `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width&&(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.click()})()`
     );
   const frames = 'new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))';
+  let lastFind: Electron.Result | undefined;
   const find = (text: string) =>
     new Promise<number>((resolve) => {
       const listener = (_event: unknown, result: Electron.Result) => {
         if (!result.finalUpdate) return;
+        lastFind = result;
         win.webContents.off('found-in-page', listener);
         resolve(result.matches);
       };
@@ -248,9 +250,17 @@ void app.whenReady().then(async () => {
       'The last topic is skipped before searching'
     );
     assert.ok((await find('needleinlasttopic')) >= 1, 'Find reaches a skipped topic');
-    await wait(
-      `(()=>{const r=document.querySelector('[data-explanation-section="10"]').getBoundingClientRect();return r.bottom>0&&r.top<innerHeight})()`
-    );
+    try {
+      await wait(
+        `(()=>{const r=document.querySelector('[data-explanation-section="10"]').getBoundingClientRect();return r.bottom>0&&r.top<innerHeight})()`
+      );
+    } catch (error) {
+      // Not reproduced locally; name where find left the reader so a CI failure says why.
+      const state = await js<string>(
+        `(()=>{const c=document.querySelector('.explanation-document');const box=n=>{const r=document.querySelector('[data-explanation-section="'+n+'"]').getBoundingClientRect();return [Math.round(r.top),Math.round(r.bottom)]};return JSON.stringify({scrollTop:c.scrollTop,scrollHeight:c.scrollHeight,clientHeight:c.clientHeight,innerHeight,section9:box(9),section10:box(10),selection:String(getSelection()).slice(0,40)})})()`
+      );
+      throw new Error(`${(error as Error).message}\nfind: ${JSON.stringify(lastFind)}\npage: ${state}`);
+    }
     win.webContents.stopFindInPage('clearSelection');
     assert.ok((await find('marker2950')) >= 1, 'Find reaches a line inside a skipped slice of the large file');
     win.webContents.stopFindInPage('clearSelection');
