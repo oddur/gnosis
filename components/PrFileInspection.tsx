@@ -23,6 +23,7 @@ import {
 } from '../lib/pr-changes';
 import { useFileProgress } from '../lib/file-view-progress';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
+import { useDiffLayout } from '../lib/use-diff-layout';
 import { diffContextLines } from '../lib/review-diff';
 import { prPreviewSelection } from '../lib/pr-change-preview';
 import { CODE_THEMES } from '../lib/constants';
@@ -103,6 +104,7 @@ export function PrFileInspection({
   const opened = useRef(!collapsed);
   if (!collapsed) opened.current = true;
   const appearance = useDiffAppearance(prefs.diffAppearance);
+  const layout = useDiffLayout(prefs.diffLayout);
   const markdown = isMarkdownFile(entry.file.path);
   const [markdownView, changeMarkdownView] = useMarkdownView();
   const [sourceOverride, setSourceOverride] = useState<string>();
@@ -397,7 +399,7 @@ export function PrFileInspection({
       : (event) => comments.begin({ start: event.lineNumber, end: event.lineNumber, side: event.annotationSide }),
     theme: `gnosis-${CODE_THEMES.some((t) => t.id === prefs.codeTheme) ? prefs.codeTheme : 'github-dark'}`,
     themeType: 'dark',
-    diffStyle: entry.file.status === 'added' || entry.file.status === 'deleted' ? 'unified' : prefs.diffLayout,
+    diffStyle: entry.file.status === 'added' || entry.file.status === 'deleted' ? 'unified' : layout,
     disableFileHeader: true,
     collapsedContextThreshold: 0,
     parseDiffOptions,
