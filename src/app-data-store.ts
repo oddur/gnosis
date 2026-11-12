@@ -200,7 +200,10 @@ export function createAppDataStore() {
         // The worker exits by itself once it answers close, and that exit can arrive before close()
         // resumes. It is not a crash: fail any request still waiting, but keep the store usable so
         // late writes are counted instead of thrown.
-        if (!closed) return failed(error);
+        if (!closed) {
+          failed(error);
+          return;
+        }
         for (const request of pending.values()) request.reject(error);
         pending.clear();
         active.unref();
