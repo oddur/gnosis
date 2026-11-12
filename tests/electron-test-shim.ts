@@ -3,21 +3,47 @@
 // silently shrinks and size-dependent assertions time out. Allow every test window to
 // exceed the display so layouts depend only on the sizes the tests ask for.
 import * as electron from 'electron';
+import fs from 'node:fs';
 
 // A suite may preserve storage across reloads, but must not restore another suite's tabs.
 if (process.env.GNOSIS_BROWSER_TEST_PROFILE) {
   electron.app.setPath('userData', process.env.GNOSIS_BROWSER_TEST_PROFILE);
 }
 
-// Electron's app.quit() exits with code 0 whatever process.exitCode says, so a suite that
-// records a failure and then quits would pass (#265). Every suite goes through this shim, so
-// make quit() honour a failure code here rather than relying on each suite calling app.exit(1).
-const quit = electron.app.quit.bind(electron.app);
-electron.app.quit = () => {
-  const code = Number(process.exitCode ?? 0);
-  if (code) electron.app.exit(code);
-  else quit();
+// A suite passes only when it says so (#265). The runner reads the code a suite exits with from
+// GNOSIS_TEST_RESULT_FILE and fails an Electron exit code of 0 that has no recorded success.
+// That closes three ways a failing suite used to exit 0:
+// - app.quit() exits 0 whatever process.exitCode says;
+// - Electron quits by itself once the last window closes, which can win the race against a
+//   suite's own app.exit(1) after `win.destroy(); await cleanup()`;
+// - an exception or rejection outside the suite's try block is only logged.
+const app = electron.app;
+const resultFile = process.env.GNOSIS_TEST_RESULT_FILE;
+const report = (code: number) => {
+  if (resultFile) fs.writeFileSync(resultFile, String(code));
 };
+const exit = app.exit.bind(app);
+app.exit = (code = 0) => {
+  report(code);
+  exit(code);
+};
+const quit = app.quit.bind(app);
+app.quit = () => {
+  const code = Number(process.exitCode ?? 0);
+  if (code) app.exit(code);
+  else {
+    report(0);
+    quit();
+  }
+};
+// Suites end by calling app.exit() or app.quit(); one that forgets times out instead of passing.
+app.on('window-all-closed', () => {});
+for (const event of ['uncaughtException', 'unhandledRejection'] as const) {
+  process.on(event, (error: unknown) => {
+    console.error(`${event}:`, error);
+    app.exit(1);
+  });
+}
 
 // @ts-expect-error -- Electron's typings use `export =`; esbuild re-exports the CommonJS module at bundle time.
 export * from 'electron';

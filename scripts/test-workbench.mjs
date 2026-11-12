@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { electronTestShim } from './electron-test-build.mjs';
+import { electronTestShim, suiteExitCode, suiteResultVariable } from './electron-test-build.mjs';
 import { createHash } from 'node:crypto';
 import { createServer } from 'vite';
 import { spawn } from 'node:child_process';
@@ -96,6 +96,7 @@ try {
   const env = {
     ...process.env,
     GNOSIS_BROWSER_TEST_PROFILE: path.join(dir, 'profile'),
+    [suiteResultVariable]: path.join(dir, 'result'),
     GNOSIS_NATIVE_SWIPE: process.argv.includes('--navigation-swipe') ? '1' : process.env.GNOSIS_NATIVE_SWIPE,
     GNOSIS_WORKBENCH_URL: `http://127.0.0.1:${address.port}/tests/fixtures/${splitDiff ? 'split-diff' : 'workbench'}.html`,
   };
@@ -118,7 +119,7 @@ try {
       resolve(code);
     });
   });
-  if (code !== 0) process.exitCode = 1;
+  if (suiteExitCode(code, env[suiteResultVariable]) !== 0) process.exitCode = 1;
 } finally {
   await server.close();
   fs.rmSync(dir, { recursive: true, force: true });

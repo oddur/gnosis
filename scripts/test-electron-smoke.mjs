@@ -7,6 +7,7 @@ import process from 'node:process';
 import { setTimeout, clearTimeout } from 'node:timers';
 import electron from 'electron';
 import { requireBrowserTestEnvironment } from './browser-test-host.mjs';
+import { electronTestShim, suiteExitCode, suiteResultVariable } from './electron-test-build.mjs';
 
 requireBrowserTestEnvironment();
 
@@ -24,9 +25,11 @@ try {
       platform: 'node',
       format: 'cjs',
       external: ['electron'],
+      // The smoke test reports its result through the test shim; the preload stays production code.
+      plugins: entry === 'tests/electron-smoke.ts' ? [electronTestShim] : [],
     });
   }
-  const env = { ...process.env, GNOSIS_SMOKE_DIRECTORY: directory };
+  const env = { ...process.env, GNOSIS_SMOKE_DIRECTORY: directory, [suiteResultVariable]: path.join(directory, 'result') };
   delete env.ELECTRON_RUN_AS_NODE;
   const code = await new Promise((resolve, reject) => {
     const child = spawn(electron, [path.join(directory, 'smoke.cjs')], { env, stdio: 'inherit' });
@@ -45,7 +48,7 @@ try {
       else resolve(code);
     });
   });
-  if (code !== 0) process.exitCode = 1;
+  if (suiteExitCode(code, env[suiteResultVariable]) !== 0) process.exitCode = 1;
 } finally {
   await fs.rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
