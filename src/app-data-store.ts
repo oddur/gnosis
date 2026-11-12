@@ -195,7 +195,15 @@ export function createAppDataStore() {
       };
       worker.on('error', failed);
       worker.on('exit', (code) => {
-        if (worker === active) failed(new Error(`Saved-work worker exited (${code})`));
+        if (worker !== active) return;
+        const error = new Error(`Saved-work worker exited (${code})`);
+        // The worker exits by itself once it answers close, and that exit can arrive before close()
+        // resumes. It is not a crash: fail any request still waiting, but keep the store usable so
+        // late writes are counted instead of thrown.
+        if (!closed) return failed(error);
+        for (const request of pending.values()) request.reject(error);
+        pending.clear();
+        active.unref();
       });
       worker.on('message', ({ id, result, error }: { id: number; result: unknown; error?: string }) => {
         const request = pending.get(id);
