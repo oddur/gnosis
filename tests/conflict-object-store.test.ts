@@ -58,11 +58,19 @@ async function remoteFixture(t: TestContext) {
   await git('mv', 'renamed.txt', 'renamed-ours.txt');
   await write('deleted.txt', 'shared text\n'.repeat(10) + 'ours\n');
   await write('mode.sh', 'echo ours\n');
-  await fs.chmod(path.join(remote, 'mode.sh'), 0o755);
   await write('binary.bin', Buffer.from([0, 1, 2, 3, 0, 6]));
-  await fs.rm(path.join(remote, 'link.txt'));
-  await fs.symlink('content.ts', path.join(remote, 'link.txt'));
-  await commit('PR changes');
+  await git('add', '-A');
+  // Set the executable bit and the symlink in the index, not the file system: Windows has neither, so
+  // chmod and symlink there would quietly commit plain files and the fixture would lose its mode and
+  // type conflicts. Commit the index directly; `commit()` would re-add from the work tree.
+  await git('update-index', '--chmod=+x', 'mode.sh');
+  await write('.link-target', 'content.ts');
+  const linkBlob = await git('hash-object', '-w', '.link-target');
+  await fs.rm(path.join(remote, '.link-target'));
+  await git('update-index', '--cacheinfo', `120000,${linkBlob},link.txt`);
+  await git('commit', '-q', '-m', 'PR changes');
+  // Match the work tree to the committed symlink so later `add -A` calls keep it.
+  await git('checkout', '-q', '--', 'link.txt', 'mode.sh').catch(() => undefined);
   await write('feature-only.txt', 'more PR history\n');
   const head = await commit('more PR changes');
   await git('checkout', '-q', 'main');
@@ -318,8 +326,13 @@ void test('a linked local clone supplies the commits as an alternate and is neve
   const clone = path.join(f.dir, 'clone');
   await exec('git', ['clone', '-q', '--no-local', f.remote, clone]);
   await exec('git', ['fetch', '-q', 'origin', 'feature:feature'], { cwd: clone });
+  // List every file under .git with Node; `find` is a different program on Windows.
   const snapshot = async () =>
-    (await exec('find', ['.git', '-type', 'f'], { cwd: clone })).stdout.split('\n').sort().join('\n');
+    (await fs.readdir(path.join(clone, '.git'), { recursive: true, withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => path.relative(clone, path.join(entry.parentPath, entry.name)).split(path.sep).join('/'))
+      .sort()
+      .join('\n');
   const before = await snapshot();
   const s = service(f, { shallow: true, localClone: clone });
   s.states.set(url, state(url, f.head, f.base));
