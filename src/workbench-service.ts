@@ -25,6 +25,7 @@ import {
   type QueueFilters,
 } from '../lib/queue-filters';
 import { ACTIVITY_RETENTION_MS, type ActivityTask } from '../lib/activity';
+import { mergeStates, type MergeStates } from '../lib/merge-conflicts';
 import type { ActivityService } from './activity-service';
 import fs from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
@@ -307,6 +308,13 @@ export function createWorkbenchService(deps: Deps) {
         s.overrides
       ),
     ];
+    // Saved status only, read once and only when a filter needs merge conflicts. The renderer loads missing status.
+    let savedMerge: MergeStates | undefined;
+    const mergeFor = (value: QueueFilters) => {
+      if (value.merge === 'all') return undefined;
+      const members = subjects.flatMap(subject => subject.members);
+      return (savedMerge ??= mergeStates(members, deps.cachedSignals?.(members) ?? []));
+    };
     const responseSignals = new Map((deps.cachedSignals?.(allMembers.filter(member => member.author.toLowerCase() === s.account.toLowerCase())) ?? []).map(value => [value.url, value]));
     const allItems = subjects.map((subject) => {
       const review = reviewFor(subject, visible);
@@ -338,7 +346,7 @@ export function createWorkbenchService(deps: Deps) {
           !subject.members.some(
             (member) => member.state === 'open' && !member.merged && matchesInvolvement(member, filters.involvement, deps.auth().login)
           )) ||
-          (filters.briefingScope === 'matches' && !matchesQueueFilters(item, { ...filters, briefing: 'all' }, now(), deps.auth().login)))
+          (filters.briefingScope === 'matches' && !matchesQueueFilters(item, { ...filters, briefing: 'all' }, now(), deps.auth().login, mergeFor(filters))))
       )
         return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
       return item;
@@ -360,7 +368,7 @@ export function createWorkbenchService(deps: Deps) {
       views.views.map((view) => [
         view.id,
         (view.filters.starredOnly ? starredItems : items).filter((item) =>
-          matchesQueueFilters(item, view.filters, now(), deps.auth().login)
+          matchesQueueFilters(item, view.filters, now(), deps.auth().login, mergeFor(view.filters))
         ).length,
       ])
     );
@@ -920,7 +928,10 @@ export function createWorkbenchService(deps: Deps) {
           )
       );
       const manualItem = items.find((i) => requestedBriefings.has(requestKey(key(i.subject, p))));
-      const item = manualItem ?? prioritizeBriefings(candidates, filters, now(), deps.auth().login, filters.sort.key === 'status' ? deps.cachedSignals?.(candidates.flatMap(item => item.subject.members)) : undefined).find(
+      const members = candidates.flatMap(item => item.subject.members);
+      const saved = filters.sort.key === 'status' || filters.merge !== 'all' ? deps.cachedSignals?.(members) : undefined;
+      const item = manualItem ?? prioritizeBriefings(candidates, filters, now(), deps.auth().login, filters.sort.key === 'status' ? saved : undefined,
+        filters.merge === 'all' ? undefined : mergeStates(members, saved ?? [])).find(
         i => !automaticBriefingBlock(i.subject, preferences, s.used, s.repositoryUsed ?? {}) &&
           (!s.briefs[key(i.subject, p)] || s.briefs[key(i.subject, p)]?.status === 'paused')
       );

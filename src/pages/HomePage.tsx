@@ -22,7 +22,9 @@ import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
-import { useCachedQueueSignals } from '../../lib/use-queue-signals';
+import { useCachedQueueSignals, useMergeFilter } from '../../lib/use-queue-signals';
+import { MergeFilterStatus } from '../../components/MergeFilterStatus';
+import { countUnsettled } from '../../lib/merge-conflicts';
 import { PrReadContext, type ViewedPr } from '../../lib/pr-read-context';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
@@ -65,6 +67,7 @@ import {
   describeQueueFilters,
   countBriefings,
   tallyBriefings,
+  mergeFilterCandidates,
   type QueueFilters,
 } from '../../lib/queue-filters';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
@@ -451,8 +454,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   }, [allItems]);
   const selectedItem = useMemo(() => {
     const item = selected ? itemsById.get(selected) : undefined;
-    // A briefing that finishes or pauses moves its row out of a briefing filter; its open panel stays.
-    return item && matchesQueueFilters(item, { ...filters, briefing: 'all' }, clock, login) ? item : undefined;
+    // A briefing that finishes or pauses, or a conflict that is resolved, moves its row out of the filter; its open panel stays.
+    return item && matchesQueueFilters(item, { ...filters, briefing: 'all', merge: 'all' }, clock, login) ? item : undefined;
   }, [itemsById, selected, filters, login, clock]);
   const workspaceItems = useMemo(() => {
     const result = [...allItems];
@@ -921,21 +924,25 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     void refresh(true);
   };
   const queueItems = useMemo(() => filters.starredOnly ? (queue.starredItems ?? []) : queue.items, [filters.starredOnly, queue.items, queue.starredItems]);
+  // The merge filter needs status for every candidate PR. Off, candidates are empty and nothing loads or subscribes.
+  const mergeCandidates = useMemo(() => mergeFilterCandidates(queueItems, filters, clock, login), [queueItems, filters, clock, login]);
+  const { states: mergeStates, phase: mergePhase } = useMergeFilter(auth?.login ?? null, mergeCandidates, filters.merge === 'conflicts');
+  const mergeUnsettled = useMemo(() => countUnsettled(mergeCandidates, mergeStates), [mergeCandidates, mergeStates]);
   const { responseMembers, responseIncomplete } = useMemo(() => {
     const candidates = filters.involvement === 'response' ? queueItems.flatMap(item => item.subject.members
-      .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, clock, login))
+      .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, clock, login, mergeStates))
       .map(member => ({ member, response: item.responses?.[member.url] }))) : [];
     return { responseMembers: candidates.map(candidate => candidate.member), responseIncomplete: candidates.filter(candidate => !candidate.response?.complete).length };
-  }, [queueItems, filters, clock, login]);
+  }, [queueItems, filters, clock, login, mergeStates]);
   const refreshResponseQueue = useCallback(() => { void refresh(false, true); }, [refresh]);
   const openedId = openedItem?.subject.id;
   const items = useMemo(() => queueItems.filter((item) => matchesQueueFilters(item,
     filters.readStatus !== 'all' && openedId === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
-    clock, login)), [queueItems, filters, openedId, login, clock]);
+    clock, login, mergeStates)), [queueItems, filters, openedId, login, clock, mergeStates]);
   const itemIds = useMemo(() => new Set(items.map(item => item.subject.id)), [items]);
   // Counts use the loaded snapshot only. Without a briefing filter, the visible entries are the scope.
-  const briefingCounts = useMemo(() => filters.briefing === 'all' ? tallyBriefings(items) : countBriefings(queueItems, filters, clock, login),
-    [items, queueItems, filters, clock, login]);
+  const briefingCounts = useMemo(() => filters.briefing === 'all' ? tallyBriefings(items) : countBriefings(queueItems, filters, clock, login, mergeStates),
+    [items, queueItems, filters, clock, login, mergeStates]);
   const latestFilterUpdate = useRef(updateFilters);
   latestFilterUpdate.current = updateFilters;
   const chooseBriefing = useCallback((briefing: QueueFilters['briefing']) => latestFilterUpdate.current({ briefing }), []);
@@ -1578,7 +1585,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         key={summaryItem.subject.id}
         item={summaryItem}
         feedbackRequest={feedbackRequest?.subjectId === summaryItem.subject.id ? feedbackRequest : undefined}
-        matchingUrls={matchingStackMembers(summaryItem, filters, auth?.login)}
+        matchingUrls={matchingStackMembers(summaryItem, filters, auth?.login, undefined, mergeStates)}
         onScopeChange={selectScope}
         onRenameStack={async name => {
           const next = await enqueueWrite(() => window.electronAPI.workbenchRenameStack(summaryItem.subject.id, name, auth?.login ?? undefined));
@@ -1973,7 +1980,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 label: 'Mark visible PRs as read',
                 disabled: readBusy || !items.some(item => item.unreadUrls?.length),
                 run: () => changeRead([...new Set(items.flatMap(item => item.subject.members
-                  .filter(member => matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, filters, Date.now(), auth.login))
+                  .filter(member => matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, filters, Date.now(), auth.login, mergeStates))
                   .map(member => member.url)))], true),
               }]]} />
             )}
@@ -2017,6 +2024,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               <button onClick={resetFilters}>Clear filters</button>
             </div>
           )}
+          {section !== 'saved' && filters.merge === 'conflicts' && auth?.login && !loading &&
+            <MergeFilterStatus phase={mergePhase} computing={mergeUnsettled.computing} unchecked={mergeUnsettled.unchecked} />}
           {section !== 'saved' && filters.involvement === 'response' && auth?.login && <ResponseFilterStatus account={auth.login} members={responseMembers} incomplete={responseIncomplete} onUpdated={refreshResponseQueue} onUnavailableChange={setResponseUnavailable} />}
           {section !== 'saved' && (
             <p className="sr-only" id="queue-keyboard-help">
@@ -2096,7 +2105,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   <h2>
                     {initializationFailed ? 'Gnosis could not finish starting' : section === 'starred' && !queue.starredPrs?.length ? 'No starred PRs yet' : queueFailed
                       ? 'Queue could not be loaded'
-                      : filters.involvement === 'response' ? (responseIncomplete > 0 || responseUnavailable > 0 ? 'Feedback is not fully checked' : 'No PRs need your response in this view') : filterCount > 0
+                      : filters.involvement === 'response' ? (responseIncomplete > 0 || responseUnavailable > 0 ? 'Feedback is not fully checked' : 'No PRs need your response in this view')
+                      : filters.merge === 'conflicts' && filterCount > 0 ? (mergeUnsettled.computing + mergeUnsettled.unchecked > 0 ? 'Merge state is not fully checked' : 'No PRs with merge conflicts') : filterCount > 0
                         ? 'No PRs match these filters'
                         : !auth?.authenticated
                           ? 'Your GitHub queue is not connected'
@@ -2107,7 +2117,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   <p>
                     {initializationFailed ? 'Your account and settings could not be read. Retry loading them to restore your review queue.' : section === 'starred' && !queue.starredPrs?.length ? 'Star a PR from the review queue or its overview to keep it here and pin it above other PRs.' : queueFailed
                       ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
-                      : filters.involvement === 'response' ? (responseIncomplete > 0 || responseUnavailable > 0 ? 'Showing known matches. More may appear when the remaining PRs are checked.' : 'The checked PRs have no changes requested or unresolved feedback from others.') : filterCount > 0
+                      : filters.involvement === 'response' ? (responseIncomplete > 0 || responseUnavailable > 0 ? 'Showing known matches. More may appear when the remaining PRs are checked.' : 'The checked PRs have no changes requested or unresolved feedback from others.')
+                      : filters.merge === 'conflicts' && filterCount > 0 ? (mergeUnsettled.computing + mergeUnsettled.unchecked > 0 ? 'Showing known conflicts. More may appear when GitHub reports the remaining PRs.' : 'GitHub reports no merge conflicts for the PRs that match your other filters.') : filterCount > 0
                         ? 'Try fewer filters or a wider date range. One open PR must match every filter; its whole stack stays visible.'
                         : !auth?.authenticated
                           ? prefs?.guestMode

@@ -8,6 +8,7 @@ import { UnreadPrMarker } from './UnreadPrMarker';
 import { needsResponse } from '../lib/response-needed';
 import { focusStackPr, matchingStackMembers } from '../lib/stack-workspace';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
+import { useMergeStates } from '../lib/use-queue-signals';
 import type { ResponseIntent } from '../lib/feedback';
 import type { SelectionModifiers } from '../lib/entry-selection';
 import type { QueueFilters } from '../lib/queue-filters';
@@ -71,7 +72,9 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
   // Menu content reads HomePage state when the menu opens, so render once more on open.
   const [, refreshMenu] = useReducer((count: number) => count + 1, 0);
   const s = item.subject;
-  const matching = s.kind === 'stack' || filters.involvement === 'response' ? matchingStackMembers(item, filters, account) : [];
+  // Only stack rows under the merge filter subscribe, and they render only when one of their own states changes.
+  const merge = useMergeStates(account, s.members, s.kind === 'stack' && filters.merge === 'conflicts');
+  const matching = s.kind === 'stack' || filters.involvement === 'response' ? matchingStackMembers(item, filters, account, undefined, merge) : [];
   return (
     <div className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''} ${item.briefing?.status === 'generating' ? 'is-briefing-generating' : ''}`}>
       <EntryActions

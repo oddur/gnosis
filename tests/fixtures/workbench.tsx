@@ -832,6 +832,22 @@ if (new URLSearchParams(location.search).has('saved-signals')) {
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
 }
+if (new URLSearchParams(location.search).has('merge-conflicts')) {
+  // Nothing is saved, and GitHub answers slowly: the merge filter shows its loading line while rows wait.
+  // #121 (a stack member) conflicts, #151 is DIRTY while mergeable is UNKNOWN, and GitHub never finishes #153.
+  const readSignals = mocks.getQueueSignals;
+  const calls: { urls: string[]; options?: import('../../lib/queue-signals').QueueSignalOptions }[] = [];
+  Object.assign(window, { mergeCalls: calls });
+  const merge = (url: string) => url.endsWith('/121') ? ['CONFLICTING', 'DIRTY'] : url.endsWith('/151') ? ['UNKNOWN', 'DIRTY'] : url.endsWith('/153') ? ['UNKNOWN', 'UNKNOWN'] : ['MERGEABLE', 'CLEAN'];
+  Object.assign(mocks, { getQueueSignals: async (requests: import('../../lib/queue-signals').QueueSignalRequest[], options?: import('../../lib/queue-signals').QueueSignalOptions) => {
+    if (options?.cachedOnly) return [];
+    calls.push({ urls: requests.map(request => request.url), options });
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    return (await readSignals(requests)).map(value => value.readiness
+      ? { ...value, readiness: { ...value.readiness, mergeable: merge(value.url)[0], mergeState: merge(value.url)[1] } }
+      : value);
+  } });
+}
 if (new URLSearchParams(location.search).has('github-sync')) {
   const { installSyncFixture } = await import('./github-sync');
   installSyncFixture(mocks, items);

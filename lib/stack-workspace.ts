@@ -1,6 +1,7 @@
 import type { QueueItem, ReviewMember, ReviewSubject } from './workbench';
 import type { QueueFilters } from './queue-filters';
 import { matchesQueueFilters } from './queue-filters';
+import type { MergeStates } from './merge-conflicts';
 
 /** A PR keeps its own identity and generation scope, with its parent as navigation context. */
 export function focusStackPr(stack: QueueItem, member: ReviewMember): QueueItem {
@@ -24,9 +25,9 @@ export function resolveWorkspace(item: QueueItem, items: QueueItem[]): QueueItem
   return current ? { ...current, subject: { ...current.subject, scope: 'single' }, parentStack: item.parentStack } : item;
 }
 
-export function matchingStackMembers(item: QueueItem, filters: QueueFilters, login?: string | null, now = Date.now()) {
+export function matchingStackMembers(item: QueueItem, filters: QueueFilters, login?: string | null, now = Date.now(), merge?: MergeStates) {
   return item.subject.members.filter(member => matchesQueueFilters(
-    { ...item, subject: { ...item.subject, members: [member] } }, filters, now, login
+    { ...item, subject: { ...item.subject, members: [member] } }, filters, now, login, merge
   )).map(member => member.url);
 }
 

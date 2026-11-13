@@ -1,6 +1,7 @@
 import type { PrStatus } from './types';
 import { QUEUE_SIGNALS_TTL, type QueueSignals } from './queue-signals';
 import type { ReviewMember, ReviewSubject } from './workbench';
+import { hasMergeConflicts } from './merge-conflicts';
 
 export interface MergeReadiness {
   label: string;
@@ -39,7 +40,7 @@ export function mergeReadiness(
 
   const base = status.baseBranch || member.baseBranch;
   const details: string[] = [];
-  const conflicts = status.mergeable === 'CONFLICTING' || status.mergeState === 'DIRTY';
+  const conflicts = hasMergeConflicts(status);
   const updateRequired = status.mergeState === 'BEHIND';
   if (conflicts)
     details.push(
