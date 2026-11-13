@@ -1,4 +1,4 @@
-/* global fetch, AbortSignal */
+/* global fetch, AbortSignal, setTimeout */
 import process from 'node:process';
 import { Buffer } from 'node:buffer';
 import console from 'node:console';
@@ -23,12 +23,34 @@ if (
   (await fs.stat(binary).catch(() => false))
 )
   process.exit(0);
-async function download(url, sha) {
+async function fetchOnce(url, sha) {
   const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
-  if (!response.ok) throw Error(`Could not fetch Mergiraf: HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = Error(`Could not fetch Mergiraf: HTTP ${response.status}`);
+    // Client errors other than rate limits will not change on a retry.
+    error.permanent = response.status < 500 && response.status !== 429 && response.status !== 408;
+    throw error;
+  }
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (crypto.createHash('sha256').update(bytes).digest('hex') !== sha) throw Error('Mergiraf checksum mismatch.');
+  if (crypto.createHash('sha256').update(bytes).digest('hex') !== sha) {
+    const error = Error('Mergiraf checksum mismatch.');
+    error.permanent = true;
+    throw error;
+  }
   return bytes;
+}
+// codeberg.org drops connections and returns 5xx often enough to fail CI, so retry with backoff.
+async function download(url, sha, attempts = 5) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetchOnce(url, sha);
+    } catch (error) {
+      if (error.permanent || attempt >= attempts) throw error;
+      const delay = 2000 * 2 ** (attempt - 1);
+      console.warn(`Mergiraf download failed (${error.cause?.message ?? error.message}); retry ${attempt} of ${attempts - 1} in ${delay / 1000}s`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 const bytes = await download(
   `https://codeberg.org/mergiraf/mergiraf/releases/download/v${manifest.version}/${asset.name}`,

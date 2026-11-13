@@ -66,6 +66,14 @@ jobs:
           restore-keys: |
             electron-${{ runner.os }}-
 
+      # Mergiraf's host (codeberg.org) is not reliable enough to download from on every job.
+      # prepare:mergiraf skips the download when this folder already holds the manifest's version.
+      - name: Cache Mergiraf
+        uses: actions/cache@v4
+        with:
+          path: resources/mergiraf/runtime
+          key: mergiraf-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/mergiraf/manifest.json') }}
+
       - name: Install dependencies
         run: npm ci
 
