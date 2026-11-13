@@ -38,6 +38,8 @@ function getEngine() {
   }
   return engine;
 }
+/** Starts the D2 engine ahead of a diagram, for example when a saved review with diagrams is likely next. */
+export const preloadD2 = () => getEngine().then(() => undefined);
 const iconURLs = new Set(D2_ICON_NAMES.flatMap((name) => [d2IconData(name, false), d2IconData(name, true)]));
 function cleanSVG(svg: string, entities: DiagramEntity[]) {
   const clean = DOMPurify.sanitize(svg, {

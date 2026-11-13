@@ -157,7 +157,10 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     await capture('laptop-dark');
     // Keyboard focus stays within the menu; Enter opens the selected destination.
+    // Keyboard focus resting on a recent PR prepares it, like a resting queue row.
+    await js("window.recentIntents=[];window.electronAPI.prOpenIntent=targets=>{window.recentIntents.push(targets&&targets.map(t=>t.url))};void 0");
     await js("[...document.querySelectorAll('.recent-history-item')].find(e=>e.textContent.includes('Fix reconnect')).focus()");
+    await wait("window.recentIntents.some(urls=>urls&&urls.some(u=>u.endsWith('/pull/150')))");
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
     await wait("!!document.querySelector('.pr-overview-tabs') && !document.querySelector('.recent-history-menu')");

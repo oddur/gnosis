@@ -50,6 +50,9 @@ import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 import { SubjectReviewStatus } from './PrReviewStatus';
 import { useChangesComments } from './useChangesComments';
+import { ArrivalProbe, contentMarkers, useIntent, usePredictions } from '../lib/use-predictions';
+import { predictableMembers, prOpenPredictions, tabIntent } from '../lib/navigation-graph';
+import { needsResponse } from '../lib/response-needed';
 import type { ReviewMember } from '../lib/workbench';
 
 /**
@@ -125,7 +128,7 @@ function ScrollKeeper() {
  * A PR tab that stays mounted after its first visit. While another tab is shown, Activity hides it
  * and pauses its effects, including polling.
  */
-function KeptTab({ value, tab, visited, className, children, ref, onScroll }: {
+function KeptTab({ value, tab, visited, className, children, ref, onScroll, arrival }: {
   value: WorkspaceTab;
   tab: WorkspaceTab;
   visited: ReadonlySet<WorkspaceTab>;
@@ -133,13 +136,19 @@ function KeptTab({ value, tab, visited, className, children, ref, onScroll }: {
   children: ReactNode;
   ref?: Ref<HTMLDivElement>;
   onScroll?: (event: UIEvent<HTMLDivElement>) => void;
+  /** Measures time to content for each visit. The first visit of the PR's first tab is the PR open. */
+  arrival?: { subjectId: string; opened: boolean };
 }) {
   if (!visited.has(value)) return null;
+  const tabKey = arrival && `pr-tab:${value}:${arrival.subjectId}`;
   return (
     <Tabs.Content value={value} className={className} forceMount ref={ref} onScroll={onScroll}>
       <Activity mode={tab === value ? 'visible' : 'hidden'}>
         <ScrollKeeper />
         {children}
+        {arrival && tabKey && value in contentMarkers && (
+          <ArrivalProbe firstKey={arrival.opened ? `pr-open:${arrival.subjectId}` : tabKey} revisitKey={tabKey} marker={value} />
+        )}
       </Activity>
     </Tabs.Content>
   );
@@ -246,6 +255,9 @@ function PrSummaryContent({
   if (!visited.has(tab)) setVisited(new Set([...visited, tab]));
   const currentTab = useRef(tab);
   currentTab.current = tab;
+  // The tab shown when the PR opened. Its first visit measures the PR open itself.
+  const [openedTab] = useState(tab);
+  const arrival = (value: WorkspaceTab) => ({ subjectId: item.subject.id, opened: value === openedTab });
   // While this PR is hidden for a minute, behind a saved review or another workspace tab, drop its other tabs.
   const evict = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
@@ -328,6 +340,22 @@ function PrSummaryContent({
     account,
     item.subject.members.map((m) => ({ url: m.url, headSha: m.headSha }))
   );
+  // Opening a PR warms the tabs the reader is likely to open next: Changes, then Checks or Feedback when they need attention.
+  const predictMembers = account ? predictableMembers(item.subject.members) : [];
+  usePredictions(`pr:${item.subject.id}`, prOpenPredictions({
+    subjectId: item.subject.id,
+    members: predictMembers,
+    attention: checkTotals.attention,
+    running: checkTotals.running,
+    checks: checkTotals.attention + checkTotals.running + checkTotals.passed + checkTotals.skipped,
+    unresolved: signals.reduce((total, signal) => total + signal.comments, 0),
+    responseNeeded: item.subject.members.some((member) => needsResponse(item.responses?.[member.url])),
+    explanationReady: !!item.review && (item.review.status ?? 'completed') === 'completed',
+  }));
+  // Resting on a tab prepares it, even when Summary did not predict it.
+  const tabRest = useIntent(`pr-tabs:${item.subject.id}`);
+  const tabIntentHandlers = (value: WorkspaceTab) =>
+    tabRest.handlers(value === tab ? null : tabIntent(item.subject.id, value, predictMembers, checkTotals.attention));
   // Status ages on the shared status clock in lib/status-clock.ts. Only the components that show
   // status read it, so a tick re-renders them and not this page, its kept tabs or the explanation.
   // New status, or a failed refresh, is aged at once: every status component reads the new time.
@@ -538,16 +566,16 @@ function PrSummaryContent({
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
           <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" />Summary</Tabs.Trigger>
-          <Tabs.Trigger value="changes" data-tour="changes"><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
-          <Tabs.Trigger value="commits"><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
-          <Tabs.Trigger value="checks"><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="feedback"><WorkspaceIcon tab="feedback" />Feedback</Tabs.Trigger>
+          <Tabs.Trigger value="changes" data-tour="changes" {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
+          <Tabs.Trigger value="commits" {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
+          <Tabs.Trigger value="checks" {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="feedback" {...tabIntentHandlers('feedback')}><WorkspaceIcon tab="feedback" />Feedback</Tabs.Trigger>
           <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" />Explanation</Tabs.Trigger>
           <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" />Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
 
         </div>
-        <KeptTab value="changes" tab={tab} visited={visited} className="pr-changes-tab">
+        <KeptTab value="changes" tab={tab} visited={visited} arrival={arrival('changes')} className="pr-changes-tab">
           {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
             <PrChangesView
               key={item.subject.id}
@@ -560,7 +588,7 @@ function PrSummaryContent({
             />
           )}
         </KeptTab>
-        <KeptTab value="feedback" tab={tab} visited={visited} className="pr-changes-tab">
+        <KeptTab value="feedback" tab={tab} visited={visited} arrival={arrival('feedback')} className="pr-changes-tab">
           <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}:${feedbackRequest?.id ?? ''}:${feedbackJump}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} initialThreadId={feedbackThread} preferences={preferences ?? undefined} intent={feedbackIntent} onIntentHandled={() => { setFeedbackIntent(undefined); setFeedbackThread(undefined); }} onSource={item => {
             if (!item.thread) return;
             setInitialFile({ url: item.member.url, headSha: item.member.headSha, path: item.thread.path, line: feedbackCodeContext(item.thread, item.headSha ? { headSha: item.headSha, baseSha: item.baseSha ?? '' } : undefined, item.member) === 'current' ? item.thread.line ?? undefined : undefined, side: item.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
@@ -569,13 +597,13 @@ function PrSummaryContent({
         <KeptTab value="brief" tab={tab} visited={visited} className="pr-changes-tab">
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
         </KeptTab>
-        <KeptTab value="checks" tab={tab} visited={visited} className="pr-changes-tab">
+        <KeptTab value="checks" tab={tab} visited={visited} arrival={arrival('checks')} className="pr-changes-tab">
           <PrChecksView key={`${account}:${item.subject.id}`} stateKey={`${account}:${item.subject.id}`} subject={item.subject} {...checks} focus={checkFocus}
             onSource={(url, path, line, headSha) => {
               setInitialFile({ url, path, line, headSha }); onTabChange('changes');
             }} />
         </KeptTab>
-        <KeptTab value="commits" tab={tab} visited={visited} className="pr-changes-tab">
+        <KeptTab value="commits" tab={tab} visited={visited} arrival={arrival('commits')} className="pr-changes-tab">
           {preferences && (
             <PrCommitsView
               key={item.subject.id}
@@ -619,7 +647,7 @@ function PrSummaryContent({
             }}
           />
         </Tabs.Content>
-        <KeptTab value="summary" tab={tab} visited={visited} className="pr-summary-content" ref={page} onScroll={remember}>
+        <KeptTab value="summary" tab={tab} visited={visited} arrival={arrival('summary')} className="pr-summary-content" ref={page} onScroll={remember}>
           <div className="pr-summary-body">
             {summaryReview.panel}
             {item.subject.warnings.map((warning) => (

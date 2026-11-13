@@ -1,4 +1,6 @@
 import { GitHubSyncStatus, type GitHubSyncStatusProps } from './GitHubSyncStatus';
+import { useIntent } from '../lib/use-predictions';
+import { reviewIntent } from '../lib/navigation-graph';
 import { inspectionData } from '../lib/inspection-cache';
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -257,6 +259,8 @@ export const ActivityDrawer = memo(function ActivityDrawer({
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, [close, setOpen]);
+  // Resting on "Open review" loads the saved review before the click.
+  const openIntentHandlers = useIntent('activity');
   async function act(task: ActivityTask, action: ActivityAction | 'open') {
     if (pendingActions.current.has(task.id)) return;
     pendingActions.current.add(task.id);
@@ -390,7 +394,8 @@ export const ActivityDrawer = memo(function ActivityDrawer({
               task.kind !== 'file-chat' &&
               task.kind !== 'pr-action' &&
               task.kind !== 'preload' && (
-                <button disabled={pending.has(task.id)} onClick={() => void act(task, 'open')}>
+                <button disabled={pending.has(task.id)} onClick={() => void act(task, 'open')}
+                  {...openIntentHandlers.handlers(task.reviewId && task.kind !== 'exploration' ? reviewIntent(task.reviewId) : null)}>
                   {openLabels[task.kind]}
                 </button>
               )}

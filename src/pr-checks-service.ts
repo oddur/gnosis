@@ -4,6 +4,7 @@ import { CheckHeadChanged, readChecksGraphQL } from './pr-checks-graphql';
 import {
   checkKey,
   checkVersion,
+  checkGroup,
   type CheckTarget,
   type PrChecks,
   type CheckSelection,
@@ -308,7 +309,73 @@ async function fetchCheckDetails(client: Octokit, input: CheckSelection): Promis
   }
   return result;
 }
-export async function readCheckLog(client: Octokit, input: CheckSelection): Promise<CheckLog> {
+// Logs of completed jobs never change: a re-run is a new check run. Kept in memory, newest last, so a log an Eager
+// prediction read opens at once in Checks. Running jobs are never kept.
+const LOG_MEMORY_BYTES = 12_000_000;
+const logMemory = new WeakMap<Octokit, Map<string, CheckLog>>();
+const logWork = new WeakMap<Octokit, Map<string, GitHubWork<CheckLog>>>();
+const logKey = (input: CheckSelection) => `${input.url}@${input.headSha}:${input.id}`;
+const logBytes = (log: CheckLog) => log.text.length * 2;
+function rememberLog(client: Octokit, key: string, log: CheckLog) {
+  let memory = logMemory.get(client);
+  if (!memory) logMemory.set(client, (memory = new Map<string, CheckLog>()));
+  memory.delete(key);
+  memory.set(key, log);
+  let bytes = [...memory.values()].reduce((sum, value) => sum + logBytes(value), 0);
+  for (const [oldest, value] of memory) {
+    if (bytes <= LOG_MEMORY_BYTES || oldest === key) break;
+    memory.delete(oldest);
+    bytes -= logBytes(value);
+  }
+}
+/** A completed job's log already read, without a request. */
+export function cachedCheckLog(client: Octokit, input: CheckSelection): CheckLog | undefined {
+  const memory = logMemory.get(client);
+  const log = memory?.get(logKey(input));
+  if (log && memory) {
+    memory.delete(logKey(input));
+    memory.set(logKey(input), log);
+  }
+  return log;
+}
+/**
+ * The job log Checks shows under "Job log", at most 2 MB. A completed job's log is read once; a reader that asks
+ * while it is being read joins that read, so a prediction in flight becomes the user's read.
+ */
+export function readCheckLog(client: Octokit, input: CheckSelection): Promise<CheckLog> {
+  const saved = cachedCheckLog(client, input);
+  if (saved) return Promise.resolve(saved);
+  let work = logWork.get(client);
+  if (!work) logWork.set(client, (work = new Map<string, GitHubWork<CheckLog>>()));
+  const key = logKey(input);
+  const existing = work.get(key);
+  if (existing) return joinGitHubWork(existing);
+  const job = createGitHubWork(async () => {
+    const log = await downloadCheckLog(client, input);
+    if (currentCheck(client, input)?.status === 'completed') rememberLog(client, key, log);
+    return log;
+  });
+  work.set(key, job);
+  void job.promise
+    .finally(() => {
+      if (work.get(key) === job) work.delete(key);
+    })
+    .catch(() => {});
+  return job.promise;
+}
+/**
+ * Failing, completed Actions jobs of one workflow run, from a check list: the logs an Eager prediction reads.
+ * Their check ids are what Checks passes to "Job log".
+ */
+export function failingRunJobs(snapshot: PrChecks, runId: number, limit: number): CheckSelection[] {
+  const { owner, repo } = target(snapshot);
+  return snapshot.checks
+    .filter((check) => check.kind === 'check' && check.status === 'completed' && checkGroup(check) === 'attention' &&
+      actionJob(check.url, owner, repo)?.runId === runId)
+    .slice(0, Math.max(0, limit))
+    .map((check) => ({ url: snapshot.url, headSha: snapshot.headSha, id: check.id }));
+}
+async function downloadCheckLog(client: Octokit, input: CheckSelection): Promise<CheckLog> {
   const { owner, repo, run } = await checkedRun(client, input);
   const job = run.app?.slug === 'github-actions' ? actionJob(run.html_url ?? run.details_url, owner, repo) : undefined;
   if (!job) throw Error('Logs for this check are available from its provider.');

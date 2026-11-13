@@ -6,6 +6,8 @@ import {
   githubAutomatic,
   githubPriority,
   githubPriorityScope,
+  githubPredicted,
+  githubPredictedJoins,
   joinGitHubWork,
   withGitHubPriority,
 } from '../lib/github-scheduler';
@@ -14,7 +16,7 @@ import { createPrChangesService } from '../src/pr-changes-service';
 import { createReviewThreadService } from '../src/review-thread-service';
 import { createSnapshotFileLoader } from '../src/snapshot-file-loader';
 import { createPrFileCache } from '../lib/pr-file-cache';
-import { intentPriority, queuePriority } from '../src/pr-open-preloader';
+import { intentPriority, predictedPriority, queuePriority } from '../src/pr-open-preloader';
 import type { PrChanges } from '../lib/pr-changes';
 function deferred() {
   let resolve!: () => void;
@@ -575,4 +577,159 @@ void test('intent prefetch never takes an interactive slot and is not charged as
   assert.equal(pool.automaticUsage('account', 'core').spent, 0);
   await queuePriority(() => client.request('GET /queue'));
   assert.equal(pool.automaticUsage('account', 'core').spent, 1, 'Queue preloading is charged as automatic');
+});
+
+void test('a prediction label is inherited by nested scopes and work, never by interactive or automatic work', async () => {
+  await predictedPriority('pr-tab:changes', async () => {
+    assert.equal(githubPredicted(), 'pr-tab:changes');
+    assert.equal(githubAutomatic(), false);
+    assert.equal(githubPriority(), 'foreground');
+    await intentPriority(() => {
+      assert.equal(githubPredicted(), 'pr-tab:changes', 'Hover helpers called inside a prediction stay predicted');
+      return Promise.resolve();
+    });
+    const work = createGitHubWork(() => Promise.resolve(githubPredicted()));
+    assert.equal(await work.promise, 'pr-tab:changes');
+    withGitHubPriority('interactive', () => assert.equal(githubPredicted(), undefined));
+    withGitHubPriority('background', () => assert.equal(githubPredicted(), undefined, 'Automatic work is never predicted'));
+  });
+  assert.equal(githubPredicted(), undefined);
+});
+
+void test('a user joining a prediction clears its label and counts one join; queue work does not', async () => {
+  const gate = deferred();
+  const work = predictedPriority('pr-tab:changes', () => Promise.resolve(createGitHubWork(async () => {
+    await gate.promise;
+    return githubPredicted();
+  })));
+  const shared = await work;
+  const joins = githubPredictedJoins();
+  void queuePriority(() => joinGitHubWork(shared));
+  assert.equal(githubPredicted(shared.scope), 'pr-tab:changes', 'Queue work joining does not take over the charge');
+  void withGitHubPriority('interactive', () => joinGitHubWork(shared));
+  assert.equal(githubPredicted(shared.scope), undefined);
+  assert.equal(githubPriority(shared.scope), 'interactive');
+  assert.equal(githubPredictedJoins(), joins + 1);
+  gate.resolve();
+  assert.equal(await shared.promise, undefined, 'The rest of the work runs as the user\'s');
+});
+
+void test('a prediction joining queue work promotes it and charges the rest to the predicted budget', async () => {
+  const gate = deferred();
+  const queued = queuePriority(() => Promise.resolve(createGitHubWork(async () => {
+    await gate.promise;
+    return [githubPriority(), githubAutomatic(), githubPredicted()] as const;
+  })));
+  const work = await queued;
+  void predictedPriority('pr-tab:changes', () => joinGitHubWork(work));
+  gate.resolve();
+  assert.deepEqual(await work.promise, ['foreground', false, 'pr-tab:changes']);
+});
+
+void test('interactive reads start while predictions hold every slot they may use', async () => {
+  const gate = deferred(),
+    starts: string[] = [];
+  const pool = createGitHubClientPool({
+    fetch: (async (url: string) => {
+      starts.push(`${new URL(url).pathname} ${githubPriority()} ${githubPredicted() ?? '-'}`);
+      await gate.promise;
+      return json({}, { 'x-ratelimit-resource': 'core', 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '4000', 'x-ratelimit-reset': '9999999999' });
+    }) as typeof fetch,
+  });
+  const client = pool.client('account');
+  const predictions = Array.from({ length: 6 }, (_, i) => predictedPriority('pr-tab:changes', () => client.request(`GET /predict-${i}`)));
+  await settle(() => starts.length === 4);
+  for (let i = 0; i < 5; i++) await turn();
+  assert.equal(starts.length, 4, 'Predictions use at most the four lower slots');
+  const clicks = withGitHubPriority('interactive', () => [client.request('GET /click-0'), client.request('GET /click-1')]);
+  await settle(() => starts.length === 6);
+  assert.deepEqual(starts.slice(4), ['/click-0 interactive -', '/click-1 interactive -'], 'A user request never waits behind a prediction');
+  gate.resolve();
+  await Promise.all([...predictions, ...clicks]);
+  assert.equal(pool.automaticUsage('account', 'core').spent, 0);
+  assert.equal(pool.predictedUsage('account', 'core').spent, 6);
+});
+
+void test('a user opening Changes during a predicted read joins it in main: no second request, rest charged to the user', async () => {
+  const gate = deferred(),
+    calls: string[] = [];
+  const pool = createGitHubClientPool({
+    now: () => 1_000_000,
+    fetch: (async (input: string) => {
+      const path = new URL(input).pathname;
+      calls.push(`${path} ${githubPriority()} ${githubPredicted() ?? '-'}`);
+      if (path.endsWith('/files')) {
+        await gate.promise;
+        return json([{ filename: 'file.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1 +1 @@\n-old\n+new' }]);
+      }
+      if (path.includes('/compare/')) return json({ merge_base_commit: { sha: 'base' } });
+      return json({
+        title: 'PR',
+        user: { login: 'dev' },
+        state: 'open',
+        labels: [],
+        changed_files: 1,
+        base: { ref: 'main', sha: 'base', repo: { full_name: 'o/r' } },
+        head: { ref: 'feature', sha: 'head', repo: { full_name: 'o/r' } },
+      });
+    }) as typeof fetch,
+  });
+  const client = pool.client('account'),
+    service = createPrChangesService();
+  // As main's pr-changes handler runs each mode. The renderer sends the user's read as a second IPC.
+  const read = () => service.manifest(client, 'https://github.com/o/r/pull/1', false, { revision: { baseSha: 'base', headSha: 'head' } });
+  const joins = githubPredictedJoins();
+  const prediction = withGitHubPriority('foreground', read, { automatic: false, predicted: 'pr-tab:changes' });
+  await settle(() => calls.some((call) => call.includes('/files')));
+  const opened = withGitHubPriority('interactive', read);
+  await turn();
+  gate.resolve();
+  const [a, b] = await Promise.all([prediction, opened]);
+  assert.deepEqual(a, b);
+  assert.equal(calls.filter((call) => call.includes('/files')).length, 1, 'One file list request for both callers');
+  assert.equal(calls.filter((call) => call.includes('/compare/')).length, 1);
+  assert.ok(calls.filter((call) => call.includes('/files')).every((call) => call.endsWith('foreground pr-tab:changes')), 'The prediction started it');
+  assert.ok(
+    calls.filter((call) => call.endsWith('/pulls/1 interactive -')).length >= 1,
+    `Requests after the join run as the user's: ${calls.join(', ')}`
+  );
+  assert.equal(githubPredictedJoins(), joins + 1);
+});
+
+void test('a user opening a file during a predicted download joins it: one download per side', async () => {
+  const gate = deferred(),
+    calls: string[] = [];
+  const pool = createGitHubClientPool({
+    now: () => 1_000_000,
+    fetch: (async (input: string) => {
+      const url = new URL(input);
+      calls.push(`${url.pathname} ${githubPriority()}`);
+      await gate.promise;
+      return new Response('const value = 1;', { headers: { 'content-type': 'application/octet-stream' } });
+    }) as typeof fetch,
+  });
+  const client = pool.client('account'),
+    loader = createSnapshotFileLoader();
+  const request = { url: 'https://github.com/o/r/pull/1', path: 'file.ts', baseSha: 'base', headSha: 'head' };
+  const file = { path: 'file.ts', status: 'modified' as const, additions: 1, deletions: 1, changeId: 'file' };
+  const snapshot = {
+    version: 1 as const, url: request.url, comparisonBase: 'base', fetchedAt: 1, files: [file],
+    metadata: { ...request, title: 'PR', baseRepo: 'o/r', headRepo: 'o/r', description: '', author: 'dev', baseBranch: 'main',
+      headBranch: 'feature', merged: false, state: 'open', createdAt: '', updatedAt: '', labels: [], mergeable: true, isDraft: false,
+      commitCount: 1, requestedReviewers: [], requestedTeams: [], mergeableState: 'clean', autoMerge: null, milestone: null },
+  } satisfies PrChanges;
+  // The renderer's file cache sends a second IPC for the user's read; main joins it by file identity.
+  const renderer = createPrFileCache((req, mode) =>
+    mode && typeof mode === 'object'
+      ? withGitHubPriority('foreground', () => loader(client, req, snapshot, file), { automatic: false, predicted: mode.predicted })
+      : withGitHubPriority(mode ? 'background' : 'interactive', () => loader(client, req, snapshot, file)));
+  const prediction = renderer.read(request, { predicted: 'pr-tab:changes' });
+  await settle(() => calls.length === 1);
+  const opened = renderer.read(request, false);
+  await turn();
+  gate.resolve();
+  const [predictedFile, displayed] = await Promise.all([prediction, opened]);
+  assert.deepEqual(predictedFile, displayed);
+  assert.equal(calls.filter((call) => call.includes('/contents/')).length, 2, 'Exactly one download per side');
+  assert.deepEqual(calls.map((call) => call.split(' ')[1]), ['foreground', 'interactive'], 'The second side runs as the user\'s');
 });

@@ -26,6 +26,11 @@ export function note(name: string, value: unknown): void {
   if (startupTracing) console.log(`[perf] main ${name} ${JSON.stringify(value)}`);
 }
 
+/** Renderer measurements: `[perf] predict nav pr-tab:changes hit 38ms`. Strings print as they are. */
+export function noteRenderer(name: string, value: unknown): void {
+  if (startupTracing) console.log(`[perf] ${name} ${typeof value === 'string' ? value : JSON.stringify(value)}`);
+}
+
 export function startupSummary(): Record<string, number> {
   return { ...marks };
 }

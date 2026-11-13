@@ -5,6 +5,9 @@ import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interfac
 import { FileTypeIcon } from './FileTypeIcon';
 import { commandRecents as recentIds, rememberCommandDestination as remember } from '../lib/command-recents';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useIntent } from '../lib/use-predictions';
+import { destinationIntent } from '../lib/navigation-graph';
+import { destinationKey } from '../lib/navigation-predictor';
 import {
   ArrowRight,
   ChevronRight,
@@ -179,6 +182,13 @@ export function GlobalCommandPalette({
     (r) => includeBots || !result?.ignoreBots || !r.author.toLowerCase().startsWith('dependabot')
   );
   const selectedRemote = remoteRows?.find((r) => `remote:${r.url}` === value);
+  // The highlighted PR, stack or review is a likely next destination once the selection rests for 150 ms.
+  const intent = useIntent('palette');
+  const selectedIntent = open && selected ? destinationIntent(selected.document.destination) : null;
+  const selectedIntentKey = selectedIntent ? destinationKey(selectedIntent.destination) : '';
+  useEffect(() => {
+    intent.enter(selectedIntent);
+  }, [selectedIntentKey]);
   useEffect(() => {
     const ids = [
       ...visible.map((h) => h.document.id),

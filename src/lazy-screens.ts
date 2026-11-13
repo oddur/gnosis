@@ -1,4 +1,4 @@
-import { lazyScreen } from '../lib/lazy-screen';
+import { lazyComponent, lazyScreen } from '../lib/lazy-screen';
 import { preloadMarkdown } from '../components/LazyMarkdown';
 
 // Screens outside the startup bundle. Each loads once per window, so kept tabs never suspend again.
@@ -6,6 +6,11 @@ export const ReviewPage = lazyScreen(() => import('./pages/ReviewPage').then((mo
 export const PrSummary = lazyScreen(() => import('../components/PrSummary').then((module) => module.PrSummary));
 export const SettingsDialog = lazyScreen(() =>
   import('../components/SettingsDialog').then((module) => module.SettingsDialog)
+);
+
+/** The Checks graph. Loaded on first use, or ahead of time when Checks is a likely next tab. */
+export const WorkflowGraphView = lazyComponent(() =>
+  import('../components/WorkflowGraph').then((module) => module.WorkflowGraphView)
 );
 
 let prefetched = false;

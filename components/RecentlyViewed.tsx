@@ -5,6 +5,8 @@ import { SubjectIcon } from './SubjectIcon';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import type { RecentlyViewedStore, RecentVisit } from '../lib/recently-viewed';
 import { PrStateIcon } from './QueueMetadata';
+import { useIntent } from '../lib/use-predictions';
+import { openIntent, reviewIntent } from '../lib/navigation-graph';
 
 interface HistoryContext {
   store: RecentlyViewedStore;
@@ -20,12 +22,14 @@ function HistoryMenu({ store, open }: HistoryContext) {
   const [visible, setVisible] = useState(false);
   const [failure, setFailure] = useState('');
   const [pending, setPending] = useState(false);
+  const intent = useIntent('recently-viewed');
   return (
     <DropdownMenu.Root
       open={visible}
       onOpenChange={(next) => {
         setVisible(next);
         if (next) setFailure('');
+        else intent.leave();
       }}
     >
       <DropdownMenu.Trigger asChild>
@@ -57,6 +61,8 @@ function HistoryMenu({ store, open }: HistoryContext) {
                 return (
                   <DropdownMenu.Item
                     key={entry.id}
+                    {...intent.handlers(subject ? openIntent(subject.id, subject.members)
+                      : entry.location.page === 'review' ? reviewIntent(entry.location.reviewId) : null)}
                     className="recent-history-item"
                     textValue={`${entry.label} ${entry.title} ${entry.detail}`}
                     title={[entry.label, entry.title, entry.detail].filter(Boolean).join(' · ')}

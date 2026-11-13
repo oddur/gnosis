@@ -3,6 +3,9 @@
 let pending: Promise<void> = Promise.resolve();
 let nextId = 0;
 
+/** Loads the Mermaid engine ahead of a diagram, for example when a saved review with diagrams is likely next. */
+export const preloadMermaid = () => import('mermaid').then(() => undefined);
+
 export function renderMermaid(chart: string, dark: boolean): Promise<string> {
   const rendered = pending.then(async () => {
     const { default: mermaid } = await import('mermaid');

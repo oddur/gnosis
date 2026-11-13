@@ -1,4 +1,4 @@
-import { mark, markRenderer, note, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
+import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
 import { attachWindowChrome, registerWindowChromeIpc, windowChromeOptions } from './window-chrome';
@@ -16,11 +16,11 @@ import {
 import { fileOverrideKey } from '../lib/file-kinds';
 import { memberPrefix } from '../lib/workbench';
 import { prepareReviewSource } from './review-start-source';
-import { createWorkflowGraphPreloader } from './workflow-graph-preloader';
+import { createWorkflowGraphPreloader, warmWorkflowGraph } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
-import type { WorkflowGraphInput } from '../lib/workflow-graph';
+import { workflowGrouping, type WorkflowGraphInput, type WorkflowRunInfo } from '../lib/workflow-graph';
 import { createCheckDetailsPreloader } from './check-details-preloader';
-import { createPrOpenPreloader, needsRefresh, queuePriority, intentPriority } from './pr-open-preloader';
+import { createPrOpenPreloader, needsRefresh, queuePriority, intentPriority, predictedPriority } from './pr-open-preloader';
 import { parseOpenTargets, type OpenTarget } from '../lib/pr-open-targets';
 import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
@@ -44,7 +44,7 @@ import { createHarnessEnvironmentStore } from './harness-environment-store';
 import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
 import type { EnvironmentVariable } from '../lib/harness-environment';
 import { createChatRuns, waitForChatContext } from './chat-runs';
-import { readPrChecks, readCurrentPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks, savedPrChecks } from './pr-checks-service';
+import { readPrChecks, readCurrentPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, failingRunJobs, rerunChecks, savedPrChecks } from './pr-checks-service';
 import { checkGroup, type CheckTarget, type CheckSelection, type ChecksOptions } from '../lib/pr-checks';
 import { createMarkdownReviewService } from './markdown-review-service';
 import type { MarkdownReviewRequest } from '../lib/markdown-review';
@@ -61,7 +61,9 @@ import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
 import type { PrActionRequest } from '../lib/pr-actions';
 import { requestGitHubCacheClear, applyPendingGitHubCacheClear, hasPendingGitHubCacheClear } from './github-cache-reset';
-import { withGitHubPriority, githubPriority } from '../lib/github-scheduler';
+import { withGitHubPriority, githubPriority, githubPredicted, githubPredictedJoins } from '../lib/github-scheduler';
+import { predictionStateFor, type PredictionState } from '../lib/github-budget';
+import { normalizePreloadPreferences, preloadSettings, amountPlan } from '../lib/preload-settings';
 import { changesRevision, type InspectionRevision, type InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import type { MutePrRequest } from '../lib/muted-prs';
@@ -157,6 +159,8 @@ import type {
 } from '../lib/types';
 
 mark('main-eval');
+// GNOSIS_PREDICT=off keeps navigation measurement and turns predictions off, for "before" benchmark runs.
+const predictionsOff = process.env.GNOSIS_PREDICT === 'off';
 
 // The window opens before saved data and the GitHub cache load. Every handler registered below waits
 // for both unless listed here. Wrap before the first registration.
@@ -346,7 +350,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Sandboxed preloads cannot read main's environment.
-      additionalArguments: startupTracing ? ['--gnosis-perf-trace'] : [],
+      additionalArguments: [...(startupTracing ? ['--gnosis-perf-trace'] : []), ...(predictionsOff ? ['--gnosis-predict-off'] : [])],
     },
   });
 
@@ -776,6 +780,7 @@ void app.whenReady().then(async () => {
         }
         // Logins and cooldowns must be known before any GitHub request.
         await githubClients.loadBudget(budgetFile);
+        githubClients.setPredictedPercent(preloadSettings(prefs).budgetPercent);
         mark('budget');
         const token = getResolvedToken();
         // The saved login lets the first queue snapshot show the saved queue.
@@ -1183,6 +1188,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   githubCacheSizeMB: DEFAULT_GITHUB_CACHE_MB,
   ignoreDependabotPrs: true,
   prInactivityDays: DEFAULT_PR_INACTIVITY_DAYS,
+  ...normalizePreloadPreferences({}),
   instructions: '',
   provider: 'claude',
   model: DEFAULT_CLAUDE_MODEL,
@@ -1247,6 +1253,7 @@ function readPreferencesFile(): Preferences {
     stored.repositoryBriefingDailyLimit = normalizeBriefingLimit(stored.repositoryBriefingDailyLimit);
     stored.githubCacheSizeMB = normalizeGitHubCacheMB(stored.githubCacheSizeMB);
     stored.prInactivityDays = normalizePrInactivityDays(stored.prInactivityDays);
+    Object.assign(stored, normalizePreloadPreferences(stored));
     const selection = normalizeModelSelection(stored.provider, stored.model);
     const proactive = normalizeModelSelection(stored.proactiveProvider, stored.proactiveModel, true);
     Object.assign(stored, selection, {
@@ -1265,7 +1272,7 @@ function readPreferencesFile(): Preferences {
 function savePreferences(prefs: Preferences): void {
   const file = getPreferencesPath(), temporary = file + '.tmp';
   try {
-  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
+  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), ...normalizePreloadPreferences(prefs) }, null, 2));
     fs.renameSync(temporary, file);
   } finally { fs.rmSync(temporary, { force: true }); preferencesFile.clear(); }
 }
@@ -1312,6 +1319,10 @@ ipcMain.on('perf-mark', (_event, name: unknown, epochMs: unknown) => {
   if (name !== 'queue-painted') return;
   console.log(`[perf] summary ${JSON.stringify(startupSummary())}`);
   if (exitAfterTrace) app.quit();
+});
+// Renderer measurements such as `[perf] predict nav …`. Only prediction notes are accepted.
+ipcMain.on('perf-note', (_event, name: unknown, value: unknown) => {
+  if (typeof name === 'string' && /^predict(?:-[a-z]+)?$/.test(name)) noteRenderer(name, value);
 });
 
 ipcMain.handle('dismiss-update', (_event, version: string) => {
@@ -1459,7 +1470,12 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   await githubClients.setCacheSizeMB(prefs.githubCacheSizeMB);
   void maintainStorage();
   savePreferences(prefs);
-  broadcastToAllWindows('preferences-changed', loadPreferences());
+  const saved = loadPreferences();
+  // Settings › Preloading applies at once: the budget share, queue preparation and the amount.
+  githubClients.setPredictedPercent(preloadSettings(saved).budgetPercent);
+  broadcastToAllWindows('preferences-changed', saved);
+  publishPredictionState();
+  if (cachedToken && syncEnabled()) void prOpenPreload.tick();
   broadcastWorkbenchChanged();
   applyBinaryOverrides(prefs);
   // Restart polling so the new proactiveMode value takes effect immediately
@@ -3177,16 +3193,50 @@ function sendSyncUpdates(updates: GitHubSyncUpdate[], failures: GitHubSyncFailur
 let syncCredential: string | null = null;
 let suspended = false;
 const syncEnabled = () => !suspended && net.isOnline() && BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
+// ── Navigation predictions ──
+// The renderer predicts where the reader goes next. Main keeps the budget: predictions start only while the window
+// is visible, the system is not idle, and the predicted share and reserve allow it. See lib/github-budget.ts.
+let onBattery = false;
+let thermalState = 'nominal';
+const predictionLabel = (value: unknown) =>
+  typeof value === 'string' && /^[a-z][a-z:-]{0,39}$/.test(value) ? value : 'prediction';
+/** Settings › Integrations › Preloading. */
+const preloads = () => preloadSettings(preferencesFile.get());
+/** GNOSIS_PREDICT=off, or Settings › "Preload likely next pages" turned off. Covers hover and focus intent too. */
+const predictionsEnabled = () => !predictionsOff && preloads().predictNavigation;
+function predictionsAllowed(resources: readonly string[] = ['core', 'graphql']) {
+  return predictionsEnabled() && !!cachedToken && syncEnabled() && powerMonitor.getSystemIdleTime() < 300 &&
+    !githubClients.predictedBackoff(cachedToken, resources);
+}
+/**
+ * What the renderer's predictor may do now, and the amount it uses: the chosen one, one level lower on battery or
+ * near the predicted cap (never below Light).
+ */
+function predictionState(): PredictionState {
+  return predictionStateFor({
+    enabled: predictionsEnabled(),
+    allowed: predictionsAllowed(),
+    battery: onBattery,
+    thermal: thermalState,
+    usage: { core: githubClients.predictedUsage(cachedToken, 'core'), graphql: githubClients.predictedUsage(cachedToken, 'graphql') },
+    amount: preloads().amount,
+    spend: { ...githubClients.predictedSpend(cachedToken), joined: githubPredictedJoins() },
+  });
+}
+/** What an opened PR warms now. */
+const predictedPlan = () => amountPlan(predictionState().amount);
+const publishPredictionState = () => broadcastToAllWindows('prediction-state', predictionState());
+ipcMain.handle('prediction-state', () => predictionState());
 let workflowWarmAccount: string | null = null;
+/** The view a fresh Checks graph opens with, so the warmed layout is the one shown. See `workflowSession`. */
+const openingGraphView = (input: CheckTarget & { runId: number }): WorkflowGraphInput => ({
+  ...input, expanded: [], showSkipped: true, showCompleted: true, grouping: workflowGrouping(preferencesFile.get().workflowGrouping),
+});
 const workflowGraphPreload = createWorkflowGraphPreloader({
   canRun: () => !!cachedToken && workflowWarmAccount === cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, true, ['core']),
-  prepare: (target, stillWanted) => withGitHubPriority('background', async () => {
+  prepare: (target, stillWanted) => withGitHubPriority('background', () => {
     const client = getGitHubClient(cachedToken);
-    const runs = await readWorkflowRuns(client, target);
-    if (!stillWanted()) return false;
-    const run = runs?.runs.at(0);
-    if (run) await readWorkflowGraph(client, { ...target, runId: run.id });
-    return true;
+    return warmWorkflowGraph(target, { runs: t => readWorkflowRuns(client, t), graph: input => readWorkflowGraph(client, openingGraphView(input)) }, stillWanted);
   }),
 });
 const checkDetailsPreload = createCheckDetailsPreloader({
@@ -3220,6 +3270,10 @@ function checksNeedingDetails(target: OpenTarget) {
 const prOpenPreload = createPrOpenPreloader({
   canRun: () => !!cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, true, ['graphql']),
   canIntent: () => !!cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, false, ['graphql']),
+  canPredict: () => predictionsAllowed(['graphql']),
+  queueEnabled: () => preloads().prepareQueue,
+  intentEnabled: predictionsEnabled,
+  committedDetails: () => predictedPlan().details,
   usage: () => githubClients.automaticUsage(cachedToken, 'graphql'),
   idleSeconds: () => powerMonitor.getSystemIdleTime(),
   need: (target, kind) => {
@@ -3262,7 +3316,7 @@ const prOpenPreload = createPrOpenPreloader({
   },
 });
 const prOpenOwners = new Set<number>();
-function prOpenOwner(event: Electron.IpcMainEvent) {
+function prOpenOwner(event: Pick<Electron.IpcMainEvent, 'sender' | 'senderFrame'>) {
   if (event.senderFrame !== event.sender.mainFrame) return;
   const owner = event.sender.id;
   if (!prOpenOwners.has(owner)) {
@@ -3277,10 +3331,19 @@ ipcMain.on('pr-open-preload', afterStartup(startup, (event: Electron.IpcMainEven
   prOpenPreload.setTargets(owner, targets);
   if (cachedToken && syncEnabled()) void prOpenPreload.tick();
 }));
+// Committed predictions for the PR the reader opened: its threads and failing check details, ahead of hover intent.
+ipcMain.handle('pr-open-committed', async (event, raw: unknown, label: unknown) => {
+  if (event.senderFrame !== event.sender.mainFrame) return;
+  const owner = prOpenOwner(event);
+  if (!owner) return;
+  const targets = raw === null ? null : parseOpenTargets(raw, 5);
+  if (targets === undefined) return;
+  await prOpenPreload.setCommitted(`${owner}:committed`, targets, predictionLabel(label));
+});
 ipcMain.on('pr-open-intent', afterStartup(startup, (event: Electron.IpcMainEvent, raw: unknown) => {
   const owner = prOpenOwner(event);
   if (!owner) return;
-  if (raw === null) { prOpenPreload.setIntent(owner, null); return; }
+  if (raw === null || !predictionsEnabled()) { prOpenPreload.setIntent(owner, null); return; }
   const targets = parseOpenTargets(raw, 5);
   if (targets) prOpenPreload.setIntent(owner, targets);
 }));
@@ -3449,6 +3512,22 @@ void app.whenReady().then(() => {
   const wake = () => { suspended = false; githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); void tickGitHubSync(); };
   powerMonitor.on('suspend', () => { suspended = true; });
   powerMonitor.on('resume', wake);
+  // On battery, predictions keep running but read one file body instead of three.
+  onBattery = powerMonitor.isOnBatteryPower();
+  powerMonitor.on('on-battery', () => { onBattery = true; publishPredictionState(); });
+  powerMonitor.on('on-ac', () => { onBattery = false; publishPredictionState(); });
+  powerMonitor.on('thermal-state-change', (details: { state: string }) => { thermalState = details.state; publishPredictionState(); });
+  if (startupTracing) {
+    let logged = '';
+    const spendLog = setInterval(() => {
+      const spend = { ...githubClients.predictedSpend(cachedToken), joined: githubPredictedJoins() };
+      const line = JSON.stringify(spend);
+      if (line !== logged) note('predict-spend', spend);
+      logged = line;
+    }, 60_000);
+    spendLog.unref();
+    app.once('will-quit', () => clearInterval(spendLog));
+  }
   app.on('browser-window-focus', wake);
   app.once('will-quit', () => clearInterval(timer));
 });
@@ -3489,6 +3568,43 @@ ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions 
       async fresh => (await getPrMetadata(client, owner, repo, pullNumber, fresh)).headSha);
     return value && withCachedCheckDetails(client, value);
   }), { automatic });
+});
+// A prediction warms the graph the Checks graph view opens on: the PR (or stack member) with failing checks, else
+// the first, and its preferred run (failed, then running), with that run's jobs and workflow definitions. Light
+// warms no graph. Eager also reads up to three failing job logs of that run, and the graphs of up to two other
+// members with failing checks.
+ipcMain.handle('predict-workflow-graph', async (_event, raw: unknown, label: unknown) => {
+  const targets = (Array.isArray(raw) ? raw : [raw]).slice(0, 5).filter((target): target is CheckTarget =>
+    !!target && typeof target === 'object' && typeof (target as CheckTarget).url === 'string' &&
+    /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test((target as CheckTarget).url) &&
+    typeof (target as CheckTarget).headSha === 'string' && /^[a-f\d]{40}$/i.test((target as CheckTarget).headSha));
+  const plan = predictedPlan();
+  if (!targets.length || !plan.graph || !predictionsAllowed(['core'])) return;
+  const token = cachedToken, client = getGitHubClient(token);
+  const attention = (target: CheckTarget) => savedPrChecks(client, target)?.value.checks
+    .some(check => checkGroup(check) === 'attention');
+  const first = targets.find(attention) ?? targets[0];
+  const others = targets.filter(target => target !== first && attention(target)).slice(0, plan.members);
+  const stillWanted = () => token === cachedToken && predictionsEnabled();
+  await predictedPriority(predictionLabel(label), async () => {
+    await warmWorkflowGraph({ url: first.url, headSha: first.headSha }, {
+      runs: target => readWorkflowRuns(client, target),
+      graph: input => readWorkflowGraph(client, openingGraphView(input)),
+      // The same reader and 2 MB limit as Checks › Job log, so the log opens from memory.
+      ...(plan.logs > 0 ? { logs: async (target: CheckTarget, run: WorkflowRunInfo) => {
+        const snapshot = savedPrChecks(client, target)?.value;
+        if (snapshot?.headSha !== target.headSha) return;
+        await Promise.allSettled(failingRunJobs(snapshot, run.id, plan.logs).map(job => readCheckLog(client, job)));
+      } } : {}),
+    }, stillWanted);
+    for (const { url, headSha } of others) {
+      if (!stillWanted()) return;
+      await warmWorkflowGraph({ url, headSha }, {
+        runs: target => readWorkflowRuns(client, target),
+        graph: input => readWorkflowGraph(client, openingGraphView(input)),
+      }, stillWanted).catch(() => {});
+    }
+  });
 });
 ipcMain.handle('prepare-workflow-graph', (_event, target?: CheckTarget) => {
   workflowWarmAccount = cachedToken;
@@ -3564,33 +3680,56 @@ const withKnownMember = (url: string, refresh: boolean, options: InspectionLoadO
   if (!member) return options;
   return refresh || (options.revision && changesRevision(member) === changesRevision(options.revision)) ? { ...options, revision: member } : options;
 };
+/**
+ * A user read is interactive; queue preparation is background and automatic; a prediction is foreground, never
+ * interactive, unpaced, and charged to the predicted budget under its destination kind.
+ */
+function inspectionPriority<T>(mode: { background?: boolean; predicted?: unknown }, operation: () => T): T {
+  if (mode.background) return withGitHubPriority('background', operation);
+  if (mode.predicted !== undefined) {
+    if (!predictionsEnabled()) throw new Error('Preloading likely next pages is off.');
+    return withGitHubPriority('foreground', operation, { automatic: false, predicted: predictionLabel(mode.predicted) });
+  }
+  return withGitHubPriority('interactive', operation);
+}
+/** File and comparison reads pass `true` for queue preparation or `{ predicted }` for a prediction. */
+const inspectionMode = (value: unknown): { background?: boolean; predicted?: string } =>
+  value === true ? { background: true } : value && typeof value === 'object' && 'predicted' in value
+    ? { predicted: predictionLabel((value as { predicted: unknown }).predicted) } : {};
 ipcMain.handle('stack-changes', (event, subject: ReviewSubject, refresh: boolean, options: InspectionLoadOptions = {}) =>
-  withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
+  inspectionPriority(options, () => runInspection(event, options, async signal => {
     const client = changesClient();
     return classifySnapshot(client, await stackChanges.read(client, subject, refresh, signal));
   })));
 ipcMain.handle('pr-changes', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
-  withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
+  inspectionPriority(options, () => runInspection(event, options, async signal => {
     const client = changesClient();
     return classifySnapshot(client, await prChanges.manifest(client, url, refresh, withKnownMember(url, refresh, options), signal));
   })));
 ipcMain.handle('pr-commits', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
-  withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options,
+  inspectionPriority(options, () => runInspection(event, options,
     signal => prCommits.list(changesClient(), url, refresh, withKnownMember(url, refresh, options), signal))));
-const inspectionPrefetchGuard = (background: boolean) => {
+// Queue preparation and predictions stop before each request when the account changed or their budget is spent.
+// A user who joins the read promotes it, and the guard then lets it finish.
+const inspectionPrefetchGuard = (mode: { background?: boolean; predicted?: string }) => {
   const token = getResolvedToken();
-  return background ? () => {
+  return mode.background || mode.predicted ? () => {
     if (token !== getResolvedToken()) throw new Error('GitHub account changed.');
-    if (githubPriority() !== 'background') return;
-    const paused = githubClients.backoff(token, true, ['core']);
+    const paused = githubPriority() === 'background' ? githubClients.backoff(token, true, ['core'])
+      : githubPredicted() ? githubClients.predictedBackoff(token, ['core']) : undefined;
     if (paused) throw paused;
   } : undefined;
 };
-ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', async () => { const client = changesClient(); return classifySnapshot(client, await prCommits.comparison(client, selection, inspectionPrefetchGuard(background))); }));
+ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, raw: unknown = false) => { const mode = inspectionMode(raw); return inspectionPriority(mode, async () => { const client = changesClient(); return classifySnapshot(client, await prCommits.comparison(client, selection, inspectionPrefetchGuard(mode))); }); });
 const markdownReview = createMarkdownReviewService(path.join(__dirname, 'markdown-review-worker.js'));
 ipcMain.handle('markdown-review', (_event, request: MarkdownReviewRequest) => markdownReview.render(request));
 app.on('will-quit', () => markdownReview.dispose());
-ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', () => (request.stackComparison ? stackChanges : request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(background))));
+ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, raw: unknown = false) => {
+  const mode = inspectionMode(raw);
+  // Predictions never download LFS objects.
+  if (mode.predicted && request.downloadLfs) throw new Error('Predictions do not download LFS objects.');
+  return inspectionPriority(mode, () => (request.stackComparison ? stackChanges : request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(mode)));
+});
 ipcMain.handle('prepare-pr-review', (_event, url: string, revision: { baseSha: string; headSha: string }) => withGitHubPriority('background', () => prChanges.prepareReview(changesClient(), url, revision)));
 ipcMain.handle('pr-changes-revision', (_event, url: string) => prChanges.revision(changesClient(), url));
 handleInteractive('ask-pr-file', async (_event, request: FileChatRequest) => {

@@ -27,6 +27,14 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.starts.length'), 0);
     await wait("document.querySelector('.stack-overview').textContent.includes('No checks reported') && document.querySelector('.stack-overview').textContent.includes('Checks unavailable') && !!document.querySelector('.stack-check-result.is-danger')");
     await capture('overview-light');
+    // Resting on a member prepares that PR, like a resting queue row, without marking it read.
+    await js(`(async()=>{window.memberIntents=[];window.electronAPI.prOpenIntent=targets=>{window.memberIntents.push(targets&&targets.map(t=>t.url))};
+      const button=[...document.querySelectorAll('.stack-member-title button')].find(b=>b.textContent.includes('Route worker commands'));
+      button.dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));await new Promise(r=>setTimeout(r,300));
+      button.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,relatedTarget:document.body}));})()`);
+    await wait("window.memberIntents.length===2");
+    assert.deepEqual(await js("window.memberIntents.map(urls=>urls&&urls.map(u=>u.split('/').pop()))"), [['121'], null]);
+    assert.equal(await js('window.reads.length'), 0, 'Preparing a member does not mark it read');
     await click('Rename stack');
     await js(`(()=>{const e=document.querySelector('#stack-name');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'Command queue redesign');e.dispatchEvent(new Event('input',{bubbles:true}))})()`);
     await click('Save');

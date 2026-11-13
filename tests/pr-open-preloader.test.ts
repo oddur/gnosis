@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPrOpenPreloader, needsRefresh, type OpenKind, type SavedCopy } from '../src/pr-open-preloader';
 import { GitHubBackoffError } from '../lib/github-client';
+import { githubPredicted } from '../lib/github-scheduler';
 import type { OpenTarget, OpenTier } from '../lib/pr-open-targets';
 
 const HOUR = 3_600_000;
@@ -20,17 +21,19 @@ const settle = async () => {
 function harness() {
   let now = 10 * HOUR;
   const saved = new Map<string, SavedCopy>();
-  const calls: { kind: string; urls: string[]; intent?: boolean }[] = [];
+  const calls: { kind: string; urls: string[]; intent?: boolean; predicted?: string }[] = [];
   const incomplete = new Set<string>();
   const details = new Set<string>();
-  const state = { canRun: true, canIntent: true, idle: 0, usage: { spent: 0, limit: 1000 } };
+  const state = { canRun: true, canIntent: true, canPredict: true, idle: 0, usage: { spent: 0, limit: 1000 },
+    // Settings › Preloading.
+    queue: true, intents: true, details: true };
   let fail: Partial<Record<OpenKind | 'full', Error>> = {};
   let hold: Promise<void> | undefined;
   const save = (kind: OpenKind, targets: OpenTarget[]) => {
     for (const t of targets) saved.set(`${kind}:${t.url}`, { headSha: t.headSha, baseSha: t.baseSha, checkedAt: now });
   };
   const step = (kind: OpenKind) => async (targets: OpenTarget[], intent: boolean) => {
-    calls.push({ kind, urls: targets.map((t) => t.url), intent });
+    calls.push({ kind, urls: targets.map((t) => t.url), intent, predicted: githubPredicted() });
     if (hold) await hold;
     if (fail[kind]) throw fail[kind];
     save(kind, targets);
@@ -39,6 +42,10 @@ function harness() {
   const preloader = createPrOpenPreloader({
     canRun: () => state.canRun,
     canIntent: () => state.canIntent,
+    canPredict: () => state.canPredict,
+    queueEnabled: () => state.queue,
+    intentEnabled: () => state.intents,
+    committedDetails: () => state.details,
     usage: () => state.usage,
     idleSeconds: () => state.idle,
     need: (t, kind) => (kind === 'details' ? details.has(t.url) : needsRefresh(kind, saved.get(`${kind}:${t.url}`), t, now)),
@@ -52,12 +59,12 @@ function harness() {
       return Promise.resolve({ incomplete: urls.filter((url) => incomplete.has(url)) });
     },
     threadsFull: async (url, intent) => {
-      calls.push({ kind: 'full', urls: [url], intent });
+      calls.push({ kind: 'full', urls: [url], intent, predicted: githubPredicted() });
       if (hold) await hold;
       save('threads', [byUrl.get(url) ?? target(0)]);
     },
     checkDetails: (t) => {
-      calls.push({ kind: 'details', urls: [t.url], intent: true });
+      calls.push({ kind: 'details', urls: [t.url], intent: true, predicted: githubPredicted() });
       details.delete(t.url);
       return Promise.resolve();
     },
@@ -266,4 +273,112 @@ void test('a newer intent replaces a queued one', async () => {
   await settle();
   assert.deepEqual([...new Set(h.calls.map((call) => call.urls[0]))], [target(1).url, target(3).url]);
   assert.ok(h.saved.has(`status:${target(1).url}`), 'The request in flight still finishes and saves');
+});
+
+void test('a committed prediction reaches the open PR, which queue tiers skip, and reads only threads and check details', async () => {
+  const h = harness();
+  const open = target(1, 0);
+  h.setTargets('window', [open]);
+  await h.preloader.tick();
+  assert.equal(h.calls.length, 0, 'Queue tiers skip the open PR');
+  h.details.add(open.url);
+  await h.preloader.setCommitted('window:committed', [open], 'pr-tab:feedback');
+  assert.deepEqual(h.calls.map((call) => [call.kind, call.predicted]), [['full', 'pr-tab:feedback'], ['details', 'pr-tab:feedback']],
+    'Live sync revalidates status, signals and checks; the prediction reads threads and failing check details');
+  h.calls.length = 0;
+  await h.preloader.setCommitted('window:committed', [open], 'pr-tab:feedback');
+  assert.equal(h.calls.length, 0, 'Fresh saved copies send nothing');
+});
+
+void test('a hover does not replace a committed prediction, and committed work runs first', async () => {
+  const h = harness();
+  let release!: () => void;
+  h.setTargets('window', [target(1, 0)]);
+  h.hold(new Promise<void>((resolve) => (release = resolve)));
+  const committed = h.preloader.setCommitted('window:committed', [target(1, 0)], 'pr-open');
+  h.preloader.setIntent('window', [target(2)]);
+  h.preloader.setIntent('window', [target(3)]);
+  await settle();
+  assert.equal(h.calls[0].urls[0], target(1).url, 'Committed work starts first');
+  h.hold(undefined);
+  release();
+  await committed;
+  await settle();
+  assert.ok(h.saved.has(`threads:${target(1).url}`), 'The committed prediction finished');
+  assert.ok(h.calls.some((call) => call.urls[0] === target(3).url && !call.predicted), 'The hover ran as hover intent');
+});
+
+void test('committed predictions spend the predicted budget, not the hover bucket, and stop when paused', async () => {
+  const h = harness();
+  for (let n = 1; n <= 6; n++) await h.preloader.setCommitted('window:committed', [target(n)], 'pr-open');
+  assert.equal(new Set(h.calls.map((call) => call.urls[0])).size, 6, 'Not limited to three per five seconds');
+  assert.ok(h.calls.every((call) => call.predicted === 'pr-open'));
+  h.preloader.setIntent('window', [target(10)]);
+  await settle();
+  assert.ok(h.calls.some((call) => call.urls[0] === target(10).url), 'The hover bucket is untouched');
+  h.calls.length = 0;
+  h.state.canPredict = false;
+  await h.preloader.setCommitted('window:committed', [target(20)], 'pr-open');
+  assert.equal(h.calls.length, 0, 'Nothing starts at the predicted cap, the reserve, on backoff or when idle');
+  h.state.canPredict = true;
+  const replaced = h.preloader.setCommitted('window:committed', [target(21)], 'pr-open');
+  h.preloader.removeOwner('window');
+  await replaced;
+});
+
+void test('"Prepare the top of the queue" off: no queue tier runs, and turning it on resumes', async () => {
+  const h = harness();
+  h.state.queue = false;
+  h.setTargets('window', [target(1, 1), target(2, 2), target(3, 3)]);
+  await h.preloader.tick();
+  h.advance(2 * 60_000);
+  await h.preloader.tick();
+  assert.equal(h.calls.length, 0, 'Nothing is prepared for queue position alone');
+  // Hover and committed predictions are separate settings.
+  h.preloader.setIntent('window', [target(4)]);
+  await settle();
+  assert.ok(h.calls.some((call) => call.intent && call.urls[0] === target(4).url), 'Hover still prepares the row');
+  h.calls.length = 0;
+  h.state.queue = true;
+  await h.preloader.tick();
+  assert.deepEqual(h.calls.map((call) => call.kind), ['status', 'signals', 'checks', 'threads']);
+});
+
+void test('"Preload likely next pages" off: hover and focus intent send nothing, and a waiting hover is dropped', async () => {
+  const h = harness();
+  h.state.intents = false;
+  for (let n = 1; n <= 3; n++) {
+    h.preloader.setIntent('window', [target(n)]);
+    await settle();
+  }
+  await h.preloader.tick();
+  await settle();
+  assert.equal(h.calls.length, 0);
+  // A hover waiting for a token when the setting turns off never starts.
+  h.state.intents = true;
+  for (let n = 4; n <= 8; n++) {
+    h.preloader.setIntent('window', [target(n)]);
+    await settle();
+  }
+  const started = new Set(h.calls.map((call) => call.urls[0])).size;
+  h.state.intents = false;
+  h.advance(5000);
+  await h.preloader.tick();
+  await settle();
+  assert.equal(new Set(h.calls.map((call) => call.urls[0])).size, started);
+  assert.ok(!h.calls.some((call) => call.urls[0] === target(8).url));
+});
+
+void test('at the Light amount, a committed prediction reads threads but no check details', async () => {
+  const h = harness();
+  const open = target(1, 0);
+  h.setTargets('window', [open]);
+  h.details.add(open.url);
+  h.state.details = false;
+  await h.preloader.setCommitted('window:committed', [open], 'pr-tab:checks');
+  assert.deepEqual(h.calls.map((call) => call.kind), ['full']);
+  h.calls.length = 0;
+  h.state.details = true;
+  await h.preloader.setCommitted('window:committed', [open], 'pr-tab:checks');
+  assert.deepEqual(h.calls.map((call) => call.kind), ['details'], 'Normal and Eager read failing check details');
 });

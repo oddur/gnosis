@@ -90,6 +90,14 @@ void app.whenReady().then(async () => {
     await wait('document.querySelectorAll(".workspace-tab").length===2');
     assert.equal(await js(`${root}.querySelector('.queue-list')!==null`), true, 'modified click leaves queue active');
     assert.equal(await js('window.tabReads'), 0, 'unopened background tab does not mark PR read');
+    // Resting on a background tab prepares its PR, as resting on a queue row does; leaving clears it.
+    await js(`(async()=>{window.tabIntents=[];window.electronAPI.prOpenIntent=targets=>{window.tabIntents.push(targets&&targets.map(t=>t.url))};
+      const tab=document.querySelectorAll('.workspace-tab-select')[1];tab.dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));
+      await new Promise(r=>setTimeout(r,300));tab.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,relatedTarget:document.body}));})()`);
+    await wait('window.tabIntents.length===2');
+    assert.ok(await js<boolean>("window.tabIntents[0]?.length===1&&window.tabIntents[0][0].startsWith('https://github.com/')"), 'The tab\'s PR is prepared');
+    assert.equal(await js('window.tabIntents[1]'), null, 'Leaving the tab clears the intent');
+    assert.equal(await js('window.tabReads'), 0, 'Preparing a tab does not mark its PR read');
     await js(`document.querySelectorAll('.workspace-tab-select')[1].click()`);
     await wait(`${root}.querySelector('.pr-summary-page')!==null`);
     await click('Changes');

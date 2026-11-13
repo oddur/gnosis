@@ -2,8 +2,8 @@ import { LoadingState, LoadingIndicator } from './LoadingState';
 import { SubjectIcon } from './SubjectIcon';
 import { checkGroupIcons } from '../lib/interface-icons';
 import { preferredChecksView, rememberChecksView, type ChecksView } from '../lib/checks-view';
-import { lazy, Suspense } from 'react';
-const WorkflowGraphView = lazy(() => import('./WorkflowGraph').then((m) => ({ default: m.WorkflowGraphView })));
+import { Suspense } from 'react';
+import { WorkflowGraphView } from '../src/lazy-screens';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useRef, useState } from 'react';
 import {

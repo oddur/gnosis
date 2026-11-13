@@ -39,9 +39,18 @@ export interface InspectionRevision {
   baseSha: string;
   headSha: string;
 }
+/**
+ * How a read is scheduled: `false` for the reader's own request, `true` for queue preparation, or `{ predicted }` for
+ * a navigation prediction labelled by destination kind, such as `pr-tab:changes`.
+ */
+export type InspectionMode = boolean | { predicted: string };
+/** User reads outrank predictions, which outrank queue preparation. A pending read is reused only by a lower rank. */
+export const inspectionRank = (mode: InspectionMode = false) => (mode === false ? 2 : mode === true ? 0 : 1);
 export interface InspectionLoadOptions {
   requestId?: string;
   background?: boolean;
+  /** A navigation prediction, labelled by destination kind. Foreground, never interactive, predicted budget. */
+  predicted?: string;
   revision?: Pick<InspectionRevision, 'baseSha' | 'headSha'>;
 }
 export type PrFileSide =

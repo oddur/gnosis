@@ -55,10 +55,14 @@ void app.whenReady().then(async () => {
     await js(
       `(()=>{window.remoteSearchCalls=0;const remote=window.electronAPI.commandGitHubSearch;window.electronAPI.commandGitHubSearch=(...args)=>{window.remoteSearchCalls++;return remote(...args)};document.querySelector('.queue-search input').focus();})()`
     );
+    // A highlighted result that rests is a likely next destination: PRs are prepared like a resting queue row.
+    await js(`(()=>{window.paletteIntents=[];window.electronAPI.prOpenIntent=targets=>{window.paletteIntents.push(targets&&targets.map(t=>t.url))};
+      window.reviewLoads=[];const load=window.electronAPI.loadReview;window.electronAPI.loadReview=id=>{window.reviewLoads.push(id);return load(id)};})()`);
     await open();
     assert.equal(await js('document.activeElement.getAttribute("aria-label")'), 'Search Gnosis');
     await fill('#150');
     assert.match(await js<string>("document.querySelector('.global-command-preview h2').textContent"), /Fix reconnect/);
+    await wait("window.paletteIntents.some(urls=>urls&&urls.some(u=>u.endsWith('/pull/150')))");
     assert.equal(await js('window.remoteSearchCalls'), 0);
     await capture('search-light');
     await js("document.documentElement.classList.add('dark')");
@@ -72,12 +76,17 @@ void app.whenReady().then(async () => {
     await key('Escape');
     await wait("!document.querySelector('.settings-tabs')");
     await open();
+    await js('window.reviewLoads=[]');
     await fill('command-queue.ts');
+    // Resting on a saved review's file loads the review's document before Enter.
+    await wait('window.reviewLoads.length>0');
     await capture('file-preview');
     assert.match(await js<string>("document.querySelector('.global-command-preview h2').textContent"), /command-queue/, 'Paths remain searchable');
     assert.equal(await js("!!document.querySelector('.global-command-code')"), false, 'The index stores no diff contents');
     await key('Enter');
     await wait("!!document.querySelector('.workbench-review .search-arrival')");
+    await wait("window.__gnosisPredict.records().some(r=>r.kind==='review')");
+    assert.equal(await js("window.__gnosisPredict.records().find(r=>r.kind==='review').outcome"), 'hit', 'The rested review opens from memory');
     assert.match(
       await js<string>("document.querySelector('.search-arrival').getAttribute('data-file-path')"),
       /command-queue/

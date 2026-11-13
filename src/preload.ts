@@ -12,7 +12,8 @@ import type { FileFilterAction } from './file-filter-state';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
-import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
+import type { InspectionRevision, InspectionLoadOptions, InspectionMode } from '../lib/pr-changes';
+import type { PredictionState } from '../lib/navigation-predictor';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
@@ -68,6 +69,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   watchGitHub: (id: string, interest: GitHubSyncInterest | null) => ipcRenderer.send('github-sync-watch', id, interest),
   prOpenPreload: (targets: OpenTarget[]) => ipcRenderer.send('pr-open-preload', targets),
   prOpenIntent: (targets: OpenTarget[] | null) => ipcRenderer.send('pr-open-intent', targets),
+  prOpenCommitted: (targets: OpenTarget[] | null, label: string): Promise<void> =>
+    ipcRenderer.invoke('pr-open-committed', targets, label),
+  predictWorkflowGraph: (target: CheckTarget[], label: string): Promise<void> =>
+    ipcRenderer.invoke('predict-workflow-graph', target, label),
+  predictionState: (): Promise<PredictionState> => ipcRenderer.invoke('prediction-state'),
+  onPredictionState: (callback: (state: PredictionState) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: PredictionState) => callback(state);
+    ipcRenderer.on('prediction-state', handler);
+    return () => {
+      ipcRenderer.removeListener('prediction-state', handler);
+    };
+  },
   onGitHubSync: (callback: (event: GitHubSyncEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, value: GitHubSyncEvent) => callback(value);
     ipcRenderer.on('github-sync', handler);
@@ -154,7 +167,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('prepare-pr-review', url, revision),
   getPrCommits: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrCommits> =>
     ipcRenderer.invoke('pr-commits', url, refresh, options),
-  getCommitComparison: (selection: CommitSelection, background?: boolean): Promise<PrChanges> =>
+  getCommitComparison: (selection: CommitSelection, background?: InspectionMode): Promise<PrChanges> =>
     ipcRenderer.invoke('commit-comparison', selection, background),
   renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest): Promise<MarkdownReview> =>
     ipcRenderer.invoke('markdown-review', request),
@@ -163,7 +176,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPrChanges: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> =>
     ipcRenderer.invoke('pr-changes', url, refresh, options),
   cancelInspection: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-inspection', requestId),
-  getPrChangeFile: (request: PrFileRequest, background?: boolean): Promise<PrFileContents> =>
+  getPrChangeFile: (request: PrFileRequest, background?: InspectionMode): Promise<PrFileContents> =>
     ipcRenderer.invoke('pr-change-file', request, background),
   checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> =>
     ipcRenderer.invoke('pr-changes-revision', url),
@@ -472,4 +485,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   perfMark: process.argv.includes('--gnosis-perf-trace')
     ? (name: string) => ipcRenderer.send('perf-mark', name, performance.timeOrigin + performance.now())
     : undefined,
+  perfNote: process.argv.includes('--gnosis-perf-trace')
+    ? (name: string, value: unknown) => ipcRenderer.send('perf-note', name, value)
+    : undefined,
+  // GNOSIS_PREDICT=off, read once at startup: measurement stays on, predictions never run.
+  predictOff: process.argv.includes('--gnosis-predict-off'),
 });

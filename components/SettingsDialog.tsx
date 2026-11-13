@@ -15,6 +15,15 @@ import { SearchableSelect } from './SearchableSelect';
 import { Button } from './ui/button';
 import { PrInactivitySetting } from './PrInactivitySetting';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
+import {
+  PRELOAD_AMOUNTS,
+  PRELOAD_BUDGET_PERCENTS,
+  DEFAULT_PRELOAD_BUDGET_PERCENT,
+  normalizePreloadBudgetPercent,
+  preloadSettings,
+  type PreloadAmount,
+} from '../lib/preload-settings';
+import type { PredictedUsage } from '../lib/github-budget';
 import { useState, useEffect, useRef } from 'react';
 import { Tabs } from 'radix-ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -111,6 +120,17 @@ function SettingRow({
   );
 }
 
+const AMOUNT_LABELS: Record<PreloadAmount, { label: string; description: string }> = {
+  light: { label: 'Light', description: 'An opened PR loads its file list, the first file and its checks.' },
+  normal: { label: 'Normal', description: 'Also three files, the workflow graph and failing check details.' },
+  eager: { label: 'Eager', description: 'Also six files, failing job logs and graphs of failing stack PRs.' },
+};
+/** "This hour: 12 of 300 requests · 4 of 300 GraphQL points". */
+function formatPreloadSpend(usage: { core: PredictedUsage; graphql: PredictedUsage }) {
+  const n = (value: number) => value.toLocaleString('en-US');
+  return `This hour: ${n(usage.core.spent)} of ${n(usage.core.limit)} requests · ${n(usage.graphql.spent)} of ${n(usage.graphql.limit)} GraphQL points`;
+}
+
 function formatBytes(bytes: number): string {
   const mb = bytes / (1024 * 1024);
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
@@ -199,6 +219,22 @@ export function SettingsDialog({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
+  const [predictNavigation, setPredictNavigation] = useState(true);
+  const [preloadAmount, setPreloadAmount] = useState<PreloadAmount>('normal');
+  const [prepareQueue, setPrepareQueue] = useState(true);
+  const [preloadBudgetPercent, setPreloadBudgetPercent] = useState(DEFAULT_PRELOAD_BUDGET_PERCENT);
+  const [preloadUsage, setPreloadUsage] = useState<{ core: PredictedUsage; graphql: PredictedUsage }>();
+  // Preloading spend this hour: main's counters, read once and then pushed with each prediction-state change.
+  useEffect(() => {
+    if (!open || section !== 'integrations') return;
+    let live = true;
+    const apply = (state: { usage?: { core: PredictedUsage; graphql: PredictedUsage } } | undefined) => {
+      if (live && state?.usage) setPreloadUsage(state.usage);
+    };
+    void Promise.resolve().then(() => window.electronAPI.predictionState?.()).then(apply, () => {});
+    const unsubscribe = window.electronAPI.onPredictionState?.(apply);
+    return () => { live = false; unsubscribe?.(); };
+  }, [open, section]);
   const [briefingDailyLimit, setBriefingDailyLimit] = useState(10);
   const [parallelReview, setParallelReview] = useState(false);
   const [claudeContext, setClaudeContext] = useState(true);
@@ -258,6 +294,11 @@ export function SettingsDialog({
         setRepositoryDailyLimit(normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit));
         setNotifications(prefs.notifications);
         setTrayEnabled(prefs.trayEnabled);
+        const preloads = preloadSettings(prefs);
+        setPredictNavigation(preloads.predictNavigation);
+        setPreloadAmount(preloads.amount);
+        setPrepareQueue(preloads.prepareQueue);
+        setPreloadBudgetPercent(preloads.budgetPercent);
         setBriefingDailyLimit(prefs.briefingDailyLimit ?? 10);
         setParallelReview(prefs.parallelReview);
         setClaudeContext(prefs.claudeContext);
@@ -835,6 +876,72 @@ export function SettingsDialog({
               </div>
             </Tabs.Content>
             <Tabs.Content value="integrations" className="settings-panel">
+              <section className="flex flex-col items-start gap-3" aria-labelledby="preloading-title">
+                <h3 id="preloading-title" className="text-sm font-medium">Preloading</h3>
+                <div className="w-full">
+                  <SettingRow
+                    label="Preload likely next pages"
+                    description="Prepares the tabs of an opened PR and anything you point at."
+                  >
+                    <Toggle
+                      checked={predictNavigation}
+                      ariaLabel="Preload likely next pages"
+                      onChange={() => {
+                        const next = !predictNavigation;
+                        setPredictNavigation(next);
+                        saveField({ predictNavigation: next });
+                      }}
+                    />
+                  </SettingRow>
+                </div>
+                <div className="settings-field">
+                  <span id="preload-amount-label">Amount</span>
+                  <div role="group" aria-labelledby="preload-amount-label" aria-describedby="preload-amount-description"
+                    className="flex flex-wrap gap-x-4 gap-y-2">
+                    {PRELOAD_AMOUNTS.map((amount) => (
+                      <Chip key={amount} active={preloadAmount === amount} onClick={() => {
+                        setPreloadAmount(amount);
+                        saveField({ preloadAmount: amount });
+                      }}>
+                        {AMOUNT_LABELS[amount].label}
+                      </Chip>
+                    ))}
+                  </div>
+                  <p id="preload-amount-description" className="settings-description">{AMOUNT_LABELS[preloadAmount].description}</p>
+                </div>
+                <div className="w-full">
+                  <SettingRow
+                    label="Prepare the top of the queue"
+                    description="Loads status, checks and files for PRs near the top of the queue."
+                  >
+                    <Toggle
+                      checked={prepareQueue}
+                      ariaLabel="Prepare the top of the queue"
+                      onChange={() => {
+                        const next = !prepareQueue;
+                        setPrepareQueue(next);
+                        saveField({ prepareQueue: next });
+                      }}
+                    />
+                  </SettingRow>
+                </div>
+                <div className="settings-field">
+                  <label htmlFor="preload-budget">Hourly GitHub budget</label>
+                  <SearchableSelect id="preload-budget" label="Hourly GitHub budget" value={String(preloadBudgetPercent)}
+                    describedBy="preload-budget-description preload-budget-spend"
+                    options={PRELOAD_BUDGET_PERCENTS.map(percent => ({ value: String(percent), label: `${percent}% of the hourly limit${percent === DEFAULT_PRELOAD_BUDGET_PERCENT ? ' (default)' : ''}` }))}
+                    onValueChange={value => {
+                      const percent = normalizePreloadBudgetPercent(Number(value));
+                      setPreloadBudgetPercent(percent);
+                      saveField({ preloadBudgetPercent: percent });
+                    }}
+                  />
+                  <p id="preload-budget-description" className="settings-description">The share of each hourly limit preloading may use. It also stops early when your limit runs low.</p>
+                  <p id="preload-budget-spend" className="settings-description" data-testid="preload-spend">
+                    {preloadUsage ? formatPreloadSpend(preloadUsage) : ''}
+                  </p>
+                </div>
+              </section>
               <section className="flex flex-col items-start gap-3" aria-labelledby="github-cache-title">
                 <h3 id="github-cache-title" className="text-sm font-medium">GitHub cache</h3>
                 <div className="settings-field">

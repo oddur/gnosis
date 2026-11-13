@@ -27,7 +27,7 @@ Each credential has one shared network scheduler with three priorities:
 | Priority | Work |
 | --- | --- |
 | Interactive | Opening PR details, Changes, Commits, files, comments, images, profiles, explicit searches and refreshes, file questions, task admission/retry, and submitting feedback |
-| Foreground | AI context requests, automatic status checks for the selected PR, and hover and focus prefetch |
+| Foreground | AI context requests, automatic status checks for the selected PR, hover and focus prefetch, and navigation predictions |
 | Background | Preloading, discovery, optional file history, automatic briefings, and status checks for other visible queue rows |
 
 Up to six requests run at the same time for each credential. Foreground and background work together use at most four of these slots, and background work uses at most two. Two slots are therefore always kept for interactive work. Interactive work gets the next free slot, then foreground work. Background work starts only when no higher tier has a queued request.
@@ -51,6 +51,23 @@ The workflow graph reads the run's workflow file and every reusable workflow tha
 Gnosis also fills these saved copies ahead of time. For the first 100 PRs in priority order it saves status and review summaries, 25 PRs per GraphQL query. For the first 40 it also saves check summaries and review discussions, 5 PRs per query. This work runs at background priority and uses only the GraphQL automatic budget. It stops when that budget is half spent, when the window is hidden, after five minutes without input, and during any GitHub backoff. A saved copy is refreshed when the PR's revision or update time changes, when its activity signal changes, or after six hours.
 
 Resting the pointer or keyboard focus on a queue row for 150 ms moves that PR to the front of preparation. If its saved copies are missing or out of date, Gnosis reads them at foreground priority, outside the automatic budget. At most one such read runs at a time, and at most three start in quick succession, then one every five seconds. These reads never use the two interactive slots.
+
+### Navigation predictions
+
+Opening a PR prepares the tabs you are likely to open next. `lib/navigation-graph.ts` lists them with a weight: Changes, Checks when checks fail or run, and Feedback when the PR has open threads or needs your response. For each one above 0.2, Gnosis reads the changed-file list, the commit list, the first three files in tree order (or the file you last viewed), review threads, failing check details, and the newest workflow run and its graph. Saved copies that are still current send nothing.
+
+These reads run at foreground priority and never use the two interactive slots. They are not paced. They have their own budget: by default 6% of each allowance per local hour (300 REST requests and 300 GraphQL points on a standard token), separate from the automatic 20%. Settings can change the share to 3%, 10% or 15%; it scales with the token's real limit. They stop when the remaining allowance is at twice the background reserve (1,000 of 5,000 REST requests), during any backoff, when the window is hidden, offline, or after five minutes without input. Predictions never search, write, download LFS objects, generate with AI, or mark anything read. Past 75% of the predicted budget, or on battery, they use one amount less (see below), never less than Light.
+
+If you open a tab while its prediction is still loading, your request joins the prediction instead of sending a second request. The rest of that work runs as yours, at interactive priority. ### Preloading settings
+
+Settings › Integrations › Preloading has four controls. Main and every window apply changes at once.
+
+- **Preload likely next pages** (on by default) turns navigation predictions and all hover and focus intent off, queue rows included.
+- **Amount** chooses how much an opened PR warms. Light: the file list and commit list, one file body, and threads; no workflow graph and no check details. Normal: three file bodies, the workflow graph of the preferred run, and failing check details (up to five). Eager: six file bodies, the graph, failing check details, the logs of up to three failing jobs in the preferred run (the same 2 MB reader as Checks › Job log, kept in memory so the log opens at once), and the graphs of up to two other stack PRs with failing checks.
+- **Prepare the top of the queue** (on by default) controls the queue preparation described above and the queue's inspection worker. When it is off, only the open PR is prepared in the background.
+- **Hourly GitHub budget** is the predicted share above. Settings shows this hour's spend next to it.
+
+`GNOSIS_PREDICT=off` forces "Preload likely next pages" off for benchmarks, whatever the setting says.
 
 Explanation preparation reports completed files, including both required sides, as “Loading files: N/M”. Cached contents use the same progress path. A rate-limited file read retains its completed work, shows the retry time in Activity, and resumes after the deadline. Cancellation remains available while waiting.
 
