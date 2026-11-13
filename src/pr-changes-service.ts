@@ -48,7 +48,7 @@ export function createPrChangesService(clones = localClones) {
     work.set(key, job);
     return job.read(signal);
   }
-  const snapshotKey = (url: string, revision: string) => `pr-changes:v2:${url}:${revision}`;
+  const snapshotKey = (url: string, revision: string) => `pr-changes:v3:${url}:${revision}`;
   function remember(client: Octokit, snapshot: PrChanges) {
     let values = snapshots.get(client);
     if (!values) {
@@ -141,6 +141,7 @@ export function createPrChangesService(clones = localClones) {
           status: file.status,
           additions: file.additions,
           deletions: file.deletions,
+          ...(file.sha && file.status !== 'deleted' ? { blobSha: file.sha } : {}),
           // Unchanged patches/blobs retain progress across revisions; renames change review content.
           changeId: hash([
             file.filename,

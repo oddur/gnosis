@@ -6,6 +6,7 @@ import { getGitHubClient, GitHubBackoffError, githubRateLimit } from './github-c
 import { localClones, type LocalClone, type LocalCloneFile, type LocalClones } from './local-clone';
 import { preparedChanges, preparedFile, preparedDiff } from './prepared-pr';
 import { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
+import { readGitHubFile } from '../src/github-file-content';
 export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -799,12 +800,14 @@ export class GitHubDiffSource implements DiffSource {
     const metadata = await this.getMetadata();
     const cached = await preparedChanges(this.octokit, this.key, metadata);
     if (cached && !cached.filesTruncated && !cached.patchesDeferred) return cached.files.map(file => ({ filename: file.path, previous_filename: file.previousPath,
-      status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch }));
+      status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch, sha: file.blobSha }));
     const local = await this.fromClone((clone) => clone.changes(metadata.baseSha, metadata.headSha));
     if (local) return local.files.map(changedFileFromClone);
     if (cached?.filesTruncated || (metadata.changedFileCount !== undefined && metadata.changedFileCount > GITHUB_PR_FILE_LIMIT))
       throw new Error(LARGE_PR_EXPLANATION_ERROR);
-    return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true, metadata.changedFileCount);
+    const files = await getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true, metadata.changedFileCount);
+    for (const file of files) if (file.sha && file.status !== 'deleted') this.blobs.set(file.filename, file.sha);
+    return files;
   }
 
   async getFileContent(filePath: string, ref: 'base' | 'head', signal?: AbortSignal): Promise<string | null> {
@@ -822,7 +825,32 @@ export class GitHubDiffSource implements DiffSource {
     }
     const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
     const [owner, repo] = ((ref === 'base' ? meta.baseRepo : meta.headRepo) ?? `${this.owner}/${this.repo}`).split('/');
-    return this.readAt(owner, repo, filePath, gitRef, signal);
+    const blobSha = ref === 'head' ? ((file?.path === filePath ? file.blobSha : undefined) ?? this.blobs.get(filePath)) : undefined;
+    return this.readSource(owner, repo, filePath, gitRef, signal, blobSha && /^[a-f\d]{40}$/i.test(blobSha) ? blobSha : undefined);
+  }
+
+  /** Blob SHAs from the last file list, so a push only downloads the files it changed. */
+  private blobs = new Map<string, string>();
+  /**
+   * A changed file's text, from the clone or from the source store that Changes shares. That store keys bytes by blob
+   * SHA, so text read for one revision, PR, or stack layer serves every other with the same content.
+   */
+  private async readSource(owner: string, repo: string, filePath: string, ref: string, signal?: AbortSignal, blobSha?: string) {
+    const local = await this.fromClone((clone) => clone.blob(ref, filePath));
+    if (local !== undefined) return local && local.toString('utf-8');
+    if (!blobSha && !/^[a-f\d]{40}$/i.test(ref)) return getFileContent(this.octokit, owner, repo, filePath, ref, signal);
+    try {
+      signal?.throwIfAborted();
+      const bytes = await readGitHubFile(this.octokit, { owner, repo, path: filePath, ref, blobSha });
+      signal?.throwIfAborted();
+      // The contents API, used before, gives no inline text above 1 MB. Keep that limit for prompts.
+      return bytes.length > 1_000_000 ? null : bytes.toString('utf-8');
+    } catch (error) {
+      signal?.throwIfAborted();
+      const limited = githubRateLimit(error);
+      if (limited) throw limited;
+      return null;
+    }
   }
 
   async getFileMetadata(changedFiles: ChangedFile[], signal?: AbortSignal): Promise<FileMetadata[]> {

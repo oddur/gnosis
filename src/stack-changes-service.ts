@@ -16,7 +16,7 @@ import { localClones } from '../lib/local-clone';
 import { getMergeBase } from '../lib/github';
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const storageKey = (key: string) => `stack-changes:v1:${key}`;
+const storageKey = (key: string) => `stack-changes:v2:${key}`;
 const isSnapshot = (v: unknown): v is PrChanges =>
   isCacheRecord(v) &&
   v.version === 1 &&
@@ -152,6 +152,7 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
             additions: f.additions,
             deletions: f.deletions,
             patch: f.patch,
+            ...(f.sha && f.status !== 'removed' ? { blobSha: f.sha } : {}),
             changeId: hash([f.filename, f.previous_filename, f.status, f.sha, f.patch ?? data.merge_base_commit.sha]),
           })),
         } satisfies PrChanges);

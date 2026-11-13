@@ -122,6 +122,7 @@ function fileValue(file: ApiFile): PrChangeFile {
     additions: file.additions,
     deletions: file.deletions,
     patch: file.patch,
+    ...(file.sha && file.status !== 'removed' ? { blobSha: file.sha } : {}),
     changeId: hash(file),
   };
 }
@@ -291,7 +292,7 @@ export function createPrCommitsService(clones = localClones) {
       ...(selection.parentSha ? [selection.parentSha] : []),
     ])
       if (!/^[a-f0-9]{40}$/i.test(sha)) throw new Error('Choose full commit references from the PR commit list.');
-    const key = `commit-comparison:v1:${hash(commitSelectionKey(selection))}`;
+    const key = `commit-comparison:v2:${hash(commitSelectionKey(selection))}`;
     return share(client, key, async () => {
       const cached = read(client, key, isComparison) ?? await githubCacheFor(client)?.getPrepared(key, isComparison);
       if (cached) { remember(client, key, cached); return cached; }
@@ -372,7 +373,7 @@ export function createPrCommitsService(clones = localClones) {
   async function find(client: Octokit, request: PrFileRequest) {
     if (!request.comparison || request.comparison.url !== request.url)
       throw new Error('Select a commit comparison first.');
-    const key = `commit-comparison:v1:${hash(commitSelectionKey(request.comparison))}`;
+    const key = `commit-comparison:v2:${hash(commitSelectionKey(request.comparison))}`;
     const snapshot = read(client, key, isComparison) ?? await githubCacheFor(client)?.getPrepared(key, isComparison),
       file = snapshot?.files.find((f) => f.path === request.path);
     if (

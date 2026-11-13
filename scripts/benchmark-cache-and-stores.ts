@@ -207,7 +207,7 @@ async function cacheReads(root: string) {
   const large = { version: 1, files: files(3_000, 7_000) };
   const pending: number[] = [];
   for (let i = 0; i < 5; i++) {
-    const key = `pr-changes:v2:https://github.com/o/r/pull/1:${i}`;
+    const key = `pr-changes:v3:https://github.com/o/r/pull/1:${i}`;
     scope.set(key, large);
     const start = performance.now();
     if (!(await scope.getPrepared(key, valid))) throw new Error('The pending write must be readable.');

@@ -531,17 +531,17 @@ void test('getPrepared serves a pending large write without flushing', async () 
     const cache = await f.open(),
       account = cache.scope(scope);
     const large = { files: [{ path: 'x'.repeat(1_100_000) }] };
-    account.set('pr-changes:v2:large', large);
-    assert.equal(account.get('pr-changes:v2:large', isRecord), undefined, 'Too large for the memory cache');
+    account.set('pr-changes:v3:large', large);
+    assert.equal(account.get('pr-changes:v3:large', isRecord), undefined, 'Too large for the memory cache');
     const flushed = cache.flush().then(() => 'flushed');
-    const read = account.getPrepared('pr-changes:v2:large', isRecord);
+    const read = account.getPrepared('pr-changes:v3:large', isRecord);
     assert.equal(await Promise.race([read.then(() => 'read'), flushed]), 'read', 'The read does not wait for the write');
     const value = await read;
     assert.deepEqual(value, large);
     assert.ok(Object.isFrozen(value.files[0]));
     await flushed;
     // Settled writes are read from disk, and are frozen too.
-    const saved = await account.getPrepared('pr-changes:v2:large', isRecord);
+    const saved = await account.getPrepared('pr-changes:v3:large', isRecord);
     assert.deepEqual(saved, large);
     assert.ok(Object.isFrozen(saved.files));
   } finally {

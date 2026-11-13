@@ -92,6 +92,7 @@ function fixture(count = 3) {
           listing && page * 100 < commits.length
         );
       }
+      if (u.pathname.includes('/git/blobs/')) return new Response('<svg/>', { headers: { 'content-type': 'application/octet-stream' } });
       if (u.pathname.includes('/contents/'))
         return new Response(u.pathname.endsWith('.svg') ? '<svg/>' : 'new\n', {
           headers: { 'content-type': 'application/octet-stream' },
@@ -166,10 +167,8 @@ void test('single commit pagination, range endpoints, merge parents, and file si
     )
   );
   assert.ok(
-    f.reads.some(
-      (u) =>
-        decodeURIComponent(u.pathname).endsWith('/o/r/contents/art/new.svg') && u.searchParams.get('ref') === sha(2)
-    )
+    f.reads.some((u) => u.pathname.endsWith(`/o/r/git/blobs/${sha(99)}`)),
+    'The after side is read by the blob SHA from the commit'
   );
   const added = await service.content(client, { ...request, path: 'new.ts' });
   assert.equal(added.before.kind, 'absent');

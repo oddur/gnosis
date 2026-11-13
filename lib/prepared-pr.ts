@@ -8,7 +8,7 @@ import type { PrMetadata } from './types';
 /** The inspection tabs and guided reviews read the same immutable revision entries. */
 export async function preparedChanges(client: Octokit, url: string, revision: Pick<PrMetadata, 'baseSha' | 'headSha'>) {
   return githubCacheFor(client)?.getPrepared(
-    `pr-changes:v2:${url}:${changesRevision(revision)}`,
+    `pr-changes:v3:${url}:${changesRevision(revision)}`,
     (value): value is PrChanges =>
       isCacheRecord(value) &&
       value.version === 1 &&
