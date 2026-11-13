@@ -123,6 +123,9 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.briefing-chips-budget').textContent"), '0 automatic left · resets at midnight');
     assert.match(await js<string>("document.querySelector('.briefing-chips-budget').title"), /0 of 10 automatic attempts left overall · Resets at midnight/);
     assert.equal(await js("document.querySelectorAll('.queue-item.is-briefing-generating').length"), 1);
+    // macOS and Windows CI desktops prefer reduced motion, which removes the shimmer. Test each preference explicitly.
+    win.webContents.debugger.attach();
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     assert.equal(await js("getComputedStyle(document.querySelector('.queue-item.is-briefing-generating'), '::after').animationName"), 'briefing-shimmer');
     await js("document.querySelector('.briefing-chip[data-state=paused]').click()");
     await wait("document.querySelectorAll('.queue-item').length === 2");
@@ -137,7 +140,6 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.queue-item').length === 1 && !!document.querySelector('.queue-item.is-briefing-generating')");
     await js("[...document.querySelectorAll('.queue-active-filters button')].find(button => button.textContent === 'Clear filters').click()");
     await wait(`document.querySelectorAll('.queue-item').length === ${total} && document.querySelector('.briefing-chip[data-state=all]').getAttribute('aria-pressed') === 'true'`);
-    win.webContents.debugger.attach();
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     assert.equal(await js("getComputedStyle(document.querySelector('.queue-item.is-briefing-generating'), '::after').animationName"), 'none');
     win.webContents.debugger.detach();
