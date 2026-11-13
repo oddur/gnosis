@@ -10,6 +10,7 @@ import { createByteCache } from './byte-cache';
 import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
 import { inTreeOrder } from './tree-file-order';
 import { isMarkdownFile } from './markdown-review';
+import { imageMimeType } from './review-images';
 
 /** IPC options for a read mode: queue preparation is `background`, a prediction carries its destination kind. */
 const loadMode = (mode: InspectionMode) => (typeof mode === 'object' ? { predicted: mode.predicted } : { background: mode });
@@ -158,9 +159,10 @@ export function predictedFiles(snapshot: PrChanges, subjectId: string, count: nu
   }
   const ordered = inTreeOrder(snapshot.files, (file) => file.path);
   // Stack positions prefix the path with the PR.
-  const start = typeof selected === 'string' && selected
-    ? ordered.findIndex((file) => file.path === selected || selected.endsWith(`/${file.path}`)) : -1;
-  return ordered.slice(Math.max(0, start), Math.max(0, start) + count);
+  const start = Math.max(0, typeof selected === 'string' && selected
+    ? ordered.findIndex((file) => file.path === selected || selected.endsWith(`/${file.path}`)) : -1);
+  // Images are large; only the file Changes opens on may be one.
+  return [...ordered.slice(start, start + 1), ...ordered.slice(start + 1).filter((file) => !imageMimeType(file.path))].slice(0, count);
 }
 export function comparisonIsReady(selection: CommitSelection, subjectId: string) {
   const snapshot = peekComparison(selection);
