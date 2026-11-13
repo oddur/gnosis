@@ -61,12 +61,24 @@ function source(n: number): PrChanges {
 }
 function fixture() {
   const calls: string[] = [];
+  const urls: URL[] = [];
   let stale = false,
-    count = 1;
+    count = 1,
+    whole: string | undefined;
+  const diffReads: URL[] = [];
   const pool = createGitHubClientPool({
-    fetch: ((input: string) => {
+    fetch: ((input: string, init?: RequestInit) => {
       const u = new URL(input);
       calls.push(u.pathname);
+      urls.push(u);
+      if (new Headers(init?.headers).get('accept')?.includes('diff')) {
+        diffReads.push(u);
+        return Promise.resolve(
+          whole === undefined
+            ? new Response('{"message":"Not Acceptable"}', { status: 406, headers: { 'content-type': 'application/json' } })
+            : new Response(whole, { headers: { 'content-type': 'application/vnd.github.diff' } })
+        );
+      }
       if (u.pathname.includes('/contents/'))
         return Promise.resolve(new Response(u.searchParams.get('ref') === 'ancestor' ? 'old' : 'new'));
       return Promise.resolve(
@@ -97,12 +109,17 @@ function fixture() {
     service,
     client,
     calls,
+    urls,
     stale: () => {
       stale = true;
     },
-    many: () => {
-      count = 300;
+    many: (n = 300) => {
+      count = n;
     },
+    whole: (diff: string) => {
+      whole = diff;
+    },
+    diffReads,
   };
 }
 void test('combined comparisons require a single complete same-repository chain', () => {
@@ -142,6 +159,16 @@ void test('net comparison pins merge-base and top head, reuses cache, and loads 
     value.stackComparison?.fileSources['one.ts'],
     members.map((m) => m.url)
   );
+  // The adjacent pair only needs its merge base: page 2 carries it without the files.
+  assert.deepEqual(
+    f.urls.filter((u) => u.pathname.endsWith('head1...head2')).map((u) => u.searchParams.get('page')),
+    ['2']
+  );
+  // The net comparison reads files, so it stays on page 1.
+  assert.deepEqual(
+    f.urls.filter((u) => u.pathname.endsWith('base...head2')).map((u) => u.searchParams.get('page')),
+    [null]
+  );
   const before = f.calls.length;
   assert.equal(await f.service.read(f.client, subject), value);
   assert.equal(f.calls.length, before);
@@ -172,6 +199,32 @@ void test('comparison cap stays explicitly partial, with all available paths pre
   const value = await f.service.read(f.client, subject);
   assert.equal(value.files.length, 300);
   assert.equal(value.filesTruncated, true);
+  assert.deepEqual(f.diffReads.map((u) => u.pathname), ['/repos/o/r/compare/base...head2'], 'GitHub refused the whole diff');
+});
+void test('a capped combined comparison loads every file from the whole diff of the same SHAs', async () => {
+  const f = fixture();
+  f.many();
+  const paths = ['one.ts', ...Array.from({ length: 299 }, (_, i) => `file${i + 1}.ts`), 'zz/last.ts'];
+  f.whole(paths.map((p) => `diff --git a/${p} b/${p}\nindex 1111111..abcdef0 100644\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-old\n+new\n`).join(''));
+  const value = await f.service.read(f.client, subject);
+  assert.equal(value.files.length, 301);
+  assert.equal(value.filesTruncated, false);
+  assert.equal(value.files[0].blobSha, 'blob', 'Listed files keep the JSON entry');
+  assert.deepEqual(
+    [value.files[300].path, value.files[300].blobSha, value.files[300].additions],
+    ['zz/last.ts', 'abcdef0', 1]
+  );
+  assert.ok(value.stackComparison && 'zz/last.ts' in value.stackComparison.fileSources);
+  assert.equal(f.diffReads.length, 1);
+});
+void test('below the 300-file cap, a combined comparison never asks for the whole diff', async () => {
+  const f = fixture();
+  f.many(299);
+  f.whole('');
+  const value = await f.service.read(f.client, subject);
+  assert.equal(value.files.length, 299);
+  assert.equal(value.filesTruncated, false);
+  assert.equal(f.diffReads.length, 0);
 });
 void test('combined progress is separate and unchanged net content retains its identity', () => {
   const s = { ...source(1), stackComparison: { key: 'first', subjectId: 'stack', members: [], fileSources: {} } };

@@ -4,7 +4,7 @@ import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limi
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { changesRevision, type InspectionLoadOptions } from '../lib/pr-changes';
-import { getPrMetadata, getPrMetadataForClone, knownMetadataForClone, parsePrUrl } from '../lib/github';
+import { getPrMetadata, getPrMetadataForClone, knownMetadataForClone, parsePrUrl, wholeDiffFiles } from '../lib/github';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import { localClones, EMPTY_TREE } from '../lib/local-clone';
@@ -17,7 +17,7 @@ import {
   type CommitSelection,
 } from '../lib/pr-commits';
 import type { PrChanges, PrChangeFile, PrFileRequest } from '../lib/pr-changes';
-import type { PrMetadata } from '../lib/types';
+import type { ChangedFile, PrMetadata } from '../lib/types';
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function target(url: string) {
   if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) throw new Error('Choose a GitHub PR.');
@@ -122,6 +122,7 @@ function fileValue(file: ApiFile): PrChangeFile {
     additions: file.additions,
     deletions: file.deletions,
     patch: file.patch,
+    ...(file.sha && file.status !== 'removed' ? { blobSha: file.sha } : {}),
     changeId: hash(file),
   };
 }
@@ -291,7 +292,7 @@ export function createPrCommitsService(clones = localClones) {
       ...(selection.parentSha ? [selection.parentSha] : []),
     ])
       if (!/^[a-f0-9]{40}$/i.test(sha)) throw new Error('Choose full commit references from the PR commit list.');
-    const key = `commit-comparison:v1:${hash(commitSelectionKey(selection))}`;
+    const key = `commit-comparison:v2:${hash(commitSelectionKey(selection))}`;
     return share(client, key, async () => {
       const cached = read(client, key, isComparison) ?? await githubCacheFor(client)?.getPrepared(key, isComparison);
       if (cached) { remember(client, key, cached); return cached; }
@@ -355,6 +356,19 @@ export function createPrCommitsService(clones = localClones) {
         files = data.files ?? [];
         filesTruncated = files.length >= 300;
       }
+      if (filesTruncated && parent !== EMPTY_TREE) {
+        // A commit lists at most 3,000 files and a comparison 300. The whole diff of the same pinned SHAs has every
+        // file; `parent...last` is exact, because the parent is an ancestor of the last commit.
+        beforeRequest?.();
+        const whole = await wholeDiffFiles(client, t.owner, t.repo, parent, last.sha, files);
+        if (whole) {
+          // Listed files keep GitHub's own entries, so their identities match an uncapped list's.
+          files = whole.files.map((f) =>
+            whole.added.has(f) ? { ...(f as ChangedFile), status: f.status === 'deleted' ? 'removed' : f.status, sha: f.sha ?? null } : (f as ApiFile)
+          );
+          filesTruncated = false;
+        }
+      }
       const snapshot = compactInventory({
         version: 1,
         url: selection.url,
@@ -372,7 +386,7 @@ export function createPrCommitsService(clones = localClones) {
   async function find(client: Octokit, request: PrFileRequest) {
     if (!request.comparison || request.comparison.url !== request.url)
       throw new Error('Select a commit comparison first.');
-    const key = `commit-comparison:v1:${hash(commitSelectionKey(request.comparison))}`;
+    const key = `commit-comparison:v2:${hash(commitSelectionKey(request.comparison))}`;
     const snapshot = read(client, key, isComparison) ?? await githubCacheFor(client)?.getPrepared(key, isComparison),
       file = snapshot?.files.find((f) => f.path === request.path);
     if (

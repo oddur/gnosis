@@ -3,7 +3,7 @@ import { createByteCache } from '../lib/byte-cache';
 import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limits';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getChangedFiles, getPrMetadata, getPrMetadataForClone, knownMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
+import { getChangedFiles, getMergeBase, wholeDiffFiles, getPrMetadata, getPrMetadataForClone, knownMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
 import { preparedDiff, preparedDiffKey } from '../lib/prepared-pr';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
@@ -48,7 +48,7 @@ export function createPrChangesService(clones = localClones) {
     work.set(key, job);
     return job.read(signal);
   }
-  const snapshotKey = (url: string, revision: string) => `pr-changes:v2:${url}:${revision}`;
+  const snapshotKey = (url: string, revision: string) => `pr-changes:v3:${url}:${revision}`;
   function remember(client: Octokit, snapshot: PrChanges) {
     let values = snapshots.get(client);
     if (!values) {
@@ -90,15 +90,16 @@ export function createPrChangesService(clones = localClones) {
         // The known revision pins the comparison, so files and the merge base load together. One fresh
         // metadata read afterwards confirms that the files belong to that revision.
         const [listed, compared] = await Promise.allSettled([
-          getChangedFiles(client, owner, repo, pullNumber, true),
-          client.repos.compareCommits({ owner, repo, base: revision.baseSha, head: revision.headSha, per_page: 1 }),
+          // A queue member may know the file count, so the pages can load together.
+          getChangedFiles(client, owner, repo, pullNumber, true, (revision as Partial<PrMetadata>).changedFileCount),
+          getMergeBase(client, owner, repo, revision.baseSha, revision.headSha),
         ]);
         metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
         // A moved revision discards both results and continues below from the fresh metadata.
         if (changesRevision(metadata) === changesRevision(revision)) {
           if (listed.status === 'rejected') throw listed.reason;
           if (compared.status === 'rejected') throw compared.reason;
-          speculated = { files: listed.value, comparisonBase: compared.value.data.merge_base_commit.sha };
+          speculated = { files: listed.value, comparisonBase: compared.value };
         }
       } else metadata = await getPrMetadataForClone(client, owner, repo, pullNumber, revision, clones);
       const key = snapshotKey(url, changesRevision(metadata));
@@ -115,21 +116,23 @@ export function createPrChangesService(clones = localClones) {
       }
       // Both sides are pinned by SHA, so a clone's answer cannot change during the read.
       const local = speculated ? undefined : memberChanges ?? await clones.read(`${owner}/${repo}`, (clone) => clone.changes(metadata.baseSha, metadata.headSha));
-      const files = speculated?.files ?? (local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true));
-      const filesTruncated = !local && files.length === GITHUB_PR_FILE_LIMIT &&
+      let files = speculated?.files ?? (local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true, metadata.changedFileCount));
+      let filesTruncated = !local && files.length === GITHUB_PR_FILE_LIMIT &&
         (metadata.changedFileCount === undefined || metadata.changedFileCount > files.length);
+      if (filesTruncated) {
+        // GitHub lists at most 3,000 files. The whole diff of the same pinned SHAs has every file. The PR's base
+        // repository resolves a fork's head SHA too.
+        const whole = await wholeDiffFiles(client, owner, repo, metadata.baseSha, metadata.headSha, files);
+        if (whole && (metadata.changedFileCount === undefined || whole.files.length === metadata.changedFileCount)) {
+          files = whole.files;
+          filesTruncated = false;
+        }
+      }
       if (!local && !filesTruncated && metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)
         throw new Error('GitHub returned an incomplete file list. Open this PR on GitHub to inspect all files.');
       let comparisonBase = speculated?.comparisonBase ?? local?.mergeBase;
       if (!comparisonBase) {
-        const { data: comparison } = await client.repos.compareCommits({
-          owner,
-          repo,
-          base: metadata.baseSha,
-          head: metadata.headSha,
-          per_page: 1,
-        });
-        comparisonBase = comparison.merge_base_commit.sha;
+        comparisonBase = await getMergeBase(client, owner, repo, metadata.baseSha, metadata.headSha);
         const after = await getPrMetadata(client, owner, repo, pullNumber, true);
         if (changesRevision(after) !== changesRevision(metadata))
           throw new Error('This PR changed while its file list was loading. Retry to load a consistent version.');
@@ -147,6 +150,7 @@ export function createPrChangesService(clones = localClones) {
           status: file.status,
           additions: file.additions,
           deletions: file.deletions,
+          ...(file.sha && file.status !== 'deleted' ? { blobSha: file.sha } : {}),
           // Unchanged patches/blobs retain progress across revisions; renames change review content.
           changeId: hash([
             file.filename,

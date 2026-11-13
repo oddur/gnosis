@@ -41,11 +41,17 @@ function fixture(count = 3) {
     incomplete = false,
     unstable = false,
     wrongBase = false,
-    cap = 0;
+    cap = 0,
+    whole: string | undefined;
+  const diffReads: URL[] = [];
   const pool = createGitHubClientPool({
-    fetch: (async (input: string) => {
+    fetch: (async (input: string, init?: RequestInit) => {
       const u = new URL(input);
       reads.push(u);
+      if (new Headers(init?.headers).get('accept')?.includes('diff')) {
+        diffReads.push(u);
+        if (whole !== undefined) return new Response(whole, { headers: { 'content-type': 'application/vnd.github.diff; charset=utf-8' } });
+      }
       const json = (data: unknown, next = false) =>
         new Response(JSON.stringify(data), {
           headers: {
@@ -92,6 +98,7 @@ function fixture(count = 3) {
           listing && page * 100 < commits.length
         );
       }
+      if (u.pathname.includes('/git/blobs/')) return new Response('<svg/>', { headers: { 'content-type': 'application/octet-stream' } });
       if (u.pathname.includes('/contents/'))
         return new Response(u.pathname.endsWith('.svg') ? '<svg/>' : 'new\n', {
           headers: { 'content-type': 'application/octet-stream' },
@@ -119,6 +126,8 @@ function fixture(count = 3) {
     unstable: () => (unstable = true),
     wrongBase: () => (wrongBase = true),
     cap: (n: number) => (cap = n),
+    whole: (diff: string) => (whole = diff),
+    diffReads,
   };
 }
 const selection = (first = 1, last = first): CommitSelection => ({
@@ -166,10 +175,8 @@ void test('single commit pagination, range endpoints, merge parents, and file si
     )
   );
   assert.ok(
-    f.reads.some(
-      (u) =>
-        decodeURIComponent(u.pathname).endsWith('/o/r/contents/art/new.svg') && u.searchParams.get('ref') === sha(2)
-    )
+    f.reads.some((u) => u.pathname.endsWith(`/o/r/git/blobs/${sha(99)}`)),
+    'The after side is read by the blob SHA from the commit'
   );
   const added = await service.content(client, { ...request, path: 'new.ts' });
   assert.equal(added.before.kind, 'absent');
@@ -226,6 +233,35 @@ void test('incomplete inventories, racing pushes, and file caps never present a 
     assert.deepEqual(await service.comparison(client, chosen), snapshot);
     assert.equal(f.reads.length, reads, 'Partial comparisons are cached too');
   }
+});
+void test('capped commit ranges and commits load every file from the whole diff; uncapped ones never ask', async () => {
+  for (const cap of [300, 3000]) {
+    const f = fixture(),
+      service = createPrCommitsService(),
+      client = f.pool.client('one');
+    await service.list(client, url);
+    f.cap(cap);
+    const paths = [...Array.from({ length: cap }, (_, i) => `${i}.ts`), 'zz/last.ts'];
+    f.whole(paths.map((p) => `diff --git a/${p} b/${p}\nnew file mode 100644\nindex 0000000..abcdef0\n--- /dev/null\n+++ b/${p}\n@@ -0,0 +1 @@\n+new\n`).join(''));
+    const chosen = cap === 300 ? selection(1, 3) : selection(1);
+    let guarded = 0;
+    const snapshot = await service.comparison(client, chosen, () => guarded++);
+    assert.equal(snapshot.files.length, cap + 1);
+    assert.equal(snapshot.filesTruncated, undefined);
+    assert.deepEqual([snapshot.files[cap].path, snapshot.files[cap].status, snapshot.files[cap].blobSha], ['zz/last.ts', 'added', 'abcdef0']);
+    assert.equal(snapshot.files[0].blobSha, undefined, 'Listed files keep the JSON entry, which has no blob SHA here');
+    // The range compares its parent with its last commit; one commit compares with its parent.
+    assert.deepEqual(f.diffReads.map((u) => u.pathname.split('/').pop()), [cap === 300 ? `${sha(0)}...${sha(3)}` : `${sha(0)}...${sha(1)}`]);
+    assert.ok(guarded >= 2, 'Prefetch guards run before the whole diff too');
+  }
+  const f = fixture(),
+    service = createPrCommitsService(),
+    client = f.pool.client('one');
+  await service.list(client, url);
+  f.cap(299);
+  f.whole('');
+  assert.equal((await service.comparison(client, selection(1, 3))).files.length, 299);
+  assert.equal(f.diffReads.length, 0);
 });
 void test('initial commit has no before side; initial-commit ranges give an explicit limitation', async () => {
   const f = fixture(),

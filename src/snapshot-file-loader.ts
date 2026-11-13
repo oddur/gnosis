@@ -13,6 +13,26 @@ import { imageMimeType } from '../lib/review-images';
 import { readGitHubFile } from './github-file-content';
 import type { PrChanges, PrChangeFile, PrFileRequest, PrFileContents, PrFileSide } from '../lib/pr-changes';
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const FULL_SHA = /^[a-f\d]{40}$/i;
+const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+/**
+ * Whether `bytes` can be the after side of `patch`: every line the patch numbers on the new side matches that line.
+ * Guards bytes found by an abbreviated blob SHA, which another cached blob could share.
+ */
+// Approach from quarterdeck crates/diff/src/hunk_context.rs, `is_patch_of` (used with permission).
+export function matchesPatch(bytes: Buffer, patch: string): boolean {
+  const lines = bytes.toString('utf8').split('\n');
+  const patchLines = patch.split('\n');
+  if (patchLines.at(-1) === '') patchLines.pop();
+  let line = 0;
+  for (const row of patchLines) {
+    const header = HUNK.exec(row);
+    if (header) line = Number(header[1]);
+    else if (row.startsWith('-') || row.startsWith('\\')) continue;
+    else if (!line || lines[line++ - 1] !== row.slice(1)) return false;
+  }
+  return line > 0;
+}
 export function createSnapshotFileLoader(lfs = lfsResources, clones = localClones) {
   const pending = new WeakMap<Octokit, Map<string, GitHubWork<PrFileContents>>>();
   return async (
@@ -68,7 +88,22 @@ export function createSnapshotFileLoader(lfs = lfsResources, clones = localClone
             bytes = (await clones.read(`${baseOwner}/${baseRepo}`, (clone) => clone.blob(ref, path))) ?? undefined;
           }
           if (!pointer && !bytes) {
-            bytes = await readGitHubFile(client, { owner, repo, path, ref }, beforeRequest);
+            // The after side's blob SHA survives pushes that leave the file alone. An abbreviated one (from a whole
+            // diff) is trusted only when the bytes it finds match the patch.
+            const blob = before ? undefined : file.blobSha;
+            const full = blob && FULL_SHA.test(blob);
+            const patch = file.patch;
+            bytes = await readGitHubFile(
+              client,
+              {
+                owner,
+                repo,
+                path,
+                ref,
+                ...(full ? { blobSha: blob } : blob && patch ? { blobSha: blob, verify: (b: Buffer) => matchesPatch(b, patch) } : {}),
+              },
+              beforeRequest
+            );
           }
           if (!pointer && bytes) pointer = parseLfsPointer(bytes.toString('utf8'));
           if (pointer) {

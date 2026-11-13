@@ -19,7 +19,9 @@ function fixture() {
     unstable = false,
     incomplete = false,
     failContent = false,
-    moveDuringDiff = false;
+    moveDuringDiff = false,
+    wholeDiff: string | number | undefined;
+  const diffReads: URL[] = [];
   const files = [
     { filename: 'src/new.ts', status: 'added', sha: 'new', patch: '@@ +1 @@\n+new', additions: 1, deletions: 0 },
     { filename: 'src/old.ts', status: 'removed', sha: 'old', patch: '@@ -1 @@\n-old', additions: 0, deletions: 1 },
@@ -50,6 +52,14 @@ function fixture() {
           headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' },
         });
       if (new Headers(init?.headers).get('accept')?.includes('diff')) {
+        diffReads.push(u);
+        if (u.pathname.includes('/compare/') && typeof wholeDiff === 'number')
+          return new Response(JSON.stringify({ message: 'Sorry, this diff is unavailable.' }), {
+            status: wholeDiff,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (u.pathname.includes('/compare/') && wholeDiff !== undefined)
+          return new Response(String(wholeDiff), { headers: { 'content-type': 'application/vnd.github.diff; charset=utf-8' } });
         const diff = `diff for ${head}`;
         if (moveDuringDiff) head = 'moved-during-diff';
         return new Response(diff, { headers: { 'content-type': 'text/plain' } });
@@ -91,7 +101,9 @@ function fixture() {
       baseBranch = nextBase;
     },
     reads,
+    diffReads,
     files,
+    wholeDiff: (value: string | number) => (wholeDiff = value),
     move: (v: string) => (head = v),
     unstable: () => (unstable = true),
     incomplete: () => (incomplete = true),
@@ -437,4 +449,222 @@ void test('restarts from fresh metadata when the head moved', async () => {
   assert.equal(value.metadata.headSha, 'c'.repeat(40), 'The old head is never shown as current');
   assert.equal(value.files[0].changeId.length > 0, true);
   assert.deepEqual(f.started.slice(2), ['metadata', 'files', `compare:${f.base}...${'c'.repeat(40)}`, 'metadata']);
+});
+void test('the merge base is read from page 2 of the comparison, without its files', async () => {
+  const f = fixture(),
+    client = f.pool.client('one');
+  const snapshot = await createPrChangesService().manifest(client, url);
+  assert.equal(snapshot.comparisonBase, 'merge-base');
+  const compares = f.reads.filter((u) => u.pathname.includes('/compare/'));
+  assert.deepEqual(
+    compares.map((u) => [u.searchParams.get('page'), u.searchParams.get('per_page')]),
+    [['2', '1']],
+    'One request, for page 2, which carries no patches'
+  );
+});
+void test('a comparison page without a merge base falls back to page 1', async () => {
+  const { getMergeBase } = await import('../lib/github');
+  const pages: (string | null)[] = [];
+  const pool = createGitHubClientPool({
+    fetch: ((input: string) => {
+      const u = new URL(input);
+      pages.push(u.searchParams.get('page'));
+      const page = u.searchParams.get('page');
+      return Promise.resolve(new Response(
+        JSON.stringify(page === '2' ? { commits: [] } : { merge_base_commit: { sha: 'from-page-1' }, files: [] }),
+        { headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' } }
+      ));
+    }) as typeof fetch,
+  });
+  assert.equal(await getMergeBase(pool.client('one'), 'o', 'r', 'base', 'head'), 'from-page-1');
+  assert.deepEqual(pages, ['2', null]);
+  const empty = createGitHubClientPool({
+    fetch: (() =>
+      Promise.resolve(new Response(JSON.stringify({ commits: [] }), {
+        headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' },
+      }))) as typeof fetch,
+  });
+  await assert.rejects(getMergeBase(empty.client('one'), 'o', 'r', 'base', 'head'), /merge base/);
+});
+
+/** A PR with `total` files whose list pages answer only when released, recording when each page starts. */
+function pagedFixture(total: number, changedFiles = total) {
+  const started: number[] = [];
+  let flying = 0,
+    peak = 0;
+  const waiting: (() => void)[] = [];
+  let open = false;
+  const pool = createGitHubClientPool({
+    fetch: (async (input: string) => {
+      const u = new URL(input);
+      const json = (data: unknown) =>
+        new Response(JSON.stringify(data), {
+          headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' },
+        });
+      if (u.pathname.endsWith('/files')) {
+        const page = Number(u.searchParams.get('page'));
+        started.push(page);
+        peak = Math.max(peak, ++flying);
+        // Later pages answer first, so the order of arrival never decides the order of files.
+        if (!open) await new Promise<void>((resolve) => waiting.push(resolve));
+        await new Promise((resolve) => setTimeout(resolve, (40 - page) % 7));
+        flying--;
+        return json(
+          Array.from({ length: Math.max(0, Math.min(100, total - (page - 1) * 100)) }, (_, i) => ({
+            filename: `f${String((page - 1) * 100 + i).padStart(4, '0')}.ts`,
+            status: 'modified',
+            sha: 'blob',
+            additions: 1,
+            deletions: 0,
+          }))
+        );
+      }
+      if (u.pathname.includes('/compare/')) return json({ merge_base_commit: { sha: 'merge-base' } });
+      return json({
+        title: 'PR',
+        body: '',
+        user: { login: 'dev' },
+        base: { ref: 'main', sha: 'base', repo: { full_name: 'o/r' } },
+        head: { ref: 'feature', sha: 'head', repo: { full_name: 'o/r' } },
+        state: 'open',
+        labels: [],
+        changed_files: changedFiles,
+      });
+    }) as typeof fetch,
+  });
+  return {
+    client: pool.client('one'),
+    started,
+    peak: () => peak,
+    release: () => {
+      open = true;
+      for (const resolve of waiting.splice(0)) resolve();
+    },
+    settle: async (count: number) => {
+      for (let i = 0; i < 50 && started.length < count; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    },
+  };
+}
+void test('a known file count requests every page together and assembles them in order', async () => {
+  const { getChangedFiles } = await import('../lib/github');
+  const f = pagedFixture(250);
+  const read = getChangedFiles(f.client, 'o', 'r', 1, true, 250);
+  await f.settle(3);
+  assert.deepEqual([...f.started].sort(), [1, 2, 3], 'All three pages start before any answers');
+  f.release();
+  const files = await read;
+  assert.equal(files.length, 250);
+  assert.deepEqual(
+    files.map((file) => file.filename),
+    Array.from({ length: 250 }, (_, i) => `f${String(i).padStart(4, '0')}.ts`)
+  );
+});
+void test('without a file count, pages load one at a time', async () => {
+  const { getChangedFiles } = await import('../lib/github');
+  const f = pagedFixture(250);
+  const read = getChangedFiles(f.client, 'o', 'r', 1, true);
+  await f.settle(2);
+  assert.deepEqual(f.started, [1], 'Page 2 waits for page 1');
+  f.release();
+  assert.equal((await read).length, 250);
+  assert.deepEqual(f.started, [1, 2, 3]);
+});
+void test('a stale low count continues page by page; the scheduler bounds the burst', async () => {
+  const { getChangedFiles } = await import('../lib/github');
+  const low = pagedFixture(340);
+  low.release();
+  const files = await getChangedFiles(low.client, 'o', 'r', 1, true, 200);
+  assert.equal(files.length, 340, 'A full last page means the count was stale');
+  assert.deepEqual(low.started.slice(2), [3, 4]);
+  const high = pagedFixture(150);
+  high.release();
+  assert.equal((await getChangedFiles(high.client, 'o', 'r', 1, true, 400)).length, 150, 'Empty pages past the end add nothing');
+  const large = pagedFixture(950);
+  const read = getChangedFiles(large.client, 'o', 'r', 1, true, 950);
+  await large.settle(6);
+  large.release();
+  assert.equal((await read).length, 950);
+  assert.equal(large.started.length, 10, 'One request per page, no more');
+  assert.ok(large.peak() <= 6, `At most the scheduler's six slots run at once (saw ${large.peak()})`);
+});
+void test('Changes requests known pages together, then checks the total against the count', async () => {
+  const f = pagedFixture(250);
+  f.release();
+  const snapshot = await createPrChangesService().manifest(f.client, url);
+  assert.equal(snapshot.files.length, 250);
+  assert.deepEqual([...f.started].sort(), [1, 2, 3]);
+  const wrong = pagedFixture(260, 250);
+  wrong.release();
+  await assert.rejects(createPrChangesService().manifest(wrong.client, url), /incomplete/);
+});
+
+/** A whole diff naming `paths`, each a one-line change, with an abbreviated blob SHA per file. */
+const wholeDiffOf = (paths: string[]) =>
+  paths
+    .map(
+      (p, i) =>
+        `diff --git a/${p} b/${p}\nindex 1111111..${(0xa000000 + i).toString(16)} 100644\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-a\n+b\n`
+    )
+    .join('');
+function cappedPr() {
+  const f = fixture();
+  f.incomplete();
+  while (f.files.length < 3000) f.files.push({ ...f.files[0], filename: `src/file-${f.files.length}.ts` });
+  return f;
+}
+void test('a PR past GitHub’s 3,000-file cap loads every file from the whole diff of its pinned SHAs', async () => {
+  const f = cappedPr();
+  f.wholeDiff(wholeDiffOf([...f.files.map((file) => file.filename), 'zz/extra.ts']));
+  const client = f.pool.client('whole'),
+    service = createPrChangesService();
+  const snapshot = await service.manifest(client, url);
+  assert.equal(snapshot.files.length, 3001);
+  assert.equal(snapshot.filesTruncated, undefined, 'Complete, so not marked partial');
+  assert.equal(f.reads.filter((u) => u.pathname.endsWith('/files')).length, 30, 'The JSON list still loads first');
+  // The base repository answers for a fork's head SHA.
+  assert.deepEqual(f.diffReads.map((u) => u.pathname), ['/repos/o/r/compare/base...head1']);
+  const listed = snapshot.files.find((file) => file.path === 'src/old.ts');
+  assert.deepEqual([listed?.status, listed?.blobSha, listed?.deletions], ['deleted', undefined, 1], 'Listed files keep the JSON entry');
+  assert.equal(snapshot.files.find((file) => file.path === 'src/new.ts')?.blobSha, 'new');
+  const extra = snapshot.files.at(-1);
+  assert.deepEqual(
+    [extra?.path, extra?.status, extra?.additions, extra?.deletions, extra?.patch, extra?.blobSha],
+    ['zz/extra.ts', 'modified', 1, 1, '@@ -1 +1 @@\n-a\n+b', 'a000bb8']
+  );
+  const reads = f.reads.length;
+  assert.equal(JSON.stringify(await createPrChangesService().manifest(client, url)), JSON.stringify(snapshot), 'The complete list is saved');
+  assert.equal(f.reads.length, reads);
+  assert.equal((await service.content(client, { url, path: 'zz/extra.ts', baseSha: 'base', headSha: 'head1' })).after.kind, 'text');
+});
+void test('a refused or inconsistent whole diff keeps the capped list, marked partial', async () => {
+  for (const [i, answer] of [406, 422, 'diff --git a/only.ts b/only.ts\nindex 1111111..2222222 100644\n'].entries()) {
+    const f = cappedPr();
+    f.wholeDiff(answer);
+    const snapshot = await createPrChangesService().manifest(f.pool.client(`refused-${i}`), url);
+    assert.equal(snapshot.files.length, 3000);
+    assert.equal(snapshot.filesTruncated, true);
+    assert.equal(f.diffReads.length, 1);
+  }
+  // More files than the PR's count is not this revision's list.
+  const f = cappedPr();
+  f.wholeDiff(wholeDiffOf([...f.files.map((file) => file.filename), 'zz/extra.ts', 'zz/more.ts']));
+  const snapshot = await createPrChangesService().manifest(f.pool.client('mismatch'), url);
+  assert.equal(snapshot.filesTruncated, true);
+});
+void test('below the cap, Changes never asks for the whole diff', async () => {
+  const f = fixture();
+  while (f.files.length < 3000) f.files.push({ ...f.files[0], filename: `src/file-${f.files.length}.ts` });
+  f.wholeDiff(wholeDiffOf(['unused.ts']));
+  const snapshot = await createPrChangesService().manifest(f.pool.client('below'), url);
+  assert.equal(snapshot.files.length, 3000);
+  assert.equal(snapshot.filesTruncated, undefined);
+  assert.equal(f.diffReads.length, 0, 'Exactly 3,000 confirmed files is complete');
+});
+void test('files from the whole diff stay within the inventory’s memory bounds', async () => {
+  const f = cappedPr();
+  const big = Array.from({ length: 20_000 }, (_, i) => `+line ${i}`).join('\n');
+  f.wholeDiff(`${wholeDiffOf(f.files.map((file) => file.filename))}diff --git a/zz/big.ts b/zz/big.ts\nnew file mode 100644\nindex 0000000..bbbbbbb\n--- /dev/null\n+++ b/zz/big.ts\n@@ -0,0 +1,20000 @@\n${big}\n`);
+  const snapshot = await createPrChangesService().manifest(f.pool.client('bounded'), url);
+  const file = snapshot.files.find((entry) => entry.path === 'zz/big.ts');
+  assert.deepEqual([file?.additions, file?.patch, snapshot.patchesDeferred], [20_000, undefined, true]);
 });

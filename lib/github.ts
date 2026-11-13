@@ -6,6 +6,9 @@ import { getGitHubClient, GitHubBackoffError, githubRateLimit } from './github-c
 import { localClones, type LocalClone, type LocalCloneFile, type LocalClones } from './local-clone';
 import { preparedChanges, preparedFile, preparedDiff } from './prepared-pr';
 import { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
+import { readGitHubFile } from '../src/github-file-content';
+import { filesOfUnifiedDiff } from './diff-files';
+import { githubReadSignal } from './github-scheduler';
 export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -115,6 +118,22 @@ export async function getPrMetadataForClone(
   }
 }
 
+/**
+ * The merge base of `base...head`, without the files. `per_page` limits commits, not files, so page 1 of a
+ * comparison carries up to 300 files with their patches. Page 2 still carries `merge_base_commit` and no files.
+ * That is observed behaviour, not a documented guarantee, so a missing SHA falls back to page 1.
+ */
+export async function getMergeBase(octokit: Octokit, owner: string, repo: string, base: string, head: string): Promise<string> {
+  const read = async (page?: number) => {
+    const { data } = await octokit.repos.compareCommits({ owner, repo, base, head, per_page: 1, ...(page ? { page } : {}) });
+    const sha = (data as { merge_base_commit?: { sha?: unknown } | null }).merge_base_commit?.sha;
+    return typeof sha === 'string' && sha ? sha : undefined;
+  };
+  const sha = (await read(2)) ?? (await read());
+  if (!sha) throw new Error('GitHub did not return the merge base of this comparison. Retry, or open it on GitHub.');
+  return sha;
+}
+
 export const changedFileFromClone = (file: LocalCloneFile): ChangedFile => ({
   filename: file.filename,
   sha: file.sha ?? undefined,
@@ -159,6 +178,71 @@ export async function getPrDiff(
   }
 }
 
+/**
+ * The whole diff of `base...head`, for every file. GitHub's JSON lists stop at 300 files for a comparison and 3,000 for
+ * a PR; this answer has no file limit, though GitHub may refuse a very large one.
+ */
+export async function getCompareDiff(octokit: Octokit, owner: string, repo: string, base: string, head: string): Promise<string> {
+  const response = await octokit.request('GET /repos/{owner}/{repo}/compare/{basehead}', {
+    owner,
+    repo,
+    basehead: `${base}...${head}`,
+    headers: { accept: 'application/vnd.github.diff' },
+  });
+  const data: unknown = response.data;
+  if (typeof data === 'string') return data;
+  // Octokit answers with bytes when the media type has no charset.
+  if (data instanceof ArrayBuffer || ArrayBuffer.isView(data))
+    return Buffer.from(data instanceof ArrayBuffer ? data : data.buffer, data instanceof ArrayBuffer ? 0 : data.byteOffset, data.byteLength).toString('utf8');
+  throw new Error('GitHub did not return a diff for this comparison.');
+}
+
+/**
+ * When a JSON file list hit GitHub's cap, the complete list from the whole diff of the same pinned SHAs, or undefined
+ * when GitHub refuses it or its files do not cover the capped list. Files the JSON list has keep its entry, with the
+ * full blob SHA, unless it lacks a patch the diff has. The others come from the diff, with counted lines and
+ * abbreviated blob SHAs.
+ */
+// Approach from quarterdeck crates/github/src/changed_file_requests.rs and
+// crates/app/src/pull_request_detail/fetch_changed_files.rs, `FileSource` (used with permission).
+export async function wholeDiffFiles<T extends { filename: string; additions: number; deletions: number; patch?: string }>(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  base: string,
+  head: string,
+  listed: T[]
+): Promise<{ files: (T | ChangedFile)[]; added: Set<T | ChangedFile> } | undefined> {
+  let diff: string;
+  try {
+    diff = await getCompareDiff(octokit, owner, repo, base, head);
+  } catch (error) {
+    // Waiting and cancellation are not answers; a refusal (too large, unavailable) keeps the capped list.
+    const limited = githubRateLimit(error);
+    if (limited) throw limited;
+    if (githubReadSignal()?.aborted || (error instanceof Error && /abort/i.test(error.name + error.message))) throw error;
+    console.warn('[github] Whole comparison diff unavailable:', error instanceof Error ? error.message : String(error));
+    return;
+  }
+  const parsed = filesOfUnifiedDiff(diff);
+  const json = new Map(listed.map((file) => [file.filename, file]));
+  if (parsed.length <= listed.length || new Set(parsed.map((file) => file.filename)).size !== parsed.length) return;
+  const covered = new Set(parsed.map((file) => file.filename));
+  if (listed.some((file) => !covered.has(file.filename))) return;
+  const added = new Set<T | ChangedFile>();
+  const files = parsed.map((file) => {
+    const entry = json.get(file.filename);
+    if (!entry) {
+      added.add(file);
+      return file;
+    }
+    // Past a size budget, GitHub's JSON comparison lists files without a patch and with zero counts. The diff has both.
+    return !entry.patch && file.patch ? { ...entry, additions: file.additions, deletions: file.deletions, patch: file.patch } : entry;
+  });
+  /** `added` holds the files only the diff has; the rest are the listed entries. */
+  return { files, added };
+}
+
 /** Reconstruct a unified diff from individual file patches returned by listFiles. */
 function assembleUnifiedDiff(files: ChangedFile[]): string {
   const parts: string[] = [];
@@ -180,40 +264,59 @@ function assembleUnifiedDiff(files: ChangedFile[]): string {
 
 export const LARGE_PR_EXPLANATION_ERROR = 'GitHub exposes at most 3,000 changed files for a PR. Gnosis cannot generate a complete explanation for this PR. Browse the available files in Changes, review smaller PRs individually, or use a local checkout.';
 
+const FILE_PAGE_SIZE = 100;
+const FILE_PAGE_LIMIT = GITHUB_PR_FILE_LIMIT / FILE_PAGE_SIZE;
+
+/**
+ * The PR's changed files, up to GitHub's 3,000-file cap. With a known `count`, pages `1..ceil(count/100)` are requested
+ * together. Each request still goes through the GitHub scheduler, whose slots bound the burst. The pages are assembled
+ * in order. A full last page means the count was stale, so reading continues one page at a time. Callers compare the
+ * total with the PR's count and re-check its revision, as before.
+ */
 export async function getChangedFiles(
   octokit: Octokit,
   owner: string,
   repo: string,
   pullNumber: number,
-  fresh = false
+  fresh = false,
+  count?: number
 ): Promise<ChangedFile[]> {
-  const files: ChangedFile[] = [];
-  let page = 1;
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- pagination loop
-  while (true) {
+  const read = async (page: number) => {
     const { data } = await octokit.pulls.listFiles({
       ...(fresh ? { headers: { 'cache-control': 'no-cache' } } : {}),
       owner,
       repo,
       pull_number: pullNumber,
-      per_page: 100,
+      per_page: FILE_PAGE_SIZE,
       page,
     });
-    for (const f of data) {
-      files.push({
-        filename: f.filename,
-        sha: f.sha ?? undefined,
-        status: f.status === 'removed' ? 'deleted' : f.status === 'added' || f.status === 'renamed' ? f.status : 'modified',
-        additions: f.additions,
-        deletions: f.deletions,
-        previous_filename: f.previous_filename,
-        patch: f.patch,
-      });
-    }
-    if (data.length < 100 || files.length >= GITHUB_PR_FILE_LIMIT) break;
-    page++;
+    return data.map((f): ChangedFile => ({
+      filename: f.filename,
+      sha: f.sha ?? undefined,
+      status: f.status === 'removed' ? 'deleted' : f.status === 'added' || f.status === 'renamed' ? f.status : 'modified',
+      additions: f.additions,
+      deletions: f.deletions,
+      previous_filename: f.previous_filename,
+      patch: f.patch,
+    }));
+  };
+  const known = count !== undefined && Number.isInteger(count) && count > 0
+    ? Math.min(FILE_PAGE_LIMIT, Math.ceil(count / FILE_PAGE_SIZE))
+    : 1;
+  const pages = await Promise.all(Array.from({ length: known }, (_, i) => read(i + 1)));
+  const files: ChangedFile[] = [];
+  let last = pages[0];
+  for (const data of pages) {
+    last = data;
+    files.push(...data);
+    // A short page is the end. Later pages of a stale count are empty, or belong to a newer revision.
+    if (data.length < FILE_PAGE_SIZE) break;
   }
-  return files;
+  for (let page = known + 1; last.length === FILE_PAGE_SIZE && files.length < GITHUB_PR_FILE_LIMIT; page++) {
+    last = await read(page);
+    files.push(...last);
+  }
+  return files.slice(0, GITHUB_PR_FILE_LIMIT);
 }
 
 export async function getFileContent(
@@ -733,8 +836,7 @@ export class GitHubDiffSource implements DiffSource {
       if (prepared) return prepared.comparisonBase;
       const local = await this.fromClone((clone) => clone.mergeBase(meta.baseSha, meta.headSha));
       if (local) return local;
-      const { data } = await this.octokit.repos.compareCommits({ owner: this.owner, repo: this.repo, base: meta.baseSha, head: meta.headSha });
-      return data.merge_base_commit.sha;
+      return getMergeBase(this.octokit, this.owner, this.repo, meta.baseSha, meta.headSha);
     }).catch((error: unknown) => {
       // Keep successful revision pins, but allow a rate-limited lookup to resume.
       this.comparisonBase = null;
@@ -765,12 +867,14 @@ export class GitHubDiffSource implements DiffSource {
     const metadata = await this.getMetadata();
     const cached = await preparedChanges(this.octokit, this.key, metadata);
     if (cached && !cached.filesTruncated && !cached.patchesDeferred) return cached.files.map(file => ({ filename: file.path, previous_filename: file.previousPath,
-      status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch }));
+      status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch, sha: file.blobSha }));
     const local = await this.fromClone((clone) => clone.changes(metadata.baseSha, metadata.headSha));
     if (local) return local.files.map(changedFileFromClone);
     if (cached?.filesTruncated || (metadata.changedFileCount !== undefined && metadata.changedFileCount > GITHUB_PR_FILE_LIMIT))
       throw new Error(LARGE_PR_EXPLANATION_ERROR);
-    return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true);
+    const files = await getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true, metadata.changedFileCount);
+    for (const file of files) if (file.sha && file.status !== 'deleted') this.blobs.set(file.filename, file.sha);
+    return files;
   }
 
   async getFileContent(filePath: string, ref: 'base' | 'head', signal?: AbortSignal): Promise<string | null> {
@@ -788,7 +892,32 @@ export class GitHubDiffSource implements DiffSource {
     }
     const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
     const [owner, repo] = ((ref === 'base' ? meta.baseRepo : meta.headRepo) ?? `${this.owner}/${this.repo}`).split('/');
-    return this.readAt(owner, repo, filePath, gitRef, signal);
+    const blobSha = ref === 'head' ? ((file?.path === filePath ? file.blobSha : undefined) ?? this.blobs.get(filePath)) : undefined;
+    return this.readSource(owner, repo, filePath, gitRef, signal, blobSha && /^[a-f\d]{40}$/i.test(blobSha) ? blobSha : undefined);
+  }
+
+  /** Blob SHAs from the last file list, so a push only downloads the files it changed. */
+  private blobs = new Map<string, string>();
+  /**
+   * A changed file's text, from the clone or from the source store that Changes shares. That store keys bytes by blob
+   * SHA, so text read for one revision, PR, or stack layer serves every other with the same content.
+   */
+  private async readSource(owner: string, repo: string, filePath: string, ref: string, signal?: AbortSignal, blobSha?: string) {
+    const local = await this.fromClone((clone) => clone.blob(ref, filePath));
+    if (local !== undefined) return local && local.toString('utf-8');
+    if (!blobSha && !/^[a-f\d]{40}$/i.test(ref)) return getFileContent(this.octokit, owner, repo, filePath, ref, signal);
+    try {
+      signal?.throwIfAborted();
+      const bytes = await readGitHubFile(this.octokit, { owner, repo, path: filePath, ref, blobSha });
+      signal?.throwIfAborted();
+      // The contents API, used before, gives no inline text above 1 MB. Keep that limit for prompts.
+      return bytes.length > 1_000_000 ? null : bytes.toString('utf-8');
+    } catch (error) {
+      signal?.throwIfAborted();
+      const limited = githubRateLimit(error);
+      if (limited) throw limited;
+      return null;
+    }
   }
 
   async getFileMetadata(changedFiles: ChangedFile[], signal?: AbortSignal): Promise<FileMetadata[]> {

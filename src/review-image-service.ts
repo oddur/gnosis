@@ -12,7 +12,7 @@ import {
 } from '../lib/review-images';
 import type { ReviewGuide } from '../lib/types';
 import { sourceForPath } from '../lib/workbench';
-import { parsePrUrl } from '../lib/github';
+import { getMergeBase, parsePrUrl } from '../lib/github';
 import { parseLocalUrl } from '../lib/localGit';
 import { localClones } from '../lib/local-clone';
 
@@ -116,8 +116,7 @@ export function createReviewImageService(io: {
         }
         if (!baseRepo || !client) throw new Error('The source repository is unavailable.');
         const [owner, repo] = baseRepo.split('/');
-        const { data } = await client.repos.compareCommits({ owner, repo, base, head });
-        return data.merge_base_commit.sha;
+        return getMergeBase(client, owner, repo, base, head);
       });
     const metadata = file;
     async function side(before: boolean): Promise<ReviewImageSide> {

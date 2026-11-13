@@ -9,6 +9,11 @@ export interface PrChangeFile {
   deletions: number;
   changeId: string;
   patch?: string;
+  /**
+   * The after side's blob SHA, when GitHub gave one. Full from the JSON file lists; abbreviated (7 or more digits) from
+   * a whole diff. Absent for deleted files and older snapshots.
+   */
+  blobSha?: string;
 }
 export interface PrChanges {
   stackComparison?: import('./stack-changes').StackComparison;
