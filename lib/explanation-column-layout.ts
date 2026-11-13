@@ -1,3 +1,10 @@
+/** Whether a column sticks. Only a column shorter than its row's tallest has sticky travel. The tallest stays in
+ * normal flow, because browser scroll anchoring never picks an anchor inside a sticky box: if every column stuck,
+ * the anchor would be the whole section, and content growing above the viewport would push the page away (#288). */
+export function columnSticks(columnHeight: number, rowTallestHeight: number) {
+  return columnHeight < rowTallestHeight;
+}
+
 /** Sticky offset for one Explanation column, or null to keep the stylesheet's `top: 16px`.
  *
  * A column taller than the viewport is pinned by its bottom, so its end stays reachable while the
@@ -5,7 +12,7 @@
  * element's own height. The tallest column in a row has no sticky travel, so it never needs a value.
  */
 export function columnTop(viewportHeight: number, columnHeight: number, rowTallestHeight: number): number | null {
-  if (columnHeight >= rowTallestHeight) return null;
+  if (!columnSticks(columnHeight, rowTallestHeight)) return null;
   if (columnHeight <= viewportHeight - 32) return null;
   return Math.min(16, Math.round(viewportHeight - columnHeight - 16));
 }
@@ -25,8 +32,8 @@ export interface ColumnLayout {
 }
 
 /** One ResizeObserver for the whole Explanation. Its callback only records sizes from the entries and reads no
- * layout. A single animation-frame flush then writes `style.top` only where the value changes, so a window
- * resize costs one coordinated pass instead of one forced layout per section. */
+ * layout. A single animation-frame flush then writes `data-sticky` and `style.top` only where they change, so a
+ * window resize costs one coordinated pass instead of one forced layout per section. */
 export function createColumnLayout(
   observe: (callback: ResizeObserverCallback) => Pick<ResizeObserver, 'observe' | 'unobserve' | 'disconnect'> = (
     callback
@@ -36,6 +43,7 @@ export function createColumnLayout(
   const heights = new Map<Element, number>();
   const rows = new Map<number, Set<HTMLElement>>();
   const written = new Map<HTMLElement, number | null>();
+  const sticky = new Map<HTMLElement, boolean>();
   let viewportElement: HTMLElement | null = null;
   let viewportHeight = 0;
   let frame = 0;
@@ -48,6 +56,11 @@ export function createColumnLayout(
       for (const column of columns) {
         const height = heights.get(column);
         if (height === undefined) continue;
+        const sticks = columnSticks(height, tallest);
+        if ((sticky.get(column) ?? false) !== sticks) {
+          sticky.set(column, sticks);
+          column.toggleAttribute('data-sticky', sticks);
+        }
         const top = columnTop(viewportHeight, height, tallest);
         if ((written.get(column) ?? null) === top) continue;
         written.set(column, top);
@@ -82,9 +95,11 @@ export function createColumnLayout(
         observer.unobserve(element);
         heights.delete(element);
         written.delete(element);
+        sticky.delete(element);
         columns.delete(element);
         if (!columns.size) rows.delete(row);
         element.style.removeProperty('top');
+        element.removeAttribute('data-sticky');
         // The remaining columns of the row may have lost their tallest neighbour.
         schedule();
       };

@@ -501,14 +501,14 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.explanation-file-progress')?.textContent.startsWith('1/')");
     assert.equal(await js("document.querySelectorAll('.explanation-section').length"), 3);
     await capture('files-viewed');
-    win.setSize(640, 800);
+    win.setContentSize(640, 800);
     await js(`window.selectOption('[aria-label="Explanation section"]','2')`);
     await wait(
       `(()=>{const row=document.querySelector('[data-explanation-section="2"]');return row.querySelector('.explanation-section-code').getBoundingClientRect().top>=row.querySelector('.explanation-section-text').getBoundingClientRect().bottom})()`
     );
     await capture('files-viewed-narrow');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
-    win.setSize(1280, 800);
+    win.setContentSize(1280, 800);
     await js(`window.selectOption('[aria-label="Explanation section"]','3')`);
     await wait('!!document.querySelector(\'[data-explanation-section="3"] .review-code\')');
     await wait("document.querySelector('.explanation-next-section').disabled");
@@ -551,7 +551,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.pr-overview-heading h1').textContent"), header);
     await js(`window.selectOption('[aria-label="Explanation section"]','1')`);
     await capture('desktop');
-    win.setSize(1920, 900);
+    win.setContentSize(1920, 900);
     await wait('innerWidth===1920');
     await capture('wide-toolbar');
     assert.equal(
@@ -569,20 +569,20 @@ void app.whenReady().then(async () => {
       1
     );
     assert.equal(await js("document.querySelectorAll('.explanation-section .inline-explanations-toggle').length"), 0);
-    win.setSize(1280, 800);
+    win.setContentSize(1280, 800);
     await wait('innerWidth===1280');
     await js("document.documentElement.classList.add('dark')");
     await capture('dark');
-    win.setSize(1024, 800);
+    win.setContentSize(1024, 800);
     await wait('innerWidth===1024');
     await js(`window.selectOption('[aria-label="Explanation section"]','1')`);
     await capture('laptop');
-    win.setSize(640, 800);
+    win.setContentSize(640, 800);
     await wait('innerWidth===640');
     await js(`window.selectOption('[aria-label="Explanation section"]','1')`);
     await capture('narrow');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
-    win.setSize(1280, 800);
+    win.setContentSize(1280, 800);
     win.webContents.setZoomFactor(2);
     await wait('innerWidth===640');
     await capture('zoomed');
@@ -700,7 +700,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("[...document.querySelectorAll('h1')].filter(h=>h.checkVisibility()).length"), 1);
     assert.match(await js<string>("document.querySelector('.explanation-no-topics').textContent"), /Generate again/);
     assert.equal(await js("document.querySelectorAll('.explanation-no-topics .reading-prose').length"), 1);
-    win.setSize(640, 800);
+    win.setContentSize(640, 800);
     await wait('innerWidth===640');
     await capture('no-topics-narrow');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);

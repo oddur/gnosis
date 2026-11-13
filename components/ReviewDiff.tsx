@@ -12,7 +12,9 @@ import {
   DEFAULT_DIFF_APPEARANCE,
   HUNK_SLICE_LIMIT,
   diffContextLines,
+  CODE_LINE_HEIGHT,
   estimateHunkBlockHeight,
+  estimateSlicedBlockHeight,
   prepareReviewHunk,
   reviewContextRanges,
   reviewHunkSlices,
@@ -330,10 +332,22 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
     }
     return result;
   }, [hunk, prepared, ranges, unfolded]);
+  // Used only while the block is skipped by content-visibility; `auto` keeps its real height once seen.
+  const estimate = useMemo(
+    () =>
+      ({
+        containIntrinsicBlockSize: `auto ${
+          estimateSlicedBlockHeight(
+            unfolded ? [{ start: 0, end: prepared?.lines.length ?? 0, hidden: false }] : ranges
+          ) + (revealed.size > 0 ? 1.5 * CODE_LINE_HEIGHT : 0)
+        }px`,
+      }) as CSSProperties,
+    [prepared, ranges, unfolded, revealed.size]
+  );
   if (unfolded) {
     if (!prepared || prepared.lines.length <= HUNK_SLICE_LIMIT) return <ReviewHunk hunk={hunk} {...props} />;
     return (
-      <div className="review-context-hunk">
+      <div className="review-context-hunk" style={estimate}>
         {slices.get(0)?.map((slice) => (
           <ReviewHunk key={`slice-${slice.start}`} {...props} hunk={slice.hunk} sourceHeader={hunk.hunkHeader} />
         ))}
@@ -341,7 +355,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
     );
   }
   return (
-    <div ref={rootRef} className="review-context-hunk">
+    <div ref={rootRef} className="review-context-hunk" style={estimate}>
       {draftNotice && (
         <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
           Finish or cancel your comment before changing the visible context.

@@ -46,6 +46,26 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 300));
     await js(frames);
   };
+  /** Grow, then shrink, a file far above the viewport in topic 9, as a skipped diff does when it renders at a
+   * height other than its estimate. Topic 10 must not move: scroll anchoring keeps what the reader sees. */
+  const keepsInPlace = async (label: string) => {
+    const place = `Math.round(document.querySelector('[data-explanation-section="10"]').getBoundingClientRect().top)`;
+    const file = `document.querySelector('[data-explanation-section="9"] .review-file-group')`;
+    const before = await js<number>(place);
+    assert.ok(before > 0 && before < (await js<number>('innerHeight')), `Topic 10 is in view ${label}: ${before}`);
+    await js(`(()=>{const f=${file};const c=document.querySelector('.explanation-document');
+      if(f.getBoundingClientRect().bottom>c.getBoundingClientRect().top)throw Error('The first file of topic 9 is not above the viewport');
+      f.style.minHeight=(f.offsetHeight+40000)+'px'})()`);
+    await js(frames);
+    const grown = await js<number>(place);
+    await js(`${file}.style.minHeight=''`);
+    await js(frames);
+    const shrunk = await js<number>(place);
+    assert.ok(
+      Math.abs(grown - before) <= 1 && Math.abs(shrunk - before) <= 1,
+      `Topic 10 stays in place ${label} while content above it changes height: ${before}, then ${grown} and ${shrunk}`
+    );
+  };
   try {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await waitForWorkbenchQueue(win.webContents);
@@ -84,6 +104,19 @@ void app.whenReady().then(async () => {
       (await js<number>(`${huge}.querySelectorAll('diffs-container').length`)) >= 15,
       'A 3,000-line file renders as 200-line slices'
     );
+    // Skipped blocks hold their place with estimates. One far too small made the document shrink by most of the
+    // file for a frame when the block was skipped again, and the browser clamped scrollTop (#288).
+    const estimates = await js<{ name: string; estimate: number; height: number }[]>(`(()=>{
+      const estimate=e=>parseFloat(getComputedStyle(e).containIntrinsicBlockSize.replace('auto',''));
+      const blocks=[['section',document.querySelector('[data-explanation-section="9"]')],['file',${huge}],['slices',${huge}.querySelector('.review-context-hunk')],['slice',${huge}.querySelector('diffs-container')]];
+      return blocks.map(([name,e])=>({name,estimate:estimate(e),height:e.getBoundingClientRect().height}));
+    })()`);
+    console.log('Skipped-block estimates:', JSON.stringify(estimates));
+    for (const { name, estimate, height } of estimates)
+      assert.ok(
+        Math.abs(estimate - height) <= height * 0.1,
+        `The ${name} estimate is within 10% of its height: ${estimate} for ${height}`
+      );
     // Read inside the large file, as on the real page.
     await js(
       `(()=>{const c=document.querySelector('.explanation-document');c.scrollTop+=${huge}.getBoundingClientRect().top-c.getBoundingClientRect().top+1500})()`
@@ -255,13 +288,49 @@ void app.whenReady().then(async () => {
         `(()=>{const r=document.querySelector('[data-explanation-section="10"]').getBoundingClientRect();return r.bottom>0&&r.top<innerHeight})()`
       );
     } catch (error) {
-      // Not reproduced locally; name where find left the reader so a CI failure says why.
+      // Name where find left the reader, so a failure says why.
       const state = await js<string>(
         `(()=>{const c=document.querySelector('.explanation-document');const box=n=>{const r=document.querySelector('[data-explanation-section="'+n+'"]').getBoundingClientRect();return [Math.round(r.top),Math.round(r.bottom)]};return JSON.stringify({scrollTop:c.scrollTop,scrollHeight:c.scrollHeight,clientHeight:c.clientHeight,innerHeight,section9:box(9),section10:box(10),selection:String(getSelection()).slice(0,40)})})()`
       );
       throw new Error(`${(error as Error).message}\nfind: ${JSON.stringify(lastFind)}\npage: ${state}`);
     }
+    // Late changes, such as a skipped block falling back to its estimate, show up within a second.
+    await new Promise((r) => setTimeout(r, 1000));
+    await js(frames);
+    await keepsInPlace('after find');
+    // The failure seen on CI: the large file's block of slices was skipped with no remembered size, so it fell back
+    // to its estimate. Too small an estimate shrinks the document, the browser clamps scrollTop, and the match ends
+    // up far below the viewport once the block renders again. A fresh copy of the block has no remembered size.
+    {
+      const place = `Math.round(document.querySelector('[data-explanation-section="10"]').getBoundingClientRect().top)`;
+      const before = await js<number>(place);
+      await js(`(()=>{const b=${huge}.querySelector('.review-context-hunk');const copy=b.cloneNode(false);
+        copy.style.contentVisibility='hidden';window.__skippedBlock=[b,copy];b.replaceWith(copy)})()`);
+      await js(frames);
+      const skipped = await js<number>(place);
+      await js(`(()=>{const [b,copy]=window.__skippedBlock;copy.replaceWith(b);delete window.__skippedBlock})()`);
+      await js(frames);
+      const after = await js<number>(place);
+      // An estimate is close, not exact: a few pixels per slice. Before the fix the match moved about 60,000px.
+      assert.ok(
+        Math.abs(skipped - before) <= 100 && Math.abs(after - before) <= 100,
+        `Topic 10 stays in place while the large file is skipped at its estimate: ${before}, then ${skipped} and ${after}`
+      );
+    }
     win.webContents.stopFindInPage('clearSelection');
+    // The same after a jump to the topic. It is the last one, so the jump ends at the bottom of the document.
+    await goTo(1);
+    await js(`window.selectOption('[aria-label="Explanation section"]','10')`);
+    await wait(
+      `(()=>{const r=document.querySelector('[data-explanation-section="10"]').getBoundingClientRect();return r.bottom>0&&r.top<innerHeight})()`
+    ).catch(async (error: unknown) => {
+      throw new Error(
+        `${(error as Error).message}\npage: ${await js<string>(`(()=>{const c=document.querySelector('.explanation-document');const box=n=>{const r=document.querySelector('[data-explanation-section="'+n+'"]').getBoundingClientRect();return [Math.round(r.top),Math.round(r.bottom)]};return JSON.stringify({scrollTop:c.scrollTop,scrollHeight:c.scrollHeight,clientHeight:c.clientHeight,innerHeight,section9:box(9),section10:box(10)})})()`)}`
+      );
+    });
+    await new Promise((r) => setTimeout(r, 1000));
+    await js(frames);
+    await keepsInPlace('after a topic jump');
     assert.ok((await find('marker2950')) >= 1, 'Find reaches a line inside a skipped slice of the large file');
     win.webContents.stopFindInPage('clearSelection');
 

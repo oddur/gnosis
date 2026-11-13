@@ -16,6 +16,7 @@ import { explanationPositionKey, useExplanationScroll } from '../lib/use-explana
 import { useBeforeDiffLayoutChange } from '../lib/use-diff-layout';
 import { createColumnLayout, type ColumnLayout } from '../lib/explanation-column-layout';
 import { estimateCodeColumnHeight } from '../lib/review-diff';
+import { scrollToMovingTarget } from '../lib/diff-layout';
 import type { ReviewGuide, Slide } from '../lib/types';
 
 export interface ExplanationReaderHandle {
@@ -80,9 +81,11 @@ export function ExplanationReader({
     trackReading();
   }, [review]);
   const navigating = useRef(false);
+  const stopFollowing = useRef(() => {});
   useEffect(() => {
     if (!active) {
       navigating.current = false;
+      stopFollowing.current();
       cancelAnimationFrame(navigationFrame.current);
       cancelAnimationFrame(frame.current);
     }
@@ -101,6 +104,7 @@ export function ExplanationReader({
     () => () => {
       cancelAnimationFrame(frame.current);
       cancelAnimationFrame(navigationFrame.current);
+      stopFollowing.current();
     },
     []
   );
@@ -141,7 +145,13 @@ export function ExplanationReader({
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       const destination = Math.max(0, Math.min(top, container.scrollHeight - container.clientHeight));
       navigating.current = !reducedMotion && Math.abs(destination - container.scrollTop) > 1;
-      container.scrollTo({ top: destination, behavior: reducedMotion ? 'instant' : 'smooth' });
+      // Sections passed on the way render and change height, so this follows the section, not a fixed offset.
+      stopFollowing.current();
+      stopFollowing.current = scrollToMovingTarget(
+        container,
+        () => container.scrollTop + target.getBoundingClientRect().top - container.getBoundingClientRect().top,
+        { smooth: !reducedMotion }
+      );
       const heading = target.querySelector<HTMLElement>('h2') ?? target;
       heading.tabIndex = -1;
       if (window.document.activeElement === origin || window.document.activeElement === window.document.body)
@@ -378,6 +388,9 @@ function PairedSection({
       aria-label={title}
       data-has-code={hasCode || undefined}
       tabIndex={-1}
+      // Used only while the section is skipped by content-visibility; `auto` keeps its real height once seen. The
+      // stylesheet's 900px holds prose; a long code column, with the section's padding, can need far more.
+      style={hasCode ? { containIntrinsicBlockSize: `auto ${Math.max(900, Math.round(reserve) + 56)}px` } : undefined}
     >
       <div ref={column} className="explanation-column explanation-section-text">
         {narrative}
