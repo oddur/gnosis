@@ -21,7 +21,8 @@ import { toast } from '../components/ui/toast';
 import { focusStackPr } from '../lib/stack-workspace';
 import { normalizeQueueFilters } from '../lib/queue-filters';
 import { isLocalUrl } from '../lib/local-url';
-import { rememberExplanation, loadExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
+import { rememberExplanation, loadExplanation, peekExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
+import { navigationStart, predictor } from '../lib/predictions';
 import {
   createNavigationHistory,
   locationKey,
@@ -327,8 +328,13 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
       return;
     }
     if (target.kind === 'review') {
+      // A saved review is ready at once when its document is already in memory, for example after a rest on its row.
+      const arrival = `review:${target.reviewId}`;
+      if (!restoring) predictor.navigate(arrival, navigationStart());
+      const warm = review?.reviewId === target.reviewId || !!peekExplanation(target.reviewId);
       const loaded = review?.reviewId === target.reviewId ? review : await loadExplanation(target.reviewId);
-      if (version !== navigationVersion.current) return;
+      if (version !== navigationVersion.current) { predictor.abandon(arrival); return; }
+      requestAnimationFrame(() => predictor.arrived(arrival, { loading: !warm }));
       setHomeCommand(undefined);
       if (isLocalUrl(loaded.prUrl)) {
         setExplanationDestination(undefined);

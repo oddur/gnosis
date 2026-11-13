@@ -245,6 +245,10 @@ declare global {
       isPackaged: boolean;
       /** Present only when GNOSIS_PERF_TRACE is set. */
       perfMark?: (name: string) => void;
+      /** Present only when GNOSIS_PERF_TRACE is set. Prints `[perf] <name> <value>` in main. */
+      perfNote?: (name: string, value: unknown) => void;
+      /** GNOSIS_PREDICT=off: navigation predictions never run. */
+      predictOff?: boolean;
     };
   }
 }

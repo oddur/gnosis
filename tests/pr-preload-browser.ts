@@ -60,6 +60,12 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.commit-detail-title')?.textContent.includes('Keep retry boundaries intact')");
     assert.deepEqual(await js('window.loadingFlashes'), [], 'Older commits also open from prepared content');
     assert.deepEqual(await js('window.inspectionReads'), [], 'All individual commit diffs were preloaded');
+    // The navigation predictor measured each prepared tab as a hit: content with no loading state first.
+    const measured = await js<Partial<Record<string, { n: number; hit: number; cold: number }>>>('window.__gnosisPredict.summary().destinations');
+    const records = JSON.stringify(await js('window.__gnosisPredict.records()'));
+    assert.ok((measured['pr-open']?.n ?? 0) >= 1, `Opening the PR is measured: ${records}`);
+    assert.ok((measured['pr-tab:changes']?.hit ?? 0) >= 1 && !measured['pr-tab:changes']?.cold, `Prepared Changes measures as a hit: ${records}`);
+    assert.ok((measured['pr-tab:commits']?.hit ?? 0) >= 1 && !measured['pr-tab:commits']?.cold, `Prepared Commits measures as a hit: ${records}`);
     await click('Changes');
     await wait("!!document.querySelector('.changes-file-header')");
     // Supply a new revision and visibly different file contents, without remounting Changes.

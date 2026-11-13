@@ -1,4 +1,4 @@
-import { mark, markRenderer, note, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
+import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
 import { attachWindowChrome, registerWindowChromeIpc, windowChromeOptions } from './window-chrome';
@@ -157,6 +157,8 @@ import type {
 } from '../lib/types';
 
 mark('main-eval');
+// GNOSIS_PREDICT=off keeps navigation measurement and turns predictions off, for "before" benchmark runs.
+const predictionsOff = process.env.GNOSIS_PREDICT === 'off';
 
 // The window opens before saved data and the GitHub cache load. Every handler registered below waits
 // for both unless listed here. Wrap before the first registration.
@@ -346,7 +348,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Sandboxed preloads cannot read main's environment.
-      additionalArguments: startupTracing ? ['--gnosis-perf-trace'] : [],
+      additionalArguments: [...(startupTracing ? ['--gnosis-perf-trace'] : []), ...(predictionsOff ? ['--gnosis-predict-off'] : [])],
     },
   });
 
@@ -1312,6 +1314,10 @@ ipcMain.on('perf-mark', (_event, name: unknown, epochMs: unknown) => {
   if (name !== 'queue-painted') return;
   console.log(`[perf] summary ${JSON.stringify(startupSummary())}`);
   if (exitAfterTrace) app.quit();
+});
+// Renderer measurements such as `[perf] predict nav …`. Only prediction notes are accepted.
+ipcMain.on('perf-note', (_event, name: unknown, value: unknown) => {
+  if (typeof name === 'string' && /^predict(?:-[a-z]+)?$/.test(name)) noteRenderer(name, value);
 });
 
 ipcMain.handle('dismiss-update', (_event, version: string) => {

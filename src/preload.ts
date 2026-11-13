@@ -472,4 +472,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   perfMark: process.argv.includes('--gnosis-perf-trace')
     ? (name: string) => ipcRenderer.send('perf-mark', name, performance.timeOrigin + performance.now())
     : undefined,
+  perfNote: process.argv.includes('--gnosis-perf-trace')
+    ? (name: string, value: unknown) => ipcRenderer.send('perf-note', name, value)
+    : undefined,
+  // GNOSIS_PREDICT=off, read once at startup: measurement stays on, predictions never run.
+  predictOff: process.argv.includes('--gnosis-predict-off'),
 });
