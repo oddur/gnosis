@@ -31,6 +31,24 @@ void app.whenReady().then(async () => {
       `[...document.querySelectorAll('button')].find(b=>b.checkVisibility()&&b.textContent.trim()===${JSON.stringify(label)}).click()`
     );
   };
+  const press = async (key: 'Enter' | 'Escape') => {
+    const code = key === 'Enter' ? 13 : 27;
+    await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key,
+      code: key,
+      windowsVirtualKeyCode: code,
+      ...(key === 'Enter' ? { text: '\r' } : {}),
+    });
+    await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key,
+      code: key,
+      windowsVirtualKeyCode: code,
+    });
+    await new Promise((r) => setTimeout(r, 120));
+  };
+  const publishes = () => js<number>("window.conflictCalls.filter(r=>r.kind==='publish').length");
   const capture = async (name: string) => {
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 300));
@@ -56,7 +74,7 @@ void app.whenReady().then(async () => {
         if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);f.result=req.contents;f.resolved=req.resolved;}
         if(req.kind==='resolve'){s.files[0].result='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
-        if(req.kind==='publish'){s.status='published';s.commitSha='d'.repeat(40);}
+        if(req.kind==='publish'){if(window.failPublish)throw Error('Git could not complete this operation. ! [rejected] feature/retry (stale info)');s.status='published';s.commitSha='d'.repeat(40);}
         s.version++;return {session:structuredClone(s)};
       };
     })()`);
@@ -152,6 +170,14 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     await capture('dark');
     await wait("document.querySelector('.conflict-file-pane > header [data-stage]')?.dataset.stage==='conflicted'");
+    // The whole plan is visible while resolving: resolve, review, then push.
+    assert.deepEqual(
+      await js(
+        "[...document.querySelectorAll('.conflict-workflow .step-list li')].map(li=>li.dataset.step+':'+li.dataset.status)"
+      ),
+      ['resolve:current', 'review:upcoming', 'push:upcoming']
+    );
+    assert.equal(await js("document.querySelector('.conflict-workflow .step-card-count').textContent.trim()"), '1 / 3');
     await click('Use PR version');
     await wait("document.querySelector('.conflict-file-pane > header [data-stage]')?.dataset.stage==='resolved'");
     assert.ok(
@@ -247,9 +273,47 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.conflict-preview diffs-container')");
     await capture('preview');
     assert.equal(await js("window.conflictCalls.filter(r=>r.kind==='publish').length"), 0, 'Preview never publishes');
+    assert.equal(await js("document.querySelector('.conflict-workflow [aria-current=step]').dataset.step"), 'review');
+    await wait("document.activeElement?.textContent.trim()==='Continue'");
+    // Enter continues from the reviewed update to the push confirmation; nothing is pushed yet.
+    await press('Enter');
+    await wait("document.querySelector('.conflict-confirm .step-card')");
+    assert.equal(await js("document.querySelector('.conflict-confirm [aria-current=step]').dataset.step"), 'push');
+    assert.equal(await js("document.querySelector('.conflict-confirm .step-card-count').textContent.trim()"), '3 / 3');
+    await wait("document.activeElement?.classList.contains('step-card-body')");
+    await capture('confirm-push');
+    await press('Enter');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await publishes(), 0, 'Enter alone never pushes');
+    // A failed push stays in its step; the push is not resent.
+    await js('window.failPublish=true');
+    await click('Commit & push to PR branch');
+    await wait("document.querySelector('.conflict-confirm [data-step=push][data-status=failed] [role=alert]')");
+    assert.match(
+      await js<string>("document.querySelector('[data-step=push] [role=alert]').textContent"),
+      /stale info.*does not resend/
+    );
+    assert.equal(await js("!!document.querySelector('.conflict-workspace > .conflict-notice[role=alert]')"), false);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(await publishes(), 1, 'A failed push is never replayed');
+    assert.ok(
+      await js(
+        "[...document.querySelectorAll('.conflict-confirm button')].find(b=>b.textContent.trim()==='Commit & push to PR branch').disabled"
+      )
+    );
+    await capture('push-failed');
+    await js('window.failPublish=false');
+    await click('Check again');
+    await wait("document.querySelector('.conflict-workflow [aria-current=step]')?.dataset.step==='resolve'");
+    assert.equal(await publishes(), 1, 'Checking again only reads');
+    await click('Review branch update…');
+    await click('Continue');
+    await click('Back to update');
+    await wait("document.querySelector('.conflict-publish')");
+    await click('Continue');
     await click('Commit & push to PR branch');
     await wait("document.querySelector('.conflict-published').textContent.includes('PR branch updated')");
-    assert.equal(await js("window.conflictCalls.filter(r=>r.kind==='publish').length"), 1);
+    assert.equal(await publishes(), 2);
     await capture('published');
     // Restacking is a separate, explicit preview-and-push flow after the root resolution.
     await js(`(()=>{
@@ -268,17 +332,44 @@ void app.whenReady().then(async () => {
     })()`);
     await click('Close');
     await js("window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))");
+    await wait("document.querySelector('.restack-review [aria-current=step]')?.dataset.step==='rebase'");
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.restack-review .step-list li')].map(li=>li.dataset.step)"),
+      ['rebase', 'review', 'push']
+    );
+    assert.ok(
+      await js("[...document.querySelectorAll('.restack-review button')].some(b=>b.textContent==='Skip')"),
+      'Restacking is optional before it starts'
+    );
+    await capture('restack-plan');
     await click('Prepare restack · 2 PRs');
     await wait("document.querySelectorAll('.restack-reviewed input').length===2");
+    assert.equal(await js("document.querySelector('.restack-review [aria-current=step]').dataset.step"), 'review');
+    assert.equal(
+      await js("[...document.querySelectorAll('.restack-review button')].some(b=>b.textContent==='Skip')"),
+      false
+    );
     assert.equal(await js("window.conflictCalls.filter(r=>r.kind==='restack-publish').length"), 0);
     assert.ok(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Push 2 PR updates').disabled")
+      await js("[...document.querySelectorAll('.restack-review [data-step-continue]')].every(b=>b.disabled)"),
+      'Continue waits for every PR update to be reviewed'
     );
     await capture('restack-desktop');
     await js("document.documentElement.classList.add('dark')");
     win.setSize(1000, 800);
     await capture('restack-laptop');
     await js("document.querySelectorAll('.restack-reviewed input').forEach(input=>input.click())");
+    await click('Continue');
+    await wait("document.querySelector('.restack-review [aria-current=step]')?.dataset.step==='push'");
+    assert.equal(await js("document.querySelectorAll('.restack-confirm li').length"), 2);
+    await press('Enter');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(
+      await js("window.conflictCalls.filter(r=>r.kind==='restack-publish').length"),
+      0,
+      'Enter alone never pushes'
+    );
+    await capture('restack-confirm');
     await click('Push 2 PR updates');
     await wait("document.querySelector('.restack-review h2').textContent==='Dependent PRs updated'");
     assert.deepEqual(await js("window.conflictCalls.find(r=>r.kind==='restack-publish').reviewed"), [
@@ -411,10 +502,14 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.conflictFixture.files.every(f=>f.resolved)'), true);
     assert.equal(
       await js("window.conflictCalls.filter(r=>r.kind==='publish').length"),
-      1,
+      2,
       'File review never publishes'
     );
     await capture('files-reviewed');
+    // Escape cancels the workspace without pushing; the draft stays saved locally.
+    await press('Escape');
+    await wait("!document.querySelector('.conflict-workspace')");
+    assert.equal(await publishes(), 2);
     console.log(
       'Conflict workspace passed: Pierre choices, editable result, saved draft, explicit preview/publication, stale guard, themes and narrow layout.'
     );
