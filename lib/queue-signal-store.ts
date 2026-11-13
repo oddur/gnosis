@@ -41,8 +41,10 @@ export function publishQueueSignals(scope: string, values: QueueSignals[]) {
   updates.dispatchEvent(new Event(scope));
 }
 
-const value = (scope: string, request: QueueSignalRequest) =>
+/** The stored value for one PR revision. */
+export const signalValue = (scope: string, request: QueueSignalRequest) =>
   accounts.get(scope)?.entries.get(queueSignalKey(request))?.value;
+const value = signalValue;
 
 /** The stored values for these PR revisions, in request order. Missing revisions are skipped. */
 export function signalValues(scope: string, requests: readonly QueueSignalRequest[]): QueueSignals[] {

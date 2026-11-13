@@ -6,6 +6,8 @@ export interface QueueSignalOptions {
   active?: boolean;
   force?: boolean;
   cachedOnly?: boolean;
+  /** Refetch saved revisions whose mergeability GitHub was still computing. Other revisions keep the normal freshness. */
+  recheckMerge?: boolean;
 }
 export interface QueueSignals extends QueueSignalRequest {
   checkedAt: number;

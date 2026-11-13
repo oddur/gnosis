@@ -10,6 +10,7 @@ import {
   type QueueSignals,
   type QueueSignalOptions,
 } from '../lib/queue-signals';
+import { mergeConflictState } from '../lib/merge-conflicts';
 
 interface PullSignals {
   headRefOid: string;
@@ -112,7 +113,8 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
         !options.force &&
         saved &&
         !saved.revalidate &&
-        now() - saved.value.checkedAt < (options.active ? ACTIVE_SIGNALS_TTL : QUEUE_SIGNALS_TTL)
+        now() - saved.value.checkedAt < (options.active ? ACTIVE_SIGNALS_TTL : QUEUE_SIGNALS_TTL) &&
+        !(options.recheckMerge && mergeConflictState(saved.value) === 'computing')
       ) {
         result.push(saved.value);
         return false;

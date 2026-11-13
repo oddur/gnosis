@@ -143,6 +143,68 @@ void app.whenReady().then(async () => {
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     assert.equal(await js("getComputedStyle(document.querySelector('.queue-item.is-briefing-generating'), '::after').animationName"), 'none');
     win.webContents.debugger.detach();
+    // Merge conflicts filter: complete status for every candidate, shared batches, an explained unknown, saved views.
+    win.webContents.debugger.attach();
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await loadWorkbenchPage(win, url + '?merge-conflicts');
+    win.focus();
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    const slowWait = async (code: string, ms = 20_000) => {
+      for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 50))) if (await js(code)) return;
+      throw Error('Timed out: ' + code + '\n' + (await js<string>("document.querySelector('.queue-header')?.parentElement?.innerText.slice(0, 800) ?? document.body.innerText.slice(0, 800)")));
+    };
+    const key = (keyCode: string, modifiers: ('shift')[] = []) => {
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+      win.webContents.sendInputEvent({ type: 'char', keyCode, modifiers });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+    };
+    assert.equal(await js("window.mergeCalls.some(call => call.options?.recheckMerge)"), false, 'Off: no merge re-checks');
+    // Keyboard: open Filters, focus the Merge conflicts select and choose by typing.
+    await js("document.querySelector('.queue-filter-toggle').focus()");
+    key('Enter');
+    await wait("!!document.querySelector('#queue-filter-panel')");
+    const select = "[...document.querySelectorAll('#queue-filter-panel label')].find(label => label.querySelector('span')?.textContent === 'Merge conflicts')?.querySelector('select')";
+    assert.deepEqual(await js(`[...${select}.options].map(option => option.textContent)`), ['Any', 'Has conflicts']);
+    await js(`${select}.focus()`);
+    key('H');
+    await wait(`${select}.value === 'conflicts'`);
+    await wait("/Checking merge state for \\d+ PRs?…/.test(document.querySelector('.queue-merge-status')?.textContent ?? '')");
+    await capture('merge-loading');
+    key('Escape');
+    await slowWait("document.querySelectorAll('.queue-item').length === 2");
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.queue-item')].map(row => row.querySelector('.queue-stack-matches')?.textContent ?? 'pr').sort()"),
+      ['1 of 3 PRs match', 'pr'],
+      'The stack with one conflicting PR stays whole, and DIRTY with UNKNOWN mergeable counts'
+    );
+    await slowWait("document.querySelector('.queue-merge-status')?.textContent.includes('1 PR’s merge state is still being computed by GitHub')");
+    assert.match(await js<string>("document.querySelector('.queue-merge-status').textContent"), /Checking again shortly/);
+    assert.ok(await js("!!document.querySelector('[aria-label=\"Remove Merge conflicts filter\"]')"), 'Removable chip');
+    assert.match(await js<string>("document.querySelector('.queue-filter-toggle').textContent"), /Filters \(1\)/);
+    await capture('merge-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('merge-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    // One re-check of just the unknown PR, after a short delay. It is still unknown, so it stays counted, not listed.
+    await slowWait("window.mergeCalls.some(call => call.options?.recheckMerge)", 20_000);
+    assert.deepEqual(await js("window.mergeCalls.filter(call => call.options?.recheckMerge).map(call => call.urls)"), [['https://github.com/klang/engine/pull/153']]);
+    await slowWait("document.querySelector('.queue-merge-status')?.textContent.includes('Not listed until GitHub finishes')");
+    assert.equal(await js("document.querySelectorAll('.queue-item').length"), 2);
+    // Saved view keeps the filter across a reload.
+    await js("[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Save view…').click()");
+    await wait("!!document.querySelector('.view-name-form input')");
+    await js("(()=>{const e=document.querySelector('.view-name-form input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'Conflicts');e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));})()");
+    await js("document.querySelector('.view-name-form').requestSubmit()");
+    await wait("document.querySelector('.queue-toolbar h1')?.textContent === 'Conflicts'");
+    win.reload();
+    await slowWait("document.querySelector('.queue-toolbar h1')?.textContent === 'Conflicts' && !!document.querySelector('[aria-label=\"Remove Merge conflicts filter\"]')");
+    await slowWait("document.querySelectorAll('.queue-item').length === 2");
+    // Keyboard removal of the chip restores the whole queue and hides the status line.
+    await js("document.querySelector('[aria-label=\"Remove Merge conflicts filter\"]').focus()");
+    key('Enter');
+    await slowWait("document.querySelectorAll('.queue-item').length === 7 && !document.querySelector('.queue-merge-status')");
+    win.webContents.debugger.detach();
+    console.log('Merge conflicts filter passed: keyboard selection, loading and unknown lines, one delayed re-check, stack rule, chip, saved view.');
     console.log(
       'Queue metadata passed: familiar identity, counts, all PR/check states, visible-only batching, cache reuse, themes and zoom.'
     );

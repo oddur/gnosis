@@ -7,6 +7,7 @@ import {
   type WorkspaceListingCount,
 } from './workspace-listings';
 import type { WorkspaceTabEntry } from './workspace-tabs';
+import { useMergeStates } from './use-queue-signals';
 
 /** Counts read the shared queue store, which stays subscribed while Activity hides every listing. */
 export function useWorkspaceListings(tabs: WorkspaceTabEntry[], account?: string) {
@@ -17,6 +18,13 @@ export function useWorkspaceListings(tabs: WorkspaceTabEntry[], account?: string
   const queue = useWorkbenchQueue(enabled);
   const history = useReviewHistory(enabled);
   const { loaded } = useWorkbenchStatus(enabled);
+  // Listings never load status; with the merge filter they count PRs whose loaded status shows conflicts.
+  const mergeNeeded = enabled && (queue.filters?.merge === 'conflicts' || !!queue.savedViews?.views.some((view) => view.draft.merge === 'conflicts'));
+  const members = useMemo(
+    () => (mergeNeeded ? [...queue.items, ...(queue.starredItems ?? [])].flatMap((item) => item.subject.members) : []),
+    [mergeNeeded, queue.items, queue.starredItems]
+  );
+  const merge = useMergeStates(account ?? null, members, mergeNeeded);
   const previousCounts = useRef<Record<string, WorkspaceListingCount | undefined>>({});
   return useMemo(() => {
     const results: Record<string, WorkspaceListingCount | undefined> = {};
@@ -26,7 +34,7 @@ export function useWorkspaceListings(tabs: WorkspaceTabEntry[], account?: string
       if (!request) continue;
       const key = JSON.stringify(request);
       if (!cache.has(key))
-        cache.set(key, countWorkspaceListing(request, queue, history, account));
+        cache.set(key, countWorkspaceListing(request, queue, history, account, undefined, merge));
       results[id] = cache.get(key);
     }
     const previous = previousCounts.current;
@@ -40,5 +48,5 @@ export function useWorkspaceListings(tabs: WorkspaceTabEntry[], account?: string
       return previous;
     previousCounts.current = results;
     return results;
-  }, [requests, queue, history, account, enabled, loaded]);
+  }, [requests, queue, history, account, enabled, loaded, merge]);
 }

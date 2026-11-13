@@ -1,4 +1,5 @@
 import { normalizeQueueFilters, matchesQueueFilters, type QueueFilters } from './queue-filters';
+import type { MergeStates } from './merge-conflicts';
 import { isMutedReview } from './muted-prs';
 import type { HomeLocation } from './navigation-history';
 import type { ReviewHistoryEntry } from './types';
@@ -66,7 +67,9 @@ export function countWorkspaceListing(
   queue: WorkbenchQueue,
   history: ReviewHistoryEntry[],
   login: string,
-  now = Date.now()
+  now = Date.now(),
+  /** Loaded merge states, for listings with the merge filter. */
+  merge?: MergeStates
 ): WorkspaceListingCount | undefined {
   const listing = resolveListing(request, queue);
   if (!listing) return;
@@ -100,7 +103,7 @@ export function countWorkspaceListing(
       const unreadUrls = item.subject.members
         .filter((member) => isUnread(member.url, item.unreadUrls?.includes(member.url)))
         .map((member) => member.url);
-      if (!matchesQueueFilters({ ...item, unreadUrls }, filters, now, login)) continue;
+      if (!matchesQueueFilters({ ...item, unreadUrls }, filters, now, login, merge)) continue;
       for (const member of item.subject.members) {
         // Keep stack-level criteria, but count only members that match all PR filters.
         if (
@@ -108,7 +111,8 @@ export function countWorkspaceListing(
             { ...item, unreadUrls, subject: { ...item.subject, members: [member] } },
             { ...filters, explanation: 'all' },
             now,
-            login
+            login,
+            merge
           )
         )
           add(member.url, unreadUrls.includes(member.url));

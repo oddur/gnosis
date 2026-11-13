@@ -2,6 +2,7 @@ import { needsResponse } from './response-needed';
 import { DEFAULT_LABEL_FILTER, normalizeLabelFilter, labelFilterActive, matchesLabelFilter, describeLabelFilter, type PrLabelFilter } from './pr-label-filter';
 import { DEFAULT_PR_SORT, normalizePrListSort, sortQueueItems, type PrListSort } from './pr-list-sort';
 import type { QueueSignals } from './queue-signals';
+import { memberMergeState, type MergeStates } from './merge-conflicts';
 import { fingerprint, type Briefing, type QueueItem, type ReviewMember } from './workbench';
 
 export interface QueueFilters {
@@ -24,6 +25,8 @@ export interface QueueFilters {
   /** Briefing status. It narrows the list only; it never decides which briefings run. */
   briefing: 'all' | BriefingState;
   briefingScope: 'matches' | 'all';
+  /** Merge conflicts reported by GitHub. Needs status for every candidate PR, so the queue loads it only while this is on. */
+  merge: 'all' | 'conflicts';
 }
 export const BRIEFING_STATES = ['generating', 'queued', 'ready', 'paused', 'failed'] as const;
 export type BriefingState = (typeof BRIEFING_STATES)[number];
@@ -62,9 +65,9 @@ export function tallyBriefings(items: readonly QueueItem[]): BriefingCounts {
   return counts;
 }
 /** Counts for the briefing chips. Every other filter applies, so a chip's count is what clicking it shows. */
-export function countBriefings(items: readonly QueueItem[], filters: QueueFilters, now = Date.now(), login?: string | null): BriefingCounts {
+export function countBriefings(items: readonly QueueItem[], filters: QueueFilters, now = Date.now(), login?: string | null, merge?: MergeStates): BriefingCounts {
   const scope = filters.briefing === 'all' ? filters : { ...filters, briefing: 'all' as const };
-  return tallyBriefings(items.filter((item) => matchesQueueFilters(item, scope, now, login)));
+  return tallyBriefings(items.filter((item) => matchesQueueFilters(item, scope, now, login, merge)));
 }
 export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
   sort: DEFAULT_PR_SORT,
@@ -84,6 +87,7 @@ export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
   attention: 'all',
   briefing: 'all',
   briefingScope: 'matches',
+  merge: 'all',
 };
 export const RECENCY_DAYS = [0, 7, 14, 30, 90, 180, 365] as const;
 export function normalizeQueueFilters(value: unknown): QueueFilters {
@@ -113,6 +117,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     attention: choice('attention', ['all', 'updated', 'requested', 'other'], 'all'),
     briefing: choice('briefing', ['all', ...BRIEFING_STATES], 'all'),
     briefingScope: choice('briefingScope', ['matches', 'all'], 'matches'),
+    merge: choice('merge', ['all', 'conflicts'], 'all'),
   };
 }
 /** Case-sensitive, whole-branch glob. * includes slashes; ? matches one character.
@@ -167,7 +172,9 @@ export function matchesQueueFilters(
   item: QueueItem,
   filters: QueueFilters,
   now = Date.now(),
-  login?: string | null
+  login?: string | null,
+  /** Required for the merge filter. A PR without a known state does not match. */
+  merge?: MergeStates
 ): boolean {
   const { subject, review } = item;
   if (filters.attention !== 'all' && item.attention !== filters.attention) return false;
@@ -198,6 +205,7 @@ export function matchesQueueFilters(
       (filters.status === 'all' ||
         (m.state === 'open' && !m.merged && (filters.status === 'draft' ? m.isDraft : !m.isDraft))) &&
       matchesLabelFilter(m.labels, filters.labels) &&
+      (filters.merge === 'all' || (m.state === 'open' && !m.merged && memberMergeState(m, merge) === 'conflicts')) &&
       recent(m.createdAt, filters.createdWithin) &&
       recent(m.updatedAt, filters.updatedWithin) &&
       `${subject.title} ${m.title} ${m.repo} #${m.number} ${m.author}`
@@ -216,15 +224,16 @@ export function prioritizeBriefings(
   filters: QueueFilters,
   now = Date.now(),
   login?: string | null,
-  signals: QueueSignals[] = []
+  signals: QueueSignals[] = [],
+  merge?: MergeStates
 ): QueueItem[] {
   items = sortQueueItems(items, filters.sort, signals);
   // The briefing filter follows briefing state, so it must not decide which briefing runs next.
   if (filters.briefing !== 'all') filters = { ...filters, briefing: 'all' };
-  const matching = items.filter((item) => matchesQueueFilters(item, filters, now, login));
+  const matching = items.filter((item) => matchesQueueFilters(item, filters, now, login, merge));
   return filters.briefingScope === 'matches'
     ? matching
-    : [...matching, ...items.filter((item) => !matchesQueueFilters(item, filters, now, login))];
+    : [...matching, ...items.filter((item) => !matchesQueueFilters(item, filters, now, login, merge))];
 }
 
 export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueFilters; label: string }[] {
@@ -252,6 +261,7 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
         failed: 'generation failed',
       }[filters.explanation]
     }`,
+    merge: 'Merge conflicts',
     briefing: `Briefing: ${{ all: 'any state', generating: 'generating', queued: 'queued', ready: 'ready', paused: 'paused', failed: 'failed' }[filters.briefing]}`,
     attention: {
       all: 'All changes',
@@ -263,4 +273,34 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
   return (Object.keys(labels) as (keyof QueueFilters)[])
     .filter((key) => key === 'labels' ? labelFilterActive(filters.labels) : filters[key] !== DEFAULT_QUEUE_FILTERS[key])
     .map((key) => ({ key, label: labels[key] ?? '' }));
+}
+
+const NO_CANDIDATES: { url: string; headSha: string }[] = [];
+/**
+ * PR revisions the merge filter must know about: open PRs that match every other filter. Empty while the
+ * filter is off, so turning it off stops all merge-state reads.
+ */
+export function mergeFilterCandidates(
+  items: readonly QueueItem[],
+  filters: QueueFilters,
+  now = Date.now(),
+  login?: string | null
+): { url: string; headSha: string }[] {
+  if (filters.merge === 'all') return NO_CANDIDATES;
+  const others = { ...filters, merge: 'all' as const };
+  const candidates = new Map<string, { url: string; headSha: string }>();
+  for (const item of items) {
+    if (!matchesQueueFilters(item, others, now, login)) continue;
+    for (const member of item.subject.members)
+      if (
+        member.state === 'open' &&
+        !member.merged &&
+        // The status service rejects a whole batch with one malformed request.
+        /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(member.url) &&
+        /^[a-zA-Z0-9_-]{1,64}$/.test(member.headSha) &&
+        matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, others, now, login)
+      )
+        candidates.set(`${member.url}@${member.headSha}`, { url: member.url, headSha: member.headSha });
+  }
+  return [...candidates.values()];
 }

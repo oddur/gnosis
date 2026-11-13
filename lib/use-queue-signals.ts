@@ -5,10 +5,18 @@ import {
   publishQueueSignals,
   signalAccount,
   signalStamp,
+  signalValue,
   signalValues,
   updates,
   type SignalEntry,
 } from './queue-signal-store';
+import {
+  MERGE_RECHECK_DELAY,
+  mergeConflictState,
+  mergeStateSignature,
+  parseMergeStateSignature,
+  type MergeStates,
+} from './merge-conflicts';
 
 export { publishQueueSignals } from './queue-signal-store';
 
@@ -141,4 +149,89 @@ export function useCachedQueueSignals(scope: string | null, requests: QueueSigna
     return () => { cancelled = true; };
   }, [scope, key]);
   return values;
+}
+
+/**
+ * Merge conflict states for these PR revisions, read from the shared store. The snapshot is one character
+ * per PR, so a status refresh that leaves every state unchanged renders nothing. Off: no subscription.
+ */
+export function useMergeStates(scope: string | null, requests: readonly QueueSignalRequest[], enabled: boolean): MergeStates | undefined {
+  const active = enabled && !!scope;
+  const subscribe = useCallback((listener: () => void) => {
+    if (!active || !scope) return () => {};
+    updates.addEventListener(scope, listener);
+    return () => updates.removeEventListener(scope, listener);
+  }, [scope, active]);
+  const signature = useSyncExternalStore(subscribe, () =>
+    active && scope ? mergeStateSignature(requests, (request) => signalValue(scope, request)) : '');
+  return useMemo(() => (active ? parseMergeStateSignature(requests, signature) : undefined), [active, requests, signature]);
+}
+
+export type MergeLoadPhase = 'loading' | 'waiting' | 'rechecking' | 'done';
+/**
+ * Status for every candidate PR while the merge filter is on. Saved status comes first. Revisions without
+ * any go to GitHub through the same coalesced 25-PR batches, service cache and backoff as visible rows.
+ * PRs whose mergeability GitHub was still computing are read once more after a short delay.
+ */
+export async function loadMergeSignals(
+  scope: string,
+  requests: readonly QueueSignalRequest[],
+  options: {
+    cancelled: () => boolean;
+    /** Revisions already re-checked in this filter session. Each one is re-checked at most once. */
+    rechecked: Set<string>;
+    onPhase?: (phase: MergeLoadPhase) => void;
+    delay?: (ms: number) => Promise<void>;
+  }
+) {
+  const { cancelled, rechecked, onPhase } = options;
+  const delay = options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const missing = () => requests.filter((request) => !signalValue(scope, request));
+  onPhase?.('loading');
+  if (!(await restoreSaved(scope, missing(), cancelled))) return;
+  const unknown = missing();
+  if (unknown.length) {
+    await Promise.all(unknown.map((request) => read(scope, request)));
+    if (cancelled()) return;
+  }
+  const computing = () =>
+    requests.filter((request) => mergeConflictState(signalValue(scope, request)) === 'computing' && !rechecked.has(queueSignalKey(request)));
+  if (computing().length) {
+    onPhase?.('waiting');
+    await delay(MERGE_RECHECK_DELAY);
+    if (cancelled()) return;
+    const recheck = computing();
+    onPhase?.('rechecking');
+    for (let i = 0; i < recheck.length; i += 25) {
+      const chunk = recheck.slice(i, i + 25);
+      for (const request of chunk) rechecked.add(queueSignalKey(request));
+      const values = await window.electronAPI.getQueueSignals(chunk, { recheckMerge: true }).catch(() => []);
+      if (cancelled()) return;
+      publishQueueSignals(scope, values);
+    }
+  }
+  onPhase?.('done');
+}
+
+/** Loads status for the merge filter while it is on. Off: no reads and a constant result. */
+export function useMergeFilter(scope: string | null, requests: readonly QueueSignalRequest[], enabled: boolean) {
+  const states = useMergeStates(scope, requests, enabled);
+  const [phase, setPhase] = useState<MergeLoadPhase>('loading');
+  const rechecked = useRef<{ scope: string | null; keys: Set<string> }>({ scope: null, keys: new Set() });
+  const key = enabled && scope ? JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha }))) : '';
+  useEffect(() => {
+    if (!key || !scope) {
+      rechecked.current = { scope: null, keys: new Set() };
+      return;
+    }
+    if (rechecked.current.scope !== scope) rechecked.current = { scope, keys: new Set() };
+    let cancelled = false;
+    void loadMergeSignals(scope, JSON.parse(key) as QueueSignalRequest[], {
+      cancelled: () => cancelled,
+      rechecked: rechecked.current.keys,
+      onPhase: (next) => { if (!cancelled) setPhase(next); },
+    });
+    return () => { cancelled = true; };
+  }, [scope, key]);
+  return { states, phase: enabled ? phase : ('done' as const) };
 }

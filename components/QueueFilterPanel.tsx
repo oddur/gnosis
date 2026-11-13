@@ -41,6 +41,7 @@ export function QueueFilterPanel({
         ['draft', 'Draft'],
       ],
     },
+    { key: 'merge', label: 'Merge conflicts', options: [['all', 'Any'], ['conflicts', 'Has conflicts']] },
     { key: 'author', label: 'Author', options: [['all', 'Anyone'], ...authors.map((a) => [a, a] as [string, string])] },
     {
       key: 'createdWithin',
@@ -204,6 +205,7 @@ export function QueueFilterPanel({
         <p>Target branch matches the whole name, including case. Use * for any text (including /), or ? for one character. Leave it blank for any branch.</p>
         <p>Use “PR created” to exclude old PRs, even if they were updated recently.</p>
         <p>“Up to date” means the AI explanation matches the latest loaded PR data.</p>
+        <p>“Has conflicts” loads GitHub’s merge state for every matching PR. PRs whose state GitHub is still computing are counted above the list, not listed.</p>
         <p>“Involving me” also reduces PR details fetched from GitHub. Related stack PRs stay included.</p>
         <p>
           Automatic briefings use your daily attempt limit. Changing filters lets the current briefing finish. Saved
