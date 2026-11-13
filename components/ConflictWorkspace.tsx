@@ -3,9 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { UnresolvedFile } from '@pierre/diffs';
 import { CodeView, EditProvider, File, MultiFileDiff } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
-import { Check, CircleAlert, CircleCheck, CheckCheck, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, CircleAlert, CircleCheck, CheckCheck, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from './ui/button';
 import { RestackReview } from './RestackReview';
+import { StepCard, StepList } from './StepCard';
+import { conflictSteps } from '../lib/action-steps';
 import { ToastHost } from './ui/toast';
 import { BranchBadge, PrBadge, RepositoryBadge } from './EntityBadge';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
@@ -137,6 +139,10 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [resetPrompt, setResetPrompt] = useState(false);
   const [outcome, setOutcome] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
+  // Reviewing the update and pushing it are separate steps; the push is the point of no return.
+  const [confirming, setConfirming] = useState(false);
+  const [failedKind, setFailedKind] = useState<ConflictRequest['kind']>();
+  const continueToPush = useRef<HTMLButtonElement>(null);
   const file = session?.files.find((f) => f.path === selected);
   const dirty = (!!file && contents !== file.result) || restackDirty;
   const fileStates =
@@ -155,6 +161,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   function apply(reply: ConflictReply, selection = selected) {
     setSession(reply.session);
     setPreview(reply.preview);
+    setConfirming(false);
     const next =
       reply.session.files.find((f) => f.path === selection) ??
       (reply.session.files.length ? reply.session.files[0] : undefined);
@@ -197,9 +204,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     pending.current = true;
     setBusy(true);
     setError('');
+    setFailedKind(undefined);
+    let kind: ConflictRequest['kind'] | undefined;
     try {
       const saved = await saveDraft(session);
       const request = build(saved);
+      kind = request.kind;
       const reply = await window.electronAPI.conflictResolution(request);
       const destination = advance ? (nextFile?.path ?? selected) : selected;
       apply(reply, destination);
@@ -221,6 +231,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       }
     } catch (e) {
       setError(errorText(e));
+      setFailedKind(kind);
     } finally {
       pending.current = false;
       setBusy(false);
@@ -231,6 +242,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     pending.current = true;
     setBusy(true);
     setError('');
+    setFailedKind(undefined);
     try {
       apply(await window.electronAPI.conflictResolution({ kind: 'open', url, restart }));
       setResetPrompt(false);
@@ -282,6 +294,25 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       setBusy(false);
     }
   }
+  useEffect(() => {
+    if (preview && !confirming) continueToPush.current?.focus();
+  }, [preview, confirming]);
+  // Failures of the push and restack steps are shown inside the failing step.
+  const stepError = failedKind === 'publish' || !!failedKind?.startsWith('restack-');
+  const steps = session
+    ? conflictSteps(session, {
+        preview: !!preview,
+        confirming,
+        running: busy && confirming,
+        failure:
+          failedKind === 'publish' && error
+            ? {
+                step: 'push',
+                message: `${error} Check again before retrying; Gnosis does not resend the push.`,
+              }
+            : undefined,
+      })
+    : undefined;
   const canEdit = !!file && !file.unsupported && !busy && !session?.stale && session?.status === 'editing';
   return (
     <Dialog
@@ -330,13 +361,16 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           </Button>
         </div>
         <ToastHost />
-        {session?.status === 'editing' && (
+        {session?.status === 'editing' && !confirming && (
           <div className="conflict-workflow">
-            <ol aria-label="Resolution steps">
-              <li aria-current={!preview ? 'step' : undefined}>1. Resolve files</li>
-              <li aria-current={preview ? 'step' : undefined}>2. Review update</li>
-              <li>3. Commit &amp; push</li>
-            </ol>
+            {steps && (
+              <>
+                <span className="step-card-count" aria-hidden="true">
+                  {steps.current + 1} / {steps.steps.length}
+                </span>
+                <StepList compact steps={steps.steps} current={steps.current} label="Resolution steps" />
+              </>
+            )}
             <span>Local draft · Nothing pushed</span>
             <Button
               variant="ghost"
@@ -374,7 +408,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             {outcome}
           </div>
         )}
-        {error && (
+        {error && !stepError && (
           <div className="conflict-notice" role="alert">
             {error}
             {!session && (
@@ -407,8 +441,17 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           </div>
         )}
         {!session ? (
-          busy ? <LoadingState title="Preparing conflicts…" description="Progress and cancellation are in Activity." hint="You can keep browsing." /> :
-          <div className="conflict-empty"><p>The workspace could not be prepared.</p></div>
+          busy ? (
+            <LoadingState
+              title="Preparing conflicts…"
+              description="Progress and cancellation are in Activity."
+              hint="You can keep browsing."
+            />
+          ) : (
+            <div className="conflict-empty">
+              <p>The workspace could not be prepared.</p>
+            </div>
+          )
         ) : session.status === 'published' ? (
           <div className="conflict-published" data-restack={!!session.dependents?.length}>
             <div className="conflict-published-result">
@@ -424,6 +467,10 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 session={session}
                 busy={busy}
                 options={options}
+                error={failedKind?.startsWith('restack-') ? error : undefined}
+                failedKind={failedKind}
+                onRecheck={() => void load()}
+                onSkip={() => void close()}
                 onDrafts={(drafts) => {
                   restackDrafts.current = drafts;
                   setRestackDirty(
@@ -443,6 +490,54 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 }
               />
             )}
+          </div>
+        ) : preview && confirming && steps ? (
+          <div className="conflict-confirm">
+            <StepCard
+              autoFocus
+              title={<h2>Update {session.headBranch}</h2>}
+              steps={steps.steps}
+              current={steps.current}
+              busy={busy}
+              onBack={() => {
+                setConfirming(false);
+                setError('');
+                setFailedKind(undefined);
+              }}
+              backLabel="Back to update"
+              onRetry={() => void load()}
+              retryLabel="Check again"
+              continueLabel={busy ? 'Pushing merge commit…' : 'Commit & push to PR branch'}
+              continueDisabled={!message.trim() || failedKind === 'publish'}
+              onContinue={() =>
+                void act((s) => ({
+                  kind: 'publish',
+                  id: s.id,
+                  version: s.version,
+                  previewToken: preview.token,
+                  message,
+                }))
+              }
+            >
+              <label className="conflict-confirm-message">
+                Merge commit message · {session.headBranch}
+                <input value={message} maxLength={2000} disabled={busy} onChange={(e) => setMessage(e.target.value)} />
+              </label>
+              <ul className="conflict-confirm-facts">
+                <li>
+                  Creates a merge commit of <BranchBadge branch={session.baseBranch} repo={session.baseRepo} /> into{' '}
+                  <BranchBadge branch={session.headBranch} repo={session.headRepo} />, with{' '}
+                  {session.files.length
+                    ? `your ${session.files.length} reviewed ${session.files.length === 1 ? 'file' : 'files'}`
+                    : 'Git’s clean merge'}
+                  .
+                </li>
+                <li>
+                  Pushes only if the branch is still at <code>{session.headSha.slice(0, 7)}</code>. The PR stays open;
+                  checks run again.
+                </li>
+              </ul>
+            </StepCard>
           </div>
         ) : preview ? (
           <>
@@ -468,23 +563,10 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
               style={{ height: '100%', overflow: 'auto' }}
             />
             <div className="conflict-publish">
-              <label>
-                Merge commit message · {session.headBranch}
-                <input value={message} maxLength={2000} onChange={(e) => setMessage(e.target.value)} />
-              </label>
-              <Button
-                disabled={busy || !message.trim()}
-                onClick={() =>
-                  void act((s) => ({
-                    kind: 'publish',
-                    id: s.id,
-                    version: s.version,
-                    previewToken: preview.token,
-                    message,
-                  }))
-                }
-              >
-                {busy ? 'Pushing merge commit…' : 'Commit & push to PR branch'}
+              <span>Nothing has been committed or pushed.</span>
+              <Button ref={continueToPush} disabled={busy} onClick={() => setConfirming(true)}>
+                Continue
+                <ArrowRight size={14} aria-hidden="true" />
               </Button>
             </div>
           </>
