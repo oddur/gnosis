@@ -4688,8 +4688,11 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .explanation-context summary { cursor:pointer;color:var(--muted-foreground); }
 .explanation-context .reading-prose { margin-top:12px; }
 .explanation-section { display:grid;grid-template-columns:minmax(0, 2fr) minmax(0, 3fr);gap:32px;border-bottom:1px solid var(--border);align-items:start; }
-/* A column taller than the viewport gets an inline top from lib/explanation-column-layout.ts. */
-.explanation-column { min-width:0;position:sticky;top:16px; }
+/* lib/explanation-column-layout.ts marks a column shorter than its row's tallest as sticky, and gives it an inline
+   top when it is taller than the viewport. The tallest column stays in normal flow: browser scroll anchoring skips
+   sticky boxes, so a section needs one column to anchor in, or content that grows inside it pushes the page (#288). */
+.explanation-column { min-width:0; }
+.explanation-column[data-sticky] { position:sticky;top:16px; }
 /* Chunks outside the viewport skip style, layout and paint. They stay in the DOM, so find-in-page, focus, selection
    and deep links still reach them. Estimates hold their place until a chunk is first seen; `auto` then keeps its
    real height. The clip margin keeps focus rings and edge controls visible under paint containment. */
@@ -4723,7 +4726,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .explanation-ending-note { color:var(--muted-foreground);font-size:var(--type-caption);line-height:1.6; }
 @container explanation-reader (max-width:850px) {
   .explanation-section { grid-template-columns:minmax(0,1fr);gap:24px; }
-  .explanation-column { position:static; }
+  .explanation-column[data-sticky] { position:static; }
   .explanation-section-text { max-width:72ch; }
   .explanation-document > section { padding:24px 20px; }
 }

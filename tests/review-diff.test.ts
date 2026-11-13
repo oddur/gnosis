@@ -11,6 +11,7 @@ import {
   estimateCodeColumnHeight,
   estimateFileBlockHeight,
   estimateHunkBlockHeight,
+  estimateSlicedBlockHeight,
   reviewHunkSlices,
 } from '../lib/review-diff';
 import type { DiffHunk } from '../lib/types';
@@ -203,4 +204,17 @@ void test('placeholder heights follow the shown rows, folded context and collaps
     viewed: (path) => path === 'other.ts',
   });
   assert.equal(column, 80 + 20 + (48 + 100 * CODE_LINE_HEIGHT + 8) + 20 + 48);
+});
+
+void test('a sliced block is estimated from its line count, not a fixed placeholder', () => {
+  // 3,000 lines in fifteen 200-line slices: about 60,000px, where the stylesheet's fallback was 400px (#288).
+  assert.equal(estimateSlicedBlockHeight([{ start: 0, end: 3000, hidden: false }]), 15 * (200 * CODE_LINE_HEIGHT + 8));
+  // Folded ranges count as one bar each.
+  assert.equal(
+    estimateSlicedBlockHeight([
+      { start: 0, end: 10, hidden: true },
+      { start: 10, end: 17, hidden: false },
+    ]),
+    1.5 * CODE_LINE_HEIGHT + 7 * CODE_LINE_HEIGHT + 8
+  );
 });
