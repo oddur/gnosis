@@ -84,9 +84,63 @@ void app.whenReady().then(async () => {
     const answer =
       'The queue keeps one command in flight per worker.\n\n- **Before dispatch:** reserve the worker slot.\n- **On acknowledgment:** release the slot, then send the next command.\n- **On failure:** retry the same command before advancing.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```';
     await emit(answer);
+    // The trace shows the context Gnosis assembled, live, before the answer settles.
+    await wait("!!document.querySelector('.chat-trace[data-streaming]')");
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.chat-trace-chips .chat-trace-chip')].map(c=>c.textContent)"),
+      ['Selected code', 'queue.tsL40–120', 'worker.tsL10–14', 'PR description']
+    );
     await capture('topic-streaming-light');
     await finish(answer);
     await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
+    await wait("!document.querySelector('.chat-trace[data-streaming]')");
+    const toggle = "document.querySelector('.chat-trace-toggle')";
+    assert.equal(await js(`${toggle}.getAttribute('aria-expanded')`), 'false', 'Completed traces collapse');
+    assert.equal(await js(`${toggle}.getAttribute('aria-label')`), 'Context used, 4 sources');
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.chat-trace-chips .chat-trace-chip')].map(c=>c.textContent)"),
+      ['queue.tsL40–120', 'worker.tsL10–14'],
+      'The summary favours file chips'
+    );
+    assert.ok(
+      await js("[...document.querySelectorAll('.chat-trace-chip-label')].every(l=>l.scrollWidth<=l.clientWidth)"),
+      'Collapsed file names are not truncated'
+    );
+    assert.equal(await js("document.querySelector('.chat-trace-more').textContent"), '2 more');
+    assert.ok(
+      (await js<number>("document.querySelector('.chat-trace-row').getBoundingClientRect().height")) < 30,
+      'Collapsed trace is one line'
+    );
+    await capture('topic-trace-collapsed-light');
+    await click('Open src/queue.ts lines 40 to 120 in Changes');
+    assert.deepEqual(
+      await js('window.chatFixture.opened.map(s=>[s.path,s.startLine,s.endLine,s.side])'),
+      [['src/queue.ts', 40, 120, 'after']],
+      'File chips open their line range'
+    );
+    assert.equal(
+      await js("document.querySelector('.chat-trace-chips span.chat-trace-chip')?.textContent ?? 'none'"),
+      'none',
+      'The summary shows only chips that open a file here'
+    );
+    await click('Context used, 4 sources');
+    assert.equal(await js(`${toggle}.getAttribute('aria-expanded')`), 'true');
+    assert.equal(await js(`document.getElementById(${toggle}.getAttribute('aria-controls')).hidden`), false);
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.chat-trace-steps .chat-trace-verb')].map(v=>v.textContent)"),
+      ['Selected code', 'Diff', 'Diff', 'Pull request']
+    );
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.chat-trace-steps span.chat-trace-chip')].map(c=>c.textContent)"),
+      ['Selected code', 'PR description'],
+      'Steps without a location are labels, not controls'
+    );
+    await capture('topic-trace-expanded-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('topic-trace-expanded-dark');
+    await click('Context used, 4 sources');
+    await capture('topic-trace-collapsed-dark');
+    await js("document.documentElement.classList.remove('dark')");
     assert.equal(await js("document.querySelector('textarea').value"), 'What happens if a worker stops?');
     await click('Copy answer');
     await wait('!!document.querySelector(\'[aria-label="Answer copied"]\')');
@@ -94,6 +148,17 @@ void app.whenReady().then(async () => {
     assert.equal(clipboard.readText().replace(/\r\n/g, '\n'), answer);
     await click('Send question');
     await emit('The worker slot stays reserved until recovery.');
+    // Tool calls replayed from a recorded Claude stream-json run join the trace live.
+    for (const line of fs.readFileSync(path.resolve('tests/fixtures/claude-tool-stream.jsonl'), 'utf8').split('\n'))
+      await js(`window.chatFixture.claudeLine(${JSON.stringify(line)})`);
+    await wait(
+      "document.querySelectorAll('.chat-trace')[1]?.querySelector('.chat-trace-toggle').textContent==='What the AI looked at'"
+    );
+    assert.equal(
+      await js("document.querySelectorAll('.chat-trace')[1].querySelectorAll('.chat-trace-chip').length"),
+      7,
+      'Context and the three reported tool calls appear while streaming'
+    );
     await wait("document.querySelectorAll('[data-slot=message-scroller-item]').length===4");
     await new Promise((r) => setTimeout(r, 300));
     const anchor = await js<number>(
@@ -152,10 +217,31 @@ void app.whenReady().then(async () => {
     await capture('file-error-narrow-dark');
     await click('Retry answer');
     assert.equal(await js('window.chatFixture.requests.at(-1).selection'), 'return command.result;');
+    // The main process sends the file context it assembled for this request.
+    await js(
+      `window.chatFixture.trace(${JSON.stringify([
+        {
+          id: 'context:file',
+          source: 'context',
+          kind: 'file',
+          label: 'queue.ts',
+          detail: 'src/queue.ts · before and after',
+          path: 'src/queue.ts',
+        },
+      ])})`
+    );
+    await wait("document.querySelector('.chat-trace-toggle')?.textContent==='Context used'");
     await finish(
       'The caller receives the result only after **acknowledgment**. A failed command stays in the queue for retry.'
     );
     await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
+    assert.match(
+      await js<string>(
+        "Object.keys(localStorage).filter(k=>k.startsWith('gnosis-file-chat:v1:')).map(k=>localStorage.getItem(k)).join()"
+      ),
+      /"trace":\{"steps":\[\{"id":"context:file"/,
+      'The trace is saved with the file conversation'
+    );
     await fill('Keep my draft');
     await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Switch file').focus()");
     await click('Switch file');

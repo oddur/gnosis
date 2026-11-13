@@ -68,6 +68,7 @@ export function PrFileInspection({
   onOpenCurrentFile,
   classificationControl,
   sourceLine,
+  sourceEndLine,
   renderFeedbackThread,
   focusThreadId,
   sourceSide = 'after',
@@ -78,6 +79,8 @@ export function PrFileInspection({
 }: {
   entry: ChangeFileEntry;
   sourceLine?: number;
+  /** Last line of a jump range; defaults to `sourceLine`. */
+  sourceEndLine?: number;
   focusThreadId?: string;
   renderFeedbackThread?: (thread: import('../lib/review-threads').GitHubReviewThread) => ReactNode;
   sourceSide?: 'before' | 'after';
@@ -488,9 +491,10 @@ export function PrFileInspection({
     if (sourceLine || focusThreadId) {
       opened.current = true;
       setJumpedOpen(true);
-      if (sourceLine) openMarkdownSource({ side: sourceSide, start: sourceLine, end: sourceLine });
+      if (sourceLine)
+        openMarkdownSource({ side: sourceSide, start: sourceLine, end: Math.max(sourceLine, sourceEndLine ?? sourceLine) });
     }
-  }, [sourceLine, sourceSide, activeKey, focusThreadId]);
+  }, [sourceLine, sourceEndLine, sourceSide, activeKey, focusThreadId]);
   function chooseMarkdownMode(mode: 'source' | 'preview') {
     const section = sectionRef.current;
     const top = Math.max(0, section?.closest('.commit-diff-stream')?.getBoundingClientRect().top ?? 0) + 130;

@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { useSlideChat } from '../lib/use-slide-chat';
 import { createCodexEventHandler } from '../lib/providers/codex';
 import type { ReviewGuide, SendSlideChatRequest } from '../lib/types';
+import { toolCallStep, type ChatTraceStep } from '../lib/chat-trace';
 
 const review: ReviewGuide = {
   prTitle: 'Fix addition',
@@ -46,6 +47,7 @@ for (const provider of ['codex', 'claude'] as const) {
     Object.defineProperty(globalThis, 'window', { value: dom.window, configurable: true });
     Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { value: true, configurable: true });
     let onProgress: ((chunk: string) => void) | undefined;
+    let onTrace: ((event: { requestId?: string; steps: ChatTraceStep[] }) => void) | undefined;
     let finish: ((answer: string) => void) | undefined;
     let fail: ((error: Error) => void) | undefined;
     const requests: SendSlideChatRequest[] = [];
@@ -61,8 +63,12 @@ for (const provider of ['codex', 'claude'] as const) {
       offChatProgress: () => {
         onProgress = undefined;
       },
-      onChatToolUse: () => {},
-      offChatToolUse: () => {},
+      onChatTrace: (callback: (event: { requestId?: string; steps: ChatTraceStep[] }) => void) => {
+        onTrace = callback;
+        return () => {
+          onTrace = undefined;
+        };
+      },
       sendSlideChat: (request: SendSlideChatRequest) => {
         requests.push(request);
         return new Promise<string>((resolve, reject) => {
@@ -132,6 +138,30 @@ for (const provider of ['codex', 'claude'] as const) {
       }
     });
     assert.equal(container.querySelector('h2')?.textContent, 'Explanation', 'Markdown is intact while streaming');
+    // The topic context is known when the question is sent; reported tool calls arrive live.
+    assert.deepEqual(
+      getChat()
+        .getMessages(1)[1]
+        .trace?.steps.map((step) => step.kind),
+      []
+    );
+    await update(() => {
+      onTrace?.({
+        requestId: 'another-request',
+        steps: [toolCallStep({ id: 'x', name: 'Bash', input: { command: 'ls' } })],
+      });
+      onTrace?.({
+        requestId: requests[0].requestId,
+        steps: [toolCallStep({ id: 'r', name: 'Read', input: { file_path: 'math.ts', offset: 1, limit: 3 } })],
+      });
+    });
+    assert.deepEqual(
+      getChat()
+        .getMessages(1)[1]
+        .trace?.steps.map((step) => [step.source, step.label]),
+      [['agent', 'math.ts']],
+      'Only this request’s tool calls join the trace'
+    );
     assert.equal(
       getChat().getMessages(1)[1].content,
       provider === 'codex' ? `Preparing the answer\n\n${answer}` : answer

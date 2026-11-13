@@ -308,11 +308,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   offChatProgress: (): void => {
     ipcRenderer.removeAllListeners('chat-progress');
   },
-  onChatToolUse: (callback: (toolName: string) => void): void => {
-    ipcRenderer.on('chat-tool-use', (_event, { toolName }: { toolName: string }) => callback(toolName));
-  },
-  offChatToolUse: (): void => {
-    ipcRenderer.removeAllListeners('chat-tool-use');
+  onChatTrace: (
+    callback: (event: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }) => void
+  ): (() => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      value: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }
+    ) => callback(value);
+    ipcRenderer.on('chat-trace', listener);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('chat-trace', listener);
+    };
   },
   conflictResolution: (
     request: import('../lib/conflict-resolution').ConflictRequest

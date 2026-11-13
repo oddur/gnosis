@@ -603,6 +603,20 @@ function PrSummaryContent({
             onShowActivity={onShowActivity}
             onBack={back}
             onOpenChanges={() => onTabChange('changes')}
+            onOpenChangesFile={(target) => {
+              const member = item.subject.members.find((m) => m.url === target.url) ?? activeMember;
+              // Lines only apply to the revision the answer read; a newer head opens just the file.
+              const current = !!target.headSha && member.headSha === target.headSha;
+              setInitialFile({
+                url: member.url,
+                path: target.path,
+                headSha: current ? target.headSha : undefined,
+                line: current ? target.line : undefined,
+                endLine: current ? target.endLine : undefined,
+                side: target.side,
+              });
+              onTabChange('changes');
+            }}
           />
         </Tabs.Content>
         <KeptTab value="summary" tab={tab} visited={visited} className="pr-summary-content" ref={page} onScroll={remember}>

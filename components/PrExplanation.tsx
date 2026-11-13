@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { ExplanationBuild, taskSteps, type ExplanationRowActions } from './ExplanationBuild';
 import { inspectionData } from '../lib/inspection-cache';
 import { GITHUB_PR_FILE_LIMIT } from '../lib/inspection-limits';
-import { ReviewPage } from '../src/pages/ReviewPage';
+import { ReviewPage, type ChangesFileTarget } from '../src/pages/ReviewPage';
 import { ReviewDraftBoundary, useSessionDraft } from '../lib/session-drafts';
 import { loadExplanation, peekExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
 import { fingerprint, subjectForReview, type QueueItem } from '../lib/workbench';
@@ -31,6 +31,7 @@ export function PrExplanation({
   onShowActivity,
   onBack,
   onOpenChanges,
+  onOpenChangesFile,
 }: {
   item: QueueItem;
   entries: ReviewHistoryEntry[];
@@ -45,6 +46,7 @@ export function PrExplanation({
   onShowActivity: () => void;
   onBack: () => void;
   onOpenChanges: () => void;
+  onOpenChangesFile?: (target: ChangesFileTarget) => void;
 }) {
   countRender('PrExplanation');
   useSyncExternalStore(inspectionData.subscribe, inspectionData.getVersion);
@@ -471,6 +473,7 @@ export function PrExplanation({
             onShowDraftProgress={readingDraft ? () => setShowProgress(true) : undefined}
             onShowActivity={onShowActivity}
             onOpenChanges={onOpenChanges}
+            onOpenChangesFile={onOpenChangesFile}
             initialSlideId={readingDraft ? reading.slideId : initialSlideId}
             commandDestination={
               readingDraft && draft.reviewId

@@ -13,6 +13,8 @@ import {
   MessageScrollerButton,
 } from './ui/message-scroller';
 import type { ChatMessage } from '../lib/use-slide-chat';
+import type { ChatTraceStep } from '../lib/chat-trace';
+import { ChatTraceView } from './ChatTrace';
 
 function AnswerCopy({ content }: { content: string }) {
   const [copied, setCopied] = useState(false);
@@ -51,12 +53,15 @@ export function ChatConversation({
   messages,
   busy,
   onRetry,
+  onOpenTraceStep,
   empty,
 }: {
   conversationId: string;
   messages: ChatMessage[];
   busy: boolean;
   onRetry?: (id: string) => void;
+  /** Opens a file step in the PR's Changes view. Without it, file chips are plain labels. */
+  onOpenTraceStep?: (step: ChatTraceStep) => void;
   empty: ReactNode;
 }) {
   const streaming = messages.some((message) => message.isStreaming);
@@ -87,18 +92,8 @@ export function ChatConversation({
                   <Message align={message.role === 'user' ? 'end' : 'start'} className="chat-message">
                     <MessageContent>
                       <MessageHeader>{message.role === 'user' ? 'You' : 'Gnosis'}</MessageHeader>
-                      {message.toolCalls?.length ? (
-                        <details className="chat-tools">
-                          <summary>
-                            {message.isStreaming ? 'Checking context' : 'Context checked'} · {message.toolCalls.length}{' '}
-                            {message.toolCalls.length === 1 ? 'tool' : 'tools'}
-                          </summary>
-                          <ul>
-                            {message.toolCalls.map((tool) => (
-                              <li key={tool}>{tool}</li>
-                            ))}
-                          </ul>
-                        </details>
+                      {message.role === 'assistant' && message.trace?.steps.length ? (
+                        <ChatTraceView trace={message.trace} streaming={message.isStreaming} onOpen={onOpenTraceStep} />
                       ) : null}
                       {message.selection && (
                         <details className="chat-quote">

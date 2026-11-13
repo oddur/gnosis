@@ -148,8 +148,9 @@ declare global {
       sendSlideChat: (req: SendSlideChatRequest) => Promise<string>;
       onChatProgress: (callback: (chunk: string) => void) => void;
       offChatProgress: () => void;
-      onChatToolUse: (callback: (toolName: string) => void) => void;
-      offChatToolUse: () => void;
+      onChatTrace: (
+        callback: (event: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }) => void
+      ) => () => void;
       conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest) => Promise<import('../lib/conflict-resolution').ConflictReply>;
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
       getStackMergePlan: (urls: string[]) => Promise<import('../lib/pr-actions').PrMergePlan>;

@@ -1,4 +1,5 @@
 import { chatQuestion } from './chat-context';
+import { appendTraceSteps, parseChatTrace } from './chat-trace';
 import { useSyncExternalStore } from 'react';
 import type { FileChatRequest } from './pr-changes';
 import type { ChatMessage } from './use-slide-chat';
@@ -36,6 +37,7 @@ function get(key: string): Session {
               content: entry.content,
               selection: 'selection' in entry && typeof entry.selection === 'string' ? entry.selection : undefined,
               error: 'error' in entry && typeof entry.error === 'string' ? entry.error : undefined,
+              trace: 'trace' in entry ? parseChatTrace(entry.trace) : undefined,
               stopped:
                 ('isStreaming' in entry && entry.isStreaming === true) ||
                 ('stopped' in entry && entry.stopped === true),
@@ -95,6 +97,7 @@ async function send(key: string, request: Omit<FileChatRequest, 'history'>, retr
     );
   update(key, { messages, busy: true, error: '' });
   let unsubscribe: (() => void) | undefined;
+  let offTrace: (() => void) | undefined;
   try {
     unsubscribe = // Older browser fixtures predate streaming; production preload always supplies this.
       (window.electronAPI as Partial<Window['electronAPI']>).onFileChatProgress?.((event) => {
@@ -102,6 +105,13 @@ async function send(key: string, request: Omit<FileChatRequest, 'history'>, retr
         const current = get(key).messages.find((m) => m.id === assistant.id);
         patch({ content: (current?.content ?? '') + event.chunk }, true, false);
       });
+    // Context arrives from the main process before the answer; agent tool calls follow live.
+    // Like chunks, trace updates stay in memory until the answer settles and is saved.
+    offTrace = (window.electronAPI as Partial<Window['electronAPI']>).onChatTrace?.((event) => {
+      if (event.requestId !== run.requestId || run.stopped) return;
+      const current = get(key).messages.find((m) => m.id === assistant.id);
+      patch({ trace: appendTraceSteps(current?.trace, event.steps) }, true, false);
+    });
     const history = before.messages
       .filter(
         (m, i) =>
@@ -118,6 +128,7 @@ async function send(key: string, request: Omit<FileChatRequest, 'history'>, retr
     return false;
   } finally {
     unsubscribe?.();
+    offTrace?.();
     if (run.stopped) patch({ isStreaming: false, stopped: true }, false);
     runs.delete(key);
   }
