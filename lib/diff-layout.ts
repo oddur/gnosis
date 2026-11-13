@@ -122,53 +122,100 @@ export function followScrollAnchor(scroller: HTMLElement, resolve: () => number 
   return stop;
 }
 
-/** Scroll to a target that can move while lazily drawn content changes height on the way. A destination computed
- * before a smooth scroll begins goes stale as the chunks it passes render, and browser scroll anchoring cannot
- * help: that content is below the anchor. So the scroll is aimed again whenever the target moves, and finishes on
- * the target itself (#288). The reader's wheel, pointer or key press, or the returned function, stops it. */
-export function scrollToMovingTarget(
-  scroller: HTMLElement,
-  resolve: () => number | undefined,
-  { smooth, limit = 5000 }: { smooth: boolean; limit?: number }
-) {
-  const clamp = (top: number) => Math.max(0, Math.min(top, scroller.scrollHeight - scroller.clientHeight));
+/** Hold a scroll target in place for `duration` ms while content around it renders. Corrections run in a
+ * ResizeObserver callback, after layout and before paint, so the target does not flicker. When browser scroll
+ * anchoring moves scrollTop and the target stays put, that is accepted. Any other scroll comes from the reader, a
+ * link or find in page: it wins and ends the hold, as does the reader's wheel, pointer or key press. Returns a
+ * function that stops. */
+export function holdScrollTarget(scroller: HTMLElement, resolve: () => number | undefined, duration = 1000) {
   const inputs = ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const;
-  const until = performance.now() + limit;
-  let frame = 0;
-  const stop = () => {
-    cancelAnimationFrame(frame);
-    scroller.removeEventListener('scrollend', land);
-    for (const type of inputs) scroller.removeEventListener(type, stop);
-  };
-  function land() {
-    stop();
-    // Only a scroll that ended where this one aimed is corrected; a jump elsewhere, as to a find match, wins.
-    const top = resolve();
-    if (top === undefined || Math.abs(scroller.scrollTop - destination) > scroller.clientHeight) return;
-    if (Math.abs(clamp(top) - scroller.scrollTop) > 1) scroller.scrollTo({ top: clamp(top), behavior: 'instant' });
-  }
-  const first = resolve();
-  if (first === undefined) return stop;
-  let destination = clamp(first);
-  if (!smooth) {
-    scroller.scrollTo({ top: destination, behavior: 'instant' });
-    return stop;
-  }
-  const step = () => {
-    if (performance.now() > until || !scroller.isConnected || scroller.clientHeight === 0) {
+  let expected = scroller.scrollTop;
+  let stopped = false;
+  const check = () => {
+    if (stopped) return;
+    if (!scroller.isConnected || scroller.clientHeight === 0) {
       stop();
       return;
     }
     const top = resolve();
-    if (top !== undefined && Math.abs(clamp(top) - destination) > 1) {
-      destination = clamp(top);
-      scroller.scrollTo({ top: destination, behavior: 'smooth' });
-    }
-    frame = requestAnimationFrame(step);
+    if (top === undefined) return;
+    const target = Math.max(0, Math.min(top, scroller.scrollHeight - scroller.clientHeight));
+    if (Math.abs(scroller.scrollTop - expected) > 1) {
+      if (Math.abs(target - scroller.scrollTop) > 1) {
+        stop();
+        return;
+      }
+    } else if (Math.abs(target - scroller.scrollTop) > 1) scroller.scrollTop = target;
+    expected = scroller.scrollTop;
   };
+  const observer = new ResizeObserver(check);
+  const timer = setTimeout(stop, duration);
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    clearTimeout(timer);
+    observer.disconnect();
+    scroller.removeEventListener('scroll', check);
+    for (const type of inputs) scroller.removeEventListener(type, stop);
+  }
+  // Any change of height inside the scroller changes the height of one of its children.
+  for (const child of scroller.children) observer.observe(child);
+  scroller.addEventListener('scroll', check, { passive: true });
+  for (const type of inputs) scroller.addEventListener(type, stop, { passive: true });
+  return stop;
+}
+
+/** Scroll to a target that can move while lazily drawn content changes height on the way. A destination computed
+ * before a smooth scroll begins goes stale as the chunks it passes render, and browser scroll anchoring cannot
+ * help: that content is below the anchor. So when the scroll ends it is put on the target itself, which is then
+ * held for `settle` ms while what it landed on renders (#288). Aiming the smooth scroll again as the target moves
+ * restarts its easing every frame, so it crawls. The reader's wheel, pointer or key press, or the returned
+ * function, stops it. */
+export function scrollToMovingTarget(
+  scroller: HTMLElement,
+  resolve: () => number | undefined,
+  { smooth, settle = 1000, limit = 5000 }: { smooth: boolean; settle?: number; limit?: number }
+) {
+  const clamp = (top: number) => Math.max(0, Math.min(top, scroller.scrollHeight - scroller.clientHeight));
+  const inputs = ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const;
+  let stopped = false;
+  let hold: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+  const detach = () => {
+    clearTimeout(timer);
+    scroller.removeEventListener('scrollend', land);
+    for (const type of inputs) scroller.removeEventListener(type, stop);
+  };
+  function stop() {
+    stopped = true;
+    detach();
+    hold?.();
+  }
+  function land() {
+    detach();
+    if (stopped || !scroller.isConnected || scroller.clientHeight === 0) return;
+    // Only a scroll that ended where it aimed, or where scroll anchoring moved that as the target moved, is
+    // followed. Anything else was another scroll, from a link, find in page or code, and it wins.
+    const top = resolve();
+    if (top === undefined) return;
+    const target = clamp(top);
+    const position = scroller.scrollTop;
+    if (position < Math.min(destination, target) - 2 || position > Math.max(destination, target) + 2) return;
+    if (Math.abs(target - position) > 1) scroller.scrollTo({ top: target, behavior: 'instant' });
+    hold = holdScrollTarget(scroller, resolve, settle);
+  }
+  const first = resolve();
+  if (first === undefined) return stop;
+  const destination = clamp(first);
+  // A smooth scroll that has nowhere to go never ends with scrollend.
+  if (!smooth || Math.abs(destination - scroller.scrollTop) <= 1) {
+    scroller.scrollTo({ top: destination, behavior: 'instant' });
+    land();
+    return stop;
+  }
   scroller.scrollTo({ top: destination, behavior: 'smooth' });
   scroller.addEventListener('scrollend', land);
   for (const type of inputs) scroller.addEventListener(type, stop, { passive: true });
-  frame = requestAnimationFrame(step);
+  timer = setTimeout(stop, limit);
   return stop;
 }
