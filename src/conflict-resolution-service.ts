@@ -15,6 +15,17 @@ import type { PrActionState } from '../lib/pr-actions';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
 import { prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
+import {
+  SHARED_LAYOUT_FILE,
+  STORES_DIRECTORY,
+  conflictStoreDirectory,
+  conflictStoreRefPrefix,
+  conflictStoreRemote,
+  createStoreLocks,
+  localCloneObjectDirectory,
+  readSharedLayout,
+  type SharedLayout,
+} from './conflict-object-store';
 
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
@@ -24,7 +35,8 @@ interface Context {
   token: string;
 }
 interface Deps {
-  storage: Pick<StateStorage, 'read' | 'write' | 'flush'>;
+  /** `names` lists saved states, so startup cleanup can tell which cache directories a saved session needs. */
+  storage: Pick<StateStorage, 'read' | 'write' | 'flush'> & { names?: () => string[] };
   directory: () => string;
   context: () => Context;
   read: (url: string) => Promise<PrActionState>;
@@ -33,6 +45,10 @@ interface Deps {
     context: { session: ConflictSession; file: ConflictFile; instructions: string },
     signal: AbortSignal
   ) => Promise<{ contents?: string; explanation: string }>;
+  /** The merge base GitHub reports for `base...head` in `repo`. Without it, conflicts use the full-history path. */
+  mergeBase?: (repo: string, base: string, head: string) => Promise<string | undefined>;
+  /** The checkout linked to a repository in Settings, if any. Its objects are read, never written. */
+  localClone?: (repo: string) => string | undefined;
   /** Tests use local bare remotes. Production only constructs github.com URLs. */
   remote?: (repo: string) => string;
   dependents?: (url: string) => string[];
@@ -54,6 +70,7 @@ export function createConflictResolutionService(deps: Deps) {
   const memoryScope = (session: Pick<ConflictSession, 'account' | 'headRepo'>) =>
     `${session.account.toLowerCase()}:${session.headRepo.toLowerCase()}`;
   const busy = new Set<string>();
+  const withStore = createStoreLocks();
   const storageKey = (account: string, id: string) => `conflict-draft:${account}:${id}`;
   const directory = (account: string, id: string) => conflictSessionDirectory(deps.directory(), account, id);
   async function persist(session: ConflictSession) {
@@ -76,25 +93,28 @@ export function createConflictResolutionService(deps: Deps) {
     if (!repoName(repo)) throw new Error('Invalid GitHub repository.');
     return deps.remote?.(repo) ?? `https://github.com/${repo}.git`;
   };
-  async function git(
-    ctx: Context,
-    id: string,
+  /** Git with an isolated configuration. `token` adds GitHub credentials for network commands. */
+  async function runGit(
+    cwd: string,
     args: string[],
     signal: AbortSignal,
-    input?: string | Buffer,
-    allowed = [0]
+    options: { token?: string; input?: string | Buffer; allowed?: number[]; lazyFetch?: boolean } = {}
   ) {
-    assertAccount(ctx);
     // Isolate user/system Git config: no credential helper, hooks or custom merge driver can execute.
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...inherited,
       GIT_CONFIG_NOSYSTEM: '1',
       GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
       GIT_TERMINAL_PROMPT: '0',
-      GIT_CONFIG_COUNT: '1',
-      GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${ctx.token}`).toString('base64')}`,
+      ...(options.lazyFetch === false ? { GIT_NO_LAZY_FETCH: '1' } : {}),
+      ...(options.token
+        ? {
+            GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+            GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${options.token}`).toString('base64')}`,
+          }
+        : {}),
     };
     const result = await runConflictProcess(
       'git',
@@ -112,13 +132,31 @@ export function createConflictResolutionService(deps: Deps) {
         `protocol.file.allow=${deps.remote ? 'always' : 'never'}`,
         ...args,
       ],
-      { cwd: await directory(ctx.account, id), env, input, signal, timeout: 180_000 }
+      { cwd, env, input: options.input, signal, timeout: 180_000 }
     );
-    if (!allowed.includes(result.code)) {
-      const safe = result.stderr.replaceAll(ctx.token, '[redacted]').replace(/AUTHORIZATION:[^\r\n]*/gi, '[redacted]');
+    if (!(options.allowed ?? [0]).includes(result.code)) {
+      let safe = result.stderr.replace(/AUTHORIZATION:[^\r\n]*/gi, '[redacted]');
+      if (options.token) safe = safe.replaceAll(options.token, '[redacted]');
       throw new Error(`Git could not complete this operation. ${safe.slice(0, 1500)}`);
     }
     return result;
+  }
+  async function git(
+    ctx: Context,
+    id: string,
+    args: string[],
+    signal: AbortSignal,
+    input?: string | Buffer,
+    allowed = [0],
+    options: { cwd?: string; lazyFetch?: boolean } = {}
+  ) {
+    assertAccount(ctx);
+    return runGit(options.cwd ?? (await directory(ctx.account, id)), args, signal, {
+      token: ctx.token,
+      input,
+      allowed,
+      lazyFetch: options.lazyFetch,
+    });
   }
   async function current(session: ConflictSession, ctx: Context) {
     const state = await deps.read(session.url);
@@ -147,6 +185,296 @@ export function createConflictResolutionService(deps: Deps) {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(data);
     if (text.includes('\0')) throw new Error('Binary files require a local merge tool.');
     return text;
+  }
+  interface MergeSpec {
+    headRepo: string;
+    baseRepo: string;
+    headSha: string;
+    baseSha: string;
+    headBranch: string;
+    baseBranch: string;
+  }
+  interface Prepared {
+    merge: { code: number; stdout: Buffer };
+    tree: string;
+    parts: string[];
+    /** Set when the cache is shallow: Git has the three commits, not the history between them. */
+    mergeBase?: string;
+  }
+  /**
+   * Git labels the common ancestor's conflict lines with the `--merge-base` argument. Without one it uses an
+   * abbreviation whose length grows with the repository, so a shallow cache would label them differently.
+   */
+  const ancestorLabel = (sha: string) => sha.slice(0, 12);
+  const exists = (file: string) =>
+    fs.stat(file).then(
+      () => true,
+      () => false
+    );
+  const accountChanged = (error: unknown) =>
+    error instanceof Error && error.message.startsWith('GitHub account changed');
+  function parseMerge(merge: { code: number; stdout: Buffer }) {
+    const parts = merge.stdout.toString('utf8').split('\0');
+    const tree = (parts.shift() ?? '').trim();
+    if (!oid(tree)) throw new Error('Git 2.38 or newer is required to prepare conflicts.');
+    return { merge, tree, parts };
+  }
+  /** Starts a session from an empty directory. A legacy-path directory moves to the current layout. */
+  async function resetSession(ctx: Context, id: string) {
+    const dir = await directory(ctx.account, id);
+    await dropStoreRefs(ctx.account, id, dir);
+    await fs.rm(dir, { recursive: true, force: true });
+    const next = await directory(ctx.account, id);
+    await fs.mkdir(next, { recursive: true, mode: 0o700 });
+    return next;
+  }
+  async function dropStoreRefs(account: string, id: string, dir: string) {
+    const layout = await readSharedLayout(dir);
+    if (!layout) return;
+    const store = path.resolve(deps.directory(), layout.store);
+    if (!store.startsWith(path.join(deps.directory(), STORES_DIRECTORY) + path.sep) || !(await exists(store))) return;
+    await withStore(store, async () => {
+      const prefix = conflictStoreRefPrefix(account, id);
+      const refs = (
+        await runGit(store, ['for-each-ref', '--format=%(refname)', prefix], new AbortController().signal)
+      ).stdout
+        .toString('utf8')
+        .split('\n')
+        .filter(Boolean);
+      if (refs.length)
+        await runGit(store, ['update-ref', '--stdin'], new AbortController().signal, {
+          input: refs.map((ref) => `delete ${ref}\n`).join(''),
+        });
+    });
+  }
+  /** Today's path: the whole history of both commits, without blobs. Used when the shallow path cannot run. */
+  async function prepareFull(
+    ctx: Context,
+    id: string,
+    spec: MergeSpec,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ): Promise<Prepared> {
+    await resetSession(ctx, id);
+    await git(ctx, id, ['init', '--bare', '.'], signal);
+    report('Fetching the PR and base history into a private Git cache.');
+    for (const [name, repo, sha] of [
+      ['pr', spec.headRepo, spec.headSha],
+      ['base', spec.baseRepo, spec.baseSha],
+    ]) {
+      await git(ctx, id, ['config', `remote.${name}.url`, remote(repo)], signal);
+      await git(ctx, id, ['config', `remote.${name}.promisor`, 'true'], signal);
+      await git(ctx, id, ['config', `remote.${name}.partialclonefilter`, 'blob:none'], signal);
+      await git(ctx, id, ['fetch', '--no-tags', '--no-write-fetch-head', '--filter=blob:none', name, sha], signal);
+    }
+    report('Finding conflicts. Your checkout is not modified.');
+    // With one merge base, name it as the shallow path does, so both paths write identical conflict markers.
+    const bases = (
+      await git(ctx, id, ['merge-base', '--all', spec.headSha, spec.baseSha], signal, undefined, [0, 1])
+    ).stdout
+      .toString('utf8')
+      .split('\n')
+      .filter(oid);
+    return parseMerge(
+      await git(
+        ctx,
+        id,
+        [
+          '-c',
+          'merge.conflictStyle=diff3',
+          'merge-tree',
+          '--write-tree',
+          '--messages',
+          '-z',
+          ...(bases.length === 1 ? [`--merge-base=${ancestorLabel(bases[0])}`] : []),
+          spec.headSha,
+          spec.baseSha,
+        ],
+        signal,
+        undefined,
+        [0, 1]
+      )
+    );
+  }
+  /**
+   * The fast path. GitHub names the merge base, so the cache needs three commits and their trees, not their history.
+   * They come from a store shared by every PR in the repository, or from a linked local clone. The session repository
+   * borrows those objects through alternates and lists the commits as shallow, so nothing walks past them.
+   */
+  async function prepareShallow(
+    ctx: Context,
+    id: string,
+    spec: MergeSpec,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ): Promise<Prepared | undefined> {
+    if (!deps.mergeBase) return;
+    report('Finding the merge base on GitHub.');
+    const mergeBase = await deps.mergeBase(spec.baseRepo, spec.baseSha, spec.headSha).catch((error: unknown) => {
+      signal.throwIfAborted();
+      console.warn('[conflicts] Could not read the merge base; fetching history instead.', error);
+      return undefined;
+    });
+    signal.throwIfAborted();
+    if (!mergeBase || !oid(mergeBase)) return;
+    const dir = await resetSession(ctx, id);
+    const store = conflictStoreDirectory(deps.directory(), ctx.account, spec.baseRepo);
+    // Written first, so a failure part way still lets the reset drop this session's store refs.
+    const layout: SharedLayout = { version: 1, store: path.relative(deps.directory(), store), mergeBase };
+    await fs.writeFile(path.join(dir, SHARED_LAYOUT_FILE), JSON.stringify(layout), { mode: 0o600 });
+    const clones = [
+      ...new Set(
+        (
+          await Promise.all(
+            [spec.baseRepo, spec.headRepo].map((repo) => localCloneObjectDirectory(deps.localClone?.(repo)))
+          )
+        ).filter((value): value is string => !!value)
+      ),
+    ];
+    const wanted = [
+      { repo: spec.headRepo, sha: spec.headSha, name: 'head' },
+      { repo: spec.baseRepo, sha: spec.baseSha, name: 'base' },
+      { repo: spec.baseRepo, sha: mergeBase, name: 'merge-base' },
+    ];
+    const commits = [...new Set(wanted.map((item) => item.sha))];
+    await git(ctx, id, ['init', '--bare', '.'], signal);
+    for (const [key, value] of [
+      // Restack and rebase run `gc --auto`. A repack would need the borrowed objects and missing blobs.
+      ['gc.auto', '0'],
+      ['maintenance.auto', 'false'],
+      // Store refs of other sessions are shallow there, so they must not count as complete history here.
+      ['core.alternateRefsPrefixes', 'refs/gnosis-none/'],
+    ])
+      await git(ctx, id, ['config', key, value], signal);
+    const alternates = path.join(dir, 'objects', 'info', 'alternates');
+    // No promisor remote is configured yet, so a presence check cannot fetch a missing commit and its history.
+    const present = async (sha: string) =>
+      (await git(ctx, id, ['cat-file', '-e', `${sha}^{tree}`], signal, undefined, [0, 1, 128], { lazyFetch: false }))
+        .code === 0;
+    await withStore(store, async () => {
+      await fs.mkdir(store, { recursive: true, mode: 0o700 });
+      if (!(await exists(path.join(store, 'HEAD')))) {
+        await git(ctx, id, ['init', '--bare', '.'], signal, undefined, [0], { cwd: store });
+        for (const [key, value] of [
+          ['gc.auto', '0'],
+          ['maintenance.auto', 'false'],
+          ['fetch.writeCommitGraph', 'false'],
+        ])
+          await git(ctx, id, ['config', key, value], signal, undefined, [0], { cwd: store });
+      }
+      await fs.writeFile(alternates, path.join(store, 'objects') + '\n', { mode: 0o600 });
+      const stored = new Set<string>();
+      for (const sha of commits) if (await present(sha)) stored.add(sha);
+      if (clones.length) {
+        await fs.writeFile(alternates, [path.join(store, 'objects'), ...clones].join('\n') + '\n', { mode: 0o600 });
+        if (commits.some((sha) => !stored.has(sha))) report('Reading objects from your local clone.');
+      }
+      const missing: typeof wanted = [];
+      for (const item of wanted)
+        if (!missing.some((other) => other.sha === item.sha) && !stored.has(item.sha) && !(await present(item.sha)))
+          missing.push(item);
+      if (missing.length) {
+        report(`Fetching ${missing.length} commit${missing.length === 1 ? '' : 's'} from GitHub.`);
+        for (const repo of new Set(missing.map((item) => item.repo))) {
+          const name = conflictStoreRemote(repo);
+          for (const [key, value] of [
+            [`remote.${name}.url`, remote(repo)],
+            [`remote.${name}.promisor`, 'true'],
+            [`remote.${name}.partialclonefilter`, 'blob:none'],
+          ])
+            await git(ctx, id, ['config', key, value], signal, undefined, [0], { cwd: store });
+          await git(
+            ctx,
+            id,
+            [
+              'fetch',
+              '--no-tags',
+              '--no-write-fetch-head',
+              '--recurse-submodules=no',
+              '--depth=1',
+              '--filter=blob:none',
+              name,
+              ...missing.filter((item) => item.repo === repo).map((item) => item.sha),
+            ],
+            signal,
+            undefined,
+            [0],
+            { cwd: store }
+          );
+        }
+        for (const item of missing) {
+          if (!(await present(item.sha))) throw new Error(`GitHub did not send ${item.sha}.`);
+          stored.add(item.sha);
+        }
+      }
+      // Replace this session's refs, so the store keeps exactly the commits it borrows.
+      const prefix = conflictStoreRefPrefix(ctx.account, id);
+      const old = (
+        await git(ctx, id, ['for-each-ref', '--format=%(refname)', prefix], signal, undefined, [0], { cwd: store })
+      ).stdout
+        .toString('utf8')
+        .split('\n')
+        .filter(Boolean);
+      const kept = wanted.filter((item) => stored.has(item.sha));
+      const updates = [
+        ...old.filter((ref) => !kept.some((item) => ref === prefix + item.name)).map((ref) => `delete ${ref}\n`),
+        ...kept.map((item) => `update ${prefix}${item.name} ${item.sha}\n`),
+      ];
+      if (updates.length) await git(ctx, id, ['update-ref', '--stdin'], signal, updates.join(''), [0], { cwd: store });
+    });
+    await fs.writeFile(path.join(dir, 'shallow'), [...commits].sort().join('\n') + '\n', { mode: 0o600 });
+    // File versions arrive on demand, as in the full path. Git batches them: one request for rename candidates and
+    // one for content merges. Fetching them in one request beforehand measured no faster on klanggames/seed.
+    for (const [name, repo] of [
+      ['pr', spec.headRepo],
+      ['base', spec.baseRepo],
+    ]) {
+      await git(ctx, id, ['config', `remote.${name}.url`, remote(repo)], signal);
+      await git(ctx, id, ['config', `remote.${name}.promisor`, 'true'], signal);
+      await git(ctx, id, ['config', `remote.${name}.partialclonefilter`, 'blob:none'], signal);
+    }
+    report('Finding conflicts. Your checkout is not modified.');
+    const prepared = parseMerge(
+      await git(
+        ctx,
+        id,
+        [
+          '-c',
+          'merge.conflictStyle=diff3',
+          'merge-tree',
+          '--write-tree',
+          '--messages',
+          '-z',
+          `--merge-base=${ancestorLabel(mergeBase)}`,
+          spec.headSha,
+          spec.baseSha,
+        ],
+        signal,
+        undefined,
+        [0, 1]
+      )
+    );
+    return { ...prepared, mergeBase };
+  }
+  async function prepare(
+    ctx: Context,
+    id: string,
+    spec: MergeSpec,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ): Promise<Prepared> {
+    await fs.mkdir(deps.directory(), { recursive: true, mode: 0o700 });
+    for (const branch of [spec.headBranch, spec.baseBranch])
+      await runGit(deps.directory(), ['check-ref-format', `refs/heads/${branch}`], signal);
+    try {
+      const prepared = await prepareShallow(ctx, id, spec, signal, report);
+      if (prepared) return prepared;
+    } catch (error) {
+      signal.throwIfAborted();
+      if (accountChanged(error)) throw error;
+      console.warn('[conflicts] The shallow cache failed; fetching history instead.', error);
+    }
+    return prepareFull(ctx, id, spec, signal, report);
   }
   async function open(
     ctx: Context,
@@ -213,41 +541,22 @@ export function createConflictResolutionService(deps: Deps) {
           saved.headRepo !== state.headRepo ||
           saved.baseRepo !== state.repository,
       };
-    await fs.mkdir(await directory(ctx.account, id), { recursive: true, mode: 0o700 });
-    await git(ctx, id, ['init', '--bare', '.'], signal);
-    for (const branch of [state.headBranch, state.baseBranch])
-      await git(ctx, id, ['check-ref-format', `refs/heads/${branch}`], signal);
-    report('Fetching the PR and base history into a private Git cache.');
-    for (const [name, repo, sha] of [
-      ['pr', state.headRepo, state.headSha],
-      ['base', state.repository, state.baseSha],
-    ]) {
-      await git(ctx, id, ['config', `remote.${name}.url`, remote(repo)], signal);
-      await git(ctx, id, ['config', `remote.${name}.promisor`, 'true'], signal);
-      await git(ctx, id, ['config', `remote.${name}.partialclonefilter`, 'blob:none'], signal);
-      await git(ctx, id, ['fetch', '--no-tags', '--no-write-fetch-head', '--filter=blob:none', name, sha], signal);
-    }
-    report('Finding conflicts. Your checkout is not modified.');
-    const merge = await git(
+    const prepared = await prepare(
       ctx,
       id,
-      [
-        '-c',
-        'merge.conflictStyle=diff3',
-        'merge-tree',
-        '--write-tree',
-        '--messages',
-        '-z',
-        state.headSha,
-        state.baseSha,
-      ],
+      {
+        headRepo: state.headRepo,
+        baseRepo: state.repository,
+        headSha: state.headSha,
+        baseSha: state.baseSha,
+        headBranch: state.headBranch,
+        baseBranch: state.baseBranch,
+      },
       signal,
-      undefined,
-      [0, 1]
+      report
     );
-    const parts = merge.stdout.toString('utf8').split('\0');
-    const tree = (parts.shift() ?? '').trim();
-    if (!oid(tree)) throw new Error('Git 2.38 or newer is required to prepare conflicts.');
+    const { merge, tree } = prepared;
+    const parts = prepared.parts;
     const stages = new Map<string, Partial<Record<string, { mode: string; sha: string }>>>();
     for (const entry of parts) {
       if (!entry) break;
@@ -342,14 +651,11 @@ export function createConflictResolutionService(deps: Deps) {
           'Git reused a resolution you previously reviewed in this repository. Check it in this PR context before marking the file reviewed.';
       }
     }
-    const containsBase = await git(
-      ctx,
-      id,
-      ['merge-base', '--is-ancestor', state.baseSha, state.headSha],
-      signal,
-      undefined,
-      [0, 1]
-    );
+    // A shallow cache has no history to walk, but the merge base answers the same question.
+    const containsBase = prepared.mergeBase
+      ? prepared.mergeBase === state.baseSha
+      : (await git(ctx, id, ['merge-base', '--is-ancestor', state.baseSha, state.headSha], signal, undefined, [0, 1]))
+          .code === 0;
     const session: ConflictSession = {
       id,
       account: ctx.account,
@@ -366,18 +672,109 @@ export function createConflictResolutionService(deps: Deps) {
       version: (saved?.version ?? 0) + 1,
       status: 'editing',
       dependents: deps.dependents?.(url) ?? [],
-      preparation: files.length ? 'conflicts' : containsBase.code === 0 ? 'up-to-date' : 'clean-merge',
+      preparation: files.length ? 'conflicts' : containsBase ? 'up-to-date' : 'clean-merge',
     };
     signal.throwIfAborted();
     assertAccount(ctx);
     await persist(session);
     return session;
   }
-  async function resultTree(ctx: Context, session: ConflictSession, signal: AbortSignal) {
+  /** Startup cleanup removes full-history caches of saved drafts. The merge is rebuilt here when it is needed. */
+  async function restoreMerge(
+    ctx: Context,
+    session: ConflictSession,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ) {
+    const dir = await directory(ctx.account, session.id);
+    if (await exists(path.join(dir, 'HEAD'))) {
+      const checks = await Promise.all(
+        [session.tree, `${session.headSha}^{tree}`, `${session.baseSha}^{tree}`].map((object) =>
+          git(ctx, session.id, ['cat-file', '-e', object], signal, undefined, [0, 1, 128], { lazyFetch: false })
+        )
+      );
+      if (checks.every((result) => result.code === 0)) return;
+    }
+    report('Restoring this PR’s private Git cache.');
+    const spec: MergeSpec = {
+      headRepo: session.headRepo,
+      baseRepo: session.baseRepo,
+      headSha: session.headSha,
+      baseSha: session.baseSha,
+      headBranch: session.headBranch,
+      baseBranch: session.baseBranch,
+    };
+    let prepared = await prepare(ctx, session.id, spec, signal, report);
+    // Git computes its own merge bases on the full path; with several of them the result can differ.
+    if (prepared.tree !== session.tree && prepared.mergeBase)
+      prepared = await prepareFull(ctx, session.id, spec, signal, report);
+    if (prepared.tree !== session.tree)
+      throw new Error('The saved resolution no longer matches its revisions. Reopen the workspace and start again.');
+  }
+  /** Restack walks history. A shallow or removed cache fetches it first, as the full path always did. */
+  async function restoreHistory(
+    ctx: Context,
+    session: ConflictSession,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ) {
+    if (!session.commitSha || !oid(session.commitSha)) return;
+    const dir = await directory(ctx.account, session.id);
+    if (!(await exists(path.join(dir, 'HEAD')))) {
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      await git(ctx, session.id, ['init', '--bare', '.'], signal);
+      for (const [name, repo] of [
+        ['pr', session.headRepo],
+        ['base', session.baseRepo],
+      ]) {
+        await git(ctx, session.id, ['config', `remote.${name}.url`, remote(repo)], signal);
+        await git(ctx, session.id, ['config', `remote.${name}.promisor`, 'true'], signal);
+        await git(ctx, session.id, ['config', `remote.${name}.partialclonefilter`, 'blob:none'], signal);
+      }
+    }
+    const shallow = await exists(path.join(dir, 'shallow'));
+    const present =
+      (
+        await git(
+          ctx,
+          session.id,
+          ['cat-file', '-e', `${session.commitSha}^{commit}`],
+          signal,
+          undefined,
+          [0, 1, 128],
+          {
+            lazyFetch: false,
+          }
+        )
+      ).code === 0;
+    if (present && !shallow) return;
+    report('Fetching the PR history for its dependent PRs.');
+    await git(
+      ctx,
+      session.id,
+      [
+        'fetch',
+        '--no-tags',
+        '--no-write-fetch-head',
+        '--filter=blob:none',
+        ...(shallow ? ['--unshallow'] : []),
+        'pr',
+        session.commitSha,
+      ],
+      signal
+    );
+  }
+  async function resultTree(
+    ctx: Context,
+    session: ConflictSession,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ) {
     if (session.preparation === 'up-to-date')
       throw new Error('The PR already contains the base branch. No update is needed.');
     if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
       throw new Error('Resolve and mark every file reviewed before publishing.');
+    await restoreMerge(ctx, session, signal, report);
     await git(ctx, session.id, ['read-tree', session.tree], signal);
     for (const file of session.files) {
       const sha = (await git(ctx, session.id, ['hash-object', '-w', '--stdin'], signal, file.result)).stdout
@@ -387,7 +784,89 @@ export function createConflictResolutionService(deps: Deps) {
     }
     return (await git(ctx, session.id, ['write-tree'], signal)).stdout.toString().trim();
   }
+  let maintenance: Promise<unknown> = Promise.resolve();
+  /**
+   * Removes cache directories that no saved session needs, and store refs that no remaining session borrows. A store
+   * without refs is removed whole. Full-history caches of drafts and published PRs go too: drafts rebuild their merge
+   * from the shared store when they publish, and restacks fetch history again. Paused or prepared restacks keep theirs.
+   */
+  async function cleanUp(): Promise<{ removed: string[] }> {
+    const removed: string[] = [];
+    if (!deps.storage.names) return { removed };
+    const root = deps.directory();
+    if (!(await exists(root))) return { removed };
+    const keep = new Set<string>();
+    const borrowed = new Map<string, Set<string>>();
+    const busyDirectories = async () =>
+      new Set(
+        await Promise.all(
+          [...busy].map(async (key) => {
+            const [, account, id] = /^conflict-draft:(.*):([a-f0-9]{64})$/.exec(key) ?? [];
+            return account && id ? directory(account, id) : '';
+          })
+        )
+      );
+    for (const name of deps.storage.names()) {
+      const match = /^conflict-draft:(.*):([a-f0-9]{64})$/.exec(name);
+      if (!match) continue;
+      const saved = deps.storage.read(name) as ConflictSession | null | undefined;
+      if (!saved || saved.account !== match[1] || saved.id !== match[2]) continue;
+      const dir = await directory(saved.account, saved.id);
+      const layout = await readSharedLayout(dir);
+      const restacking = saved.restack?.status === 'prepared' || saved.restack?.status === 'blocked';
+      if (!restacking && (saved.status !== 'editing' || !layout)) continue;
+      keep.add(dir);
+      if (layout) {
+        const store = path.resolve(root, layout.store);
+        borrowed.set(store, (borrowed.get(store) ?? new Set()).add(conflictStoreRefPrefix(saved.account, saved.id)));
+      }
+    }
+    const candidates: string[] = [];
+    const names = async (dir: string) =>
+      (await fs.readdir(dir).catch(() => [] as string[])).filter((n) => /^[a-f0-9]{64}$/.test(n));
+    for (const name of await names(path.join(root, 'sessions'))) candidates.push(path.join(root, 'sessions', name));
+    // Legacy layout: <account hash>/<PR hash>.
+    for (const account of await names(root))
+      for (const name of await names(path.join(root, account))) candidates.push(path.join(root, account, name));
+    for (const dir of candidates) {
+      if (keep.has(dir) || (await busyDirectories()).has(dir)) continue;
+      await fs.rm(dir, { recursive: true, force: true });
+      removed.push(dir);
+    }
+    for (const account of await names(root)) await fs.rmdir(path.join(root, account)).catch(() => {});
+    const signal = new AbortController().signal;
+    for (const name of await names(path.join(root, STORES_DIRECTORY))) {
+      const store = path.join(root, STORES_DIRECTORY, name);
+      await withStore(store, async () => {
+        // A session that started since the scan may have just added refs; keep those of every busy session too.
+        const live = new Set(borrowed.get(store));
+        for (const key of busy) {
+          const [, account, id] = /^conflict-draft:(.*):([a-f0-9]{64})$/.exec(key) ?? [];
+          if (account && id) live.add(conflictStoreRefPrefix(account, id));
+        }
+        const refs = (await runGit(store, ['for-each-ref', '--format=%(refname)', 'refs/gnosis/'], signal)).stdout
+          .toString('utf8')
+          .split('\n')
+          .filter(Boolean);
+        const stale = refs.filter((ref) => ![...live].some((prefix) => ref.startsWith(prefix)));
+        if (stale.length === refs.length && !live.size) {
+          await fs.rm(store, { recursive: true, force: true });
+          removed.push(store);
+        } else if (stale.length)
+          await runGit(store, ['update-ref', '--stdin'], signal, {
+            input: stale.map((ref) => `delete ${ref}\n`).join(''),
+          });
+      });
+    }
+    return { removed };
+  }
   return {
+    /** Run once after saved data loads. Conflict requests wait for it. */
+    maintain() {
+      const task = cleanUp();
+      maintenance = task.catch((error: unknown) => console.warn('[conflicts] Cache cleanup failed.', error));
+      return task;
+    },
     async run(
       request: ConflictRequest,
       signal: AbortSignal,
@@ -402,6 +881,8 @@ export function createConflictResolutionService(deps: Deps) {
       if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
       busy.add(key);
       try {
+        // Cleanup checks `busy` before each removal; a request that starts later waits for it to finish.
+        await maintenance;
         if (request.kind === 'open')
           return { session: await open(ctx, request.url, !!request.restart, signal, report) };
         const session = sessionFor(ctx, id);
@@ -442,6 +923,7 @@ export function createConflictResolutionService(deps: Deps) {
             // A failed preparation must not leave an older plan publishable.
             session.restack = undefined;
             await persist(session);
+            await restoreHistory(ctx, session, signal, report);
             session.dependents = deps.dependents?.(session.url) ?? [];
             await memory.record(memoryScope(session), session.files, signal);
             session.restack = await memory.withRepository(memoryScope(session), await directory(ctx.account, id), () =>
@@ -485,7 +967,9 @@ export function createConflictResolutionService(deps: Deps) {
         if (request.kind === 'discard') {
           deps.storage.write(key, null);
           await deps.storage.flush();
-          await fs.rm(await directory(ctx.account, id), { recursive: true, force: true });
+          const dir = await directory(ctx.account, id);
+          await dropStoreRefs(ctx.account, id, dir);
+          await fs.rm(dir, { recursive: true, force: true });
           return { session };
         }
         if (request.kind === 'save') {
@@ -525,7 +1009,9 @@ export function createConflictResolutionService(deps: Deps) {
               }
               file.explanation = result.explanation;
             } else {
-              const temp = await fs.mkdtemp(path.join(await directory(ctx.account, id), 'mergiraf-'));
+              const parent = await directory(ctx.account, id);
+              await fs.mkdir(parent, { recursive: true, mode: 0o700 });
+              const temp = await fs.mkdtemp(path.join(parent, 'mergiraf-'));
               try {
                 const names = ['base', 'ours', 'theirs'].map((name) => path.join(temp, name));
                 await Promise.all(
@@ -563,7 +1049,7 @@ export function createConflictResolutionService(deps: Deps) {
           }
         } else {
           await current(session, ctx);
-          const tree = await resultTree(ctx, session, signal);
+          const tree = await resultTree(ctx, session, signal, report);
           const digest = hash(`${session.id}:${session.version}:${tree}:${session.headSha}:${session.baseSha}`);
           if (request.kind === 'preview') {
             const patch = (

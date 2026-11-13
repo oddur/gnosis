@@ -28,6 +28,7 @@ async function fixture(
   await fs.mkdir(remote);
   const git = async (...args: string[]) => (await exec('git', args, { cwd: remote })).stdout.trim();
   await git('init', '-b', 'main');
+  await git('config', 'uploadpack.allowFilter', 'true');
   await git('config', 'user.name', 'Test');
   await git('config', 'user.email', 'test@example.com');
   await fs.writeFile(path.join(remote, sample.name), sample.base);
@@ -72,6 +73,10 @@ async function fixture(
     context: () => context,
     read: () => Promise.resolve({ ...state }),
     remote: () => remote,
+    // The shallow suite (conflict-resolution-shallow.test.ts) runs every test here through the merge-base path.
+    ...(process.env.GNOSIS_TEST_CONFLICT_SHALLOW
+      ? { mergeBase: async (_repo: string, base: string, head: string) => git('merge-base', base, head) }
+      : {}),
     mergiraf: () =>
       path.resolve('resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf'),
     suggest: () => Promise.resolve({ contents: 'export const answer = 3;\n', explanation: 'Combine both increments.' }),
@@ -83,6 +88,14 @@ async function fixture(
 }
 void test('real Git conflicts: draft, proposal, preview and guarded publication preserve clean base changes', async (t) => {
   const f = await fixture(t);
+  const cache = await conflictSessionDirectory(f.deps.directory(), 'tester', f.session.id);
+  assert.equal(
+    await fs.stat(path.join(cache, 'gnosis-objects.json')).then(
+      () => 'shallow',
+      () => 'full'
+    ),
+    process.env.GNOSIS_TEST_CONFLICT_SHALLOW ? 'shallow' : 'full'
+  );
   assert.equal(f.session.files.length, 1);
   assert.equal(f.session.files[0].unsupported, undefined);
   assert.match(f.session.files[0].original, /<<<<<<< /);
