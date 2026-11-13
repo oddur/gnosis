@@ -805,13 +805,15 @@ export class GitHubDiffSource implements DiffSource {
   private readonly pullNumber: number;
   private metadataPromise: Promise<PrMetadata> | null = null;
 
-  constructor(url: string, token: string | null, client?: Octokit) {
+  /** `metadata` is a fresh read the caller just made, such as the access check, so it is not read twice. */
+  constructor(url: string, token: string | null, client?: Octokit, metadata?: PrMetadata) {
     this.key = url;
     this.octokit = client ?? getGitHubClient(token);
     const parsed = parsePrUrl(url);
     this.owner = parsed.owner;
     this.repo = parsed.repo;
     this.pullNumber = parsed.pullNumber;
+    if (metadata) this.metadataPromise = Promise.resolve(metadata);
   }
 
   getMetadata(): Promise<PrMetadata> {

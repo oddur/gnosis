@@ -594,6 +594,8 @@ const mocks = {
     sessionStorage.setItem('ftue-auth', 'true');
     return Promise.resolve();
   },
+  // Fixture setups never come from saved data, so GitHub never replaces them.
+  onExplanationSetupUpdate: () => () => undefined,
   getExplanationSetup: async (request:GenerateReviewRequest) => {
     const item=items.find(item=>request.subjectId?item.subject.id===request.subjectId:item.subject.members.some(m=>m.url===request.prUrl));
     const selected=request.standalone?item?.subject.members.filter(m=>m.url===request.prUrl):item?.subject.members;

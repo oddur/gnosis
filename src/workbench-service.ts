@@ -386,7 +386,10 @@ export function createWorkbenchService(deps: Deps) {
     role: ReviewMember['role'] = 'watched'
   ): Promise<ReviewMember> {
     const { owner, repo, pullNumber } = parsePrUrl(url);
-    const meta = await getPrMetadata(octokit, owner, repo, pullNumber);
+    return memberFrom(url, await getPrMetadata(octokit, owner, repo, pullNumber), role);
+  }
+  function memberFrom(url: string, meta: PrMetadata, role: ReviewMember['role']): ReviewMember {
+    const { owner, repo, pullNumber } = parsePrUrl(url);
     return {
       ...meta,
       number: pullNumber,
@@ -1299,11 +1302,16 @@ export function createWorkbenchService(deps: Deps) {
     interrupt() {
       running?.abort(new BriefingPaused());
     },
-    async fresh(subject: ReviewSubject) {
+    /** `verified` holds fresh metadata the caller just read, such as access checks, so members are not read twice. */
+    async fresh(subject: ReviewSubject, verified?: ReadonlyMap<string, PrMetadata>) {
       const token = deps.auth().token;
       if (!token) throw new Error('Connect GitHub to refresh this review.');
       const octokit = deps.client?.() ?? getGitHubClient(token);
-      const members = await Promise.all(subject.members.map((m) => fetchMember(octokit, m.url, m.role)));
+      const memberOf = (client: Octokit, url: string, role: ReviewMember['role']) => {
+        const known = verified?.get(url);
+        return known ? Promise.resolve(memberFrom(url, known, role)) : fetchMember(client, url, role);
+      };
+      const members = await Promise.all(subject.members.map((m) => memberOf(octokit, m.url, m.role)));
       const discovered =
         subject.scope !== 'single'
           ? (load().subjects.find((s) => s.id === subject.id) ??
@@ -1316,7 +1324,7 @@ export function createWorkbenchService(deps: Deps) {
       ) {
         return {
           ...discovered,
-          members: await Promise.all(discovered.members.map((m) => fetchMember(octokit, m.url, m.role))),
+          members: await Promise.all(discovered.members.map((m) => memberOf(octokit, m.url, m.role))),
         };
       }
       return { ...subject, members, edges: discovered?.edges ?? subject.edges };

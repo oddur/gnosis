@@ -3,7 +3,6 @@ import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
 import { attachWindowChrome, registerWindowChromeIpc, windowChromeOptions } from './window-chrome';
 import {
-  explanationFile,
   explanationExclusion,
   explanationInstructions,
   normalizeLocalExplanationPreferences,
@@ -11,10 +10,10 @@ import {
   normalizeExplanationPreferences,
   type ExplanationOptions,
   type ExplanationSetup,
+  type ExplanationSetupUpdate,
 } from '../lib/explanation-options';
 
-import { fileOverrideKey } from '../lib/file-kinds';
-import { memberPrefix } from '../lib/workbench';
+import { explanationFiles as setupFiles, explanationRepository, loadExplanationSetup, type SourceIdentity } from './explanation-setup';
 import { prepareReviewSource } from './review-start-source';
 import { createWorkflowGraphPreloader, warmWorkflowGraph } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
@@ -95,7 +94,7 @@ import crypto from 'crypto';
 import { getGitHubClient, githubClients, githubCacheFor, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
 import { createGitHubWebAuth } from './github-web-auth';
 import { createGitHubAuthService } from './github-auth-service';
-import { checkGitHubPrAccess, githubAccessMessage } from '../lib/github-auth';
+import { checkGitHubPrAccess, githubAccessMessage, readAccessiblePr } from '../lib/github-auth';
 import { createPrImageService } from './pr-image-service';
 import { createReviewImageService } from './review-image-service';
 import { imageMimeType, includeImageChanges } from '../lib/review-images';
@@ -2026,11 +2025,7 @@ function resolveDiffHunks(
     });
 }
 
-function explanationRepository(source: DiffSource): string {
-  if (source.kind === 'local') return `local:${source.cwd ?? source.key.split('#')[0].slice(6)}`;
-  return new URL(source.key).pathname.split('/').slice(1, 3).join('/').toLowerCase();
-}
-function explanationDefaults(source: DiffSource): ExplanationOptions {
+function explanationDefaults(source: SourceIdentity): ExplanationOptions {
   const prefs = loadPreferences(),
     repo = explanationRepository(source);
   return normalizeExplanationOptions(
@@ -2039,49 +2034,20 @@ function explanationDefaults(source: DiffSource): ExplanationOptions {
       : prefs.repositorySettings?.[repo]?.explanation,
   );
 }
-async function explanationFiles(source: DiffSource, files: ChangedFile[], snapshot?: ReviewSnapshot) {
-  const overrides = rawFileFilters.read().overrides;
-  const members = snapshot?.subject.members ?? [];
-  const sources =
-    source.kind === 'local'
-      ? []
-      : members.length
-        ? members.map((m) => ({
-            url: m.url,
-            repo: m.repo,
-            prefix: members.length > 1 ? memberPrefix(m) : '',
-            revision: m,
-          }))
-        : [{ url: source.key, repo: explanationRepository(source), prefix: '', revision: undefined }];
-  const classifications = await Promise.all(
-    sources.map(async (entry) => {
-      const client = changesClient();
-      const manifest = await prChanges.manifest(client, entry.url, false, { revision: entry.revision });
-      return { ...entry, kinds: await fileClassifications.read(client, manifest) };
-    }),
+/** Generation classifies files with the current Changes inventory, loading it when needed. */
+function explanationFiles(source: DiffSource, files: ChangedFile[], snapshot?: ReviewSnapshot) {
+  return setupFiles(
+    {
+      overrides: () => rawFileFilters.read().overrides,
+      inventory: (url, revision) => prChanges.manifest(changesClient(), url, false, { revision }),
+      kinds: (inventory) => fileClassifications.read(changesClient(), inventory),
+    },
+    source,
+    files,
+    snapshot,
   );
-  return files.map((file) => {
-    const origin = classifications.find((entry) => file.filename.startsWith(entry.prefix));
-    const displayPath = origin ? file.filename.slice(origin.prefix.length) : file.filename;
-    const repo = origin?.repo ?? explanationRepository(source);
-    const member = members.find((m) => m.url === origin?.url);
-    const group = member ? `#${member.number} ${member.title}` : repo;
-    return explanationFile(
-      file,
-      displayPath,
-      group,
-      origin?.kinds[displayPath],
-      overrides[fileOverrideKey(repo, displayPath)],
-    );
-  });
 }
-handleInteractive('explanation-setup', async (_event, request: GenerateReviewRequest): Promise<ExplanationSetup> => {
-  const token = getResolvedToken();
-  const { source, prData, reviewSnapshot } = await prepareReviewSource(request, {
-    token,
-    workbench,
-    checkAccess: (url) => checkGitHubPrAccess(getGitHubClient(token), url),
-  });
+function explanationSetupOptions(request: GenerateReviewRequest, source: SourceIdentity, reviewSnapshot?: ReviewSnapshot) {
   const previous =
     request.previousReviewId &&
     readReviewsIndex().find(
@@ -2090,17 +2056,58 @@ handleInteractive('explanation-setup', async (_event, request: GenerateReviewReq
         entry.prUrl === request.prUrl &&
         (!entry.snapshot || entry.snapshot.subject.id === reviewSnapshot?.subject.id),
     );
-  const options =
-    previous && previous.explanationOptions
-      ? normalizeExplanationOptions(previous.explanationOptions)
-      : explanationDefaults(source);
-  return {
-    title: prData.title,
-    repository: explanationRepository(source),
-    files: await explanationFiles(source, await source.getChangedFiles(), reviewSnapshot),
-    options,
-    restored: !!(previous && previous.explanationOptions),
+  return previous && previous.explanationOptions
+    ? { options: normalizeExplanationOptions(previous.explanationOptions), restored: true }
+    : { options: explanationDefaults(source), restored: false };
+}
+/** Access and freshness checks for a review scope: one fresh read per PR that also serves as its metadata. */
+const reviewSourceDeps = (token: string | null) => ({
+  token,
+  workbench,
+  checkAccess: (url: string) => readAccessiblePr(getGitHubClient(token), url),
+});
+/** The newest of the PR metadata the app already holds. */
+function savedPrMetadata(client: ReturnType<typeof getGitHubClient>, url: string): PrMetadata | undefined {
+  const candidates = [syncMetadata.get(url), workbench.knownMember(url), prChanges.latest(client, url)?.metadata];
+  return candidates.reduce<PrMetadata | undefined>(
+    (newest, value) => (value && (!newest || value.updatedAt > newest.updatedAt) ? value : newest),
+    undefined,
+  );
+}
+handleInteractive('explanation-setup', async (event, request: GenerateReviewRequest): Promise<ExplanationSetup> => {
+  const token = getResolvedToken();
+  const client = getGitHubClient(token);
+  const loaded = await loadExplanationSetup(request, {
+    prepare: (value) => prepareReviewSource(value, reviewSourceDeps(token)),
+    saved: {
+      muted: () => workbench.mutedUrls(),
+      subject: (value) =>
+        value.subjectId
+          ? workbench.subject(value.subjectId)
+          : workbench.cached().items.find((item) => item.subject.members.some((m) => m.url === value.prUrl))?.subject,
+      metadata: (url) => (token ? savedPrMetadata(client, url) : undefined),
+      inventory: (url, revision) => (token ? prChanges.saved(client, url, revision) : Promise.resolve(undefined)),
+    },
+    inventory: (url, revision) => prChanges.manifest(client, url, false, { revision }),
+    overrides: () => rawFileFilters.read().overrides,
+    kinds: (inventory) => fileClassifications.read(client, inventory),
+    options: explanationSetupOptions,
+  });
+  const { revalidate } = loaded;
+  if (!revalidate) return loaded.setup;
+  // The saved answer shows at once. GitHub confirms it afterwards and the dialog updates in place.
+  const updateId = crypto.randomUUID();
+  const sender = event.sender;
+  const send = (update: ExplanationSetupUpdate) => {
+    if (!sender.isDestroyed() && token === getResolvedToken()) sender.send('explanation-setup-update', update);
   };
+  setImmediate(() => {
+    withGitHubPriority('foreground', revalidate).then(
+      (setup) => { if (setup) send({ updateId, setup: { ...setup, updateId } }); },
+      (error: unknown) => send({ updateId, error: error instanceof Error ? error.message : String(error) }),
+    );
+  });
+  return { ...loaded.setup, updateId };
 });
 
 async function runBackgroundGeneration(
@@ -2776,11 +2783,7 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   const rememberOptions = request.rememberExplanationOptions === true;
   const token = getResolvedToken();
   workbench.interrupt();
-  const { source, prData, reviewSnapshot } = await prepareReviewSource(request, {
-    token,
-    workbench,
-    checkAccess: (url) => checkGitHubPrAccess(getGitHubClient(token), url),
-  });
+  const { source, prData, reviewSnapshot } = await prepareReviewSource(request, reviewSourceDeps(token));
 
   const options = request.explanationOptions
     ? normalizeExplanationOptions(request.explanationOptions)

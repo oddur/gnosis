@@ -103,6 +103,10 @@ declare global {
       generateExplainer: (req: GenerateExplainerRequest) => Promise<InteractiveExplainer>;
       cancelExplainer: (req: GenerateExplainerRequest) => Promise<void>;
       getExplanationSetup: (req: GenerateReviewRequest) => Promise<import('../lib/explanation-options').ExplanationSetup>;
+      /** GitHub's answer for a setup that came from saved data. Returns the unsubscribe function. */
+      onExplanationSetupUpdate?: (
+        callback: (update: import('../lib/explanation-options').ExplanationSetupUpdate) => void
+      ) => () => void;
       startReview: (req: GenerateReviewRequest) => Promise<StartReviewResult>;
       cancelReview: (reviewId: string) => Promise<void>;
       getConfig: () => Promise<{ githubToken: string | null }>;

@@ -241,6 +241,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cancelExplainer: (req: GenerateExplainerRequest): Promise<void> => ipcRenderer.invoke('cancel-explainer', req),
   getExplanationSetup: (req: GenerateReviewRequest): Promise<import('../lib/explanation-options').ExplanationSetup> =>
     ipcRenderer.invoke('explanation-setup', req),
+  onExplanationSetupUpdate: (callback: (update: import('../lib/explanation-options').ExplanationSetupUpdate) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, update: import('../lib/explanation-options').ExplanationSetupUpdate) =>
+      callback(update);
+    ipcRenderer.on('explanation-setup-update', handler);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('explanation-setup-update', handler);
+    };
+  },
   startReview: (req: GenerateReviewRequest): Promise<StartReviewResult> => ipcRenderer.invoke('start-review', req),
   cancelReview: (reviewId: string): Promise<void> => ipcRenderer.invoke('cancel-review', reviewId),
   getConfig: (): Promise<{ githubToken: string | null }> => ipcRenderer.invoke('get-config'),

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareReviewSource } from '../src/review-start-source';
 import type { DiffSource } from '../lib/diffSource';
-import type { GenerateReviewRequest } from '../lib/types';
+import type { GenerateReviewRequest, PrMetadata } from '../lib/types';
 import type { ReviewMember, ReviewSubject, WorkbenchQueue } from '../lib/workbench';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 
@@ -73,9 +73,9 @@ function fixture() {
         return Promise.resolve(subject);
       },
     },
-    checkAccess: (value: string) => {
+    checkAccess: (value: string): Promise<PrMetadata | undefined> => {
       calls.push(`access:${value}`);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     },
     prSource: (value: string) => {
       calls.push(`source:${value}`);

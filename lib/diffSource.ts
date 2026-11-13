@@ -47,12 +47,12 @@ export interface DiffSource {
  */
 export async function createDiffSource(
   url: string,
-  opts: { token?: string | null } = {},
+  opts: { token?: string | null; metadata?: PrMetadata } = {},
 ): Promise<DiffSource> {
   if (isLocalUrl(url)) {
     const { LocalGitDiffSource } = await import('./localGit');
     return new LocalGitDiffSource(url);
   }
   const { GitHubDiffSource } = await import('./github');
-  return new GitHubDiffSource(url, opts.token ?? null);
+  return new GitHubDiffSource(url, opts.token ?? null, undefined, opts.metadata);
 }

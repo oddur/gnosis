@@ -182,6 +182,16 @@ export function createPrChangesService(clones = localClones) {
       if (saved) remember(client, saved);
       return saved;
     },
+    /** The saved inventory at exactly this revision, from memory or disk. Never reads GitHub. */
+    async saved(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
+      const key = snapshotKey(url, changesRevision(revision));
+      return snapshots.get(client)?.get(key) ?? await githubCacheFor(client)?.getPrepared(key, isSnapshot);
+    },
+    /** The last inventory saved for a PR, at any revision. Its metadata is what Changes last showed. */
+    latest(client: Octokit, url: string) {
+      const key = snapshotKey(url, 'latest');
+      return snapshots.get(client)?.get(key) ?? githubCacheFor(client)?.get(key, isSnapshot)?.value;
+    },
     cached(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
       const cache = githubCacheFor(client);
       const exact = snapshotKey(url, changesRevision(revision)), latest = snapshotKey(url, 'latest');
