@@ -1,3 +1,4 @@
+import type { Octokit } from '@octokit/rest';
 import type { DiffSource } from './diffSource';
 import { GitHubDiffSource } from './github';
 import { memberPrefix, type ReviewSubject } from './workbench';
@@ -11,10 +12,11 @@ export class StackDiffSource implements DiffSource {
   private sources: Map<string, GitHubDiffSource>;
   constructor(
     readonly subject: ReviewSubject,
-    token: string | null
+    token: string | null,
+    client?: Octokit
   ) {
     this.key = subject.members[0].url;
-    this.sources = new Map(subject.members.map((m) => [memberPrefix(m), new GitHubDiffSource(m.url, token)]));
+    this.sources = new Map(subject.members.map((m) => [memberPrefix(m), new GitHubDiffSource(m.url, token, client)]));
   }
   async getMetadata() {
     const results = await Promise.all([...this.sources.values()].map((s) => s.getMetadata()));
