@@ -359,6 +359,13 @@ if (new URLSearchParams(location.search).has('inactivity')) {
   items[1].subject.members[0].updatedAt = daysAgo(90);
   for (const item of items.slice(2)) for (const member of item.subject.members) member.updatedAt = daysAgo(2);
 }
+const predictionListeners = new Set<(state: ReturnType<typeof fixturePredictionState>) => void>();
+function fixturePredictionState() {
+  const limit = Math.floor((5000 * (prefs.preloadBudgetPercent ?? 6)) / 100);
+  const off = prefs.predictNavigation === false;
+  return { off, paused: off, battery: false, hot: false, light: false, amount: prefs.preloadAmount ?? 'normal',
+    usage: { core: { spent: 42, limit }, graphql: { spent: 7, limit } } };
+}
 let prefs: Preferences = {
   checksView: sessionStorage.getItem('fixture-checks-view') === 'graph' ? 'graph' : 'list',
   ...(sessionStorage.getItem('fixture-predict-navigation') === 'false' ? { predictNavigation: false } : {}),
@@ -630,16 +637,18 @@ const mocks = {
   disconnectLocalClone: () => Promise.resolve([]),
   loadPreferences: () => Promise.resolve(prefs),
   // Main's answer for the predictor, with the Preloading amount and this hour's spend on a 5,000-request token.
-  predictionState: () => {
-    const limit = Math.floor(5000 * (prefs.preloadBudgetPercent ?? 6) / 100);
-    return Promise.resolve({ off: prefs.predictNavigation === false, paused: prefs.predictNavigation === false, battery: false, hot: false, light: false,
-      amount: prefs.preloadAmount ?? 'normal', usage: { core: { spent: 42, limit }, graphql: { spent: 7, limit } } });
+  predictionState: () => Promise.resolve(fixturePredictionState()),
+  // Main publishes a new state when preferences are saved.
+  onPredictionState: (callback: (state: ReturnType<typeof fixturePredictionState>) => void) => {
+    predictionListeners.add(callback);
+    return () => { predictionListeners.delete(callback); };
   },
   storageSizes: () => Promise.resolve({ savedWorkBytes: 68 * 1024 * 1024, githubCacheBytes: 580 * 1024 * 1024 }),
   savePreferences: (next: Preferences) => {
     prefs = next;
     sessionStorage.setItem('fixture-checks-view', next.checksView ?? 'list');
     sessionStorage.setItem('fixture-predict-navigation', String(next.predictNavigation !== false));
+    queueMicrotask(() => predictionListeners.forEach((listener) => listener(fixturePredictionState())));
     sessionStorage.setItem('fixture-preloading', JSON.stringify({ preloadAmount: next.preloadAmount, prepareQueue: next.prepareQueue, preloadBudgetPercent: next.preloadBudgetPercent }));
     if (next.diffHighlighter) sessionStorage.setItem('fixture-diff-highlighter', next.diffHighlighter);
     sessionStorage.setItem('fixture-inactivity-days', JSON.stringify(next.prInactivityDays ?? 30));
