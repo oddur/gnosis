@@ -6,6 +6,8 @@ import { DropdownMenu } from 'radix-ui';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { SearchableSelect } from './SearchableSelect';
+import { StepCard } from './StepCard';
+import { stackMergeSteps, type StackMergePage } from '../lib/action-steps';
 import {
   mergeBlockedReason,
   draftActionBlockedReason,
@@ -56,6 +58,9 @@ export function PrActions({
     [body, setBody] = useState('');
   const [busy, setBusy] = useState(false),
     [result, setResult] = useState('');
+  // Merging several PRs is paged: review, method, then the merge itself.
+  const [page, setPage] = useState<StackMergePage>('review');
+  const [errorStep, setErrorStep] = useState<'load' | 'submit'>('load');
   const version = useRef(0),
     pending = useRef(false);
   const identity = JSON.stringify([member.url, member.headSha, stackMembers?.map((m) => [m.url, m.headSha])]);
@@ -102,6 +107,8 @@ export function PrActions({
     if (pending.current) return;
     const n = ++version.current;
     setDialog({ kind });
+    setPage('review');
+    setErrorStep('load');
     setLoading(true);
     setError('');
     setTitle('');
@@ -174,11 +181,15 @@ export function PrActions({
             : branchUpdateBlockedReason(plan.target)
     : undefined;
   const showMethod = kind === 'enable-auto' || (kind === 'merge' && !plan?.mergeQueue);
+  // Several consequential steps get a step card; a single PR keeps its one confirmation.
+  const stepFlow =
+    kind === 'merge' && (plan ? plan.members.length > 1 : !!stackMembers || (!!state?.stack && (nativeCount ?? 0) > 0));
   async function submit() {
     if (!plan || !kind || pending.current || actionBlock) return;
     pending.current = true;
     setBusy(true);
     setError('');
+    setErrorStep('submit');
     const started = current.current;
     try {
       const response = await window.electronAPI.performPrAction({
@@ -204,6 +215,94 @@ export function PrActions({
       setBusy(false);
     }
   }
+  const membersList = plan ? (
+    <ol className="pr-action-members">
+      {members.map((m) => {
+        const source =
+          stackMembers?.find((candidate) => candidate.url === m.url) ?? (member.url === m.url ? member : undefined);
+        return (
+          <li key={m.url}>
+            <div className="entity-badge-group">
+              <PrBadge url={m.url} number={m.number} title={m.title} />
+              <a href={m.url} target="_blank" rel="noreferrer">
+                {m.title}
+                <ExternalLink size={12} />
+              </a>
+            </div>
+            <span>
+              <BranchBadge branch={m.headBranch} repo={source?.headRepo} /> ·{' '}
+              <CommitBadge sha={m.headSha} repo={source?.headRepo} />
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  ) : null;
+  const methodFields = plan ? (
+    <>
+      {showMethod && (
+        <label className="pr-action-field">
+          Merge method
+          <SearchableSelect
+            label="Merge method"
+            value={method}
+            options={plan.methods.map((value) => ({ value, label: mergeMethodLabels[value] }))}
+            onValueChange={(v) => setMethod(v as MergeMethod)}
+            disabled={busy}
+          />
+        </label>
+      )}
+      {showMethod && method !== 'REBASE' && (
+        <details className="pr-action-message">
+          <summary>Customize commit message</summary>
+          <p>Leave blank to use GitHub’s repository defaults.</p>
+          <label>
+            Commit title
+            <input
+              aria-label="Commit title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              maxLength={256}
+              disabled={busy}
+            />
+          </label>
+          <label>
+            Commit message
+            <textarea
+              aria-label="Commit message"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              maxLength={65536}
+              rows={3}
+              disabled={busy}
+            />
+          </label>
+        </details>
+      )}
+    </>
+  ) : null;
+  const stepPlan = stackMergeSteps(plan, {
+    page,
+    method,
+    loading,
+    running: busy,
+    count: stackMembers?.filter((m) => !m.merged).length,
+    failure: error
+      ? {
+          step: errorStep === 'submit' ? 'merge' : 'review',
+          message:
+            errorStep === 'submit'
+              ? `${error} If GitHub may have received the request, check the PR before trying again.`
+              : error,
+        }
+      : undefined,
+  });
+  const cancel = () => {
+    version.current++;
+    setDialog(undefined);
+    setLoading(false);
+    setError('');
+  };
   if (!member.url.startsWith('https://github.com/')) return null;
   return (
     <div className={`pr-actions ${stackMembers ? 'pr-actions-stack' : ''} ${compact ? 'pr-actions-compact' : ''}`}>
@@ -379,6 +478,13 @@ export function PrActions({
         <DialogContent
           showCloseButton={!busy}
           className="pr-action-dialog"
+          onOpenAutoFocus={(e) => {
+            // The step card focuses its first step once the plan loads, so Enter continues from there.
+            if (stepFlow) {
+              e.preventDefault();
+              (e.currentTarget as HTMLElement | null)?.focus();
+            }
+          }}
           onEscapeKeyDown={(e) => {
             if (busy) e.preventDefault();
           }}
@@ -386,167 +492,204 @@ export function PrActions({
             if (busy) e.preventDefault();
           }}
         >
-          <DialogHeader>
-            <DialogTitle>{heading}</DialogTitle>
-            <DialogDescription>
-              {plan
-                ? `${plan.target.repository} · ${kind?.startsWith('update-') ? `${plan.target.baseBranch} → ${plan.target.headBranch}` : `${members.length} PR${members.length === 1 ? '' : 's'} → ${plan.baseBranch}`}`
-                : 'Checking GitHub permissions and current revisions…'}
-            </DialogDescription>
-          </DialogHeader>
-          {loading && (
-            <p className="pr-action-note" role="status">
-              <Loader2 size={16} className="motion-safe:animate-spin" />
-              Checking GitHub…
-            </p>
-          )}
-          {plan && (
-            <>
-              <ol className="pr-action-members">
-                {members.map((m) => {
-                  const source =
-                    stackMembers?.find((candidate) => candidate.url === m.url) ??
-                    (member.url === m.url ? member : undefined);
-                  return (
-                    <li key={m.url}>
-                      <div className="entity-badge-group">
-                        <PrBadge url={m.url} number={m.number} title={m.title} />
-                        <a href={m.url} target="_blank" rel="noreferrer">
-                          {m.title}
-                          <ExternalLink size={12} />
-                        </a>
-                      </div>
-                      <span>
-                        <BranchBadge branch={m.headBranch} repo={source?.headRepo} /> ·{' '}
-                        <CommitBadge sha={m.headSha} repo={source?.headRepo} />
-                      </span>
-                    </li>
-                  );
-                })}
-              </ol>
-              {plan.createStack && kind === 'merge' && (
-                <p className="pr-action-note">
-                  This will first create a GitHub stack from these branches, then request an atomic merge. If merging is
-                  blocked, the GitHub stack remains.
-                </p>
-              )}
-              {kind === 'merge' && members.length > 1 && (
-                <p className="pr-action-note">
-                  GitHub checks every PR’s requirements. All listed PRs merge together, or none do.
-                  {plan.mergeQueue ? ' They will enter the base branch’s merge queue.' : ''}
-                </p>
-              )}
-              {(kind === 'mark-ready' || kind === 'convert-draft') && (
-                <p className="pr-action-note">
-                  {kind === 'mark-ready'
-                    ? 'This PR will be ready for review. It will still need to meet GitHub’s requirements before merging.'
-                    : 'Draft PRs cannot be merged. Mark it ready for review again when the work is ready.'}
-                </p>
-              )}
-              {kind === 'enable-auto' && (
-                <p className="pr-action-note">
-                  GitHub will merge automatically when the requirements are met, including after new commits. Turn
-                  auto-merge off to stop it.
-                </p>
-              )}
-              {kind === 'disable-auto' && (
-                <p className="pr-action-note">GitHub will stop waiting to automatically merge this PR.</p>
-              )}
-              {kind?.startsWith('update-') && (
-                <p className="pr-action-note">
-                  {kind === 'update-rebase'
-                    ? 'Rebase rewrites the PR’s commits on top of the base branch. Collaborators may need to resynchronize their local branches.'
-                    : 'A merge commit brings the base branch’s changes into this PR.'}{' '}
-                  Checks may run again and approvals may be dismissed by repository rules.
-                </p>
-              )}
-              {showMethod && (
-                <label className="pr-action-field">
-                  Merge method
-                  <SearchableSelect
-                    label="Merge method"
-                    value={method}
-                    options={plan.methods.map((value) => ({ value, label: mergeMethodLabels[value] }))}
-                    onValueChange={(v) => setMethod(v as MergeMethod)}
-                    disabled={busy}
-                  />
-                </label>
-              )}
-              {showMethod && method !== 'REBASE' && (
-                <details className="pr-action-message">
-                  <summary>Customize commit message</summary>
-                  <p>Leave blank to use GitHub’s repository defaults.</p>
-                  <label>
-                    Commit title
-                    <input
-                      aria-label="Commit title"
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      maxLength={256}
-                      disabled={busy}
-                    />
-                  </label>
-                  <label>
-                    Commit message
-                    <textarea
-                      aria-label="Commit message"
-                      value={body}
-                      onChange={(e) => setBody(e.target.value)}
-                      maxLength={65536}
-                      rows={3}
-                      disabled={busy}
-                    />
-                  </label>
-                </details>
-              )}
-              {actionBlock && (
-                <p role="status" className="pr-action-note">
-                  {actionBlock}
-                </p>
-              )}
-            </>
-          )}
-          {error && (
-            <div role="alert" className="pr-action-error">
-              <p>{error}</p>
-              <p>If GitHub may have received the request, check the PR before trying again.</p>
-              <a href={plan?.target.url ?? member.url} target="_blank" rel="noreferrer">
-                Open on GitHub
-              </a>
-              <button disabled={busy} onClick={() => kind && void open(kind)}>
-                Refresh confirmation
-              </button>
-            </div>
-          )}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                version.current++;
-                setDialog(undefined);
-                setLoading(false);
-                setError('');
+          {stepFlow ? (
+            <StepCard
+              autoFocus
+              className="pr-action-steps"
+              title={<DialogTitle>{heading}</DialogTitle>}
+              description={
+                <DialogDescription>
+                  {plan
+                    ? `${plan.target.repository} · ${members.length} PRs → ${plan.baseBranch}`
+                    : 'Checking GitHub permissions and current revisions…'}
+                </DialogDescription>
+              }
+              steps={stepPlan.steps}
+              current={stepPlan.current}
+              busy={busy}
+              onCancel={cancel}
+              onBack={
+                plan && page !== 'review'
+                  ? () => setPage(page === 'confirm' && !plan.mergeQueue ? 'method' : 'review')
+                  : undefined
+              }
+              onRetry={() => void open('merge')}
+              retryLabel={errorStep === 'submit' && error ? 'Refresh confirmation' : 'Refresh'}
+              continueLabel={
+                page === 'confirm' ? (
+                  busy ? (
+                    <>
+                      <Loader2 size={14} className="motion-safe:animate-spin" />
+                      Submitting…
+                    </>
+                  ) : (
+                    heading
+                  )
+                ) : (
+                  'Continue'
+                )
+              }
+              continueDisabled={
+                !plan ||
+                loading ||
+                !!error ||
+                !!actionBlock ||
+                (page !== 'review' && showMethod && !plan.methods.includes(method))
+              }
+              onContinue={() => {
+                if (page === 'review') setPage(plan?.mergeQueue ? 'confirm' : 'method');
+                else if (page === 'method') setPage('confirm');
+                else void submit();
               }}
             >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void submit()}
-              disabled={
-                !plan || loading || busy || !!actionBlock || !!error || (showMethod && !plan.methods.includes(method))
-              }
-            >
-              {busy ? (
+              {plan ? (
                 <>
-                  <Loader2 size={14} className="motion-safe:animate-spin" />
-                  Submitting…
+                  {page === 'review' && (
+                    <>
+                      {membersList}
+                      <p className="pr-action-note">
+                        GitHub checks every PR’s requirements at the revisions listed here. If a PR changes, nothing
+                        merges and you confirm again.
+                      </p>
+                    </>
+                  )}
+                  {page === 'method' && methodFields}
+                  {page === 'confirm' && (
+                    <div className="pr-action-confirm">
+                      <p>Gnosis will send {plan.createStack ? 'two GitHub requests' : 'one GitHub request'}:</p>
+                      <ol>
+                        {plan.createStack && (
+                          <li>
+                            Create a GitHub stack from {members.map((m) => `#${m.number}`).join(', ')}. It remains if
+                            merging is blocked.
+                          </li>
+                        )}
+                        <li>
+                          {plan.mergeQueue
+                            ? `Add all ${members.length} PRs to the ${plan.baseBranch} merge queue together.`
+                            : `Merge all ${members.length} PRs into ${plan.baseBranch} together with “${mergeMethodLabels[method]}”${title.trim() ? `, titled “${title.trim()}”` : ''}.`}
+                        </li>
+                      </ol>
+                      <p className="pr-action-note">
+                        This cannot be undone from Gnosis. GitHub merges all of them or none; follow its progress in
+                        Activity.
+                      </p>
+                    </div>
+                  )}
                 </>
-              ) : (
-                heading
+              ) : undefined}
+            </StepCard>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>{heading}</DialogTitle>
+                <DialogDescription>
+                  {plan
+                    ? `${plan.target.repository} · ${kind?.startsWith('update-') ? `${plan.target.baseBranch} → ${plan.target.headBranch}` : `${members.length} PR${members.length === 1 ? '' : 's'} → ${plan.baseBranch}`}`
+                    : 'Checking GitHub permissions and current revisions…'}
+                </DialogDescription>
+              </DialogHeader>
+              {loading && (
+                <p className="pr-action-note" role="status">
+                  <Loader2 size={16} className="motion-safe:animate-spin" />
+                  Checking GitHub…
+                </p>
               )}
-            </Button>
-          </DialogFooter>
+              {plan && (
+                <>
+                  {membersList}
+                  {plan.createStack && kind === 'merge' && (
+                    <p className="pr-action-note">
+                      This will first create a GitHub stack from these branches, then request an atomic merge. If
+                      merging is blocked, the GitHub stack remains.
+                    </p>
+                  )}
+                  {kind === 'merge' && members.length > 1 && (
+                    <p className="pr-action-note">
+                      GitHub checks every PR’s requirements. All listed PRs merge together, or none do.
+                      {plan.mergeQueue ? ' They will enter the base branch’s merge queue.' : ''}
+                    </p>
+                  )}
+                  {(kind === 'mark-ready' || kind === 'convert-draft') && (
+                    <p className="pr-action-note">
+                      {kind === 'mark-ready'
+                        ? 'This PR will be ready for review. It will still need to meet GitHub’s requirements before merging.'
+                        : 'Draft PRs cannot be merged. Mark it ready for review again when the work is ready.'}
+                    </p>
+                  )}
+                  {kind === 'enable-auto' && (
+                    <p className="pr-action-note">
+                      GitHub will merge automatically when the requirements are met, including after new commits. Turn
+                      auto-merge off to stop it.
+                    </p>
+                  )}
+                  {kind === 'disable-auto' && (
+                    <p className="pr-action-note">GitHub will stop waiting to automatically merge this PR.</p>
+                  )}
+                  {kind?.startsWith('update-') && (
+                    <p className="pr-action-note">
+                      {kind === 'update-rebase'
+                        ? 'Rebase rewrites the PR’s commits on top of the base branch. Collaborators may need to resynchronize their local branches.'
+                        : 'A merge commit brings the base branch’s changes into this PR.'}{' '}
+                      Checks may run again and approvals may be dismissed by repository rules.
+                    </p>
+                  )}
+                  {methodFields}
+                  {actionBlock && (
+                    <p role="status" className="pr-action-note">
+                      {actionBlock}
+                    </p>
+                  )}
+                </>
+              )}
+              {error && (
+                <div role="alert" className="pr-action-error">
+                  <p>{error}</p>
+                  <p>If GitHub may have received the request, check the PR before trying again.</p>
+                  <a href={plan?.target.url ?? member.url} target="_blank" rel="noreferrer">
+                    Open on GitHub
+                  </a>
+                  <button disabled={busy} onClick={() => kind && void open(kind)}>
+                    Refresh confirmation
+                  </button>
+                </div>
+              )}
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => {
+                    version.current++;
+                    setDialog(undefined);
+                    setLoading(false);
+                    setError('');
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => void submit()}
+                  disabled={
+                    !plan ||
+                    loading ||
+                    busy ||
+                    !!actionBlock ||
+                    !!error ||
+                    (showMethod && !plan.methods.includes(method))
+                  }
+                >
+                  {busy ? (
+                    <>
+                      <Loader2 size={14} className="motion-safe:animate-spin" />
+                      Submitting…
+                    </>
+                  ) : (
+                    heading
+                  )}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

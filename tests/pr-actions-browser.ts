@@ -24,6 +24,14 @@ void app.whenReady().then(async () => {
     );
     await new Promise((r) => setTimeout(r, 60));
   };
+  const press = async (keyCode: string) => {
+    win.focus();
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode });
+    if (keyCode === 'Enter') win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode });
+    await new Promise((r) => setTimeout(r, 120));
+  };
+  const currentStep = () => js<string>("document.querySelector('.step-list [aria-current=step]')?.dataset.step ?? ''");
   const shots = path.resolve('.impeccable/review/pr-actions');
   fs.mkdirSync(shots, { recursive: true });
   const capture = async (name: string) => {
@@ -55,11 +63,17 @@ void app.whenReady().then(async () => {
     );
     await click('Open PR overview');
     await wait("document.querySelector('.pr-action-controls button')?.disabled===false");
-    assert.ok(await js(`[...document.querySelectorAll('.pr-action-controls button')].filter(b=>b.getBoundingClientRect().width>0).length>=6`), 'PR actions are directly visible without opening a menu');
+    assert.ok(
+      await js(
+        `[...document.querySelectorAll('.pr-action-controls button')].filter(b=>b.getBoundingClientRect().width>0).length>=6`
+      ),
+      'PR actions are directly visible without opening a menu'
+    );
     await capture('summary-light-1280');
     await click('Merge PR…');
     await wait('!!document.querySelector(\'[aria-label="Merge method"]\')');
     assert.match(await js<string>("document.querySelector('.pr-action-dialog').textContent"), /1 PR → main/);
+    assert.equal(await js("!!document.querySelector('.step-card')"), false, 'A single PR merge keeps one confirmation');
     await capture('merge-light-1280');
     await js('window.badgeLinks=[];void(window.electronAPI.openExternal=async url=>{window.badgeLinks.push(url)})');
     for (const kind of ['branch', 'commit']) {
@@ -182,11 +196,83 @@ void app.whenReady().then(async () => {
     await js('window.denyWrite=false');
     await click('Merge whole stack…');
     await wait("document.querySelector('.pr-action-members')?.children.length===3");
+    // The plan is visible before anything runs: three steps, the first current, nothing written.
     assert.match(
       await js<string>("document.querySelector('.pr-action-dialog').textContent"),
       /Create GitHub stack and merge/
     );
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.pr-action-steps .step-list li')].map(li=>li.dataset.step)"),
+      ['review', 'method', 'merge']
+    );
+    assert.equal(await currentStep(), 'review');
+    assert.equal(await js("document.querySelector('.pr-action-steps .step-card-count').textContent.trim()"), '1 / 3');
+    assert.match(
+      await js<string>("document.querySelector('.step-list [data-step=merge]').textContent"),
+      /Create a GitHub stack and merge into main/
+    );
+    assert.equal(
+      await js("[...document.querySelectorAll('.pr-action-steps button')].some(b=>b.textContent==='Skip')"),
+      false,
+      'No merge step is optional'
+    );
+    const stackWrites = await js<number>('window.writes.length');
+    await wait("document.activeElement?.classList.contains('step-card-body')");
     await capture('create-stack-light-1280');
+    // Enter continues ordinary steps.
+    await press('Enter');
+    await wait("document.querySelector('.step-list [aria-current=step]')?.dataset.step==='method'");
+    assert.ok(await js('!!document.querySelector(\'[aria-label="Merge method"]\')'));
+    assert.match(
+      await js<string>("document.querySelector('.pr-action-steps [role=status][aria-live]').textContent"),
+      /Step 2 of 3/
+    );
+    await wait("document.activeElement?.classList.contains('step-card-body')");
+    await press('Enter');
+    await wait("document.querySelector('.step-list [aria-current=step]')?.dataset.step==='merge'");
+    await wait("document.activeElement?.classList.contains('step-card-body')");
+    assert.match(await js<string>("document.querySelector('.pr-action-confirm').textContent"), /two GitHub requests/);
+    await capture('create-stack-confirm-light-1280');
+    // The point of no return needs its own button; Enter on the card does not merge.
+    await press('Enter');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await js('window.writes.length'), stackWrites, 'Enter alone never merges');
+    assert.equal(await currentStep(), 'merge');
+    // A failure stays inside its step and is not retried automatically.
+    await js('window.failAction=true');
+    await click('Create GitHub stack and merge');
+    await wait("document.querySelector('.step-list [data-step=merge][data-status=failed] [role=alert]')");
+    assert.match(
+      await js<string>("document.querySelector('.step-list [data-step=merge] [role=alert]').textContent"),
+      /changed since confirmation/
+    );
+    assert.equal(await js("document.querySelector('.step-list [data-step=review]').dataset.status"), 'done');
+    assert.equal(await js("!!document.querySelector('.pr-action-dialog > .pr-action-error')"), false);
+    assert.ok(await js("document.activeElement?.closest('.step-list-error')"), 'Focus moves to the failure');
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(await js('window.writes.length'), stackWrites + 1, 'A failed merge is never replayed');
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('.pr-action-steps button')].find(b=>b.textContent==='Create GitHub stack and merge').disabled"
+      ),
+      true
+    );
+    await capture('create-stack-failed-light-1280');
+    await js('window.failAction=false');
+    await click('Refresh confirmation');
+    await wait(
+      "document.querySelector('.step-list [aria-current=step]')?.dataset.step==='review' && document.querySelector('.pr-action-members')"
+    );
+    assert.equal(await js('window.writes.length'), stackWrites + 1, 'Refreshing the confirmation only reads');
+    await click('Continue');
+    // The title bar also has a Back button; use the one in the step card.
+    await js(
+      "[...document.querySelectorAll('.pr-action-steps .step-card-footer button')].find(b=>b.textContent==='Back').click()"
+    );
+    await wait("document.querySelector('.step-list [aria-current=step]')?.dataset.step==='review'");
+    await click('Continue');
+    await click('Continue');
+    await wait("document.querySelector('.step-list [aria-current=step]')?.dataset.step==='merge'");
     await js("document.documentElement.classList.add('dark')");
     await capture('create-stack-dark-1280');
     win.setSize(640, 800);
@@ -214,7 +300,10 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.pr-action-members')?.children.length===3");
     assert.match(await js<string>("document.querySelector('.pr-action-dialog').textContent"), /Merge stack/);
     await capture('native-stack-dark-1280');
-    await click('Cancel');
+    const beforeEscape = await js<number>('window.writes.length');
+    await press('Escape');
+    await wait("!document.querySelector('.pr-action-dialog')");
+    assert.equal(await js('window.writes.length'), beforeEscape, 'Escape cancels without writing');
     console.log('PR action browser checks passed');
     app.exit(0);
   } catch (e) {
