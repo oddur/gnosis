@@ -3207,6 +3207,7 @@ function predictionState(): PredictionState {
     // Serious or critical heat: committed predictions only, no hover intent.
     hot: thermalState === 'serious' || thermalState === 'critical',
     light: onBattery || nearCap,
+    spend: { ...githubClients.predictedSpend(cachedToken), joined: githubPredictedJoins() },
   };
 }
 const publishPredictionState = () => broadcastToAllWindows('prediction-state', predictionState());

@@ -104,6 +104,49 @@ void app.whenReady().then(async () => {
       [],
       'Reopening uses the prepared revision without a loading phase'
     );
+    // Opening a PR the queue has not prepared warms its likely next tabs. Hold back queue preparation for a new
+    // head of another PR: only predictions can prepare it. They read at foreground priority, labelled for main.
+    await click('Review queue');
+    await js(`(async()=>{
+      const member=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.title.includes('Document worker lifecycle'));
+      const head='9'.repeat(40);window.predictUrl=member.url;window.predictReads=[];window.committed=[];window.graphs=[];
+      const api=window.electronAPI,load=api.workbenchQueue,changes=api.getPrChanges,commits=api.getPrCommits,file=api.getPrChangeFile;
+      const moved=s=>({...s,metadata:{...s.metadata,headSha:head},fetchedAt:Date.now()});
+      api.workbenchQueue=async(...args)=>{const q=await load(...args);return {...q,items:q.items.map(i=>({...i,subject:{...i.subject,members:i.subject.members.map(m=>m.url===member.url?{...m,headSha:head}:m)}}))}};
+      const held=(name,mode)=>{window.predictReads.push({name,mode:mode===true?'background':mode&&typeof mode==='object'?mode.predicted:'user'});return mode===true};
+      api.getPrChanges=(url,refresh,options)=>url!==member.url?changes(url,refresh,options):held('changes',options?.predicted?{predicted:options.predicted}:!!options?.background)?new Promise(()=>{}):changes(url,refresh,options).then(moved);
+      api.getPrCommits=(url,refresh,options)=>url!==member.url?commits(url,refresh,options):held('commits',options?.predicted?{predicted:options.predicted}:!!options?.background)?new Promise(()=>{}):commits(url,refresh,options).then(moved);
+      api.getPrChangeFile=(request,mode)=>request.url!==member.url?file(request,mode):held('file',mode)?new Promise(()=>{}):file(request,mode);
+      api.prOpenCommitted=(targets,label)=>{window.committed.push({urls:targets.map(t=>t.url),tiers:targets.map(t=>t.tier),label});return Promise.resolve()};
+      api.predictWorkflowGraph=(target,label)=>{window.graphs.push({url:target.url,label});return Promise.resolve()};
+      document.dispatchEvent(new Event('visibilitychange'));
+      await new Promise(r=>setTimeout(r,100));
+    })()`);
+    await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Document worker lifecycle')).click()");
+    await click('Open PR overview');
+    await wait("!!document.querySelector('.pr-description')");
+    await wait("window.predictReads.some(r=>r.name==='file'&&r.mode==='pr-tab:changes') && window.__gnosisPredict.idle()").catch(async (error: unknown) => {
+      throw new Error(`${String(error)} ${JSON.stringify(await js("({reads:window.predictReads,wanted:window.__gnosisPredict.wanted(),records:window.__gnosisPredict.records(),visible:document.visibilityState,online:navigator.onLine,focus:document.hasFocus(),off:window.electronAPI.predictOff===true})"))}`);
+    });
+    await js('window.loadingFlashes=[];window.readsBeforeChanges=window.predictReads.length');
+    await click('Changes');
+    await wait("!!document.querySelector('.commit-stream-row[data-active=true] .changes-file-header')");
+    assert.deepEqual(await js('window.loadingFlashes'), [], 'Changes of a just-opened PR shows without a loading phase');
+    const reads = await js<{ name: string; mode: string }[]>('window.predictReads');
+    for (const name of ['changes', 'commits', 'file'])
+      assert.ok(reads.some((read) => read.name === name && read.mode === 'pr-tab:changes'), `The ${name} read carried predicted: ${JSON.stringify(reads)}`);
+    assert.ok(reads.filter((read) => read.name === 'file' && read.mode === 'pr-tab:changes').length <= 3, 'At most three file bodies');
+    const opening = reads.slice(await js<number>('window.readsBeforeChanges'));
+    assert.ok(!opening.some((read) => read.mode === 'user'), `Opening Changes needed no read of its own: ${JSON.stringify(reads)}`);
+    assert.deepEqual(await js('window.committed.map(c=>[c.urls,c.tiers])'), [[[await js<string>('window.predictUrl')], [0]]],
+      'Threads and failing check details were requested once, for the open PR');
+    const predicted = await js<Partial<Record<string, { hit: number; cold: number }>>>('window.__gnosisPredict.summary().destinations');
+    assert.ok((predicted['pr-tab:changes']?.hit ?? 0) >= 2, `Predicted Changes measures as a hit: ${JSON.stringify(await js('window.__gnosisPredict.records()'))}`);
+    await click('Commits');
+    await wait("!!document.querySelector('.commit-detail-title')");
+    assert.ok(!(await js<{ name: string; mode: string }[]>('window.predictReads')).some((read) => read.name === 'commits' && read.mode === 'user'),
+      'The commit list was predicted too');
+
     // Queue rows send their PRs for preloading. Main validates full SHAs, so give the fixture's members real-looking ones.
     await click('Review queue');
     const pr = 'https://github.com/klang/engine/pull/151';

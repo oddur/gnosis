@@ -74,7 +74,17 @@ void app.whenReady().then(async () => {
       window.detailObserver=new MutationObserver(()=>{if(['Lint','TypeScript'].includes(document.querySelector('.check-detail-header h2')?.textContent)&&document.querySelector('.check-detail')?.textContent.includes('Loading check details'))window.detailLoadingFlashes++});
       window.detailObserver.observe(document.body,{subtree:true,childList:true});
     })()`);
+    // Failing checks make Checks a likely next tab, so Summary loads the graph's code ahead of time.
+    await wait("window.__gnosisPredict.wanted().includes('chunk:workflow-graph') && window.__gnosisPredict.idle()");
     await js("document.querySelector('.review-evidence-summary button').click()");
+    await wait("document.querySelectorAll('.check-row').length===6");
+    await js(`window.graphFallbacks=0;window.graphObserver=new MutationObserver(()=>{if(document.body.innerText.includes('Loading graph view'))window.graphFallbacks++});window.graphObserver.observe(document.body,{subtree:true,childList:true,characterData:true})`);
+    await click('Graph');
+    await wait("!!document.querySelector('.workflow-host:not([hidden])')");
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(await js('window.graphFallbacks'), 0, `The graph view opens without its loading fallback: ${JSON.stringify(await js("({wanted:window.__gnosisPredict.wanted(),summary:window.__gnosisPredict.summary(),visible:document.visibilityState,online:navigator.onLine,focus:document.hasFocus()})"))}`);
+    await js('window.graphObserver.disconnect()');
+    await click('List');
     await wait("document.querySelectorAll('.check-row').length===6");
     await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Lint')).click()");
     await wait("!!document.querySelector('.check-steps')");

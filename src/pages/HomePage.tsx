@@ -30,6 +30,7 @@ import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import type { GitHubSyncStatusProps } from '../../components/GitHubSyncStatus';
 import { inspectionData } from '../../lib/inspection-cache';
 import { createRowIntent, type RowIntent } from '../../lib/row-intent';
+import { setPredictionAccount } from '../../lib/predictions';
 import { openRows, type OpenTarget } from '../../lib/pr-open-targets';
 import { EntryActions } from '../../components/EntryActions';
 import { prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
@@ -1010,6 +1011,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     const preload = () => {
       const { targets, intent, rows } = JSON.parse(inspectionKey) as { targets: Parameters<typeof inspectionData.setTargets>[1]; intent: Parameters<typeof inspectionData.setTargets>[2]; rows: Parameters<typeof openRows>[0] };
       inspectionData.setTargets(auth.authenticated ? auth.login : null, targets, intent);
+      setPredictionAccount(auth.authenticated ? auth.login : null);
       const open = openRows(rows, intent ?? {});
       window.electronAPI.prOpenPreload?.(auth.authenticated ? open.targets.slice(0, 200) : []);
       openIntent.current ??= { rows: open.rows, intent: createRowIntent({

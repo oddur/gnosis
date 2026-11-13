@@ -2,14 +2,17 @@ import { clearStackChanges } from './stack-inspection-cache';
 import { clearMarkdownReviews } from './markdown-review-cache';
 import { createPrFileCache } from './pr-file-cache';
 import { commitSelectionKey, type CommitSelection } from './pr-commits';
-import { fileRevisionKey, type PrChanges, type PrChangeFile } from './pr-changes';
+import { fileRevisionKey, inspectionRank, type InspectionMode, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { FileDiffMetadata } from '@pierre/diffs';
 import { createPrInspectionCache } from './pr-inspection-cache';
 import type { PrCommits } from './pr-commits';
 import { createByteCache } from './byte-cache';
 import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
 import { inTreeOrder } from './tree-file-order';
+import { isMarkdownFile } from './markdown-review';
 
+/** IPC options for a read mode: queue preparation is `background`, a prediction carries its destination kind. */
+const loadMode = (mode: InspectionMode) => (typeof mode === 'object' ? { predicted: mode.predicted } : { background: mode });
 async function inventory<T>(signal: AbortSignal | undefined, read: (requestId: string) => Promise<T>): Promise<T> {
   signal?.throwIfAborted();
   const requestId = crypto.randomUUID();
@@ -34,9 +37,12 @@ export const latestCommitSelection = (list: PrCommits): CommitSelection | undefi
 
 export const inspectionData = createPrInspectionCache({
   restore: revisions => window.electronAPI.getPreparedInventories(revisions),
-  changes: (r, refresh, background, signal) => inventory(signal, requestId => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, background, requestId })),
-  commits: (r, refresh, background, signal) => inventory(signal, requestId => window.electronAPI.getPrCommits(r.url, refresh, { revision: r, background, requestId })),
-  file: (snapshot, file) => inspectionFiles.read(inspectionFileRequest(snapshot, file), true),
+  changes: (r, refresh, mode, signal) => inventory(signal, requestId => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, ...loadMode(mode), requestId })),
+  commits: (r, refresh, mode, signal) => inventory(signal, requestId => window.electronAPI.getPrCommits(r.url, refresh, { revision: r, ...loadMode(mode), requestId })),
+  file: (snapshot, file, mode = true) => inspectionFiles.read(inspectionFileRequest(snapshot, file), mode),
+  // A patch preview shows code at once; Markdown needs its contents to render.
+  fileReady: (snapshot, file) =>
+    !!inspectionFiles.peek(inspectionFileRequest(snapshot, file)) || (!isMarkdownFile(file.path) && fileIsReady(snapshot, file)),
   comparison: (list, commit) => readComparison({
     url: list.url, prBaseSha: list.metadata.baseSha, prHeadSha: list.metadata.headSha,
     firstSha: commit.sha, lastSha: commit.sha,
@@ -112,7 +118,7 @@ export function fileIsReady(snapshot: PrChanges, file: PrChangeFile) {
     )
   );
 }
-export async function prepareFile(snapshot: PrChanges, file: PrChangeFile, background = false) {
+export async function prepareFile(snapshot: PrChanges, file: PrChangeFile, background: InspectionMode = false) {
   // Without a preview parser the file itself is read, as for a file without a patch.
   await loadChangePreview().catch(() => {});
   if (!fileIsReady(snapshot, file)) await inspectionFiles.read(inspectionFileRequest(snapshot, file), background);
@@ -120,7 +126,7 @@ export async function prepareFile(snapshot: PrChanges, file: PrChangeFile, backg
 let inspectionEpoch = 0;
 let comparisonPriorities = new Map<string, number>();
 const comparisons = createByteCache<string, PrChanges>(INVENTORY_MEMORY_BYTES, 100);
-const pending = new Map<string, { promise: Promise<PrChanges>; background: boolean }>();
+const pending = new Map<string, { promise: Promise<PrChanges>; background: InspectionMode }>();
 export const peekComparison = (selection: CommitSelection) => comparisons.get(commitSelectionKey(selection));
 function preferredFile(snapshot: PrChanges, subjectId: string) {
   let path: string | undefined;
@@ -138,6 +144,24 @@ function preferredFile(snapshot: PrChanges, subjectId: string) {
     inTreeOrder(snapshot.files, (file) => file.path).at(0)
   );
 }
+/**
+ * The files a prediction prepares for Changes: the file the reader last viewed, or the first in tree order, then the
+ * next ones in tree order. The same choice Changes makes when it opens.
+ */
+export function predictedFiles(snapshot: PrChanges, subjectId: string, count: number): PrChangeFile[] {
+  let selected: string | undefined;
+  try {
+    selected = (JSON.parse(localStorage.getItem(`gnosis-changes-position:${subjectId}`) ?? 'null') as { selected?: unknown } | null)
+      ?.selected as string | undefined;
+  } catch {
+    /* Optional position. */
+  }
+  const ordered = inTreeOrder(snapshot.files, (file) => file.path);
+  // Stack positions prefix the path with the PR.
+  const start = typeof selected === 'string' && selected
+    ? ordered.findIndex((file) => file.path === selected || selected.endsWith(`/${file.path}`)) : -1;
+  return ordered.slice(Math.max(0, start), Math.max(0, start) + count);
+}
 export function comparisonIsReady(selection: CommitSelection, subjectId: string) {
   const snapshot = peekComparison(selection);
   if (!snapshot) return false;
@@ -147,13 +171,13 @@ export function comparisonIsReady(selection: CommitSelection, subjectId: string)
 export async function readComparison(
   selection: CommitSelection,
   subjectId: string,
-  background = false
+  background: InspectionMode = false
 ): Promise<PrChanges> {
   const key = commitSelectionKey(selection);
   const saved = comparisons.get(key);
   if (saved && comparisonIsReady(selection, subjectId)) return saved;
   const existing = pending.get(key);
-  if (existing && (!existing.background || background)) return existing.promise;
+  if (existing && inspectionRank(existing.background) >= inspectionRank(background)) return existing.promise;
   const generation = inspectionEpoch;
   const promise = (async () => {
     const snapshot = saved ?? (await window.electronAPI.getCommitComparison(selection, background));

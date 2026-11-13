@@ -50,7 +50,9 @@ import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 import { SubjectReviewStatus } from './PrReviewStatus';
 import { useChangesComments } from './useChangesComments';
-import { ArrivalProbe, contentMarkers } from '../lib/use-predictions';
+import { ArrivalProbe, contentMarkers, usePredictions } from '../lib/use-predictions';
+import { predictableMembers, prOpenPredictions } from '../lib/navigation-graph';
+import { needsResponse } from '../lib/response-needed';
 import type { ReviewMember } from '../lib/workbench';
 
 /**
@@ -338,6 +340,16 @@ function PrSummaryContent({
     account,
     item.subject.members.map((m) => ({ url: m.url, headSha: m.headSha }))
   );
+  // Opening a PR warms the tabs the reader is likely to open next: Changes, then Checks or Feedback when they need attention.
+  usePredictions(`pr:${item.subject.id}`, prOpenPredictions({
+    subjectId: item.subject.id,
+    members: account ? predictableMembers(item.subject.members) : [],
+    attention: checkTotals.attention,
+    running: checkTotals.running,
+    unresolved: signals.reduce((total, signal) => total + signal.comments, 0),
+    responseNeeded: item.subject.members.some((member) => needsResponse(item.responses?.[member.url])),
+    explanationReady: !!item.review && (item.review.status ?? 'completed') === 'completed',
+  }));
   // Status ages on the shared status clock in lib/status-clock.ts. Only the components that show
   // status read it, so a tick re-renders them and not this page, its kept tabs or the explanation.
   // New status, or a failed refresh, is aged at once: every status component reads the new time.

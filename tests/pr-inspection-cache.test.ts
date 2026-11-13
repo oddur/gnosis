@@ -504,3 +504,100 @@ void test('setIntent runs the hovered PR before visible rows and reverts', async
     assert.deepEqual(priorities.at(-1), [visible.url, view.url, hovered.url], 'Clearing the intent restores queue order');
   } finally { f.cache.stop(); }
 });
+
+function committedFixture(options: { truncated?: boolean; files?: number } = {}) {
+  const calls: string[] = [];
+  const ready = new Set<string>();
+  const mode = (value: unknown) => (value && typeof value === 'object' ? `predicted:${(value as { predicted: string }).predicted}` : value ? 'background' : 'user');
+  const snapshot = (revision: InspectionRevision): PrChanges => ({
+    version: 1,
+    url: revision.url,
+    metadata: { ...revision, title: 'PR' } as PrMetadata,
+    comparisonBase: 'merge-base',
+    fetchedAt: 1,
+    ...(options.truncated ? { filesTruncated: true } : {}),
+    files: Array.from({ length: options.files ?? 5 }, (_, i) => ({ path: `f${i}.ts`, status: 'modified' as const, additions: 1, deletions: 1, changeId: `f${i}` })),
+  });
+  const cache = createPrInspectionCache({
+    changes: (revision, _refresh, background) => {
+      calls.push(`changes ${mode(background)}`);
+      return Promise.resolve(snapshot(revision));
+    },
+    commits: (revision, _refresh, background) => {
+      calls.push(`commits ${mode(background)}`);
+      return Promise.resolve({ version: 1, url: revision.url, metadata: snapshot(revision).metadata, commits: [], fetchedAt: 1 } as PrCommits);
+    },
+    file: (_snapshot, file, background) => {
+      calls.push(`file ${file.path} ${mode(background)}`);
+      ready.add(file.path);
+      return Promise.resolve();
+    },
+    fileReady: (_snapshot, file) => ready.has(file.path),
+    comparison: () => Promise.resolve(undefined),
+    review: () => Promise.resolve(),
+    visible: () => true,
+  });
+  return { cache, calls, ready };
+}
+
+void test('a committed prediction reads both lists and the first three files as a prediction, then the queue continues in background', async () => {
+  const f = committedFixture();
+  f.cache.setTargets('account', []);
+  const reverse = (value: PrChanges, count: number) => [...value.files].reverse().slice(0, count);
+  assert.equal(f.cache.committedReady(r, 3, reverse), false);
+  await f.cache.prepareCommitted(r, { files: 3, label: 'pr-tab:changes', choose: reverse });
+  assert.deepEqual(f.calls, [
+    'changes predicted:pr-tab:changes',
+    'commits predicted:pr-tab:changes',
+    'file f4.ts predicted:pr-tab:changes',
+    'file f3.ts predicted:pr-tab:changes',
+    'file f2.ts predicted:pr-tab:changes',
+  ], 'The preferred files, in the order Changes shows them');
+  assert.equal(f.cache.committedReady(r, 3, reverse), true);
+  f.calls.length = 0;
+  await f.cache.prepareCommitted(r, { files: 3, label: 'pr-tab:changes', choose: reverse });
+  assert.equal(f.calls.length, 0, 'Warm data sends nothing');
+  f.cache.setTargets('account', [r], { active: [r.url] });
+  await f.cache.flush();
+  assert.deepEqual(f.calls.filter((call) => call.startsWith('changes') || call.startsWith('commits')), [], 'Lists are not read again');
+  assert.ok(f.calls.filter((call) => call.startsWith('file')).every((call) => call.endsWith(' background')), 'The rest is queue work');
+  assert.ok(f.calls.includes('file f0.ts background'));
+});
+
+void test('a committed prediction reads at most three files, and one when the inventory is truncated or on a light budget', async () => {
+  const many = committedFixture({ files: 10 });
+  await many.cache.prepareCommitted(r, { files: 8, label: 'pr-tab:changes' });
+  assert.equal(many.calls.filter((call) => call.startsWith('file')).length, 3);
+  const truncated = committedFixture({ truncated: true });
+  await truncated.cache.prepareCommitted(r, { files: 3, label: 'pr-tab:changes' });
+  assert.deepEqual(truncated.calls.filter((call) => call.startsWith('file')), ['file f0.ts predicted:pr-tab:changes']);
+  const light = committedFixture();
+  await light.cache.prepareCommitted(r, { files: 1, label: 'pr-tab:changes' });
+  assert.deepEqual(light.calls.filter((call) => call.startsWith('file')), ['file f0.ts predicted:pr-tab:changes']);
+});
+
+void test('a user read during a pending prediction sends its own read for main to join; a queue read reuses it', async () => {
+  const calls: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const cache = createPrInspectionCache({
+    changes: async (revision, _refresh, background) => {
+      calls.push(typeof background === 'object' ? 'predicted' : background ? 'background' : 'user');
+      await gate;
+      return { version: 1, url: revision.url, metadata: { ...revision } as PrMetadata, comparisonBase: 'b', fetchedAt: 1, files: [] };
+    },
+    commits: () => Promise.reject(new Error('unused')),
+    file: () => Promise.resolve(),
+    comparison: () => Promise.resolve(undefined),
+    review: () => Promise.resolve(),
+    visible: () => true,
+  });
+  const reads = [
+    cache.readChanges(r, false, { predicted: 'pr-tab:changes' }),
+    cache.readChanges(r, false, true),
+    cache.readChanges(r, false, false),
+  ];
+  release();
+  await Promise.all(reads);
+  assert.deepEqual(calls, ['predicted', 'user']);
+});

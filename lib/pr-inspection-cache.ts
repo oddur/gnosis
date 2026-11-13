@@ -1,6 +1,6 @@
 import { inspectionFailure } from './inspection-batch';
 import type { ActivityTask } from './activity';
-import { changesRevision, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
+import { changesRevision, inspectionRank, type InspectionMode, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { PrCommits, PrCommit } from './pr-commits';
 import { createSharedRead, readError } from './shared-read';
 import { createByteCache } from './byte-cache';
@@ -13,9 +13,11 @@ export interface PreparedInventories {
 }
 interface Dependencies {
   restore?: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;
-  changes: (revision: InspectionRevision, refresh: boolean, background: boolean, signal?: AbortSignal) => Promise<PrChanges>;
-  commits: (revision: InspectionRevision, refresh: boolean, background: boolean, signal?: AbortSignal) => Promise<PrCommits>;
-  file: (snapshot: PrChanges, file: PrChangeFile) => Promise<unknown>;
+  changes: (revision: InspectionRevision, refresh: boolean, background: InspectionMode, signal?: AbortSignal) => Promise<PrChanges>;
+  commits: (revision: InspectionRevision, refresh: boolean, background: InspectionMode, signal?: AbortSignal) => Promise<PrCommits>;
+  file: (snapshot: PrChanges, file: PrChangeFile, background?: InspectionMode) => Promise<unknown>;
+  /** Whether a file can show without a request, from its saved contents or its patch. */
+  fileReady?: (snapshot: PrChanges, file: PrChangeFile) => boolean;
   comparison: (list: PrCommits, commit: PrCommit) => Promise<PrChanges | undefined>;
   review: (snapshot: PrChanges) => Promise<unknown>;
   visible: () => boolean;
@@ -60,7 +62,7 @@ export function createPrInspectionCache(deps: Dependencies) {
   const jobs = new Map<string, Job>();
   const completed = new Set<string>();
   const restored = new Set<string>();
-  const pending = new Map<string, { task: ReturnType<typeof createSharedRead<PrChanges | PrCommits>>; background: boolean }>();
+  const pending = new Map<string, { task: ReturnType<typeof createSharedRead<PrChanges | PrCommits>>; background: InspectionMode }>();
   let scope: string | null = null,
     epoch = 0;
   let order: string[] = [];
@@ -105,7 +107,7 @@ export function createPrInspectionCache(deps: Dependencies) {
     kind: keyof Entry,
     revision: InspectionRevision,
     refresh = false,
-    background = false,
+    background: InspectionMode = false,
     signal?: AbortSignal
   ): Promise<T> {
     if (signal?.aborted) return Promise.reject(readError(signal.reason));
@@ -113,7 +115,9 @@ export function createPrInspectionCache(deps: Dependencies) {
     if (saved && !refresh) return Promise.resolve(saved as T);
     const id = `${kind}:${key(revision)}:${refresh}`;
     const previous = pending.get(id);
-    if (previous && !previous.task.signal.aborted && (!previous.background || background)) return previous.task.read(signal) as Promise<T>;
+    // A higher rank sends its own read; main joins the two and promotes the work.
+    if (previous && !previous.task.signal.aborted && inspectionRank(previous.background) >= inspectionRank(background))
+      return previous.task.read(signal) as Promise<T>;
     const generation = epoch;
     const task = createSharedRead(sharedSignal => deps[kind](revision, refresh, background, sharedSignal)
       .then((value) => {
@@ -126,10 +130,15 @@ export function createPrInspectionCache(deps: Dependencies) {
     pending.set(id, { task, background });
     return task.read(signal) as Promise<T>;
   }
-  const readChanges = (r: InspectionRevision, refresh = false, background = false, signal?: AbortSignal) =>
+  const readChanges = (r: InspectionRevision, refresh = false, background: InspectionMode = false, signal?: AbortSignal) =>
     read<PrChanges>('changes', r, refresh, background, signal);
-  const readCommits = (r: InspectionRevision, refresh = false, background = false, signal?: AbortSignal) =>
+  const readCommits = (r: InspectionRevision, refresh = false, background: InspectionMode = false, signal?: AbortSignal) =>
     read<PrCommits>('commits', r, refresh, background, signal);
+  /** Committed predictions read at most `files` bodies; one when GitHub's inventory is incomplete or patches were dropped. */
+  const committedFiles = (snapshot: PrChanges, files: number, choose?: (snapshot: PrChanges, count: number) => PrChangeFile[]) => {
+    const count = snapshot.filesTruncated || snapshot.patchesDeferred ? Math.min(1, files) : Math.min(3, files);
+    return (choose ?? ((value, n) => value.files.slice(0, n)))(snapshot, count).slice(0, count);
+  };
   async function step(job: Job, generation: number) {
     const r = job.revision;
     if (job.stage === 0) {
@@ -212,8 +221,8 @@ export function createPrInspectionCache(deps: Dependencies) {
   function unsupported(error: unknown) {
     return /too large|binary file|not UTF-8|no text preview|Not Found|\b404\b|file limit/i.test(String(error));
   }
-  async function prepareFile(snapshot: PrChanges, file: PrChangeFile) {
-    try { await deps.file(snapshot, file); }
+  async function prepareFile(snapshot: PrChanges, file: PrChangeFile, mode: InspectionMode = true) {
+    try { await deps.file(snapshot, file, mode); }
     catch (error) { if (!unsupported(error)) throw error; }
   }
   function finish(job: Job, generation: number) {
@@ -384,6 +393,28 @@ export function createPrInspectionCache(deps: Dependencies) {
         timer = undefined;
       }
       kick();
+    },
+    /**
+     * A committed prediction for an open PR: both tab inventories and the first files, at foreground priority and
+     * outside the queue's pacing. The queue worker later skips what this saved and continues in background mode.
+     */
+    async prepareCommitted(
+      revision: InspectionRevision,
+      options: { files: number; label: string; choose?: (snapshot: PrChanges, count: number) => PrChangeFile[] }
+    ) {
+      const mode = { predicted: options.label };
+      const changes = await readChanges(revision, false, mode);
+      // History is optional for Changes; a failed commit list must not stop the files.
+      await readCommits(revision, false, mode).catch(() => {});
+      for (const file of committedFiles(changes, options.files, options.choose))
+        if (!deps.fileReady?.(changes, file)) await prepareFile(changes, file, mode);
+    },
+    /** Whether `prepareCommitted` would send nothing: both inventories and the chosen files are ready. */
+    committedReady(revision: InspectionRevision, files: number, choose?: (snapshot: PrChanges, count: number) => PrChangeFile[]) {
+      const saved = values.get(key(revision));
+      if (!saved?.changes || !saved.commits) return false;
+      const changes = saved.changes;
+      return !!deps.fileReady && committedFiles(changes, files, choose).every((file) => deps.fileReady?.(changes, file));
     },
     /** Hover or focus intent. Work stays at background priority; the current step finishes first. */
     setIntent(urls: string[]) {
