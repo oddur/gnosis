@@ -6,6 +6,7 @@ import { ChatConversation } from './ChatConversation';
 import { chatSuggestions } from '../lib/chat-context';
 import { ChatComposer } from './ChatComposer';
 import type { ChatMessage } from '@/lib/use-slide-chat';
+import type { ChatTraceStep } from '@/lib/chat-trace';
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 700;
@@ -24,6 +25,7 @@ interface Props {
   onSend: (text: string, selection?: string) => void;
   onRetry?: (assistantId: string) => void;
   onStop?: () => void;
+  onOpenTraceStep?: (step: ChatTraceStep) => void;
   modelLabel?: string;
   // When the user selects code in the diff and clicks "Ask about
   // this", the selected code is passed here as a fenced code block.
@@ -83,6 +85,7 @@ export function SlideChatSheet({
   onSend,
   onRetry,
   onStop,
+  onOpenTraceStep,
   modelLabel,
   quotedCode,
   onQuotedCodeConsumed,
@@ -195,6 +198,7 @@ export function SlideChatSheet({
         messages={messages}
         busy={isStreaming}
         onRetry={onRetry}
+        onOpenTraceStep={onOpenTraceStep}
         empty={
           <SuggestedQuestions
             slideTitle={slideTitle}

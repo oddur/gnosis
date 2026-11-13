@@ -9,12 +9,14 @@ import { ChatComposer } from './ChatComposer';
 import { useFileChat } from '../lib/use-file-chat';
 import { fileRevisionKey, type PrFileRequest } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
+import type { ChatTraceStep } from '../lib/chat-trace';
 export function PrFileChat(props: {
   request: PrFileRequest;
   preferences: Preferences;
   selection: string;
   focusRequest?: number;
   onClose: () => void;
+  onOpenTraceStep?: (step: ChatTraceStep) => void;
 }) {
   const { request } = props;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -43,6 +45,7 @@ function FileConversation({
   preferences,
   selection,
   onClose,
+  onOpenTraceStep,
   conversationId,
   textareaRef,
 }: {
@@ -50,6 +53,7 @@ function FileConversation({
   preferences: Preferences;
   selection: string;
   onClose: () => void;
+  onOpenTraceStep?: (step: ChatTraceStep) => void;
   conversationId: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 }) {
@@ -87,6 +91,7 @@ function FileConversation({
         messages={chat.messages}
         busy={chat.busy}
         onRetry={(id) => void chat.retry(context, id)}
+        onOpenTraceStep={onOpenTraceStep}
         empty={
           <>
             <div className="chat-suggestions" role="group" aria-label="Suggested questions">
