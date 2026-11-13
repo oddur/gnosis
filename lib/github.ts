@@ -115,6 +115,22 @@ export async function getPrMetadataForClone(
   }
 }
 
+/**
+ * The merge base of `base...head`, without the files. `per_page` limits commits, not files, so page 1 of a
+ * comparison carries up to 300 files with their patches. Page 2 still carries `merge_base_commit` and no files.
+ * That is observed behaviour, not a documented guarantee, so a missing SHA falls back to page 1.
+ */
+export async function getMergeBase(octokit: Octokit, owner: string, repo: string, base: string, head: string): Promise<string> {
+  const read = async (page?: number) => {
+    const { data } = await octokit.repos.compareCommits({ owner, repo, base, head, per_page: 1, ...(page ? { page } : {}) });
+    const sha = (data as { merge_base_commit?: { sha?: unknown } | null }).merge_base_commit?.sha;
+    return typeof sha === 'string' && sha ? sha : undefined;
+  };
+  const sha = (await read(2)) ?? (await read());
+  if (!sha) throw new Error('GitHub did not return the merge base of this comparison. Retry, or open it on GitHub.');
+  return sha;
+}
+
 export const changedFileFromClone = (file: LocalCloneFile): ChangedFile => ({
   filename: file.filename,
   sha: file.sha ?? undefined,
@@ -733,8 +749,7 @@ export class GitHubDiffSource implements DiffSource {
       if (prepared) return prepared.comparisonBase;
       const local = await this.fromClone((clone) => clone.mergeBase(meta.baseSha, meta.headSha));
       if (local) return local;
-      const { data } = await this.octokit.repos.compareCommits({ owner: this.owner, repo: this.repo, base: meta.baseSha, head: meta.headSha });
-      return data.merge_base_commit.sha;
+      return getMergeBase(this.octokit, this.owner, this.repo, meta.baseSha, meta.headSha);
     }).catch((error: unknown) => {
       // Keep successful revision pins, but allow a rate-limited lookup to resume.
       this.comparisonBase = null;

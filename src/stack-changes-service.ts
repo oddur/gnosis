@@ -13,6 +13,7 @@ import type { PrChanges, PrFileRequest } from '../lib/pr-changes';
 import { createPrChangesService } from './pr-changes-service';
 import { createSnapshotFileLoader } from './snapshot-file-loader';
 import { localClones } from '../lib/local-clone';
+import { getMergeBase } from '../lib/github';
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const storageKey = (key: string) => `stack-changes:v1:${key}`;
@@ -92,13 +93,7 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
             child = snapshots[i];
           const base =
             (await clones.read(root.metadata.baseRepo, (clone) => clone.mergeBase(parent.metadata.headSha, child.metadata.headSha))) ??
-            (await client.repos.compareCommits({
-              owner,
-              repo,
-              base: parent.metadata.headSha,
-              head: child.metadata.headSha,
-              per_page: 1,
-            })).data.merge_base_commit.sha;
+            (await getMergeBase(client, owner, repo, parent.metadata.headSha, child.metadata.headSha));
           if (base !== parent.metadata.headSha)
             throw new Error(
               `PR #${child.url.split('/').pop()} does not include the current commits from PR #${parent.url.split('/').pop()}. Update its branch or review by PR.`

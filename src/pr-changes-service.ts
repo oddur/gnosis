@@ -3,7 +3,7 @@ import { createByteCache } from '../lib/byte-cache';
 import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limits';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getChangedFiles, getPrMetadata, getPrMetadataForClone, knownMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
+import { getChangedFiles, getMergeBase, getPrMetadata, getPrMetadataForClone, knownMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
 import { preparedDiff, preparedDiffKey } from '../lib/prepared-pr';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
@@ -91,14 +91,14 @@ export function createPrChangesService(clones = localClones) {
         // metadata read afterwards confirms that the files belong to that revision.
         const [listed, compared] = await Promise.allSettled([
           getChangedFiles(client, owner, repo, pullNumber, true),
-          client.repos.compareCommits({ owner, repo, base: revision.baseSha, head: revision.headSha, per_page: 1 }),
+          getMergeBase(client, owner, repo, revision.baseSha, revision.headSha),
         ]);
         metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
         // A moved revision discards both results and continues below from the fresh metadata.
         if (changesRevision(metadata) === changesRevision(revision)) {
           if (listed.status === 'rejected') throw listed.reason;
           if (compared.status === 'rejected') throw compared.reason;
-          speculated = { files: listed.value, comparisonBase: compared.value.data.merge_base_commit.sha };
+          speculated = { files: listed.value, comparisonBase: compared.value };
         }
       } else metadata = await getPrMetadataForClone(client, owner, repo, pullNumber, revision, clones);
       const key = snapshotKey(url, changesRevision(metadata));
@@ -122,14 +122,7 @@ export function createPrChangesService(clones = localClones) {
         throw new Error('GitHub returned an incomplete file list. Open this PR on GitHub to inspect all files.');
       let comparisonBase = speculated?.comparisonBase ?? local?.mergeBase;
       if (!comparisonBase) {
-        const { data: comparison } = await client.repos.compareCommits({
-          owner,
-          repo,
-          base: metadata.baseSha,
-          head: metadata.headSha,
-          per_page: 1,
-        });
-        comparisonBase = comparison.merge_base_commit.sha;
+        comparisonBase = await getMergeBase(client, owner, repo, metadata.baseSha, metadata.headSha);
         const after = await getPrMetadata(client, owner, repo, pullNumber, true);
         if (changesRevision(after) !== changesRevision(metadata))
           throw new Error('This PR changed while its file list was loading. Retry to load a consistent version.');

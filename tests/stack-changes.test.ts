@@ -61,12 +61,14 @@ function source(n: number): PrChanges {
 }
 function fixture() {
   const calls: string[] = [];
+  const urls: URL[] = [];
   let stale = false,
     count = 1;
   const pool = createGitHubClientPool({
     fetch: ((input: string) => {
       const u = new URL(input);
       calls.push(u.pathname);
+      urls.push(u);
       if (u.pathname.includes('/contents/'))
         return Promise.resolve(new Response(u.searchParams.get('ref') === 'ancestor' ? 'old' : 'new'));
       return Promise.resolve(
@@ -97,6 +99,7 @@ function fixture() {
     service,
     client,
     calls,
+    urls,
     stale: () => {
       stale = true;
     },
@@ -141,6 +144,16 @@ void test('net comparison pins merge-base and top head, reuses cache, and loads 
   assert.deepEqual(
     value.stackComparison?.fileSources['one.ts'],
     members.map((m) => m.url)
+  );
+  // The adjacent pair only needs its merge base: page 2 carries it without the files.
+  assert.deepEqual(
+    f.urls.filter((u) => u.pathname.endsWith('head1...head2')).map((u) => u.searchParams.get('page')),
+    ['2']
+  );
+  // The net comparison reads files, so it stays on page 1.
+  assert.deepEqual(
+    f.urls.filter((u) => u.pathname.endsWith('base...head2')).map((u) => u.searchParams.get('page')),
+    [null]
   );
   const before = f.calls.length;
   assert.equal(await f.service.read(f.client, subject), value);

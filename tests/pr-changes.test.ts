@@ -438,3 +438,39 @@ void test('restarts from fresh metadata when the head moved', async () => {
   assert.equal(value.files[0].changeId.length > 0, true);
   assert.deepEqual(f.started.slice(2), ['metadata', 'files', `compare:${f.base}...${'c'.repeat(40)}`, 'metadata']);
 });
+void test('the merge base is read from page 2 of the comparison, without its files', async () => {
+  const f = fixture(),
+    client = f.pool.client('one');
+  const snapshot = await createPrChangesService().manifest(client, url);
+  assert.equal(snapshot.comparisonBase, 'merge-base');
+  const compares = f.reads.filter((u) => u.pathname.includes('/compare/'));
+  assert.deepEqual(
+    compares.map((u) => [u.searchParams.get('page'), u.searchParams.get('per_page')]),
+    [['2', '1']],
+    'One request, for page 2, which carries no patches'
+  );
+});
+void test('a comparison page without a merge base falls back to page 1', async () => {
+  const { getMergeBase } = await import('../lib/github');
+  const pages: (string | null)[] = [];
+  const pool = createGitHubClientPool({
+    fetch: ((input: string) => {
+      const u = new URL(input);
+      pages.push(u.searchParams.get('page'));
+      const page = u.searchParams.get('page');
+      return Promise.resolve(new Response(
+        JSON.stringify(page === '2' ? { commits: [] } : { merge_base_commit: { sha: 'from-page-1' }, files: [] }),
+        { headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' } }
+      ));
+    }) as typeof fetch,
+  });
+  assert.equal(await getMergeBase(pool.client('one'), 'o', 'r', 'base', 'head'), 'from-page-1');
+  assert.deepEqual(pages, ['2', null]);
+  const empty = createGitHubClientPool({
+    fetch: (() =>
+      Promise.resolve(new Response(JSON.stringify({ commits: [] }), {
+        headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' },
+      }))) as typeof fetch,
+  });
+  await assert.rejects(getMergeBase(empty.client('one'), 'o', 'r', 'base', 'head'), /merge base/);
+});
