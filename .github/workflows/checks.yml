@@ -8,10 +8,12 @@ on:
 permissions:
   contents: read
 
-# Supersede stale PR runs, but keep a distinct full run for EVERY main push.
+# A newer push supersedes the older run on the same PR or on main. Each main commit contains every earlier
+# one (squash merges), so the newest run still checks them all, and the account's 5 concurrent macOS
+# runners are not spent on a commit that is already behind.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
