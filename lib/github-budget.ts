@@ -55,3 +55,35 @@ export function predictedDeadline(
 }
 /** Near the cap, predictions read fewer file bodies before they stop. */
 export const PREDICTED_LIGHT_SHARE = 0.75;
+
+/** What main tells the renderer's predictor. Mirrors `PredictionState` in lib/navigation-predictor.ts. */
+export interface PredictionState {
+  off: boolean;
+  paused: boolean;
+  battery: boolean;
+  hot: boolean;
+  light: boolean;
+  spend?: unknown;
+}
+/**
+ * On battery, predictions keep running but read one file body instead of three. Near the predicted cap they do
+ * the same before they stop. Serious or critical heat leaves committed predictions only.
+ */
+export function predictionStateFor(input: {
+  enabled: boolean;
+  allowed: boolean;
+  battery: boolean;
+  thermal: string;
+  usage: { spent: number; limit: number }[];
+  spend?: unknown;
+}): PredictionState {
+  const nearCap = input.usage.some(({ spent, limit }) => spent >= PREDICTED_LIGHT_SHARE * limit);
+  return {
+    off: !input.enabled,
+    paused: !input.enabled || !input.allowed,
+    battery: input.battery,
+    hot: input.thermal === 'serious' || input.thermal === 'critical',
+    light: input.battery || nearCap,
+    ...(input.spend !== undefined ? { spend: input.spend } : {}),
+  };
+}

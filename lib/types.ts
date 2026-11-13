@@ -383,6 +383,11 @@ export interface Preferences {
   repositoryBriefingDailyLimit?: number;
   savedReviewSort?: import('./pr-list-sort').PrListSort;
   githubCacheSizeMB?: number;
+  /**
+   * Preload likely next pages: opening a PR warms its likely next tabs, and resting on an entry point prepares
+   * it. Undefined means on. Queue preparation and queue-row hover do not depend on it.
+   */
+  predictNavigation?: boolean;
   ignoreDependabotPrs?: boolean;
   /** Days since the last PR update; zero disables the global inactivity limit. */
   prInactivityDays?: number;

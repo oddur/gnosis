@@ -199,6 +199,7 @@ export function SettingsDialog({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
+  const [predictNavigation, setPredictNavigation] = useState(true);
   const [briefingDailyLimit, setBriefingDailyLimit] = useState(10);
   const [parallelReview, setParallelReview] = useState(false);
   const [claudeContext, setClaudeContext] = useState(true);
@@ -258,6 +259,7 @@ export function SettingsDialog({
         setRepositoryDailyLimit(normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit));
         setNotifications(prefs.notifications);
         setTrayEnabled(prefs.trayEnabled);
+        setPredictNavigation(prefs.predictNavigation !== false);
         setBriefingDailyLimit(prefs.briefingDailyLimit ?? 10);
         setParallelReview(prefs.parallelReview);
         setClaudeContext(prefs.claudeContext);
@@ -837,6 +839,22 @@ export function SettingsDialog({
             <Tabs.Content value="integrations" className="settings-panel">
               <section className="flex flex-col items-start gap-3" aria-labelledby="github-cache-title">
                 <h3 id="github-cache-title" className="text-sm font-medium">GitHub cache</h3>
+                <div className="w-full">
+                  <SettingRow
+                    label="Preload likely next pages"
+                    description="Uses some of your GitHub API limit to make navigation instant."
+                  >
+                    <Toggle
+                      checked={predictNavigation}
+                      ariaLabel="Preload likely next pages"
+                      onChange={() => {
+                        const next = !predictNavigation;
+                        setPredictNavigation(next);
+                        saveField({ predictNavigation: next });
+                      }}
+                    />
+                  </SettingRow>
+                </div>
                 <div className="settings-field">
                   <label htmlFor="github-cache-size">Disk cache size</label>
                   <SearchableSelect id="github-cache-size" label="Disk cache size" value={String(cacheSizeMB)}

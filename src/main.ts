@@ -62,8 +62,7 @@ import { createPrMergeMonitor } from './pr-merge-monitor';
 import type { PrActionRequest } from '../lib/pr-actions';
 import { requestGitHubCacheClear, applyPendingGitHubCacheClear, hasPendingGitHubCacheClear } from './github-cache-reset';
 import { withGitHubPriority, githubPriority, githubPredicted, githubPredictedJoins } from '../lib/github-scheduler';
-import { PREDICTED_LIGHT_SHARE } from '../lib/github-budget';
-import type { PredictionState } from '../lib/navigation-predictor';
+import { predictionStateFor, type PredictionState } from '../lib/github-budget';
 import { changesRevision, type InspectionRevision, type InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import type { MutePrRequest } from '../lib/muted-prs';
@@ -1468,6 +1467,7 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   void maintainStorage();
   savePreferences(prefs);
   broadcastToAllWindows('preferences-changed', loadPreferences());
+  publishPredictionState();
   broadcastWorkbenchChanged();
   applyBinaryOverrides(prefs);
   // Restart polling so the new proactiveMode value takes effect immediately
@@ -3192,23 +3192,22 @@ let onBattery = false;
 let thermalState = 'nominal';
 const predictionLabel = (value: unknown) =>
   typeof value === 'string' && /^[a-z][a-z:-]{0,39}$/.test(value) ? value : 'prediction';
+/** GNOSIS_PREDICT=off, or Settings › "Preload likely next pages" turned off. */
+const predictionsEnabled = () => !predictionsOff && preferencesFile.get().predictNavigation !== false;
 function predictionsAllowed(resources: readonly string[] = ['core', 'graphql']) {
-  return !predictionsOff && !!cachedToken && syncEnabled() && powerMonitor.getSystemIdleTime() < 300 &&
+  return predictionsEnabled() && !!cachedToken && syncEnabled() && powerMonitor.getSystemIdleTime() < 300 &&
     !githubClients.predictedBackoff(cachedToken, resources);
 }
 /** What the renderer's predictor may do now. Near the predicted cap, or on battery, it reads one file body, not three. */
 function predictionState(): PredictionState {
-  const usage = ['core', 'graphql'].map((resource) => githubClients.predictedUsage(cachedToken, resource));
-  const nearCap = usage.some(({ spent, limit }) => spent >= PREDICTED_LIGHT_SHARE * limit);
-  return {
-    off: predictionsOff,
-    paused: !predictionsAllowed(),
+  return predictionStateFor({
+    enabled: predictionsEnabled(),
+    allowed: predictionsAllowed(),
     battery: onBattery,
-    // Serious or critical heat: committed predictions only, no hover intent.
-    hot: thermalState === 'serious' || thermalState === 'critical',
-    light: onBattery || nearCap,
+    thermal: thermalState,
+    usage: ['core', 'graphql'].map((resource) => githubClients.predictedUsage(cachedToken, resource)),
     spend: { ...githubClients.predictedSpend(cachedToken), joined: githubPredictedJoins() },
-  };
+  });
 }
 const publishPredictionState = () => broadcastToAllWindows('prediction-state', predictionState());
 ipcMain.handle('prediction-state', () => predictionState());
@@ -3644,7 +3643,10 @@ const withKnownMember = (url: string, refresh: boolean, options: InspectionLoadO
  */
 function inspectionPriority<T>(mode: { background?: boolean; predicted?: unknown }, operation: () => T): T {
   if (mode.background) return withGitHubPriority('background', operation);
-  if (mode.predicted !== undefined) return withGitHubPriority('foreground', operation, { automatic: false, predicted: predictionLabel(mode.predicted) });
+  if (mode.predicted !== undefined) {
+    if (!predictionsEnabled()) throw new Error('Preloading likely next pages is off.');
+    return withGitHubPriority('foreground', operation, { automatic: false, predicted: predictionLabel(mode.predicted) });
+  }
   return withGitHubPriority('interactive', operation);
 }
 /** File and comparison reads pass `true` for queue preparation or `{ predicted }` for a prediction. */

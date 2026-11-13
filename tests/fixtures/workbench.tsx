@@ -361,6 +361,7 @@ if (new URLSearchParams(location.search).has('inactivity')) {
 }
 let prefs: Preferences = {
   checksView: sessionStorage.getItem('fixture-checks-view') === 'graph' ? 'graph' : 'list',
+  ...(sessionStorage.getItem('fixture-predict-navigation') === 'false' ? { predictNavigation: false } : {}),
   prInactivityDays: JSON.parse(sessionStorage.getItem('fixture-inactivity-days') ?? '30'),
   instructions: '',
   provider: 'claude',
@@ -631,6 +632,7 @@ const mocks = {
   savePreferences: (next: Preferences) => {
     prefs = next;
     sessionStorage.setItem('fixture-checks-view', next.checksView ?? 'list');
+    sessionStorage.setItem('fixture-predict-navigation', String(next.predictNavigation !== false));
     if (next.diffHighlighter) sessionStorage.setItem('fixture-diff-highlighter', next.diffHighlighter);
     sessionStorage.setItem('fixture-inactivity-days', JSON.stringify(next.prInactivityDays ?? 30));
     if (onboardingScenario) {

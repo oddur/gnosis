@@ -1106,3 +1106,20 @@ void test('predicted GraphQL spend counts query points', async () => {
   assert.equal(h.pool.predictedUsage('one', 'graphql').spent, 3);
   assert.deepEqual(h.pool.predictedSpend('one'), { graphql: { 'pr-open': 3 } });
 });
+
+void test('on battery or near the predicted cap, predictions turn light before they stop', async () => {
+  const { predictionStateFor, predictedLimit } = await import('../lib/github-budget');
+  const limit = predictedLimit('core');
+  assert.equal(limit, 300);
+  const state = (input: Partial<Parameters<typeof predictionStateFor>[0]>) =>
+    predictionStateFor({ enabled: true, allowed: true, battery: false, thermal: 'nominal', usage: [{ spent: 0, limit }], ...input });
+  assert.deepEqual(state({}), { off: false, paused: false, battery: false, hot: false, light: false });
+  assert.equal(state({ battery: true }).light, true, 'On battery: one file body');
+  assert.equal(state({ battery: true }).paused, false, 'Battery does not stop predictions');
+  assert.equal(state({ usage: [{ spent: 224, limit }] }).light, false);
+  assert.equal(state({ usage: [{ spent: 0, limit }, { spent: 225, limit }] }).light, true, '75% of either resource');
+  assert.equal(state({ allowed: false }).paused, true, 'At the cap, the reserve, on backoff, hidden or idle');
+  assert.deepEqual([state({ enabled: false }).off, state({ enabled: false }).paused], [true, true], 'The setting or GNOSIS_PREDICT');
+  assert.equal(state({ thermal: 'serious' }).hot, true);
+  assert.equal(state({ thermal: 'fair' }).hot, false);
+});

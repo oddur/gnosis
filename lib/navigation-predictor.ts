@@ -1,5 +1,8 @@
 import type { WorkspaceTab } from './navigation-history';
 import { PREDICTION_THRESHOLD } from './navigation-graph';
+import type { PredictionState } from './github-budget';
+/** What main allows now. Main keeps the budget, since several windows share one credential. */
+export type { PredictionState };
 
 /**
  * Knows where the reader is and where they are likely to go next. Screens declare likely destinations; the
@@ -48,20 +51,6 @@ export function destinationKey(destination: Destination): string {
 /** `pr-tab:changes:<subject>` → `pr-tab:changes`. */
 export const kindOfKey = (key: string) => (key.startsWith('pr-tab:') ? key.split(':', 2).join(':') : key.split(':', 1)[0]);
 
-/** What main allows now. Main keeps the budget, since several windows share one credential. */
-export interface PredictionState {
-  /** GNOSIS_PREDICT=off. */
-  off: boolean;
-  /** Hidden window, offline, idle, rate-limit backoff, or the predicted share or reserve is spent. */
-  paused: boolean;
-  battery: boolean;
-  /** Serious or critical thermal state: committed predictions only. */
-  hot: boolean;
-  /** On battery or near the predicted cap: one file body per PR instead of three. */
-  light: boolean;
-  /** Predicted spend since launch, by resource and destination kind, and user joins. For the summary. */
-  spend?: unknown;
-}
 export interface PredictionConditions {
   /** The "Preload likely next pages" setting, and GNOSIS_PREDICT. */
   enabled: boolean;

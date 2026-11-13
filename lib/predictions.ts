@@ -55,12 +55,19 @@ const reads: PredictorReads = {
 // Main keeps the budget. Its answer is refreshed when conditions change and at most every 15 s while visible.
 let state: PredictionState = { off: false, paused: false, battery: false, hot: false, light: false };
 const predictOff = window.electronAPI.predictOff === true;
+// Settings › "Preload likely next pages". On unless turned off. Queue preparation and row hover do not use it.
+let setting = true;
+const applySetting = (preferences: { predictNavigation?: boolean } | undefined) => {
+  if (!preferences || typeof preferences !== 'object') return;
+  setting = preferences.predictNavigation !== false;
+  predictor.wake();
+};
 export const predictor = createNavigationPredictor({
   now: clock,
   report: (line) => window.electronAPI.perfNote?.('predict', line),
   reads,
   conditions: () => ({
-    enabled: !predictOff,
+    enabled: !predictOff && setting,
     online: navigator.onLine,
     visible: document.visibilityState !== 'hidden',
     focused: document.hasFocus(),
@@ -78,6 +85,8 @@ function refresh() {
   void window.electronAPI.predictionState?.().then(apply, () => {});
 }
 window.electronAPI.onPredictionState?.(apply);
+void Promise.resolve().then(() => window.electronAPI.loadPreferences()).then(applySetting, () => {});
+window.electronAPI.onPreferencesChanged?.(applySetting);
 for (const type of ['focus', 'online'] as const) window.addEventListener(type, refresh);
 document.addEventListener('visibilitychange', refresh);
 // Only while something is predicted: an idle window sends nothing.

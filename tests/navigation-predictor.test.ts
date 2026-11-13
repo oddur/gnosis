@@ -259,3 +259,21 @@ void test('predictions can reach only read executors', () => {
   assert.deepEqual(Object.keys(keys).sort(), [...allowed].sort());
   assert.ok(!allowed.some((name) => /write|post|submit|generate|mark|merge|comment|download|lfs/i.test(name)));
 });
+
+void test('turning the setting off stops new predictions; work in flight finishes; turning it on resumes', async () => {
+  const h = running({ concurrency: 1 });
+  h.hold(true);
+  h.predictor.declare('pr:1', opened({ attention: 1 }));
+  await h.flush();
+  assert.equal(h.calls.length, 1);
+  h.conditions.enabled = false;
+  await h.release();
+  assert.equal(h.calls.length, 1, 'Nothing new starts while off');
+  h.predictor.intent('palette', { destination: { kind: 'pr-open', subjectId: 'x', members: [member] }, weight: 1, strength: 'intent' });
+  assert.equal(h.calls.length, 1, 'Hover intent from new entry points is off too');
+  h.hold(false);
+  h.conditions.enabled = true;
+  h.predictor.wake();
+  await h.flush();
+  assert.notEqual(h.calls.length, 1, 'Turning it on resumes the set');
+});
