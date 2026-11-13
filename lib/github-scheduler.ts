@@ -6,6 +6,11 @@ const rank: Record<GitHubPriority, number> = { interactive: 2, foreground: 1, ba
 interface PriorityScope {
   priority: GitHubPriority;
   automatic?: boolean;
+  /**
+   * A navigation prediction, labelled by destination kind such as `pr-tab:changes`. Charged to the predicted
+   * budget, not paced. `null` means a user joined the work: the rest is charged to the user.
+   */
+  predicted?: string | null;
   parent?: PriorityScope;
 }
 const context = new AsyncLocalStorage<PriorityScope>();
@@ -27,14 +32,32 @@ export function githubPriority(scope = githubPriorityScope()): GitHubPriority {
   const parent = scope.parent && githubPriority(scope.parent);
   return parent && rank[parent] > rank[scope.priority] ? parent : scope.priority;
 }
-export const withGitHubPriority = <T>(priority: GitHubPriority, operation: () => T, options: { automatic?: boolean } = {}): T =>
-  context.run({ priority, automatic: options.automatic ?? (context.getStore() && githubAutomatic() ? true : undefined) }, operation);
+export const withGitHubPriority = <T>(
+  priority: GitHubPriority,
+  operation: () => T,
+  options: { automatic?: boolean; predicted?: string } = {}
+): T =>
+  context.run({
+    priority,
+    automatic: options.automatic ?? (context.getStore() && githubAutomatic() ? true : undefined),
+    // Reads made inside a prediction stay a prediction, unless the user's own interactive work starts them.
+    predicted: options.predicted ?? (priority !== 'interactive' && context.getStore() ? githubPredicted() : undefined),
+  }, operation);
 /** Automatic refreshes can be urgent without borrowing the user's interactive allowance. */
 export function githubAutomatic(scope = githubPriorityScope()): boolean {
   if (githubPriority(scope) === 'interactive') return false;
   if (scope.automatic !== undefined) return scope.automatic;
   return scope.parent ? githubAutomatic(scope.parent) : githubPriority(scope) === 'background';
 }
+/** The prediction label of non-automatic, non-interactive work. Interactive and automatic work is never predicted. */
+export function githubPredicted(scope = githubPriorityScope()): string | undefined {
+  if (githubPriority(scope) === 'interactive' || githubAutomatic(scope)) return undefined;
+  if (scope.predicted !== undefined) return scope.predicted ?? undefined;
+  return scope.parent ? githubPredicted(scope.parent) : undefined;
+}
+let predictedJoins = 0;
+/** How often a user request joined a prediction in flight. */
+export const githubPredictedJoins = () => predictedJoins;
 export interface GitHubWork<T> {
   promise: Promise<T>;
   scope: PriorityScope;
@@ -47,12 +70,22 @@ export function createGitHubWork<T>(operation: () => Promise<T>): GitHubWork<T> 
 export function joinGitHubWork<T>(work: GitHubWork<T>): Promise<T> {
   const priority = githubPriority();
   const before = [work.scope.priority, work.scope.automatic];
+  const joiner = { automatic: githubAutomatic(), predicted: githubPredicted() };
+  const was = { automatic: githubAutomatic(work.scope), predicted: githubPredicted(work.scope) };
   if (rank[priority] > rank[work.scope.priority]) {
     work.scope.priority = priority;
     work.scope.automatic = githubAutomatic();
   }
   // A user-requested generation can join an automatic foreground refresh.
   if (!githubAutomatic() && rank[priority] >= rank[work.scope.priority]) work.scope.automatic = false;
+  if (was.predicted && !joiner.predicted && !joiner.automatic) {
+    // The user caught up with a prediction. The rest of the work is charged to the user.
+    work.scope.predicted = null;
+    predictedJoins++;
+  } else if (joiner.predicted && was.automatic && !githubAutomatic(work.scope)) {
+    // A prediction promoted queue work: the rest is charged to the predicted budget, not to nobody.
+    work.scope.predicted = joiner.predicted;
+  }
   // A promoted task may now fit a slot its old tier could not use.
   if (before[0] !== work.scope.priority || before[1] !== work.scope.automatic) for (const drain of [...stalled]) drain();
   return work.promise;

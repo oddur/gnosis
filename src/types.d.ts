@@ -52,6 +52,11 @@ declare global {
       watchGitHub?: (id: string, interest: GitHubSyncInterest | null) => void;
       prOpenPreload?: (targets: OpenTarget[]) => void;
       prOpenIntent?: (targets: OpenTarget[] | null) => void;
+      /** Committed predictions: the open PR's threads and failing check details. Resolves when they have run. */
+      prOpenCommitted?: (targets: OpenTarget[] | null, label: string) => Promise<void>;
+      predictWorkflowGraph?: (target: CheckTarget, label: string) => Promise<void>;
+      predictionState?: () => Promise<import('../lib/navigation-predictor').PredictionState>;
+      onPredictionState?: (callback: (state: import('../lib/navigation-predictor').PredictionState) => void) => () => void;
       onGitHubSync?: (callback: (event: GitHubSyncEvent) => void) => () => void;
       onWorkbenchChanged?: (callback: (revisions?: import('../lib/workbench-revision').WorkbenchRevisions) => void) => () => void;
       onActivityChanged?: (callback: () => void) => () => void;
@@ -61,12 +66,12 @@ declare global {
       getPreparedInventories: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;
       preparePrReview: (url: string, revision: { baseSha: string; headSha: string }) => Promise<void>;
       getPrCommits: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrCommits>;
-      getCommitComparison: (selection: CommitSelection, background?: boolean) => Promise<PrChanges>;
+      getCommitComparison: (selection: CommitSelection, background?: import('../lib/pr-changes').InspectionMode) => Promise<PrChanges>;
       renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest) => Promise<MarkdownReview>;
       getStackChanges: (subject: ReviewSubject, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
       getPrChanges: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
       cancelInspection: (requestId: string) => Promise<void>;
-      getPrChangeFile: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>;
+      getPrChangeFile: (request: PrFileRequest, background?: import('../lib/pr-changes').InspectionMode) => Promise<PrFileContents>;
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
       cancelChat: (requestId: string) => Promise<void>;
       onFileChatProgress: (callback: (event: { requestId: string; chunk: string }) => void) => () => void;

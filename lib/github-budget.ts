@@ -35,3 +35,23 @@ export function automaticSpacing(
       Math.max(1, automaticLimit(resource, budget, authenticated) - usage.spent + 1)
   );
 }
+
+/**
+ * Navigation predictions, such as warming the tabs of the PR the reader just opened, get their own share of each
+ * allowance: 6% per hour, separate from the automatic 20% and not paced. Predictions never use search.
+ */
+export const PREDICTED_SHARE = 0.06;
+export const predictedLimit = (resource: string, budget?: GitHubBudget, authenticated = true) =>
+  resource === 'search' ? 0 : Math.max(1, Math.floor((budget?.limit || (authenticated ? 5000 : 60)) * PREDICTED_SHARE));
+export function predictedDeadline(
+  resource: string,
+  usage: AutomaticUsage | undefined,
+  now: number,
+  budget?: GitHubBudget,
+  authenticated = true
+) {
+  if (!usage || now >= usage.startedAt + automaticWindow(resource)) return 0;
+  return usage.spent >= predictedLimit(resource, budget, authenticated) ? usage.startedAt + automaticWindow(resource) : 0;
+}
+/** Near the cap, predictions read fewer file bodies before they stop. */
+export const PREDICTED_LIGHT_SHARE = 0.75;

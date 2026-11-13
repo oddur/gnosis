@@ -30,12 +30,20 @@ export const queuePriority = <T>(operation: () => Promise<T>) => withGitHubPrior
 /** Hover and focus prefetch: ahead of background work, outside automatic pacing, never in an interactive slot. */
 export const intentPriority = <T>(operation: () => Promise<T>) =>
   withGitHubPriority('foreground', operation, { automatic: false });
+/**
+ * Committed navigation predictions, such as the open PR's threads and failing check details: foreground, never
+ * interactive, unpaced, and charged to the predicted budget under `label`.
+ */
+export const predictedPriority = <T>(label: string, operation: () => Promise<T>) =>
+  withGitHubPriority('foreground', operation, { automatic: false, predicted: label });
 
 export interface PrOpenPreloaderDependencies {
   /** Queue tiers: signed in, window visible, and no GraphQL backoff or reserve. */
   canRun: () => boolean;
   /** Hover and focus: signed in, window visible, and no hard GraphQL backoff. */
   canIntent: () => boolean;
+  /** Committed predictions: signed in, window visible, not idle, and inside the predicted budget. */
+  canPredict?: () => boolean;
   usage: () => { spent: number; limit: number };
   idleSeconds: () => number;
   /** `details` is used by hover prefetch only: failing checks without fresh details. */
@@ -75,6 +83,9 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     dirty = true,
     recheckAt = 0;
   let queued: { owner: string; targets: OpenTarget[] } | undefined;
+  // Committed predictions, one set per owner (`<window>:committed`). A hover never replaces them.
+  const committed = new Map<string, { targets: OpenTarget[]; label: string; done: (() => void)[] }>();
+  let committedRunning = false;
   let intentRunning = false,
     tokens = BUCKET,
     refilledAt = now();
@@ -161,6 +172,40 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     );
     await Promise.allSettled(jobs);
   }
+  /** Committed work for the open PR skips status and signals: live sync revalidates them on open. */
+  const committedKinds = (target: OpenTarget): (OpenKind | 'details')[] =>
+    target.tier === 0 ? ['threads', 'details'] : kinds;
+  const settle = (entry: { done: (() => void)[] } | undefined) => entry?.done.splice(0).forEach((done) => done());
+  async function runCommitted(): Promise<void> {
+    if (committedRunning || !committed.size) return;
+    if (!(deps.canPredict ?? deps.canIntent)()) {
+      // Nothing starts while paused. The renderer declares again when it can run.
+      for (const entry of committed.values()) settle(entry);
+      committed.clear();
+      return;
+    }
+    const [owner, entry] = committed.entries().next().value as [string, { targets: OpenTarget[]; label: string; done: (() => void)[] }];
+    committed.delete(owner);
+    const work = entry.targets.flatMap((target) => {
+      const needed = new Set(committedKinds(target).filter((kind) => deps.need(target, kind)));
+      return needed.size ? [{ target, needed }] : [];
+    });
+    if (!work.length) {
+      // Fresh saved copies: nothing to send, and no allowance spent.
+      settle(entry);
+      return runCommitted();
+    }
+    committedRunning = true;
+    const generation = epoch;
+    try {
+      await predictedPriority(entry.label, () => Promise.allSettled(work.map(({ target, needed }) => prefetch(target, needed))));
+    } finally {
+      committedRunning = false;
+      if (generation === epoch) dirty = true;
+      settle(entry);
+      void runCommitted();
+    }
+  }
   async function runIntent(): Promise<void> {
     if (intentRunning || !queued || !deps.canIntent()) return;
     const work = queued.targets.flatMap((target) => {
@@ -204,7 +249,25 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     removeOwner(owner: string) {
       owners.delete(owner);
       if (queued?.owner === owner) queued = undefined;
+      for (const key of [owner, `${owner}:committed`]) {
+        settle(committed.get(key));
+        committed.delete(key);
+      }
       dirty = true;
+    },
+    /**
+     * Committed predictions for `owner`, such as the open PR. They may target the open PR, which queue tiers skip,
+     * run ahead of hover intent, and spend the predicted budget instead of the hover bucket. Replaces the owner's
+     * queued set; work in flight finishes and is saved. Resolves when this set has run or was replaced.
+     */
+    setCommitted(owner: string, targets: OpenTarget[] | null, label = 'pr-open'): Promise<void> {
+      settle(committed.get(owner));
+      committed.delete(owner);
+      if (!targets?.length) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        committed.set(owner, { targets: targets.slice(0, 5), label, done: [resolve] });
+        void runCommitted();
+      });
     },
     /** Replaces any queued intent. A request already in flight finishes and is saved. */
     setIntent(owner: string, targets: OpenTarget[] | null) {
@@ -221,10 +284,13 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
       retries.clear();
       incomplete.clear();
       queued = undefined;
+      for (const entry of committed.values()) settle(entry);
+      committed.clear();
       pausedUntil = 0;
       dirty = true;
     },
     async tick() {
+      void runCommitted();
       void runIntent();
       if (running) return;
       running = true;

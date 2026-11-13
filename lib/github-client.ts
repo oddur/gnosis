@@ -4,7 +4,15 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
-import { automaticDeadline, automaticLimit, automaticSpacing, automaticWindow, type AutomaticUsage } from './github-budget';
+import {
+  automaticDeadline,
+  automaticLimit,
+  automaticSpacing,
+  automaticWindow,
+  predictedDeadline,
+  predictedLimit,
+  type AutomaticUsage,
+} from './github-budget';
 import {
   createGitHubScheduler,
   githubPriorityScope,
@@ -12,6 +20,7 @@ import {
   joinGitHubWork,
   githubReadSignal,
   githubAutomatic,
+  githubPredicted,
   type GitHubWork,
 } from './github-scheduler';
 
@@ -63,6 +72,8 @@ const backgroundReserve = (resource: string, budget: Budget) =>
 interface AccountState {
   budgets: Partial<Record<string, Budget>>;
   automatic: Partial<Record<string, AutomaticUsage>>;
+  /** Navigation predictions, per resource, in their own hourly window. */
+  predicted?: Partial<Record<string, AutomaticUsage>>;
   blockedUntil: number;
   secondaryStrikes: number;
   lastSecondary: number;
@@ -114,6 +125,13 @@ export function createGitHubClientPool(options: Options = {}) {
   const states = new Map<string, AccountState>();
   const clients = new Map<string, Octokit>();
   const snapshots = createGitHubCache(now);
+  // Prediction spend since launch, per account, resource and destination kind. Logged, never saved.
+  const predictedSpend = new Map<string, Partial<Record<string, Record<string, number>>>>();
+  const spendFor = (key: string) => {
+    let spend = predictedSpend.get(key);
+    if (!spend) predictedSpend.set(key, (spend = {}));
+    return spend;
+  };
   let storage: string | undefined;
   let budgetWrites = Promise.resolve();
   let dirty = false;
@@ -125,7 +143,7 @@ export function createGitHubClientPool(options: Options = {}) {
   const stateFor = (key: string) => {
     let state = states.get(key);
     if (!state) {
-      state = { budgets: {}, automatic: {}, blockedUntil: 0, secondaryStrikes: 0, lastSecondary: 0 };
+      state = { budgets: {}, automatic: {}, predicted: {}, blockedUntil: 0, secondaryStrikes: 0, lastSecondary: 0 };
       states.set(key, state);
     }
     return state;
@@ -173,6 +191,30 @@ export function createGitHubClientPool(options: Options = {}) {
     if (reserveDeadline > now())
       return new GitHubBackoffError(reserveDeadline, 'Background updates paused to preserve your API allowance');
   };
+  /**
+   * Why predictions cannot start now: a hard limit, the predicted reserve (twice the background reserve) or the
+   * predicted hourly share. Predictions never use search.
+   */
+  const predictedBackoff = (token: string | null | undefined, resources: readonly string[] = ['core', 'graphql']) => {
+    const state = stateFor(keyFor(token));
+    const hard = backoff(token, false, resources);
+    if (hard) return hard;
+    let deadline = 0;
+    for (const resource of resources) {
+      const budget = state.budgets[resource];
+      if (budget && budget.remaining <= 2 * backgroundReserve(resource, budget)) deadline = Math.max(deadline, budget.reset);
+      deadline = Math.max(deadline, predictedDeadline(resource, state.predicted?.[resource], now(), budget, !!token));
+    }
+    if (deadline > now()) return new GitHubBackoffError(deadline, 'Predictions paused to preserve your GitHub allowance');
+  };
+  const predictedUsage = (token: string | null | undefined, resource: string) => {
+    const state = stateFor(keyFor(token));
+    const usage = state.predicted?.[resource];
+    return {
+      spent: usage && now() < usage.startedAt + automaticWindow(resource) ? usage.spent : 0,
+      limit: predictedLimit(resource, state.budgets[resource], !!token),
+    };
+  };
   /** Automatic spend in the current window, and its limit. Optional work can stop well before the limit. */
   const automaticUsage = (token: string | null | undefined, resource: string) => {
     const state = stateFor(keyFor(token));
@@ -185,6 +227,10 @@ export function createGitHubClientPool(options: Options = {}) {
   return {
     backoff,
     automaticUsage,
+    predictedBackoff,
+    predictedUsage,
+    /** Requests started and GraphQL points spent by predictions since launch, by resource and destination kind. */
+    predictedSpend: (token?: string | null) => structuredClone(spendFor(keyFor(token))),
     setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
     trimPrepared: () => snapshots.trimPrepared(),
     onCacheChange: (listener: Parameters<typeof snapshots.onChange>[0]) => snapshots.onChange(listener),
@@ -227,16 +273,20 @@ export function createGitHubClientPool(options: Options = {}) {
               reset: number(budget.reset),
             };
           }
-          const automatic: AccountState['automatic'] = {};
-          for (const [resource, rawUsage] of Object.entries(record(value.automatic) ?? {})) {
-            const usage = record(rawUsage);
-            if (usage && typeof usage.startedAt === 'number' && Number.isFinite(usage.startedAt) &&
-              usage.startedAt <= now() && typeof usage.spent === 'number' && Number.isFinite(usage.spent) && usage.spent >= 0)
-              automatic[resource] = { startedAt: usage.startedAt, spent: usage.spent };
-          }
+          const usages = (raw: unknown) => {
+            const result: AccountState['automatic'] = {};
+            for (const [resource, rawUsage] of Object.entries(record(raw) ?? {})) {
+              const usage = record(rawUsage);
+              if (usage && typeof usage.startedAt === 'number' && Number.isFinite(usage.startedAt) &&
+                usage.startedAt <= now() && typeof usage.spent === 'number' && Number.isFinite(usage.spent) && usage.spent >= 0)
+                result[resource] = { startedAt: usage.startedAt, spent: usage.spent };
+            }
+            return result;
+          };
           states.set(key, {
             budgets,
-            automatic,
+            automatic: usages(value.automatic),
+            predicted: usages(value.predicted),
             blockedUntil: number(value.blockedUntil),
             secondaryStrikes: number(value.secondaryStrikes),
             lastSecondary: number(value.lastSecondary),
@@ -390,22 +440,27 @@ export function createGitHubClientPool(options: Options = {}) {
             const failed = get && unavailable.get(requestKey);
             if (failed && failed.retryAt > now()) throw failed.error;
             const automatic = readOnly && githubAutomatic();
+            const predicted = !automatic && githubPredicted();
+            // A prediction can only read. It never writes, downloads LFS objects or searches.
+            if (predicted && (!readOnly || resource === 'search')) throw new Error('Predictions only read pull request data.');
             const budget = state.budgets[resource];
             // Automatic reads already in flight will spend part of the reserve. Interactive reads
             // stop only on the observed exhaustion, so they are never rejected falsely.
             const exhausted = budget && (budget.remaining <= 0 ||
-              (automatic && budget.remaining - (flying[resource] ?? 0) <= backgroundReserve(resource, budget)));
+              (automatic && budget.remaining - (flying[resource] ?? 0) <= backgroundReserve(resource, budget)) ||
+              (predicted && budget.remaining - (flying[resource] ?? 0) <= 2 * backgroundReserve(resource, budget)));
             const deadline = Math.max(
               state.blockedUntil,
               exhausted ? budget.reset : 0,
-              automatic ? automaticDeadline(resource, state.automatic[resource], now(), budget, !!token) : 0
+              automatic ? automaticDeadline(resource, state.automatic[resource], now(), budget, !!token) : 0,
+              predicted ? predictedDeadline(resource, state.predicted?.[resource], now(), budget, !!token) : 0
             );
             if (deadline > now())
               throw new GitHubBackoffError(
                 deadline,
                 automatic
                   ? 'Background updates are waiting to preserve your GitHub allowance'
-                  : undefined
+                  : predicted ? 'Predictions paused to preserve your GitHub allowance' : undefined
               );
           };
           // Pacing is not a failed operation. Release the network scheduler while
@@ -427,9 +482,23 @@ export function createGitHubClientPool(options: Options = {}) {
           // From here to the request, nothing awaits: the gate, the charge and the start are one step.
           const sequence = ++started;
           const automatic = readOnly && githubAutomatic();
+          const predicted = !automatic && githubPredicted();
           const beforeBudget = state.budgets[resource];
           let graphCost: number | undefined;
           let charged: AutomaticUsage | undefined;
+          // Predictions are charged at start like automatic work, but never paced.
+          let predictedCharge: { usage: AutomaticUsage; label: string } | undefined;
+          if (predicted) {
+            const usages = (state.predicted ??= {});
+            const previous = usages[resource];
+            const usage = previous && now() < previous.startedAt + automaticWindow(resource) ? previous : { startedAt: now(), spent: 0 };
+            usage.spent++;
+            usages[resource] = usage;
+            const spend = (spendFor(key)[resource] ??= {});
+            spend[predicted] = (spend[predicted] ?? 0) + 1;
+            predictedCharge = { usage, label: predicted };
+            markDirty();
+          }
           if (automatic) {
             const previous = state.automatic[resource];
             charged = previous && now() < previous.startedAt + automaticWindow(resource)
@@ -620,7 +689,15 @@ export function createGitHubClientPool(options: Options = {}) {
               backgroundDue.set(resource, now() + Math.max(quotaSpacing,
                 automaticSpacing(resource, charged, now(), budget, !!token)));
             }
-            if (charged || state.budgets[resource] !== beforeBudget) markDirty();
+            if (predictedCharge && resource === 'graphql') {
+              const budget = state.budgets[resource];
+              const delta = budget && beforeBudget?.reset === budget.reset ? beforeBudget.remaining - budget.remaining : 1;
+              const extra = Math.max(0, (graphCost ?? delta) - 1);
+              predictedCharge.usage.spent += extra;
+              const spend = (spendFor(key).graphql ??= {});
+              spend[predictedCharge.label] = (spend[predictedCharge.label] ?? 0) + extra;
+            }
+            if (charged || predictedCharge || state.budgets[resource] !== beforeBudget) markDirty();
             if (timer) clearTimeout(timer);
             invalidateWrite();
           }

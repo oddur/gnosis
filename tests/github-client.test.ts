@@ -1041,3 +1041,68 @@ void test('paginate over a cached total_count response', async () => {
   assert.equal(h.calls.length, 1, 'The second read is a memory hit');
   assert.deepEqual(githubCachedResponses(client)[0].data, { total_count: 2, check_runs: [{ id: 1 }, { id: 2 }] });
 });
+
+const predicted = <T>(label: string, read: () => Promise<T>) =>
+  withGitHubPriority('foreground', read, { automatic: false, predicted: label });
+
+void test('predictions stop at six percent of the hourly allowance, unpaced, and are counted by destination', async () => {
+  let now = 1_000_000;
+  let requests = 0;
+  const pool = createGitHubClientPool({ now: () => now,
+    sleep: ms => { now += ms; return Promise.resolve(); },
+    fetch: (() => {
+      requests++;
+      return Promise.resolve(json({}, 200, { 'x-ratelimit-resource': 'core', 'x-ratelimit-remaining': String(5000 - requests),
+        'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '4600' }));
+    }) as typeof fetch,
+  });
+  const client = pool.client('one');
+  const start = now;
+  for (let i = 0; i < 300; i++) await predicted(i < 200 ? 'pr-tab:changes' : 'pr-tab:checks', () => client.request(`GET /predict/${i}`));
+  assert.ok(now - start < 60_000, `Predictions are not paced: 300 took ${now - start}ms`);
+  assert.deepEqual(pool.predictedUsage('one', 'core'), { spent: 300, limit: 300 });
+  assert.ok(pool.predictedBackoff('one', ['core']), 'The renderer is told to stop');
+  await assert.rejects(predicted('pr-tab:changes', () => client.request('GET /predict/over')), /Predictions paused/);
+  assert.equal(requests, 300);
+  assert.deepEqual(pool.predictedSpend('one'), { core: { 'pr-tab:changes': 200, 'pr-tab:checks': 100 } });
+  assert.equal(pool.automaticUsage('one', 'core').spent, 0, 'Predictions are not charged to the automatic budget');
+  await withGitHubPriority('background', () => client.request('GET /queue'));
+  await withGitHubPriority('interactive', () => client.request('GET /opened'));
+  assert.equal(requests, 302, 'Queue and user work keep their own budgets');
+  now += 3_600_001;
+  await predicted('pr-tab:changes', () => client.request('GET /predict/next-hour'));
+  assert.equal(requests, 303, 'The predicted share resets after an hour');
+});
+
+void test('predictions stop at twice the background reserve, before queue work does', async () => {
+  const h = harness(() => json({}, 200, { 'x-ratelimit-resource': 'core', 'x-ratelimit-remaining': '900',
+    'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '4600' }));
+  const client = h.pool.client('one');
+  await client.request('GET /seed');
+  assert.ok(h.pool.predictedBackoff('one', ['core']));
+  assert.equal(h.pool.backoff('one', true, ['core']), undefined, 'Queue work still has its reserve');
+  await assert.rejects(predicted('pr-tab:changes', () => client.request('GET /predict')), GitHubBackoffError);
+  await withGitHubPriority('background', () => client.request('GET /queue'));
+  assert.equal(h.calls.length, 2);
+});
+
+void test('predictions only read: no writes, no search, no LFS', async () => {
+  const h = harness(() => json({}));
+  const client = h.pool.client('one');
+  await assert.rejects(predicted('pr-open', () => client.request('POST /repos/o/r/issues/1/comments', { body: 'x' })), /only read/);
+  await assert.rejects(predicted('pr-open', () => client.request('GET /search/issues?q=x')), /only read/);
+  await assert.rejects(predicted('pr-open', () => client.request('POST https://github.com/o/r.git/info/lfs/objects/batch', { operation: 'download' })), /only read/);
+  assert.equal(h.calls.length, 0);
+});
+
+void test('predicted GraphQL spend counts query points', async () => {
+  let remaining = 5000;
+  const h = harness(() => json({ data: { rateLimit: { cost: 3 } } }, 200, {
+    'x-ratelimit-resource': 'graphql', 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': String(remaining), 'x-ratelimit-reset': '1100',
+  }));
+  const client = h.pool.client('one');
+  remaining = 4997;
+  await predicted('pr-open', () => client.request('POST /graphql', { query: 'query { viewer { login } }' }));
+  assert.equal(h.pool.predictedUsage('one', 'graphql').spent, 3);
+  assert.deepEqual(h.pool.predictedSpend('one'), { graphql: { 'pr-open': 3 } });
+});

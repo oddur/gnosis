@@ -1,13 +1,13 @@
-import { fileRevisionKey, type PrFileContents, type PrFileRequest } from './pr-changes';
+import { fileRevisionKey, inspectionRank, type InspectionMode, type PrFileContents, type PrFileRequest } from './pr-changes';
 
 /** Keep opened immutable revisions in the renderer: revisits need no IPC or network round trip. */
 export function createPrFileCache(
-  load: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>,
+  load: (request: PrFileRequest, background?: InspectionMode) => Promise<PrFileContents>,
   maxBytes = 32_000_000
 ) {
   const saved = new Map<string, { value: PrFileContents; bytes: number; url: string }>();
   let priorities = new Map<string, number>();
-  const pending = new Map<string, { promise: Promise<PrFileContents>; background: boolean }>();
+  const pending = new Map<string, { promise: Promise<PrFileContents>; background: InspectionMode }>();
   let bytes = 0,
     epoch = 0;
   const keyFor = (r: PrFileRequest) =>
@@ -21,14 +21,18 @@ export function createPrFileCache(
     }
     return entry?.value;
   };
-  function read(r: PrFileRequest, background = false): Promise<PrFileContents> {
+  /**
+   * A pending read is reused only by a caller of the same or lower rank. A reader's own request sends its own IPC
+   * even while a prediction or queue read is pending; main joins the two and promotes the work.
+   */
+  function read(r: PrFileRequest, background: InspectionMode = false): Promise<PrFileContents> {
     const cached = peek(r);
     if (cached && (!r.downloadLfs || ![cached.before, cached.after].some((s) => s.kind === 'lfs')))
       return Promise.resolve(cached);
     const key = keyFor(r),
       pendingKey = `${key}:${!!r.downloadLfs}`,
       existing = pending.get(pendingKey);
-    if (existing && (!existing.background || background)) return existing.promise;
+    if (existing && inspectionRank(existing.background) >= inspectionRank(background)) return existing.promise;
     const generation = epoch;
     const promise = load(r, background)
       .then((value) => {

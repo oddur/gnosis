@@ -77,6 +77,19 @@ export interface PredictorSummary {
   spend?: unknown;
 }
 
+/** What main allows now. Main keeps the budget, since several windows share one credential. */
+export interface PredictionState {
+  /** GNOSIS_PREDICT=off. */
+  off: boolean;
+  /** Hidden window, offline, idle, rate-limit backoff, or the predicted share or reserve is spent. */
+  paused: boolean;
+  battery: boolean;
+  /** Serious or critical thermal state: committed predictions only. */
+  hot: boolean;
+  /** On battery or near the predicted cap: one file body per PR instead of three. */
+  light: boolean;
+}
+
 export interface PredictorDependencies {
   now: () => number;
   /** One line per navigation, for `GNOSIS_PERF_TRACE`. */
