@@ -71,7 +71,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   prOpenIntent: (targets: OpenTarget[] | null) => ipcRenderer.send('pr-open-intent', targets),
   prOpenCommitted: (targets: OpenTarget[] | null, label: string): Promise<void> =>
     ipcRenderer.invoke('pr-open-committed', targets, label),
-  predictWorkflowGraph: (target: CheckTarget, label: string): Promise<void> =>
+  predictWorkflowGraph: (target: CheckTarget[], label: string): Promise<void> =>
     ipcRenderer.invoke('predict-workflow-graph', target, label),
   predictionState: (): Promise<PredictionState> => ipcRenderer.invoke('prediction-state'),
   onPredictionState: (callback: (state: PredictionState) => void) => {

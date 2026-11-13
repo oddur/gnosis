@@ -347,6 +347,7 @@ function PrSummaryContent({
     members: predictMembers,
     attention: checkTotals.attention,
     running: checkTotals.running,
+    checks: checkTotals.attention + checkTotals.running + checkTotals.passed + checkTotals.skipped,
     unresolved: signals.reduce((total, signal) => total + signal.comments, 0),
     responseNeeded: item.subject.members.some((member) => needsResponse(item.responses?.[member.url])),
     explanationReady: !!item.review && (item.review.status ?? 'completed') === 'completed',

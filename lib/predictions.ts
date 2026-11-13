@@ -34,8 +34,8 @@ const reads: PredictorReads = {
     window.electronAPI.prOpenIntent?.(targets(members, 1));
     void PrSummary.preload();
   },
-  graph: (member, label) =>
-    window.electronAPI.predictWorkflowGraph?.({ url: member.url, headSha: member.headSha }, label) ?? Promise.resolve(),
+  graph: (members, label) =>
+    window.electronAPI.predictWorkflowGraph?.(members.map(({ url, headSha }) => ({ url, headSha })), label) ?? Promise.resolve(),
   chunk(name) {
     if (name === 'workflow-graph') return WorkflowGraphView.preload();
     if (name === 'review-page') return ReviewPage.preload();

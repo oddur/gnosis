@@ -22,9 +22,10 @@ export const predictableMembers = (members: readonly { url: string; headSha: str
 export function prOpenPredictions(input: {
   subjectId: string;
   members: PredictMember[];
-  /** Failing and running checks, from the check list. */
+  /** Failing and running checks, and all checks, from the check list. */
   attention: number;
   running: number;
+  checks: number;
   /** Review comments on the PR, from its signals. */
   unresolved: number;
   responseNeeded: boolean;
@@ -45,7 +46,9 @@ export function prOpenPredictions(input: {
   });
   return [
     tab('changes', 0.6),
-    tab('checks', input.attention > 0 ? 0.5 : input.running > 0 ? 0.3 : 0.1),
+    // Checks is the slowest tab to open: its graph needs workflow runs, jobs and definitions. Warm it whenever the
+    // PR has checks, most strongly when they fail or run.
+    tab('checks', input.attention > 0 ? 0.5 : input.running > 0 ? 0.4 : input.checks > 0 ? 0.35 : 0.1),
     tab('feedback', input.responseNeeded || input.unresolved > 0 ? 0.5 : 0.1),
     tab('explanation', input.explanationReady ? 0.5 : 0),
     tab('commits', 0.15),

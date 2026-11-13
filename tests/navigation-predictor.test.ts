@@ -50,13 +50,13 @@ void test('classifies hits, cold opens and kept tabs, and measures from the inpu
   assert.equal(lines[0], 'nav pr-tab:changes hit 40ms predicted=0.6');
   assert.equal(lines[1], 'nav pr-tab:checks cold 500ms predicted=no from=pr-tab:changes');
   const summary = predictor.summary();
-  assert.deepEqual(summary.destinations['pr-tab:changes'], { n: 2, hit: 1, joined: 0, cold: 0, kept: 1, p50: 40, p95: 40 });
+  assert.deepEqual(summary.destinations['pr-tab:changes'], { n: 2, hit: 1, joined: 0, cold: 0, kept: 1, left: 0, p50: 40, p95: 40 });
   assert.deepEqual(summary.declared, { navigations: 3, predicted: 2 });
   assert.equal(summary.transitions['pr-tab:changes -> pr-tab:checks'], 1);
 });
 
-void test('an arrival without a navigation, a second arrival and an abandoned navigation record nothing', () => {
-  const { predictor } = harness();
+void test('an arrival without a navigation, a second arrival and an abandoned navigation record no arrival', () => {
+  const { predictor, lines } = harness();
   predictor.arrived('pr-tab:changes:x', { loading: false });
   predictor.navigate('pr-tab:changes:x');
   predictor.abandon('pr-tab:changes:x');
@@ -64,7 +64,9 @@ void test('an arrival without a navigation, a second arrival and an abandoned na
   predictor.navigate('pr-tab:commits:x');
   predictor.arrived('pr-tab:commits:x', { loading: false });
   predictor.arrived('pr-tab:commits:x', { loading: true });
-  assert.deepEqual(predictor.records().map((r) => r.outcome), ['hit']);
+  assert.deepEqual(predictor.records().map((r) => r.outcome), ['left', 'hit']);
+  assert.equal(lines[0], 'nav pr-tab:changes left 0ms predicted=no', 'Leaving before content is logged');
+  assert.equal(predictor.summary().destinations['pr-tab:changes'].p50, null, 'Left navigations have no time to content');
 });
 
 void test('a repeated navigate keeps the first start time', () => {
@@ -114,7 +116,7 @@ function running(options: { concurrency?: number } = {}) {
     changesReady: (m) => warm.has(`changes ${m.url}`),
     open: (members, label) => done(`open ${members.map((m) => m.url).join(',')} ${label}`),
     openIntent: (members) => void calls.push(`intent ${members ? members.map((m) => m.url).join(',') : 'clear'}`),
-    graph: (m, label) => done(`graph ${m.url} ${label}`),
+    graph: (members, label) => done(`graph ${members.map((m) => m.url).join(',')} ${label}`),
     chunk: (name) => done(`chunk ${name}`),
     review: (id) => done(`review ${id}`),
     reviewReady: (id) => warm.has(`review ${id}`),
@@ -129,7 +131,7 @@ function running(options: { concurrency?: number } = {}) {
   };
 }
 const opened = (input: Partial<Parameters<typeof prOpenPredictions>[0]> = {}) =>
-  prOpenPredictions({ subjectId: member.url, members: [member], attention: 0, running: 0, unresolved: 0, responseNeeded: false, explanationReady: false, ...input });
+  prOpenPredictions({ subjectId: member.url, members: [member], attention: 0, running: 0, checks: 0, unresolved: 0, responseNeeded: false, explanationReady: false, ...input });
 
 void test('opening a PR runs Changes, Checks and Feedback reads once each, two at a time, highest weight first', async () => {
   const h = running();
@@ -276,4 +278,22 @@ void test('turning the setting off stops new predictions; work in flight finishe
   h.predictor.wake();
   await h.flush();
   assert.notEqual(h.calls.length, 1, 'Turning it on resumes the set');
+});
+
+void test('a PR whose checks all passed still warms Checks: its graph, the graph code, threads and check details', async () => {
+  const h = running();
+  h.predictor.declare('pr:1', opened({ checks: 8 }));
+  await h.flush();
+  assert.deepEqual(h.calls.sort(), [
+    `changes ${member.url} files=3 pr-tab:changes`,
+    'chunk workflow-graph',
+    `graph ${member.url} pr-tab:checks`,
+    `open ${member.url} pr-tab:changes`,
+  ]);
+  const second = running();
+  second.predictor.declare('pr:2', opened({ checks: 8 }));
+  second.predictor.declare('pr:3', prOpenPredictions({ subjectId: 'https://github.com/o/r/pull/3', members: [{ ...member, url: 'https://github.com/o/r/pull/3' }],
+    attention: 0, running: 0, checks: 4, unresolved: 0, responseNeeded: false, explanationReady: false }));
+  await second.flush();
+  assert.ok(second.calls.includes('graph https://github.com/o/r/pull/3 pr-tab:checks'), 'Every opened PR, not only the first');
 });

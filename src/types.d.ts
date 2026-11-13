@@ -54,7 +54,7 @@ declare global {
       prOpenIntent?: (targets: OpenTarget[] | null) => void;
       /** Committed predictions: the open PR's threads and failing check details. Resolves when they have run. */
       prOpenCommitted?: (targets: OpenTarget[] | null, label: string) => Promise<void>;
-      predictWorkflowGraph?: (target: CheckTarget, label: string) => Promise<void>;
+      predictWorkflowGraph?: (targets: CheckTarget[], label: string) => Promise<void>;
       predictionState?: () => Promise<import('../lib/navigation-predictor').PredictionState>;
       onPredictionState?: (callback: (state: import('../lib/navigation-predictor').PredictionState) => void) => () => void;
       onGitHubSync?: (callback: (event: GitHubSyncEvent) => void) => () => void;

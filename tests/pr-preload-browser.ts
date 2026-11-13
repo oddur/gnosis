@@ -118,7 +118,7 @@ void app.whenReady().then(async () => {
       api.getPrCommits=(url,refresh,options)=>url!==member.url?commits(url,refresh,options):held('commits',options?.predicted?{predicted:options.predicted}:!!options?.background)?new Promise(()=>{}):commits(url,refresh,options).then(moved);
       api.getPrChangeFile=(request,mode)=>request.url!==member.url?file(request,mode):held('file',mode)?new Promise(()=>{}):file(request,mode);
       api.prOpenCommitted=(targets,label)=>{window.committed.push({urls:targets.map(t=>t.url),tiers:targets.map(t=>t.tier),label});return Promise.resolve()};
-      api.predictWorkflowGraph=(target,label)=>{window.graphs.push({url:target.url,label});return Promise.resolve()};
+      api.predictWorkflowGraph=(targets,label)=>{window.graphs.push({urls:targets.map(t=>t.url),label});return Promise.resolve()};
       document.dispatchEvent(new Event('visibilitychange'));
       await new Promise(r=>setTimeout(r,100));
     })()`);

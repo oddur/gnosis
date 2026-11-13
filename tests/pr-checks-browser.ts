@@ -47,6 +47,19 @@ void app.whenReady().then(async () => {
     if (!url) throw Error('Missing fixture URL');
     await loadWorkbenchPage(win, url + '?pr-summary&checks');
     await wait("document.querySelectorAll('.queue-item').length===7", 60_000);
+    // Checks is warmed for every opened PR that has checks, including one whose checks all passed.
+    await js(`(()=>{window.graphWarms=[];window.electronAPI.predictWorkflowGraph=(targets,label)=>{window.graphWarms.push({urls:targets.map(t=>t.url),label});return Promise.resolve()};
+      const read=window.electronAPI.getPrChecks;window.electronAPI.getPrChecks=async(input,options)=>{const value=await read(input,options);
+        return value&&input.url.endsWith('/151')?{...value,checks:value.checks.filter(c=>c.kind==='check').map(c=>({...c,status:'completed',conclusion:'success'}))}:value};})()`);
+    await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Reduce allocations')).click()");
+    await click('Open PR overview');
+    await wait("!!document.querySelector('.pr-description')");
+    await wait("window.graphWarms.length>0 && window.__gnosisPredict.idle()");
+    assert.deepEqual(await js("window.graphWarms.map(w=>[w.urls.map(u=>u.split('/').pop()),w.label])"), [[['151'], 'pr-tab:checks']],
+      'A PR whose checks passed still gets its workflow graph warmed');
+    assert.ok((await js<string[]>('window.__gnosisPredict.wanted()')).includes('chunk:workflow-graph'));
+    await click('Review queue');
+    await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );

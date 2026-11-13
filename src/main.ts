@@ -16,9 +16,9 @@ import {
 import { fileOverrideKey } from '../lib/file-kinds';
 import { memberPrefix } from '../lib/workbench';
 import { prepareReviewSource } from './review-start-source';
-import { createWorkflowGraphPreloader } from './workflow-graph-preloader';
+import { createWorkflowGraphPreloader, warmWorkflowGraph } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
-import type { WorkflowGraphInput } from '../lib/workflow-graph';
+import { workflowGrouping, type WorkflowGraphInput } from '../lib/workflow-graph';
 import { createCheckDetailsPreloader } from './check-details-preloader';
 import { createPrOpenPreloader, needsRefresh, queuePriority, intentPriority, predictedPriority } from './pr-open-preloader';
 import { parseOpenTargets, type OpenTarget } from '../lib/pr-open-targets';
@@ -3212,15 +3212,15 @@ function predictionState(): PredictionState {
 const publishPredictionState = () => broadcastToAllWindows('prediction-state', predictionState());
 ipcMain.handle('prediction-state', () => predictionState());
 let workflowWarmAccount: string | null = null;
+/** The view a fresh Checks graph opens with, so the warmed layout is the one shown. See `workflowSession`. */
+const openingGraphView = (input: CheckTarget & { runId: number }): WorkflowGraphInput => ({
+  ...input, expanded: [], showSkipped: true, showCompleted: true, grouping: workflowGrouping(preferencesFile.get().workflowGrouping),
+});
 const workflowGraphPreload = createWorkflowGraphPreloader({
   canRun: () => !!cachedToken && workflowWarmAccount === cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, true, ['core']),
-  prepare: (target, stillWanted) => withGitHubPriority('background', async () => {
+  prepare: (target, stillWanted) => withGitHubPriority('background', () => {
     const client = getGitHubClient(cachedToken);
-    const runs = await readWorkflowRuns(client, target);
-    if (!stillWanted()) return false;
-    const run = runs?.runs.at(0);
-    if (run) await readWorkflowGraph(client, { ...target, runId: run.id });
-    return true;
+    return warmWorkflowGraph(target, { runs: t => readWorkflowRuns(client, t), graph: input => readWorkflowGraph(client, openingGraphView(input)) }, stillWanted);
   }),
 });
 const checkDetailsPreload = createCheckDetailsPreloader({
@@ -3551,17 +3551,22 @@ ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions 
   }), { automatic });
 });
 // A prediction warms the open PR's newest workflow run and its graph before Checks is opened.
-ipcMain.handle('predict-workflow-graph', async (_event, target: unknown, label: unknown) => {
-  const valid = target && typeof target === 'object' && typeof (target as CheckTarget).url === 'string' &&
+// A prediction warms the graph the Checks graph view opens on: the PR (or stack member) with failing checks, else
+// the first, and its preferred run (failed, then running), with that run's jobs and workflow definitions.
+ipcMain.handle('predict-workflow-graph', async (_event, raw: unknown, label: unknown) => {
+  const targets = (Array.isArray(raw) ? raw : [raw]).slice(0, 5).filter((target): target is CheckTarget =>
+    !!target && typeof target === 'object' && typeof (target as CheckTarget).url === 'string' &&
     /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test((target as CheckTarget).url) &&
-    typeof (target as CheckTarget).headSha === 'string' && /^[a-f\d]{40}$/i.test((target as CheckTarget).headSha);
-  if (!valid || !predictionsAllowed(['core'])) return;
-  const token = cachedToken, { url, headSha } = target as CheckTarget;
-  await predictedPriority(predictionLabel(label), async () => {
-    const client = getGitHubClient(token);
-    const run = (await readWorkflowRuns(client, { url, headSha }))?.runs.at(0);
-    if (run && token === cachedToken) await readWorkflowGraph(client, { url, headSha, runId: run.id });
-  });
+    typeof (target as CheckTarget).headSha === 'string' && /^[a-f\d]{40}$/i.test((target as CheckTarget).headSha));
+  if (!targets.length || !predictionsAllowed(['core'])) return;
+  const token = cachedToken, client = getGitHubClient(token);
+  const attention = (target: CheckTarget) => savedPrChecks(client, target)?.value.checks
+    .some(check => checkGroup(check) === 'attention');
+  const { url, headSha } = targets.find(attention) ?? targets[0];
+  await predictedPriority(predictionLabel(label), () => warmWorkflowGraph({ url, headSha }, {
+    runs: target => readWorkflowRuns(client, target),
+    graph: input => readWorkflowGraph(client, openingGraphView(input)),
+  }, () => token === cachedToken));
 });
 ipcMain.handle('prepare-workflow-graph', (_event, target?: CheckTarget) => {
   workflowWarmAccount = cachedToken;

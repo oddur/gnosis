@@ -32,8 +32,9 @@ export interface Prediction {
   strength: Strength;
 }
 /** Content was shown at once (hit), after a loading state while a prediction was in flight (joined), after a
- * loading state with nothing in flight (cold), or by a tab that stayed mounted from an earlier visit (kept). */
-export type Outcome = 'hit' | 'joined' | 'cold' | 'kept';
+ * loading state with nothing in flight (cold), or by a tab that stayed mounted from an earlier visit (kept). The
+ * reader left, or 30 s passed, before any content appeared (left): `ttcMs` is how long they waited. */
+export type Outcome = 'hit' | 'joined' | 'cold' | 'kept' | 'left';
 
 /** The destination kind, such as `pr-tab:changes`. Used for metrics and as the spend label in main. */
 export function destinationKind(destination: Destination): string {
@@ -73,8 +74,8 @@ export interface PredictorReads {
   open(members: PredictMember[], label: string): Promise<unknown>;
   /** Hover intent on a PR: the queue row's existing preparation. `null` clears it. */
   openIntent(members: PredictMember[] | null): void;
-  /** The newest workflow run and its graph. */
-  graph(member: PredictMember, label: string): Promise<unknown>;
+  /** The workflow run the Checks graph opens on (the member with failing checks, its failed or running run) and its graph. */
+  graph(members: PredictMember[], label: string): Promise<unknown>;
   chunk(name: ChunkName): Promise<unknown>;
   /** A saved review's document, from disk. */
   review(reviewId: string): Promise<unknown>;
@@ -97,7 +98,8 @@ export interface DestinationSummary {
   joined: number;
   cold: number;
   kept: number;
-  /** Time to content, excluding kept tabs. */
+  left: number;
+  /** Time to content, excluding kept tabs and navigations left before content. */
   p50: number | null;
   p95: number | null;
 }
@@ -184,10 +186,11 @@ export function resourcesFor(prediction: Prediction): Omit<Resource, 'destinatio
     if (tab === 'commits') return changes;
     if (tab === 'feedback') return [open];
     if (tab === 'checks') {
-      const first = members[0];
       return [
         open,
-        { key: `graph:${revision(first)}`, label, strength, run: (reads) => reads.graph(first, label) },
+        // Keyed by the failing-check count too: which member and run the graph opens on depends on it.
+        { key: `graph:${members.map(revision).join('|')}${destination.epoch ? `#${destination.epoch}` : ''}`, label, strength,
+          run: (reads) => reads.graph(members, label) },
         { key: 'chunk:workflow-graph', label, strength, run: (reads) => reads.chunk('workflow-graph') },
       ];
     }
@@ -368,9 +371,22 @@ export function createNavigationPredictor(deps: PredictorDependencies) {
       const pending = (byDestination.get(key) ?? []).some((resource) => states.get(resource)?.status === 'pending');
       open.set(key, { key, at, pending, predicted: weightOf(key), previous: last });
     },
-    /** The reader left before the content appeared. */
-    abandon(key: string) {
+    /** The reader left, or gave up waiting, before the content appeared. Logged, so slow tabs are not invisible. */
+    abandon(key: string, at = deps.now()) {
+      const navigation = open.get(key);
+      if (!navigation) return;
       open.delete(key);
+      const record: NavigationRecord = {
+        key,
+        kind: kindOfKey(key),
+        outcome: 'left',
+        ttcMs: Math.max(0, Math.round(at - navigation.at)),
+        ...(navigation.predicted !== undefined ? { predicted: navigation.predicted } : {}),
+        ...(navigation.previous ? { previous: kindOfKey(navigation.previous) } : {}),
+      };
+      records.push(record);
+      deps.report?.(`nav ${record.kind} left ${record.ttcMs}ms` +
+        (record.predicted !== undefined ? ` predicted=${record.predicted}` : ' predicted=no') + (record.previous ? ` from=${record.previous}` : ''));
     },
     /** Whether a navigation to `key` is waiting for its content. */
     awaiting: (key: string) => open.has(key),
@@ -408,10 +424,10 @@ export function createNavigationPredictor(deps: PredictorDependencies) {
       const transitions: Record<string, number> = {};
       let predicted = 0;
       for (const record of records) {
-        const entry = (destinations[record.kind] ??= { n: 0, hit: 0, joined: 0, cold: 0, kept: 0, p50: null, p95: null });
+        const entry = (destinations[record.kind] ??= { n: 0, hit: 0, joined: 0, cold: 0, kept: 0, left: 0, p50: null, p95: null });
         entry.n++;
         entry[record.outcome]++;
-        if (record.outcome !== 'kept') {
+        if (record.outcome !== 'kept' && record.outcome !== 'left') {
           const list = times.get(record.kind) ?? [];
           list.push(record.ttcMs);
           times.set(record.kind, list);

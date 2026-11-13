@@ -89,7 +89,9 @@ export const contentMarkers: Record<string, (root: Element) => ContentState> = {
   },
   checks: (root) => {
     const graph = root.querySelector('.workflow-host:not([hidden])');
-    if (graph) return state(root, !!graph.querySelector('.workflow-job') && !graph.querySelector('.loading-state'));
+    // A run with jobs, or the settled "no workflow jobs" state for PRs with only external checks.
+    if (graph) return state(root, !!graph.querySelector('.workflow-job, .workflow-graph-state:not([data-loading])') &&
+      !graph.querySelector('.loading-state'));
     const list = root.querySelector('.checks-list');
     return state(root, !!list?.querySelector('.checks-pr-group') && !list.querySelector('.checks-revision .loading-indicator'));
   },
@@ -135,7 +137,10 @@ export function ArrivalProbe({ firstKey, revisitKey, marker }: { firstKey: strin
       predictor.arrived(key, { loading, kept });
     });
     observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'class', 'data-active'] });
-    const timer = setTimeout(finish, 30_000);
+    const timer = setTimeout(() => {
+      finish();
+      predictor.abandon(key);
+    }, 30_000);
     // Leaving before content appeared is not a navigation that completed.
     return () => {
       if (!done) predictor.abandon(key);
