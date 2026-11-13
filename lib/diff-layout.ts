@@ -121,3 +121,54 @@ export function followScrollAnchor(scroller: HTMLElement, resolve: () => number 
   frame = requestAnimationFrame(step);
   return stop;
 }
+
+/** Scroll to a target that can move while lazily drawn content changes height on the way. A destination computed
+ * before a smooth scroll begins goes stale as the chunks it passes render, and browser scroll anchoring cannot
+ * help: that content is below the anchor. So the scroll is aimed again whenever the target moves, and finishes on
+ * the target itself (#288). The reader's wheel, pointer or key press, or the returned function, stops it. */
+export function scrollToMovingTarget(
+  scroller: HTMLElement,
+  resolve: () => number | undefined,
+  { smooth, limit = 5000 }: { smooth: boolean; limit?: number }
+) {
+  const clamp = (top: number) => Math.max(0, Math.min(top, scroller.scrollHeight - scroller.clientHeight));
+  const inputs = ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const;
+  const until = performance.now() + limit;
+  let frame = 0;
+  const stop = () => {
+    cancelAnimationFrame(frame);
+    scroller.removeEventListener('scrollend', land);
+    for (const type of inputs) scroller.removeEventListener(type, stop);
+  };
+  function land() {
+    stop();
+    // Only a scroll that ended where this one aimed is corrected; a jump elsewhere, as to a find match, wins.
+    const top = resolve();
+    if (top === undefined || Math.abs(scroller.scrollTop - destination) > scroller.clientHeight) return;
+    if (Math.abs(clamp(top) - scroller.scrollTop) > 1) scroller.scrollTo({ top: clamp(top), behavior: 'instant' });
+  }
+  const first = resolve();
+  if (first === undefined) return stop;
+  let destination = clamp(first);
+  if (!smooth) {
+    scroller.scrollTo({ top: destination, behavior: 'instant' });
+    return stop;
+  }
+  const step = () => {
+    if (performance.now() > until || !scroller.isConnected || scroller.clientHeight === 0) {
+      stop();
+      return;
+    }
+    const top = resolve();
+    if (top !== undefined && Math.abs(clamp(top) - destination) > 1) {
+      destination = clamp(top);
+      scroller.scrollTo({ top: destination, behavior: 'smooth' });
+    }
+    frame = requestAnimationFrame(step);
+  };
+  scroller.scrollTo({ top: destination, behavior: 'smooth' });
+  scroller.addEventListener('scrollend', land);
+  for (const type of inputs) scroller.addEventListener(type, stop, { passive: true });
+  frame = requestAnimationFrame(step);
+  return stop;
+}

@@ -148,6 +148,21 @@ export function estimateHunkBlockHeight(lines: number, lineHeight = CODE_LINE_HE
   return Math.max(1, lines) * lineHeight + 8;
 }
 
+/** Placeholder height for the block that holds a hunk's visible ranges, each sliced as reviewHunkSlices does, with
+ * one bar per folded range. A 3,000-line file skipped at the stylesheet's 400px fallback made the document about
+ * 60,000px shorter for a frame, and the browser clamped scrollTop to fit, which scrolled a find match out of view
+ * (#288). */
+export function estimateSlicedBlockHeight(ranges: ContextRange[], lineHeight = CODE_LINE_HEIGHT) {
+  let height = 0;
+  for (const range of ranges) {
+    if (range.hidden) height += 1.5 * lineHeight;
+    else
+      for (const [start, end] of reviewHunkSlices(range.start, range.end))
+        height += estimateHunkBlockHeight(end - start, lineHeight);
+  }
+  return Math.round(height);
+}
+
 /** Placeholder height for a whole file group: its header, plus the rows it shows when expanded. Folded context
  * counts as one bar. */
 export function estimateFileBlockHeight(
