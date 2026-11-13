@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
+import { normalizePreloadBudgetPercent } from './preload-settings';
 import {
   automaticDeadline,
   automaticLimit,
@@ -11,6 +12,7 @@ import {
   automaticWindow,
   predictedDeadline,
   predictedLimit,
+  PREDICTED_SHARE,
   type AutomaticUsage,
 } from './github-budget';
 import {
@@ -132,6 +134,8 @@ export function createGitHubClientPool(options: Options = {}) {
     if (!spend) predictedSpend.set(key, (spend = {}));
     return spend;
   };
+  // Settings › Preloading › hourly budget, as a share of each hourly limit.
+  let predictedShare = PREDICTED_SHARE;
   let storage: string | undefined;
   let budgetWrites = Promise.resolve();
   let dirty = false;
@@ -203,7 +207,7 @@ export function createGitHubClientPool(options: Options = {}) {
     for (const resource of resources) {
       const budget = state.budgets[resource];
       if (budget && budget.remaining <= 2 * backgroundReserve(resource, budget)) deadline = Math.max(deadline, budget.reset);
-      deadline = Math.max(deadline, predictedDeadline(resource, state.predicted?.[resource], now(), budget, !!token));
+      deadline = Math.max(deadline, predictedDeadline(resource, state.predicted?.[resource], now(), budget, !!token, predictedShare));
     }
     if (deadline > now()) return new GitHubBackoffError(deadline, 'Predictions paused to preserve your GitHub allowance');
   };
@@ -212,7 +216,7 @@ export function createGitHubClientPool(options: Options = {}) {
     const usage = state.predicted?.[resource];
     return {
       spent: usage && now() < usage.startedAt + automaticWindow(resource) ? usage.spent : 0,
-      limit: predictedLimit(resource, state.budgets[resource], !!token),
+      limit: predictedLimit(resource, state.budgets[resource], !!token, predictedShare),
     };
   };
   /** Automatic spend in the current window, and its limit. Optional work can stop well before the limit. */
@@ -229,6 +233,10 @@ export function createGitHubClientPool(options: Options = {}) {
     automaticUsage,
     predictedBackoff,
     predictedUsage,
+    /** The hourly share predictions may spend, from Settings › Preloading. Invalid values keep the default. */
+    setPredictedPercent(percent: unknown) {
+      predictedShare = normalizePreloadBudgetPercent(percent) / 100;
+    },
     /** Requests started and GraphQL points spent by predictions since launch, by resource and destination kind. */
     predictedSpend: (token?: string | null) => structuredClone(spendFor(keyFor(token))),
     setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
@@ -453,7 +461,7 @@ export function createGitHubClientPool(options: Options = {}) {
               state.blockedUntil,
               exhausted ? budget.reset : 0,
               automatic ? automaticDeadline(resource, state.automatic[resource], now(), budget, !!token) : 0,
-              predicted ? predictedDeadline(resource, state.predicted?.[resource], now(), budget, !!token) : 0
+              predicted ? predictedDeadline(resource, state.predicted?.[resource], now(), budget, !!token, predictedShare) : 0
             );
             if (deadline > now())
               throw new GitHubBackoffError(

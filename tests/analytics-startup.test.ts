@@ -166,6 +166,7 @@ async function launch(stored: string | undefined, packaged = true, platform: Nod
     normalizeBriefingLimit: () => 10,
     normalizeGitHubCacheMB: () => 512,
     normalizePrInactivityDays: () => 30,
+    normalizePreloadPreferences: () => ({ predictNavigation: true, preloadAmount: 'normal', prepareQueue: true, preloadBudgetPercent: 6 }),
     normalizeModelSelection: () => ({ provider: 'claude', model: 'opus' }),
     normalizeEffort: () => 'high',
   });

@@ -3,6 +3,7 @@ import { inspectionData, loadChangePreview, predictedFiles } from './inspection-
 import { loadExplanation, peekExplanation } from './explanation-workspace';
 import { PrSummary, ReviewPage, WorkflowGraphView } from '../src/lazy-screens';
 import type { OpenTarget } from './pr-open-targets';
+import { preloadSettings, type PreloadSettings } from './preload-settings';
 
 // Loaded on every screen, including fixtures and windows whose preload exposes only part of the API (or none).
 // Nothing here may throw at import time, or the whole renderer fails to mount.
@@ -59,19 +60,35 @@ const reads: PredictorReads = {
 // Main keeps the budget. Its answer is refreshed when conditions change and at most every 15 s while visible.
 let state: PredictionState = { off: false, paused: false, battery: false, hot: false, light: false };
 const predictOff = api()?.predictOff === true;
-// Settings › "Preload likely next pages". On unless turned off. Queue preparation and row hover do not use it.
-let setting = true;
-const applySetting = (preferences: { predictNavigation?: boolean } | undefined) => {
+// Settings › Integrations › Preloading. Main applies the amount (through `state`) and the budget; the renderer
+// needs the two switches: intent preloading and queue preparation.
+let settings: PreloadSettings = preloadSettings(undefined);
+const settingsListeners = new Set<() => void>();
+const applySetting = (preferences: unknown) => {
   if (!preferences || typeof preferences !== 'object') return;
-  setting = preferences.predictNavigation !== false;
+  const next = preloadSettings(preferences);
+  const changed = JSON.stringify(next) !== JSON.stringify(settings);
+  settings = next;
+  // Turning intent off drops a hover that is waiting.
+  if (!intentsEnabled()) predictor.dropIntents();
   predictor.wake();
+  if (changed) settingsListeners.forEach((listener) => listener());
 };
+/** "Preload likely next pages", unless GNOSIS_PREDICT=off. Off: no prediction and no hover or focus intent. */
+export const intentsEnabled = () => !predictOff && settings.predictNavigation;
+/** The current Preloading settings. */
+export const currentPreloadSettings = () => settings;
+/** Called when a Preloading setting changes. Returns an unsubscribe function. */
+export function onPreloadSettings(listener: () => void) {
+  settingsListeners.add(listener);
+  return () => { settingsListeners.delete(listener); };
+}
 export const predictor = createNavigationPredictor({
   now: clock,
   report: (line) => api()?.perfNote?.('predict', line),
   reads,
   conditions: () => ({
-    enabled: !predictOff && setting,
+    enabled: intentsEnabled(),
     online: navigator.onLine,
     visible: document.visibilityState !== 'hidden',
     focused: document.hasFocus(),
@@ -91,6 +108,8 @@ function refresh() {
 api()?.onPredictionState?.(apply);
 void Promise.resolve().then(() => api()?.loadPreferences?.()).then(applySetting, () => {});
 api()?.onPreferencesChanged?.(applySetting);
+// Settings saved in this window, before main's broadcast arrives.
+window.addEventListener('gnosis-preferences-changed', (event) => applySetting((event as CustomEvent<unknown>).detail));
 for (const type of ['focus', 'online'] as const) window.addEventListener(type, refresh);
 document.addEventListener('visibilitychange', refresh);
 // Only while something is predicted: an idle window sends nothing.

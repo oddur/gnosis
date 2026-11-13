@@ -44,6 +44,12 @@ export interface PrOpenPreloaderDependencies {
   canIntent: () => boolean;
   /** Committed predictions: signed in, window visible, not idle, and inside the predicted budget. */
   canPredict?: () => boolean;
+  /** Settings › Preloading › "Prepare the top of the queue". Off: no queue tier runs. */
+  queueEnabled?: () => boolean;
+  /** Settings › Preloading › "Preload likely next pages". Off: hover and focus intent send nothing. */
+  intentEnabled?: () => boolean;
+  /** Whether committed predictions read failing check details. Light reads threads only. */
+  committedDetails?: () => boolean;
   usage: () => { spent: number; limit: number };
   idleSeconds: () => number;
   /** `details` is used by hover prefetch only: failing checks without fresh details. */
@@ -147,6 +153,7 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     }
   }
   const queueAllowed = () => {
+    if (deps.queueEnabled?.() === false) return false;
     if (pausedUntil > now() || !deps.canRun()) return false;
     const usage = deps.usage();
     // Half of the automatic GraphQL budget stays for signals, checks and discussion sync.
@@ -159,7 +166,8 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     refilledAt = time;
     while (intentStarts.length && intentStarts[0] <= time - 60 * MINUTE) intentStarts.shift();
   }
-  async function prefetch(target: OpenTarget, needed: Set<OpenKind | 'details'>) {
+  /** `details`: read failing check details too, checked again after the check list. Light skips them. */
+  async function prefetch(target: OpenTarget, needed: Set<OpenKind | 'details'>, details = true) {
     const jobs: Promise<unknown>[] = [];
     if (needed.has('status')) jobs.push(deps.status([target], true));
     if (needed.has('signals')) jobs.push(deps.signals([target], true));
@@ -167,14 +175,20 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     if (needed.has('threads')) jobs.push(deps.threadsFull(target.url, true));
     jobs.push(
       (needed.has('checks') ? deps.checks([target], true) : Promise.resolve()).then(() =>
-        deps.need(target, 'details') ? deps.checkDetails(target) : undefined
+        details && deps.need(target, 'details') ? deps.checkDetails(target) : undefined
       )
     );
     await Promise.allSettled(jobs);
   }
-  /** Committed work for the open PR skips status and signals: live sync revalidates them on open. */
-  const committedKinds = (target: OpenTarget): (OpenKind | 'details')[] =>
-    target.tier === 0 ? ['threads', 'details'] : kinds;
+  /**
+   * Committed work for the open PR skips status and signals: live sync revalidates them on open. At the Light
+   * amount it skips failing check details too.
+   */
+  const committedKinds = (target: OpenTarget): (OpenKind | 'details')[] => {
+    const list: (OpenKind | 'details')[] = target.tier === 0 ? ['threads', 'details'] : kinds;
+    return deps.committedDetails?.() === false ? list.filter((kind) => kind !== 'details') : list;
+  };
+  const intentEnabled = () => deps.intentEnabled?.() !== false;
   const settle = (entry: { done: (() => void)[] } | undefined) => entry?.done.splice(0).forEach((done) => done());
   async function runCommitted(): Promise<void> {
     if (committedRunning || !committed.size) return;
@@ -187,8 +201,9 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     const [owner, entry] = committed.entries().next().value as [string, { targets: OpenTarget[]; label: string; done: (() => void)[] }];
     committed.delete(owner);
     const work = entry.targets.flatMap((target) => {
-      const needed = new Set(committedKinds(target).filter((kind) => deps.need(target, kind)));
-      return needed.size ? [{ target, needed }] : [];
+      const allowed = committedKinds(target);
+      const needed = new Set(allowed.filter((kind) => deps.need(target, kind)));
+      return needed.size ? [{ target, needed, details: allowed.includes('details') }] : [];
     });
     if (!work.length) {
       // Fresh saved copies: nothing to send, and no allowance spent.
@@ -198,7 +213,7 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     committedRunning = true;
     const generation = epoch;
     try {
-      await predictedPriority(entry.label, () => Promise.allSettled(work.map(({ target, needed }) => prefetch(target, needed))));
+      await predictedPriority(entry.label, () => Promise.allSettled(work.map(({ target, needed, details }) => prefetch(target, needed, details))));
     } finally {
       committedRunning = false;
       if (generation === epoch) dirty = true;
@@ -207,6 +222,7 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     }
   }
   async function runIntent(): Promise<void> {
+    if (queued && !intentEnabled()) queued = undefined;
     if (intentRunning || !queued || !deps.canIntent()) return;
     const work = queued.targets.flatMap((target) => {
       const needed = new Set(kinds.filter((kind) => deps.need(target, kind)));
@@ -273,6 +289,10 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     setIntent(owner: string, targets: OpenTarget[] | null) {
       if (!targets?.length) {
         if (queued?.owner === owner) queued = undefined;
+        return;
+      }
+      if (!intentEnabled()) {
+        queued = undefined;
         return;
       }
       queued = { owner, targets: targets.slice(0, 5) };

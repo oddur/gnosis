@@ -30,7 +30,7 @@ import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import type { GitHubSyncStatusProps } from '../../components/GitHubSyncStatus';
 import { inspectionData } from '../../lib/inspection-cache';
 import { createRowIntent, type RowIntent } from '../../lib/row-intent';
-import { setPredictionAccount } from '../../lib/predictions';
+import { setPredictionAccount, intentsEnabled, currentPreloadSettings, onPreloadSettings } from '../../lib/predictions';
 import { openRows, type OpenTarget } from '../../lib/pr-open-targets';
 import { EntryActions } from '../../components/EntryActions';
 import { prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
@@ -68,7 +68,7 @@ import {
   type QueueFilters,
 } from '../../lib/queue-filters';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
-import { Activity, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Activity, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
@@ -1006,18 +1006,23 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const openIntent = useRef<{ rows: Map<string, OpenTarget[]>; intent: RowIntent } | null>(null);
   // Stable, so the memoized queue list does not re-render for hover wiring.
   const onQueueIntent = useCallback((id: string | null) => { if (id) openIntent.current?.intent.enter(id); else openIntent.current?.intent.leave(); }, []);
+  // Settings › Preloading › "Prepare the top of the queue". Off: only the open PR is prepared in the background.
+  const prepareQueue = useSyncExternalStore(onPreloadSettings, () => currentPreloadSettings().prepareQueue);
   useEffect(() => {
     if (!auth) return;
     const preload = () => {
       const { targets, intent, rows } = JSON.parse(inspectionKey) as { targets: Parameters<typeof inspectionData.setTargets>[1]; intent: Parameters<typeof inspectionData.setTargets>[2]; rows: Parameters<typeof openRows>[0] };
-      inspectionData.setTargets(auth.authenticated ? auth.login : null, targets, intent);
+      const active = new Set(intent?.active ?? []);
+      inspectionData.setTargets(auth.authenticated ? auth.login : null,
+        prepareQueue ? targets : targets.filter(target => active.has(target.url)), prepareQueue ? intent : { active: [...active] });
       setPredictionAccount(auth.authenticated ? auth.login : null);
       const open = openRows(rows, intent ?? {});
-      window.electronAPI.prOpenPreload?.(auth.authenticated ? open.targets.slice(0, 200) : []);
+      window.electronAPI.prOpenPreload?.(auth.authenticated && prepareQueue ? open.targets.slice(0, 200) : []);
       openIntent.current ??= { rows: open.rows, intent: createRowIntent({
         fire: id => {
           const members = openIntent.current?.rows.get(id) ?? [];
-          if (!members.length) return;
+          // Settings › Preloading › "Preload likely next pages" covers queue-row hover and focus too.
+          if (!members.length || !intentsEnabled()) return;
           inspectionData.setIntent(members.map(member => member.url));
           window.electronAPI.prOpenIntent?.(members);
           void PrSummary.preload();
@@ -1029,7 +1034,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     preload();
     document.addEventListener('visibilitychange', preload);
     return () => document.removeEventListener('visibilitychange', preload);
-  }, [auth?.authenticated, auth?.login, inspectionKey]);
+  }, [auth?.authenticated, auth?.login, inspectionKey, prepareQueue]);
 
   const originName = savedView ? 'Saved reviews' : activeQueueView?.name ??
     ({ saved: 'Saved reviews', all: 'Review queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes', response: 'Needs my response' }[section]);

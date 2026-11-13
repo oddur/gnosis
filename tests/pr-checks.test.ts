@@ -13,6 +13,8 @@ import {
   cachedCheckDetails,
   withCachedCheckDetails,
   readCheckLog,
+  cachedCheckLog,
+  failingRunJobs,
   rerunChecks,
 } from '../src/pr-checks-service';
 import { CheckHeadChanged } from '../src/pr-checks-graphql';
@@ -324,6 +326,40 @@ void test('job logs use an unauthenticated bounded download and strip terminal e
     assert.ok(log.text.length <= 2_000_000);
     assert.equal(log.text.includes(String.fromCharCode(27)), false);
     assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+void test('a completed job log is read once, so an Eager prediction makes "Job log" open from memory', async () => {
+  const h = harness((p) =>
+    p.endsWith('/logs') ? new Response(null, { status: 302, headers: { location: 'https://logs.blob.core.windows.net/job' } }) : undefined
+  );
+  const original = globalThis.fetch;
+  let downloads = 0;
+  globalThis.fetch = (() => {
+    downloads++;
+    return Promise.resolve(new Response('FAIL line 12'));
+  }) as unknown as typeof fetch;
+  try {
+    // The check list says the job completed, so its log can no longer change.
+    const snapshot = await readPrChecks(h.client, { url, headSha: sha });
+    assert.ok(snapshot);
+    assert.deepEqual(failingRunJobs(snapshot, 9, 3), [input], 'The failing job of run 9');
+    assert.deepEqual(failingRunJobs(snapshot, 8, 3), [], 'No job of another run');
+    assert.deepEqual(failingRunJobs(snapshot, 9, 0), []);
+    const [predicted, joined] = await Promise.all([
+      withGitHubPriority('foreground', () => readCheckLog(h.client, input), { automatic: false, predicted: 'pr-tab:checks' }),
+      readCheckLog(h.client, input),
+    ]);
+    assert.equal(downloads, 1, 'A user read while the prediction is in flight joins it');
+    assert.equal(predicted.text, 'FAIL line 12');
+    assert.equal(joined, predicted);
+    const logRequests = h.calls.filter((call) => call.path.endsWith('/logs')).length;
+    assert.equal((await readCheckLog(h.client, input)).text, 'FAIL line 12');
+    assert.equal(downloads, 1, 'Opening the log later is a memory hit');
+    assert.equal(h.calls.filter((call) => call.path.endsWith('/logs')).length, logRequests, 'and sends no request');
+    assert.equal(cachedCheckLog(h.client, input)?.text, 'FAIL line 12');
   } finally {
     globalThis.fetch = original;
   }

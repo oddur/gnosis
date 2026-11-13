@@ -21,3 +21,22 @@ void test('the graph is warmed for the run the Checks graph opens on: failed, th
     graph: (input) => { graphs.push(input.runId); return Promise.resolve(); } }, () => false), false);
   assert.deepEqual(graphs, [], 'A target that is no longer wanted reads no graph');
 });
+
+void test('Eager reads the failing job logs of the run the graph opens on, after its graph', async () => {
+  const target = { url: 'https://github.com/o/r/pull/1', headSha: 'a'.repeat(40) };
+  const order: string[] = [];
+  await warmWorkflowGraph(target, {
+    runs: () => Promise.resolve({ runs: [run(1, 'completed', 'success'), run(2, 'completed', 'failure')] }),
+    graph: (input) => { order.push(`graph ${input.runId}`); return Promise.resolve(); },
+    logs: (_target, preferred) => { order.push(`logs ${preferred.id}`); return Promise.resolve(); },
+  });
+  assert.deepEqual(order, ['graph 2', 'logs 2']);
+  order.length = 0;
+  let wanted = true;
+  await warmWorkflowGraph(target, {
+    runs: () => Promise.resolve({ runs: [run(3, 'completed', 'failure')] }),
+    graph: () => { order.push('graph'); wanted = false; return Promise.resolve(); },
+    logs: () => { order.push('logs'); return Promise.resolve(); },
+  }, () => wanted);
+  assert.deepEqual(order, ['graph'], 'No logs once the PR is no longer wanted');
+});

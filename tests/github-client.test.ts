@@ -1113,8 +1113,9 @@ void test('on battery or near the predicted cap, predictions turn light before t
   assert.equal(limit, 300);
   const state = (input: Partial<Parameters<typeof predictionStateFor>[0]>) =>
     predictionStateFor({ enabled: true, allowed: true, battery: false, thermal: 'nominal', usage: [{ spent: 0, limit }], ...input });
-  assert.deepEqual(state({}), { off: false, paused: false, battery: false, hot: false, light: false });
-  assert.equal(state({ battery: true }).light, true, 'On battery: one file body');
+  assert.deepEqual(state({}), { off: false, paused: false, battery: false, hot: false, light: false, amount: 'normal' });
+  assert.equal(state({ battery: true }).light, true, 'On battery: one amount lower');
+  assert.equal(state({ battery: true }).amount, 'light');
   assert.equal(state({ battery: true }).paused, false, 'Battery does not stop predictions');
   assert.equal(state({ usage: [{ spent: 224, limit }] }).light, false);
   assert.equal(state({ usage: [{ spent: 0, limit }, { spent: 225, limit }] }).light, true, '75% of either resource');
@@ -1122,4 +1123,45 @@ void test('on battery or near the predicted cap, predictions turn light before t
   assert.deepEqual([state({ enabled: false }).off, state({ enabled: false }).paused], [true, true], 'The setting or GNOSIS_PREDICT');
   assert.equal(state({ thermal: 'serious' }).hot, true);
   assert.equal(state({ thermal: 'fair' }).hot, false);
+  // Battery and the near-cap reduction step the chosen amount down one level, never below Light.
+  const near = [{ spent: 0, limit }, { spent: 225, limit }];
+  assert.deepEqual((['light', 'normal', 'eager'] as const).map((amount) => state({ amount }).amount), ['light', 'normal', 'eager']);
+  assert.deepEqual((['light', 'normal', 'eager'] as const).map((amount) => state({ amount, battery: true }).amount), ['light', 'light', 'normal']);
+  assert.deepEqual((['light', 'normal', 'eager'] as const).map((amount) => state({ amount, usage: near }).amount), ['light', 'light', 'normal']);
+  assert.equal(state({ amount: 'eager', battery: true, usage: near }).amount, 'normal', 'Both together still step down once');
+  // Spend per resource is passed on for Settings.
+  const usage = { core: { spent: 12, limit }, graphql: { spent: 3, limit } };
+  assert.deepEqual(state({ usage }).usage, usage);
+});
+
+void test('the predicted hourly budget follows Settings › Preloading and scales with the real limit', async () => {
+  const { predictedLimit } = await import('../lib/github-budget');
+  assert.deepEqual([3, 6, 10, 15].map((percent) => predictedLimit('core', undefined, true, percent / 100)), [150, 300, 500, 750]);
+  const enterprise = { limit: 15000, remaining: 15000, reset: 0 };
+  assert.deepEqual([3, 6, 10, 15].map((percent) => predictedLimit('graphql', enterprise, true, percent / 100)), [450, 900, 1500, 2250]);
+  assert.equal(predictedLimit('search', enterprise, true, 0.15), 0, 'Never search');
+  let remaining = 5000;
+  const h = harness(() => json({}, 200, {
+    'x-ratelimit-resource': 'core', 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': String(remaining), 'x-ratelimit-reset': '1100',
+  }));
+  const client = h.pool.client('one');
+  await client.request('GET /first');
+  assert.equal(h.pool.predictedUsage('one', 'core').limit, 300, 'Default 6%');
+  h.pool.setPredictedPercent(3);
+  assert.equal(h.pool.predictedUsage('one', 'core').limit, 150);
+  h.pool.setPredictedPercent(15);
+  assert.equal(h.pool.predictedUsage('one', 'core').limit, 750);
+  h.pool.setPredictedPercent(42);
+  assert.equal(h.pool.predictedUsage('one', 'core').limit, 300, 'An invalid share falls back to 6%');
+  // Spend up to the 3% cap; predictions then stop until the hour ends.
+  h.pool.setPredictedPercent(3);
+  for (let i = 0; i < 150; i++) await predicted('pr-tab:changes', () => client.request(`GET /predict/${i}`));
+  assert.ok(h.pool.predictedBackoff('one', ['core']), 'At 3%, the 151st predicted request waits');
+  h.pool.setPredictedPercent(10);
+  assert.equal(h.pool.predictedBackoff('one', ['core']), undefined, 'A larger share applies at once');
+  // The reserve rule is unchanged: twice the background reserve (2 × 500 on 5,000) stops predictions at any share.
+  remaining = 999;
+  await client.request('GET /user-read');
+  h.pool.setPredictedPercent(15);
+  assert.ok(h.pool.predictedBackoff('one', ['core']), 'Stops at twice the background reserve');
 });

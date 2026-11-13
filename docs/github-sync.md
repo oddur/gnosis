@@ -56,9 +56,18 @@ Resting the pointer or keyboard focus on a queue row for 150 ms moves that PR to
 
 Opening a PR prepares the tabs you are likely to open next. `lib/navigation-graph.ts` lists them with a weight: Changes, Checks when checks fail or run, and Feedback when the PR has open threads or needs your response. For each one above 0.2, Gnosis reads the changed-file list, the commit list, the first three files in tree order (or the file you last viewed), review threads, failing check details, and the newest workflow run and its graph. Saved copies that are still current send nothing.
 
-These reads run at foreground priority and never use the two interactive slots. They are not paced. They have their own budget: 6% of each allowance per local hour (300 REST requests and 300 GraphQL points on a standard token), separate from the automatic 20%. They stop when the remaining allowance is at twice the background reserve (1,000 of 5,000 REST requests), during any backoff, when the window is hidden, offline, or after five minutes without input. Predictions never search, write, download LFS objects, generate with AI, or mark anything read. Past 75% of the predicted budget, or on battery, they read one file body per PR instead of three.
+These reads run at foreground priority and never use the two interactive slots. They are not paced. They have their own budget: by default 6% of each allowance per local hour (300 REST requests and 300 GraphQL points on a standard token), separate from the automatic 20%. Settings can change the share to 3%, 10% or 15%; it scales with the token's real limit. They stop when the remaining allowance is at twice the background reserve (1,000 of 5,000 REST requests), during any backoff, when the window is hidden, offline, or after five minutes without input. Predictions never search, write, download LFS objects, generate with AI, or mark anything read. Past 75% of the predicted budget, or on battery, they use one amount less (see below), never less than Light.
 
-If you open a tab while its prediction is still loading, your request joins the prediction instead of sending a second request. The rest of that work runs as yours, at interactive priority. Settings › Integrations › "Preload likely next pages" turns predictions off; queue preparation and row hover stay as they are. `GNOSIS_PREDICT=off` does the same for benchmarks.
+If you open a tab while its prediction is still loading, your request joins the prediction instead of sending a second request. The rest of that work runs as yours, at interactive priority. ### Preloading settings
+
+Settings › Integrations › Preloading has four controls. Main and every window apply changes at once.
+
+- **Preload likely next pages** (on by default) turns navigation predictions and all hover and focus intent off, queue rows included.
+- **Amount** chooses how much an opened PR warms. Light: the file list and commit list, one file body, and threads; no workflow graph and no check details. Normal: three file bodies, the workflow graph of the preferred run, and failing check details (up to five). Eager: six file bodies, the graph, failing check details, the logs of up to three failing jobs in the preferred run (the same 2 MB reader as Checks › Job log, kept in memory so the log opens at once), and the graphs of up to two other stack PRs with failing checks.
+- **Prepare the top of the queue** (on by default) controls the queue preparation described above and the queue's inspection worker. When it is off, only the open PR is prepared in the background.
+- **Hourly GitHub budget** is the predicted share above. Settings shows this hour's spend next to it.
+
+`GNOSIS_PREDICT=off` forces "Preload likely next pages" off for benchmarks, whatever the setting says.
 
 Explanation preparation reports completed files, including both required sides, as “Loading files: N/M”. Cached contents use the same progress path. A rate-limited file read retains its completed work, shows the retry time in Activity, and resumes after the deadline. Cancellation remains available while waiting.
 

@@ -384,10 +384,16 @@ export interface Preferences {
   savedReviewSort?: import('./pr-list-sort').PrListSort;
   githubCacheSizeMB?: number;
   /**
-   * Preload likely next pages: opening a PR warms its likely next tabs, and resting on an entry point prepares
-   * it. Undefined means on. Queue preparation and queue-row hover do not depend on it.
+   * Preload likely next pages: opening a PR warms its likely next tabs, and resting on any entry point, queue rows
+   * included, prepares it. Undefined means on. See lib/preload-settings.ts for this and the next three.
    */
   predictNavigation?: boolean;
+  /** How much an opened PR warms: light, normal (default) or eager. */
+  preloadAmount?: import('./preload-settings').PreloadAmount;
+  /** Prepare PRs near the top of the queue in the background. Undefined means on. */
+  prepareQueue?: boolean;
+  /** Percent of each hourly GitHub limit that preloading may spend: 3, 6 (default), 10 or 15. */
+  preloadBudgetPercent?: number;
   ignoreDependabotPrs?: boolean;
   /** Days since the last PR update; zero disables the global inactivity limit. */
   prInactivityDays?: number;

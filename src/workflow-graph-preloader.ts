@@ -40,13 +40,15 @@ export function createWorkflowGraphPreloader(deps: {
 
 /**
  * Prepares the graph the Checks graph view opens on: the preferred run of the PR's runs (failed first, then running,
- * as `WorkflowGraphView` chooses), not simply the newest. Returns false when `stillWanted` turned false.
+ * as `WorkflowGraphView` chooses), not simply the newest. With `logs` (the Eager amount), it then reads the logs of
+ * that run's failing jobs. Returns false when `stillWanted` turned false.
  */
 export async function warmWorkflowGraph(
   target: CheckTarget,
   reads: {
     runs: (target: CheckTarget) => Promise<{ runs: WorkflowRunInfo[] } | undefined>;
     graph: (input: CheckTarget & { runId: number }) => Promise<unknown>;
+    logs?: (target: CheckTarget, run: WorkflowRunInfo) => Promise<unknown>;
   },
   stillWanted: () => boolean = () => true
 ): Promise<boolean> {
@@ -54,5 +56,9 @@ export async function warmWorkflowGraph(
   if (!stillWanted()) return false;
   const run = runs && preferredWorkflow(runs.runs);
   if (run) await reads.graph({ ...target, runId: run.id });
+  if (run && reads.logs) {
+    if (!stillWanted()) return false;
+    await reads.logs(target, run);
+  }
   return true;
 }

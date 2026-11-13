@@ -1,6 +1,7 @@
 import type { WorkspaceTab } from './navigation-history';
 import { PREDICTION_THRESHOLD } from './navigation-graph';
 import type { PredictionState } from './github-budget';
+import { AMOUNT_PLANS, type AmountPlan } from './preload-settings';
 /** What main allows now. Main keeps the budget, since several windows share one credential. */
 export type { PredictionState };
 
@@ -152,8 +153,6 @@ const NAVIGATION_TIMEOUT_MS = 30_000;
 /** A resource that ran is not run again for a minute, even if its saved copy looks stale. A real visit ignores this. */
 const RERUN_MS = 60_000;
 const FAILED_RETRY_MS = 60_000;
-const FILES = 3;
-const LIGHT_FILES = 1;
 const rank: Record<Strength, number> = { committed: 0, intent: 1, ambient: 2 };
 
 export function percentile(values: number[], p: number): number | null {
@@ -162,21 +161,30 @@ export function percentile(values: number[], p: number): number | null {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))];
 }
 
-/** The reads that make a destination instant. Each is an existing cache or preloader entry point. */
-export function resourcesFor(prediction: Prediction): Omit<Resource, 'destinations'>[] {
+/** The amount main allows now. Before main answers, Normal, or Light when main said `light` without an amount. */
+export const planFor = (state: PredictionState): Readonly<AmountPlan> =>
+  AMOUNT_PLANS[state.amount ?? (state.light ? 'light' : 'normal')];
+
+/**
+ * The reads that make a destination instant. Each is an existing cache or preloader entry point. `plan` is the
+ * amount (Settings › Preloading): keys carry what it changes, so a larger amount reads the rest.
+ */
+export function resourcesFor(prediction: Prediction, plan: Readonly<AmountPlan> = AMOUNT_PLANS.normal): Omit<Resource, 'destinations'>[] {
   const { destination, strength } = prediction;
   const label = destinationKind(destination);
   const revision = (m: PredictMember) => `${m.url}@${m.baseSha}:${m.headSha}`;
   if (destination.kind === 'pr-tab') {
     const { members, subjectId, tab } = destination;
+    const epoch = destination.epoch ? `#${destination.epoch}` : '';
     const open = {
-      key: `open:${members.map(revision).join('|')}${destination.epoch ? `#${destination.epoch}` : ''}`,
+      // Main reads failing check details unless the amount is Light.
+      key: `open:${members.map(revision).join('|')}${epoch}${plan.details ? '' : ':threads'}`,
       label,
       strength,
       run: (reads: PredictorReads) => reads.open(members, label),
     };
     const changes = members.map((member) => ({
-      key: `changes:${revision(member)}`,
+      key: `changes:${revision(member)}${plan.files === AMOUNT_PLANS.normal.files ? '' : `:${plan.files}`}`,
       label,
       strength,
       ready: (reads: PredictorReads, files: number) => reads.changesReady(member, subjectId, files),
@@ -186,10 +194,13 @@ export function resourcesFor(prediction: Prediction): Omit<Resource, 'destinatio
     if (tab === 'commits') return changes;
     if (tab === 'feedback') return [open];
     if (tab === 'checks') {
+      // Light reads the check list only: it is already live for the open PR, so nothing is sent for the graph.
+      if (!plan.graph) return [open];
       return [
         open,
-        // Keyed by the failing-check count too: which member and run the graph opens on depends on it.
-        { key: `graph:${members.map(revision).join('|')}${destination.epoch ? `#${destination.epoch}` : ''}`, label, strength,
+        // Keyed by the failing-check count too: which member and run the graph opens on depends on it. Eager also
+        // reads failing job logs and other members' graphs, so the amount is part of the key.
+        { key: `graph:${members.map(revision).join('|')}${epoch}${plan.logs || plan.members ? ':eager' : ''}`, label, strength,
           run: (reads) => reads.graph(members, label) },
         { key: 'chunk:workflow-graph', label, strength, run: (reads) => reads.chunk('workflow-graph') },
       ];
@@ -248,7 +259,8 @@ export function createNavigationPredictor(deps: PredictorDependencies) {
     if (strength === 'ambient') return false;
     return strength === 'committed' || (c.focused && !c.state.hot);
   }
-  const fileCount = () => (deps.conditions?.().state.light ? LIGHT_FILES : FILES);
+  const plan = () => (deps.conditions ? planFor(deps.conditions().state) : AMOUNT_PLANS.normal);
+  const fileCount = () => plan().files;
   /** A destination left the set. Count it once: used if the reader went there, wasted if its reads needed the network. */
   function settle(key: string) {
     const run = executed.get(key);
@@ -267,9 +279,10 @@ export function createNavigationPredictor(deps: PredictorDependencies) {
     ].sort((a, b) => rank[a.strength] - rank[b.strength] || b.weight - a.weight);
     const byKey = new Map<string, Resource>();
     const destinations = new Map<string, string[]>();
+    const amount = plan();
     for (const prediction of predictions) {
       const destination = destinationKey(prediction.destination);
-      for (const resource of resourcesFor(prediction)) {
+      for (const resource of resourcesFor(prediction, amount)) {
         const existing = byKey.get(resource.key);
         if (existing) existing.destinations.add(destination);
         else byKey.set(resource.key, { ...resource, destinations: new Set([destination]) });
@@ -356,8 +369,15 @@ export function createNavigationPredictor(deps: PredictorDependencies) {
       }
       recompute();
     },
-    /** Conditions changed: focus, visibility, network, battery, budget or the setting. */
-    wake: () => pump(),
+    /** Conditions changed: focus, visibility, network, battery, budget or a setting. The amount may have changed. */
+    wake: () => recompute(),
+    /** "Preload likely next pages" was turned off: forget hovers, including the one main is preparing. */
+    dropIntents() {
+      intents.clear();
+      if (openIntentOwner) deps.reads?.openIntent(null);
+      openIntentOwner = undefined;
+      recompute();
+    },
     /**
      * The reader started a navigation. Starts the time-to-content clock at `at`, the input event time.
      * A navigation already waiting for the same destination keeps its earlier start.

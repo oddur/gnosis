@@ -199,12 +199,61 @@ void test('nothing runs when off, paused, hidden or offline; a blurred window ru
   assert.equal(resumed.calls.length, 2, 'Work resumes when conditions allow');
 });
 
-void test('on battery or near the predicted cap, a PR reads one file body instead of three', async () => {
+void test('on battery or near the predicted cap, a PR steps down to Light: one file body instead of three', async () => {
   const h = running();
   h.conditions.state.light = true;
+  h.conditions.state.amount = 'light';
   h.predictor.declare('pr:1', opened());
   await h.flush();
   assert.equal(h.calls[0], `changes ${member.url} files=1 pr-tab:changes`);
+});
+
+void test('the amount sets file bodies and whether Checks warms its graph; a larger amount reads the rest', async () => {
+  const runAt = async (amount: 'light' | 'normal' | 'eager') => {
+    const h = running({ concurrency: 10 });
+    h.conditions.state.amount = amount;
+    h.predictor.declare('pr:1', opened({ attention: 1 }));
+    await h.flush();
+    return h;
+  };
+  const light = await runAt('light');
+  assert.deepEqual(light.calls, [`changes ${member.url} files=1 pr-tab:changes`, `open ${member.url} pr-tab:changes`],
+    'Light: the file list and one body, threads, and no graph');
+  assert.ok(light.predictor.wanted().some((key) => key.startsWith('open:') && key.endsWith(':threads')), 'Main is told to skip check details');
+  const normal = await runAt('normal');
+  assert.deepEqual(normal.calls, [`changes ${member.url} files=3 pr-tab:changes`, `open ${member.url} pr-tab:changes`,
+    `graph ${member.url} pr-tab:checks`, 'chunk workflow-graph'], 'Normal is unchanged');
+  const eager = await runAt('eager');
+  assert.equal(eager.calls[0], `changes ${member.url} files=6 pr-tab:changes`);
+  assert.ok(eager.calls.includes(`graph ${member.url} pr-tab:checks`), 'Eager warms the graph; main adds logs and members');
+  // Light → Eager: the graph and the rest of the files are read at once, without leaving the PR.
+  light.conditions.state.amount = 'eager';
+  light.predictor.wake();
+  await light.flush();
+  assert.ok(light.calls.includes(`changes ${member.url} files=6 pr-tab:changes`));
+  assert.ok(light.calls.includes(`graph ${member.url} pr-tab:checks`));
+  // Without an amount from main, `light` still means one body (main before this setting).
+  const old = running();
+  old.conditions.state.light = true;
+  old.predictor.declare('pr:1', opened());
+  await old.flush();
+  assert.equal(old.calls[0], `changes ${member.url} files=1 pr-tab:changes`);
+});
+
+void test('turning "Preload likely next pages" off drops a hover and clears the row main is preparing', async () => {
+  const h = running();
+  h.predictor.intent('queue', { destination: { kind: 'pr-open', subjectId: 'x', members: [member] }, weight: 1, strength: 'intent' });
+  h.predictor.intent('palette', { destination: { kind: 'review', reviewId: 'r1' }, weight: 1, strength: 'intent' });
+  assert.deepEqual(h.calls.slice(0, 1), [`intent ${member.url}`]);
+  h.hold(true);
+  h.conditions.enabled = false;
+  h.predictor.dropIntents();
+  await h.flush();
+  assert.ok(h.calls.includes('intent clear'), 'Main drops the queued hover');
+  assert.deepEqual(h.predictor.wanted(), []);
+  h.predictor.intent('queue', { destination: { kind: 'pr-open', subjectId: 'y', members: [member] }, weight: 1, strength: 'intent' });
+  await h.flush();
+  assert.equal(h.calls.filter((call) => call.startsWith(`intent ${member.url}`)).length, 1, 'A new hover sends nothing while off');
 });
 
 void test('warm data sends nothing, and a finished read is not repeated within a minute', async () => {

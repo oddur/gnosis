@@ -24,7 +24,9 @@ function harness() {
   const calls: { kind: string; urls: string[]; intent?: boolean; predicted?: string }[] = [];
   const incomplete = new Set<string>();
   const details = new Set<string>();
-  const state = { canRun: true, canIntent: true, canPredict: true, idle: 0, usage: { spent: 0, limit: 1000 } };
+  const state = { canRun: true, canIntent: true, canPredict: true, idle: 0, usage: { spent: 0, limit: 1000 },
+    // Settings › Preloading.
+    queue: true, intents: true, details: true };
   let fail: Partial<Record<OpenKind | 'full', Error>> = {};
   let hold: Promise<void> | undefined;
   const save = (kind: OpenKind, targets: OpenTarget[]) => {
@@ -41,6 +43,9 @@ function harness() {
     canRun: () => state.canRun,
     canIntent: () => state.canIntent,
     canPredict: () => state.canPredict,
+    queueEnabled: () => state.queue,
+    intentEnabled: () => state.intents,
+    committedDetails: () => state.details,
     usage: () => state.usage,
     idleSeconds: () => state.idle,
     need: (t, kind) => (kind === 'details' ? details.has(t.url) : needsRefresh(kind, saved.get(`${kind}:${t.url}`), t, now)),
@@ -319,4 +324,61 @@ void test('committed predictions spend the predicted budget, not the hover bucke
   const replaced = h.preloader.setCommitted('window:committed', [target(21)], 'pr-open');
   h.preloader.removeOwner('window');
   await replaced;
+});
+
+void test('"Prepare the top of the queue" off: no queue tier runs, and turning it on resumes', async () => {
+  const h = harness();
+  h.state.queue = false;
+  h.setTargets('window', [target(1, 1), target(2, 2), target(3, 3)]);
+  await h.preloader.tick();
+  h.advance(2 * 60_000);
+  await h.preloader.tick();
+  assert.equal(h.calls.length, 0, 'Nothing is prepared for queue position alone');
+  // Hover and committed predictions are separate settings.
+  h.preloader.setIntent('window', [target(4)]);
+  await settle();
+  assert.ok(h.calls.some((call) => call.intent && call.urls[0] === target(4).url), 'Hover still prepares the row');
+  h.calls.length = 0;
+  h.state.queue = true;
+  await h.preloader.tick();
+  assert.deepEqual(h.calls.map((call) => call.kind), ['status', 'signals', 'checks', 'threads']);
+});
+
+void test('"Preload likely next pages" off: hover and focus intent send nothing, and a waiting hover is dropped', async () => {
+  const h = harness();
+  h.state.intents = false;
+  for (let n = 1; n <= 3; n++) {
+    h.preloader.setIntent('window', [target(n)]);
+    await settle();
+  }
+  await h.preloader.tick();
+  await settle();
+  assert.equal(h.calls.length, 0);
+  // A hover waiting for a token when the setting turns off never starts.
+  h.state.intents = true;
+  for (let n = 4; n <= 8; n++) {
+    h.preloader.setIntent('window', [target(n)]);
+    await settle();
+  }
+  const started = new Set(h.calls.map((call) => call.urls[0])).size;
+  h.state.intents = false;
+  h.advance(5000);
+  await h.preloader.tick();
+  await settle();
+  assert.equal(new Set(h.calls.map((call) => call.urls[0])).size, started);
+  assert.ok(!h.calls.some((call) => call.urls[0] === target(8).url));
+});
+
+void test('at the Light amount, a committed prediction reads threads but no check details', async () => {
+  const h = harness();
+  const open = target(1, 0);
+  h.setTargets('window', [open]);
+  h.details.add(open.url);
+  h.state.details = false;
+  await h.preloader.setCommitted('window:committed', [open], 'pr-tab:checks');
+  assert.deepEqual(h.calls.map((call) => call.kind), ['full']);
+  h.calls.length = 0;
+  h.state.details = true;
+  await h.preloader.setCommitted('window:committed', [open], 'pr-tab:checks');
+  assert.deepEqual(h.calls.map((call) => call.kind), ['details'], 'Normal and Eager read failing check details');
 });
