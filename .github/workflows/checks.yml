@@ -123,7 +123,7 @@ jobs:
     # The full browser suite on macOS and Windows, on pushes to main only (pull requests run the smoke
     # suite in Check). Run serially it outgrew the 45-minute job limit, so it is split like Linux.
     name: Browser (${{ matrix.os }} ${{ matrix.shard }}/3)
-    if: github.event_name == 'push' || github.head_ref == 'ci/shard-mac-windows' # TEMP: validate on this PR
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     strategy:
