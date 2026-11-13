@@ -4790,6 +4790,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .explanation-setup-dialog { width:min(760px,calc(100vw - 32px));max-width:760px;max-height:calc(90dvh - 24px);overflow:hidden;display:flex;flex-direction:column;gap:20px; }
 .explanation-setup-dialog [data-slot=dialog-header] { flex-shrink:0;text-align:left; }
 .explanation-setup-dialog [data-slot=dialog-description] { overflow-wrap:anywhere; }
+.explanation-setup-pending { min-height:180px; }
 .explanation-setup-body { min-height:0;overflow-y:auto;padding-inline:2px; }
 .explanation-setup-fields,.explanation-preferences-fields { display:grid;gap:20px;min-width:0; }
 .explanation-style-options { display:grid;grid-template-columns:1fr 1fr;gap:8px 20px;min-width:0; }

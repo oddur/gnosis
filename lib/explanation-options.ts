@@ -33,6 +33,14 @@ export interface ExplanationSetup {
   files: ExplanationFile[];
   options: ExplanationOptions;
   restored: boolean;
+  /** Set when the setup came from saved data. A later `ExplanationSetupUpdate` with this ID replaces it. */
+  updateId?: string;
+}
+/** GitHub's answer for a setup that came from saved data: a newer setup, or why the scope can't be explained. */
+export interface ExplanationSetupUpdate {
+  updateId: string;
+  setup?: ExplanationSetup;
+  error?: string;
 }
 export const DEFAULT_EXPLANATION_PREFERENCES: ExplanationPreferences = {
   style: 'concise',

@@ -10,6 +10,7 @@ import {
   normalizeExplanationPreferences,
   type ExplanationOptions,
   type ExplanationSetup,
+  type ExplanationSetupUpdate,
 } from '../lib/explanation-options';
 
 import { explanationFiles as setupFiles, explanationRepository, loadExplanationSetup, type SourceIdentity } from './explanation-setup';
@@ -93,7 +94,7 @@ import crypto from 'crypto';
 import { getGitHubClient, githubClients, githubCacheFor, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
 import { createGitHubWebAuth } from './github-web-auth';
 import { createGitHubAuthService } from './github-auth-service';
-import { checkGitHubPrAccess, githubAccessMessage } from '../lib/github-auth';
+import { checkGitHubPrAccess, githubAccessMessage, readAccessiblePr } from '../lib/github-auth';
 import { createPrImageService } from './pr-image-service';
 import { createReviewImageService } from './review-image-service';
 import { imageMimeType, includeImageChanges } from '../lib/review-images';
@@ -2059,22 +2060,54 @@ function explanationSetupOptions(request: GenerateReviewRequest, source: SourceI
     ? { options: normalizeExplanationOptions(previous.explanationOptions), restored: true }
     : { options: explanationDefaults(source), restored: false };
 }
-handleInteractive('explanation-setup', async (_event, request: GenerateReviewRequest): Promise<ExplanationSetup> => {
+/** Access and freshness checks for a review scope: one fresh read per PR that also serves as its metadata. */
+const reviewSourceDeps = (token: string | null) => ({
+  token,
+  workbench,
+  checkAccess: (url: string) => readAccessiblePr(getGitHubClient(token), url),
+});
+/** The newest of the PR metadata the app already holds. */
+function savedPrMetadata(client: ReturnType<typeof getGitHubClient>, url: string): PrMetadata | undefined {
+  const candidates = [syncMetadata.get(url), workbench.knownMember(url), prChanges.latest(client, url)?.metadata];
+  return candidates.reduce<PrMetadata | undefined>(
+    (newest, value) => (value && (!newest || value.updatedAt > newest.updatedAt) ? value : newest),
+    undefined,
+  );
+}
+handleInteractive('explanation-setup', async (event, request: GenerateReviewRequest): Promise<ExplanationSetup> => {
   const token = getResolvedToken();
-  return loadExplanationSetup(request, {
-    prepare: (value) =>
-      prepareReviewSource(value, {
-        token,
-        workbench,
-        checkAccess: (url) => checkGitHubPrAccess(getGitHubClient(token), url),
-      }),
-    files: {
-      overrides: () => rawFileFilters.read().overrides,
-      inventory: (url, revision) => prChanges.manifest(changesClient(), url, false, { revision }),
-      kinds: (inventory) => fileClassifications.read(changesClient(), inventory),
+  const client = getGitHubClient(token);
+  const loaded = await loadExplanationSetup(request, {
+    prepare: (value) => prepareReviewSource(value, reviewSourceDeps(token)),
+    saved: {
+      muted: () => workbench.mutedUrls(),
+      subject: (value) =>
+        value.subjectId
+          ? workbench.subject(value.subjectId)
+          : workbench.cached().items.find((item) => item.subject.members.some((m) => m.url === value.prUrl))?.subject,
+      metadata: (url) => (token ? savedPrMetadata(client, url) : undefined),
+      inventory: (url, revision) => (token ? prChanges.saved(client, url, revision) : Promise.resolve(undefined)),
     },
+    inventory: (url, revision) => prChanges.manifest(client, url, false, { revision }),
+    overrides: () => rawFileFilters.read().overrides,
+    kinds: (inventory) => fileClassifications.read(client, inventory),
     options: explanationSetupOptions,
   });
+  const { revalidate } = loaded;
+  if (!revalidate) return loaded.setup;
+  // The saved answer shows at once. GitHub confirms it afterwards and the dialog updates in place.
+  const updateId = crypto.randomUUID();
+  const sender = event.sender;
+  const send = (update: ExplanationSetupUpdate) => {
+    if (!sender.isDestroyed() && token === getResolvedToken()) sender.send('explanation-setup-update', update);
+  };
+  setImmediate(() => {
+    withGitHubPriority('foreground', revalidate).then(
+      (setup) => { if (setup) send({ updateId, setup: { ...setup, updateId } }); },
+      (error: unknown) => send({ updateId, error: error instanceof Error ? error.message : String(error) }),
+    );
+  });
+  return { ...loaded.setup, updateId };
 });
 
 async function runBackgroundGeneration(
@@ -2750,11 +2783,7 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   const rememberOptions = request.rememberExplanationOptions === true;
   const token = getResolvedToken();
   workbench.interrupt();
-  const { source, prData, reviewSnapshot } = await prepareReviewSource(request, {
-    token,
-    workbench,
-    checkAccess: (url) => checkGitHubPrAccess(getGitHubClient(token), url),
-  });
+  const { source, prData, reviewSnapshot } = await prepareReviewSource(request, reviewSourceDeps(token));
 
   const options = request.explanationOptions
     ? normalizeExplanationOptions(request.explanationOptions)

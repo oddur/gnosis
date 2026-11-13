@@ -2,7 +2,7 @@ import type { Octokit } from '@octokit/rest';
 import type { DiffSource } from './diffSource';
 import { GitHubDiffSource } from './github';
 import { memberPrefix, type ReviewSubject } from './workbench';
-import type { ChangedFile, FileMetadata, Provider } from './types';
+import type { ChangedFile, FileMetadata, PrMetadata, Provider } from './types';
 
 // Namespaced paths keep repeated files in different PRs distinct throughout planning,
 // hunk assignment, code links, and comments. The UI resolves them back to source paths.
@@ -13,10 +13,14 @@ export class StackDiffSource implements DiffSource {
   constructor(
     readonly subject: ReviewSubject,
     token: string | null,
-    client?: Octokit
+    client?: Octokit,
+    /** Fresh metadata the caller just read for members, such as their access checks. */
+    verified?: ReadonlyMap<string, PrMetadata>
   ) {
     this.key = subject.members[0].url;
-    this.sources = new Map(subject.members.map((m) => [memberPrefix(m), new GitHubDiffSource(m.url, token, client)]));
+    this.sources = new Map(
+      subject.members.map((m) => [memberPrefix(m), new GitHubDiffSource(m.url, token, client, verified?.get(m.url))])
+    );
   }
   async getMetadata() {
     const results = await Promise.all([...this.sources.values()].map((s) => s.getMetadata()));

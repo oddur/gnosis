@@ -1,5 +1,6 @@
 import type { Octokit } from '@octokit/rest';
-import { parsePrUrl } from './github';
+import { getPrMetadata, parsePrUrl } from './github';
+import type { PrMetadata } from './types';
 import { githubRateLimit } from './github-client';
 
 export interface GitHubDevicePrompt {
@@ -49,4 +50,32 @@ export async function checkGitHubPrAccess(client: Octokit, prUrl: string): Promi
   } catch (error) {
     throw new Error(githubAccessMessage(error, checkedRepo));
   }
+}
+
+/**
+ * Verify access like `checkGitHubPrAccess`, from one fresh PR read that also serves as the PR's metadata. The two
+ * revision checks run together.
+ */
+export async function readAccessiblePr(client: Octokit, prUrl: string): Promise<PrMetadata> {
+  const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+  let metadata: PrMetadata;
+  try {
+    metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
+  } catch (error) {
+    throw new Error(githubAccessMessage(error, `${owner}/${repo}`));
+  }
+  const revisions = [
+    { repo: metadata.baseRepo ?? `${owner}/${repo}`, sha: metadata.baseSha },
+    { repo: metadata.headRepo ?? `${owner}/${repo}`, sha: metadata.headSha },
+  ];
+  const results = await Promise.allSettled(
+    revisions.map((revision) => {
+      const [revisionOwner, revisionRepo] = revision.repo.split('/');
+      return client.git.getCommit({ owner: revisionOwner, repo: revisionRepo, commit_sha: revision.sha });
+    }),
+  );
+  // Report the first refused revision, base before head, as the sequential check does.
+  const failed = results.findIndex((result) => result.status === 'rejected');
+  if (failed >= 0) throw new Error(githubAccessMessage((results[failed] as PromiseRejectedResult).reason, revisions[failed].repo));
+  return metadata;
 }

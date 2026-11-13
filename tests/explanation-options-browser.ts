@@ -106,6 +106,41 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('input[value=educational]').checked"), true);
     await click('Cancel');
     assert.equal(await js("sessionStorage.getItem('attempts')"), null);
+    // Saved data answers at once: no loading state, then GitHub's update for a push replaces it in place.
+    await open('?saved');
+    await count(3);
+    assert.equal(await js('document.documentElement.dataset.loadingSeen'), undefined, 'A saved answer never shows loading');
+    assert.equal(await js("!!document.querySelector('.explanation-setup-updated')"), false);
+    await js("document.querySelector('input[value=educational]').click()");
+    await js("document.querySelector('.explanation-files-disclosure').click()");
+    await js('document.querySelector(\'[aria-label="Include CHANGELOG.md"]\').click()');
+    await input('[aria-label="Find explanation files"]', 'src/queue.ts');
+    await wait('!!document.querySelector(\'[aria-label="Include src/queue.ts"]\')');
+    await js('document.querySelector(\'[aria-label="Include src/queue.ts"]\').click()');
+    await input('[aria-label="Find explanation files"]', '');
+    await count(1);
+    await js('window.simulatePush()');
+    // Five files now: generated/schema.ts stays filtered and the excluded src/queue.ts stays excluded.
+    await wait("document.querySelector('.explanation-files-disclosure')?.textContent.includes('3 of 5 included')");
+    assert.equal(
+      await js("document.querySelector('.explanation-setup-updated')?.textContent"),
+      'Updated for the latest push.'
+    );
+    assert.equal(await js("document.querySelector('input[value=educational]').checked"), true, 'The style survives');
+    assert.equal(await js('document.documentElement.dataset.loadingSeen'), undefined);
+    await capture('updated');
+    await click('Generate explanation');
+    await wait("!!document.querySelector('[data-closed]')");
+    const pushed = await js<{ explanationOptions: { style: string; fileOverrides: Record<string, boolean> } }[]>(
+      "JSON.parse(sessionStorage.getItem('attempts'))"
+    );
+    assert.equal(pushed[0].explanationOptions.style, 'educational');
+    assert.deepEqual(pushed[0].explanationOptions.fileOverrides, { 'src/queue.ts': false }, 'Choices for removed files drop');
+    // A slow answer shows the loading state after a short delay.
+    await open('?slow');
+    await wait('document.documentElement.dataset.loadingSeen === "true"');
+    await count(3);
+    await click('Cancel');
     await open('?load-error');
     await wait("!!document.querySelector('[role=alert]')");
     await click('Retry loading files');
@@ -155,7 +190,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.setupRequest.prUrl'), 'local:/tmp/project#main');
     await click('Cancel');
     console.log(
-      'Explanation setup passed: scope, styles, overrides, restore, cancel, errors, bulk retry, responsive layout.'
+      'Explanation setup passed: scope, styles, overrides, restore, saved answer and push update, cancel, errors, bulk retry, responsive layout.'
     );
   } catch (e) {
     console.error(e);

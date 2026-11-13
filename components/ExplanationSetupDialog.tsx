@@ -12,6 +12,7 @@ import {
   type ExplanationFile,
   type ExplanationOptions,
   type ExplanationSetup,
+  type ExplanationSetupUpdate,
 } from '../lib/explanation-options';
 import { fileExtension } from '../lib/file-kinds';
 import type { GenerateReviewRequest } from '../lib/types';
@@ -176,6 +177,23 @@ function FileTree({
   );
 }
 
+/** A setup in the dialog. `updated` marks one that GitHub replaced after it showed from saved data. */
+type SetupEntry = ExplanationSetup & { updated?: boolean };
+/** Show the loading state only when options take longer than this, so a saved answer never flashes it. */
+const LOADING_DELAY_MS = 150;
+/** A newer setup keeps the reader's choices: style, filters, and file choices for files that still exist. */
+function updatedSetup(entry: SetupEntry, next: ExplanationSetup): SetupEntry {
+  const paths = new Set(next.files.map((file) => file.path));
+  return {
+    ...next,
+    options: {
+      ...entry.options,
+      fileOverrides: Object.fromEntries(Object.entries(entry.options.fileOverrides).filter(([path]) => paths.has(path))),
+    },
+    restored: entry.restored,
+    updated: true,
+  };
+}
 export function ExplanationSetupDialog({
   requests,
   onGenerate,
@@ -185,8 +203,9 @@ export function ExplanationSetupDialog({
   onGenerate: (request: GenerateReviewRequest) => Promise<void>;
   onClose: (started: boolean) => void;
 }) {
-  const [setups, setSetups] = useState<ExplanationSetup[]>([]);
+  const [setups, setSetups] = useState<SetupEntry[]>([]);
   const [error, setError] = useState('');
+  const [slow, setSlow] = useState(false);
   const [retry, setRetry] = useState(0);
   const [selected, setSelected] = useState(0);
   const [remember, setRemember] = useState(false);
@@ -202,8 +221,27 @@ export function ExplanationSetupDialog({
     const lifetime = new AbortController();
     setError('');
     setSetups([]);
+    setSlow(false);
+    const timer = setTimeout(() => setSlow(true), LOADING_DELAY_MS);
+    // Setups from saved data show at once. GitHub's answer for them arrives later, possibly before the batch ends.
+    let loaded = false;
+    const result: ExplanationSetup[] = [];
+    const early = new Map<string, ExplanationSetupUpdate>();
+    function apply({ updateId, setup: next, error: failure }: ExplanationSetupUpdate) {
+      const entry = result.find((value) => value.updateId === updateId);
+      if (!entry) return;
+      if (failure) setError(`${entry.title}: ${failure}`);
+      if (next)
+        setSetups((previous) =>
+          previous.map((value) => (value.updateId === updateId ? updatedSetup(value, next) : value))
+        );
+    }
+    const unsubscribe = window.electronAPI.onExplanationSetupUpdate?.((update) => {
+      if (lifetime.signal.aborted) return;
+      if (loaded) apply(update);
+      else early.set(update.updateId, update);
+    });
     void (async () => {
-      const result: ExplanationSetup[] = [];
       // At most two inventories at once; all reads use the existing backend caches.
       for (let i = 0; i < requests.length; i += 2) {
         if (lifetime.signal.aborted) return;
@@ -213,14 +251,19 @@ export function ExplanationSetupDialog({
         result.push(...batch);
       }
       if (!lifetime.signal.aborted) {
+        clearTimeout(timer);
+        loaded = true;
         setSetups(result);
         setCommon(result.at(0)?.options);
+        early.forEach(apply);
       }
     })().catch((e: unknown) => {
       if (!lifetime.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     });
     return () => {
       lifetime.abort();
+      clearTimeout(timer);
+      unsubscribe?.();
     };
   }, [requests, retry]);
   const setup = setups.at(selected);
@@ -239,7 +282,7 @@ export function ExplanationSetupDialog({
       ].sort(),
     [setup, options?.hiddenExtensions]
   );
-  const resolvedOptions = (entry: ExplanationSetup) =>
+  const resolvedOptions = (entry: SetupEntry) =>
     requests.length > 1 && !useDefaults && common
       ? { ...common, fileOverrides: entry.options.fileOverrides }
       : entry.options;
@@ -308,8 +351,10 @@ export function ExplanationSetupDialog({
               <p>{error}</p>
               <Button onClick={() => setRetry((n) => n + 1)}>Retry loading files</Button>
             </div>
-          ) : (
+          ) : slow ? (
             <LoadingState title="Preparing explanation options…" description="Reading the changed-file inventory." />
+          ) : (
+            <div className="explanation-setup-pending" aria-busy="true" />
           )
         ) : (
           <>
@@ -338,6 +383,11 @@ export function ExplanationSetupDialog({
               )}
               {setup && options && (
                 <fieldset disabled={busy || started.current.has(selected)} className="explanation-setup-fields">
+                  {setup.updated && (
+                    <p className="explanation-setup-note explanation-setup-updated" role="status">
+                      Updated for the latest push.
+                    </p>
+                  )}
                   {setup.restored && (
                     <p className="explanation-setup-note">
                       Using this explanation’s previous choices. New files follow these filters.

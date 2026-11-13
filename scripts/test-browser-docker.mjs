@@ -5,10 +5,11 @@
 //   npm run test:browser:docker -- --review-evidence # one workbench check
 //   npm run test:browser:docker -- npm run test:explainer
 //   GNOSIS_DOCKER_PLATFORM=linux/amd64 npm run test:browser:docker  # CI's architecture
+//   GNOSIS_DOCKER_IMAGE=gnosis-browser-tests-mine npm run test:browser:docker  # a worktree's own image
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 
-const image = 'gnosis-browser-tests';
+const image = process.env.GNOSIS_DOCKER_IMAGE || 'gnosis-browser-tests';
 const platform = process.env.GNOSIS_DOCKER_PLATFORM ? ['--platform', process.env.GNOSIS_DOCKER_PLATFORM] : [];
 const args = process.argv.slice(2);
 // `node scripts/test-browser-docker.mjs -- …` keeps the separator that npm would strip.
