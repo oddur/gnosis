@@ -1593,8 +1593,7 @@ ul.review-focus-content > li::before {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior:auto !important; }
   .slide-enter,.animate-fade-in-up,.animate-fade-in,.animate-spin,.animate-pulse,
-  [data-slot=dialog-overlay],[data-slot=dialog-content],[data-slot=sheet-overlay],
-  [data-slot=sheet-content],[data-slot=tooltip-content] { animation:none !important; }
+  [data-slot=dialog-overlay],[data-slot=dialog-content],[data-slot=tooltip-content] { animation:none !important; }
   .chat-sheet>div,.loading-progress-fill { transition:none !important; }
   .check-highlight::after { animation:none; opacity:1; }
 }
@@ -1678,7 +1677,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .queue-empty { padding:64px 24px; display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; color:var(--muted-foreground); }
 .queue-empty h2 { font-size:16px; font-weight:600; color:var(--foreground); }
 .queue-empty p { font-size:var(--type-body); max-width:42ch; line-height:1.6; }
-.briefing-panel { width:360px; max-width:44%; border-left:1px solid var(--border); background:var(--card); padding:16px 20px 24px; overflow:auto; flex-shrink:0; }
+.briefing-panel { width:360px; max-width:44%; border-left:1px solid var(--border); background:var(--card); padding:16px 20px 24px; overflow:auto; flex-shrink:0; animation:drawer-edge-in 280ms var(--drawer-ease); }
 .briefing-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px; }
 .briefing-top>button { flex-shrink:0; }
 .briefing-panel h2 { min-width:0; font-size:var(--type-panel-title); font-weight:650; line-height:1.4; margin:0; letter-spacing:-.02em; }
@@ -1919,8 +1918,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .draft-topic-status button { margin-left:6px; color:var(--primary); font-weight:500; text-decoration:underline; text-underline-offset:3px; }
 
 /* Activity: a panel below the title bar capsule. Borders and tonal layers, no shadow. */
-.activity-drawer { position:fixed; z-index:60; top:calc(var(--app-titlebar-height) + 6px); right:10px; width:min(440px,calc(100vw - 24px)); max-height:calc(100dvh - var(--app-titlebar-height) - 24px); display:flex; flex-direction:column; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; overflow:hidden; animation:activity-panel-in 140ms ease-out; }
-@keyframes activity-panel-in { from { opacity:0; transform:translateY(-4px); } }
+/* Drawers enter like a sheet: a quick move from their edge that settles without bounce (Vaul's curve, desktop timing). */
+:root { --drawer-ease:cubic-bezier(.32,.72,0,1); }
+.activity-drawer { position:fixed; z-index:60; top:calc(var(--app-titlebar-height) + 6px); right:10px; width:min(440px,calc(100vw - 24px)); max-height:calc(100dvh - var(--app-titlebar-height) - 24px); display:flex; flex-direction:column; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; overflow:hidden; transform-origin:top right; animation:activity-panel-in 260ms var(--drawer-ease); }
+@keyframes activity-panel-in { from { opacity:0; transform:translate(10px,-6px) scale(.97); } }
+@keyframes drawer-edge-in { from { opacity:0; transform:translateX(24px); } }
 .activity-drawer header { display:flex; align-items:center; gap:10px; padding:8px 8px 8px 14px; border-bottom:1px solid var(--border); }
 .activity-drawer header h2 { font-size:var(--type-body); font-weight:600; }
 .activity-drawer header>span { flex:1; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
@@ -1957,6 +1959,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .activity-failure summary { cursor:pointer; }
 .activity-failure p { margin-top:6px; overflow-wrap:anywhere; white-space:pre-wrap; }
 @media(prefers-reduced-motion:reduce) {
+  .briefing-panel, .chat-panel-dock,
   .task-glyph, .activity-drawer, .activity-capsule, .task-row-toggle svg, .task-row-action { animation:none!important; transition:none!important; }
   .activity-drawer * { animation:none!important; transition:none!important; }
 }
@@ -2508,7 +2511,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-other-threads>h3 { font-weight:600;font-size:var(--type-control); }
 .changes-other-threads>p { font-size:var(--type-caption);color:var(--muted-foreground);margin:6px 0 12px; }
 .chat-panel { min-height:0;display:flex;flex-direction:column;background:var(--background);overflow:hidden; }
-.chat-panel-dock { width:400px;max-width:45%;min-width:280px;flex-shrink:0;border-left:1px solid var(--border); }
+.chat-panel-dock { width:400px;max-width:45%;min-width:280px;flex-shrink:0;border-left:1px solid var(--border);animation:drawer-edge-in 300ms var(--drawer-ease); }
 .chat-panel-contained { height:100%;width:100%; }
 .review-chat-workspace { position:relative; }
 .review-chat-content,.changes-diff-pane { isolation:isolate; }

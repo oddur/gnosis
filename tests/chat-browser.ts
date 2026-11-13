@@ -278,6 +278,8 @@ void app.whenReady().then(async () => {
     await click('Send question');
     await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
     const assertDock = async () => {
+      // The dock slides in from the edge; measure where it settles.
+      await js("Promise.all([...document.querySelectorAll('.chat-panel-dock')].flatMap(el=>el.getAnimations()).map(a=>a.finished)).then(()=>true)");
       const rect = await js<{ right: number; width: number; parentRight: number }>(
         "(()=>{const panel=[...document.querySelectorAll('.chat-panel-dock')].find(el=>el.checkVisibility());const r=panel.getBoundingClientRect();return{right:r.right,width:r.width,parentRight:panel.parentElement.getBoundingClientRect().right}})()"
       );
