@@ -220,6 +220,10 @@ export function createAppDataStore() {
     read(name: string): unknown {
       return structuredClone(assertReady()[name]);
     },
+    /** Names of the saved states that are loaded and not taken. */
+    names(): string[] {
+      return Object.keys(assertReady());
+    },
     take(name: string): unknown {
       const all = assertReady();
       const value = all[name];
