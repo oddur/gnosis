@@ -14,6 +14,8 @@ import { BranchBadge, PrBadge, RepositoryBadge } from './EntityBadge';
 import { stackDependencyOrder, stackMergeLabel, stackMergeTarget } from '../lib/stack-overview';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReviewMember, ReviewSubject } from '../lib/workbench';
+import { useIntent } from '../lib/use-predictions';
+import { openIntent } from '../lib/navigation-graph';
 
 export function StackDependencyChain({
   subject,
@@ -52,6 +54,9 @@ export function StackDependencyChain({
       now
     );
   const mixedRepos = new Set(subject.members.map((member) => member.repo)).size > 1;
+  // Resting on a member prepares that PR like a queue row.
+  const intent = useIntent(`stack:${subject.id}`);
+  const memberIntent = (member: ReviewMember) => intent.handlers(member.url === currentUrl ? null : openIntent(member.url, [member]));
   return (
     <div className={`stack-dependency-chain ${renderColumns ? 'stack-status-table' : ''}`} data-linear={order.linear}>
       {!order.linear && (
@@ -92,7 +97,7 @@ export function StackDependencyChain({
               <div className="stack-member-main">
                 <div className="stack-member-title">
                   <PrBadge url={member.url} number={member.number} title={member.title} />
-                  <button onClick={() => onOpen(member)}>{member.title}</button>
+                  <button onClick={() => onOpen(member)} {...memberIntent(member)}>{member.title}</button>
                   {currentUrl === member.url && <span className="stack-current-label">Current PR</span>}
                 </div>
                 <div className="stack-member-branches">
@@ -100,7 +105,7 @@ export function StackDependencyChain({
                   <BranchBadge branch={member.headBranch} repo={member.headRepo} />
                   <span>into</span>
                   {target.parent ? (
-                    <button className="stack-parent-link" onClick={() => target.parent && onOpen(target.parent)}>
+                    <button className="stack-parent-link" onClick={() => target.parent && onOpen(target.parent)} {...memberIntent(target.parent)}>
                       #{target.parent.number}
                     </button>
                   ) : (
@@ -123,6 +128,7 @@ export function StackDependencyChain({
                   <button
                     className="workbench-icon"
                     onClick={() => onOpen(member)}
+                    {...memberIntent(member)}
                     aria-label={`Open PR #${member.number}`}
                   >
                     <ChevronRight size={16} />

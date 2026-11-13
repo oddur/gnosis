@@ -50,8 +50,8 @@ import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 import { SubjectReviewStatus } from './PrReviewStatus';
 import { useChangesComments } from './useChangesComments';
-import { ArrivalProbe, contentMarkers, usePredictions } from '../lib/use-predictions';
-import { predictableMembers, prOpenPredictions } from '../lib/navigation-graph';
+import { ArrivalProbe, contentMarkers, useIntent, usePredictions } from '../lib/use-predictions';
+import { predictableMembers, prOpenPredictions, tabIntent } from '../lib/navigation-graph';
 import { needsResponse } from '../lib/response-needed';
 import type { ReviewMember } from '../lib/workbench';
 
@@ -341,15 +341,20 @@ function PrSummaryContent({
     item.subject.members.map((m) => ({ url: m.url, headSha: m.headSha }))
   );
   // Opening a PR warms the tabs the reader is likely to open next: Changes, then Checks or Feedback when they need attention.
+  const predictMembers = account ? predictableMembers(item.subject.members) : [];
   usePredictions(`pr:${item.subject.id}`, prOpenPredictions({
     subjectId: item.subject.id,
-    members: account ? predictableMembers(item.subject.members) : [],
+    members: predictMembers,
     attention: checkTotals.attention,
     running: checkTotals.running,
     unresolved: signals.reduce((total, signal) => total + signal.comments, 0),
     responseNeeded: item.subject.members.some((member) => needsResponse(item.responses?.[member.url])),
     explanationReady: !!item.review && (item.review.status ?? 'completed') === 'completed',
   }));
+  // Resting on a tab prepares it, even when Summary did not predict it.
+  const tabRest = useIntent(`pr-tabs:${item.subject.id}`);
+  const tabIntentHandlers = (value: WorkspaceTab) =>
+    tabRest.handlers(value === tab ? null : tabIntent(item.subject.id, value, predictMembers, checkTotals.attention));
   // Status ages on the shared status clock in lib/status-clock.ts. Only the components that show
   // status read it, so a tick re-renders them and not this page, its kept tabs or the explanation.
   // New status, or a failed refresh, is aged at once: every status component reads the new time.
@@ -560,10 +565,10 @@ function PrSummaryContent({
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
           <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" />Summary</Tabs.Trigger>
-          <Tabs.Trigger value="changes" data-tour="changes"><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
-          <Tabs.Trigger value="commits"><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
-          <Tabs.Trigger value="checks"><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="feedback"><WorkspaceIcon tab="feedback" />Feedback</Tabs.Trigger>
+          <Tabs.Trigger value="changes" data-tour="changes" {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
+          <Tabs.Trigger value="commits" {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
+          <Tabs.Trigger value="checks" {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="feedback" {...tabIntentHandlers('feedback')}><WorkspaceIcon tab="feedback" />Feedback</Tabs.Trigger>
           <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" />Explanation</Tabs.Trigger>
           <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" />Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>

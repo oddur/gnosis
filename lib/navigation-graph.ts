@@ -1,5 +1,6 @@
 import type { WorkspaceTab } from './navigation-history';
 import type { Prediction, PredictMember } from './navigation-predictor';
+import type { SearchDestination } from './command-search';
 
 /**
  * Where a reader goes next from each screen, as weights. These are estimates; the predictor's measurements
@@ -49,4 +50,29 @@ export function prOpenPredictions(input: {
     tab('explanation', input.explanationReady ? 0.5 : 0),
     tab('commits', 0.15),
   ];
+}
+
+/** Resting on an entry point that opens a PR: its status, checks and threads, and its inventory first in the queue. */
+export function openIntent(subjectId: string, members: readonly { url: string; headSha: string; baseSha: string; updatedAt: string }[]): Prediction | null {
+  const predictable = predictableMembers(members);
+  return predictable.length ? { destination: { kind: 'pr-open', subjectId, members: predictable }, weight: 1, strength: 'intent' } : null;
+}
+/** Resting on a saved review: its document from disk, the review screen's code, and diagram engines it uses. */
+export const reviewIntent = (reviewId: string, diagrams?: ('mermaid' | 'd2')[]): Prediction => ({
+  destination: { kind: 'review', reviewId, ...(diagrams?.length ? { diagrams } : {}) },
+  weight: 1,
+  strength: 'intent',
+});
+/** Resting on a PR tab raises that tab to a committed prediction for the open PR. */
+export const tabIntent = (subjectId: string, tab: WorkspaceTab, members: PredictMember[], attention = 0): Prediction | null =>
+  members.length ? { destination: { kind: 'pr-tab', tab, subjectId, members, epoch: `a${attention}` }, weight: 1, strength: 'intent' } : null;
+/** A search or palette destination as an intent: a PR or stack in the queue, or a saved review. */
+export function destinationIntent(destination: SearchDestination): Prediction | null {
+  if (destination.kind === 'review') return reviewIntent(destination.reviewId);
+  if (destination.kind === 'home' && destination.subject) {
+    const subject = destination.subject.subject;
+    const focus = destination.focusUrl && subject.members.find((member) => member.url === destination.focusUrl);
+    return focus ? openIntent(focus.url, [focus]) : openIntent(subject.id, subject.members);
+  }
+  return null;
 }

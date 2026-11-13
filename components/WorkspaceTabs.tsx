@@ -17,6 +17,20 @@ import { sameTabChrome, workspaceTabDescription, type WorkspaceTabsState } from 
 
 import { workspaceTabTitle, type WorkspaceListingCount } from '../lib/workspace-listings';
 import { useWorkspaceTabDrag } from '../lib/use-workspace-tab-drag';
+import { useIntent } from '../lib/use-predictions';
+import { destinationIntent, openIntent, reviewIntent } from '../lib/navigation-graph';
+import type { Prediction } from '../lib/navigation-predictor';
+
+/** Resting on another workspace tab prepares the PR or saved review it shows. */
+function tabPrediction(tab: WorkspaceTabsState['tabs'][number]): Prediction | null {
+  const location = tab.location;
+  if (location?.page === 'review') return reviewIntent(location.reviewId);
+  const subject = location?.home.item?.subject;
+  if (subject) return openIntent(subject.id, subject.members);
+  // A tab opened in the background has not been shown yet: use what it was opened with.
+  return !location && tab.initial && tab.initial.kind !== 'location' && tab.initial.kind !== 'restore'
+    ? destinationIntent(tab.initial) : null;
+}
 
 /** The PR number shown before a tab's title; narrow tabs hide it, so names and tooltips repeat it. */
 const tabNumber = (tab: WorkspaceTabsState['tabs'][number]) =>
@@ -50,6 +64,7 @@ export const WorkspaceTabs = memo(
   }) {
     const list = useRef<HTMLDivElement>(null);
     const drag = useWorkspaceTabDrag(list, state.tabs, move);
+    const intent = useIntent('workspace-tabs');
     const modifier = window.electronAPI.platform === 'darwin' ? '⌘' : 'Ctrl+';
     useEffect(() => {
       list.current
@@ -181,6 +196,7 @@ export const WorkspaceTabs = memo(
                       }
                       tabIndex={state.active === tab.id ? 0 : -1}
                       onClick={() => activate(tab.id)}
+                      {...intent.handlers(state.active === tab.id ? null : tabPrediction(tab))}
                       onKeyDown={(event) => {
                         if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
                           event.preventDefault();

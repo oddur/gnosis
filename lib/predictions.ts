@@ -43,7 +43,12 @@ const reads: PredictorReads = {
     if (name === 'mermaid') return import('./mermaid').then((module) => module.preloadMermaid());
     return import('./d2').then((module) => module.preloadD2());
   },
-  review: (id) => loadExplanation(id),
+  // A saved review's document is local. Its diagram engines load with it, as the review would on open.
+  review: async (id) => {
+    const review = await loadExplanation(id);
+    if (review.slides.some((slide) => slide.mermaidDiagram)) void reads.chunk('mermaid').catch(() => {});
+    if (review.slides.some((slide) => slide.d2Diagram)) void reads.chunk('d2').catch(() => {});
+  },
   reviewReady: (id) => !!peekExplanation(id),
 };
 

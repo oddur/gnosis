@@ -1,6 +1,7 @@
-import { createElement, useEffect, useLayoutEffect, useRef } from 'react';
+import { createElement, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { navigationStart, predictor } from './predictions';
-import type { Prediction } from './navigation-predictor';
+import { destinationKey, type Prediction } from './navigation-predictor';
+import { createRowIntent } from './row-intent';
 
 /** Declares a screen's likely next destinations while it is mounted. Hidden Activity trees clear theirs. */
 export function usePredictions(owner: string, predictions: Prediction[]): void {
@@ -9,6 +10,56 @@ export function usePredictions(owner: string, predictions: Prediction[]): void {
     predictor.declare(owner, JSON.parse(signature) as Prediction[]);
     return () => predictor.declare(owner, []);
   }, [owner, signature]);
+}
+
+/**
+ * Hover and keyboard-focus intent for an entry point that opens a PR or a review. It fires once the pointer or focus
+ * rests for 150 ms, like a queue row, and clears on leave. The returned handlers are stable, so rows do not re-render.
+ */
+export function useIntent(owner: string) {
+  const state = useRef<{ intent: ReturnType<typeof createRowIntent>; predictions: Map<string, Prediction> } | null>(null);
+  if (!state.current) {
+    const predictions = new Map<string, Prediction>();
+    state.current = {
+      predictions,
+      intent: createRowIntent({
+        fire: (id) => {
+          const prediction = predictions.get(id);
+          if (prediction) predictor.intent(owner, prediction);
+        },
+        clear: () => predictor.intent(owner, null),
+      }),
+    };
+  }
+  useEffect(() => () => {
+    state.current?.intent.leave();
+  }, []);
+  return useMemo(() => {
+    const enter = (prediction: Prediction | null) => {
+      const current = state.current;
+      if (!current) return;
+      if (!prediction) {
+        current.intent.leave();
+        return;
+      }
+      const id = destinationKey(prediction.destination);
+      current.predictions.clear();
+      current.predictions.set(id, prediction);
+      current.intent.enter(id);
+    };
+    const leave = () => state.current?.intent.leave();
+    return {
+      enter,
+      leave,
+      /** Pointer and focus handlers for one element. */
+      handlers: (prediction: Prediction | null) => ({
+        onPointerEnter: () => enter(prediction),
+        onPointerLeave: leave,
+        onFocus: () => enter(prediction),
+        onBlur: leave,
+      }),
+    };
+  }, []);
 }
 
 export type ContentState = 'content' | 'loading' | 'blank';

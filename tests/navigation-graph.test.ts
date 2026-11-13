@@ -36,3 +36,19 @@ void test('every tab is predicted while the PR is open, and nothing without a Gi
   assert.deepEqual(predictableMembers([{ ...member, url: 'local:review' }, member, { ...member, headSha: '' }]), [member]);
   assert.equal(predictableMembers(Array.from({ length: 9 }, () => member)).length, 5, 'At most five stack members');
 });
+
+void test('entry points become intents: PRs and stacks, a focused stack member, saved reviews and PR tabs', async () => {
+  const { destinationIntent, openIntent, reviewIntent, tabIntent } = await import('../lib/navigation-graph');
+  assert.equal(openIntent('local', [{ ...member, url: 'local:/repo' }]), null, 'Local reviews have nothing to prepare');
+  assert.deepEqual(openIntent(member.url, [member])?.destination, { kind: 'pr-open', subjectId: member.url, members: [member] });
+  assert.equal(openIntent(member.url, [member])?.strength, 'intent');
+  assert.deepEqual(reviewIntent('r1', ['d2']).destination, { kind: 'review', reviewId: 'r1', diagrams: ['d2'] });
+  assert.equal(tabIntent(member.url, 'checks', [], 1), null);
+  assert.equal(tabIntent(member.url, 'checks', [member], 1)?.destination.kind, 'pr-tab');
+  const second = { ...member, url: 'https://github.com/o/r/pull/2' };
+  const stack = { subject: { id: 'stack', kind: 'stack', title: 'Stack', members: [member, second], edges: [], warnings: [] }, attention: 'other' } as unknown as import('../lib/workbench').QueueItem;
+  assert.deepEqual(destinationIntent({ kind: 'home', subject: stack })?.destination, { kind: 'pr-open', subjectId: 'stack', members: [member, second] });
+  assert.deepEqual(destinationIntent({ kind: 'home', subject: stack, focusUrl: second.url })?.destination, { kind: 'pr-open', subjectId: second.url, members: [second] });
+  assert.equal(destinationIntent({ kind: 'review', reviewId: 'r2' })?.destination.kind, 'review');
+  assert.equal(destinationIntent({ kind: 'home', section: 'all' }), null, 'Views and settings are local');
+});
