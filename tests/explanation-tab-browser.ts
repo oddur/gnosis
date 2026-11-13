@@ -465,8 +465,10 @@ void app.whenReady().then(async () => {
       `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[1].url);})()`
     );
     await click('Review PR #121 (1)');
-    await wait("!!document.querySelector('[role=dialog]')");
-    assert.match(await js<string>("document.querySelector('[role=dialog]').textContent"), /cancellation throws/);
+    // Not [role=dialog]: Base UI toasts are non-modal dialogs, and the finished build's "Review ready"
+    // toast can still be showing.
+    await wait("!!document.querySelector('.review-submit-dialog')");
+    assert.match(await js<string>("document.querySelector('.review-submit-dialog').textContent"), /cancellation throws/);
     await capture('shared-review');
     if (await js("!!document.querySelector('[role=tooltip]')")) {
       await js(
@@ -475,9 +477,9 @@ void app.whenReady().then(async () => {
       await wait("!document.querySelector('[role=tooltip]')");
     }
     await js(
-      "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+      "document.querySelector('.review-submit-dialog').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
-    await wait("!document.querySelector('[role=dialog]')");
+    await wait("!document.querySelector('.review-submit-dialog')");
     // Each section pairs its explanation and evidence in one scrolling document.
     assert.equal(await js("document.querySelectorAll('.explanation-section').length"), 3);
     assert.equal(
@@ -607,7 +609,7 @@ void app.whenReady().then(async () => {
       `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[0].url);window.electronAPI.submitReview=async r=>{window.reviewWrites.push(r);throw Error('This PR changed. Open the latest changes before submitting.')}})()`
     );
     await click('Review PR #120');
-    await wait("!!document.querySelector('[role=dialog]')");
+    await wait("!!document.querySelector('.review-submit-dialog')");
     await js("document.querySelector('input[type=radio][value=APPROVE]').click()");
     await click('Submit review');
     await wait('window.reviewWrites.length===1');
@@ -619,7 +621,7 @@ void app.whenReady().then(async () => {
         `(()=>{const m=window.savedReview.snapshot.subject.members[0], revision=[m.url,m.headSha,m.baseSha,m.baseBranch];return {actual:revision,expected:revision,event:'APPROVE',comments:[]}})()`
       )
     );
-    await wait("document.querySelector('[role=dialog]')?.textContent.includes('This PR changed')");
+    await wait("document.querySelector('.review-submit-dialog')?.textContent.includes('This PR changed')");
     if (await js("!!document.querySelector('[role=tooltip]')")) {
       await js(
         "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))"
@@ -627,9 +629,9 @@ void app.whenReady().then(async () => {
       await wait("!document.querySelector('[role=tooltip]')");
     }
     await js(
-      "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+      "document.querySelector('.review-submit-dialog').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
-    await wait("!document.querySelector('[role=dialog]')");
+    await wait("!document.querySelector('.review-submit-dialog')");
     await js(
       `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[1].url);})()`
     );
