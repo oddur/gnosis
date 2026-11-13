@@ -90,7 +90,8 @@ export function createPrChangesService(clones = localClones) {
         // The known revision pins the comparison, so files and the merge base load together. One fresh
         // metadata read afterwards confirms that the files belong to that revision.
         const [listed, compared] = await Promise.allSettled([
-          getChangedFiles(client, owner, repo, pullNumber, true),
+          // A queue member may know the file count, so the pages can load together.
+          getChangedFiles(client, owner, repo, pullNumber, true, (revision as Partial<PrMetadata>).changedFileCount),
           getMergeBase(client, owner, repo, revision.baseSha, revision.headSha),
         ]);
         metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
@@ -115,7 +116,7 @@ export function createPrChangesService(clones = localClones) {
       }
       // Both sides are pinned by SHA, so a clone's answer cannot change during the read.
       const local = speculated ? undefined : memberChanges ?? await clones.read(`${owner}/${repo}`, (clone) => clone.changes(metadata.baseSha, metadata.headSha));
-      const files = speculated?.files ?? (local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true));
+      const files = speculated?.files ?? (local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true, metadata.changedFileCount));
       const filesTruncated = !local && files.length === GITHUB_PR_FILE_LIMIT &&
         (metadata.changedFileCount === undefined || metadata.changedFileCount > files.length);
       if (!local && !filesTruncated && metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)

@@ -196,40 +196,59 @@ function assembleUnifiedDiff(files: ChangedFile[]): string {
 
 export const LARGE_PR_EXPLANATION_ERROR = 'GitHub exposes at most 3,000 changed files for a PR. Gnosis cannot generate a complete explanation for this PR. Browse the available files in Changes, review smaller PRs individually, or use a local checkout.';
 
+const FILE_PAGE_SIZE = 100;
+const FILE_PAGE_LIMIT = GITHUB_PR_FILE_LIMIT / FILE_PAGE_SIZE;
+
+/**
+ * The PR's changed files, up to GitHub's 3,000-file cap. With a known `count`, pages `1..ceil(count/100)` are requested
+ * together. Each request still goes through the GitHub scheduler, whose slots bound the burst. The pages are assembled
+ * in order. A full last page means the count was stale, so reading continues one page at a time. Callers compare the
+ * total with the PR's count and re-check its revision, as before.
+ */
 export async function getChangedFiles(
   octokit: Octokit,
   owner: string,
   repo: string,
   pullNumber: number,
-  fresh = false
+  fresh = false,
+  count?: number
 ): Promise<ChangedFile[]> {
-  const files: ChangedFile[] = [];
-  let page = 1;
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- pagination loop
-  while (true) {
+  const read = async (page: number) => {
     const { data } = await octokit.pulls.listFiles({
       ...(fresh ? { headers: { 'cache-control': 'no-cache' } } : {}),
       owner,
       repo,
       pull_number: pullNumber,
-      per_page: 100,
+      per_page: FILE_PAGE_SIZE,
       page,
     });
-    for (const f of data) {
-      files.push({
-        filename: f.filename,
-        sha: f.sha ?? undefined,
-        status: f.status === 'removed' ? 'deleted' : f.status === 'added' || f.status === 'renamed' ? f.status : 'modified',
-        additions: f.additions,
-        deletions: f.deletions,
-        previous_filename: f.previous_filename,
-        patch: f.patch,
-      });
-    }
-    if (data.length < 100 || files.length >= GITHUB_PR_FILE_LIMIT) break;
-    page++;
+    return data.map((f): ChangedFile => ({
+      filename: f.filename,
+      sha: f.sha ?? undefined,
+      status: f.status === 'removed' ? 'deleted' : f.status === 'added' || f.status === 'renamed' ? f.status : 'modified',
+      additions: f.additions,
+      deletions: f.deletions,
+      previous_filename: f.previous_filename,
+      patch: f.patch,
+    }));
+  };
+  const known = count !== undefined && Number.isInteger(count) && count > 0
+    ? Math.min(FILE_PAGE_LIMIT, Math.ceil(count / FILE_PAGE_SIZE))
+    : 1;
+  const pages = await Promise.all(Array.from({ length: known }, (_, i) => read(i + 1)));
+  const files: ChangedFile[] = [];
+  let last = pages[0];
+  for (const data of pages) {
+    last = data;
+    files.push(...data);
+    // A short page is the end. Later pages of a stale count are empty, or belong to a newer revision.
+    if (data.length < FILE_PAGE_SIZE) break;
   }
-  return files;
+  for (let page = known + 1; last.length === FILE_PAGE_SIZE && files.length < GITHUB_PR_FILE_LIMIT; page++) {
+    last = await read(page);
+    files.push(...last);
+  }
+  return files.slice(0, GITHUB_PR_FILE_LIMIT);
 }
 
 export async function getFileContent(
@@ -785,7 +804,7 @@ export class GitHubDiffSource implements DiffSource {
     if (local) return local.files.map(changedFileFromClone);
     if (cached?.filesTruncated || (metadata.changedFileCount !== undefined && metadata.changedFileCount > GITHUB_PR_FILE_LIMIT))
       throw new Error(LARGE_PR_EXPLANATION_ERROR);
-    return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true);
+    return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true, metadata.changedFileCount);
   }
 
   async getFileContent(filePath: string, ref: 'base' | 'head', signal?: AbortSignal): Promise<string | null> {

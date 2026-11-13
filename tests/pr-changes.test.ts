@@ -474,3 +474,114 @@ void test('a comparison page without a merge base falls back to page 1', async (
   });
   await assert.rejects(getMergeBase(empty.client('one'), 'o', 'r', 'base', 'head'), /merge base/);
 });
+
+/** A PR with `total` files whose list pages answer only when released, recording when each page starts. */
+function pagedFixture(total: number, changedFiles = total) {
+  const started: number[] = [];
+  let flying = 0,
+    peak = 0;
+  const waiting: (() => void)[] = [];
+  let open = false;
+  const pool = createGitHubClientPool({
+    fetch: (async (input: string) => {
+      const u = new URL(input);
+      const json = (data: unknown) =>
+        new Response(JSON.stringify(data), {
+          headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' },
+        });
+      if (u.pathname.endsWith('/files')) {
+        const page = Number(u.searchParams.get('page'));
+        started.push(page);
+        peak = Math.max(peak, ++flying);
+        // Later pages answer first, so the order of arrival never decides the order of files.
+        if (!open) await new Promise<void>((resolve) => waiting.push(resolve));
+        await new Promise((resolve) => setTimeout(resolve, (40 - page) % 7));
+        flying--;
+        return json(
+          Array.from({ length: Math.max(0, Math.min(100, total - (page - 1) * 100)) }, (_, i) => ({
+            filename: `f${String((page - 1) * 100 + i).padStart(4, '0')}.ts`,
+            status: 'modified',
+            sha: 'blob',
+            additions: 1,
+            deletions: 0,
+          }))
+        );
+      }
+      if (u.pathname.includes('/compare/')) return json({ merge_base_commit: { sha: 'merge-base' } });
+      return json({
+        title: 'PR',
+        body: '',
+        user: { login: 'dev' },
+        base: { ref: 'main', sha: 'base', repo: { full_name: 'o/r' } },
+        head: { ref: 'feature', sha: 'head', repo: { full_name: 'o/r' } },
+        state: 'open',
+        labels: [],
+        changed_files: changedFiles,
+      });
+    }) as typeof fetch,
+  });
+  return {
+    client: pool.client('one'),
+    started,
+    peak: () => peak,
+    release: () => {
+      open = true;
+      for (const resolve of waiting.splice(0)) resolve();
+    },
+    settle: async (count: number) => {
+      for (let i = 0; i < 50 && started.length < count; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    },
+  };
+}
+void test('a known file count requests every page together and assembles them in order', async () => {
+  const { getChangedFiles } = await import('../lib/github');
+  const f = pagedFixture(250);
+  const read = getChangedFiles(f.client, 'o', 'r', 1, true, 250);
+  await f.settle(3);
+  assert.deepEqual([...f.started].sort(), [1, 2, 3], 'All three pages start before any answers');
+  f.release();
+  const files = await read;
+  assert.equal(files.length, 250);
+  assert.deepEqual(
+    files.map((file) => file.filename),
+    Array.from({ length: 250 }, (_, i) => `f${String(i).padStart(4, '0')}.ts`)
+  );
+});
+void test('without a file count, pages load one at a time', async () => {
+  const { getChangedFiles } = await import('../lib/github');
+  const f = pagedFixture(250);
+  const read = getChangedFiles(f.client, 'o', 'r', 1, true);
+  await f.settle(2);
+  assert.deepEqual(f.started, [1], 'Page 2 waits for page 1');
+  f.release();
+  assert.equal((await read).length, 250);
+  assert.deepEqual(f.started, [1, 2, 3]);
+});
+void test('a stale low count continues page by page; the scheduler bounds the burst', async () => {
+  const { getChangedFiles } = await import('../lib/github');
+  const low = pagedFixture(340);
+  low.release();
+  const files = await getChangedFiles(low.client, 'o', 'r', 1, true, 200);
+  assert.equal(files.length, 340, 'A full last page means the count was stale');
+  assert.deepEqual(low.started.slice(2), [3, 4]);
+  const high = pagedFixture(150);
+  high.release();
+  assert.equal((await getChangedFiles(high.client, 'o', 'r', 1, true, 400)).length, 150, 'Empty pages past the end add nothing');
+  const large = pagedFixture(950);
+  const read = getChangedFiles(large.client, 'o', 'r', 1, true, 950);
+  await large.settle(6);
+  large.release();
+  assert.equal((await read).length, 950);
+  assert.equal(large.started.length, 10, 'One request per page, no more');
+  assert.ok(large.peak() <= 6, `At most the scheduler's six slots run at once (saw ${large.peak()})`);
+});
+void test('Changes requests known pages together, then checks the total against the count', async () => {
+  const f = pagedFixture(250);
+  f.release();
+  const snapshot = await createPrChangesService().manifest(f.client, url);
+  assert.equal(snapshot.files.length, 250);
+  assert.deepEqual([...f.started].sort(), [1, 2, 3]);
+  const wrong = pagedFixture(260, 250);
+  wrong.release();
+  await assert.rejects(createPrChangesService().manifest(wrong.client, url), /incomplete/);
+});
