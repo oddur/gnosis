@@ -37,6 +37,13 @@ jobs:
             ~/Library/Caches/electron
             ~/AppData/Local/electron/Cache
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+      # Mergiraf's host (codeberg.org) is not reliable enough to download from on every job.
+      # prepare:mergiraf skips the download when this folder already holds the manifest's version.
+      - name: Cache Mergiraf
+        uses: actions/cache@v4
+        with:
+          path: resources/mergiraf/runtime
+          key: mergiraf-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/mergiraf/manifest.json') }}
       - run: npm ci
       - run: npm run prepare:mergiraf
       - run: npx tsc --noEmit
@@ -93,6 +100,13 @@ jobs:
         with:
           path: ~/.cache/electron
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+      # Mergiraf's host (codeberg.org) is not reliable enough to download from on every job.
+      # prepare:mergiraf skips the download when this folder already holds the manifest's version.
+      - name: Cache Mergiraf
+        uses: actions/cache@v4
+        with:
+          path: resources/mergiraf/runtime
+          key: mergiraf-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/mergiraf/manifest.json') }}
       - run: npm ci
       - run: npm run prepare:mergiraf
       - name: Configure Electron sandbox
@@ -142,6 +156,13 @@ jobs:
       - name: Install Linux packaging tools
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+      # Mergiraf's host (codeberg.org) is not reliable enough to download from on every job.
+      # prepare:mergiraf skips the download when this folder already holds the manifest's version.
+      - name: Cache Mergiraf
+        uses: actions/cache@v4
+        with:
+          path: resources/mergiraf/runtime
+          key: mergiraf-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/mergiraf/manifest.json') }}
       - run: npm ci
       - name: Build unsigned app and installers
         env:
