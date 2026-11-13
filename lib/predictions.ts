@@ -4,6 +4,10 @@ import { loadExplanation, peekExplanation } from './explanation-workspace';
 import { PrSummary, ReviewPage, WorkflowGraphView } from '../src/lazy-screens';
 import type { OpenTarget } from './pr-open-targets';
 
+// Loaded on every screen, including fixtures and windows whose preload exposes only part of the API (or none).
+// Nothing here may throw at import time, or the whole renderer fails to mount.
+const api = (): Partial<Window['electronAPI']> | undefined => (window as { electronAPI?: Partial<Window['electronAPI']> }).electronAPI;
+
 // The renderer's predictor. Under GNOSIS_PERF_TRACE each navigation prints one `[perf] predict nav …` line.
 const clock = () => performance.now();
 let lastInput = -Infinity;
@@ -23,19 +27,19 @@ const reads: PredictorReads = {
   },
   changesReady: (member, subjectId, files) =>
     inspectionData.committedReady(member, files, (snapshot, count) => predictedFiles(snapshot, subjectId, count)),
-  open: (members, label) => window.electronAPI.prOpenCommitted?.(targets(members, 0), label) ?? Promise.resolve(),
+  open: (members, label) => api()?.prOpenCommitted?.(targets(members, 0), label) ?? Promise.resolve(),
   openIntent(members) {
     if (!members) {
       inspectionData.setIntent([]);
-      window.electronAPI.prOpenIntent?.(null);
+      api()?.prOpenIntent?.(null);
       return;
     }
     inspectionData.setIntent(members.map((member) => member.url));
-    window.electronAPI.prOpenIntent?.(targets(members, 1));
+    api()?.prOpenIntent?.(targets(members, 1));
     void PrSummary.preload();
   },
   graph: (members, label) =>
-    window.electronAPI.predictWorkflowGraph?.(members.map(({ url, headSha }) => ({ url, headSha })), label) ?? Promise.resolve(),
+    api()?.predictWorkflowGraph?.(members.map(({ url, headSha }) => ({ url, headSha })), label) ?? Promise.resolve(),
   chunk(name) {
     if (name === 'workflow-graph') return WorkflowGraphView.preload();
     if (name === 'review-page') return ReviewPage.preload();
@@ -54,7 +58,7 @@ const reads: PredictorReads = {
 
 // Main keeps the budget. Its answer is refreshed when conditions change and at most every 15 s while visible.
 let state: PredictionState = { off: false, paused: false, battery: false, hot: false, light: false };
-const predictOff = window.electronAPI.predictOff === true;
+const predictOff = api()?.predictOff === true;
 // Settings › "Preload likely next pages". On unless turned off. Queue preparation and row hover do not use it.
 let setting = true;
 const applySetting = (preferences: { predictNavigation?: boolean } | undefined) => {
@@ -64,7 +68,7 @@ const applySetting = (preferences: { predictNavigation?: boolean } | undefined) 
 };
 export const predictor = createNavigationPredictor({
   now: clock,
-  report: (line) => window.electronAPI.perfNote?.('predict', line),
+  report: (line) => api()?.perfNote?.('predict', line),
   reads,
   conditions: () => ({
     enabled: !predictOff && setting,
@@ -82,11 +86,11 @@ const apply = (next: PredictionState | undefined) => {
 };
 function refresh() {
   if (document.visibilityState === 'hidden') return;
-  void window.electronAPI.predictionState?.().then(apply, () => {});
+  void api()?.predictionState?.().then(apply, () => {});
 }
-window.electronAPI.onPredictionState?.(apply);
-void Promise.resolve().then(() => window.electronAPI.loadPreferences()).then(applySetting, () => {});
-window.electronAPI.onPreferencesChanged?.(applySetting);
+api()?.onPredictionState?.(apply);
+void Promise.resolve().then(() => api()?.loadPreferences?.()).then(applySetting, () => {});
+api()?.onPreferencesChanged?.(applySetting);
 for (const type of ['focus', 'online'] as const) window.addEventListener(type, refresh);
 document.addEventListener('visibilitychange', refresh);
 // Only while something is predicted: an idle window sends nothing.
@@ -102,5 +106,5 @@ export function setPredictionAccount(next: string | null) {
 
 if (import.meta.env.DEV) (window as unknown as { __gnosisPredict: typeof predictor }).__gnosisPredict = predictor;
 window.addEventListener('pagehide', () => {
-  if (predictor.records().length) window.electronAPI.perfNote?.('predict-summary', predictor.summary());
+  if (predictor.records().length) api()?.perfNote?.('predict-summary', predictor.summary());
 });
