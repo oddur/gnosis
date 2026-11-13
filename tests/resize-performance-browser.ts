@@ -298,6 +298,25 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 1000));
     await js(frames);
     await keepsInPlace('after find');
+    // The failure seen on CI: the large file's block of slices was skipped with no remembered size, so it fell back
+    // to its estimate. Too small an estimate shrinks the document, the browser clamps scrollTop, and the match ends
+    // up far below the viewport once the block renders again. A fresh copy of the block has no remembered size.
+    {
+      const place = `Math.round(document.querySelector('[data-explanation-section="10"]').getBoundingClientRect().top)`;
+      const before = await js<number>(place);
+      await js(`(()=>{const b=${huge}.querySelector('.review-context-hunk');const copy=b.cloneNode(false);
+        copy.style.contentVisibility='hidden';window.__skippedBlock=[b,copy];b.replaceWith(copy)})()`);
+      await js(frames);
+      const skipped = await js<number>(place);
+      await js(`(()=>{const [b,copy]=window.__skippedBlock;copy.replaceWith(b);delete window.__skippedBlock})()`);
+      await js(frames);
+      const after = await js<number>(place);
+      // An estimate is close, not exact: a few pixels per slice. Before the fix the match moved about 60,000px.
+      assert.ok(
+        Math.abs(skipped - before) <= 100 && Math.abs(after - before) <= 100,
+        `Topic 10 stays in place while the large file is skipped at its estimate: ${before}, then ${skipped} and ${after}`
+      );
+    }
     win.webContents.stopFindInPage('clearSelection');
     // The same after a jump to the topic. It is the last one, so the jump ends at the bottom of the document.
     await goTo(1);
