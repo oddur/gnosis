@@ -97,7 +97,9 @@ async function main() {
     for (const suite of selected) console.log(`${String(durations[suite.key] ?? '?').padStart(4)}s  ${suite.key}`);
     return;
   }
-  const env = { ...process.env, PATH: `${path.join(root, 'node_modules/.bin')}${path.delimiter}${process.env.PATH}` };
+  // Windows names the variable `Path`; extend whichever spelling exists so the child sees one entry.
+  const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+  const env = { ...process.env, [pathKey]: `${path.join(root, 'node_modules/.bin')}${path.delimiter}${process.env[pathKey] ?? ''}` };
   const measured = {};
   const failed = [];
   for (const suite of selected) {
