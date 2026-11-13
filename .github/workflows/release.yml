@@ -24,6 +24,24 @@ permissions:
   contents: write
 
 jobs:
+  # The account runs at most 5 macOS jobs at once, and a push to main uses all of them. Cancel Checks runs
+  # still in flight so the release's macOS build is not starved; a release is tagged only on a green main.
+  free-macos-runners:
+    name: Free macOS runners
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel queued and running Checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for status in in_progress queued; do
+            gh run list --workflow checks.yml --status "$status" --json databaseId --jq '.[].databaseId' |
+              while read -r id; do gh run cancel "$id" || true; done
+          done
+
   release:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
