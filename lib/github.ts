@@ -7,6 +7,8 @@ import { localClones, type LocalClone, type LocalCloneFile, type LocalClones } f
 import { preparedChanges, preparedFile, preparedDiff } from './prepared-pr';
 import { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { readGitHubFile } from '../src/github-file-content';
+import { filesOfUnifiedDiff } from './diff-files';
+import { githubReadSignal } from './github-scheduler';
 export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -174,6 +176,71 @@ export async function getPrDiff(
     }
     return assembleUnifiedDiff(changedFiles);
   }
+}
+
+/**
+ * The whole diff of `base...head`, for every file. GitHub's JSON lists stop at 300 files for a comparison and 3,000 for
+ * a PR; this answer has no file limit, though GitHub may refuse a very large one.
+ */
+export async function getCompareDiff(octokit: Octokit, owner: string, repo: string, base: string, head: string): Promise<string> {
+  const response = await octokit.request('GET /repos/{owner}/{repo}/compare/{basehead}', {
+    owner,
+    repo,
+    basehead: `${base}...${head}`,
+    headers: { accept: 'application/vnd.github.diff' },
+  });
+  const data: unknown = response.data;
+  if (typeof data === 'string') return data;
+  // Octokit answers with bytes when the media type has no charset.
+  if (data instanceof ArrayBuffer || ArrayBuffer.isView(data))
+    return Buffer.from(data instanceof ArrayBuffer ? data : data.buffer, data instanceof ArrayBuffer ? 0 : data.byteOffset, data.byteLength).toString('utf8');
+  throw new Error('GitHub did not return a diff for this comparison.');
+}
+
+/**
+ * When a JSON file list hit GitHub's cap, the complete list from the whole diff of the same pinned SHAs, or undefined
+ * when GitHub refuses it or its files do not cover the capped list. Files the JSON list has keep its entry, with the
+ * full blob SHA, unless it lacks a patch the diff has. The others come from the diff, with counted lines and
+ * abbreviated blob SHAs.
+ */
+// Approach from quarterdeck crates/github/src/changed_file_requests.rs and
+// crates/app/src/pull_request_detail/fetch_changed_files.rs, `FileSource` (used with permission).
+export async function wholeDiffFiles<T extends { filename: string; additions: number; deletions: number; patch?: string }>(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  base: string,
+  head: string,
+  listed: T[]
+): Promise<{ files: (T | ChangedFile)[]; added: Set<T | ChangedFile> } | undefined> {
+  let diff: string;
+  try {
+    diff = await getCompareDiff(octokit, owner, repo, base, head);
+  } catch (error) {
+    // Waiting and cancellation are not answers; a refusal (too large, unavailable) keeps the capped list.
+    const limited = githubRateLimit(error);
+    if (limited) throw limited;
+    if (githubReadSignal()?.aborted || (error instanceof Error && /abort/i.test(error.name + error.message))) throw error;
+    console.warn('[github] Whole comparison diff unavailable:', error instanceof Error ? error.message : String(error));
+    return;
+  }
+  const parsed = filesOfUnifiedDiff(diff);
+  const json = new Map(listed.map((file) => [file.filename, file]));
+  if (parsed.length <= listed.length || new Set(parsed.map((file) => file.filename)).size !== parsed.length) return;
+  const covered = new Set(parsed.map((file) => file.filename));
+  if (listed.some((file) => !covered.has(file.filename))) return;
+  const added = new Set<T | ChangedFile>();
+  const files = parsed.map((file) => {
+    const entry = json.get(file.filename);
+    if (!entry) {
+      added.add(file);
+      return file;
+    }
+    // Past a size budget, GitHub's JSON comparison lists files without a patch and with zero counts. The diff has both.
+    return !entry.patch && file.patch ? { ...entry, additions: file.additions, deletions: file.deletions, patch: file.patch } : entry;
+  });
+  /** `added` holds the files only the diff has; the rest are the listed entries. */
+  return { files, added };
 }
 
 /** Reconstruct a unified diff from individual file patches returned by listFiles. */

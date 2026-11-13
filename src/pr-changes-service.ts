@@ -3,7 +3,7 @@ import { createByteCache } from '../lib/byte-cache';
 import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limits';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getChangedFiles, getMergeBase, getPrMetadata, getPrMetadataForClone, knownMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
+import { getChangedFiles, getMergeBase, wholeDiffFiles, getPrMetadata, getPrMetadataForClone, knownMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
 import { preparedDiff, preparedDiffKey } from '../lib/prepared-pr';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
@@ -116,9 +116,18 @@ export function createPrChangesService(clones = localClones) {
       }
       // Both sides are pinned by SHA, so a clone's answer cannot change during the read.
       const local = speculated ? undefined : memberChanges ?? await clones.read(`${owner}/${repo}`, (clone) => clone.changes(metadata.baseSha, metadata.headSha));
-      const files = speculated?.files ?? (local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true, metadata.changedFileCount));
-      const filesTruncated = !local && files.length === GITHUB_PR_FILE_LIMIT &&
+      let files = speculated?.files ?? (local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true, metadata.changedFileCount));
+      let filesTruncated = !local && files.length === GITHUB_PR_FILE_LIMIT &&
         (metadata.changedFileCount === undefined || metadata.changedFileCount > files.length);
+      if (filesTruncated) {
+        // GitHub lists at most 3,000 files. The whole diff of the same pinned SHAs has every file. The PR's base
+        // repository resolves a fork's head SHA too.
+        const whole = await wholeDiffFiles(client, owner, repo, metadata.baseSha, metadata.headSha, files);
+        if (whole && (metadata.changedFileCount === undefined || whole.files.length === metadata.changedFileCount)) {
+          files = whole.files;
+          filesTruncated = false;
+        }
+      }
       if (!local && !filesTruncated && metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)
         throw new Error('GitHub returned an incomplete file list. Open this PR on GitHub to inspect all files.');
       let comparisonBase = speculated?.comparisonBase ?? local?.mergeBase;

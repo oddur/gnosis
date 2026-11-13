@@ -13,8 +13,23 @@ import type { PrChanges, PrFileRequest } from '../lib/pr-changes';
 import { createPrChangesService } from './pr-changes-service';
 import { createSnapshotFileLoader } from './snapshot-file-loader';
 import { localClones } from '../lib/local-clone';
-import { getMergeBase } from '../lib/github';
+import { getMergeBase, wholeDiffFiles } from '../lib/github';
+import type { ChangedFile } from '../lib/types';
 
+/** GitHub's JSON comparison lists at most this many files. */
+const COMPARE_FILE_LIMIT = 300;
+/** A comparison's file, as GitHub's JSON comparison and a clone describe it. */
+interface ComparedFile {
+  filename: string;
+  previous_filename?: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch?: string;
+  sha?: string | null;
+}
+/** Back to GitHub's status words, so identities match the JSON comparison's. */
+const comparedFile = (f: ChangedFile): ComparedFile => ({ ...f, status: f.status === 'deleted' ? 'removed' : f.status });
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const storageKey = (key: string) => `stack-changes:v2:${key}`;
 const isSnapshot = (v: unknown): v is PrChanges =>
@@ -110,6 +125,17 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
               per_page: 1,
             })).data;
         if (!data.files) throw new Error('GitHub did not return this comparison’s files. Retry or review by PR.');
+        let files: ComparedFile[] = data.files,
+          filesTruncated = !local && files.length >= COMPARE_FILE_LIMIT;
+        if (filesTruncated) {
+          // The JSON comparison stops at 300 files. The whole diff of the same pinned SHAs has every file.
+          const whole = await wholeDiffFiles(client, owner, repo, root.metadata.baseSha, tip.metadata.headSha, files);
+          if (whole) {
+            // Listed files keep GitHub's own entries, so their identities match an uncapped comparison's.
+            files = whole.files.map((f) => (whole.added.has(f) ? comparedFile(f as ChangedFile) : (f as ComparedFile)));
+            filesTruncated = false;
+          }
+        }
         const key = hash(stackRevisionKey(actual));
         const snapshot = compactInventory({
           version: 1,
@@ -128,17 +154,17 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
             subjectId: subject.id,
             members: snapshots.map((s) => ({ metadata: s.metadata, comparisonBase: s.comparisonBase })),
             fileSources: Object.fromEntries(
-              data.files.map((f) => [f.filename, stackFileSources(f.filename, snapshots).map((s) => s.url)])
+              files.map((f) => [f.filename, stackFileSources(f.filename, snapshots).map((s) => s.url)])
             ),
             fileSourcePaths: Object.fromEntries(
-              data.files.map((f) => [
+              files.map((f) => [
                 f.filename,
                 Object.fromEntries(stackFileSources(f.filename, snapshots).map((s) => [s.url, s.path])),
               ])
             ),
           },
-          filesTruncated: !local && data.files.length >= 300,
-          files: data.files.map((f) => ({
+          filesTruncated,
+          files: files.map((f) => ({
             path: f.filename,
             previousPath: f.previous_filename,
             status:

@@ -19,7 +19,9 @@ function fixture() {
     unstable = false,
     incomplete = false,
     failContent = false,
-    moveDuringDiff = false;
+    moveDuringDiff = false,
+    wholeDiff: string | number | undefined;
+  const diffReads: URL[] = [];
   const files = [
     { filename: 'src/new.ts', status: 'added', sha: 'new', patch: '@@ +1 @@\n+new', additions: 1, deletions: 0 },
     { filename: 'src/old.ts', status: 'removed', sha: 'old', patch: '@@ -1 @@\n-old', additions: 0, deletions: 1 },
@@ -50,6 +52,14 @@ function fixture() {
           headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' },
         });
       if (new Headers(init?.headers).get('accept')?.includes('diff')) {
+        diffReads.push(u);
+        if (u.pathname.includes('/compare/') && typeof wholeDiff === 'number')
+          return new Response(JSON.stringify({ message: 'Sorry, this diff is unavailable.' }), {
+            status: wholeDiff,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (u.pathname.includes('/compare/') && wholeDiff !== undefined)
+          return new Response(String(wholeDiff), { headers: { 'content-type': 'application/vnd.github.diff; charset=utf-8' } });
         const diff = `diff for ${head}`;
         if (moveDuringDiff) head = 'moved-during-diff';
         return new Response(diff, { headers: { 'content-type': 'text/plain' } });
@@ -91,7 +101,9 @@ function fixture() {
       baseBranch = nextBase;
     },
     reads,
+    diffReads,
     files,
+    wholeDiff: (value: string | number) => (wholeDiff = value),
     move: (v: string) => (head = v),
     unstable: () => (unstable = true),
     incomplete: () => (incomplete = true),
@@ -584,4 +596,75 @@ void test('Changes requests known pages together, then checks the total against 
   const wrong = pagedFixture(260, 250);
   wrong.release();
   await assert.rejects(createPrChangesService().manifest(wrong.client, url), /incomplete/);
+});
+
+/** A whole diff naming `paths`, each a one-line change, with an abbreviated blob SHA per file. */
+const wholeDiffOf = (paths: string[]) =>
+  paths
+    .map(
+      (p, i) =>
+        `diff --git a/${p} b/${p}\nindex 1111111..${(0xa000000 + i).toString(16)} 100644\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-a\n+b\n`
+    )
+    .join('');
+function cappedPr() {
+  const f = fixture();
+  f.incomplete();
+  while (f.files.length < 3000) f.files.push({ ...f.files[0], filename: `src/file-${f.files.length}.ts` });
+  return f;
+}
+void test('a PR past GitHub’s 3,000-file cap loads every file from the whole diff of its pinned SHAs', async () => {
+  const f = cappedPr();
+  f.wholeDiff(wholeDiffOf([...f.files.map((file) => file.filename), 'zz/extra.ts']));
+  const client = f.pool.client('whole'),
+    service = createPrChangesService();
+  const snapshot = await service.manifest(client, url);
+  assert.equal(snapshot.files.length, 3001);
+  assert.equal(snapshot.filesTruncated, undefined, 'Complete, so not marked partial');
+  assert.equal(f.reads.filter((u) => u.pathname.endsWith('/files')).length, 30, 'The JSON list still loads first');
+  // The base repository answers for a fork's head SHA.
+  assert.deepEqual(f.diffReads.map((u) => u.pathname), ['/repos/o/r/compare/base...head1']);
+  const listed = snapshot.files.find((file) => file.path === 'src/old.ts');
+  assert.deepEqual([listed?.status, listed?.blobSha, listed?.deletions], ['deleted', undefined, 1], 'Listed files keep the JSON entry');
+  assert.equal(snapshot.files.find((file) => file.path === 'src/new.ts')?.blobSha, 'new');
+  const extra = snapshot.files.at(-1);
+  assert.deepEqual(
+    [extra?.path, extra?.status, extra?.additions, extra?.deletions, extra?.patch, extra?.blobSha],
+    ['zz/extra.ts', 'modified', 1, 1, '@@ -1 +1 @@\n-a\n+b', 'a000bb8']
+  );
+  const reads = f.reads.length;
+  assert.equal(JSON.stringify(await createPrChangesService().manifest(client, url)), JSON.stringify(snapshot), 'The complete list is saved');
+  assert.equal(f.reads.length, reads);
+  assert.equal((await service.content(client, { url, path: 'zz/extra.ts', baseSha: 'base', headSha: 'head1' })).after.kind, 'text');
+});
+void test('a refused or inconsistent whole diff keeps the capped list, marked partial', async () => {
+  for (const [i, answer] of [406, 422, 'diff --git a/only.ts b/only.ts\nindex 1111111..2222222 100644\n'].entries()) {
+    const f = cappedPr();
+    f.wholeDiff(answer);
+    const snapshot = await createPrChangesService().manifest(f.pool.client(`refused-${i}`), url);
+    assert.equal(snapshot.files.length, 3000);
+    assert.equal(snapshot.filesTruncated, true);
+    assert.equal(f.diffReads.length, 1);
+  }
+  // More files than the PR's count is not this revision's list.
+  const f = cappedPr();
+  f.wholeDiff(wholeDiffOf([...f.files.map((file) => file.filename), 'zz/extra.ts', 'zz/more.ts']));
+  const snapshot = await createPrChangesService().manifest(f.pool.client('mismatch'), url);
+  assert.equal(snapshot.filesTruncated, true);
+});
+void test('below the cap, Changes never asks for the whole diff', async () => {
+  const f = fixture();
+  while (f.files.length < 3000) f.files.push({ ...f.files[0], filename: `src/file-${f.files.length}.ts` });
+  f.wholeDiff(wholeDiffOf(['unused.ts']));
+  const snapshot = await createPrChangesService().manifest(f.pool.client('below'), url);
+  assert.equal(snapshot.files.length, 3000);
+  assert.equal(snapshot.filesTruncated, undefined);
+  assert.equal(f.diffReads.length, 0, 'Exactly 3,000 confirmed files is complete');
+});
+void test('files from the whole diff stay within the inventory’s memory bounds', async () => {
+  const f = cappedPr();
+  const big = Array.from({ length: 20_000 }, (_, i) => `+line ${i}`).join('\n');
+  f.wholeDiff(`${wholeDiffOf(f.files.map((file) => file.filename))}diff --git a/zz/big.ts b/zz/big.ts\nnew file mode 100644\nindex 0000000..bbbbbbb\n--- /dev/null\n+++ b/zz/big.ts\n@@ -0,0 +1,20000 @@\n${big}\n`);
+  const snapshot = await createPrChangesService().manifest(f.pool.client('bounded'), url);
+  const file = snapshot.files.find((entry) => entry.path === 'zz/big.ts');
+  assert.deepEqual([file?.additions, file?.patch, snapshot.patchesDeferred], [20_000, undefined, true]);
 });
