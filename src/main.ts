@@ -105,6 +105,7 @@ import {
   searchRepos,
   listRepoPullRequests,
   getReviewStatus,
+  getMergeBase,
 } from '../lib/github';
 import { createDiffSource } from '../lib/diffSource';
 import type { DiffSource } from '../lib/diffSource';
@@ -815,6 +816,10 @@ void app.whenReady().then(async () => {
 
   // Repairs that predate this launch wait until the queue has had time to paint.
   setTimeout(() => void repairReviewsIndex(), STARTUP_REPAIR_DELAY_MS).unref();
+  // Old conflict caches held each PR's whole history. Saved drafts rebuild what they need from the shared store.
+  setTimeout(() => void conflicts.maintain().then(({ removed }) => {
+    if (removed.length) console.log(`[conflicts] Removed ${removed.length} unused conflict caches.`);
+  }, (error: unknown) => console.warn('[conflicts] Could not clean the conflict cache:', error)), STARTUP_REPAIR_DELAY_MS).unref();
   setTimeout(() => {
     void githubClients.trimPrepared().catch((error: unknown) => console.warn('Could not trim the GitHub cache:', error))
       .then(() => {
@@ -3056,6 +3061,11 @@ const conflicts = createConflictResolutionService({
   },
   storage: appData,
   directory: () => path.join(app.getPath('userData'), 'conflict-objects'),
+  mergeBase: async (repository, base, head) => {
+    const [owner, repo] = repository.split('/');
+    return getMergeBase(discussionClient(), owner, repo, base, head);
+  },
+  localClone: repo => localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase())?.path,
   context: () => ({ account: cachedLogin ?? '', token: getResolvedToken() ?? '' }),
   read: async url => {
     const client = discussionClient();
