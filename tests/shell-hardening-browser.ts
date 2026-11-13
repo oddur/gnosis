@@ -108,8 +108,12 @@ void app.whenReady().then(async () => {
     await capture('activity-light');
     await js("document.documentElement.classList.add('dark')");
     await capture('activity-dark');
-    win.setSize(900, 700);
+    // Size the page, not the window (the Windows frame is part of the outer size), and measure only once the
+    // resize and the zoom have both landed.
+    win.setContentSize(900, 700);
     win.webContents.setZoomFactor(2);
+    await wait('innerWidth===450 && innerHeight===350');
+    await new Promise((r) => setTimeout(r, 100));
     await capture('activity-zoom');
     assert.equal(
       await js(
@@ -125,7 +129,7 @@ void app.whenReady().then(async () => {
       'Notifications remain reachable at 200% zoom'
     );
     win.webContents.setZoomFactor(1);
-    win.setSize(1100, 800);
+    win.setContentSize(1100, 800);
     await click('Close activity');
     await js(
       "window.normalSearch=window.electronAPI.commandSearch;window.electronAPI.commandSearch=()=>Promise.reject(Error('Local search temporarily unavailable.'));void 0"
