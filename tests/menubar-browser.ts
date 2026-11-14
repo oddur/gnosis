@@ -166,7 +166,12 @@ void app.whenReady().then(async () => {
     // The opaque fill without vibrancy (the browser suite has none), and under reduced transparency.
     const fill = () => js<string>('getComputedStyle(document.querySelector(".menubar")).backgroundColor');
     assert.equal(await fill(), 'rgb(255, 255, 255)');
-    await media([{ name: 'prefers-color-scheme', value: 'dark' }]);
+    // macOS and Windows CI desktops prefer reduced transparency and motion; state each preference explicitly.
+    const settled = [
+      { name: 'prefers-reduced-transparency', value: 'no-preference' },
+      { name: 'prefers-reduced-motion', value: 'no-preference' },
+    ];
+    await media([{ name: 'prefers-color-scheme', value: 'dark' }, ...settled]);
     await wait('document.documentElement.classList.contains("dark")');
     assert.equal(await fill(), 'rgb(34, 39, 49)');
     await js('document.documentElement.dataset.vibrancy=""');
@@ -176,6 +181,7 @@ void app.whenReady().then(async () => {
     await js('delete document.documentElement.dataset.vibrancy');
 
     // No animation under reduced motion.
+    await media([{ name: 'prefers-color-scheme', value: 'dark' }, ...settled]);
     await js('window.showMenubarState("loading")');
     await wait('!!document.querySelector(".menubar-skeleton-row span")');
     assert.notEqual(await js('getComputedStyle(document.querySelector(".menubar-skeleton-row span")).animationName'), 'none');
