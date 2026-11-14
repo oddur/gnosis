@@ -302,6 +302,11 @@ export interface PrStatus {
   checkedAt?: number;
   /** A saved copy shown while GitHub is read again. It never reports mergeability. */
   stale?: boolean;
+  /**
+   * Open, merged or closed, from the GitHub read behind this status. Saved copies omit it. It wins over an
+   * older queue or tab copy of the PR, which never learns of a merge on its own.
+   */
+  lifecycle?: import('./pr-lifecycle').PrLifecycle;
 }
 
 /** `cachedOnly` returns the saved status for `headSha`, or null, without a GitHub request. */

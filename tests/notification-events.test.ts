@@ -139,6 +139,18 @@ test('a basis older than seven days is replaced silently', () => {
   assert.deepEqual(later.events, []);
 });
 
+test('a merge keeps the head but clears the saved status kinds and raises nothing', () => {
+  const pr = mine(1);
+  const failing = deriveEvents(undefined, obs(pr, signals(pr, { checks: 'failure' })), context()).basis;
+  assert.ok(failing.kinds['checks-failed']);
+  // Metadata reports the merge before any signals for it arrive.
+  const merged = deriveEvents(failing, obs({ ...pr, merged: true, state: 'closed' }), context(T0 + 60_000));
+  assert.deepEqual(merged.basis.kinds, {});
+  assert.deepEqual(merged.events, []);
+  const approval = signals(pr, { review: { id: '9', author: 'maya', state: 'APPROVED' }, checkedAt: T0 + 2 });
+  assert.deepEqual(deriveEvents(merged.basis, obs({ ...pr, merged: true, state: 'closed' }, approval), context(T0 + 120_000)).events, []);
+});
+
 test('every raised event kind has a matching menu bar row', () => {
   const pr = mine(1);
   const start = deriveEvents(undefined, obs(pr, signals(pr)), context()).basis;

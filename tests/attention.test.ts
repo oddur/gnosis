@@ -156,6 +156,24 @@ void test('drafts, merged and closed PRs and your own PRs never ask for your rev
   assert.deepEqual(rows([item([merged])], { signals: { [merged.url]: signals(merged, { checks: 'failure' }) } }), []);
 });
 
+void test('merged and closed PRs leave the needs-you list, even with replies or an unread explanation', () => {
+  const replied = mine(1, { merged: true, state: 'closed' });
+  const explained = member(2, { state: 'closed' });
+  const updated = member(3, { merged: true, state: 'closed' });
+  // A stack keeps its merged parent; only the open child still needs you.
+  const child = member(5, { requestedReviewers: [LOGIN] });
+  const parent = member(4, { requestedReviewers: [LOGIN], merged: true, state: 'closed' });
+  assert.deepEqual(
+    rows([
+      item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 2 } as never } }),
+      item([explained], { review: review(explained.url) }),
+      item([updated], { attention: 'updated', review: review(updated.url, { unread: false }) }),
+      item([parent, child], { review: review(parent.url) }),
+    ]).map((row) => row.number),
+    [5]
+  );
+});
+
 void test('the enabled callback removes kinds per kind and per repository', () => {
   const requested = member(1, { requestedReviewers: [LOGIN] });
   const other = member(2, { requestedReviewers: [LOGIN], repo: 'o/quiet', url: 'https://github.com/o/quiet/pull/2' });

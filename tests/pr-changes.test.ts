@@ -147,6 +147,21 @@ void test('Changes is cached, complete, account scoped, and pins content to merg
   assert.equal((await service.manifest(client, url, true)).metadata.headSha, 'head2');
   assert.equal((await service.content(client, request)).before.kind, 'image', 'pinned prior revisions remain readable');
 });
+void test('a saved inventory for the merged revision reports the merge its queue member knows', async () => {
+  const f = fixture(),
+    client = f.pool.client('one'),
+    service = createPrChangesService();
+  const open = await service.manifest(client, url);
+  assert.equal(open.metadata.state, 'open');
+  const calls = f.reads.length;
+  // A merge keeps the revision, so the saved inventory still says open; the member read after the merge wins.
+  const member = { ...open.metadata, merged: true, state: 'closed' as const, updatedAt: '2026-11-14T09:06:41Z' };
+  const shown = await service.manifest(client, url, false, { revision: member });
+  assert.equal(f.reads.length, calls, 'No GitHub read');
+  assert.equal(shown.metadata.merged, true);
+  assert.equal(shown.metadata.state, 'closed');
+  assert.equal(shown.files.length, open.files.length);
+});
 void test('additions and deletions have genuinely absent sides; request failures never become empty files', async () => {
   const f = fixture(),
     client = f.pool.client('one'),

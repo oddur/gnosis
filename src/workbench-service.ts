@@ -206,6 +206,15 @@ export function createWorkbenchService(deps: Deps) {
   let running: AbortController | undefined;
   let runningKey: string | undefined;
   let pumping = false;
+  /**
+   * Metadata read while a discovery runs, such as the status read of an opened PR. Discovery works from the
+   * members it read when it started; a PR merged since then must not be published as open again.
+   */
+  const latestMetadata = new Map<string, PrMetadata>();
+  const withLatestMetadata = (member: ReviewMember): ReviewMember => {
+    const latest = latestMetadata.get(member.url);
+    return latest && Date.parse(latest.updatedAt) > Date.parse(member.updatedAt) ? { ...member, ...latest } : member;
+  };
   const requestedBriefings = new Set<string>();
   const requestKey = (key: string) => `${deps.auth().login ?? 'guest'}:${key}`;
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
@@ -528,7 +537,7 @@ export function createWorkbenchService(deps: Deps) {
       // Keep unseen members until reconciliation completes; partial results must not erase stacks.
       const merged = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
       for (const [url, member] of members) merged.set(url, member);
-      s.subjects = groupSubjects([...merged.values()].filter(member => !isArchived(member)), s.overrides, s.subjects);
+      s.subjects = groupSubjects([...merged.values()].map(withLatestMetadata).filter(member => !isArchived(member)), s.overrides, s.subjects);
       dirty = false;
     };
     const checkpoint = () => {
@@ -787,7 +796,7 @@ export function createWorkbenchService(deps: Deps) {
       if (deps.auth().login !== login || discoveryKey() !== discoverySettings)
         return { items: [], warnings: [], remaining: 0 };
       progress('Updating your queue');
-      const updatedSubjects = groupSubjects([...members.values()].filter(member => !isArchived(member)), s.overrides, s.subjects);
+      const updatedSubjects = groupSubjects([...members.values()].map(withLatestMetadata).filter(member => !isArchived(member)), s.overrides, s.subjects);
       // Keep unrelated saved subjects for an instant return to the full queue.
       // Previously personal subjects absent from the new result may have closed
       // or been unassigned, so do not retain those as current personal work.
@@ -1341,6 +1350,12 @@ export function createWorkbenchService(deps: Deps) {
       return view();
     },
     updatePrMetadata(metadata: PrMetadata, own = false) {
+      const previous = latestMetadata.get(metadata.url);
+      if (!previous || Date.parse(metadata.updatedAt) >= Date.parse(previous.updatedAt)) {
+        latestMetadata.delete(metadata.url);
+        latestMetadata.set(metadata.url, metadata);
+        while (latestMetadata.size > 500) latestMetadata.delete(latestMetadata.keys().next().value as string);
+      }
       reads.observe(load().account, [metadata], false, own);
       const known = knownMembers().get(metadata.url);
       notifyMembers(load().account, [known ? { ...known, ...metadata } : metadata], { own });
@@ -1349,7 +1364,8 @@ export function createWorkbenchService(deps: Deps) {
       s.subjects = s.subjects.map(subject => {
         let subjectChanged = false;
         const members = subject.members.map(member => {
-          if (member.url !== metadata.url) return member;
+          // A slow read must not undo a newer one, such as an open copy arriving after the merge.
+          if (member.url !== metadata.url || Date.parse(metadata.updatedAt) < Date.parse(member.updatedAt)) return member;
           const next = { ...member, ...metadata };
           if (isDeepStrictEqual(member, next)) return member;
           changed = subjectChanged = true;
@@ -1360,7 +1376,7 @@ export function createWorkbenchService(deps: Deps) {
         return subjectChanged ? { ...subject, members, ...(subject.kind === 'pr' ? { title: members[0].title } : {}) } : subject;
       });
       const saved = stars.load(s.account).find(entry => entry.member.url === metadata.url);
-      if (saved) stars.update(s.account, [{ ...saved.member, ...metadata }]);
+      if (saved && !(Date.parse(metadata.updatedAt) < Date.parse(saved.member.updatedAt))) stars.update(s.account, [{ ...saved.member, ...metadata }]);
       if (changed) save();
     },
     updateStarredMetadata(metadata: PrMetadata) {

@@ -7,6 +7,7 @@ import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github
 import type { QueueSignalOptions, QueueSignalRequest, QueueSignals } from '../lib/queue-signals';
 import type { PrMetadata, PrStatus, ReviewSummary } from '../lib/types';
 import { withCachedCheckDetails } from './pr-checks-service';
+import { lifecycleOf, type PrLifecycle } from '../lib/pr-lifecycle';
 
 /** A saved status core older than this is never shown; the PR waits for GitHub instead. */
 export const PR_STATUS_MAX_STALE_MS = 24 * 60 * 60_000;
@@ -30,6 +31,8 @@ interface SavedPrStatus {
   baseSha: string;
   checkedAt: number;
   core: StatusCore;
+  /** Absent in copies saved before 0.40. A merge keeps the head, so a copy for the head can still say open. */
+  lifecycle?: PrLifecycle;
 }
 const strings = (value: unknown) => Array.isArray(value) && value.every((item) => typeof item === 'string');
 function isSavedPrStatus(value: unknown): value is SavedPrStatus {
@@ -55,6 +58,9 @@ function isSavedPrStatus(value: unknown): value is SavedPrStatus {
   );
 }
 
+const isLifecycle = (value: unknown): value is PrLifecycle =>
+  isCacheRecord(value) && (value.state === 'open' || value.state === 'closed') && typeof value.merged === 'boolean' && typeof value.updatedAt === 'string';
+
 function ciConclusion(signals: QueueSignals | undefined, checks: PrChecks | undefined): PrStatus['ciConclusion'] {
   if (signals) return signals.checks.state;
   if (!checks) return 'neutral';
@@ -63,6 +69,9 @@ function ciConclusion(signals: QueueSignals | undefined, checks: PrChecks | unde
 }
 
 interface PreloadedPull {
+  /** GraphQL reports MERGED for a merged PR. Absent from responses mocked before 0.40. */
+  state?: 'OPEN' | 'CLOSED' | 'MERGED';
+  updatedAt?: string;
   headRefOid: string;
   baseRefOid: string;
   isDraft: boolean;
@@ -162,6 +171,7 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
         baseSha: prData.baseSha,
         checkedAt,
         core,
+        lifecycle: lifecycleOf(prData),
       } satisfies SavedPrStatus);
     return {
       metadata: prData,
@@ -176,6 +186,7 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
         ciConclusion: ciConclusion(prSignals, checkSnapshot),
         headSha: prData.headSha,
         checkedAt,
+        lifecycle: lifecycleOf(prData),
       },
     };
   }
@@ -231,7 +242,7 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
       const query = `query { rateLimit { cost } ${parsed
         .map(
           ({ owner, repo, number }, i) => `p${i}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { pullRequest(number:${number}) {
-      headRefOid baseRefOid isDraft baseRefName
+      state updatedAt headRefOid baseRefOid isDraft baseRefName
       commits { totalCount }
       labels(first:100) { nodes { name } }
       reviewRequests(first:100) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { name } } } }
@@ -267,6 +278,9 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
             baseSha: pr.baseRefOid,
             checkedAt,
             core: coreOf(pr),
+            ...(pr.state && pr.updatedAt
+              ? { lifecycle: { state: pr.state === 'OPEN' ? 'open' : 'closed', merged: pr.state === 'MERGED', updatedAt: pr.updatedAt } }
+              : {}),
           } satisfies SavedPrStatus);
           saved.push(target.url);
         }
@@ -328,6 +342,7 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
         ciConclusion: ciConclusion(prSignals, checkSnapshot),
         headSha,
         checkedAt: value.checkedAt,
+        ...(isLifecycle(value.lifecycle) ? { lifecycle: lifecycleOf(value.lifecycle) } : {}),
         stale: true,
       };
     },

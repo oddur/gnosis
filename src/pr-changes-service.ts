@@ -11,7 +11,18 @@ import { localClones } from '../lib/local-clone';
 import { createSnapshotFileLoader } from './snapshot-file-loader';
 import { changesRevision, type PrChanges, type PrFileRequest, type InspectionLoadOptions } from '../lib/pr-changes';
 import type { ChangedFile, PrMetadata } from '../lib/types';
+import { lifecycleOf, withLifecycle } from '../lib/pr-lifecycle';
 
+/**
+ * A saved inventory is keyed by revision, and a merge keeps the revision, so its metadata can still say open.
+ * The caller's queue member is updated by every status read; a newer lifecycle from it wins.
+ */
+function withKnownLifecycle(snapshot: PrChanges, revision: InspectionLoadOptions['revision']): PrChanges {
+  const known = revision as Partial<PrMetadata> | undefined;
+  if (!known || (known.state !== 'open' && known.state !== 'closed') || typeof known.merged !== 'boolean' || typeof known.updatedAt !== 'string') return snapshot;
+  const metadata = withLifecycle(snapshot.metadata, lifecycleOf({ state: known.state, merged: known.merged, updatedAt: known.updatedAt }));
+  return metadata === snapshot.metadata ? snapshot : { ...snapshot, metadata };
+}
 const isSha = (value: unknown): value is string => typeof value === 'string' && /^[a-f\d]{40}$/i.test(value);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function isSnapshot(value: unknown): value is PrChanges {
@@ -77,8 +88,9 @@ export function createPrChangesService(clones = localClones) {
       const exact = options.revision && await cache?.getPrepared(snapshotKey(url, changesRevision(options.revision)), isSnapshot);
       const saved = exact ?? snapshots.get(client)?.get(latestKey) ?? cache?.get(latestKey, isSnapshot)?.value;
       if (saved && !refresh && (!options.revision || changesRevision(saved.metadata) === changesRevision(options.revision))) {
-        remember(client, saved);
-        return saved;
+        const current = withKnownLifecycle(saved, options.revision);
+        remember(client, current);
+        return current;
       }
       const member = knownMetadataForClone(options.revision, `${owner}/${repo}`, refresh, clones);
       const memberChanges = member && await clones.read(`${owner}/${repo}`, (clone) => clone.changes(member.baseSha, member.headSha));

@@ -160,11 +160,13 @@ export function attentionItems(input: {
   const updated = new Map<string, number>();
   for (const item of input.items) {
     for (const member of item.subject.members) {
+      // A merged or closed PR needs nobody: no replies, explanations or status kinds keep it listed.
+      if (!isOpen(member)) continue;
       const signals = input.signals(member);
       const fresh = signals && input.now - signals.checkedAt <= ATTENTION_SIGNALS_MAX_AGE ? signals : undefined;
       const level = memberAttention(member, fresh, input.login, { teamRequests: input.teamRequests });
       const kinds = new Set(Object.keys(level) as AttentionKind[]);
-      if (item.attention === 'updated' && isOpen(member) && !isOwnPr(member, input.login)) kinds.add('updated-since-review');
+      if (item.attention === 'updated' && !isOwnPr(member, input.login)) kinds.add('updated-since-review');
       if ((item.responses?.[member.url]?.unresolvedThreads ?? 0) > 0) kinds.add('replies');
       // A finished, current, unread explanation. It folds into a review request on the same row.
       const explanation = explanationFor(item, member.url);

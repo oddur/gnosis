@@ -21,6 +21,7 @@ import { DesktopSetupDialog } from '../../components/DesktopSetup';
 import { GuidedTour } from '../../components/GuidedTour';
 import { offerMenubarTourStop } from '../../lib/desktop-setup';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
+import { itemWithLifecycle } from '../../lib/pr-lifecycle';
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
@@ -469,20 +470,32 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     }
     return result;
   }, [allItems, queue.stacks, visibleHistory]);
-  const summaryItem = useMemo(() => {
-    const summarySource = openedItem && resolveWorkspace(openedItem, workspaceItems);
-    return summarySource && {
-      ...summarySource,
+  const summarySource = useMemo(() => {
+    const source = openedItem && resolveWorkspace(openedItem, workspaceItems);
+    return source && {
+      ...source,
       review:
-        visibleHistory.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
+        visibleHistory.find((entry) => entry.id === requestedReviews[source.subject.id]) ??
         visibleHistory.find(
           (entry) =>
-            entry.snapshot?.subject.id === summarySource.subject.id ||
-            (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)
+            entry.snapshot?.subject.id === source.subject.id ||
+            (!entry.snapshot && entry.prUrl === source.subject.members[0].url)
         ) ??
-        (summarySource.review && matchesExplanation(summarySource.review, summarySource.subject) ? summarySource.review : undefined),
+        (source.review && matchesExplanation(source.review, source.subject) ? source.review : undefined),
     };
   }, [openedItem, workspaceItems, visibleHistory, requestedReviews]);
+  // A merged or closed PR leaves the queue, so `resolveWorkspace` keeps the copy taken when it opened, or the
+  // one a saved tab restored. The status read is the fresh source: its lifecycle wins over that copy.
+  const summaryItem = useMemo(
+    () => summarySource && itemWithLifecycle(summarySource, url => statuses[url]?.lifecycle),
+    [summarySource, statuses]
+  );
+  // Saved tabs and navigation history store the opened item, so they restore the fresh state as well.
+  useEffect(() => {
+    if (!openedItem) return;
+    const next = itemWithLifecycle(openedItem, url => statuses[url]?.lifecycle);
+    if (next !== openedItem) setOpenedItem(next);
+  }, [openedItem, statuses]);
   const appliedExplanation = useRef<ExplanationDestination | undefined>(undefined);
   useEffect(() => {
     if (!explanationDestination || appliedExplanation.current === explanationDestination) return;
@@ -1297,7 +1310,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const selectQueueEntry = (id: string, modifiers?: SelectionModifiers) => {
     selection.select(id, modifiers);
     setSelected(id);
-    if (!modifiers?.shiftKey && !modifiers?.metaKey && !modifiers?.ctrlKey) setStatuses({});
+    // Selecting the same row again does not read its status again, so keep the status it already has.
+    if (id !== selected && !modifiers?.shiftKey && !modifiers?.metaKey && !modifiers?.ctrlKey) setStatuses({});
   };
   const moveSelection = (direction: number, modifiers?: SelectionModifiers) => {
     const index = orderedItems.findIndex((item) => item.subject.id === selected);
