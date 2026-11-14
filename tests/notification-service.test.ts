@@ -29,7 +29,7 @@ function harness(options: { focused?: boolean; activeUrl?: string; desktop?: boo
           on: (event: string, fn: () => void) => listeners.set(event, [...(listeners.get(event) ?? []), fn]),
           show: () => {},
           close: () => {},
-        } as DesktopNotification;
+        };
         return notification;
       },
     },

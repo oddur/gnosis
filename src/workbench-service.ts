@@ -122,6 +122,8 @@ interface Deps {
   };
   provider?: typeof getProvider;
   now?: () => number;
+  /** The shared GitHub pause, for the notification sweep and watch mode. Tests inject one. */
+  backoff?: typeof githubClients.backoff;
 }
 interface VisibleHistory {
   history: readonly ReviewHistoryEntry[];
@@ -156,6 +158,7 @@ export function createWorkbenchService(deps: Deps) {
   const notifiedMembers = new WeakMap<object, string>();
   const swept = new Map<string, number>();
   let sweepCost = 1;
+  const notificationBackoff: typeof githubClients.backoff = (...args) => (deps.backoff ?? githubClients.backoff)(...args);
   const savedViews = createSavedViewStore(storage);
   const stars = createStarredPrStore(storage, now);
   const mutes = deps.mutes ?? createMutedPrStore(storage, now);
@@ -885,7 +888,7 @@ export function createWorkbenchService(deps: Deps) {
     const batches = planSweep({ members, signals: member => cached.get(member.url), sweptAt: swept, now: now(), cost: sweepCost });
     let requests = 0, prs = 0;
     for (const batch of batches) {
-      if (githubClients.backoff(token, true, ['graphql']) || deps.auth().login !== login) break;
+      if (notificationBackoff(token, true, ['graphql']) || deps.auth().login !== login) break;
       let measured: number | undefined;
       const signals = await withGitHubPriority('background', () => read(octokit, batch, { cost: value => { measured = value; } }), { automatic: true });
       if (deps.auth().login !== login) break;
@@ -913,7 +916,7 @@ export function createWorkbenchService(deps: Deps) {
     if (!token || !login || refresh) return { changed: 0 };
     const allowance = () => {
       if (deps.auth().login !== login) throw new DiscoverySuperseded();
-      const paused = githubClients.backoff(token, true, ['core', 'search']);
+      const paused = notificationBackoff(token, true, ['core', 'search']);
       if (paused) throw paused;
     };
     try {
