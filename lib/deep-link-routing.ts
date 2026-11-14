@@ -139,7 +139,9 @@ export function linkSupport(target: DeepLinkTarget, source: DeepLinkSource): Lin
     const plain: PrLinkTarget = { kind: 'pr', pr: target.pr, ...(target.tab ? { tab: target.tab } : {}) };
     return { supported: true, target: plain, ...(notes.length ? { note: { title: `Opened ${prName(target.pr)}`, description: notes.join(' ') } } : {}) };
   }
-  if (trusted && (target.kind === 'review' || target.kind === 'queue')) return { supported: true, target };
+  // The menu bar panel's ⌘, and its short menu open Settings; nothing outside Gnosis can yet.
+  if (trusted && (target.kind === 'review' || target.kind === 'queue' || target.kind === 'settings' || target.kind === 'activity'))
+    return { supported: true, target };
   const title = 'This link is not supported yet';
   if (target.kind === 'conflicts')
     return { supported: false, title, description: 'This version of Gnosis cannot open conflict resolution from a link.', action: { label: 'Open PR', target: { kind: 'pr', pr: target.pr } } };

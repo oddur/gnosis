@@ -5,7 +5,7 @@
  * a PR's set (see `lib/notification-events.ts`). Same kinds, same rank, same target, same switches.
  * Pure: no Node or Electron imports.
  *
- * Built by #307 Phase 1. `explanation-ready` rows and `restack` are not derived here yet; #308 adds them.
+ * Built by #307 Phase 1; #308 Phase 1 adds `explanation-ready` rows. `restack` is not derived yet (#308 Phase 2).
  */
 import type { QueueSignals } from './queue-signals';
 import type { QueueItem, ReviewMember } from './workbench';
@@ -36,6 +36,7 @@ export const ATTENTION_RANK: readonly AttentionKind[] = [
   'explanation-ready',
 ];
 export type AttentionGroup = 'review' | 'fix' | 'ready';
+export const ATTENTION_GROUPS: readonly AttentionGroup[] = ['review', 'fix', 'ready'];
 export const ATTENTION_GROUP: Readonly<Record<AttentionKind, AttentionGroup>> = {
   'review-requested': 'review',
   'updated-since-review': 'review',
@@ -154,6 +155,7 @@ export function attentionItems(input: {
   isNew?: (url: string, item: QueueItem) => boolean;
 }): AttentionItem[] {
   const rows: AttentionItem[] = [];
+  const updated = new Map<string, number>();
   for (const item of input.items) {
     for (const member of item.subject.members) {
       const signals = input.signals(member);
@@ -162,13 +164,19 @@ export function attentionItems(input: {
       const kinds = new Set(Object.keys(level) as AttentionKind[]);
       if (item.attention === 'updated' && isOpen(member) && !isOwnPr(member, input.login)) kinds.add('updated-since-review');
       if ((item.responses?.[member.url]?.unresolvedThreads ?? 0) > 0) kinds.add('replies');
+      // A finished, current, unread explanation. It folds into a review request on the same row.
+      const explanation = explanationFor(item, member.url);
+      if (explanation?.unread) kinds.add('explanation-ready');
       for (const kind of kinds) if (!input.enabled(kind, member.repo)) kinds.delete(kind);
       // A fix comes before merging.
       if ([...kinds].some((kind) => ATTENTION_GROUP[kind] === 'fix')) kinds.delete('ready-to-merge');
       if (!kinds.size) continue;
       const ranked = [...kinds].sort(byAttentionRank);
-      const target = attentionTarget(ranked[0], member.url, { explanation: !!item.review && (item.review.status ?? 'completed') === 'completed' });
+      const saved = !!item.review && (item.review.status ?? 'completed') === 'completed';
+      const target = attentionTarget(ranked[0], member.url, { explanation: saved, reviewId: explanation?.id });
       if (!target) continue;
+      const isNew = input.isNew ? input.isNew(member.url, item) : !!item.unreadUrls?.includes(member.url) || (kinds.has('explanation-ready') && !!explanation?.unread);
+      updated.set(`${item.subject.id}|${member.url}`, Date.parse(member.updatedAt) || 0);
       rows.push({
         id: `${item.subject.id}|${member.url}`,
         group: ATTENTION_GROUP[ranked[0]],
@@ -179,14 +187,32 @@ export function attentionItems(input: {
         number: member.number,
         author: member.author,
         ...(item.subject.kind === 'stack' ? { stackSize: item.subject.members.length } : {}),
-        isNew: input.isNew ? input.isNew(member.url, item) : !!item.unreadUrls?.includes(member.url),
+        isNew,
         ...(fresh && ranked.some((kind) => STATUS_KINDS.includes(kind)) ? { checkedAt: fresh.checkedAt } : {}),
         target,
       });
     }
   }
-  const groups: AttentionGroup[] = ['review', 'fix', 'ready'];
-  return rows.sort((a, b) => groups.indexOf(a.group) - groups.indexOf(b.group) || byAttentionRank(a.kinds[0], b.kinds[0]));
+  // Groups are fixed. Inside a group: rank, then new before seen, then most recently updated.
+  return rows.sort(
+    (a, b) =>
+      ATTENTION_GROUPS.indexOf(a.group) - ATTENTION_GROUPS.indexOf(b.group) ||
+      byAttentionRank(a.kinds[0], b.kinds[0]) ||
+      Number(b.isNew) - Number(a.isNew) ||
+      (updated.get(b.id) ?? 0) - (updated.get(a.id) ?? 0)
+  );
+}
+
+/**
+ * The saved explanation that makes a row "Explanation ready": completed, current for the subject (an outdated one
+ * makes the item `updated` instead), on this PR or, for a stack, on the stack as a whole.
+ */
+function explanationFor(item: QueueItem, url: string): { id: string; unread: boolean } | undefined {
+  const review = item.review;
+  if (!review || (review.status ?? 'completed') !== 'completed' || item.attention === 'updated') return undefined;
+  const members = item.subject.members;
+  const owner = members.some((member) => member.url === review.prUrl) ? review.prUrl : members[0]?.url;
+  return owner === url ? { id: review.id, unread: !!review.unread } : undefined;
 }
 
 export function attentionSummary(items: readonly AttentionItem[]): { needYou: number; ready: number; fresh: number; line: string } {
@@ -194,7 +220,7 @@ export function attentionSummary(items: readonly AttentionItem[]): { needYou: nu
   const needYou = items.length - ready;
   const fresh = items.filter((item) => item.isNew).length;
   const parts = [needYou ? `${needYou} need${needYou === 1 ? 's' : ''} you` : '', ready ? `${ready} ready` : ''].filter(Boolean);
-  return { needYou, ready, fresh, line: parts.length ? parts.join(', ') : 'Nothing needs you' };
+  return { needYou, ready, fresh, line: parts.length ? parts.join(' · ') : 'Nothing needs you' };
 }
 
 /** `new`: PRs that need you and that you have not opened since. `all`: every row. */

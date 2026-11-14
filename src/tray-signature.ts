@@ -18,3 +18,19 @@ export function createTrayMenuSignature() {
     },
   };
 }
+
+/** Skips pushing a value equal to the last one pushed, such as the menu bar panel's state. */
+export function createStateSignature() {
+  let last: string | undefined;
+  return {
+    changed(value: unknown) {
+      const next = JSON.stringify(value);
+      if (next === last) return false;
+      last = next;
+      return true;
+    },
+    reset() {
+      last = undefined;
+    },
+  };
+}

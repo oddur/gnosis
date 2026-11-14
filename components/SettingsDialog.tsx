@@ -12,6 +12,7 @@ import { resolveDiffHighlighter, type DiffHighlighter } from '../lib/diff-highli
 import { HarnessEnvironmentSettings } from './HarnessEnvironmentSettings';
 import { GITHUB_CACHE_SIZES_MB, DEFAULT_GITHUB_CACHE_MB, normalizeGitHubCacheMB } from '../lib/github-cache-settings';
 import { SearchableSelect } from './SearchableSelect';
+import { DEFAULT_MENUBAR_SETTINGS, menubarSettings, type MenubarSettings } from '../lib/menubar-settings';
 import { Button } from './ui/button';
 import { NotificationSettings } from './NotificationSettings';
 import { normalizeNotificationPreferences, type SavedNotificationPreferences } from '../lib/notification-settings';
@@ -222,6 +223,7 @@ export function SettingsDialog({
   const [notifications, setNotifications] = useState(true);
   const [notificationPrefs, setNotificationPrefs] = useState<SavedNotificationPreferences>(() => normalizeNotificationPreferences({}));
   const [trayEnabled, setTrayEnabled] = useState(true);
+  const [menubar, setMenubar] = useState<MenubarSettings>(DEFAULT_MENUBAR_SETTINGS);
   const [predictNavigation, setPredictNavigation] = useState(true);
   const [preloadAmount, setPreloadAmount] = useState<PreloadAmount>('normal');
   const [prepareQueue, setPrepareQueue] = useState(true);
@@ -298,6 +300,7 @@ export function SettingsDialog({
         setNotifications(prefs.notifications);
         setNotificationPrefs(normalizeNotificationPreferences(prefs));
         setTrayEnabled(prefs.trayEnabled);
+        setMenubar(menubarSettings(prefs));
         const preloads = preloadSettings(prefs);
         setPredictNavigation(preloads.predictNavigation);
         setPreloadAmount(preloads.amount);
@@ -889,6 +892,42 @@ export function SettingsDialog({
                 Row={SettingRow}
                 Toggle={Toggle}
               />
+              {window.electronAPI.platform === 'darwin' && (
+                <section className="flex flex-col items-start gap-3" aria-labelledby="menubar-settings-title">
+                  <h3 id="menubar-settings-title" className="text-sm font-medium">Menu bar</h3>
+                  <p className="settings-description">
+                    {trayEnabled ? 'What the Gnosis icon in the menu bar does.' : 'The menu bar icon is off. Turn it on in Integrations.'}
+                  </p>
+                  <div className="settings-field">
+                    <label htmlFor="menubar-click">Clicking the icon shows</label>
+                    <SearchableSelect id="menubar-click" label="Clicking the icon shows" value={menubar.click}
+                      options={[{ value: 'panel', label: 'Summary panel' }, { value: 'menu', label: 'Classic menu' }]}
+                      onValueChange={value => {
+                        const next = { ...menubar, click: menubarSettings({ menubarSettings: { click: value } }).click };
+                        setMenubar(next);
+                        saveField({ menubarSettings: next });
+                      }}
+                    />
+                  </div>
+                  <div className="settings-field">
+                    <label htmlFor="menubar-badge">Number on the icon</label>
+                    <SearchableSelect id="menubar-badge" label="Number on the icon" value={menubar.badge} describedBy="menubar-badge-description"
+                      options={[
+                        { value: 'new', label: 'New since you last looked' },
+                        { value: 'all', label: 'Everything that needs you' },
+                        { value: 'dot', label: 'A dot only' },
+                        { value: 'none', label: 'Nothing' },
+                      ]}
+                      onValueChange={value => {
+                        const next = { ...menubar, badge: menubarSettings({ menubarSettings: { badge: value } }).badge };
+                        setMenubar(next);
+                        saveField({ menubarSettings: next });
+                      }}
+                    />
+                    <p id="menubar-badge-description" className="settings-description">Also shown on the Dock icon.</p>
+                  </div>
+                </section>
+              )}
             </Tabs.Content>
             <Tabs.Content value="integrations" className="settings-panel">
               <section className="flex flex-col items-start gap-3" aria-labelledby="preloading-title">
@@ -1017,7 +1056,7 @@ export function SettingsDialog({
                   fails.
                 </p>
               </section>
-              <SettingRow label="Menu bar icon" description="Show review status and quick actions in the menu bar">
+              <SettingRow label="Menu bar icon" description="Show what needs you in the menu bar">
                 <Toggle
                   checked={trayEnabled}
                   ariaLabel="Menu bar icon"

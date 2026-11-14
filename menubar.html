@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Strict policy for the menu bar panel (#308). The dev server removes it: Vite injects an inline client. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gnosis</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/menubar/main.tsx"></script>
+  </body>
+</html>

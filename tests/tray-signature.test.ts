@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTrayMenuSignature } from '../src/tray-signature';
+import { createStateSignature, createTrayMenuSignature } from '../src/tray-signature';
 
 const menu = (label: string) => [
   { label, submenu: [{ label: 'Open Review', click: () => undefined }] },
@@ -27,4 +27,13 @@ void test('skips an unchanged menu', () => {
     true,
     'A new tray gets a menu'
   );
+});
+
+void test('the state signature skips a value equal to the last one', () => {
+  const signature = createStateSignature();
+  assert.equal(signature.changed({ rows: [1, 2], line: '2 need you' }), true);
+  assert.equal(signature.changed({ rows: [1, 2], line: '2 need you' }), false);
+  assert.equal(signature.changed({ rows: [2, 1], line: '2 need you' }), true);
+  signature.reset();
+  assert.equal(signature.changed({ rows: [2, 1], line: '2 need you' }), true, 'A new panel gets the state again');
 });

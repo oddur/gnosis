@@ -158,6 +158,60 @@ test('every raised event kind has a matching menu bar row', () => {
   assert.equal(attentionSummary(rows).line, '1 needs you');
 });
 
+void test('every raised event of every level kind has a matching panel row with the same target', () => {
+  // The same snapshots feed the edge detector and the panel's level model (#308 risk 8).
+  const requested = member(1);
+  const changes = mine(2);
+  const failing = mine(3);
+  const ready = mine(4);
+  const team = member(5);
+  const before: Record<string, PrObservation> = {
+    requested: obs(requested),
+    changes: obs(changes, signals(changes)),
+    failing: obs(failing, signals(failing)),
+    ready: obs(ready, signals(ready)),
+    team: obs(team),
+  };
+  const after: Record<string, PrObservation> = {
+    requested: obs({ ...requested, requestedReviewers: [LOGIN] }),
+    changes: obs(changes, signals(changes, { review: { id: '7', author: 'maya', state: 'CHANGES_REQUESTED' }, decision: 'CHANGES_REQUESTED', checkedAt: T0 + 1 })),
+    failing: obs(failing, signals(failing, { checks: 'failure', checkedAt: T0 + 1 })),
+    ready: obs(ready, readySignals(ready, T0 + 1)),
+    team: obs({ ...team, role: 'review-requested' }),
+  };
+  const raised = Object.keys(before).flatMap((name) => {
+    const basis = deriveEvents(undefined, before[name], context()).basis;
+    return deriveEvents(basis, after[name], context(T0 + 1)).events;
+  });
+  assert.deepEqual(raised.map((e) => e.type).sort(), ['changes-requested', 'checks-failed', 'ready-to-merge', 'review-requested', 'team-review-requested']);
+  const observed = Object.values(after);
+  const rows = attentionItems({
+    items: observed.map(({ member: m }) => ({ subject: { id: m.url, kind: 'pr' as const, title: m.title, members: [m as ReviewMember], edges: [], warnings: [] }, attention: 'other' as const })),
+    signals: (m) => observed.find((o) => o.member.url === m.url)?.signals,
+    login: LOGIN,
+    enabled: () => true,
+    now: T0 + 1,
+    teamRequests: true,
+  });
+  for (const event of raised) {
+    const row = rows.find((r) => r.url === event.url);
+    assert.ok(row, `${event.type} has a row`);
+    const kind = event.type === 'team-review-requested' ? 'review-requested' : event.type;
+    assert.ok(row.kinds.includes(kind as never), `${event.type} is one of the row's kinds`);
+    assert.deepEqual(row.target, event.target, `${event.type} opens the same place`);
+  }
+  // Approved is edge-only: it raises an event but is never a row on its own.
+  const approved = mine(6);
+  const start = deriveEvents(undefined, obs(approved, signals(approved)), context()).basis;
+  const approval = signals(approved, { review: { id: '8', author: 'maya', state: 'APPROVED' }, checkedAt: T0 + 1 });
+  assert.deepEqual(deriveEvents(start, obs(approved, approval), context(T0 + 1)).events.map((e) => e.type), ['approved']);
+  const none = attentionItems({
+    items: [{ subject: { id: approved.url, kind: 'pr', title: approved.title, members: [approved], edges: [], warnings: [] }, attention: 'other' }],
+    signals: () => approval, login: LOGIN, enabled: () => true, now: T0 + 1,
+  });
+  assert.deepEqual(none, []);
+});
+
 test('the attention model: rank order, ready dropped beside a fix, team requests opt in', () => {
   assert.equal(ATTENTION_RANK[0], 'review-requested');
   const pr = mine(1);

@@ -72,3 +72,7 @@ export class BrowserWindow extends electron.BrowserWindow {
     }) as typeof contents.capturePage;
   }
 }
+// Electron recognises browser windows by constructor name (`win.constructor.name === 'BrowserWindow'` in
+// BrowserWindow.getAllWindows and fromId). esbuild renames this subclass (e.g. "BrowserWindow2"), which would hide
+// every test window from those lookups, so keep the name Electron expects.
+Object.defineProperty(BrowserWindow, 'name', { value: 'BrowserWindow' });

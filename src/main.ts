@@ -145,7 +145,13 @@ import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHu
 import { filterDiff } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import { initialize as initAptabase, trackEvent } from '@aptabase/electron/main';
-import { createTray, updateTrayMenu, destroyTray, setStatusFetcher } from './tray';
+import { createTray, updateTrayMenu, destroyTray, setStatusFetcher, setTrayPanel, setTrayBadge, hasTray } from './tray';
+import { createMenubarPanel } from './menubar-window';
+import { createStateSignature } from './tray-signature';
+import { buildMenubarState, menubarSignalRequests, menubarTooltip, type MenubarState } from '../lib/menubar-state';
+import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
+import type { AttentionItem } from '../lib/attention';
+import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
 import { createNotificationService, type ToastAction } from './notification-service';
 import { createDeepLinks } from './deep-link-service';
@@ -187,6 +193,8 @@ const PREPARED_TRIM_DELAY_MS = 30_000;
 // Injected by Electron Forge Vite plugin
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
+declare const MENUBAR_WINDOW_VITE_DEV_SERVER_URL: string;
+declare const MENUBAR_WINDOW_VITE_NAME: string;
 
 // Injected by Vite define
 declare const __GH_CLIENT_SECRET__: string;
@@ -346,6 +354,14 @@ function setupLogging() {
 
 let quitConfirmed = false;
 
+/**
+ * The app's windows, without the menu bar panel. Every "main window", "create one if none" and broadcast site uses
+ * this, never `BrowserWindow.getAllWindows()`: the hidden panel would otherwise be shown, block `activate` and
+ * receive every broadcast. See src/app-windows.ts.
+ */
+const windowSet = createAppWindows(() => BrowserWindow.getAllWindows());
+const appWindows = windowSet.list;
+
 // The workbench --background colours in globals.css, so the window opens in the theme the app paints.
 const WINDOW_BACKGROUND = { light: '#fcfcfd', dark: '#171a20' };
 
@@ -371,6 +387,7 @@ function createWindow() {
   attachWindowHistoryNavigation(mainWindow, direction => mainWindow.webContents.send('history-navigate', direction));
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
+  windowSet.watchClose(mainWindow, allAppWindowsClosed);
   // A reload, crash or close clears the ready mark, so the next renderer asks for waiting targets again.
   mainWindow.webContents.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) { deepLinks.reset(ownerId); notificationContexts.delete(ownerId); } });
   mainWindow.webContents.on('render-process-gone', () => deepLinks.reset(ownerId));
@@ -437,8 +454,7 @@ async function runUpdateCheck() {
   if (!update) return;
   if (dismissedUpdateVersion === update.version) return;
 
-  const windows = BrowserWindow.getAllWindows();
-  for (const win of windows) {
+  for (const win of appWindows()) {
     win.webContents.send('update-available', update);
   }
 }
@@ -703,7 +719,7 @@ let updateController: UpdateController | null = null;
 let notifiedUpdateVersion: string | null = null;
 
 function sendUpdateStatus(status: AppUpdateStatus) {
-  for (const win of BrowserWindow.getAllWindows()) {
+  for (const win of appWindows()) {
     if (!win.webContents.isDestroyed()) win.webContents.send('update-status', status);
   }
 }
@@ -889,9 +905,12 @@ void app.whenReady().then(async () => {
   mark('all-ready');
 
   if (prefs.analytics) void trackEvent('app_started');
+  menubarStartupDone = true;
   initTrayIfEnabled();
-  setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
+  // macOS: the panel replaced the recent-reviews menu and its status poll (#308). Windows and Linux keep both.
+  if (process.platform !== 'darwin') setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
   rebuildTrayMenu();
+  rebuildMenubarNow();
   setupAutoUpdater();
 
   // GitHub release polling only needed on Linux (no native auto-update)
@@ -917,7 +936,7 @@ void app.whenReady().then(async () => {
   }, PREPARED_TRIM_DELAY_MS).unref();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (appWindows().length === 0) createWindow();
     if (!updateInterval && process.platform === 'linux') startUpdateChecks();
     if (!proactiveInterval && loadPreferences().proactiveMode) startProactivePolling();
   });
@@ -959,7 +978,7 @@ ipcMain.on('review-state-flushed', (_event, id: unknown) => rendererFlush.acknow
 function confirmQuitDuringGenerations(): boolean {
   if (quitConfirmed || activeGenerations.size === 0) return true;
   const count = activeGenerations.size;
-  const win = BrowserWindow.getAllWindows()[0];
+  const win = appWindows()[0];
   const response = dialog.showMessageBoxSync(win, {
     type: 'question',
     buttons: ['Cancel', 'Quit Anyway'],
@@ -993,7 +1012,8 @@ function saveBeforeQuit(): Promise<boolean> {
       // User drafts and progress must finish before quitting; only disposable cache has a deadline.
       // Windows send their pending review state first, so the final flush includes it.
       await saveWorkBeforeQuit({
-        targets: BrowserWindow.getAllWindows().map((win) => win.webContents),
+        // The panel has no pending review state and never acknowledges a flush.
+        targets: appWindows().map((win) => win.webContents),
         flush: (targets) => rendererFlush.flush(targets),
         close: () => appData.close(),
       });
@@ -1027,14 +1047,16 @@ app.on('before-quit', (event) => {
   destroyTray();
 });
 
-app.on('window-all-closed', () => {
+/** The last app window closed. Also runs while the hidden menu bar panel exists, which holds back `window-all-closed`. */
+function allAppWindowsClosed() {
   if (updateInterval) {
     clearInterval(updateInterval);
     updateInterval = null;
   }
   stopProactivePolling();
   if (process.platform !== 'darwin') app.quit();
-});
+}
+app.on('window-all-closed', allAppWindowsClosed);
 
 // ── Review history helpers ───────────────────────────────────────
 
@@ -1193,6 +1215,7 @@ function notifyLocalChange(channel: string) {
   if (localChangeTimers.has(channel)) return;
   localChangeTimers.set(channel, setTimeout(() => {
     localChangeTimers.delete(channel);
+    if (channel === 'activity-changed') scheduleMenubar();
     if (channel === 'workbench-changed') broadcastWorkbenchChanged();
     else broadcastToAllWindows(channel);
   }, 150));
@@ -1203,6 +1226,9 @@ function broadcastWorkbenchChanged(): void {
   let revisions: WorkbenchRevisions | undefined;
   try {
     const queue = workbench.snapshot();
+    // The menu bar reuses this snapshot instead of building another.
+    menubarQueue = { account: cachedLogin, queue };
+    scheduleMenubar();
     if (queue.revision && queue.historyRevision) revisions = { revision: queue.revision, historyRevision: queue.historyRevision };
   } catch {
     /* Without revisions, renderers read the snapshot once and compare it themselves. */
@@ -1212,7 +1238,7 @@ function broadcastWorkbenchChanged(): void {
 }
 
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
-  for (const win of BrowserWindow.getAllWindows()) {
+  for (const win of appWindows()) {
     win.webContents.send(channel, ...args);
   }
 }
@@ -1239,7 +1265,7 @@ function sameAppPage(url: string, current: string): boolean {
 }
 
 function showOrCreateWindow(): void {
-  const windows = BrowserWindow.getAllWindows();
+  const windows = appWindows();
   if (windows.length > 0) {
     const win = windows[0];
     if (win.isMinimized()) win.restore();
@@ -1263,7 +1289,7 @@ function initTrayIfEnabled(): void {
 
   if (!raw || !('trayEnabled' in raw)) {
     // First time — ask via in-app modal once the renderer is ready
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = appWindows().at(0);
     if (win) {
       // The window now opens before startup finishes, so it may have loaded already.
       const prompt = () => win.webContents.send('show-tray-prompt');
@@ -1272,6 +1298,7 @@ function initTrayIfEnabled(): void {
     }
   } else if (raw.trayEnabled) {
     createTray();
+    applyTrayMode();
     rebuildTrayMenuNow();
   }
 }
@@ -1300,6 +1327,162 @@ function rebuildTrayMenuNow(): void {
     });
     return reviews.length;
   }, (reviews) => `reviews=${reviews}`);
+}
+
+// ── Menu bar panel (#308) ─────────────────────────────────────────
+// macOS only in Phase 1. Main derives the panel's state from data it already holds and pushes it, debounced, from
+// the existing hooks: workbench changes, activity changes, preference saves and sign-out. No timer, no polling.
+// Opening the panel reads status for up to 25 PRs at most once (skipped while fresh); ↻ refreshes interactively.
+
+/**
+ * The panel window is created on the tray's `mouse-enter`, not pre-created after startup: its renderer measured
+ * 111 MB resident (`app.getAppMetrics()` working set) on macOS with Electron 41, above the 100 MB limit, although its
+ * own footprint was 28 MB. GNOSIS_MENUBAR_PRECREATE=1 pre-creates it 3 seconds after startup instead, for measuring.
+ */
+const MENUBAR_PRECREATE = process.env.GNOSIS_MENUBAR_PRECREATE === '1';
+const MENUBAR_REBUILD_MS = 250;
+/** A panel open reads status at most this often; `getQueueSignals` also serves entries younger than 25 s. */
+const MENUBAR_READ_MS = 25_000;
+let menubarStartupDone = false;
+let menubarQueue: { account: string | null; queue: import('../lib/workbench').WorkbenchQueue } | undefined;
+let menubarItems: AttentionItem[] = [];
+let menubarState: MenubarState | undefined;
+let menubarRefreshing = false;
+let menubarReadAt = 0;
+let menubarRebuild: ReturnType<typeof setTimeout> | undefined;
+const menubarSignature = createStateSignature();
+
+const menubarPanel = process.platform === 'darwin' ? createMenubarPanel({
+  preload: path.join(__dirname, 'menubar-preload.js'),
+  // ?vibrancy tells the page that the popover material is behind it, so it paints a translucent fill.
+  load: win => MENUBAR_WINDOW_VITE_DEV_SERVER_URL
+    ? win.loadURL(`${MENUBAR_WINDOW_VITE_DEV_SERVER_URL}/menubar.html?vibrancy=1`)
+    : win.loadFile(path.join(__dirname, `../renderer/${MENUBAR_WINDOW_VITE_NAME}/menubar.html`), { query: { vibrancy: '1' } }),
+  state: () => menubarState,
+  // The renderer sent an id; the target comes from the rows main built.
+  open: id => {
+    const item = menubarItems.find(row => row.id === id);
+    if (item) deepLinks.open(item.target, 'menubar');
+    else showOrCreateWindow();
+  },
+  openApp: showOrCreateWindow,
+  openSettings: () => deepLinks.open({ kind: 'settings', section: 'notifications' }, 'menubar'),
+  refresh: () => readMenubarStatus(true),
+  visibilityChanged: visible => {
+    rebuildMenubarNow();
+    if (!visible) return;
+    void readMenubarStatus(false);
+    // A visible panel satisfies syncEnabled(): the sync tick wakes and brings discovery forward.
+    void tickGitHubSync();
+  },
+  created: win => windowSet.exclude(win),
+  devTools: !app.isPackaged,
+}) : undefined;
+
+/** macOS: the summary panel or the classic menu, from Settings. */
+function applyTrayMode() {
+  if (!menubarPanel || !hasTray()) return;
+  if (menubarSettings(loadPreferences()).click === 'menu') {
+    setTrayPanel(null);
+    menubarPanel.destroy();
+    return;
+  }
+  setTrayPanel({
+    toggle: bounds => menubarPanel.toggle(bounds),
+    hover: () => menubarPanel.ensure(),
+    hide: () => menubarPanel.hide(),
+    shortMenu: () => [
+      { label: 'Open Gnosis', click: showOrCreateWindow },
+      { label: 'Settings…', click: () => deepLinks.open({ kind: 'settings' }, 'tray') },
+      { type: 'separator' },
+      { label: 'Quit Gnosis', click: () => app.quit() },
+    ],
+  });
+  if (MENUBAR_PRECREATE) setTimeout(() => { if (hasTray()) menubarPanel.ensure(); }, 3000).unref();
+}
+
+function scheduleMenubar(): void {
+  if (menubarRebuild || process.platform !== 'darwin') return;
+  menubarRebuild = setTimeout(() => {
+    menubarRebuild = undefined;
+    rebuildMenubarNow();
+  }, MENUBAR_REBUILD_MS);
+}
+function rebuildMenubarNow(): void {
+  clearTimeout(menubarRebuild);
+  menubarRebuild = undefined;
+  if (process.platform !== 'darwin') return;
+  timed('menubar', () => {
+    const token = getResolvedToken();
+    const login = cachedLogin;
+    const signedIn = !!token && !!login;
+    // The first state of a session reads the snapshot once; later ones reuse the snapshot each broadcast built.
+    if (signedIn && menubarStartupDone && menubarQueue?.account !== login) menubarQueue = { account: login, queue: workbench.snapshot() };
+    const queue = signedIn && menubarQueue?.account === login ? menubarQueue.queue : undefined;
+    // Saved status only, for your own open PRs: the only rows that use it. Never a request.
+    const own = (queue?.items ?? []).flatMap(item => item.subject.members)
+      .filter(member => member.state === 'open' && !member.merged && member.author.toLowerCase() === login?.toLowerCase());
+    const saved = new Map(token && own.length ? cachedQueueSignals(getGitHubClient(token), own).map(value => [value.url, value]) : []);
+    const prefs = loadPreferences();
+    const { state, items } = buildMenubarState({
+      login,
+      signedIn,
+      online: net.isOnline(),
+      queue,
+      signals: member => saved.get(member.url),
+      teamRequests: notificationSettings(prefs).events['team-review-requested'],
+      tasks: activities.list(),
+      backoffUntil: token ? githubClients.backoff(token, true, ['graphql'])?.retryAt : undefined,
+      refreshing: menubarRefreshing,
+      now: Date.now(),
+    });
+    menubarItems = items;
+    menubarState = state;
+    // One count for the menu bar and the Dock, so the two always agree.
+    const badge = menubarBadge(items, menubarSettings(prefs).badge);
+    setTrayBadge({ title: badge.title, dot: badge.dot, tooltip: menubarTooltip(state) });
+    app.dock?.setBadge(badge.title || (badge.dot ? '•' : ''));
+    if (menubarSignature.changed(state)) menubarPanel?.push(state);
+    return items.length;
+  }, rows => `rows=${rows}`);
+}
+
+/**
+ * The read on open: one signals request for the PRs behind the rows and your other open PRs, at most 25, at the
+ * automatic foreground tier. Skipped while GitHub reads are paused and when the last read is younger than 25 s.
+ * ↻ (`force`) is interactive: the same read with `force`, plus a queue refresh.
+ */
+async function readMenubarStatus(force: boolean): Promise<void> {
+  const token = getResolvedToken();
+  const login = cachedLogin;
+  if (!token || !login || (menubarRefreshing && force)) return;
+  if (!force && (Date.now() - menubarReadAt < MENUBAR_READ_MS || githubClients.backoff(token, true, ['graphql']))) return;
+  const requests = menubarSignalRequests(menubarItems, menubarQueue?.account === login ? menubarQueue.queue : undefined, login);
+  menubarReadAt = Date.now();
+  if (force) {
+    menubarRefreshing = true;
+    rebuildMenubarNow();
+  }
+  try {
+    const client = getGitHubClient(token);
+    const [values] = await Promise.all([
+      requests.length
+        ? withGitHubPriority(force ? 'interactive' : 'foreground', () => getQueueSignals(client, requests, { active: true, force }), { automatic: !force })
+        : Promise.resolve([]),
+      force ? workbench.queue(true) : undefined,
+    ]);
+    if (cachedLogin !== login) return;
+    if (values.length && workbench.observeReadSignals(login, values)) broadcastToAllWindows('pr-read-state-changed');
+    // New saved status changes rows, unread state and the queue's responses: rebuild through the usual broadcast.
+    if (values.length) notifyLocalChange('workbench-changed');
+  } catch (error) {
+    console.warn('[menubar] Status read failed:', error instanceof Error ? error.message : error);
+  } finally {
+    if (force) {
+      menubarRefreshing = false;
+      scheduleMenubar();
+    }
+  }
 }
 
 // ── Preferences helpers ─────────────────────────────────────────
@@ -1398,7 +1581,7 @@ function readPreferencesFile(): Preferences {
 function savePreferences(prefs: Preferences): void {
   const file = getPreferencesPath(), temporary = file + '.tmp';
   try {
-  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), ...normalizePreloadPreferences(prefs) }, null, 2));
+  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), menubarSettings: menubarSettings(prefs), ...normalizePreloadPreferences(prefs) }, null, 2));
     fs.renameSync(temporary, file);
   } finally { fs.rmSync(temporary, { force: true }); preferencesFile.clear(); }
 }
@@ -1562,6 +1745,7 @@ ipcMain.handle('sign-out', () => {
   cachedToken = null;
   cachedLogin = null;
   deleteStoredToken();
+  scheduleMenubar();
 });
 
 handleInteractive('search-pull-requests', async () => {
@@ -1614,13 +1798,16 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   // Restart polling so the new proactiveMode value takes effect immediately
   stopProactivePolling();
   if (prefs.proactiveMode) startProactivePolling();
-  // Toggle tray on/off
+  // Toggle tray on/off. Turning it off destroys the tray and the panel; turning it on creates both.
   if (prefs.trayEnabled) {
     createTray();
+    applyTrayMode();
     rebuildTrayMenuNow();
   } else {
     destroyTray();
+    menubarPanel?.destroy();
   }
+  rebuildMenubarNow();
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {
@@ -1954,8 +2141,7 @@ ipcMain.handle('disconnect-local-clone', (_event, repo: string) => {
 });
 
 ipcMain.handle('pick-repo-dir', async (): Promise<string | null> => {
-  const windows = BrowserWindow.getAllWindows();
-  const win = BrowserWindow.getFocusedWindow() ?? (windows.length > 0 ? windows[0] : null);
+  const win = windowSet.focused() ?? appWindows().at(0);
   const opts: Electron.OpenDialogOptions = {
     title: 'Select a git repository',
     buttonLabel: 'Select',
@@ -2819,7 +3005,7 @@ const deepLinks = createDeepLinks({
   show: () => {
     showOrCreateWindow();
     // Windows may refuse focus to a background process; raising the window once brings it forward.
-    const win = BrowserWindow.getAllWindows().at(0);
+    const win = appWindows().at(0);
     if (process.platform === 'win32' && win && !win.isFocused()) {
       win.setAlwaysOnTop(true);
       win.setAlwaysOnTop(false);
@@ -2834,14 +3020,15 @@ const deepLinks = createDeepLinks({
   },
   // Prefer the focused window, then the first window.
   preferred: ready => {
-    const focused = BrowserWindow.getFocusedWindow()?.webContents.id;
+    const focused = windowSet.focused()?.webContents.id;
     return focused !== undefined && ready.includes(focused) ? focused : ready[0];
   },
 });
 const notifications = createNotificationService({
   settings: () => notificationSettings(loadPreferences()),
   focus: () => {
-    const win = BrowserWindow.getFocusedWindow();
+    // The menu bar panel having focus is not the app having focus: a notification still shows.
+    const win = windowSet.focused();
     return { focused: !!win, activeUrl: win ? notificationContexts.get(win.webContents.id)?.activeUrl : undefined };
   },
   desktop: {
@@ -2857,7 +3044,7 @@ const notifications = createNotificationService({
     },
   },
   toast: delivery => {
-    const contents = (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(0))?.webContents;
+    const contents = (windowSet.focused() ?? appWindows().at(0))?.webContents;
     if (!contents || contents.isDestroyed() || contents.isLoading() || !notificationContexts.has(contents.id)) return false;
     contents.send('notification', { type: 'show', delivery });
     return true;
@@ -3406,12 +3593,12 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
 });
 
 onClassificationUpdate((key, kinds) => {
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('file-classifications-changed', { key, kinds });
+  for (const win of appWindows()) win.webContents.send('file-classifications-changed', { key, kinds });
 });
 ipcMain.handle('load-file-filters', () => rawFileFilters.read());
 ipcMain.handle('update-file-filters', async (_event, action: FileFilterAction) => {
   const value = await rawFileFilters.update(action);
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('file-filters-changed', value);
+  for (const win of appWindows()) win.webContents.send('file-filters-changed', value);
   return value;
 });
 async function classifySnapshot(client: ReturnType<typeof changesClient>, snapshot: import('../lib/pr-changes').PrChanges) {
@@ -3443,7 +3630,9 @@ function sendSyncUpdates(updates: GitHubSyncUpdate[], failures: GitHubSyncFailur
 }
 let syncCredential: string | null = null;
 let suspended = false;
-const syncEnabled = () => !suspended && net.isOnline() && BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
+const windowVisible = () => appWindows().some(win => win.isVisible() && !win.isMinimized());
+/** A visible menu bar panel counts as a visible window: opening it wakes sync (#308 section 8). */
+const syncEnabled = () => !suspended && net.isOnline() && (windowVisible() || !!menubarPanel?.visible());
 // ── Navigation predictions ──
 // The renderer predicts where the reader goes next. Main keeps the budget: predictions start only while the window
 // is visible, the system is not idle, and the predicted share and reserve allow it. See lib/github-budget.ts.
@@ -3742,7 +3931,6 @@ function sweepOwnPrs(force = false): Promise<unknown> {
     .finally(() => { sweepPending = undefined; });
   return sweepPending;
 }
-const windowVisible = () => BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
 let watchDue = 0;
 let watchPending = false;
 let watching = false;
