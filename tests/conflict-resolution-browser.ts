@@ -98,6 +98,8 @@ void app.whenReady().then(async () => {
     );
     await wait('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\')');
     assert.ok(await js("document.querySelector('.conflict-workspace').contains(document.querySelector('.app-toast'))"));
+    // In the modal host too, a toast is a grouped notification, never a second dialog.
+    assert.equal(await js("document.querySelector('.app-toast').getAttribute('role')"), 'group');
     assert.ok(
       await js(
         "document.querySelector('.app-toast').getBoundingClientRect().bottom < document.querySelector('.conflict-footer').getBoundingClientRect().top"

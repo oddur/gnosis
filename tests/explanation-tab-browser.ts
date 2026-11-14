@@ -679,7 +679,7 @@ void app.whenReady().then(async () => {
     await click('Review queue');
     // Notification destinations also work for historical PRs outside the queue.
     await js(
-      `window.archived=structuredClone(window.savedReview);window.archived.reviewId='archived-review';window.archived.prUrl='https://github.com/klang/engine/pull/999';window.archived.prTitle='Archived standalone explanation';window.archived.snapshot.subject={...window.archived.snapshot.subject,id:window.archived.prUrl,kind:'pr',title:window.archived.prTitle,members:[{...window.archived.snapshot.subject.members[0],url:window.archived.prUrl,number:999,merged:true,state:'closed'}],edges:[]};window.electronAPI.loadReview=async id=>id==='archived-review'?window.archived:window.nextReview;window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'archived-review'}));`
+      `window.archived=structuredClone(window.savedReview);window.archived.reviewId='archived-review';window.archived.prUrl='https://github.com/klang/engine/pull/999';window.archived.prTitle='Archived standalone explanation';window.archived.snapshot.subject={...window.archived.snapshot.subject,id:window.archived.prUrl,kind:'pr',title:window.archived.prTitle,members:[{...window.archived.snapshot.subject.members[0],url:window.archived.prUrl,number:999,merged:true,state:'closed'}],edges:[]};window.electronAPI.loadReview=async id=>id==='archived-review'?window.archived:window.nextReview;window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'review',reviewId:'archived-review'}}));`
     );
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent==='Archived standalone explanation'");
     assert.equal(
@@ -695,7 +695,7 @@ void app.whenReady().then(async () => {
     // Empty generated explanations retain their overview and offer direct recovery.
     await js(`window.emptyReview=structuredClone(window.archived);window.emptyReview.reviewId='empty-review';window.emptyReview.slides=[];
       window.electronAPI.loadReview=async()=>window.emptyReview;
-      window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'empty-review'}));void 0;`);
+      window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'review',reviewId:'empty-review'}}));void 0;`);
     await wait("!!document.querySelector('.explanation-no-topics')");
     assert.equal(await js("[...document.querySelectorAll('h1')].filter(h=>h.checkVisibility()).length"), 1);
     assert.match(await js<string>("document.querySelector('.explanation-no-topics').textContent"), /Generate again/);

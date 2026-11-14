@@ -197,7 +197,7 @@ void app.whenReady().then(async () => {
     await js(
       "window.electronAPI.getReviewThreads=async()=>({headSha:'head-1',baseSha:'base-1',threads:[{id:'explanation-thread',path:'docs/retry.md',line:22,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:false,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{id:'explanation-comment',body:'Does the limit include the first attempt?',createdAt:new Date().toISOString(),url:'https://github.com/klang/engine/pull/121#discussion_r1',author:{login:'maya',avatarUrl:''}}]}]});void 0"
     );
-    await js("window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'workbench-review'}))");
+    await js("window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'review',reviewId:'workbench-review'}}))");
     await wait("!!document.querySelector('.pr-overview-tabs') || !!document.querySelector('.review-workspace')");
     await js("window.selectOption('[aria-label=\"Explanation section\"]', '1')");
     await wait("!!document.querySelector('.review-file-group .markdown-review ins')");

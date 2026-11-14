@@ -2182,6 +2182,14 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .app-toast-action { display:block; margin-top:8px; color:var(--ring); font-size:var(--type-control); font-weight:600; text-decoration:underline; text-underline-offset:3px; }
 .app-toast-action:disabled { opacity:.5; }
 .app-toast .workbench-icon { width:24px; height:24px; }
+.notification-settings-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:4px 0; }
+.app-toast-subtitle { font-size:var(--type-caption); line-height:1.4; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.app-toast[data-kind=checks-failed] .app-toast-icon,.app-toast[data-kind=changes-requested] .app-toast-icon { color:var(--color-danger); }
+.app-toast[data-kind=ready-to-merge] .app-toast-icon,.app-toast[data-kind=approved] .app-toast-icon { color:var(--color-success); }
+.app-toast-introduce { margin-top:10px; padding-top:10px; border-top:1px solid var(--border); font-size:var(--type-control); line-height:1.5; }
+.app-toast-introduce-actions { display:flex; align-items:baseline; gap:16px; }
+.app-toast-introduce .app-toast-action { display:inline; }
+.app-toast-secondary { margin-top:8px; color:var(--muted-foreground); font-size:var(--type-control); text-decoration:underline; text-underline-offset:3px; }
 @media(prefers-reduced-motion:reduce) { .app-toast { transition:none; } }
 
 /* Published GitHub discussions remain distinct from local draft comments. */

@@ -13,6 +13,8 @@ import { HarnessEnvironmentSettings } from './HarnessEnvironmentSettings';
 import { GITHUB_CACHE_SIZES_MB, DEFAULT_GITHUB_CACHE_MB, normalizeGitHubCacheMB } from '../lib/github-cache-settings';
 import { SearchableSelect } from './SearchableSelect';
 import { Button } from './ui/button';
+import { NotificationSettings } from './NotificationSettings';
+import { normalizeNotificationPreferences, type SavedNotificationPreferences } from '../lib/notification-settings';
 import { PrInactivitySetting } from './PrInactivitySetting';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import {
@@ -33,7 +35,7 @@ import { applyTheme, type ThemeChoice } from '@/lib/theme';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
 import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
 
-export type SettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'integrations';
+export type SettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'notifications' | 'integrations';
 
 interface Props {
   initialSection?: SettingsSection;
@@ -218,6 +220,7 @@ export function SettingsDialog({
   const replayingOnboarding = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
+  const [notificationPrefs, setNotificationPrefs] = useState<SavedNotificationPreferences>(() => normalizeNotificationPreferences({}));
   const [trayEnabled, setTrayEnabled] = useState(true);
   const [predictNavigation, setPredictNavigation] = useState(true);
   const [preloadAmount, setPreloadAmount] = useState<PreloadAmount>('normal');
@@ -293,6 +296,7 @@ export function SettingsDialog({
         setRepositorySettings(normalizeRepositorySettings(prefs.repositorySettings));
         setRepositoryDailyLimit(normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit));
         setNotifications(prefs.notifications);
+        setNotificationPrefs(normalizeNotificationPreferences(prefs));
         setTrayEnabled(prefs.trayEnabled);
         const preloads = preloadSettings(prefs);
         setPredictNavigation(preloads.predictNavigation);
@@ -516,6 +520,7 @@ export function SettingsDialog({
               <Tabs.Trigger value="repositories">Repositories</Tabs.Trigger>
               <Tabs.Trigger value="review">Review</Tabs.Trigger>
               <Tabs.Trigger value="appearance">Appearance</Tabs.Trigger>
+              <Tabs.Trigger value="notifications">Notifications</Tabs.Trigger>
               <Tabs.Trigger value="integrations">Integrations</Tabs.Trigger>
             </Tabs.List>
             <Tabs.Content forceMount value="repositories" className="settings-panel settings-repositories">
@@ -875,6 +880,16 @@ export function SettingsDialog({
                 </span>
               </div>
             </Tabs.Content>
+            <Tabs.Content value="notifications" className="settings-panel">
+              <NotificationSettings
+                desktop={notifications}
+                value={notificationPrefs}
+                onDesktopChange={(next) => { setNotifications(next); saveField({ notifications: next }); }}
+                onChange={(next) => { setNotificationPrefs(next); saveField({ notificationSettings: next }); }}
+                Row={SettingRow}
+                Toggle={Toggle}
+              />
+            </Tabs.Content>
             <Tabs.Content value="integrations" className="settings-panel">
               <section className="flex flex-col items-start gap-3" aria-labelledby="preloading-title">
                 <h3 id="preloading-title" className="text-sm font-medium">Preloading</h3>
@@ -1002,18 +1017,6 @@ export function SettingsDialog({
                   fails.
                 </p>
               </section>
-              <SettingRow label="Desktop notifications" description="Notify when a review completes">
-                <Toggle
-                  checked={notifications}
-                  ariaLabel="Desktop notifications"
-                  onChange={() => {
-                    const next = !notifications;
-                    setNotifications(next);
-                    saveField({ notifications: next });
-                  }}
-                />
-              </SettingRow>
-
               <SettingRow label="Menu bar icon" description="Show review status and quick actions in the menu bar">
                 <Toggle
                   checked={trayEnabled}

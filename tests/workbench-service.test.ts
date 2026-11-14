@@ -2168,3 +2168,131 @@ void test('unmute restores the full member and keeps the briefing key', () => {
     q.cleanup();
   }
 });
+
+// ── Notifications ──
+type Pull = { requested_reviewers: { login: string }[]; updated_at: string; user: { login: string } };
+const signalValue = (now: number) => (request: { url: string; headSha: string }) => ({
+  ...request, checkedAt: now, comments: 0, activity: {}, checks: { state: 'pending' as const, total: 1, passed: 0 },
+});
+void test('the notification observer sees what the unread store sees, and a review request fires once', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const delivered: import('../lib/notification-events').NotificationEvent[] = [];
+  let now = Date.parse('2026-10-26T12:00:00Z');
+  let signalReads = 0;
+  const service = createWorkbenchService({ ...s.deps, now: () => now,
+    notifications: { deliver: (events) => delivered.push(...events) },
+    signals: async (_client, requests) => { signalReads++; return requests.map(signalValue(now)); },
+  });
+  try {
+    await service.queue(true);
+    assert.equal(delivered.length, 0, 'The first discovery only records a baseline');
+    const pull = s.pr as unknown as Pull;
+    pull.requested_reviewers = [{ login: 'reviewer' }];
+    pull.updated_at = '2026-10-26T12:05:00Z';
+    now += 3 * 60_000;
+    await service.queue(true);
+    assert.deepEqual(delivered.map((event) => event.type), ['review-requested']);
+    assert.equal(delivered[0].url, s.pr.html_url);
+    assert.ok(signalReads >= 1, 'Changed PRs reach the observer through the same signals read as Unread');
+    now += 3 * 60_000;
+    await service.queue(true);
+    service.updatePrMetadata({ ...service.knownMember(s.pr.html_url)!, title: 'Renamed' });
+    assert.equal(delivered.length, 1, 'A replayed snapshot fires nothing');
+  } finally { s.cleanup(); }
+});
+
+void test('muted PRs and archived repositories raise nothing', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const delivered: unknown[] = [];
+  let now = Date.parse('2026-10-26T12:00:00Z');
+  // The fixture's search lists the PR as review-requested, so dropping the direct request leaves a team request.
+  const service = createWorkbenchService({ ...s.deps, now: () => now, notifications: { deliver: (events) => delivered.push(...events.filter((event) => event.type === 'review-requested')) } });
+  try {
+    await service.queue(true);
+    const member = service.knownMember(s.pr.html_url)!;
+    service.mutePrs({ muted: true, members: [member] });
+    const pull = s.pr as unknown as Pull;
+    pull.requested_reviewers = [{ login: 'reviewer' }];
+    pull.updated_at = '2026-10-26T12:05:00Z';
+    now += 3 * 60_000;
+    await service.queue(true);
+    service.updatePrMetadata({ ...member, requestedReviewers: ['reviewer'], updatedAt: '2026-10-26T12:06:00Z' });
+    assert.deepEqual(delivered, [], 'Muted');
+    service.mutePrs({ muted: false, urls: [member.url] });
+    service.updatePrMetadata({ ...member, requestedReviewers: [], updatedAt: '2026-10-26T12:07:00Z' });
+    service.updatePrMetadata({ ...member, requestedReviewers: ['reviewer'], updatedAt: '2026-10-26T12:08:00Z', repoArchived: true });
+    assert.deepEqual(delivered, [], 'Archived');
+    service.updatePrMetadata({ ...member, requestedReviewers: [], updatedAt: '2026-10-26T12:09:00Z', repoArchived: false });
+    service.updatePrMetadata({ ...member, requestedReviewers: ['reviewer'], updatedAt: '2026-10-26T12:10:00Z', repoArchived: false });
+    assert.equal(delivered.length, 1, 'The same PR notifies once it is neither muted nor archived');
+  } finally { s.cleanup(); }
+});
+
+void test('the own-PR sweep reads 25 PRs per request as automatic background work, and stops during backoff', async () => {
+  const { githubAutomatic, githubPriority } = await import('../lib/github-scheduler');
+  const s = setup(() => Promise.resolve(''), false);
+  const urls = Array.from({ length: 30 }, (_, i) => `https://github.com/owner/repo/pull/${i + 1}`);
+  const client = s.deps.client();
+  Object.assign(client.search, {
+    issuesAndPullRequests: async () => ({ data: { total_count: 30, items: urls.map((url, i) => ({
+      number: i + 1, title: `PR ${i + 1}`, html_url: url, repository_url: 'https://api.github.com/repos/owner/repo',
+      user: { login: 'reviewer' }, updated_at: s.pr.updated_at, draft: false,
+    })) } }),
+  });
+  Object.assign(client.pulls, {
+    get: async ({ pull_number }: { pull_number: number }) => ({ data: { ...s.pr, user: { login: 'reviewer' }, html_url: urls[pull_number - 1], head: { ...s.pr.head, ref: `b${pull_number}`, sha: `h${pull_number}` } } }),
+    list: async () => ({ data: [] }),
+  });
+  let now = Date.parse('2026-10-26T12:00:00Z');
+  let paused = false;
+  const sweeps: { size: number; automatic: boolean; priority: string }[] = [];
+  const service = createWorkbenchService({ ...s.deps, now: () => now,
+    notifications: { deliver: () => {} },
+    backoff: () => (paused ? Object.assign(new Error('paused'), { retryAt: now + 60_000 }) as never : undefined),
+    signals: async (_client, requests, options) => {
+      if (options?.cost) { sweeps.push({ size: requests.length, automatic: githubAutomatic(), priority: githubPriority() }); options.cost(1); }
+      return requests.map(signalValue(now));
+    },
+  });
+  try {
+    await service.queue(true);
+    assert.equal(service.ownOpenPrs().length, 30);
+    assert.deepEqual(await service.sweepOwnPrs(), { requests: 2, prs: 30 });
+    assert.deepEqual(sweeps, [{ size: 25, automatic: true, priority: 'background' }, { size: 5, automatic: true, priority: 'background' }]);
+    assert.deepEqual(await service.sweepOwnPrs(), { requests: 0, prs: 0 }, 'Nothing is due right after a sweep');
+    now += 121_000;
+    paused = true;
+    assert.deepEqual(await service.sweepOwnPrs(), { requests: 0, prs: 0 }, 'The shared backoff pauses the sweep');
+    paused = false;
+    assert.deepEqual(await service.sweepOwnPrs(), { requests: 2, prs: 30 });
+  } finally { s.cleanup(); }
+});
+
+void test('watch mode runs the personal searches only and notifies from them', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let lists = 0, searches = 0;
+  const client = s.deps.client();
+  const { list } = client.pulls;
+  const search = client.search.issuesAndPullRequests;
+  Object.assign(client.pulls, { list: (...args: Parameters<typeof list>) => { lists++; return list(...args); } });
+  Object.assign(client.search, { issuesAndPullRequests: (...args: Parameters<typeof search>) => { searches++; return search(...args); } });
+  const delivered: import('../lib/notification-events').NotificationEvent[] = [];
+  let now = Date.parse('2026-10-26T12:00:00Z');
+  const service = createWorkbenchService({ ...s.deps, now: () => now, backoff: () => undefined,
+    notifications: { deliver: (events) => delivered.push(...events) },
+    signals: async (_client, requests) => requests.map(signalValue(now)),
+  });
+  try {
+    await service.queue(true);
+    lists = 0; searches = 0;
+    const pull = s.pr as unknown as Pull;
+    pull.requested_reviewers = [{ login: 'reviewer' }];
+    pull.updated_at = '2026-10-26T12:05:00Z';
+    now += 5 * 60_000;
+    assert.deepEqual(await service.watch(), { changed: 1 });
+    assert.equal(lists, 0, 'No watched-repository listings or stack lookups while hidden');
+    assert.equal(searches, 3, 'author, assignee and review-requested');
+    assert.deepEqual(delivered.map((event) => event.type), ['review-requested']);
+    assert.equal(service.snapshot().items[0].subject.members[0].requestedReviewers[0], 'reviewer');
+  } finally { s.cleanup(); }
+});
