@@ -50,7 +50,7 @@ function harness(options: { focused?: boolean; activeUrl?: string; desktop?: boo
   const advance = (ms: number) => {
     clock += ms;
     for (;;) {
-      const due = timers.filter((t) => t.at <= clock).sort((a, b) => a.at - b.at)[0];
+      const due = timers.filter((t) => t.at <= clock).sort((a, b) => a.at - b.at).at(0);
       if (!due) break;
       timers.splice(timers.indexOf(due), 1);
       due.fn();

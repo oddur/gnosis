@@ -48,7 +48,7 @@ test('a team request is its own type, and a metadata update without a role keeps
   const team = member(1, { role: 'review-requested', requestedTeams: ['core'] });
   const { events, basis } = run([obs(member(1)), obs(team)]);
   assert.deepEqual(events.map((e) => e.type), ['team-review-requested']);
-  const { role: _role, ...metadata } = team;
+  const metadata = { ...team, role: undefined };
   assert.deepEqual(deriveEvents(basis, { member: metadata }, context(T0 + 600_000)).events, []);
 });
 

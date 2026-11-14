@@ -726,6 +726,8 @@ const mocks = {
     }
     sessionStorage.setItem('fixture-read-state', JSON.stringify(fixtureReads));
     updateFixtureUnread();
+    // Like main: marking PRs read closes their notification toasts.
+    if (request.read) window.dispatchEvent(new CustomEvent('fixture-notification', { detail: { type: 'close', urls: request.receipts.map(receipt => receipt.url) } }));
     return mocks.workbenchQueue();
   },
   workbenchMutePrs: (request: import('../../lib/muted-prs').MutePrRequest) => {

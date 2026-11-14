@@ -37,6 +37,7 @@ export interface DesktopNotificationOptions {
 export type ToastAction = 'clicked' | 'dismissed' | 'timedOut';
 /** Without a `show` event this soon, the desktop notification may have been blocked. Only a hint, never a reroute. */
 export const SHOW_CONFIRM_MS = 3_000;
+const LIVE_LIMIT = 20;
 type Timer = ReturnType<typeof setTimeout>;
 
 export function createNotificationService(deps: {
@@ -93,7 +94,10 @@ export function createNotificationService(deps: {
       silent: true,
     });
     let confirmed = false;
+    // Keep a reference so the click handler survives garbage collection. Ones left in the notification centre
+    // never close, so only the newest are kept.
     live.add(notification);
+    if (live.size > LIVE_LIMIT) live.delete(live.values().next().value as DesktopNotification);
     const forget = () => live.delete(notification);
     notification.on('show', () => {
       confirmed = true;

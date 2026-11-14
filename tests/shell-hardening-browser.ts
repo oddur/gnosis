@@ -57,7 +57,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.app-titlebar .workspace-menu-trigger')"), true);
     // A newer notification wins even if its older load finishes last.
     await js(
-      `(async()=>{window.baseReview=await window.electronAPI.loadReview('fixture');window.loads={};window.electronAPI.loadReview=id=>new Promise((resolve,reject)=>{window.loads[id]={resolve,reject}});window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'slow-old'}));window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'fast-new'}));})()`
+      `(async()=>{window.baseReview=await window.electronAPI.loadReview('fixture');window.loads={};window.electronAPI.loadReview=id=>new Promise((resolve,reject)=>{window.loads[id]={resolve,reject}});window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'review',reviewId:'slow-old'}}));window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'review',reviewId:'fast-new'}}));})()`
     );
     await wait('!!window.loads["fast-new"]');
     await js(
@@ -67,10 +67,12 @@ void app.whenReady().then(async () => {
     await js("window.loads['slow-old'].resolve(window.baseReview)");
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(await js("document.querySelector('.pr-overview-heading h1')?.textContent"), 'Latest explanation');
-    await js("window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'failed-review'}))");
+    await js("window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'review',reviewId:'failed-review'}}))");
     await wait('!!window.loads["failed-review"]');
     await js("window.loads['failed-review'].reject(Error('Saved review could not be read.'))");
     await wait("document.querySelector('.app-toasts')?.textContent.includes('Could not open saved review')");
+    // Toasts are grouped notifications, not dialogs, so a check for an open dialog never matches one.
+    assert.equal(await js("document.querySelectorAll('.app-toast').length > 0 && !document.querySelector('.app-toast[role=dialog]') && document.querySelector('.app-toast').getAttribute('aria-roledescription') === 'notification'"), true);
     await capture('notification-error');
     // Isolated shell: overlapping activity actions and an older polling response.
     await loadWorkbenchPage(win, new URL('shell-hardening.html', url).href);

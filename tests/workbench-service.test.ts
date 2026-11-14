@@ -2185,7 +2185,7 @@ void test('the notification observer sees what the unread store sees, and a revi
   });
   try {
     await service.queue(true);
-    assert.deepEqual(delivered, [], 'The first discovery only records a baseline');
+    assert.equal(delivered.length, 0, 'The first discovery only records a baseline');
     const pull = s.pr as unknown as Pull;
     pull.requested_reviewers = [{ login: 'reviewer' }];
     pull.updated_at = '2026-10-26T12:05:00Z';
