@@ -171,6 +171,10 @@ export function createMenubarPanel(deps: MenubarPanelDeps) {
       else if (action === 'hide') hide('click');
     },
     hide: () => hide('other'),
+    /** Setup's "Show me": opens the panel under the icon, or leaves it open. Unlike a click, never hides it. */
+    showAt(bounds: Rectangle) {
+      if (!visibility.visible) show(bounds);
+    },
     /** Sends a new state to the panel; it also reads `menubar:get` when it loads. */
     push(state: MenubarState) {
       const panel = live();

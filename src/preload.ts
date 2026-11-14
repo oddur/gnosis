@@ -37,6 +37,7 @@ import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot, ReviewSubject } 
 import type { DeepLinkDelivery } from './deep-link-service';
 import type { NotificationKind, NotificationMessage } from '../lib/notification-routing';
 import type { NotificationPreferences } from '../lib/notification-settings';
+import type { MenubarShowResult, SystemSettingsPane, SystemSettingsPanes } from '../lib/desktop-setup';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ChangedFile,
@@ -344,6 +345,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendTestNotification: (): Promise<'desktop' | 'toast' | 'none'> => ipcRenderer.invoke('notification-test'),
   pauseNotifications: (paused: boolean): Promise<NotificationPreferences> => ipcRenderer.invoke('notification-pause', paused),
   notificationStatus: (): Promise<{ supported: boolean; blocked: boolean }> => ipcRenderer.invoke('notification-status'),
+  systemSettingsPanes: (): Promise<SystemSettingsPanes> => ipcRenderer.invoke('system-settings-panes'),
+  openSystemSettings: (pane: SystemSettingsPane): Promise<boolean> => ipcRenderer.invoke('open-system-settings', pane),
+  showMenubarPanel: (): Promise<MenubarShowResult> => ipcRenderer.invoke('menubar-show'),
   sendSlideChat: (req: SendSlideChatRequest): Promise<string> => ipcRenderer.invoke('send-slide-chat', req),
   onChatProgress: (callback: (chunk: string) => void): void => {
     ipcRenderer.on('chat-progress', (_event, { chunk }: { chunk: string }) => callback(chunk));

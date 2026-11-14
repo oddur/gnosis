@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import type { NotificationEventType, SavedNotificationPreferences } from '../lib/notification-settings';
 import { normalizeNotificationPreferences, isPaused } from '../lib/notification-settings';
+import { notificationMissedHint, notificationSettingsLabel } from '../lib/desktop-setup';
+import { useSystemSettingsPanes } from './DesktopSetup';
 
 /** Settings › Notifications. Every switch has a visible label; state is never shown by colour alone. */
 export function NotificationSettings({
@@ -11,6 +13,7 @@ export function NotificationSettings({
   onChange,
   Row,
   Toggle,
+  onDesktopSetup,
 }: {
   desktop: boolean;
   value: SavedNotificationPreferences;
@@ -18,7 +21,22 @@ export function NotificationSettings({
   onChange: (next: SavedNotificationPreferences) => void;
   Row: (props: { label: string; description?: string; children: React.ReactNode }) => React.ReactNode;
   Toggle: (props: { checked: boolean; onChange: () => void; ariaLabel?: string }) => React.ReactNode;
+  /** Opens the notifications and menu bar setup steps on their own. */
+  onDesktopSetup?: () => void;
 }) {
+  const platform = window.electronAPI.platform;
+  const panes = useSystemSettingsPanes();
+  const [sentToDesktop, setSentToDesktop] = useState(false);
+  const [openError, setOpenError] = useState('');
+  const openSettings = () => {
+    setOpenError('');
+    void window.electronAPI
+      .openSystemSettings('notifications')
+      .then((opened) => {
+        if (!opened) setOpenError('Could not open notification settings. Open them from your system settings.');
+      })
+      .catch(() => setOpenError('Could not open notification settings. Open them from your system settings.'));
+  };
   const [status, setStatus] = useState<{ supported: boolean; blocked: boolean }>();
   const [testResult, setTestResult] = useState('');
   const [now, setNow] = useState(() => Date.now());
@@ -74,6 +92,11 @@ export function NotificationSettings({
             Desktop notifications may be blocked. Allow them for Gnosis in your system settings.
           </p>
         )}
+        {panes.notifications && (
+          <Button type="button" variant="outline" size="sm" className="self-start" onClick={openSettings}>
+            {notificationSettingsLabel(platform)}
+          </Button>
+        )}
         <Row label="In-app notifications" description="When Gnosis is in front.">
           <Toggle checked={value.inApp} ariaLabel="In-app notifications" onChange={() => onChange({ ...value, inApp: !value.inApp })} />
         </Row>
@@ -84,8 +107,12 @@ export function NotificationSettings({
             size="sm"
             onClick={() => {
               setTestResult('');
+              setSentToDesktop(false);
               void window.electronAPI.sendTestNotification().then(
-                (result) => setTestResult(result === 'desktop' ? 'Sent a test notification to your desktop.' : result === 'toast' ? 'Desktop notifications are off, so the test appears in Gnosis.' : 'No notification could be shown.'),
+                (result) => {
+                  setSentToDesktop(result === 'desktop');
+                  setTestResult(result === 'desktop' ? 'Sent a test notification to your desktop.' : result === 'toast' ? 'Desktop notifications are off, so the test appears in Gnosis.' : 'No notification could be shown.');
+                },
                 () => setTestResult('Could not send a test notification.')
               );
             }}
@@ -94,6 +121,22 @@ export function NotificationSettings({
           </Button>
           {testResult && <span className="settings-description" role="status">{testResult}</span>}
         </div>
+        {sentToDesktop && (
+          <p className="settings-description notification-settings-missed">
+            {notificationMissedHint(platform)}{' '}
+            {panes.notifications && (
+              <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={openSettings}>
+                Open notification settings
+              </Button>
+            )}
+          </p>
+        )}
+        {openError && <p className="settings-description" role="alert">{openError}</p>}
+        {onDesktopSetup && (
+          <Button type="button" variant="link" size="sm" className="self-start h-auto p-0" onClick={onDesktopSetup}>
+            {platform === 'darwin' ? 'Set up notifications and menu bar…' : 'Set up notifications…'}
+          </Button>
+        )}
       </section>
       <section className="settings-group" aria-labelledby="notifications-reviews-title">
         <h2 id="notifications-reviews-title">Reviews you owe</h2>

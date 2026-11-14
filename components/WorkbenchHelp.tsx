@@ -79,12 +79,14 @@ const terms = [
 export function WorkbenchHelp({
   onGettingStarted,
   onWalkthrough,
+  onDesktopSetup,
   open,
   onOpenChange,
   anchor,
 }: {
   onGettingStarted?: () => void;
   onWalkthrough?: () => void;
+  onDesktopSetup?: () => void;
   /** Controlled use: a menu opens help, which then attaches to `anchor` instead of its own trigger. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -142,6 +144,13 @@ export function WorkbenchHelp({
             </li>
           </ol>
           {onWalkthrough && <Popover.Close asChild><button className="workbench-help-link" onClick={onWalkthrough}>Show walkthrough</button></Popover.Close>}
+          {onDesktopSetup && (
+            <Popover.Close asChild>
+              <button className="workbench-help-link" onClick={onDesktopSetup}>
+                {window.electronAPI.platform === 'darwin' ? 'Set up notifications and menu bar…' : 'Set up notifications…'}
+              </button>
+            </Popover.Close>
+          )}
           {onGettingStarted && (
             <Popover.Close asChild>
               <button

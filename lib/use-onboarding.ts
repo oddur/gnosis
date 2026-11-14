@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { initialSetup, normalizeSetup, type OnboardingState, type SetupDraft } from './onboarding';
 import type { Preferences } from './types';
 import type { QueueViewsState } from './saved-views';
+import { offerDesktopSetup, recordDesktopOutcome, type DesktopOutcome, type DesktopStep } from './desktop-setup';
 
 export function useOnboarding(
   prefs: Preferences | null,
@@ -16,6 +17,7 @@ export function useOnboarding(
   const [open, setOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
   const [offerTour, setOfferTour] = useState(false);
+  const [desktopOpen, setDesktopOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const writes = useRef<Promise<unknown>>(Promise.resolve());
@@ -133,8 +135,27 @@ export function useOnboarding(
       tourStep: completed ? 0 : current.current.tourStep,
     }).catch(() => setError('Could not save walkthrough progress.'));
   };
+  /** Notifications and menu bar steps: remember each answer as it is given, in setup or on their own. */
+  const desktopOutcome = (step: DesktopStep, outcome: DesktopOutcome) => {
+    void persist({
+      ...current.current,
+      desktop: recordDesktopOutcome(current.current.desktop, step, outcome),
+    }).catch(() => setError('Could not save your notification setup.'));
+  };
+  const answerDesktopPrompt = (prompt: 'started' | 'dismissed') => {
+    if (current.current.desktop?.prompt) return;
+    void persist({ ...current.current, desktop: { ...current.current.desktop, prompt } }).catch(() =>
+      setError('Could not save your notification setup.')
+    );
+  };
+  const startDesktop = () => {
+    setOfferTour(false);
+    answerDesktopPrompt('started');
+    setDesktopOpen(true);
+  };
+  const loaded = ready && loadedFor === login;
   return {
-    ready: ready && loadedFor === login,
+    ready: loaded,
     state,
     open,
     tourOpen,
@@ -149,5 +170,17 @@ export function useOnboarding(
     startTour,
     tourStep,
     endTour,
+    desktopOpen,
+    startDesktop,
+    closeDesktop: () => setDesktopOpen(false),
+    desktopOutcome,
+    /** The one-time prompt for people who finished setup before the notifications and menu bar steps. */
+    offerDesktop:
+      loaded &&
+      !open &&
+      !desktopOpen &&
+      !offerTour &&
+      offerDesktopSetup({ state, firstRunSeen: prefs.firstRunSeen, guestMode: prefs.guestMode, signedIn: !!login }),
+    dismissDesktopOffer: () => answerDesktopPrompt('dismissed'),
   };
 }

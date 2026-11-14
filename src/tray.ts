@@ -408,6 +408,8 @@ export function updateTrayMenu(
 }
 
 export const hasTray = () => !!tray;
+/** Where the status item is on screen, for opening the panel under it from setup. */
+export const trayBounds = (): Electron.Rectangle | undefined => tray?.getBounds();
 
 export function destroyTray(): void {
   if (tray) {

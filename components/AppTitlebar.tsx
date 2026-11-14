@@ -145,6 +145,7 @@ export function WorkspaceMenu({
   onSearch,
   onGettingStarted,
   onWalkthrough,
+  onDesktopSetup,
   onSettings,
   account,
 }: {
@@ -153,6 +154,7 @@ export function WorkspaceMenu({
   onSearch: () => void;
   onGettingStarted?: () => void;
   onWalkthrough?: () => void;
+  onDesktopSetup?: () => void;
   onSettings: () => void;
   account: { login?: string | null; onClick: () => void };
 }) {
@@ -196,6 +198,7 @@ export function WorkspaceMenu({
             }}
             onGettingStarted={onGettingStarted}
             onWalkthrough={onWalkthrough}
+            onDesktopSetup={onDesktopSetup}
             anchor={
               <DropdownMenu.Trigger asChild>
                 <button

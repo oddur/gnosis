@@ -3349,6 +3349,27 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .setup-body details > summary { font-size:13px; cursor:pointer; }
 .setup-body .queue-filter-panel { border:0; padding:12px 0; }
 .setup-resume { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 16px; background:var(--accent); color:var(--accent-foreground); font-size:14px; }
+/* Notifications and menu bar steps: questions, answers and help stay in the setup's type and spacing. */
+.setup-desktop-start,.setup-desktop-question,.setup-desktop-result,.setup-desktop-help { display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
+.setup-desktop-question p,.setup-desktop-help p { margin:0; font-size:14px; line-height:1.6; }
+.setup-desktop-question p { font-weight:600; }
+.setup-desktop-help { padding:12px 14px; border-radius:6px; background:var(--secondary); color:var(--foreground); }
+.setup-desktop-question:focus,.setup-desktop-result:focus,.setup-desktop-help:focus { outline:none; }
+.setup-desktop-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.setup-desktop-question [aria-pressed=true] { border-color:var(--ring); background:var(--accent); color:var(--accent-foreground); }
+.setup-menubar-demo { display:flex; align-items:center; flex-wrap:wrap; gap:16px; }
+.setup-menubar-preview { display:inline-flex; align-items:center; gap:14px; height:30px; padding:0 12px 0 10px; border:1px solid var(--border); border-radius:6px; background:var(--secondary); color:var(--foreground); font:500 13px/1 -apple-system, system-ui, sans-serif; }
+.setup-menubar-item { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 7px; border-radius:5px; background:color-mix(in oklab, var(--foreground) 12%, transparent); }
+.setup-menubar-icon { position:relative; display:inline-flex; }
+.setup-menubar-dot { position:absolute; top:-1px; right:-3px; width:6px; height:6px; border-radius:50%; background:currentColor; }
+.setup-menubar-count { font-variant-numeric:tabular-nums; }
+.setup-menubar-system { color:var(--muted-foreground); }
+.setup-badge { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 16px; padding-top:16px; border-top:1px solid var(--border); }
+.setup-badge > p { grid-column:1 / -1; }
+.setup-badge-title { margin:0 0 2px; font-size:14px; font-weight:600; }
+.settings-menubar-missing { display:flex; flex-direction:column; gap:8px; }
+.settings-menubar-missing > summary { font-size:13px; cursor:pointer; width:fit-content; }
+.settings-menubar-missing > :not(summary) { margin-top:8px; }
 .driver-popover.gnosis-tour { background:var(--popover); color:var(--foreground); border:1px solid var(--border); border-radius:8px; box-shadow:none; padding:18px; max-width:min(340px, calc(100vw - 24px)); font-family:var(--font-sans); }
 .gnosis-tour .driver-popover-title { font-size:16px; line-height:1.4; font-weight:600; }
 .gnosis-tour .driver-popover-description { font-size:14px; line-height:1.6; }
@@ -3360,7 +3381,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .gnosis-tour .driver-popover-navigation-btns button.driver-popover-next-btn { background:var(--primary); color:var(--primary-foreground); border-color:var(--primary); }
 .gnosis-tour button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .gnosis-tour .driver-popover-arrow { display:none; }
-@media (max-width:600px) { .setup-dialog { padding:16px; max-height:calc(100dvh - 24px); } .setup-ai-role { grid-template-columns:1fr; gap:8px; } .setup-body { min-height:0; } .setup-actions { gap:4px; } }
+@media (max-width:600px) { .setup-dialog { padding:16px; max-height:calc(100dvh - 24px); } .setup-ai-role,.setup-badge { grid-template-columns:1fr; gap:8px; } .setup-body { min-height:0; } .setup-actions { gap:4px; } }
 @media (prefers-reduced-motion: reduce) { .driver-overlay,.driver-popover { transition:none!important; animation:none!important; } }
 
 /* Combined and per-PR comparisons share the same inspection workspace. */

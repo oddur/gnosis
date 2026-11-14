@@ -150,6 +150,12 @@ declare global {
       sendTestNotification: () => Promise<'desktop' | 'toast' | 'none'>;
       pauseNotifications: (paused: boolean) => Promise<import('../lib/notification-settings').NotificationPreferences>;
       notificationStatus: () => Promise<{ supported: boolean; blocked: boolean }>;
+      /** Which System Settings panes this system can open for notifications and the menu bar. */
+      systemSettingsPanes: () => Promise<import('../lib/desktop-setup').SystemSettingsPanes>;
+      /** Opens an allow-listed System Settings pane. False when there is none, or it did not open. */
+      openSystemSettings: (pane: import('../lib/desktop-setup').SystemSettingsPane) => Promise<boolean>;
+      /** Opens the menu bar summary panel under the icon (macOS). */
+      showMenubarPanel: () => Promise<import('../lib/desktop-setup').MenubarShowResult>;
       getPrBadgePreview: (url: string) => Promise<import('../lib/pr-badge-preview').PrBadgePreview | null>;
       loadFileFilters: () => Promise<FileFilterState>;
       updateFileFilters: (action:FileFilterAction) => Promise<FileFilterState>;

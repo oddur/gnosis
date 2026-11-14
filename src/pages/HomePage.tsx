@@ -17,6 +17,7 @@ import { toast } from '../../components/ui/toast';
 import { watchGitHub } from '../../lib/watch-github';
 import { useOnboarding } from '../../lib/use-onboarding';
 import { OnboardingSetup } from '../../components/OnboardingSetup';
+import { DesktopSetupDialog } from '../../components/DesktopSetup';
 import { GuidedTour } from '../../components/GuidedTour';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
 import { PrListSortControl } from '../../components/PrListSortControl';
@@ -1573,6 +1574,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       onSearch={() => commandCenter?.open()}
       onGettingStarted={replayGettingStarted}
       onWalkthrough={() => onboarding.startTour()}
+      onDesktopSetup={auth?.authenticated && !prefs?.guestMode ? () => onboarding.startDesktop() : undefined}
       onSettings={() => openSettings()}
       account={{ login: auth?.login, onClick: () => setAuthOpen(true) }}
     />
@@ -2054,6 +2056,13 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               {onboarding.error && !onboarding.open && <p role="alert" className="setup-error">{onboarding.error}</p>}
               {onboarding.state.paused && !onboarding.open && !onboarding.state.completed && <div className="setup-resume"><span>Finish setting up your review queue.</span><Button size="sm" variant="outline" onClick={onboarding.start}>Resume setup</Button></div>}
               {onboarding.offerTour && <div className="setup-resume"><span>Your setup is ready. Take a quick look around.</span><Button size="sm" onClick={onboarding.startTour}>Show walkthrough</Button><Button size="sm" variant="ghost" onClick={() => onboarding.setOfferTour(false)}>Not now</Button></div>}
+              {onboarding.offerDesktop && (
+                <div className="setup-resume" role="region" aria-label="Notifications setup">
+                  <span>{window.electronAPI.platform === 'darwin' ? 'Get notified when a PR needs you, and see what is waiting from the menu bar.' : 'Get notified when a PR needs you.'}</span>
+                  <Button size="sm" onClick={onboarding.startDesktop}>Set up</Button>
+                  <Button size="sm" variant="ghost" onClick={onboarding.dismissDesktopOffer}>Not now</Button>
+                </div>
+              )}
               {!gettingStartedVisible && githubConnection}
               {gettingStartedVisible && (
                 <GettingStarted
@@ -2411,7 +2420,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
             filtersLoaded.current = true;
           });
         }); }} onConnect={() => setAuthOpen(true)} login={auth?.authenticated ? auth.login : null}
-        items={queue.items} saving={onboarding.saving} saveError={onboarding.error} />}
+        items={queue.items} saving={onboarding.saving} saveError={onboarding.error}
+        desktop={onboarding.state.desktop} onDesktopOutcome={onboarding.desktopOutcome} />}
+      {onboarding.desktopOpen && <DesktopSetupDialog platform={window.electronAPI.platform} state={onboarding.state.desktop}
+        onOutcome={onboarding.desktopOutcome} onClose={onboarding.closeDesktop} />}
       {onboarding.tourOpen && <GuidedTour step={onboarding.state.tourStep ?? 0} stacked={summaryItem?.subject.kind === 'stack'} local={prefs?.guestMode || !auth?.authenticated}
         onStep={onboarding.tourStep} onClose={onboarding.endTour} prepare={step => {
           if (step === 0) { setOpenedItem(null); setSavedView(false); setMutedOpen(false); return true; }
@@ -2454,6 +2466,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         initialSection={settingsSection}
         onReplayOnboarding={replayGettingStarted}
         onShowWalkthrough={() => { setSettings(false); onboarding.startTour(); }}
+        onDesktopSetup={() => { setSettings(false); onboarding.startDesktop(); }}
         open={settings}
         onOpenChange={(open) => {
           setSettings(open);

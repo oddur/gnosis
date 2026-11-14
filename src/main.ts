@@ -145,7 +145,8 @@ import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHu
 import { filterDiff } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import { initialize as initAptabase, trackEvent } from '@aptabase/electron/main';
-import { createTray, updateTrayMenu, destroyTray, setStatusFetcher, setTrayPanel, setTrayBadge, hasTray } from './tray';
+import { createTray, updateTrayMenu, destroyTray, setStatusFetcher, setTrayPanel, setTrayBadge, hasTray, trayBounds } from './tray';
+import { isSystemSettingsPane, isSystemSettingsUrl, systemSettingsPanes, systemSettingsUrl, type MenubarShowResult } from '../lib/desktop-setup';
 import { createMenubarPanel } from './menubar-window';
 import { createStateSignature } from './tray-signature';
 import { buildMenubarState, menubarSignalRequests, menubarTooltip, type MenubarState } from '../lib/menubar-state';
@@ -3196,6 +3197,41 @@ handleInteractive('notification-pause', (_event, paused: unknown) => {
   return updateNotificationSettings(() => ({ pausedUntil: paused ? Date.now() + PAUSE_DURATION : 0 })).notificationSettings;
 });
 ipcMain.handle('notification-status', () => notifications.status());
+// ── Notifications and menu bar setup ──
+// The renderer names a pane, never a URL. Main picks the URL for this system and opens it only if it is one of the
+// exact System Settings URLs allowed in lib/desktop-setup.ts. `open-external` stays https only.
+ipcMain.handle('system-settings-panes', () => systemSettingsPanes(process.platform, os.release()));
+ipcMain.handle('open-system-settings', async (_event, pane: unknown) => {
+  if (!isSystemSettingsPane(pane)) return false;
+  const url = systemSettingsUrl(pane, process.platform, os.release());
+  if (!isSystemSettingsUrl(url)) return false;
+  try {
+    await shell.openExternal(url);
+    return true;
+  } catch {
+    return false;
+  }
+});
+/** Setup's "Show me": opens the summary panel under the menu bar icon, creating the icon if it is on but missing. */
+ipcMain.handle('menubar-show', async (): Promise<MenubarShowResult> => {
+  if (process.platform !== 'darwin' || !menubarPanel) return 'unsupported';
+  const prefs = loadPreferences();
+  if (!prefs.trayEnabled) return 'off';
+  if (!hasTray()) {
+    createTray();
+    applyTrayMode();
+    rebuildTrayMenuNow();
+    rebuildMenubarNow();
+    // A status item created just now has no position until the menu bar lays it out.
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  if (menubarSettings(prefs).click === 'menu') return 'menu';
+  const bounds = trayBounds();
+  // A status item macOS does not draw reports no size.
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) return 'hidden';
+  menubarPanel.showAt(bounds);
+  return 'shown';
+});
 const onboardingService = createOnboardingService({ storage: appData, account: () => cachedLogin, preferences: loadPreferences, savePreferences, views: () => workbench.savedViewsState(), replaceViews: state => workbench.replaceSavedViews(state) });
 ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
 ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
