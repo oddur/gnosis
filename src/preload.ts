@@ -1,3 +1,4 @@
+import type { AppUpdateStatus } from './update-state';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
@@ -424,14 +425,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   offUpdateAvailable: (): void => {
     ipcRenderer.removeAllListeners('update-available');
   },
-  onUpdateReady: (callback: (version: string) => void): void => {
-    ipcRenderer.on('update-ready', (_event, version: string) => callback(version));
+  onUpdateStatus: (callback: (status: AppUpdateStatus) => void): void => {
+    ipcRenderer.on('update-status', (_event, status: AppUpdateStatus) => callback(status));
   },
-  offUpdateReady: (): void => {
-    ipcRenderer.removeAllListeners('update-ready');
+  offUpdateStatus: (): void => {
+    ipcRenderer.removeAllListeners('update-status');
   },
   dismissUpdate: (version: string): Promise<void> => ipcRenderer.invoke('dismiss-update', version),
-  getPendingUpdateReady: (): Promise<string | null> => ipcRenderer.invoke('get-pending-update-ready'),
+  getUpdateStatus: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('get-update-status'),
+  installUpdate: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('install-update'),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('open-external', url),
   openLogsDirectory: (): Promise<void> => ipcRenderer.invoke('open-logs-directory'),
   openReviewPrompt: (id: string): Promise<void> => ipcRenderer.invoke('open-review-prompt', id),

@@ -764,7 +764,7 @@ const mocks = {
         ? { status: 'unknown', reason: 'API rate limit exceeded. ' + 'Technical diagnostic details. '.repeat(30) }
         : { status: 'current' }
     ),
-  getPendingUpdateReady: () => Promise.resolve(null),
+  getUpdateStatus: () => Promise.resolve({ state: 'idle' as const }),
   generateExplainer: () => {
     document.body.dataset.explainerCalls = String(Number(document.body.dataset.explainerCalls ?? 0) + 1);
     return Promise.resolve(explainer);
@@ -861,6 +861,26 @@ const fixtureHistory = () => {
   fixtureWindow.fixtureInternalRead = true;
   try { return Promise.resolve(mocks.listReviews()); } finally { fixtureWindow.fixtureInternalRead = false; }
 };
+// ?update=ready|failed shows the auto-update banner; calls are recorded in window.fixtureUpdateCalls.
+const updateScenario = new URLSearchParams(location.search).get('update');
+if (updateScenario) {
+  const fixtureWindow = window as unknown as { fixtureUpdateCalls: string[] };
+  fixtureWindow.fixtureUpdateCalls = [];
+  const status = updateScenario === 'failed'
+    ? { state: 'failed' as const, version: '9.9.9', message: 'Gnosis v9.9.9 did not install. This happens when Gnosis is reopened before the update finishes installing.', releaseUrl: 'https://github.com/oddur/gnosis/releases/tag/v9.9.9' }
+    : { state: 'ready' as const, version: '9.9.9' };
+  Object.assign(mocks, {
+    getUpdateStatus: () => Promise.resolve(status),
+    installUpdate: () => {
+      fixtureWindow.fixtureUpdateCalls.push('installUpdate');
+      return Promise.resolve({ state: 'installing' as const, version: '9.9.9' });
+    },
+    openExternal: (url: string) => {
+      fixtureWindow.fixtureUpdateCalls.push(url);
+      return Promise.resolve();
+    },
+  });
+}
 Object.defineProperty(window, 'electronAPI', {
   value: new Proxy(mocks, {
     get: (target, key) => {
