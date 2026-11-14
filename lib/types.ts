@@ -431,6 +431,8 @@ export interface Preferences {
   firstRunSeen: boolean;
   theme: 'light' | 'dark' | 'system';
   trayEnabled: boolean;
+  /** Settings › Notifications › Menu bar (macOS). See lib/menubar-settings.ts. */
+  menubarSettings?: import('./menubar-settings').MenubarPreferences;
   maxPrsPerRepo: number;
   parallelReview: boolean;
   analytics: boolean;
