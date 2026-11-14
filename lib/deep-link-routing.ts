@@ -35,8 +35,9 @@ export function routeDeepLink(
 ): DeepLinkRoute {
   if (target.kind === 'review') {
     // A tab already on that review is reused. Otherwise the active tab opens it, as "Explanation ready" always has.
+    // `explore: false` opens the reader: without it, an open interactive explanation would stay in front.
     const reuse = state.tabs.find((tab) => tab.location?.page === 'review' && tab.location.reviewId === target.reviewId);
-    return { tab: reuse ? { kind: 'reuse', id: reuse.id } : { kind: 'active' }, destination: { kind: 'review', reviewId: target.reviewId } };
+    return { tab: reuse ? { kind: 'reuse', id: reuse.id } : { kind: 'active' }, destination: { kind: 'review', reviewId: target.reviewId, explore: false } };
   }
   if (target.kind === 'queue') {
     const active = state.tabs.find((tab) => tab.id === state.active);

@@ -103,18 +103,18 @@ void app.whenReady().then(async () => {
 
     // The action opens the PR on the right tab.
     await clickText('.app-toast[data-kind=checks-failed] .app-toast-action', 'Open checks');
-    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Checks')");
+    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Checks')");
     assert.ok((await js<string[]>('window.fixtureNotificationActions')).includes('checks-failed:clicked'));
     await wait("window.fixtureNotificationContext === 'https://github.com/klang/engine/pull/120'");
 
     // A desktop notification click arrives as a deep link: Feedback on another PR, in its own tab.
     const tabs = await js<number>('document.querySelectorAll(".workspace-tab").length');
     await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'pr',pr:{host:'github.com',owner:'klang',repo:'engine',number:121},tab:'feedback'}}))`);
-    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Feedback')");
+    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Feedback')");
     assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), tabs + 1);
     // The same PR again reuses its tab.
     await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'pr',pr:{host:'github.com',owner:'klang',repo:'engine',number:121},tab:'summary'}}))`);
-    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Summary')");
+    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Summary')");
     assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), tabs + 1);
 
     // Settings › Notifications.

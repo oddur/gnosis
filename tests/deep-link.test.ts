@@ -78,7 +78,7 @@ test('a PR target reuses the tab showing it, else opens a new tab, with the tab 
 test('a review opens in the active tab; the Unread view reuses a plain queue tab', () => {
   assert.deepEqual(routeDeepLink({ kind: 'review', reviewId: 'r' }, { tabs: [tab('t1')], active: 't1' }, { items: [] }), {
     tab: { kind: 'active' },
-    destination: { kind: 'review', reviewId: 'r' },
+    destination: { kind: 'review', reviewId: 'r', explore: false },
   });
   assert.deepEqual(routeDeepLink({ kind: 'queue', filters: { read: 'unread' } }, { tabs: [tab('t1')], active: 't1' }, { items: [] }), {
     tab: { kind: 'active' },
