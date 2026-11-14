@@ -83,6 +83,45 @@ const base: MenubarState = {
   refreshing: false,
   hint: false,
 };
+// The website's capture (site/public/screenshots/menubar-panel.webp): only the synthetic workbench sample
+// (klang/engine, maya, lena, sam), so it never shows names from a real queue.
+const sampleRow = (id: string, extra: Partial<MenubarRow> & Pick<MenubarRow, 'title' | 'kinds'>) =>
+  row(id, { repo: 'klang/engine', author: 'lena', ...extra });
+const queueStack = { stackId: 'stack-queue', stackSize: 3, author: 'maya' };
+const sample: MenubarState = {
+  ...base,
+  groups: [
+    {
+      group: 'review',
+      label: 'To review',
+      count: 4,
+      rows: [
+        sampleRow('pr153', { title: 'Retry transient upload failures with backoff', kinds: ['review-requested'], isNew: true }),
+        sampleRow('pr120', { title: 'Bound work before it reaches the worker', kinds: ['review-requested'], ...queueStack, isNew: true }),
+        sampleRow('pr121', { title: 'Move worker dispatch onto the queue', kinds: ['updated-since-review'], ...queueStack, isNew: true }),
+        sampleRow('pr122', { title: 'Adapt batches without changing order', kinds: ['review-requested', 'explanation-ready'], ...queueStack }),
+      ],
+    },
+    {
+      group: 'fix',
+      label: 'To fix',
+      count: 2,
+      rows: [
+        sampleRow('pr148', { title: 'Keep pending commands across a reconnect', kinds: ['changes-requested', 'checks-failed'], own: true, isNew: true }),
+        sampleRow('pr146', { title: 'Trim the snapshot header', kinds: ['conflicts'], own: true }),
+      ],
+    },
+    {
+      group: 'ready',
+      label: 'Ready',
+      count: 1,
+      rows: [sampleRow('pr150', { title: 'Fix reconnect after transport shutdown', kinds: ['ready-to-merge'], own: true, checkedAt: NOW - 3 * 60_000 })],
+    },
+  ],
+  tasks: [],
+  summary: { needYou: 6, ready: 1, fresh: 4, marked: 4, line: '6 need you · 4 new · 1 ready' },
+  queueSize: 9,
+};
 const none = { needYou: 0, ready: 0, fresh: 0, marked: 0, line: 'Nothing needs you' };
 const states: Record<string, MenubarState> = {
   default: base,
@@ -94,6 +133,7 @@ const states: Record<string, MenubarState> = {
   error: { ...base, connection: 'error' },
   // The first time the panel opens: the footer tip shows until it is dismissed or a row opens.
   'first-open': { ...base, hint: true },
+  sample,
 };
 
 type Call = [keyof MenubarApi, ...unknown[]];

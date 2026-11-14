@@ -8,7 +8,7 @@ interface Props {
 }
 const {
   title,
-  description = 'Gnosis is an open-source desktop app for GitHub code review. Read diffs, review stacks, and generate explanations using your local Claude Code or Codex.',
+  description = 'Gnosis is an open-source desktop app for GitHub code review. It tells you when a PR needs you, then helps you read diffs, review stacks, resolve conflicts, and generate explanations with your local Claude Code or Codex.',
 } = Astro.props;
 const canonical = new URL(Astro.url.pathname, 'https://gnosis.to');
 ---
@@ -31,6 +31,14 @@ const canonical = new URL(Astro.url.pathname, 'https://gnosis.to');
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="font" href="/fonts/onest-latin.woff2" type="font/woff2" crossorigin />
     <title>{title}</title>
+    <script is:inline>
+      (function () {
+        var n = navigator;
+        var platform = (n.userAgentData && n.userAgentData.platform) || n.platform || '';
+        var mac = /mac/i.test(platform) && !(n.maxTouchPoints > 1);
+        document.documentElement.dataset.platform = mac ? 'mac' : 'other';
+      })();
+    </script>
     <script>
       import { init, trackEvent } from '@aptabase/web';
       init('A-EU-1996018704');

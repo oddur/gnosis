@@ -66,6 +66,10 @@ void app.whenReady().then(async () => {
         await wait(`document.querySelector('.menubar-title') && ${state === 'loading' ? '!!document.querySelector(".menubar-skeleton")' : '!document.querySelector(".menubar-skeleton")'}`);
         await capture(`${state}-${scheme}`);
       }
+      // The website's capture, from synthetic sample data only.
+      await js('window.showMenubarState("sample")');
+      await wait('document.querySelectorAll(".menubar-row").length === 7');
+      await capture(`sample-${scheme}`);
     }
     await media([{ name: 'prefers-color-scheme', value: 'light' }]);
     await js('window.showMenubarState("default")');

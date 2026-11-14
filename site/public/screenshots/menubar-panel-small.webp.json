@@ -1,0 +1,4 @@
+{
+  "prompt": "Origin: actual Gnosis application captured from commit 6f30649 (with the site sample state added to tests/fixtures/menubar.tsx) using tests/menubar-browser.ts (--menubar), sample-light capture, run in the gnosis-browser-tests-site Docker image at device scale factor 2 with GitHub avatar hosts blocked. Synthetic test fixture data (klang/engine sample) only. Resized to 360px wide with cwebp, WebP quality 86. No generated imagery.",
+  "createdAt": "2026-11-14T14:35:03.000Z"
+}

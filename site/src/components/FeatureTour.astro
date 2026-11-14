@@ -66,16 +66,16 @@ const features = [
     label: 'Resolve conflicts',
     title: 'Resolve conflicts and restack',
     description:
-      'Compare conflicting versions and review suggestions from Mergiraf or your AI tool. Inspect the result before publishing, then prepare dependent PRs for restacking.',
+      'Preparing conflicts takes about 3 seconds on a large repository, down from about 50. For each conflict, keep the PR’s change, main’s change, or both, with undo. Review the result before you push, then prepare dependent PRs for restacking.',
     details: [
-      'Conflicted, resolved, and reviewed states',
-      'Review changes before pushing',
-      'Reuse matching resolutions when restacking',
+      'One next step per file, with shortcuts',
+      'Suggestions from Mergiraf or your AI tool',
+      'Your resolutions shown apart from main’s changes',
     ],
     image: 'resolve-conflicts',
-    height: 1085,
-    alt: 'Gnosis conflict resolution workspace showing file states, conflicting code versions, and actions to choose or edit the resolution.',
-    caption: 'Compare conflicting versions, edit the result, and review before pushing.',
+    height: 1092,
+    alt: 'Gnosis Resolve conflicts view for a PR: two conflicts in src/retry.ts, each showing This PR beside main, with Keep PR change, Keep main’s change, and Keep both buttons, and Next conflict as the next step.',
+    caption: 'Each conflict shows this PR beside main. Keep one change or both.',
   },
 ];
 ---

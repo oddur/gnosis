@@ -1,4 +1,4 @@
 {
-  "prompt": "Origin: actual Gnosis application captured from current-main code at 7d81c79 using tests/conflict-resolution-browser.ts, light capture. Synthetic tests/fixtures/workbench data. Resized to 960px wide with sharp, WebP quality 86. No generated imagery.",
-  "createdAt": "2026-11-02T21:14:44.853Z"
+  "prompt": "Origin: actual Gnosis application captured from commit 6f30649 (with the site sample state added to tests/fixtures/menubar.tsx) using tests/conflict-resolution-browser.ts (--conflict-resolution), conflicts-light capture, run in the gnosis-browser-tests-site Docker image at device scale factor 2 with GitHub avatar hosts blocked. Synthetic test fixture data (klang/engine sample) only. Resized to 960px wide with cwebp, WebP quality 86. No generated imagery.",
+  "createdAt": "2026-11-14T14:35:03.000Z"
 }

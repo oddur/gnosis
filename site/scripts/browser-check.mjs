@@ -87,6 +87,28 @@ app
       assert.equal(intro.imagePriority, 'high');
       assert.equal(intro.featureFirst, true);
       assert.equal(intro.demoInIllustrated, true);
+      // Loading attributes come from the served HTML, because load() forces images to decode eagerly.
+      const needsYou = await js(`(async()=>{
+        const html=new DOMParser().parseFromString(await (await fetch(location.href)).text(),'text/html');
+        const section=html.querySelector('#needs-you');
+        const images=[...html.images].filter(i=>!i.closest('.menubar-strip'));
+        return {
+          beforeFeatures:!!(section.compareDocumentPosition(html.querySelector('#features'))&Node.DOCUMENT_POSITION_FOLLOWING),
+          terms:[...section.querySelectorAll('dt')].map(t=>t.firstChild.textContent.trim()),
+          openingEager:images[0].getAttribute('loading'),
+          othersLazy:images.slice(1).every(i=>i.getAttribute('loading')==='lazy'),
+          panelLoaded:document.querySelector('#needs-you .menubar-panel').naturalWidth>0,
+          stripHidden:section.querySelector('.menubar-strip').getAttribute('aria-hidden')
+        };
+      })()`);
+      assert.deepEqual(needsYou, {
+        beforeFeatures: true,
+        terms: ['Notifications', 'Menu bar panel', 'Open in Gnosis'],
+        openingEager: 'eager',
+        othersLazy: true,
+        panelLoaded: true,
+        stripHidden: 'true',
+      });
       assert.equal(
         await js("performance.getEntriesByType('resource').some(e=>e.name.endsWith('/onest-latin.woff2'))"),
         true
@@ -225,11 +247,15 @@ app
       await js(
         "Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copied=text}}});void 0"
       );
-      await click('#copy-brew');
+      await js("document.documentElement.dataset.platform='other';void 0");
+      assert.equal(await js("getComputedStyle(document.querySelector('.brew-install')).display"), 'none');
+      assert.equal(await js("getComputedStyle(document.querySelector('.intro-brew')).display"), 'none');
+      await js("document.documentElement.dataset.platform='mac';void 0");
+      await click('[data-copy="brew-command"]');
       assert.equal(await js('window.copied'), 'brew tap oddur/gnosis && brew install --cask gnosis');
       assert.equal(await js("document.querySelector('#copy-status').textContent"), 'Install command copied.');
       await js("navigator.clipboard.writeText=async()=>{throw Error('Denied')};void 0");
-      await click('#copy-brew');
+      await click('[data-copy="brew-command"]');
       assert.match(await js("document.querySelector('#copy-status').textContent"), /copy it manually/);
       await load();
       const featureIds = ['stacks', 'changes', 'markdown', 'chat', 'checks', 'conflicts'];
@@ -303,6 +329,20 @@ app
         'Laptop opening shows product summary and app image side by side above the fold'
       );
       await capture('laptop');
+      const captureSection = async (name) => {
+        await js("document.querySelector('#needs-you').scrollIntoView({behavior:'instant'})");
+        await pause(100);
+        const clip = await js(
+          "(()=>{const r=document.querySelector('#needs-you').getBoundingClientRect();return {x:0,y:r.top+scrollY,width:innerWidth,height:r.height,scale:1}})()"
+        );
+        const shot = await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
+          format: 'png',
+          captureBeyondViewport: true,
+          clip,
+        });
+        fs.writeFileSync(path.join(shots, name + '.png'), Buffer.from(shot.data, 'base64'));
+      };
+      await captureSection('needs-you-laptop');
       win.setContentSize(820, 900);
       await load();
       await noOverflow();
@@ -312,6 +352,7 @@ app
       await noOverflow();
       await audit('mobile');
       await capture('mobile');
+      await captureSection('needs-you-mobile');
       for (const id of featureIds) {
         await click(`[data-feature-tab="${id}"]`);
         await noOverflow();
