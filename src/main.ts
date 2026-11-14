@@ -1,3 +1,4 @@
+import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
 import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
@@ -87,7 +88,7 @@ import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell, session, net, powerMonitor } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell, session, net, powerMonitor, webContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -143,6 +144,13 @@ import { filterDiff } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import { initialize as initAptabase, trackEvent } from '@aptabase/electron/main';
 import { createTray, updateTrayMenu, destroyTray, setStatusFetcher } from './tray';
+import { createNotificationStore } from './notification-store';
+import { createNotificationService, type ToastAction } from './notification-service';
+import { createDeepLinks } from './deep-link-service';
+import { notificationSettings, normalizeNotificationPreferences, PAUSE_DURATION } from '../lib/notification-settings';
+import { isCatchUp, type NotificationKind } from '../lib/notification-routing';
+import { syncMode, watchInterval } from '../lib/notification-cadence';
+import { prRef, prUrl as deepLinkPrUrl } from '../lib/deep-link';
 import type {
   ChangedFile,
   DiffHunk,
@@ -361,6 +369,10 @@ function createWindow() {
   attachWindowHistoryNavigation(mainWindow, direction => mainWindow.webContents.send('history-navigate', direction));
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
+  // A reload, crash or close clears the ready mark, so the next renderer asks for waiting targets again.
+  mainWindow.webContents.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) { deepLinks.reset(ownerId); notificationContexts.delete(ownerId); } });
+  mainWindow.webContents.on('render-process-gone', () => deepLinks.reset(ownerId));
+  mainWindow.webContents.once('destroyed', () => { deepLinks.reset(ownerId); notificationContexts.delete(ownerId); });
 
   mainWindow.webContents.once('did-finish-load', () => mark('did-finish-load'));
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
@@ -369,7 +381,8 @@ function createWindow() {
 
   // Open external links in the user's default browser instead of a new Electron window
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    const safe = safeExternalUrl(url);
+    if (safe) void shell.openExternal(safe);
     return { action: 'deny' };
   });
 
@@ -757,13 +770,12 @@ function setupAutoUpdater() {
       if (status.state !== 'ready' || notifiedUpdateVersion === status.version) return;
       notifiedUpdateVersion = status.version;
       console.log(`[main] Update ${status.version} downloaded and ready to install`);
-      if (loadPreferences().notifications) {
-        new Notification({
-          title: 'A Gnosis update is ready',
-          body: `Restart Gnosis to install${status.version ? ` v${status.version}` : ' it'}.`,
-          silent: true,
-        }).show();
-      }
+      notifications.local({
+        type: 'update-ready',
+        key: `update|${status.version}`,
+        title: `Restart Gnosis to install${status.version ? ` v${status.version}` : ' it'}.`,
+        at: Date.now(),
+      });
     },
     // Saved data is closed by now, so Gnosis cannot keep running. Say what failed, then quit.
     onInstallFailed: (status) => {
@@ -1207,8 +1219,7 @@ function showOrCreateWindow(): void {
 }
 
 function navigateToReview(reviewId: string): void {
-  showOrCreateWindow();
-  setTimeout(() => broadcastToAllWindows('review-navigate', { reviewId }), 100);
+  deepLinks.open({ kind: 'review', reviewId }, 'tray');
 }
 
 function initTrayIfEnabled(): void {
@@ -1355,7 +1366,7 @@ function readPreferencesFile(): Preferences {
 function savePreferences(prefs: Preferences): void {
   const file = getPreferencesPath(), temporary = file + '.tmp';
   try {
-  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), ...normalizePreloadPreferences(prefs) }, null, 2));
+  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), ...normalizePreloadPreferences(prefs) }, null, 2));
     fs.renameSync(temporary, file);
   } finally { fs.rmSync(temporary, { force: true }); preferencesFile.clear(); }
 }
@@ -1432,6 +1443,7 @@ ipcMain.handle('open-logs-directory', () => {
 });
 
 ipcMain.handle('open-review-prompt', (_event, id: string) => {
+  assertReviewId(id);
   const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
   if (fs.existsSync(promptPath)) {
     void shell.openPath(promptPath);
@@ -1555,6 +1567,7 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   void maintainStorage();
   savePreferences(prefs);
   const saved = loadPreferences();
+  notifications.settingsChanged();
   // Settings › Preloading applies at once: the budget share, queue preparation and the amount.
   githubClients.setPredictedPercent(preloadSettings(saved).budgetPercent);
   broadcastToAllWindows('preferences-changed', saved);
@@ -1591,6 +1604,7 @@ ipcMain.handle('list-reviews', () => {
 });
 
 ipcMain.handle('load-review', async (_event, id: string) => {
+  assertReviewId(id);
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
   if (workbench.isMutedReview(review)) throw new Error('This review contains a muted PR. Restore it from Muted PRs first.');
@@ -1610,10 +1624,9 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   return review;
 });
 
-const REVIEW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Topics finished so far in a running explanation, or null once it has finished or stopped. */
 ipcMain.handle('load-draft-review', async (_event, id: unknown) => {
-  if (typeof id !== 'string' || !REVIEW_ID.test(id)) throw new Error('Invalid explanation.');
+  if (!isReviewId(id)) throw new Error('Invalid explanation.');
   const review = explanationBuilds.draft(id);
   if (!review) return null;
   if (workbench.isMutedReview(review)) throw new Error('This review contains a muted PR. Restore it from Muted PRs first.');
@@ -1640,6 +1653,7 @@ ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
 });
 
 ipcMain.handle('mark-review-read', (_event, id: string) => {
+  assertReviewId(id);
   const index = readReviewsIndex().map((e) =>
     e.id === id ? { ...e, unread: false, autoUpdated: false } : e
   );
@@ -1649,6 +1663,7 @@ ipcMain.handle('mark-review-read', (_event, id: string) => {
 });
 
 ipcMain.handle('delete-review', (_event, id: string) => {
+  assertReviewId(id);
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
   if (fs.existsSync(reviewPath)) fs.unlinkSync(reviewPath);
@@ -1659,6 +1674,7 @@ ipcMain.handle('delete-review', (_event, id: string) => {
 });
 
 ipcMain.handle('export-review', async (event, id: string): Promise<string | null> => {
+  assertReviewId(id);
   const index = readReviewsIndex();
   const entry = index.find((e) => e.id === id);
   if (!entry) throw new Error(`Review ${id} not found.`);
@@ -2722,16 +2738,15 @@ async function runBackgroundGeneration(
     const muted = workbench.isMutedReview(reviewGuide);
     if (!muted) broadcastToAllWindows('review-completed', { reviewId });
 
-    // Desktop notification
-    if (!muted && loadPreferences().notifications) {
-      const notif = new Notification({
-        title: 'Explanation ready',
-        body: prData.title,
-        silent: true,
-      });
-      notif.on('click', () => navigateToReview(reviewId));
-      notif.show();
-    }
+    // One surface: a toast when Gnosis has focus, a desktop notification when it does not.
+    if (!muted) notifications.local({
+      type: 'explanation-ready',
+      key: `explanation|${reviewId}`,
+      title: prData.title,
+      ...(prRef(request.prUrl) ? { url: request.prUrl } : {}),
+      at: Date.now(),
+      target: { kind: 'review', reviewId },
+    });
 
     console.log(`[main] Review ${reviewId} completed in ${formatMs(generationDurationMs)}`);
   } catch (err) {
@@ -2759,10 +2774,59 @@ function formatMs(ms: number): string {
   return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 }
 
+// ── Notifications ──
+// One pipeline: the observer beside the unread store raises events, the service routes each to one surface.
+const notificationStore = createNotificationStore(appData);
+const notificationContexts = new Map<number, { activeUrl?: string }>();
+const notificationAnalytics = () => loadPreferences().analytics;
+const deepLinks = createDeepLinks({
+  show: showOrCreateWindow,
+  send: (id, item) => {
+    const target = webContents.fromId(id);
+    if (!target || target.isDestroyed()) return false;
+    target.send('deep-link', item);
+    return true;
+  },
+  // Prefer the focused window, then the first window.
+  preferred: ready => {
+    const focused = BrowserWindow.getFocusedWindow()?.webContents.id;
+    return focused !== undefined && ready.includes(focused) ? focused : ready[0];
+  },
+});
+const notifications = createNotificationService({
+  settings: () => notificationSettings(loadPreferences()),
+  focus: () => {
+    const win = BrowserWindow.getFocusedWindow();
+    return { focused: !!win, activeUrl: win ? notificationContexts.get(win.webContents.id)?.activeUrl : undefined };
+  },
+  desktop: {
+    supported: () => Notification.isSupported(),
+    // Electron 41 has no threadId or groupId; the service coalesces per PR itself.
+    create: options => {
+      const notification = new Notification(options);
+      return {
+        on: (event, listener) => { notification.on(event as 'show', listener); },
+        show: () => notification.show(),
+        close: () => notification.close(),
+      };
+    },
+  },
+  toast: delivery => {
+    const contents = (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(0))?.webContents;
+    if (!contents || contents.isDestroyed() || contents.isLoading() || !notificationContexts.has(contents.id)) return false;
+    contents.send('notification', { type: 'show', delivery });
+    return true;
+  },
+  open: target => deepLinks.open(target, 'notification'),
+  show: showOrCreateWindow,
+  count: (kind, field) => { if (cachedLogin && notificationAnalytics()) notificationStore.count(cachedLogin, kind, field); },
+  platform: process.platform,
+});
 const workbench = createWorkbenchService({
   changed: () => { notifyLocalChange('workbench-changed'); notifyLocalChange('activity-changed'); },
   storage: appData,
-  signals: (client, requests) => getQueueSignals(client, requests),
+  signals: (client, requests, options) => getQueueSignals(client, requests, options),
+  notifications: { store: notificationStore, deliver: events => notifications.deliver(events), count: notificationAnalytics },
   cachedDiscussion: url => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
   cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests) : []; },
   activities,
@@ -2846,9 +2910,58 @@ ipcMain.handle('workbench-mark-pr-read', async (_event, request: MarkPrReadReque
   const result = workbench.markPrRead(request);
   await appData.flush();
   broadcastToAllWindows('pr-read-state-changed');
+  // Marking a PR read closes its waiting toasts.
+  if (request.read) {
+    const urls = request.receipts.map(receipt => receipt.url);
+    notifications.read(urls);
+    broadcastToAllWindows('notification', { type: 'close', urls });
+  }
   return result;
 });
 ipcMain.handle('workbench-star-prs', (_event, request: StarPrRequest) => workbench.starPrs(request));
+// ── Notification and deep-link IPC ──
+// The renderer can navigate: hand it waiting targets, and show toasts that had no window.
+ipcMain.handle('deep-link-take', (event) => {
+  if (event.senderFrame !== event.sender.mainFrame) return [];
+  if (!notificationContexts.has(event.sender.id)) notificationContexts.set(event.sender.id, {});
+  const items = deepLinks.take(event.sender.id);
+  setTimeout(() => notifications.rendererReady(), 0);
+  return items;
+});
+/** The PR shown in a window's active workspace, so an event for it shows nothing while that window has focus. */
+ipcMain.on('notification-context', (event, raw: unknown) => {
+  if (event.senderFrame !== event.sender.mainFrame) return;
+  const url = raw && typeof raw === 'object' && typeof (raw as { activeUrl?: unknown }).activeUrl === 'string' ? (raw as { activeUrl: string }).activeUrl : undefined;
+  const ref = url ? prRef(url) : undefined;
+  notificationContexts.set(event.sender.id, { activeUrl: ref ? deepLinkPrUrl(ref) : undefined });
+});
+const TOAST_ACTIONS: readonly ToastAction[] = ['clicked', 'dismissed', 'timedOut'];
+const NOTIFICATION_KINDS: readonly NotificationKind[] = ['review-requested', 'team-review-requested', 'changes-requested', 'approved', 'checks-failed', 'ready-to-merge', 'explanation-ready', 'update-ready', 'summary', 'test'];
+ipcMain.on('notification-action', (_event, kind: unknown, action: unknown) => {
+  if (NOTIFICATION_KINDS.includes(kind as NotificationKind) && TOAST_ACTIONS.includes(action as ToastAction))
+    notifications.toastAction(kind as NotificationKind, action as ToastAction);
+});
+function updateNotificationSettings(change: (current: ReturnType<typeof normalizeNotificationPreferences>) => Partial<ReturnType<typeof normalizeNotificationPreferences>>, desktop?: boolean) {
+  const prefs = loadPreferences();
+  const current = normalizeNotificationPreferences(prefs);
+  savePreferences({ ...prefs, ...(desktop === undefined ? {} : { notifications: desktop }), notificationSettings: { ...current, ...change(current) } });
+  const saved = loadPreferences();
+  broadcastToAllWindows('preferences-changed', saved);
+  notifications.settingsChanged();
+  return saved;
+}
+/** The answer to the first PR-event toast. "Turn on" sends a test notification, so any OS prompt follows the click. */
+handleInteractive('notification-introduce', (_event, accept: unknown) => {
+  if (typeof accept !== 'boolean') throw new Error('Choose whether to turn on desktop notifications.');
+  updateNotificationSettings(() => ({ introduced: true }), accept);
+  return accept ? notifications.test() : 'none';
+});
+handleInteractive('notification-test', () => notifications.test());
+handleInteractive('notification-pause', (_event, paused: unknown) => {
+  if (typeof paused !== 'boolean') throw new Error('Choose whether to pause notifications.');
+  return updateNotificationSettings(() => ({ pausedUntil: paused ? Date.now() + PAUSE_DURATION : 0 })).notificationSettings;
+});
+ipcMain.handle('notification-status', () => notifications.status());
 const onboardingService = createOnboardingService({ storage: appData, account: () => cachedLogin, preferences: loadPreferences, savePreferences, views: () => workbench.savedViewsState(), replaceViews: state => workbench.replaceSavedViews(state) });
 ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
 ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
@@ -3561,6 +3674,61 @@ ipcMain.on('github-sync-watch', afterStartup(startup, (event: Electron.IpcMainEv
 let discoveryDue = 0;
 let discoveryPending = false;
 let syncWasAvailable = false;
+// ── Notification passes ──
+// The first pass after launch, after resume or after a gap is a catch-up pass: its events become one batch.
+let lastSyncPassAt: number | undefined;
+let resumedSinceSync = false;
+function beginSyncPass(intervalMs: number) {
+  if (isCatchUp({ lastSyncAt: lastSyncPassAt, now: Date.now(), resumed: resumedSinceSync, intervalMs })) notifications.beginCatchUp();
+}
+function endSyncPass(success: boolean) {
+  if (success) { lastSyncPassAt = Date.now(); resumedSinceSync = false; }
+  notifications.endCatchUp();
+}
+/** The own-PR status sweep. Its plan is local; requests only for PRs that are due. */
+let sweepPending: Promise<unknown> | undefined;
+let sweepCheckedAt = 0;
+function sweepOwnPrs(force = false): Promise<unknown> {
+  if (sweepPending) return sweepPending;
+  if (!force && Date.now() - sweepCheckedAt < 15_000) return Promise.resolve();
+  sweepCheckedAt = Date.now();
+  sweepPending = workbench.sweepOwnPrs()
+    .catch((error: unknown) => console.warn('[notifications] Own-PR status sweep failed:', error instanceof Error ? error.message : error))
+    .finally(() => { sweepPending = undefined; });
+  return sweepPending;
+}
+const windowVisible = () => BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
+let watchDue = 0;
+let watchPending = false;
+let watching = false;
+/**
+ * Watch mode: no window is visible, so the normal loop is stopped. Desktop notifications still need news, so the
+ * personal searches and the own-PR sweep run every 5 minutes, or 10 on battery. No renderer sync, no preloading.
+ */
+async function tickWatch(token: string) {
+  const interval = watchInterval(onBattery);
+  if (!watching) { watching = true; watchDue = Math.max(watchDue, Date.now() + interval); }
+  if (watchPending || Date.now() < watchDue) return;
+  watchPending = true;
+  watchDue = Date.now() + interval;
+  let success = false;
+  beginSyncPass(interval);
+  try {
+    if (!cachedLogin) {
+      const login = await resolveGitHubLogin(token);
+      if (token !== cachedToken) return;
+      cachedLogin = login;
+    }
+    await workbench.watch();
+    await sweepOwnPrs(true);
+    success = true;
+  } catch (error) {
+    watchDue = githubRateLimit(error)?.retryAt ?? Date.now() + interval;
+  } finally {
+    endSyncPass(success);
+    watchPending = false;
+  }
+}
 async function tickGitHubSync() {
   if (!startup.ready('all')) return;
   const token = cachedToken;
@@ -3574,7 +3742,13 @@ async function tickGitHubSync() {
       subscription.owner.send('github-sync', { account: cachedLogin, subscriptionId: subscription.id, reset: true, updates: [] });
   }
   const available = !!token && syncEnabled();
-  if (!available) { syncWasAvailable = false; return; }
+  if (!available) {
+    syncWasAvailable = false;
+    const mode = syncMode({ signedIn: !!token, suspended, online: net.isOnline(), windowVisible: windowVisible(), desktopNotifications: notificationSettings(loadPreferences()).desktop });
+    if (token && mode === 'watch') void tickWatch(token);
+    return;
+  }
+  watching = false;
   if (!syncWasAvailable) { githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); }
   syncWasAvailable = true;
   void githubSync.tick();
@@ -3582,9 +3756,12 @@ async function tickGitHubSync() {
   void checkDetailsPreload.tick();
   void prOpenPreload.tick();
   prMergeMonitor.tick();
+  if (!discoveryPending && cachedLogin) void sweepOwnPrs();
   if (discoveryPending || Date.now() < discoveryDue) return;
   discoveryPending = true;
   discoveryDue = Date.now() + 120_000;
+  let success = false;
+  beginSyncPass(120_000);
   try {
     if (!cachedLogin) {
       const login = await resolveGitHubLogin(token);
@@ -3593,18 +3770,23 @@ async function tickGitHubSync() {
     }
     if (token !== cachedToken) return;
     const queue = await workbench.queue();
+    // The queue returns its saved view at once; wait for the discovery behind it, then sweep, so a catch-up
+    // pass covers both.
+    await workbench.refreshing();
+    await sweepOwnPrs(true);
     if (token !== cachedToken) return;
     discoveryDue = queue.sync?.retryAt ?? Date.now() + 120_000;
+    success = queue.sync?.status !== 'paused';
   } catch (error) {
     discoveryDue = githubRateLimit(error)?.retryAt ?? Date.now() + 60_000;
-  } finally { discoveryPending = false; }
+  } finally { endSyncPass(success); discoveryPending = false; }
 }
 void app.whenReady().then(() => {
   const timer = setInterval(() => void tickGitHubSync(), 1000);
   timer.unref();
   const wake = () => { suspended = false; githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); void tickGitHubSync(); };
   powerMonitor.on('suspend', () => { suspended = true; });
-  powerMonitor.on('resume', wake);
+  powerMonitor.on('resume', () => { resumedSinceSync = true; watchDue = Math.min(watchDue, Date.now() + 10_000); wake(); });
   // On battery, predictions keep running but read one file body instead of three.
   onBattery = powerMonitor.isOnBatteryPower();
   powerMonitor.on('on-battery', () => { onBattery = true; publishPredictionState(); });

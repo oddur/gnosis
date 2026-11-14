@@ -140,7 +140,16 @@ declare global {
       offReviewFailed: () => void;
       onReviewStats: (callback: (reviewId: string, inputBytes: number) => void) => void;
       offReviewStats: () => void;
-      onReviewNavigate: (callback: (reviewId: string) => void) => void;
+      takeDeepLinks?: () => Promise<import('./deep-link-service').DeepLinkDelivery[]>;
+      onDeepLink?: (callback: (item: import('./deep-link-service').DeepLinkDelivery) => void) => () => void;
+      onNotification?: (callback: (message: import('../lib/notification-routing').NotificationMessage) => void) => () => void;
+      /** The PR shown in this window's active workspace. */
+      notificationContext?: (activeUrl?: string) => void;
+      notificationAction?: (kind: import('../lib/notification-routing').NotificationKind, action: 'clicked' | 'dismissed' | 'timedOut') => void;
+      notificationIntroduce: (accept: boolean) => Promise<'desktop' | 'toast' | 'none'>;
+      sendTestNotification: () => Promise<'desktop' | 'toast' | 'none'>;
+      pauseNotifications: (paused: boolean) => Promise<import('../lib/notification-settings').NotificationPreferences>;
+      notificationStatus: () => Promise<{ supported: boolean; blocked: boolean }>;
       getPrBadgePreview: (url: string) => Promise<import('../lib/pr-badge-preview').PrBadgePreview | null>;
       loadFileFilters: () => Promise<FileFilterState>;
       updateFileFilters: (action:FileFilterAction) => Promise<FileFilterState>;
@@ -154,7 +163,6 @@ declare global {
       onFullScreenChange?: (callback: (fullScreen: boolean) => void) => () => void;
       /** Recolours the Windows and Linux caption buttons drawn over the title bar row. */
       setWindowChromeTheme?: (dark: boolean) => void;
-      offReviewNavigate: () => void;
       sendSlideChat: (req: SendSlideChatRequest) => Promise<string>;
       onChatProgress: (callback: (chunk: string) => void) => void;
       offChatProgress: () => void;

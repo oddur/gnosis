@@ -5,7 +5,7 @@ import { Worker } from 'node:worker_threads';
 import path from 'node:path';
 
 /**
- * A change to a state saved as a header row plus one row per entry: `pr-read-*`, `muted-prs:*` and
+ * A change to a state saved as a header row plus one row per entry: `pr-read-*`, `pr-notify-*`, `muted-prs:*` and
  * `starred-prs:*`. Such a state reads as `{ ...header, entries }`. `header` replaces the header row.
  */
 export interface RowPatch {

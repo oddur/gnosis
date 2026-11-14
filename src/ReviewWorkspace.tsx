@@ -280,37 +280,6 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     setPage('home');
   }
 
-  // Navigate to a completed review when notification is clicked
-  useEffect(() => {
-    window.electronAPI.onReviewNavigate((reviewId) => {
-      const open = async () => {
-        const version = ++navigationVersion.current;
-        try {
-          const loaded = await loadExplanation(reviewId);
-          if (version === navigationVersion.current) handleReviewReady(loaded);
-        } catch (error) {
-          if (version !== navigationVersion.current) return;
-          const id = toast.add({
-            type: 'error',
-            title: 'Could not open saved review',
-            description: error instanceof Error ? error.message : String(error),
-            actionProps: {
-              children: 'Retry',
-              onClick: () => {
-                toast.close(id);
-                void open();
-              },
-            },
-          });
-        }
-      };
-      void open();
-    });
-    return () => {
-      window.electronAPI.offReviewNavigate();
-    };
-  }, [handleReviewReady]);
-
   async function navigate(target: SearchDestination, restoring = false) {
     if (!restoring) {
       initialAttempt.current++;
@@ -357,6 +326,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
       if (version !== navigationVersion.current) return;
       resolved = {
         kind: 'home',
+        ...(target.open ? { open: target.open } : {}),
         subject: {
           attention: 'other',
           subject: {

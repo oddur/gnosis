@@ -4,6 +4,10 @@ import fs from 'node:fs';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createAppDataStore } from '../src/app-data-store';
 import { attachWindowHistoryNavigation } from '../src/window-history-navigation';
+import { createNotificationService, type DesktopNotificationOptions } from '../src/notification-service';
+import { createDeepLinks } from '../src/deep-link-service';
+import { notificationSettings } from '../lib/notification-settings';
+import { prTarget } from '../lib/deep-link';
 
 const directory = process.env.GNOSIS_SMOKE_DIRECTORY;
 if (!directory) throw new Error('Run through npm run test:electron-smoke');
@@ -67,8 +71,56 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await contents.executeJavaScript('window.smokeEvents'), [-1, 1, -1, 1]);
     // Unsubscribing must not hand ipcRenderer (or anything else) back across the context bridge.
     assert.equal(await contents.executeJavaScript('window.unsubscribeSmoke() === undefined'), true);
+
+    // Notification routing against real window focus. A shim records desktop notifications, so none is shown.
+    const desktop: DesktopNotificationOptions[] = [];
+    const toasts: string[] = [];
+    const deepLinks = createDeepLinks({
+      show: () => {},
+      send: (id, item) => {
+        if (id !== contents.id) return false;
+        contents.send('deep-link', item);
+        return true;
+      },
+      log: () => {},
+    });
+    ipcMain.handle('deep-link-take', (event) => deepLinks.take(event.sender.id));
+    const notifications = createNotificationService({
+      settings: () => notificationSettings({ notifications: true, notificationSettings: { introduced: true } }),
+      focus: () => ({ focused: !!BrowserWindow.getFocusedWindow() }),
+      desktop: { supported: () => true, create: (options) => { desktop.push(options); return { on: () => {}, show: () => {}, close: () => {} }; } },
+      toast: (delivery) => (toasts.push(delivery.title), true),
+      open: (target) => deepLinks.open(target, 'notification'),
+    });
+    const ready = { type: 'explanation-ready' as const, title: 'Smoke PR', at: Date.now(), target: { kind: 'review' as const, reviewId: 'smoke-review' } };
+    window.blur();
+    if (BrowserWindow.getFocusedWindow()) window.hide();
+    assert.equal(BrowserWindow.getFocusedWindow(), null, 'No Gnosis window has focus');
+    notifications.local({ ...ready, key: 'explanation|smoke-1' });
+    assert.deepEqual(desktop.map((options) => options.title), ['Explanation ready'], 'Unfocused: a desktop notification');
+    assert.deepEqual(toasts, []);
+    window.show();
+    window.focus();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // A virtual display may not grant focus; check the focused route only when the window really has it.
+    const focused = !!BrowserWindow.getFocusedWindow();
+    notifications.local({ ...ready, key: 'explanation|smoke-2' });
+    if (focused) {
+      assert.equal(desktop.length, 1, 'Focused: no desktop notification');
+      assert.deepEqual(toasts, ['Explanation ready']);
+    }
+    // A click before the renderer is ready waits for its handshake, then later targets arrive at once.
+    deepLinks.open(prTarget('https://github.com/example/repository/pull/7', 'checks')!, 'notification');
+    await contents.executeJavaScript(`window.smokeLinks=[];window.stopLinks=window.electronAPI.onDeepLink(item=>window.smokeLinks.push(item.target.kind));
+      window.electronAPI.takeDeepLinks().then(items=>{window.taken=items.map(item=>item.target.tab);return true})`);
+    assert.deepEqual(await contents.executeJavaScript('window.taken'), ['checks']);
+    deepLinks.open({ kind: 'review', reviewId: 'smoke-review' }, 'tray');
+    await contents.executeJavaScript(`new Promise((resolve,reject)=>{const deadline=Date.now()+5000;
+      const check=()=>{if(window.smokeLinks.length===1)resolve();else if(Date.now()>deadline)reject(Error('Deep link IPC timed out'));else setTimeout(check,20)};check();})`);
+    assert.deepEqual(await contents.executeJavaScript('window.smokeLinks'), ['review']);
+    assert.equal(await contents.executeJavaScript('window.stopLinks() === undefined'), true);
     console.log(
-      'PASS: Electron window, isolated production preload, IPC, SQLite worker persistence, native navigation bridge'
+      `PASS: Electron window, isolated production preload, IPC, SQLite worker persistence, native navigation bridge, notification routing by focus${focused ? '' : ' (focused route skipped: no window focus on this display)'}, deep-link handshake`
     );
   } catch (error) {
     console.error(error);

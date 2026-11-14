@@ -901,7 +901,11 @@ void app.whenReady().then(async () => {
           };
         });
       };
-      window.finishReview = () => tasks.push({id:'review:notification',kind:'review',title:'Completed background review',detail:'Ready',reviewId:'workbench-review',status:'completed',updatedAt:new Date().toISOString(),canCancel:false,canRetry:false});
+      // "Explanation ready" is routed by main: with the window focused it arrives as one toast, never also as a desktop notification.
+      window.finishReview = () => {
+        tasks.push({id:'review:notification',kind:'review',title:'Completed background review',detail:'Ready',reviewId:'workbench-review',status:'completed',updatedAt:new Date().toISOString(),canCancel:false,canRetry:false});
+        window.dispatchEvent(new CustomEvent('fixture-notification',{detail:{type:'show',delivery:{id:'explanation',kind:'explanation-ready',title:'Explanation ready',body:'Completed background review',target:{kind:'review',reviewId:'workbench-review'},keys:['explanation|workbench-review'],types:['explanation-ready']}}}));
+      };
     })()`);
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
@@ -953,7 +957,10 @@ void app.whenReady().then(async () => {
     );
     await wait("!document.querySelector('[data-slot=toast]')");
     await js('window.finishReview()');
-    await wait("document.querySelector('[data-slot=toast]')?.textContent.includes('Review ready')");
+    await wait("document.querySelector('[data-slot=toast]')?.textContent.includes('Explanation ready')");
+    // The Activity drawer no longer raises its own toast for the same completion.
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    assert.equal(await js("document.querySelectorAll('[data-slot=toast]').length"), 1, 'One surface per event');
     await js("document.querySelector('[data-slot=toast] .app-toast-action').click()");
     await wait("!document.querySelector('.review-tool-slot iframe') && !!document.querySelector('.review-toolbar')");
     await wait("!document.querySelector('[data-slot=toast]')");

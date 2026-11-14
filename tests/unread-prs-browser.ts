@@ -117,8 +117,12 @@ void app.whenReady().then(async () => {
     await open(152);
     await wait(`${unread(152)}.then(n=>n===0)`);
     await back();
+    // A waiting notification for a PR closes when that PR is marked read.
+    await js(`window.dispatchEvent(new CustomEvent('fixture-notification',{detail:{type:'show',delivery:{id:'n121',kind:'approved',title:'maya approved',body:'Route worker commands',url:'https://github.com/klang/engine/pull/121',target:{kind:'pr',pr:{host:'github.com',owner:'klang',repo:'engine',number:121}},keys:['k'],types:['approved']}}}))`);
+    await wait("!!document.querySelector('.app-toast[data-kind=approved]')");
     await menuAction(js, 'Stack actions', 'Mark as read');
     await wait(`${unread(121)}.then(n=>n===0)`);
+    await wait("!document.querySelector('.app-toast[data-kind=approved]')");
     await menuAction(js, 'Stack actions', 'Mark as unread');
     assert.equal(await js("document.querySelectorAll('.queue-member.is-unread').length"), 3);
     await js(
