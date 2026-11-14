@@ -50,8 +50,8 @@ export function SearchableSelect({
   id?: string;
   className?: string;
   popupClassName?: string;
-  /** Small parent popovers can retain focus ownership while positioning against the window. */
-  popupBoundary?: 'container' | 'viewport';
+  /** Small parent popovers can retain focus ownership while positioning against the window or a dialog. */
+  popupBoundary?: 'container' | 'viewport' | Element;
   disabled?: boolean;
   describedBy?: string;
   triggerLabel?: string;
@@ -128,7 +128,7 @@ export function SearchableSelect({
       >
         {triggerLabel !== undefined ? identityLabel(value, triggerLabel) : optionLabel(value, labels.get(value)) ?? placeholder}
       </ComboboxTrigger>
-      <ComboboxContent container={container} collisionBoundary={popupBoundary === 'viewport' ? [] : undefined} className={popupClassName}>
+      <ComboboxContent container={container} collisionBoundary={popupBoundary === 'viewport' ? [] : popupBoundary === 'container' ? undefined : popupBoundary} className={popupClassName}>
         <ComboboxInput aria-label={`Search ${label.toLowerCase()}`} placeholder="Type to search…" />
         <ComboboxEmpty>No matches. Try another search.</ComboboxEmpty>
         <ComboboxList>
