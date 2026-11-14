@@ -520,9 +520,17 @@ const mocks = {
       checks:{state:'success' as const,passed:129,skipped:1,total:130},readiness:{state:'OPEN',isDraft:false,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'APPROVED',baseBranch:member.baseBranch,baseSha:member.baseSha,behindBy:0,mergeQueue:false,queueState:null}}});
   },
   ...fileFilterMocks,
+  linkScheme: 'gnosis',
   takeDeepLinks: () => Promise.resolve([]),
+  // The detail is a target from a notification, or a whole delivery (`{ source, target }` or `{ source, error }`).
   onDeepLink: (callback: (item: import('../../src/deep-link-service').DeepLinkDelivery) => void) => {
-    const listener = (event: Event) => callback({ id: `fixture-${++deepLinkSequence}`, source: 'notification', target: (event as CustomEvent<import('../../lib/deep-link').DeepLinkTarget>).detail });
+    const listener = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+      const id = `fixture-${++deepLinkSequence}`;
+      callback('source' in detail
+        ? { id, ...detail } as import('../../src/deep-link-service').DeepLinkDelivery
+        : { id, source: 'notification', target: detail as import('../../lib/deep-link').DeepLinkTarget });
+    };
     window.addEventListener('fixture-deep-link', listener);
     return () => window.removeEventListener('fixture-deep-link', listener);
   },
@@ -818,6 +826,14 @@ const mocks = {
 };
 for (const item of items) { item.starredUrls=item.subject.members.filter(m=>fixtureStars.some(e=>e.member.url===m.url)).map(m=>m.url);item.starred=!!item.starredUrls.length; }
 if (new URLSearchParams(location.search).has('threads')) Object.assign(mocks, threadMocks());
+// ?deep-links: pull/404 is gone or private, and pull/777 is muted.
+if (new URLSearchParams(location.search).has('deep-links')) {
+  const metadata = mocks.getPrMetadata;
+  mocks.getPrMetadata = (url: string) => url.endsWith('/pull/404')
+    ? Promise.reject(new Error('GitHub could not find the PR or code revision in klang/engine. It may no longer exist, or your account may not have access.'))
+    : metadata(url);
+  if (!fixtureMutes.length) fixtureMutes = [{ member: { ...members[0], number: 777, url: 'https://github.com/klang/engine/pull/777', title: 'A muted PR' }, mutedAt: date }];
+}
 if (new URLSearchParams(location.search).has('images')) Object.assign(mocks, imageMocks(review));
 if (new URLSearchParams(location.search).has('shell-startup-failure')) {
   const load = mocks.loadPreferences;

@@ -22,7 +22,7 @@ test('targets crossing IPC are re-validated, and unknown fields are dropped', ()
     { kind: 'review', reviewId: '../../etc/passwd' },
     { kind: 'queue', section: 'everything' },
     { kind: 'queue', filters: { read: 'maybe' } },
-    { kind: 'settings' },
+    { kind: 'settings', section: 'secrets' },
   ])
     assert.equal(parseDeepLinkTarget(bad), undefined, JSON.stringify(bad));
   assert.equal(prUrl(pr), 'https://github.com/o/r/pull/1');
@@ -32,7 +32,7 @@ test('targets crossing IPC are re-validated, and unknown fields are dropped', ()
 test('targets wait until a renderer is ready, then arrive at once; a reload asks again', () => {
   const sent: [number, string][] = [];
   let shown = 0;
-  const links = createDeepLinks({ show: () => shown++, send: (id, item) => (sent.push([id, item.target.kind]), true), log: () => {} });
+  const links = createDeepLinks({ show: () => shown++, send: (id, item) => (sent.push([id, item.target?.kind ?? '']), true), log: () => {} });
   links.open({ kind: 'review', reviewId: 'a' }, 'tray');
   links.open({ kind: 'review', reviewId: 'a' }, 'tray');
   assert.equal(shown, 2);
@@ -43,7 +43,7 @@ test('targets wait until a renderer is ready, then arrive at once; a reload asks
   links.reset(7);
   for (let i = 0; i < 8; i++) links.open({ kind: 'review', reviewId: `r${i}` }, 'notification');
   assert.equal(links.pending(), DEEP_LINK_QUEUE_LIMIT);
-  assert.deepEqual(links.take(8).map((item) => item.target.kind === 'review' && item.target.reviewId), ['r3', 'r4', 'r5', 'r6', 'r7']);
+  assert.deepEqual(links.take(8).map((item) => item.target?.kind === 'review' && item.target.reviewId), ['r3', 'r4', 'r5', 'r6', 'r7']);
 });
 
 test('an invalid target is rejected; a renderer that is gone is skipped', () => {

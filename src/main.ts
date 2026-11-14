@@ -1,3 +1,5 @@
+// First: the single-instance lock and the macOS `open-url` buffer must exist before anything else runs (#309).
+import { instance as singleInstance } from './single-instance-start';
 import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
 import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
@@ -176,7 +178,7 @@ const predictionsOff = process.env.GNOSIS_PREDICT === 'off';
 const startup = createStartup();
 gateHandlers(ipcMain, startup, {
   ungated: ['load-preferences', 'get-config', 'open-external', 'open-logs-directory', 'get-update-status', 'install-update', 'dismiss-update'],
-  dataOnly: ['load-review-state', 'save-review-state', 'save-file-progress', 'load-file-filters', 'load-onboarding', 'get-auth-state'],
+  dataOnly: ['load-review-state', 'save-review-state', 'save-file-progress', 'load-file-filters', 'load-onboarding', 'get-auth-state', 'deep-link-take'],
 });
 const launchedAt = Date.now();
 const STARTUP_REPAIR_DELAY_MS = 5_000;
@@ -359,7 +361,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Sandboxed preloads cannot read main's environment.
-      additionalArguments: [...(startupTracing ? ['--gnosis-perf-trace'] : []), ...(predictionsOff ? ['--gnosis-predict-off'] : [])],
+      additionalArguments: [...(startupTracing ? ['--gnosis-perf-trace'] : []), ...(predictionsOff ? ['--gnosis-predict-off'] : []), ...(app.isPackaged ? [] : ['--gnosis-link-dev'])],
     },
   });
 
@@ -380,10 +382,21 @@ function createWindow() {
   });
 
   // Open external links in the user's default browser instead of a new Electron window
+  // A gnosis link in rendered content opens in the app, untrusted; it never bounces through the OS.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isGnosisLink(url)) {
+      deepLinks.receive(url, 'content');
+      return { action: 'deny' };
+    }
     const safe = safeExternalUrl(url);
     if (safe) void shell.openExternal(safe);
     return { action: 'deny' };
+  });
+  // The main window never leaves the app. A clicked gnosis link is routed in the app instead.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (sameAppPage(url, mainWindow.webContents.getURL())) return;
+    event.preventDefault();
+    if (isGnosisLink(url)) deepLinks.receive(url, 'content');
   });
 
   // On non-macOS, closing the window quits the app — confirm if a review is in progress.
@@ -803,6 +816,8 @@ let harnessEnvironments: ReturnType<typeof createHarnessEnvironmentStore>;
 const appData = createAppDataStore();
 const rawFileFilters = createFileFilterState(appData);
 void app.whenReady().then(async () => {
+  // The instance that lost the lock is already exiting.
+  if (!singleInstance.primary) return;
   mark('when-ready');
   setupLogging();
   harnessEnvironments = createHarnessEnvironmentStore(path.join(app.getPath('userData'), 'harness-environment.enc'), {
@@ -839,6 +854,8 @@ void app.whenReady().then(async () => {
     }
   }
   createWindow();
+  // Links that arrived before the window (macOS cold launch, argv, another launch) go through the service now.
+  singleInstance.attach({ receive: (raw, source) => deepLinks.receive(raw, source), show: showOrCreateWindow });
 
   // Saved data and the GitHub cache load while the renderer boots. Handlers wait for what they read.
   try {
@@ -1206,6 +1223,21 @@ function reportReviewPhase(payload: {reviewId:string;phase:string;completed?:num
   broadcastToAllWindows('review-phase',payload);
 }
 
+/** A `gnosis://` link in this build's scheme: `gnosis` when packaged, `gnosis-dev` in development. */
+function isGnosisLink(url: unknown): url is string {
+  return typeof url === 'string' && singleInstance.schemes.some(scheme => url.slice(0, scheme.length + 1).toLowerCase() === `${scheme}:`);
+}
+/** Whether a navigation stays on the app's own page: the dev server origin, or the packaged renderer file. */
+function sameAppPage(url: string, current: string): boolean {
+  try {
+    const next = new URL(url);
+    const page = new URL(current);
+    return next.protocol === 'file:' ? page.protocol === 'file:' && next.pathname === page.pathname : next.origin === page.origin;
+  } catch {
+    return false;
+  }
+}
+
 function showOrCreateWindow(): void {
   const windows = BrowserWindow.getAllWindows();
   if (windows.length > 0) {
@@ -1427,6 +1459,10 @@ ipcMain.handle('get-update-status', (): AppUpdateStatus => updateController?.sta
 ipcMain.handle('install-update', (): Promise<AppUpdateStatus> => updateController?.restartNow() ?? Promise.resolve({ state: 'idle' }));
 
 ipcMain.handle('open-external', (_event, url: string) => {
+  if (isGnosisLink(url)) {
+    deepLinks.receive(url, 'content');
+    return;
+  }
   try {
     if (new URL(url).protocol === 'https:') {
       void shell.openExternal(url);
@@ -2780,7 +2816,16 @@ const notificationStore = createNotificationStore(appData);
 const notificationContexts = new Map<number, { activeUrl?: string }>();
 const notificationAnalytics = () => loadPreferences().analytics;
 const deepLinks = createDeepLinks({
-  show: showOrCreateWindow,
+  show: () => {
+    showOrCreateWindow();
+    // Windows may refuse focus to a background process; raising the window once brings it forward.
+    const win = BrowserWindow.getAllWindows().at(0);
+    if (process.platform === 'win32' && win && !win.isFocused()) {
+      win.setAlwaysOnTop(true);
+      win.setAlwaysOnTop(false);
+    }
+  },
+  schemes: singleInstance.schemes,
   send: (id, item) => {
     const target = webContents.fromId(id);
     if (!target || target.isDestroyed()) return false;

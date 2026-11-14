@@ -262,6 +262,7 @@ declare global {
       >;
       platform: NodeJS.Platform;
       isPackaged: boolean;
+      linkScheme?: string;
       /** Present only when GNOSIS_PERF_TRACE is set. */
       perfMark?: (name: string) => void;
       /** Present only when GNOSIS_PERF_TRACE is set. Prints `[perf] <name> <value>` in main. */

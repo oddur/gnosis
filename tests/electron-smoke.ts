@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createAppDataStore } from '../src/app-data-store';
 import { attachWindowHistoryNavigation } from '../src/window-history-navigation';
@@ -14,6 +15,68 @@ if (!directory) throw new Error('Run through npm run test:electron-smoke');
 const profile = path.join(directory, 'profile with spaces');
 fs.mkdirSync(profile, { recursive: true });
 app.setPath('userData', profile);
+
+const root: string = directory;
+const probes: ChildProcess[] = [];
+/** One lock probe (tests/electron-lock-probe.ts): the production single-instance module on its own profile. */
+function lockProbe(profileDirectory: string, ...args: string[]) {
+  const env: Record<string, string | undefined> = { ...process.env, GNOSIS_SINGLE_INSTANCE: '1' };
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.GNOSIS_TEST_RESULT_FILE;
+  delete env.GNOSIS_DEV_PROTOCOL;
+  const child = spawn(process.execPath, [path.join(root, 'lock-probe.cjs'), `--user-data-dir=${profileDirectory}`, ...args], { env, stdio: ['ignore', 'pipe', 'inherit'] });
+  probes.push(child);
+  const events: Record<string, unknown>[] = [];
+  let buffer = '';
+  child.stdout.on('data', (chunk: Buffer) => {
+    buffer += chunk.toString();
+    for (let index = buffer.indexOf('\n'); index >= 0; index = buffer.indexOf('\n')) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      try {
+        events.push(JSON.parse(line) as Record<string, unknown>);
+      } catch {
+        // Log lines from the probe are not events.
+      }
+    }
+  });
+  const exited = new Promise<number | null>((resolve) => child.once('exit', (code) => resolve(code)));
+  const until = async (match: (event: Record<string, unknown>) => boolean, label: string) => {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const event = events.find(match);
+      if (event) return event;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`Lock probe timed out: ${label}`);
+  };
+  const exit = () => Promise.race([exited, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Lock probe did not exit')), 20_000))]);
+  return { events, until, exit };
+}
+
+/**
+ * The lock is scoped by --user-data-dir: a second launch on one profile forwards its link and exits 0, and a
+ * launch on another profile takes its own lock and keeps running. Developers run two profiles at once.
+ */
+async function checkLockScoping() {
+  const first = path.join(root, 'lock profile a');
+  const second = path.join(root, 'lock profile b');
+  fs.mkdirSync(first, { recursive: true });
+  fs.mkdirSync(second, { recursive: true });
+  const real = (value: unknown) => fs.realpathSync(String(value));
+  const a = lockProbe(first);
+  assert.equal(real((await a.until((event) => 'ready' in event, 'first profile ready')).ready), real(first), 'The probe runs on the profile it was given');
+  const forwarded = lockProbe(first, 'gnosis-dev://pr/example/repository/7');
+  assert.equal(await forwarded.exit(), 0, 'The same profile: the second launch exits 0');
+  assert.deepEqual(await a.until((event) => 'link' in event, 'forwarded link'), { link: 'gnosis-dev://pr/example/repository/7', source: 'os' });
+  assert.equal(forwarded.events.some((event) => 'ready' in event), false, 'The losing launch never reaches ready');
+  const b = lockProbe(second);
+  assert.equal(real((await b.until((event) => 'ready' in event, 'second profile ready')).ready), real(second), 'Another profile takes its own lock');
+  const plain = lockProbe(first);
+  assert.equal(await plain.exit(), 0);
+  await a.until((event) => event.show === true, 'a launch without a link focuses the first window');
+  assert.equal(b.events.some((event) => 'link' in event || 'show' in event), false, 'The other profile receives nothing');
+}
 
 void app.whenReady().then(async () => {
   let store = createAppDataStore();
@@ -119,13 +182,16 @@ void app.whenReady().then(async () => {
       const check=()=>{if(window.smokeLinks.length===1)resolve();else if(Date.now()>deadline)reject(Error('Deep link IPC timed out'));else setTimeout(check,20)};check();})`);
     assert.deepEqual(await contents.executeJavaScript('window.smokeLinks'), ['review']);
     assert.equal(await contents.executeJavaScript('window.stopLinks() === undefined'), true);
+    assert.equal(await contents.executeJavaScript('window.electronAPI.linkScheme'), 'gnosis', 'Without --gnosis-link-dev the preload uses the packaged scheme');
+    await checkLockScoping();
     console.log(
-      `PASS: Electron window, isolated production preload, IPC, SQLite worker persistence, native navigation bridge, notification routing by focus${focused ? '' : ' (focused route skipped: no window focus on this display)'}, deep-link handshake`
+      `PASS: Electron window, isolated production preload, IPC, SQLite worker persistence, native navigation bridge, notification routing by focus${focused ? '' : ' (focused route skipped: no window focus on this display)'}, deep-link handshake, single-instance lock per --user-data-dir`
     );
   } catch (error) {
     console.error(error);
     exitCode = 1;
   } finally {
+    for (const probe of probes) if (probe.exitCode === null) probe.kill();
     window?.destroy();
     await store.close().catch((error: unknown) => {
       console.error(error);
