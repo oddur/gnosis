@@ -556,7 +556,7 @@
       },
       "prose": {
         "displayName": "prose",
-        "purpose": "16px review narratives, PR descriptions, overview summaries, and chat; 68ch measure for explanations and 36rem (--measure-reading) for author Markdown, with shared dark-mode tuning."
+        "purpose": "16px review narratives, PR descriptions, overview summaries, and chat; 68ch measure for explanations, 36rem (--measure-reading) for author Markdown prose and 64rem (--measure-wide) for its tables and media, with shared dark-mode tuning."
       },
       "label-row": {
         "displayName": "label-row",
