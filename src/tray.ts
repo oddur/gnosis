@@ -134,7 +134,7 @@ function buildReviewSubmenu(
       prStatus.signals
     );
     items.push({ label: readiness.label + (readiness.stale ? ' (out of date)' : ''), enabled: false });
-  } else {
+  } else if (statusFetcher) {
     items.push({ label: 'Loading status…', enabled: false });
   }
 
@@ -153,7 +153,7 @@ function buildReviewSubmenu(
   return items;
 }
 
-function getTrayIcon(): Electron.NativeImage {
+function getTrayIcon(name: 'trayTemplate' | 'trayDotTemplate' = 'trayTemplate'): Electron.NativeImage {
   let iconDir: string;
   if (app.isPackaged) {
     iconDir = path.join(process.resourcesPath, 'tray');
@@ -162,7 +162,8 @@ function getTrayIcon(): Electron.NativeImage {
   }
 
   if (process.platform === 'darwin') {
-    const templatePath = path.join(iconDir, 'trayTemplate.png');
+    // A template image: macOS draws it in the menu bar's colour and inverts it while highlighted. No fixed colour.
+    const templatePath = path.join(iconDir, `${name}.png`);
     const icon = nativeImage.createFromPath(templatePath);
     if (!icon.isEmpty()) {
       icon.setTemplateImage(true);
@@ -187,6 +188,8 @@ export function createTray(): void {
     if (process.platform === 'darwin') {
       tray.setIgnoreDoubleClickEvents(true);
     }
+    applyBadge();
+    if (panel) bindPanel();
   } catch (error) {
     console.error('[tray] Failed to create tray:', error);
   }
@@ -212,11 +215,84 @@ export function setStatusFetcher(fetcher: (prUrl: string) => Promise<PrStatus | 
   statusFetcher = fetcher;
 }
 
+/**
+ * macOS with the summary panel (#308): a left click toggles the panel with the bounds of the clicked item, and a
+ * right click or Control-click pops a short menu. No context menu is set, because a set menu also opens on a left
+ * click. The recent-reviews menu and its status fetches are not built.
+ */
+export interface TrayPanelHandlers {
+  toggle: (bounds: Electron.Rectangle) => void;
+  /** The pointer entered the item: create the panel window before the click arrives. */
+  hover: () => void;
+  hide: () => void;
+  /** Open Gnosis, Settings…, Quit Gnosis. */
+  shortMenu: () => Electron.MenuItemConstructorOptions[];
+}
+let panel: TrayPanelHandlers | null = null;
+
+function bindPanel() {
+  if (!tray || !panel) return;
+  const handlers = panel;
+  tray.setContextMenu(null);
+  tray.removeAllListeners('click');
+  tray.removeAllListeners('right-click');
+  tray.removeAllListeners('mouse-enter');
+  const popUp = () => {
+    handlers.hide();
+    tray?.popUpContextMenu(Menu.buildFromTemplate(handlers.shortMenu()));
+  };
+  tray.on('click', (event, bounds) => {
+    if (event.ctrlKey) popUp();
+    else handlers.toggle(bounds);
+  });
+  tray.on('right-click', popUp);
+  tray.on('mouse-enter', () => handlers.hover());
+}
+
+/** Turns the panel mode on (macOS) or off, back to the classic menu. */
+export function setTrayPanel(handlers: TrayPanelHandlers | null): void {
+  if (process.platform !== 'darwin') handlers = null;
+  if (panel === handlers) return;
+  const wasPanel = !!panel;
+  panel = handlers;
+  menuSignature.reset();
+  if (!tray) return;
+  if (panel) bindPanel();
+  else if (wasPanel) {
+    tray.removeAllListeners('mouse-enter');
+    if (lastCallbacks) updateTrayMenu(lastReviews, lastCallbacks);
+  }
+}
+
+/** The number or dot beside the icon and the tooltip, from `menubarBadge` and `menubarTooltip`. */
+let badge = { title: '', dot: false, tooltip: 'Gnosis' };
+let badgeShown: typeof badge | undefined;
+const icons: Partial<Record<'plain' | 'dot', Electron.NativeImage>> = {};
+function applyBadge() {
+  if (!tray) return;
+  if (badgeShown?.title !== badge.title && process.platform === 'darwin')
+    // The system font and colour, digits of equal width. No title for zero.
+    tray.setTitle(badge.title, { fontType: 'monospacedDigit' });
+  if (badgeShown?.dot !== badge.dot && process.platform === 'darwin') {
+    const key = badge.dot ? 'dot' : 'plain';
+    icons[key] ??= getTrayIcon(badge.dot ? 'trayDotTemplate' : 'trayTemplate');
+    tray.setImage(icons[key]);
+  }
+  if (badgeShown?.tooltip !== badge.tooltip) tray.setToolTip(badge.tooltip);
+  badgeShown = { ...badge };
+}
+export function setTrayBadge(next: { title: string; dot: boolean; tooltip: string }): void {
+  badge = { ...next };
+  applyBadge();
+}
+
 export function updateTrayMenu(
   reviews: readonly ReviewHistoryEntry[],
   callbacks: TrayCallbacks,
 ): void {
-  if (!tray) return;
+  lastReviews = reviews;
+  lastCallbacks = callbacks;
+  if (!tray || panel) return;
   const { onShowWindow, onNavigateToReview, onOpenExternal, onQuit } = callbacks;
 
   const template: Electron.MenuItemConstructorOptions[] = [];
@@ -296,9 +372,6 @@ export function updateTrayMenu(
     }
   }
 
-  // Stash for rebuild after status fetch
-  lastReviews = reviews;
-  lastCallbacks = callbacks;
 
   // Fetch live PR status in background for open PRs
   if (statusFetcher) {
@@ -334,10 +407,13 @@ export function updateTrayMenu(
   }
 }
 
+export const hasTray = () => !!tray;
+
 export function destroyTray(): void {
   if (tray) {
     tray.destroy();
     tray = null;
     menuSignature.reset();
+    badgeShown = undefined;
   }
 }

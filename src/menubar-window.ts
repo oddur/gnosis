@@ -35,6 +35,7 @@ export function createMenubarPanel(deps: MenubarPanelDeps) {
   let anchor: Rectangle | undefined;
   let contentHeight = PANEL_MAX_HEIGHT;
   const visibility = createPanelVisibility();
+  const painted = new WeakSet<BrowserWindow>();
   const live = () => (win && !win.isDestroyed() ? win : undefined);
   const own = (event: IpcMainEvent | IpcMainInvokeEvent) => {
     const panel = live();
@@ -74,6 +75,7 @@ export function createMenubarPanel(deps: MenubarPanelDeps) {
       },
     });
     deps.created(panel);
+    panel.once('ready-to-show', () => painted.add(panel));
     if (mac) panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     const contents = panel.webContents;
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -105,15 +107,23 @@ export function createMenubarPanel(deps: MenubarPanelDeps) {
     panel.setBounds(panelPosition(anchor, display.workArea, { width: PANEL_WIDTH, height: contentHeight }));
   }
 
-  function show(bounds: Rectangle) {
-    const panel = ensure();
-    anchor = bounds;
+  function reveal(panel: BrowserWindow) {
     place();
     panel.show();
     panel.focus();
-    visibility.shown();
     panel.webContents.send('menubar:shown');
+  }
+  function show(bounds: Rectangle) {
+    const panel = ensure();
+    anchor = bounds;
+    visibility.shown();
     deps.visibilityChanged(true);
+    // A window created by this click shows after its first paint, never as an empty frame.
+    if (painted.has(panel)) reveal(panel);
+    else
+      panel.once('ready-to-show', () => {
+        if (visibility.visible && live() === panel) reveal(panel);
+      });
   }
 
   function hide(reason: PanelHideReason) {

@@ -65,7 +65,10 @@ void test('trust by source: targets Gnosis built keep the routes the app already
   for (const source of ['notification', 'menubar', 'tray'] as const) {
     assert.equal(linkSupport({ kind: 'review', reviewId: 'local-1' }, source).supported, true);
     assert.equal(linkSupport({ kind: 'queue', filters: { read: 'unread' } }, source).supported, true);
+    assert.equal(linkSupport({ kind: 'settings', section: 'notifications' }, source).supported, true, 'The panel opens Settings');
+    assert.equal(linkSupport({ kind: 'activity' }, source).supported, true);
   }
+  assert.equal(linkSupport({ kind: 'settings', section: 'notifications' }, 'os').supported, false);
   assert.equal(linkSupport({ kind: 'review', reviewId: 'local-1' }, 'os').supported, false);
   assert.equal(linkSupport({ kind: 'conflicts', pr }, 'notification').supported, false, 'Conflict links wait for Phase 3 everywhere');
 });

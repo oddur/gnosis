@@ -145,7 +145,12 @@ import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHu
 import { filterDiff } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import { initialize as initAptabase, trackEvent } from '@aptabase/electron/main';
-import { createTray, updateTrayMenu, destroyTray, setStatusFetcher } from './tray';
+import { createTray, updateTrayMenu, destroyTray, setStatusFetcher, setTrayPanel, setTrayBadge, hasTray } from './tray';
+import { createMenubarPanel } from './menubar-window';
+import { createStateSignature } from './tray-signature';
+import { buildMenubarState, menubarSignalRequests, menubarTooltip, type MenubarState } from '../lib/menubar-state';
+import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
+import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
 import { createNotificationService, type ToastAction } from './notification-service';
@@ -188,6 +193,8 @@ const PREPARED_TRIM_DELAY_MS = 30_000;
 // Injected by Electron Forge Vite plugin
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
+declare const MENUBAR_WINDOW_VITE_DEV_SERVER_URL: string;
+declare const MENUBAR_WINDOW_VITE_NAME: string;
 
 // Injected by Vite define
 declare const __GH_CLIENT_SECRET__: string;
@@ -898,9 +905,12 @@ void app.whenReady().then(async () => {
   mark('all-ready');
 
   if (prefs.analytics) void trackEvent('app_started');
+  menubarStartupDone = true;
   initTrayIfEnabled();
-  setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
+  // macOS: the panel replaced the recent-reviews menu and its status poll (#308). Windows and Linux keep both.
+  if (process.platform !== 'darwin') setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
   rebuildTrayMenu();
+  rebuildMenubarNow();
   setupAutoUpdater();
 
   // GitHub release polling only needed on Linux (no native auto-update)
@@ -1205,6 +1215,7 @@ function notifyLocalChange(channel: string) {
   if (localChangeTimers.has(channel)) return;
   localChangeTimers.set(channel, setTimeout(() => {
     localChangeTimers.delete(channel);
+    if (channel === 'activity-changed') scheduleMenubar();
     if (channel === 'workbench-changed') broadcastWorkbenchChanged();
     else broadcastToAllWindows(channel);
   }, 150));
@@ -1215,6 +1226,9 @@ function broadcastWorkbenchChanged(): void {
   let revisions: WorkbenchRevisions | undefined;
   try {
     const queue = workbench.snapshot();
+    // The menu bar reuses this snapshot instead of building another.
+    menubarQueue = { account: cachedLogin, queue };
+    scheduleMenubar();
     if (queue.revision && queue.historyRevision) revisions = { revision: queue.revision, historyRevision: queue.historyRevision };
   } catch {
     /* Without revisions, renderers read the snapshot once and compare it themselves. */
@@ -1284,6 +1298,7 @@ function initTrayIfEnabled(): void {
     }
   } else if (raw.trayEnabled) {
     createTray();
+    applyTrayMode();
     rebuildTrayMenuNow();
   }
 }
@@ -1312,6 +1327,162 @@ function rebuildTrayMenuNow(): void {
     });
     return reviews.length;
   }, (reviews) => `reviews=${reviews}`);
+}
+
+// ── Menu bar panel (#308) ─────────────────────────────────────────
+// macOS only in Phase 1. Main derives the panel's state from data it already holds and pushes it, debounced, from
+// the existing hooks: workbench changes, activity changes, preference saves and sign-out. No timer, no polling.
+// Opening the panel reads status for up to 25 PRs at most once (skipped while fresh); ↻ refreshes interactively.
+
+/**
+ * The panel window is created on the tray's `mouse-enter`, not pre-created after startup: its renderer measured
+ * 111 MB resident (`app.getAppMetrics()` working set) on macOS with Electron 41, above the 100 MB limit, although its
+ * own footprint was 28 MB. GNOSIS_MENUBAR_PRECREATE=1 pre-creates it 3 seconds after startup instead, for measuring.
+ */
+const MENUBAR_PRECREATE = process.env.GNOSIS_MENUBAR_PRECREATE === '1';
+const MENUBAR_REBUILD_MS = 250;
+/** A panel open reads status at most this often; `getQueueSignals` also serves entries younger than 25 s. */
+const MENUBAR_READ_MS = 25_000;
+let menubarStartupDone = false;
+let menubarQueue: { account: string | null; queue: import('../lib/workbench').WorkbenchQueue } | undefined;
+let menubarItems: AttentionItem[] = [];
+let menubarState: MenubarState | undefined;
+let menubarRefreshing = false;
+let menubarReadAt = 0;
+let menubarRebuild: ReturnType<typeof setTimeout> | undefined;
+const menubarSignature = createStateSignature();
+
+const menubarPanel = process.platform === 'darwin' ? createMenubarPanel({
+  preload: path.join(__dirname, 'menubar-preload.js'),
+  // ?vibrancy tells the page that the popover material is behind it, so it paints a translucent fill.
+  load: win => MENUBAR_WINDOW_VITE_DEV_SERVER_URL
+    ? win.loadURL(`${MENUBAR_WINDOW_VITE_DEV_SERVER_URL}/menubar.html?vibrancy=1`)
+    : win.loadFile(path.join(__dirname, `../renderer/${MENUBAR_WINDOW_VITE_NAME}/menubar.html`), { query: { vibrancy: '1' } }),
+  state: () => menubarState,
+  // The renderer sent an id; the target comes from the rows main built.
+  open: id => {
+    const item = menubarItems.find(row => row.id === id);
+    if (item) deepLinks.open(item.target, 'menubar');
+    else showOrCreateWindow();
+  },
+  openApp: showOrCreateWindow,
+  openSettings: () => deepLinks.open({ kind: 'settings', section: 'notifications' }, 'menubar'),
+  refresh: () => readMenubarStatus(true),
+  visibilityChanged: visible => {
+    rebuildMenubarNow();
+    if (!visible) return;
+    void readMenubarStatus(false);
+    // A visible panel satisfies syncEnabled(): the sync tick wakes and brings discovery forward.
+    void tickGitHubSync();
+  },
+  created: win => windowSet.exclude(win),
+  devTools: !app.isPackaged,
+}) : undefined;
+
+/** macOS: the summary panel or the classic menu, from Settings. */
+function applyTrayMode() {
+  if (!menubarPanel || !hasTray()) return;
+  if (menubarSettings(loadPreferences()).click === 'menu') {
+    setTrayPanel(null);
+    menubarPanel.destroy();
+    return;
+  }
+  setTrayPanel({
+    toggle: bounds => menubarPanel.toggle(bounds),
+    hover: () => menubarPanel.ensure(),
+    hide: () => menubarPanel.hide(),
+    shortMenu: () => [
+      { label: 'Open Gnosis', click: showOrCreateWindow },
+      { label: 'Settings…', click: () => deepLinks.open({ kind: 'settings' }, 'tray') },
+      { type: 'separator' },
+      { label: 'Quit Gnosis', click: () => app.quit() },
+    ],
+  });
+  if (MENUBAR_PRECREATE) setTimeout(() => { if (hasTray()) menubarPanel.ensure(); }, 3000).unref();
+}
+
+function scheduleMenubar(): void {
+  if (menubarRebuild || process.platform !== 'darwin') return;
+  menubarRebuild = setTimeout(() => {
+    menubarRebuild = undefined;
+    rebuildMenubarNow();
+  }, MENUBAR_REBUILD_MS);
+}
+function rebuildMenubarNow(): void {
+  clearTimeout(menubarRebuild);
+  menubarRebuild = undefined;
+  if (process.platform !== 'darwin') return;
+  timed('menubar', () => {
+    const token = getResolvedToken();
+    const login = cachedLogin;
+    const signedIn = !!token && !!login;
+    // The first state of a session reads the snapshot once; later ones reuse the snapshot each broadcast built.
+    if (signedIn && menubarStartupDone && menubarQueue?.account !== login) menubarQueue = { account: login, queue: workbench.snapshot() };
+    const queue = signedIn && menubarQueue?.account === login ? menubarQueue.queue : undefined;
+    // Saved status only, for your own open PRs: the only rows that use it. Never a request.
+    const own = (queue?.items ?? []).flatMap(item => item.subject.members)
+      .filter(member => member.state === 'open' && !member.merged && member.author.toLowerCase() === login?.toLowerCase());
+    const saved = new Map(token && own.length ? cachedQueueSignals(getGitHubClient(token), own).map(value => [value.url, value]) : []);
+    const prefs = loadPreferences();
+    const { state, items } = buildMenubarState({
+      login,
+      signedIn,
+      online: net.isOnline(),
+      queue,
+      signals: member => saved.get(member.url),
+      teamRequests: notificationSettings(prefs).events['team-review-requested'],
+      tasks: activities.list(),
+      backoffUntil: token ? githubClients.backoff(token, true, ['graphql'])?.retryAt : undefined,
+      refreshing: menubarRefreshing,
+      now: Date.now(),
+    });
+    menubarItems = items;
+    menubarState = state;
+    // One count for the menu bar and the Dock, so the two always agree.
+    const badge = menubarBadge(items, menubarSettings(prefs).badge);
+    setTrayBadge({ title: badge.title, dot: badge.dot, tooltip: menubarTooltip(state) });
+    app.dock?.setBadge(badge.title || (badge.dot ? '•' : ''));
+    if (menubarSignature.changed(state)) menubarPanel?.push(state);
+    return items.length;
+  }, rows => `rows=${rows}`);
+}
+
+/**
+ * The read on open: one signals request for the PRs behind the rows and your other open PRs, at most 25, at the
+ * automatic foreground tier. Skipped while GitHub reads are paused and when the last read is younger than 25 s.
+ * ↻ (`force`) is interactive: the same read with `force`, plus a queue refresh.
+ */
+async function readMenubarStatus(force: boolean): Promise<void> {
+  const token = getResolvedToken();
+  const login = cachedLogin;
+  if (!token || !login || (menubarRefreshing && force)) return;
+  if (!force && (Date.now() - menubarReadAt < MENUBAR_READ_MS || githubClients.backoff(token, true, ['graphql']))) return;
+  const requests = menubarSignalRequests(menubarItems, menubarQueue?.account === login ? menubarQueue.queue : undefined, login);
+  menubarReadAt = Date.now();
+  if (force) {
+    menubarRefreshing = true;
+    rebuildMenubarNow();
+  }
+  try {
+    const client = getGitHubClient(token);
+    const [values] = await Promise.all([
+      requests.length
+        ? withGitHubPriority(force ? 'interactive' : 'foreground', () => getQueueSignals(client, requests, { active: true, force }), { automatic: !force })
+        : Promise.resolve([]),
+      force ? workbench.queue(true) : undefined,
+    ]);
+    if (cachedLogin !== login) return;
+    if (values.length && workbench.observeReadSignals(login, values)) broadcastToAllWindows('pr-read-state-changed');
+    // New saved status changes rows, unread state and the queue's responses: rebuild through the usual broadcast.
+    if (values.length) notifyLocalChange('workbench-changed');
+  } catch (error) {
+    console.warn('[menubar] Status read failed:', error instanceof Error ? error.message : error);
+  } finally {
+    if (force) {
+      menubarRefreshing = false;
+      scheduleMenubar();
+    }
+  }
 }
 
 // ── Preferences helpers ─────────────────────────────────────────
@@ -1574,6 +1745,7 @@ ipcMain.handle('sign-out', () => {
   cachedToken = null;
   cachedLogin = null;
   deleteStoredToken();
+  scheduleMenubar();
 });
 
 handleInteractive('search-pull-requests', async () => {
@@ -1626,13 +1798,16 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   // Restart polling so the new proactiveMode value takes effect immediately
   stopProactivePolling();
   if (prefs.proactiveMode) startProactivePolling();
-  // Toggle tray on/off
+  // Toggle tray on/off. Turning it off destroys the tray and the panel; turning it on creates both.
   if (prefs.trayEnabled) {
     createTray();
+    applyTrayMode();
     rebuildTrayMenuNow();
   } else {
     destroyTray();
+    menubarPanel?.destroy();
   }
+  rebuildMenubarNow();
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {
@@ -3456,7 +3631,8 @@ function sendSyncUpdates(updates: GitHubSyncUpdate[], failures: GitHubSyncFailur
 let syncCredential: string | null = null;
 let suspended = false;
 const windowVisible = () => appWindows().some(win => win.isVisible() && !win.isMinimized());
-const syncEnabled = () => !suspended && net.isOnline() && windowVisible();
+/** A visible menu bar panel counts as a visible window: opening it wakes sync (#308 section 8). */
+const syncEnabled = () => !suspended && net.isOnline() && (windowVisible() || !!menubarPanel?.visible());
 // ── Navigation predictions ──
 // The renderer predicts where the reader goes next. Main keeps the budget: predictions start only while the window
 // is visible, the system is not idle, and the predicted share and reserve allow it. See lib/github-budget.ts.
