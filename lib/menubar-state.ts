@@ -17,6 +17,7 @@ import {
   type AttentionKind,
 } from './attention';
 import type { ActivityTask } from './activity';
+import { menubarBadge, type MenubarBadge } from './menubar-settings';
 import type { QueueSignalRequest, QueueSignals } from './queue-signals';
 import type { ReviewMember, WorkbenchQueue } from './workbench';
 
@@ -33,6 +34,8 @@ export interface MenubarRow {
   /** Your own PR: the author is not shown. */
   own: boolean;
   stackSize?: number;
+  /** Rows from the same stack share it; the panel shows them together under one stack line. */
+  stackId?: string;
   isNew: boolean;
   checkedAt?: number;
 }
@@ -60,7 +63,11 @@ export interface MenubarState {
   retryAt?: number;
   groups: MenubarGroup[];
   tasks: MenubarTask[];
-  summary: { needYou: number; ready: number; fresh: number; line: string };
+  /**
+   * The header. `marked` is the number on the menu bar icon when the icon counts new PRs (`new`, or `dot`, whose dot
+   * stands for them), so the header explains the icon: "15 need you · 9 new · 20 ready". Otherwise 0.
+   */
+  summary: { needYou: number; ready: number; fresh: number; marked: number; line: string };
   /** Open PRs in the queue, for "Nothing needs you. 14 open PRs in your queue." */
   queueSize: number;
   /** Your open PRs whose status is older than 30 minutes, so status kinds are not shown for them. */
@@ -86,6 +93,8 @@ export interface MenubarInput {
   /** When GitHub reads are paused for this account, from the client backoff. */
   backoffUntil?: number;
   refreshing?: boolean;
+  /** The "Number on the icon" setting, so the header names the same count. Defaults to `new`. */
+  badge?: MenubarBadge;
   now: number;
 }
 
@@ -130,7 +139,7 @@ export function buildMenubarState(input: MenubarInput): { state: MenubarState; i
       })
     : [];
   const groups = ATTENTION_GROUPS.flatMap((group): MenubarGroup[] => {
-    const rows = items.filter((item) => item.group === group);
+    const rows = clusterStacks(items.filter((item) => item.group === group));
     return rows.length
       ? [{ group, label: MENUBAR_GROUP_LABEL[group], count: rows.length, rows: rows.slice(0, MENUBAR_GROUP_LIMIT).map((item) => menubarRow(item, login)) }]
       : [];
@@ -151,12 +160,31 @@ export function buildMenubarState(input: MenubarInput): { state: MenubarState; i
       ...(queue?.sync?.checkedAt ? { checkedAt: queue.sync.checkedAt } : {}),
       groups,
       tasks: signedIn ? menubarTasks(input.tasks ?? [], login) : [],
-      summary: attentionSummary(items),
+      summary: menubarSummary(items, input.badge ?? 'new'),
       queueSize: new Set(open.map((member) => member.url)).size,
       unchecked,
       refreshing: !!input.refreshing,
     },
   };
+}
+
+/** Rows from one stack move up to the first of them, so the panel shows a stack once. Otherwise the order holds. */
+export function clusterStacks<T extends { id: string; stackId?: string }>(rows: readonly T[]): T[] {
+  const placed = new Set<string>();
+  return rows.flatMap((row) => {
+    if (placed.has(row.id)) return [];
+    const run = row.stackId ? rows.filter((other) => other.stackId === row.stackId && !placed.has(other.id)) : [row];
+    for (const member of run) placed.add(member.id);
+    return run;
+  });
+}
+
+/** The header line. The new count is the icon's own `menubarBadge` count, never a second reckoning. */
+export function menubarSummary(items: readonly AttentionItem[], badge: MenubarBadge): MenubarState['summary'] {
+  const { needYou, ready, fresh } = attentionSummary(items);
+  const marked = badge === 'new' || badge === 'dot' ? menubarBadge(items, badge).count : 0;
+  const parts = [needYou ? `${needYou} need${needYou === 1 ? 's' : ''} you` : '', marked ? `${marked} new` : '', ready ? `${ready} ready` : ''].filter(Boolean);
+  return { needYou, ready, fresh, marked, line: parts.length ? parts.join(' · ') : 'Nothing needs you' };
 }
 
 export function menubarRow(item: AttentionItem, login: string): MenubarRow {
@@ -170,6 +198,7 @@ export function menubarRow(item: AttentionItem, login: string): MenubarRow {
     author: item.author,
     own: isOwnPr(item, login),
     ...(item.stackSize ? { stackSize: item.stackSize } : {}),
+    ...(item.stackId ? { stackId: item.stackId } : {}),
     isNew: item.isNew,
     ...(item.checkedAt ? { checkedAt: item.checkedAt } : {}),
   };
