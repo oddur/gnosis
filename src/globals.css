@@ -4205,6 +4205,25 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .workflow-sidebar-empty { padding:16px 8px; color:var(--muted-foreground); font-size:13px; }
 .workflow-active-run { font-size:13px; max-width:250px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .workflow-sidebar-backdrop { position:absolute; inset:0; z-index:7; background:color-mix(in srgb,var(--background) 65%,transparent); }
+/* The sidebar summary uses the same check snapshot as the Checks tab count. */
+.workflow-sidebar-summary { display:flex; align-items:flex-start; gap:8px; margin:0 8px 8px; padding:0 4px; font-size:12px; line-height:1.5; font-variant-numeric:tabular-nums; }
+.workflow-sidebar-summary > svg { flex-shrink:0; margin-top:2px; }
+.workflow-sidebar-summary > span { display:flex; flex-direction:column; min-width:0; }
+.workflow-sidebar-summary-detail { color:var(--muted-foreground); }
+/* Checks without Actions dependency data: standalone job cards, failures first. */
+.workflow-external { position:absolute; inset:0; overflow:auto; padding:20px 24px 32px; }
+.workflow-external-heading { display:grid; gap:4px; margin-bottom:16px; max-width:72ch; }
+.workflow-external-heading h2 { display:flex; align-items:center; gap:8px; margin:0; font-size:var(--type-panel-title); font-weight:600; line-height:1.4; }
+.workflow-external-heading p { margin:0; color:var(--muted-foreground); font-size:13px; line-height:1.5; text-wrap:pretty; }
+.workflow-external-grid { display:grid; grid-template-columns:repeat(auto-fill,244px); gap:12px; margin:0; padding:0; list-style:none; }
+.workflow-job.workflow-external-check { height:auto; min-height:80px; }
+.workflow-external-check .workflow-job-name { white-space:normal; overflow-wrap:anywhere; padding-right:28px; }
+.workflow-external-link { position:absolute; right:6px; top:8px; width:24px; height:24px; display:grid; place-items:center; border-radius:4px; color:var(--muted-foreground); }
+.workflow-external-link:hover { background:var(--accent); color:var(--foreground); }
+.workflow-external-link:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+.workflow-external-notice { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+.workflow-external-notice > svg { flex-shrink:0; }
+.workflow-external-notice > span { flex:1 1 240px; min-width:0; }
 @media (max-width:1000px) {
   .workflow-sidebar { position:absolute; inset:0 auto 0 0; z-index:8; width:min(300px,90%); }
   .workflow-active-run { max-width:220px; }

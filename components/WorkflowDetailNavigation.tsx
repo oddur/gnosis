@@ -16,7 +16,10 @@ export function WorkflowDetailNavigation({
   dependants,
   onReveal,
   onClose,
+  showRelations = true,
 }: {
+  /** External checks have no dependency data, so there is nothing to summarise. */
+  showRelations?: boolean;
   count: number;
   position: number;
   onMove: (direction: 1 | -1) => void;
@@ -54,43 +57,45 @@ export function WorkflowDetailNavigation({
           Next <ArrowRight size={14} />
         </Button>
       </nav>
-      <details className="workflow-detail-relations">
-        <summary title={summary}>{summary}</summary>
-        {(
-          [
-            ['Prerequisites', prerequisites],
-            ['Dependants', dependants],
-          ] as const
-        ).map(([label, relations]) => (
-          <div key={label}>
-            <strong>{label}</strong>
-            {relations.length ? (
-              <ul>
-                {relations.map((n) => (
-                  <li key={n.id}>
-                    <span>
-                      {n.name} · {n.label}
-                      {n.outside ? ' · Outside this view' : ''}
-                    </span>
-                    {n.outside && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onReveal(n.id)}
-                        aria-label={`Reveal prerequisite ${n.name}`}
-                      >
-                        Reveal
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>None mapped in this workflow.</p>
-            )}
-          </div>
-        ))}
-      </details>
+      {showRelations && (
+        <details className="workflow-detail-relations">
+          <summary title={summary}>{summary}</summary>
+          {(
+            [
+              ['Prerequisites', prerequisites],
+              ['Dependants', dependants],
+            ] as const
+          ).map(([label, relations]) => (
+            <div key={label}>
+              <strong>{label}</strong>
+              {relations.length ? (
+                <ul>
+                  {relations.map((n) => (
+                    <li key={n.id}>
+                      <span>
+                        {n.name} · {n.label}
+                        {n.outside ? ' · Outside this view' : ''}
+                      </span>
+                      {n.outside && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onReveal(n.id)}
+                          aria-label={`Reveal prerequisite ${n.name}`}
+                        >
+                          Reveal
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>None mapped in this workflow.</p>
+              )}
+            </div>
+          ))}
+        </details>
+      )}
     </div>
   );
 }

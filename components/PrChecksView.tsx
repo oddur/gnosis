@@ -4,16 +4,10 @@ import { checkGroupIcons } from '../lib/interface-icons';
 import { preferredChecksView, rememberChecksView, type ChecksView } from '../lib/checks-view';
 import { Suspense } from 'react';
 import { WorkflowGraphView } from '../src/lazy-screens';
+import { checkLinkLabel } from '../lib/workflow-external';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useRef, useState } from 'react';
-import {
-  ExternalLink,
-  List,
-  RefreshCw,
-  LoaderCircle,
-  Workflow,
-  X,
-} from 'lucide-react';
+import { ExternalLink, List, RefreshCw, LoaderCircle, Workflow, X } from 'lucide-react';
 import type { ReviewSubject } from '../lib/workbench';
 import {
   checkCounts,
@@ -407,13 +401,6 @@ export function PrChecksView({
                 detailHost={view === 'graph' && graphDetails ? detailNavigation : null}
                 onRevealContext={closeGraphDetails}
                 onFilterChange={setFilter}
-                onExternalChecks={(url) => {
-                  setFilter('all');
-                  setView('list');
-                  const source = values[url];
-                  const check = source?.checks.find((c) => c.kind === 'status');
-                  if (source && check) setSelected({ snapshot: source, check });
-                }}
                 subject={subject}
                 values={values}
                 detailCache={detailCache}
@@ -627,8 +614,7 @@ export function PrChecksView({
                 </div>
                 {selected.check.url && (
                   <a href={selected.check.url} target="_blank" rel="noopener noreferrer">
-                    {selected.check.kind === 'status' ? 'Open provider result' : 'Open on GitHub'}{' '}
-                    <ExternalLink size={13} />
+                    {checkLinkLabel(selected.check)} <ExternalLink size={13} />
                   </a>
                 )}
               </header>
@@ -666,7 +652,9 @@ export function PrChecksView({
                   )}
                   {!detail.summary && !detail.text && !detail.annotations.length && !detail.job && (
                     <p className="checks-notice">
-                      This check did not supply further output. Open GitHub for more details.
+                      {selected.check.url && checkLinkLabel(selected.check) !== 'Open on GitHub'
+                        ? `This check did not supply further output. Open its result in ${selected.check.provider} for more details.`
+                        : 'This check did not supply further output. Open GitHub for more details.'}
                     </p>
                   )}
                   {detail.job && (
