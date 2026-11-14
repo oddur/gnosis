@@ -19,6 +19,8 @@ const config: ForgeConfig = {
     appBundleId: 'com.electron.gnosis',
     icon: path.resolve(__dirname, 'Icon/macos/AppIcon'),
     extraResource: [path.resolve(__dirname, 'Icon/tray'), path.resolve(__dirname, 'resources/mergiraf')],
+    // macOS: CFBundleURLTypes for gnosis:// links (#309). Development builds use gnosis-dev:// and never register it here.
+    protocols: [{ name: 'Gnosis', schemes: ['gnosis'] }],
     ...(process.env.APPLE_TEAM_ID
       ? {
           osxSign: {

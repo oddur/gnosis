@@ -1,3 +1,4 @@
+import { prMetadataItem } from '../lib/deep-link-routing';
 import type { GitHubSyncStatusProps } from '../components/GitHubSyncStatus';
 import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interface-icons';
 
@@ -321,32 +322,12 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
       const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/.exec(target.url);
       if (!match) throw Error('Enter a GitHub pull request URL.');
       const canonical = `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`;
-      const meta = await window.electronAPI.getPrMetadata(canonical),
-        repo = `${match[1]}/${match[2]}`;
+      const meta = await window.electronAPI.getPrMetadata(canonical);
       if (version !== navigationVersion.current) return;
       resolved = {
         kind: 'home',
         ...(target.open ? { open: target.open } : {}),
-        subject: {
-          attention: 'other',
-          subject: {
-            id: canonical,
-            kind: 'pr',
-            title: meta.title,
-            edges: [],
-            warnings: [],
-            members: [
-              {
-                ...meta,
-                number: Number(match[3]),
-                repo,
-                headRepo: meta.headRepo ?? repo,
-                baseRepo: meta.baseRepo ?? repo,
-                role: 'watched',
-              },
-            ],
-          },
-        },
+        subject: prMetadataItem({ host: 'github.com', owner: match[1], repo: match[2], number: Number(match[3]) }, meta),
       };
     }
     setHomeCommand({ destination: resolved, nonce: Date.now() });

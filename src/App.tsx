@@ -34,11 +34,15 @@ import './workspace-tabs.css';
 import { useWorkspaceListings } from '../lib/use-workspace-listings';
 import { workbenchStore } from '../lib/workbench-store';
 import { workspaceTabTitle } from '../lib/workspace-listings';
-import { routeDeepLink } from '../lib/deep-link-routing';
-import type { DeepLinkTarget } from '../lib/deep-link';
+import { linkErrorNotice, linkSupport, prLinkBlock, prMetadataItem, queueItemFor, routeDeepLink, type LinkAction, type LinkNotice } from '../lib/deep-link-routing';
+import { formatDeepLink, githubUrl, parseDeepLinkError, parseDeepLinkTarget, prUrl, targetFromLocation, type DeepLinkTarget } from '../lib/deep-link';
+import type { DeepLinkDelivery } from './deep-link-service';
+import type { QueueItem } from '../lib/workbench';
 import { useNotificationToasts } from '../lib/use-notification-toasts';
 
 const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID(), target);
+/** A PR link that arrived signed out is kept this long and opens once GitHub is connected. */
+const SIGNED_OUT_HOLD_MS = 10 * 60_000;
 const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
 /** Diff layout keys and commands need the command center, so they live inside it. */
 function DiffLayoutShortcuts() {
@@ -276,8 +280,11 @@ export function App() {
     await controllers.current.get(latest.current.active)?.openActivity(task);
   }, []);
   // "Open Gnosis at this exact place": notification clicks and the tray, through main's ready handshake.
-  const openTarget = useCallback(async (target: DeepLinkTarget) => {
+  const openTarget = useCallback(async (target: DeepLinkTarget, subject?: QueueItem) => {
     const route = routeDeepLink(target, latest.current, workbenchStore.getQueue());
+    // A PR outside the queue whose metadata was already read opens without reading it again.
+    if (subject && route.destination.kind === 'home')
+      route.destination = { kind: 'home', subject, ...(route.destination.open ? { open: route.destination.open } : {}) };
     if (route.tab.kind === 'new') {
       open(route.destination);
       return;
@@ -295,27 +302,105 @@ export function App() {
     await existing.navigate(route.destination);
   }, [open, change, activate]);
   useNotificationToasts(openTarget);
+  const runLinkAction = useCallback((action: LinkAction) => {
+    if ('url' in action) void window.electronAPI.openExternal(action.url);
+    else if ('target' in action) void openTarget(action.target).catch(() => {});
+    else void controllers.current.get(latest.current.active)?.navigate(action.destination);
+  }, [openTarget]);
+  const notice = useCallback((type: 'error' | 'info', value: LinkNotice) => {
+    const action = value.action;
+    toast.add({
+      type,
+      title: value.title,
+      description: value.description,
+      ...(action ? { actionProps: { children: action.label, onClick: () => runLinkAction(action) } } : {}),
+    });
+  }, [runLinkAction]);
+  // A PR link that arrived signed out, replayed once GitHub is connected.
+  const heldLink = useRef<{ item: DeepLinkDelivery; at: number } | undefined>(undefined);
+  /** One delivery from main: a refusal, or a target from a link, a notification or the tray. */
+  const openLink = useCallback(async (item: DeepLinkDelivery) => {
+    if (item.error !== undefined) {
+      notice('error', linkErrorNotice(parseDeepLinkError(item.error) ?? { code: 'malformed' }));
+      return;
+    }
+    const target = parseDeepLinkTarget(item.target);
+    if (!target) {
+      notice('error', linkErrorNotice({ code: 'bad-parameter' }));
+      return;
+    }
+    const support = linkSupport(target, item.source);
+    if (!support.supported) {
+      notice('info', support);
+      return;
+    }
+    const next = support.target;
+    let subject: QueueItem | undefined;
+    if (next.kind === 'pr') {
+      const queue = workbenchStore.getQueue();
+      const signedIn = !!currentAccount.current && currentAccount.current !== 'local';
+      const block = prLinkBlock(next, { signedIn, mutedUrls: new Set((queue.mutedPrs ?? []).map((muted) => muted.member.url.toLowerCase())) });
+      if (block) {
+        if (!signedIn) heldLink.current = { item: { id: item.id, source: item.source, target: next }, at: Date.now() };
+        notice('error', block);
+        return;
+      }
+      const url = prUrl(next.pr);
+      if (!queueItemFor(url, queue)) {
+        // Read the PR before opening a tab, so a PR that is gone or private shows why instead of an empty tab.
+        try {
+          subject = prMetadataItem(next.pr, await window.electronAPI.getPrMetadata(url));
+        } catch (error) {
+          notice('error', {
+            title: `Could not open ${next.pr.owner}/${next.pr.repo}#${next.pr.number}`,
+            description: error instanceof Error ? error.message : String(error),
+            action: { label: 'Open on GitHub', url: githubUrl(next) ?? url },
+          });
+          return;
+        }
+      }
+    }
+    await openTarget(next, subject);
+    if (support.note) notice('info', support.note);
+  }, [openTarget, notice]);
   useEffect(() => {
     if (!account) return;
     const api = window.electronAPI;
     let live = true;
-    const run = (target: DeepLinkTarget) =>
-      void openTarget(target).catch((error: unknown) =>
+    const run = (item: DeepLinkDelivery) =>
+      void openLink(item).catch((error: unknown) =>
         toast.add({
           type: 'error',
-          title: target.kind === 'review' ? 'Could not open saved review' : 'Could not open this PR',
+          title: item.target?.kind === 'review' ? 'Could not open saved review' : 'Could not open this PR',
           description: error instanceof Error ? error.message : String(error),
-          actionProps: { children: 'Retry', onClick: () => run(target) },
+          actionProps: { children: 'Retry', onClick: () => run(item) },
         })
       );
-    const stop = api.onDeepLink?.((item) => run(item.target));
+    const stop = api.onDeepLink?.((item) => run(item));
     // Tabs are restored once the account is scoped; an earlier open would be overwritten.
-    void api.takeDeepLinks?.().then((items) => { if (live && Array.isArray(items)) for (const item of items) run(item.target); }).catch(() => {});
+    void api.takeDeepLinks?.().then((items) => { if (live && Array.isArray(items)) for (const item of items) run(item); }).catch(() => {});
+    const held = heldLink.current;
+    if (held && account !== 'local') {
+      heldLink.current = undefined;
+      if (Date.now() - held.at < SIGNED_OUT_HOLD_MS) run(held.item);
+    }
     return () => {
       live = false;
       if (typeof stop === 'function') stop();
     };
-  }, [account, openTarget]);
+  }, [account, openLink]);
+  const copyViewLink = useCallback(() => {
+    const location = latest.current.tabs.find((tab) => tab.id === latest.current.active)?.location;
+    const target = location ? targetFromLocation(location) : undefined;
+    if (!target) {
+      toast.add({ type: 'error', title: 'Nothing to link to here' });
+      return;
+    }
+    void navigator.clipboard.writeText(formatDeepLink(target, window.electronAPI.linkScheme ?? 'gnosis')).then(
+      () => toast.add({ type: 'success', title: 'Copied Gnosis link' }),
+      () => toast.add({ type: 'error', title: 'Could not copy the link' })
+    );
+  }, []);
   // The PR in the active workspace: an event for it shows nothing while this window has focus.
   const activeLocation = state.tabs.find((tab) => tab.id === state.active)?.location;
   const activeItem = activeLocation?.page === 'home' ? activeLocation.home.item : null;
@@ -346,6 +431,7 @@ export function App() {
             commands={[
               { id: 'tabs:new', label: 'New tab', keywords: 'open workspace review', perform: () => open() },
               { id: 'tabs:reopen', label: 'Reopen closed tab', perform: reopen },
+              { id: 'links:copy-view', label: 'Copy Gnosis link to this view', keywords: 'share deep link gnosis:// url', perform: copyViewLink },
               ...state.tabs.map((tab) => ({
                 id: `tabs:${tab.id}`,
                 label: `Switch to ${workspaceTabTitle(tab, listings[tab.id])}`,
