@@ -4,7 +4,8 @@ import { WorkbenchIcon } from './WorkbenchIcon';
 import { useContext } from 'react';
 import { PrReadContext } from '../lib/pr-read-context';
 import { Mail, MailOpen } from 'lucide-react';
-import { Copy, ExternalLink, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { Copy, ExternalLink, Link, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { prDeepLinks } from '../lib/deep-link';
 import type { ReviewMember } from '../lib/workbench';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import type { ComponentProps } from 'react';
@@ -118,6 +119,15 @@ export function prEntryActionGroups({
         icon: <Copy size={15} />,
         run: () => navigator.clipboard.writeText(members.map((m) => m.url).join('\n')),
       },
+      ...(prDeepLinks(members.map((m) => m.url)).length
+        ? [
+            {
+              label: stack ? 'Copy Gnosis links' : 'Copy Gnosis link',
+              icon: <Link size={15} />,
+              run: () => navigator.clipboard.writeText(prDeepLinks(members.map((m) => m.url), window.electronAPI.linkScheme).join('\n')),
+            },
+          ]
+        : []),
     ],
     onMute
       ? [

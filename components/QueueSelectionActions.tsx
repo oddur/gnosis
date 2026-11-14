@@ -1,4 +1,5 @@
-import { Copy, Mail, MailOpen, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { Copy, Link, Mail, MailOpen, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { prDeepLinks } from '../lib/deep-link';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import type { EntryActionGroups } from './EntryActions';
@@ -112,6 +113,12 @@ export function queueSelectionGroups({
         label: 'Copy PR links',
         icon: <Copy size={15} />,
         run: () => navigator.clipboard.writeText(members.map((member) => member.url).join('\n')),
+      },
+      {
+        label: 'Copy Gnosis links',
+        icon: <Link size={15} />,
+        disabled: !prDeepLinks(members.map((member) => member.url)).length,
+        run: () => navigator.clipboard.writeText(prDeepLinks(members.map((member) => member.url), window.electronAPI.linkScheme).join('\n')),
       },
     ],
     [
