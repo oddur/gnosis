@@ -158,6 +158,40 @@ jobs:
       - name: Browser suites
         run: node scripts/run-browser-suites.mjs --shard ${{ matrix.shard }}/3
 
+  extension:
+    # Builds the "Open in Gnosis" browser extension (extensions/browser) and uploads the unsigned packages.
+    # Its unit and DOM tests run in Check with `npm test`. No publishing and no store credentials here.
+    name: Browser extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:extension
+      # web-ext is not a dev dependency (it brings a large, older dependency tree); run it on demand.
+      - name: Lint the Firefox package
+        run: npx --yes web-ext@8 lint --source-dir dist-extension/firefox --warnings-as-errors
+      - name: Upload Chrome and Edge package
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-in-gnosis-chrome-${{ github.sha }}
+          path: dist-extension/open-in-gnosis-chrome-*.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Firefox package
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-in-gnosis-firefox-${{ github.sha }}
+          path: dist-extension/open-in-gnosis-firefox-*.xpi
+          if-no-files-found: error
+          retention-days: 14
+
   package:
     name: Package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
