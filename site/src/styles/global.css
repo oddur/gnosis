@@ -697,6 +697,24 @@ code {
   user-select: all;
   flex: 1;
 }
+.command-copy-compact {
+  padding: 8px 8px 8px 14px;
+  gap: 10px;
+}
+.intro-brew {
+  margin-top: 22px;
+  max-width: 440px;
+  margin-bottom: 22px;
+}
+.intro-brew > span {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+:root[data-platform='other'] .mac-only {
+  display: none;
+}
 .copy-status {
   font-size: 12px;
   line-height: 1.6;

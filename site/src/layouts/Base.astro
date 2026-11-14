@@ -31,6 +31,14 @@ const canonical = new URL(Astro.url.pathname, 'https://gnosis.to');
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="font" href="/fonts/onest-latin.woff2" type="font/woff2" crossorigin />
     <title>{title}</title>
+    <script is:inline>
+      (function () {
+        var n = navigator;
+        var platform = (n.userAgentData && n.userAgentData.platform) || n.platform || '';
+        var mac = /mac/i.test(platform) && !(n.maxTouchPoints > 1);
+        document.documentElement.dataset.platform = mac ? 'mac' : 'other';
+      })();
+    </script>
     <script>
       import { init, trackEvent } from '@aptabase/web';
       init('A-EU-1996018704');

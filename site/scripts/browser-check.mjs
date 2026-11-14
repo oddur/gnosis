@@ -247,11 +247,15 @@ app
       await js(
         "Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copied=text}}});void 0"
       );
-      await click('#copy-brew');
+      await js("document.documentElement.dataset.platform='other';void 0");
+      assert.equal(await js("getComputedStyle(document.querySelector('.brew-install')).display"), 'none');
+      assert.equal(await js("getComputedStyle(document.querySelector('.intro-brew')).display"), 'none');
+      await js("document.documentElement.dataset.platform='mac';void 0");
+      await click('[data-copy="brew-command"]');
       assert.equal(await js('window.copied'), 'brew tap oddur/gnosis && brew install --cask gnosis');
       assert.equal(await js("document.querySelector('#copy-status').textContent"), 'Install command copied.');
       await js("navigator.clipboard.writeText=async()=>{throw Error('Denied')};void 0");
-      await click('#copy-brew');
+      await click('[data-copy="brew-command"]');
       assert.match(await js("document.querySelector('#copy-status').textContent"), /copy it manually/);
       await load();
       const featureIds = ['stacks', 'changes', 'markdown', 'chat', 'checks', 'conflicts'];

@@ -39,6 +39,24 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
               See the features <Icon name="arrow" size={16} />
             </a>
           </div>
+          <div class="intro-brew mac-only">
+            <span id="intro-brew-label">Or with Homebrew</span>
+            <div class="command-copy command-copy-compact">
+              <code id="intro-brew-command">{brewCommand}</code>
+              <button
+                class="icon-button"
+                type="button"
+                data-copy="intro-brew-command"
+                data-status="intro-copy-status"
+                aria-label="Copy Homebrew install command"
+                title="Copy install command"
+                hidden
+              >
+                <Icon name="copy" size={17} />
+              </button>
+            </div>
+            <p id="intro-copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+          </div>
           <p class="intro-note">
             Free and open source. Uses your local Claude Code or Codex, with your existing subscription or API billing.
           </p>
@@ -199,14 +217,15 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
             <a href={releasesUrl}>All downloads</a>
           </p>
         </div>
-        <div class="brew-install">
+        <div class="brew-install mac-only">
           <label for="brew-command">Or install with Homebrew</label>
           <div class="command-copy">
             <code id="brew-command">{brewCommand}</code>
             <button
               class="icon-button"
               type="button"
-              id="copy-brew"
+              data-copy="brew-command"
+              data-status="copy-status"
               aria-label="Copy Homebrew install command"
               title="Copy install command"
               hidden
@@ -222,16 +241,15 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
     </section>
   </main>
   <script>
-    const copy = document.querySelector<HTMLButtonElement>('#copy-brew');
-    if (copy) {
-      copy.hidden = false;
-      copy.addEventListener('click', async () => {
-        const status = document.querySelector('#copy-status')!;
+    for (const button of document.querySelectorAll<HTMLButtonElement>('button[data-copy]')) {
+      button.hidden = false;
+      button.addEventListener('click', async () => {
+        const status = document.getElementById(button.dataset.status!)!;
         try {
-          await navigator.clipboard.writeText(document.querySelector('#brew-command')!.textContent!.trim());
+          await navigator.clipboard.writeText(document.getElementById(button.dataset.copy!)!.textContent!.trim());
           status.textContent = 'Install command copied.';
         } catch {
-          status.textContent = 'Select the command above and copy it manually.';
+          status.textContent = 'Select the command and copy it manually.';
         }
       });
     }
