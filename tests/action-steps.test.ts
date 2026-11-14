@@ -143,32 +143,36 @@ function session(overrides: Partial<ConflictSession> = {}): ConflictSession {
   };
 }
 
-void test('conflicts: resolve, review, then push; restack is an optional later step', () => {
-  const editing = conflictSteps(session(), { preview: false });
-  assert.deepEqual(ids(editing), ['resolve', 'review', 'push']);
-  assert.equal(editing.steps[0].label, 'Resolve 2 conflicted files');
-  assert.equal(editing.steps[0].detail, 'conflicts.go, retry.go · 1 of 2 reviewed');
-  assert.equal(editing.steps[2].pointOfNoReturn, true);
-  assert.equal(conflictSteps(session(), { preview: true }).current, 1);
-  const confirming = conflictSteps(session(), { preview: true, confirming: true });
-  assert.deepEqual(statuses(confirming), ['done', 'done', 'current']);
+void test('conflicts: one plan from start to end; resolving includes review, then one confirmation pushes', () => {
+  const editing = conflictSteps(session());
+  assert.deepEqual(ids(editing), ['resolve', 'push']);
+  assert.equal(editing.steps[0].label, 'Resolve 2 files');
+  assert.equal(editing.steps[0].detail, '1 of 2 reviewed');
+  assert.equal(editing.steps[1].label, 'Confirm and push to feature/retry');
+  assert.equal(editing.steps[1].pointOfNoReturn, true);
+  assert.equal(editing.current, 0);
+  const confirming = conflictSteps(session(), { confirming: true });
+  assert.deepEqual(statuses(confirming), ['done', 'current']);
+  // Marking files reviewed changes the detail, never the number of steps.
+  assert.equal(conflictSteps(session({ files: [file('a', true), file('b', true)] })).steps.length, 2);
 
   const failed = conflictSteps(session(), {
-    preview: true,
     confirming: true,
     failure: { step: 'push', message: 'Git could not complete this operation.' },
   });
-  assert.equal(failed.steps[2].status, 'failed');
+  assert.equal(failed.steps[1].status, 'failed');
 
-  const withDependents = conflictSteps(session({ dependents: [url(2), url(3)] }), { preview: false });
-  assert.deepEqual(ids(withDependents), ['resolve', 'review', 'push', 'restack']);
-  assert.equal(withDependents.steps[3].optional, true);
-  const published = conflictSteps(session({ dependents: [url(2)], status: 'published' }), { preview: false });
-  assert.deepEqual(statuses(published), ['done', 'done', 'done', 'current']);
+  const withDependents = conflictSteps(session({ dependents: [url(2), url(3)] }));
+  assert.deepEqual(ids(withDependents), ['resolve', 'push', 'restack']);
+  assert.equal(withDependents.steps[2].optional, true);
+  const published = conflictSteps(session({ dependents: [url(2)], status: 'published' }));
+  assert.deepEqual(statuses(published), ['done', 'done', 'current']);
+  assert.deepEqual(statuses(conflictSteps(session({ status: 'published' }))), ['done', 'done']);
 
-  const clean = conflictSteps(session({ files: [], preparation: 'clean-merge' }), { preview: false });
-  assert.equal(clean.steps[0].label, 'Merge cleanly, without conflicts');
-  const upToDate = conflictSteps(session({ files: [], preparation: 'up-to-date' }), { preview: false });
+  const clean = conflictSteps(session({ files: [], preparation: 'clean-merge' }));
+  assert.equal(clean.steps[0].label, 'No conflicts to resolve');
+  assert.deepEqual(statuses(clean), ['done', 'current']);
+  const upToDate = conflictSteps(session({ files: [], preparation: 'up-to-date', dependents: [url(2)] }));
   assert.deepEqual(statuses(upToDate), ['done', 'skipped', 'skipped']);
 });
 
