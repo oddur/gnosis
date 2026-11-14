@@ -547,7 +547,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
-    if (origin.isContentEditable || origin.closest('input,textarea,select,[contenteditable=true],[role=menu]')) return;
+    if (origin.isContentEditable || origin.closest('input,textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu')) return;
     const key = event.key;
     const handled = (() => {
       if (key === 'j' || key === 'k') {
