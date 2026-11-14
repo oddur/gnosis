@@ -24,8 +24,7 @@ import {
 import type { CounterField } from './notification-store';
 
 export interface DesktopNotification {
-  on(event: 'show' | 'click' | 'close', listener: () => void): void;
-  on(event: 'failed', listener: (error: string) => void): void;
+  on(event: 'show' | 'click' | 'close' | 'failed', listener: () => void): void;
   show(): void;
   close(): void;
 }
@@ -47,6 +46,8 @@ export function createNotificationService(deps: {
   /** Shows a toast in the focused window, or the main window. False when no renderer can show it. */
   toast: (delivery: NotificationDelivery) => boolean;
   open: (target: DeepLinkTarget) => void;
+  /** A click on a notification without a target, such as "Update ready", only shows Gnosis. */
+  show?: () => void;
   count?: (kind: NotificationKind, field: CounterField) => void;
   platform?: string;
   now?: () => number;
@@ -103,6 +104,7 @@ export function createNotificationService(deps: {
       forget();
       count(delivery.kind, 'clicked');
       if (delivery.target) deps.open(delivery.target);
+      else deps.show?.();
     });
     notification.on('close', forget);
     notification.on('failed', () => {
@@ -174,7 +176,10 @@ export function createNotificationService(deps: {
         return false;
       });
       if (!enabled.length) return;
-      if (isPaused(settings, now())) return hold(enabled);
+      if (isPaused(settings, now())) {
+        hold(enabled);
+        return;
+      }
       if (catchUp) {
         catchUp.push(...enabled);
         return;
@@ -191,8 +196,14 @@ export function createNotificationService(deps: {
       if (localKeys.has(event.key)) return;
       localKeys.add(event.key);
       const settings = deps.settings();
-      if (!settings.events[event.type]) return count(event.type, 'suppressed:type-off');
-      if (isPaused(settings, now())) return hold([event]);
+      if (!settings.events[event.type]) {
+        count(event.type, 'suppressed:type-off');
+        return;
+      }
+      if (isPaused(settings, now())) {
+        hold([event]);
+        return;
+      }
       const delivery = coalesce([event], nextId());
       if (delivery) route(delivery);
     },

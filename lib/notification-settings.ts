@@ -76,7 +76,8 @@ export function notificationSettings(preferences: unknown): NotificationSettings
   };
 }
 /** The saved form of `notificationSettings`: every field present and valid. */
-export function normalizeNotificationPreferences(preferences: unknown): Required<NotificationPreferences> {
+export type SavedNotificationPreferences = Omit<NotificationSettings, 'desktop'>;
+export function normalizeNotificationPreferences(preferences: unknown): SavedNotificationPreferences {
   const settings = notificationSettings(preferences);
   return { inApp: settings.inApp, events: settings.events, pausedUntil: settings.pausedUntil, introduced: settings.introduced };
 }

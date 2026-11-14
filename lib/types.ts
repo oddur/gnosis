@@ -418,7 +418,10 @@ export interface Preferences {
   codeFont: string;
   claudePath: string;
   codexPath: string;
+  /** The desktop notification master switch: "Desktop notifications" in Settings › Notifications. */
   notifications: boolean;
+  /** Settings › Notifications. See lib/notification-settings.ts. */
+  notificationSettings?: import('./notification-settings').NotificationPreferences;
   diffLayout: 'unified' | 'split';
   stackChangesMode?: 'combined' | 'by-pr';
   diffAppearance?: import('./review-diff').DiffAppearance;

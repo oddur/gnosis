@@ -480,7 +480,16 @@ let activities: ActivityTask[] = [
   },
 ];
 if (onboardingScenario) activities = [];
-let navigateReview: ((event: Event) => void) | undefined;
+// Notifications and deep links: tests dispatch `fixture-deep-link` (a target) and `fixture-notification` (a message).
+const notificationScenario = new URLSearchParams(location.search).has('notifications');
+const fixtureNotifications = window as unknown as {
+  fixtureNotificationContext?: string;
+  fixtureNotificationActions: string[];
+  fixtureNotificationCalls: string[];
+};
+fixtureNotifications.fixtureNotificationActions = [];
+fixtureNotifications.fixtureNotificationCalls = [];
+let deepLinkSequence = 0;
 const unreadScenario = new URLSearchParams(location.search).has('unread');
 const fixtureReads: Record<string, PrReadState> = unreadScenario ? JSON.parse(sessionStorage.getItem('fixture-read-state') ?? 'null') ?? Object.fromEntries(items.flatMap(item => item.subject.members).map(member => {
   const versions = emptyReadVersions();
@@ -511,11 +520,34 @@ const mocks = {
       checks:{state:'success' as const,passed:129,skipped:1,total:130},readiness:{state:'OPEN',isDraft:false,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'APPROVED',baseBranch:member.baseBranch,baseSha:member.baseSha,behindBy:0,mergeQueue:false,queueState:null}}});
   },
   ...fileFilterMocks,
-  onReviewNavigate: (callback: (id: string) => void) => {
-    navigateReview = event => callback((event as CustomEvent<string>).detail);
-    window.addEventListener('fixture-review-navigate', navigateReview);
+  takeDeepLinks: () => Promise.resolve([]),
+  onDeepLink: (callback: (item: import('../../src/deep-link-service').DeepLinkDelivery) => void) => {
+    const listener = (event: Event) => callback({ id: `fixture-${++deepLinkSequence}`, source: 'notification', target: (event as CustomEvent<import('../../lib/deep-link').DeepLinkTarget>).detail });
+    window.addEventListener('fixture-deep-link', listener);
+    return () => window.removeEventListener('fixture-deep-link', listener);
   },
-  offReviewNavigate: () => { if (navigateReview) window.removeEventListener('fixture-review-navigate', navigateReview); },
+  onNotification: (callback: (message: import('../../lib/notification-routing').NotificationMessage) => void) => {
+    const listener = (event: Event) => callback((event as CustomEvent<import('../../lib/notification-routing').NotificationMessage>).detail);
+    window.addEventListener('fixture-notification', listener);
+    return () => window.removeEventListener('fixture-notification', listener);
+  },
+  notificationContext: (activeUrl?: string) => { fixtureNotifications.fixtureNotificationContext = activeUrl; },
+  notificationAction: (kind: string, action: string) => { fixtureNotifications.fixtureNotificationActions.push(`${kind}:${action}`); },
+  notificationIntroduce: (accept: boolean) => {
+    fixtureNotifications.fixtureNotificationCalls.push(`introduce:${accept}`);
+    prefs = { ...prefs, notifications: accept, notificationSettings: { ...prefs.notificationSettings, introduced: true } };
+    return Promise.resolve(accept ? 'desktop' as const : 'none' as const);
+  },
+  sendTestNotification: () => {
+    fixtureNotifications.fixtureNotificationCalls.push('test');
+    return Promise.resolve(prefs.notifications ? 'desktop' as const : 'toast' as const);
+  },
+  pauseNotifications: (paused: boolean) => {
+    fixtureNotifications.fixtureNotificationCalls.push(`pause:${paused}`);
+    prefs = { ...prefs, notificationSettings: { ...prefs.notificationSettings, pausedUntil: paused ? Date.now() + 3_600_000 : 0 } };
+    return Promise.resolve(prefs.notificationSettings ?? {});
+  },
+  notificationStatus: () => Promise.resolve({ supported: true, blocked: notificationScenario && new URLSearchParams(location.search).has('blocked') }),
   renderMarkdownReview: (request: import('../../lib/markdown-review').MarkdownReviewRequest) => (window as unknown as { markdownFixture: (request: import('../../lib/markdown-review').MarkdownReviewRequest) => Promise<import('../../lib/markdown-review').MarkdownReview> }).markdownFixture(request),
   getPreparedInventories: () => Promise.resolve({ changes: [], commits: [] }),
   getPrChanges: (url: string) => {

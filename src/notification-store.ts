@@ -137,7 +137,7 @@ export function createNotificationStore(storage: StateStorage, now = Date.now) {
         const fired = { ...(saved?.fired ?? {}) };
         for (const event of derived) {
           if (options.count) { bump(state, event.type, 'derived'); headerChanged = true; }
-          if (fired[event.key] !== undefined) {
+          if (Object.hasOwn(fired, event.key)) {
             if (options.count) bump(state, event.type, 'suppressed:duplicate');
             continue;
           }

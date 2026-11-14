@@ -14,6 +14,9 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     executableName: 'gnosis',
+    // Pinned to the value Forge used by default. macOS keys notification permission, Focus settings and saved
+    // credentials by bundle id: changing it would reset them for every user.
+    appBundleId: 'com.electron.gnosis',
     icon: path.resolve(__dirname, 'Icon/macos/AppIcon'),
     extraResource: [path.resolve(__dirname, 'Icon/tray'), path.resolve(__dirname, 'resources/mergiraf')],
     ...(process.env.APPLE_TEAM_ID

@@ -163,6 +163,8 @@ export function batch(events: readonly NotificationEvent[], nextId: () => string
 
 /** At most three desktop notifications in any five minutes. */
 export const DESKTOP_LIMIT = { count: 3, windowMs: 5 * 60_000 };
+/** Main to renderer, on the `notification` channel. */
+export type NotificationMessage = { type: 'show'; delivery: NotificationDelivery } | { type: 'close'; urls: string[] };
 /** When the next desktop notification may be shown, given the times of recent ones. */
 export function nextDesktopSlot(shown: readonly number[], now: number): number {
   const recent = shown.filter((at) => now - at < DESKTOP_LIMIT.windowMs).sort((a, b) => a - b);

@@ -19,7 +19,8 @@ export interface NotificationEvent {
   /** Who caused it, such as the reviewer. */
   actor?: string;
   at: number;
-  target: DeepLinkTarget;
+  /** Where a click lands. Without one, a click only shows Gnosis. */
+  target?: DeepLinkTarget;
 }
 /** Row order of the design's event table: picks the headline when events coalesce. */
 export const EVENT_RANK: readonly NotificationEventType[] = [
@@ -83,7 +84,7 @@ export function deriveEvents(previous: PrBasis | undefined, next: PrObservation,
   const team = eligible && !direct && (member.role !== undefined ? member.role === 'review-requested' : (prev?.team ?? false));
 
   const signals = next.signals && next.signals.url === member.url && next.signals.headSha === member.headSha &&
-    (!sameHead || next.signals.checkedAt > (prev?.signalsAt ?? 0)) ? next.signals : undefined;
+    (!prev || !sameHead || next.signals.checkedAt > (prev.signalsAt ?? 0)) ? next.signals : undefined;
   const kinds: Partial<Record<AttentionKind, string>> = {};
   if (direct) kinds['review-requested'] = 'direct';
   // Status kinds come from signals for this head. A new head resets them to unknown without an event.
