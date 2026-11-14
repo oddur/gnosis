@@ -63,6 +63,8 @@ const config: ForgeConfig = {
         { entry: 'src/markdown-review-worker.ts', config: 'vite.markdown-worker.config.ts', target: 'main' },
         { entry: 'src/app-data-worker.ts', config: 'vite.main.config.ts', target: 'main' },
         { entry: 'src/preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
+        // The menu bar panel's own small preload (#308), none of the main window's API.
+        { entry: 'src/menubar-preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
       ],
       renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],
     }),
