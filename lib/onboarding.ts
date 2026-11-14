@@ -1,6 +1,7 @@
 import { normalizeRepositorySettings, normalizeBriefingLimit, type RepositorySettingsMap } from './repository-settings';
 import { normalizeEffort, type Effort } from './effort';
 import type { Preferences } from './types';
+import { desktopSteps, type DesktopSetupState } from './desktop-setup';
 import { DEFAULT_QUEUE_FILTERS, normalizeQueueFilters, type QueueFilters } from './queue-filters';
 import type { QueueViewsState } from './saved-views';
 import {
@@ -29,8 +30,18 @@ export const SETUP_GOALS = [
   { id: 'authored', label: 'Track my own PRs', description: 'The PRs you authored, in one view.', view: 'My PRs' },
 ] as const;
 export type SetupGoal = (typeof SETUP_GOALS)[number]['id'];
-export const SETUP_STEPS = ['goals', 'github', 'repositories', 'filters', 'ai', 'finish'] as const;
+export const SETUP_STEPS = ['goals', 'github', 'repositories', 'filters', 'notifications', 'menubar', 'ai', 'finish'] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
+const GITHUB_STEPS: readonly SetupStep[] = ['github', 'repositories', 'filters', 'notifications', 'menubar'];
+/**
+ * The steps shown. Local reviews skip GitHub and everything that follows from it, including PR notifications.
+ * The menu bar step is macOS only.
+ */
+export function setupSteps(local: boolean, platform: string): SetupStep[] {
+  return SETUP_STEPS.filter(
+    (step) => (!local || !GITHUB_STEPS.includes(step)) && (step !== 'menubar' || desktopSteps(platform).includes('menubar'))
+  );
+}
 export interface SetupDraft {
   step: SetupStep;
   local: boolean;
@@ -59,6 +70,8 @@ export interface OnboardingState {
   completed?: boolean;
   tourStep?: number;
   tourCompleted?: boolean;
+  /** Notifications and menu bar steps: what the user did, kept across replays. */
+  desktop?: DesktopSetupState;
 }
 export interface SetupView {
   id: string;

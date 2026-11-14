@@ -1,6 +1,7 @@
 import { applyViewAction, type QueueViewsState } from '../lib/saved-views';
 import { normalizeSetup, setupPreferences, setupViews, type OnboardingState, type SetupDraft } from '../lib/onboarding';
 import type { Preferences } from '../lib/types';
+import { normalizeDesktopSetup } from '../lib/desktop-setup';
 import type { StateStorage } from './app-data-store';
 
 export function createOnboardingService(deps: {
@@ -29,6 +30,8 @@ export function createOnboardingService(deps: {
             : 0,
         tourCompleted: state.tourCompleted === true,
       };
+      const desktop = normalizeDesktopSetup(state.desktop);
+      if (desktop) value.desktop = desktop;
       deps.storage.write(key(), value);
       await deps.storage.flush();
     },
@@ -55,6 +58,7 @@ export function createOnboardingService(deps: {
           );
       if (!draft.local && !account) throw new Error('Connect GitHub before applying repository setup.');
       const preferences = setupPreferences(oldPrefs, draft);
+      const desktop = normalizeDesktopSetup((oldProgress as OnboardingState).desktop);
       let viewsWritten = false;
       try {
         if (!draft.local) {
@@ -62,7 +66,15 @@ export function createOnboardingService(deps: {
           viewsWritten = true;
         }
         deps.savePreferences(preferences);
-        deps.storage.write(storageKey, { draft, completed: true, paused: false, tourStep: 0, tourCompleted: false });
+        deps.storage.write(storageKey, {
+          draft,
+          completed: true,
+          paused: false,
+          tourStep: 0,
+          tourCompleted: false,
+          // Notifications and menu bar answers take effect when given, so applying keeps them.
+          ...(desktop ? { desktop } : {}),
+        });
         await deps.storage.flush();
         return preferences;
       } catch {
