@@ -10,6 +10,8 @@ import { WorkflowViewMenu } from './WorkflowViewMenu';
 import { WorkflowSidebar } from './WorkflowSidebar';
 import { WorkflowGraphState } from './WorkflowGraphState';
 import { WorkflowDetailNavigation } from './WorkflowDetailNavigation';
+import { WorkflowExternalChecks } from './WorkflowExternalChecks';
+import { actionsNeedAttention, externalCheckGroups, workflowWarningSummary } from '../lib/workflow-external';
 import { createPortal } from 'react-dom';
 import {
   attentionJobs,
@@ -37,6 +39,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
+  CircleAlert,
   Focus,
   Network,
   ArrowRight,
@@ -478,7 +481,6 @@ export function WorkflowGraphView({
   selectedId,
   onSelect,
   onContextChange,
-  onExternalChecks,
   onFilterChange,
   active = true,
   stateKey,
@@ -493,7 +495,6 @@ export function WorkflowGraphView({
   detailHost?: HTMLElement | null;
   toolbarHost?: HTMLElement | null;
   onRevealContext: () => void;
-  onExternalChecks: (url: string) => void;
   onFilterChange: (value: CheckFilter) => void;
   values: Partial<Record<string, PrChecks>>;
   filter: CheckFilter;
@@ -541,7 +542,30 @@ export function WorkflowGraphView({
   const latestRuns = useRef(runs);
   latestRuns.current = runs;
   const run = runs?.runs.find((r) => r.id === runId) ?? runs?.runs[0];
-  const sidebarOpen = workflowsOpen ?? (!!runs && runs.runs.length > 1 && !compactSidebar);
+  // Checks the Actions graph cannot draw still count toward the Checks tab, so Graph lists them too.
+  const externalGroups = useMemo(() => externalCheckGroups(snapshot, runs?.runs), [snapshot, runs]);
+  const [externalId, setExternalId] = useState<string | undefined>(session.externalId);
+  const external =
+    externalGroups.find((group) => group.id === externalId) ??
+    (runs && !runs.runs.length ? externalGroups.at(0) : undefined);
+  const sidebarCount = (runs?.runs.length ?? 0) + externalGroups.length;
+  // Without a saved choice, open a failing provider when GitHub Actions has nothing to fix.
+  const chosen = useRef(session.runId !== undefined || session.externalId !== undefined);
+  useEffect(() => {
+    if (chosen.current || !runs || !snapshot) return;
+    chosen.current = true;
+    const failing = externalGroups.find((group) => group.outcome === 'attention');
+    if (failing && !actionsNeedAttention(snapshot, runs.runs)) setExternalId(failing.id);
+  }, [runs, snapshot, externalGroups]);
+  const chooseExternal = (id: string) => {
+    chosen.current = true;
+    switchGeneration.current++;
+    setPendingWorkflow(undefined);
+    if (id !== external?.id) onContextChange();
+    setExternalId(id);
+    if (compactSidebar) closeWorkflows();
+  };
+  const sidebarOpen = workflowsOpen ?? (!!runs && sidebarCount > 1 && !compactSidebar);
   const switchGeneration = useRef(0);
   const currentScope = useRef(scope);
   currentScope.current = scope;
@@ -551,8 +575,11 @@ export function WorkflowGraphView({
     JSON.stringify([scope, id, attempt, grouping, showSkipped, showCompleted]);
   const chooseWorkflow = (id: number) => {
     const generation = ++switchGeneration.current;
+    chosen.current = true;
     setPendingWorkflow(undefined);
     if (id === run?.id) {
+      if (external) onContextChange();
+      setExternalId(undefined);
       if (compactSidebar) closeWorkflows();
       return;
     }
@@ -595,6 +622,7 @@ export function WorkflowGraphView({
           : current
       );
       setRunId(id);
+      setExternalId(undefined);
       setExpanded([]);
       setExpandedAnnotations([]);
       setExpandedSteps([]);
@@ -682,6 +710,7 @@ export function WorkflowGraphView({
     Object.assign(session, {
       memberUrl,
       runId,
+      externalId,
       expanded,
       showSkipped,
       showCompleted,
@@ -694,6 +723,7 @@ export function WorkflowGraphView({
     session,
     memberUrl,
     runId,
+    externalId,
     expanded,
     showSkipped,
     showCompleted,
@@ -1176,6 +1206,20 @@ export function WorkflowGraphView({
       })),
     [graph, byId, highlight, failureSources]
   );
+  const externalIssues = external?.checks.filter((check) => checkGroup(check) === 'attention') ?? [];
+  const moveExternalIssue = (direction: 1 | -1) => {
+    if (!snapshot || !externalIssues.length) return;
+    const current = externalIssues.findIndex((check) => check.id === selectedId);
+    const next =
+      current < 0
+        ? direction === 1
+          ? 0
+          : externalIssues.length - 1
+        : (current + direction + externalIssues.length) % externalIssues.length;
+    onSelect(snapshot, externalIssues[next]);
+  };
+  // Failures the current Actions graph does not show; never let a green graph stand in for a red tab.
+  const hiddenFailures = external ? [] : externalGroups.filter((group) => group.counts.attention > 0);
   const toolbarControls = (
     <>
       <div className="workflow-selectors">
@@ -1191,12 +1235,14 @@ export function WorkflowGraphView({
               onContextChange();
               setMemberUrl(value);
               setRunId(undefined);
+              setExternalId(undefined);
+              chosen.current = false;
               setExpanded([]);
               setFocusNodeId(undefined);
             }}
           />
         )}
-        {!!runs?.runs.length && (
+        {!!runs && sidebarCount > 0 && (
           <>
             <Button
               ref={workflowToggle}
@@ -1214,14 +1260,14 @@ export function WorkflowGraphView({
                 }
               }}
             >
-              <PanelLeft size={15} /> Workflows ({runs.runs.length})
+              <PanelLeft size={15} /> Workflows ({sidebarCount})
             </Button>
-            <span className="workflow-active-run" title={run?.name}>
-              {run?.name}
+            <span className="workflow-active-run" title={external?.name ?? run?.name}>
+              {external?.name ?? run?.name}
             </span>
           </>
         )}
-        {run && (
+        {run && !external && (
           <a
             href={run.url}
             target="_blank"
@@ -1232,7 +1278,7 @@ export function WorkflowGraphView({
             <ExternalLink size={15} />
           </a>
         )}
-        {graph && (
+        {graph && !external && (
           <WorkflowViewMenu
             grouping={grouping}
             onGrouping={chooseGrouping}
@@ -1253,7 +1299,7 @@ export function WorkflowGraphView({
           </WorkflowViewMenu>
         )}
       </div>
-      {graph && (
+      {graph && !external && (
         <div className="workflow-triage">
           <div role="group" aria-label="Highlight jobs in this workflow">
             <Button
@@ -1298,11 +1344,6 @@ export function WorkflowGraphView({
               Next issue <ArrowRight size={14} />
             </Button>
           )}
-          {!!snapshot?.checks.some((c) => c.kind === 'status') && (
-            <Button size="sm" variant="ghost" onClick={() => member && onExternalChecks(member.url)}>
-              External checks ({snapshot.checks.filter((c) => c.kind === 'status').length})
-            </Button>
-          )}
         </div>
       )}
       <span
@@ -1334,6 +1375,22 @@ export function WorkflowGraphView({
   return (
     <section className="workflow-graph-view" aria-label="Workflow dependency graph">
       {detailHost &&
+        external &&
+        createPortal(
+          <WorkflowDetailNavigation
+            count={externalIssues.length}
+            position={externalIssues.findIndex((check) => check.id === selectedId)}
+            onMove={moveExternalIssue}
+            onReveal={() => {}}
+            onClose={onRevealContext}
+            prerequisites={[]}
+            dependants={[]}
+            showRelations={false}
+          />,
+          detailHost
+        )}
+      {detailHost &&
+        !external &&
         createPortal(
           <WorkflowDetailNavigation
             count={issues.length}
@@ -1369,7 +1426,9 @@ export function WorkflowGraphView({
           key={scope}
           id={sidebarId}
           runs={runs?.runs ?? []}
+          external={externalGroups}
           selected={run?.id}
+          selectedExternal={external?.id}
           pending={pendingWorkflow}
           snapshot={snapshot}
           counts={Object.fromEntries(
@@ -1380,6 +1439,7 @@ export function WorkflowGraphView({
           open={sidebarOpen}
           focusRequest={sidebarFocus}
           onSelect={chooseWorkflow}
+          onSelectExternal={chooseExternal}
           onClose={closeWorkflows}
         />
         {sidebarOpen && compactSidebar && (
@@ -1401,36 +1461,55 @@ export function WorkflowGraphView({
             </div>
           )}
           {runs?.warning && <p className="workflow-notice">{runs.warning}</p>}
-          {graph?.warnings.length ? (
+          {hiddenFailures.length > 0 && (
+            <div className="workflow-notice workflow-external-notice" role="status">
+              <CircleAlert size={14} className="check-attention" aria-hidden="true" />
+              <span>
+                {hiddenFailures.map((group) => `${group.label} in ${group.name}`).join(' · ')}
+                {hiddenFailures.some((group) => group.source === 'external')
+                  ? ', outside GitHub Actions.'
+                  : ', outside the listed workflows.'}
+              </span>
+              {hiddenFailures.map((group) => (
+                <Button key={group.id} size="sm" variant="outline" onClick={() => chooseExternal(group.id)}>
+                  Show {group.name}
+                </Button>
+              ))}
+            </div>
+          )}
+          {!external && graph?.warnings.length ? (
             <details className="workflow-notice">
-              <summary>Some dependencies are unavailable</summary>
+              <summary>{workflowWarningSummary(graph.warnings)}</summary>
               {graph.warnings.map((warning, i) => (
                 <p key={i}>{warning}</p>
               ))}
+              <p>Jobs without arrows still show their reported status.</p>
             </details>
           ) : null}
-          <span
-            className={
-              [...outsideFailures.values()].some((items) => items.length)
-                ? 'workflow-scope-status workflow-context-notice'
-                : 'sr-only workflow-scope-status'
-            }
-            role="status"
-          >
-            {filter === 'running' && !activeCount
-              ? 'No active jobs in this view'
-              : [...outsideFailures.values()].some((items) => items.length)
-                ? 'Failed prerequisites outside this view'
-                : issues.length
-                  ? ''
-                  : 'No jobs need attention in this view'}
-          </span>
+          {!external && (
+            <span
+              className={
+                [...outsideFailures.values()].some((items) => items.length)
+                  ? 'workflow-scope-status workflow-context-notice'
+                  : 'sr-only workflow-scope-status'
+              }
+              role="status"
+            >
+              {filter === 'running' && !activeCount
+                ? 'No active jobs in this view'
+                : [...outsideFailures.values()].some((items) => items.length)
+                  ? 'Failed prerequisites outside this view'
+                  : issues.length
+                    ? ''
+                    : 'No jobs need attention in this view'}
+            </span>
+          )}
           {preferenceError && (
             <div className="workflow-notice" role="status">
               {preferenceError}
             </div>
           )}
-          {graph?.focus && (
+          {!external && graph?.focus && (
             <div className="workflow-navigation">
               <Button variant="outline" size="sm" onClick={() => setFocusNodeId(undefined)}>
                 Back to workflow
@@ -1438,7 +1517,7 @@ export function WorkflowGraphView({
               <span role="status">Prerequisites and dependants of {graph.focus.name}</span>
             </div>
           )}
-          {graph && !graph.focus && expanded.length > 0 && (
+          {!external && graph && !graph.focus && expanded.length > 0 && (
             <div className="workflow-expanded-groups" aria-label="Expanded job groups">
               {graph.groups
                 .filter((g) => expanded.includes(g.id))
@@ -1450,7 +1529,7 @@ export function WorkflowGraphView({
             </div>
           )}
           <div className="workflow-canvas" ref={canvas}>
-            {!!graph?.nodes.length && (
+            {!external && !!graph?.nodes.length && (
               <div className="workflow-viewport-actions" role="group" aria-label="Graph zoom">
                 <Button
                   variant="outline"
@@ -1481,7 +1560,15 @@ export function WorkflowGraphView({
               </div>
             )}
 
-            {graph?.nodes.length ? (
+            {external ? (
+              <WorkflowExternalChecks
+                group={external}
+                selectedId={selectedId}
+                onOpen={(check) => {
+                  if (snapshot) onSelect(snapshot, check);
+                }}
+              />
+            ) : graph?.nodes.length ? (
               <ClockActive.Provider value={active}>
                 <ReactFlow<JobNode>
                   defaultViewport={(() => {
