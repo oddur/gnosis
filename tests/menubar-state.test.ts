@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildMenubarState, menubarSignalRequests, menubarTasks, menubarTooltip, MENUBAR_TASK_LIMIT, type MenubarInput } from '../lib/menubar-state';
+import { buildMenubarState, clusterStacks, menubarSignalRequests, menubarTasks, menubarTooltip, MENUBAR_TASK_LIMIT, type MenubarInput } from '../lib/menubar-state';
+import { menubarBadge, MENUBAR_BADGES } from '../lib/menubar-settings';
 import { createStateSignature } from '../src/tray-signature';
 import type { ActivityTask } from '../lib/activity';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
@@ -32,10 +33,36 @@ void test('default: groups, summary, age and queue size', () => {
   assert.equal(state.checkedAt, T0 - 60_000);
   assert.deepEqual(state.groups.map((g) => [g.group, g.label, g.count, g.rows.map((r) => r.number)]), [['review', 'To review', 2, [2, 1]]]);
   assert.deepEqual(state.groups[0].rows[0].labels, ['Review requested']);
-  assert.equal(state.summary.line, '2 need you');
+  assert.equal(state.summary.line, '2 need you · 1 new');
   assert.equal(state.queueSize, 2);
   assert.equal(items.length, 2);
   assert.equal(menubarTooltip(state), 'Gnosis: 2 need you');
+});
+
+void test('the header names the number on the icon, from the same count', () => {
+  for (const badge of MENUBAR_BADGES) {
+    const { state, items } = buildMenubarState(input({ badge }));
+    const icon = menubarBadge(items, badge);
+    // `new` shows the count and `dot` stands for it; `all` already sums to "need you" plus "ready"; `none` shows nothing.
+    const marked = badge === 'new' || badge === 'dot' ? icon.count : 0;
+    assert.equal(state.summary.marked, marked, badge);
+    assert.equal(state.summary.line, marked ? `2 need you · ${marked} new` : '2 need you', badge);
+  }
+  assert.equal(buildMenubarState(input()).state.summary.marked, 1, 'The default setting is new');
+  const seen = input({ queue: { items: [item(requested(1)), item(requested(2))] } });
+  assert.equal(buildMenubarState(seen).state.summary.line, '2 need you', 'No "0 new"');
+});
+
+void test('rows from one stack sit together under their first row', () => {
+  const at = (hour: number) => `2026-11-14T0${hour}:00:00Z`;
+  const a = member(10, { requestedReviewers: [LOGIN], updatedAt: at(9) });
+  const b = member(11, { requestedReviewers: [LOGIN], updatedAt: at(5) });
+  const alone = member(20, { requestedReviewers: [LOGIN], updatedAt: at(7) });
+  const stack: QueueItem = { subject: { id: 'stack-10', kind: 'stack', title: 'Stack', members: [a, b], edges: [], warnings: [] }, attention: 'other' };
+  const { state } = buildMenubarState(input({ queue: { items: [stack, item(alone)] } }));
+  // By update time alone the order is 10, 20, 11.
+  assert.deepEqual(state.groups[0].rows.map((r) => [r.number, r.stackId ?? null, r.stackSize ?? null]), [[10, 'stack-10', 2], [11, 'stack-10', 2], [20, null, null]]);
+  assert.deepEqual(clusterStacks([{ id: '1' }, { id: '2', stackId: 's' }, { id: '3' }, { id: '4', stackId: 's' }]).map((r) => r.id), ['1', '2', '4', '3']);
 });
 
 void test('rows sent to the panel carry no URL or target; main resolves the id against its items', () => {

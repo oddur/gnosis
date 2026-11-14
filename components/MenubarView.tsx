@@ -5,7 +5,7 @@
  * Markup is labelled groups of buttons, not `role="menu"`: a screen reader reads "To review, 2 items". The list
  * is one Tab stop with a roving tabindex; arrows or j/k move across groups. The panel never writes to GitHub.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   CircleAlert,
   CircleCheck,
@@ -25,7 +25,7 @@ import {
   WifiOff,
   type LucideIcon,
 } from 'lucide-react';
-import type { AttentionKind } from '../lib/attention';
+import { ATTENTION_LABEL, type AttentionKind } from '../lib/attention';
 import type { MenubarApi, MenubarGroup, MenubarRow, MenubarState, MenubarTask } from '../lib/menubar-state';
 import { useStatusNow } from '../lib/status-clock';
 
@@ -83,31 +83,46 @@ function Line({ icon: Icon, tone, children }: { icon?: LucideIcon; tone?: string
   );
 }
 
-function rowDetail(row: MenubarRow, group: MenubarGroup['group'], now: number): string {
-  const where = row.stackSize ? `Stack · ${row.stackSize} PRs` : `${row.repo} #${row.number}`;
-  const author = group === 'review' && !row.own ? row.author : '';
+/** The kind a group's header already names. Its icon and words are not repeated on the row. */
+const GROUP_KIND: Partial<Record<MenubarGroup['group'], AttentionKind>> = { review: 'review-requested', ready: 'ready-to-merge' };
+const repoName = (repo: string) => repo.slice(repo.lastIndexOf('/') + 1);
+
+/**
+ * The second line, as the reason and the rest. The reason leads and never truncates; the group's own kind is not
+ * repeated ("Review requested" under To review). Rows under a stack line show only their number.
+ */
+export function rowDetail(row: MenubarRow, group: MenubarGroup['group'], now: number, inStack = false): { reason: string; rest: string } {
+  const named = GROUP_KIND[group];
+  const reason = row.labels.filter((label) => !named || label !== ATTENTION_LABEL[named]).join(' · ');
+  const where = inStack ? `#${row.number}` : `${repoName(row.repo)} #${row.number}${row.stackSize ? ` · stack of ${row.stackSize}` : ''}`;
+  const author = group === 'review' && !row.own && !inStack ? row.author : '';
   const checked = row.kinds[0] === 'ready-to-merge' && row.checkedAt ? `checked ${ago(row.checkedAt, now)}` : '';
-  return [where, author, ...row.labels, checked].filter(Boolean).join(' · ');
+  return { reason, rest: [where, author, checked].filter(Boolean).join(' · ') };
 }
 
 function Row({
   row,
   group,
   now,
+  inStack,
   current,
   onOpen,
   onFocus,
+  onPoint,
   setRef,
 }: {
   row: MenubarRow;
   group: MenubarGroup['group'];
   now: number;
+  inStack: boolean;
   current: boolean;
   onOpen: () => void;
   onFocus: () => void;
+  onPoint: (event: ReactPointerEvent) => void;
   setRef: (element: HTMLButtonElement | null) => void;
 }) {
   const { icon: Icon, tone } = KIND_ICON[row.kinds[0]];
+  const { reason, rest } = rowDetail(row, group, now, inStack);
   return (
     <li>
       <button
@@ -117,23 +132,43 @@ function Row({
         data-row-id={row.id}
         data-current={current || undefined}
         tabIndex={current ? 0 : -1}
+        title={row.title}
         onClick={onOpen}
         onFocus={onFocus}
+        onPointerMove={onPoint}
       >
         <span className="menubar-row-dot" data-new={row.isNew || undefined}>
           {row.isNew && <span className="sr-only">New</span>}
         </span>
-        <Icon aria-hidden="true" className="menubar-row-icon" data-tone={tone} />
+        {row.kinds[0] === GROUP_KIND[group] ? <span className="menubar-row-icon" /> : <Icon aria-hidden="true" className="menubar-row-icon" data-tone={tone} />}
         <span className="menubar-row-text">
           <span className="menubar-row-title">{row.title}</span>
-          <span className="menubar-row-detail">{rowDetail(row, group, now)}</span>
-        </span>
-        <span className="menubar-row-hint" aria-hidden="true">
-          Open ↵
+          <span className="menubar-row-detail">
+            {reason && <span className="menubar-row-reason">{reason}</span>}
+            {rest && <span className="menubar-row-meta">{reason ? `\u00a0· ${rest}` : rest}</span>}
+          </span>
         </span>
       </button>
     </li>
   );
+}
+
+/** Consecutive rows from one stack; `buildMenubarState` puts them together. A run of one stays a plain row. */
+function runs(rows: readonly MenubarRow[]): MenubarRow[][] {
+  const out: MenubarRow[][] = [];
+  for (const row of rows) {
+    const last = out.at(-1);
+    if (row.stackId && last?.[0].stackId === row.stackId) last.push(row);
+    else out.push([row]);
+  }
+  return out;
+}
+
+/** "Stack · 9 PRs · ivar", once above the rows it holds. The author shows for reviews when every row shares one. */
+function stackLine(rows: readonly MenubarRow[], group: MenubarGroup['group']): string {
+  const authors = new Set(rows.map((row) => row.author));
+  const author = group === 'review' && authors.size === 1 && !rows[0].own ? rows[0].author : '';
+  return [`Stack · ${rows[0].stackSize} PRs`, author].filter(Boolean).join(' · ');
 }
 
 function Task({ task }: { task: MenubarTask }) {
@@ -164,6 +199,28 @@ function Skeleton() {
   );
 }
 
+/** The header line. "9 new" carries the same dot as new rows: it is the number on the menu bar icon. */
+function Summary({ summary }: { summary: MenubarState['summary'] }) {
+  const parts = summary.line.split(' · ');
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={part}>
+          {index > 0 && ' · '}
+          {summary.marked > 0 && part === `${summary.marked} new` ? (
+            <span className="menubar-summary-new">
+              <span className="menubar-summary-dot" aria-hidden="true" />
+              {part}
+            </span>
+          ) : (
+            part
+          )}
+        </span>
+      ))}
+    </>
+  );
+}
+
 export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState | null; api: MenubarApi; now?: number }) {
   const clockNow = useStatusNow();
   const now = fixedNow ?? (clockNow || Date.now());
@@ -179,11 +236,23 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [cooling, setCooling] = useState(false);
 
-  const focusRow = useCallback((id: string | undefined) => {
+  const focusRow = useCallback((id: string | undefined, options?: FocusOptions) => {
     if (!id) return;
     setCurrentId(id);
-    buttons.current.get(id)?.focus();
+    buttons.current.get(id)?.focus(options);
   }, []);
+  // The pointer moves the one selection, as in a native menu: the keyboard carries on from the row under it, and
+  // there is never a hovered row beside a selected one. A list that scrolls under a still pointer moves nothing.
+  const pointer = useRef<{ x: number; y: number } | undefined>(undefined);
+  const pointAt = useCallback(
+    (id: string, event: ReactPointerEvent) => {
+      const last = pointer.current;
+      pointer.current = { x: event.screenX, y: event.screenY };
+      if (last?.x === event.screenX && last.y === event.screenY) return;
+      if (document.activeElement !== buttons.current.get(id)) focusRow(id, { preventScroll: true });
+    },
+    [focusRow]
+  );
   const refresh = useCallback(() => {
     if (state?.refreshing || Date.now() < cooldownUntil) return;
     setCooldownUntil(Date.now() + REFRESH_COOLDOWN_MS);
@@ -263,7 +332,7 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
   const signedOut = state?.connection === 'signed-out';
   const loading = !state || state.loading;
   const clear = !!state && !loading && !signedOut && state.groups.length === 0;
-  const title = signedOut ? 'Not connected to GitHub' : loading ? 'Checking your PRs…' : clear ? 'All clear' : state.summary.line;
+  const title = signedOut ? 'Not connected to GitHub' : loading ? 'Checking your PRs…' : clear ? 'All clear' : <Summary summary={state.summary} />;
   const refreshDisabled = !!state?.refreshing || cooling;
 
   return (
@@ -324,21 +393,39 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
                         </span>
                       </h2>
                       <ul className="menubar-rows" aria-labelledby={`menubar-group-${group.group}`}>
-                        {group.rows.map((row) => (
-                          <Row
-                            key={row.id}
-                            row={row}
-                            group={group.group}
-                            now={now}
-                            current={row.id === current}
-                            onOpen={() => api.open(row.id)}
-                            onFocus={() => setCurrentId(row.id)}
-                            setRef={(element) => {
-                              if (element) buttons.current.set(row.id, element);
-                              else buttons.current.delete(row.id);
-                            }}
-                          />
-                        ))}
+                        {runs(group.rows).map((run) => {
+                          const rowsOf = (inStack: boolean) =>
+                            run.map((row) => (
+                              <Row
+                                key={row.id}
+                                row={row}
+                                group={group.group}
+                                now={now}
+                                inStack={inStack}
+                                current={row.id === current}
+                                onOpen={() => api.open(row.id)}
+                                onFocus={() => setCurrentId(row.id)}
+                                onPoint={(event) => pointAt(row.id, event)}
+                                setRef={(element) => {
+                                  if (element) buttons.current.set(row.id, element);
+                                  else buttons.current.delete(row.id);
+                                }}
+                              />
+                            ));
+                          if (run.length === 1) return rowsOf(false);
+                          const label = `menubar-stack-${group.group}-${run[0].id}`;
+                          return (
+                            <li key={`stack:${run[0].id}`} className="menubar-stack">
+                              <p id={label} className="menubar-stack-line">
+                                <Layers aria-hidden="true" className="menubar-stack-icon" />
+                                <span>{stackLine(run, group.group)}</span>
+                              </p>
+                              <ul className="menubar-rows" aria-labelledby={label}>
+                                {rowsOf(true)}
+                              </ul>
+                            </li>
+                          );
+                        })}
                       </ul>
                       {group.count > group.rows.length && (
                         <button type="button" className="menubar-more" onClick={() => api.openApp()}>

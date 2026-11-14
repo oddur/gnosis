@@ -93,7 +93,7 @@ async function checkAppWindows(main: BrowserWindow) {
   // The production panel module and preload, with a data page instead of the panel renderer.
   const opened: string[] = [];
   let visibleChanges = 0;
-  const state = { connection: 'ok', loading: false, groups: [], tasks: [], summary: { needYou: 0, ready: 0, fresh: 0, line: 'Nothing needs you' }, queueSize: 0, unchecked: 0, refreshing: false } as MenubarState;
+  const state = { connection: 'ok', loading: false, groups: [], tasks: [], summary: { needYou: 0, ready: 0, fresh: 0, marked: 0, line: 'Nothing needs you' }, queueSize: 0, unchecked: 0, refreshing: false } as MenubarState;
   const menubar = createMenubarPanel({
     preload: path.join(root, 'menubar-preload.cjs'),
     load: (win) => win.loadURL('data:text/html,<title>Menu bar panel</title><p>Panel</p>'),

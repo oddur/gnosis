@@ -135,6 +135,8 @@ export interface AttentionItem {
   number: number;
   author: string;
   stackSize?: number;
+  /** The stack's subject id, shared by every row from the same stack. */
+  stackId?: string;
   /** Needs you and not opened since. */
   isNew: boolean;
   /** Age of the signals behind status kinds. */
@@ -186,7 +188,7 @@ export function attentionItems(input: {
         repo: member.repo,
         number: member.number,
         author: member.author,
-        ...(item.subject.kind === 'stack' ? { stackSize: item.subject.members.length } : {}),
+        ...(item.subject.kind === 'stack' ? { stackSize: item.subject.members.length, stackId: item.subject.id } : {}),
         isNew,
         ...(fresh && ranked.some((kind) => STATUS_KINDS.includes(kind)) ? { checkedAt: fresh.checkedAt } : {}),
         target,

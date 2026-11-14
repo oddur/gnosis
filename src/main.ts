@@ -1425,6 +1425,7 @@ function rebuildMenubarNow(): void {
       .filter(member => member.state === 'open' && !member.merged && member.author.toLowerCase() === login?.toLowerCase());
     const saved = new Map(token && own.length ? cachedQueueSignals(getGitHubClient(token), own).map(value => [value.url, value]) : []);
     const prefs = loadPreferences();
+    const iconBadge = menubarSettings(prefs).badge;
     const { state, items } = buildMenubarState({
       login,
       signedIn,
@@ -1435,12 +1436,13 @@ function rebuildMenubarNow(): void {
       tasks: activities.list(),
       backoffUntil: token ? githubClients.backoff(token, true, ['graphql'])?.retryAt : undefined,
       refreshing: menubarRefreshing,
+      badge: iconBadge,
       now: Date.now(),
     });
     menubarItems = items;
     menubarState = state;
     // One count for the menu bar and the Dock, so the two always agree.
-    const badge = menubarBadge(items, menubarSettings(prefs).badge);
+    const badge = menubarBadge(items, iconBadge);
     setTrayBadge({ title: badge.title, dot: badge.dot, tooltip: menubarTooltip(state) });
     app.dock?.setBadge(badge.title || (badge.dot ? '•' : ''));
     if (menubarSignature.changed(state)) menubarPanel?.push(state);

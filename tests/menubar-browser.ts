@@ -1,5 +1,5 @@
 /**
- * The menu bar panel (#308) in a 360-pt window: the five states in light and dark, keyboard navigation and
+ * The menu bar panel (#308) in a 360-pt window: every state in light and dark, keyboard navigation and
  * opening, the opaque fill without vibrancy, reduced motion, and truncation. Screenshots go to
  * .impeccable/review/menubar/.
  */
@@ -9,7 +9,7 @@ import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const STATES = ['default', 'clear', 'loading', 'signed-out', 'offline'] as const;
+const STATES = ['default', 'clear', 'loading', 'signed-out', 'offline', 'paused', 'error'] as const;
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -55,7 +55,7 @@ void app.whenReady().then(async () => {
     await loadWorkbenchPage(win, new URL('/tests/fixtures/menubar.html', process.env.GNOSIS_WORKBENCH_URL).href);
     cdp.attach('1.3');
     await cdp.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
-    await wait('document.querySelectorAll(".menubar-row").length === 8');
+    await wait('document.querySelectorAll(".menubar-row").length === 15');
 
     // Light and dark follow the system appearance, never an app theme class.
     for (const scheme of ['light', 'dark'] as const) {
@@ -69,7 +69,7 @@ void app.whenReady().then(async () => {
     }
     await media([{ name: 'prefers-color-scheme', value: 'light' }]);
     await js('window.showMenubarState("default")');
-    await wait('document.querySelectorAll(".menubar-row").length === 8');
+    await wait('document.querySelectorAll(".menubar-row").length === 15');
 
     // The window fits the content: all clear is short, the full list is capped at 560 and scrolls.
     await js('window.showMenubarState("clear")');
@@ -82,53 +82,94 @@ void app.whenReady().then(async () => {
     assert.equal(await js('(()=>{const b=document.querySelector(".menubar-body");return b.scrollHeight>b.clientHeight})()'), true, 'The list scrolls between the fixed header and footer');
     assert.equal(await js('document.querySelector(".menubar-footer").getBoundingClientRect().bottom <= innerHeight'), true);
 
-    // Header, groups and accessible structure.
-    assert.equal(await js('document.querySelector(".menubar-title").textContent'), '3 need you · 7 ready');
+    // Header: the new count is the number on the icon, marked with the same dot as new rows.
+    assert.equal(await js('document.querySelector(".menubar-title").textContent'), '15 need you · 9 new · 20 ready');
+    assert.equal(await js('document.querySelector(".menubar-title .menubar-summary-new").textContent'), '9 new');
+    assert.equal(await js('getComputedStyle(document.querySelector(".menubar-summary-dot")).backgroundColor === getComputedStyle(document.querySelector(".menubar-row-dot[data-new]")).backgroundColor'), true);
     assert.equal(await js('document.querySelector(".menubar-state-line").textContent'), 'Updated 1 min ago');
     assert.deepEqual(await js('[...document.querySelectorAll(".menubar-group-label > span:first-child")].map(e=>e.textContent)'), ['To review', 'To fix', 'Ready', 'In progress']);
     assert.equal(await js('document.querySelectorAll("[role=menu],[role=menuitem]").length'), 0, 'A list of buttons, not a menu');
     assert.equal(await js('[...document.querySelectorAll("section.menubar-group")].every(s=>document.getElementById(s.getAttribute("aria-labelledby")))'), true);
-    assert.equal(await js('document.querySelector(".menubar-more").textContent'), '2 more in Gnosis');
-    // Every status has visible text, not only an icon; icons are hidden from screen readers.
+    assert.deepEqual(await js('[...document.querySelectorAll(".menubar-more")].map(e=>e.textContent)'), ['1 more in Gnosis', '4 more in Gnosis', '15 more in Gnosis']);
+    // Every row has visible text under its title; icons are hidden from screen readers.
+    const detail = (id: string) => js<string>(`document.querySelector("[data-row-id=${id}] .menubar-row-detail").textContent`);
     assert.equal(await js('[...document.querySelectorAll(".menubar-row-detail")].every(e=>e.innerText.trim().length>0)'), true);
-    assert.match(await js<string>('document.querySelector("[data-row-id=pr407] .menubar-row-detail").textContent'), /Changes requested · Checks failed/);
-    assert.match(await js<string>('document.querySelector("[data-row-id=pr91] .menubar-row-detail").textContent'), /Ready to merge · checked 3 min ago/);
-    assert.match(await js<string>('document.querySelector("[data-row-id=pr388] .menubar-row-detail").textContent'), /^Stack · 3 PRs · jon/);
     assert.equal(await js('[...document.querySelectorAll(".menubar-row svg")].every(svg=>svg.getAttribute("aria-hidden")==="true")'), true);
-    // The new dot has an accessible name.
-    assert.deepEqual(await js('[...document.querySelectorAll(".menubar-row-dot[data-new]")].map(d=>d.textContent)'), ['New', 'New', 'New']);
-    assert.match(await js<string>('document.querySelector("[data-row-id=pr412]").textContent'), /^New/);
+    // The reason leads. The group's own kind is not repeated: no "Review requested" under To review, no
+    // "Ready to merge" under Ready, and no eye icon on a plain review request.
+    assert.equal(await detail('pr36144'), 'Changes requested · Checks failed\u00a0· seed #36144');
+    assert.equal(await detail('pr377'), 'seed-launcher #377 · zsolt');
+    assert.equal(await detail('pr36172'), 'Explanation ready\u00a0· #36172');
+    assert.equal(await detail('pr91'), 'seed-web #91 · checked 3 min ago');
+    assert.equal(await detail('pr399'), 'Explanation ready\u00a0· seed #399');
+    assert.equal(await js('[...document.querySelectorAll(".menubar-row-detail")].some(e=>/Review requested|Ready to merge/.test(e.textContent))'), false);
+    assert.equal(await js('!!document.querySelector("[data-row-id=pr377] svg") || !!document.querySelector("[data-row-id=pr36170] svg")'), false);
+    assert.equal(await js('!!document.querySelector("[data-row-id=pr36171] svg") && !!document.querySelector("[data-row-id=pr36144] svg")'), true);
+    // A stack shows once, above its rows, which keep only their number.
+    assert.deepEqual(await js('[...document.querySelectorAll(".menubar-stack-line")].map(e=>e.textContent)'), ['Stack · 9 PRs · ivaremilsson', 'Stack · 4 PRs']);
+    assert.deepEqual(await js('[...document.querySelectorAll(".menubar-stack")].map(s=>[...s.querySelectorAll(".menubar-row")].map(r=>r.dataset.rowId))'), [['pr36170', 'pr36171', 'pr36172', 'pr36173'], ['pr36175', 'pr36176']]);
+    assert.equal(await detail('pr36170'), '#36170');
+    assert.equal(await detail('pr36171'), 'Updated since your review\u00a0· #36171');
+    assert.equal(await js('[...document.querySelectorAll(".menubar-row-detail")].some(e=>/Stack/.test(e.textContent))'), false);
+    assert.equal(await js('[...document.querySelectorAll(".menubar-stack > ul")].every(u=>document.getElementById(u.getAttribute("aria-labelledby")))'), true);
+    // The new dot has an accessible name; no "Open ↵" hint.
+    assert.equal(await js('[...document.querySelectorAll(".menubar-row-dot[data-new]")].every(d=>d.textContent==="New")'), true);
+    assert.equal(await js('document.querySelectorAll(".menubar-row-dot[data-new]").length'), 6);
+    assert.match(await js<string>('document.querySelector("[data-row-id=pr377]").textContent'), /^New/);
+    assert.equal(await js('/Open ↵/.test(document.body.textContent)'), false);
 
-    // Long titles truncate without growing the panel.
+    // Long titles truncate without growing the panel; the reason never does, and leads the line.
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
-    assert.equal(await js('(()=>{const t=document.querySelector("[data-row-id=pr407] .menubar-row-title");return t.scrollWidth>t.clientWidth})()'), true);
+    assert.equal(await js('(()=>{const t=document.querySelector("[data-row-id=pr36144] .menubar-row-title");return t.scrollWidth>t.clientWidth})()'), true);
+    assert.equal(await js('[...document.querySelectorAll(".menubar-row-reason")].every(r=>r.scrollWidth<=r.clientWidth && r.getBoundingClientRect().left===r.parentElement.getBoundingClientRect().left)'), true, 'Reasons are whole and first');
     assert.equal(await js('new Set([...document.querySelectorAll(".menubar-row")].map(r=>Math.round(r.getBoundingClientRect().height))).size'), 1, 'Rows keep one height');
+    // One left edge for titles, the stack line and "N more"; one for the header, group labels and footer.
+    const lefts = (selector: string) => js<number[]>(`[...document.querySelectorAll(${JSON.stringify(selector)})].map(e=>{const r=document.createRange();r.selectNodeContents(e);return Math.round(r.getBoundingClientRect().left)})`);
+    assert.deepEqual([...new Set([...(await lefts('.menubar-row-title')), ...(await lefts('.menubar-stack-line > span')), ...(await lefts('.menubar-more'))])], [44]);
+    assert.deepEqual([...new Set([...(await lefts('.menubar-title')), ...(await lefts('.menubar-group-label > span:first-child')), ...(await lefts('.menubar-footer-button > span'))])], [20]);
 
     // On open the list takes focus with the first row current; one Tab stop for the list.
+    const selected = () => js<string[]>('[...document.querySelectorAll(".menubar-row")].filter(r=>getComputedStyle(r).backgroundColor!=="rgba(0, 0, 0, 0)").map(r=>r.dataset.rowId)');
     await js('window.fireMenubarShown()');
-    assert.equal(await active(), 'pr412');
+    assert.equal(await active(), 'pr377');
+    assert.deepEqual(await selected(), ['pr377']);
     assert.equal(await js('document.querySelectorAll(".menubar-row[tabindex=\'0\']").length'), 1);
-    // Arrows and j/k move across groups; Home and End jump.
+    // Arrows and j/k move across groups and stacks; Home and End jump.
     await key('ArrowDown', { keyCode: 40 });
-    assert.equal(await active(), 'pr388');
-    await key('ArrowDown', { keyCode: 40 });
-    assert.equal(await active(), 'pr407', 'Down from the last review row enters To fix');
-    await key('j', { code: 'KeyJ', keyCode: 74, text: 'j' });
-    assert.equal(await active(), 'pr91');
-    await key('k', { code: 'KeyK', keyCode: 75, text: 'k' });
-    assert.equal(await active(), 'pr407');
+    assert.equal(await active(), 'pr36170', 'Down enters the stack');
     await key('End', { keyCode: 35 });
     assert.equal(await active(), 'pr392');
     await key('ArrowDown', { keyCode: 40 });
     assert.equal(await active(), 'pr392', 'The last row stays current');
     await key('Home', { keyCode: 36 });
-    assert.equal(await active(), 'pr412');
-    await key('ArrowDown', { keyCode: 40 });
-    await key('ArrowDown', { keyCode: 40 });
+    assert.equal(await active(), 'pr377');
+    for (let i = 0; i < 5; i++) await key('j', { code: 'KeyJ', keyCode: 74, text: 'j' });
+    assert.equal(await active(), 'pr36160', 'Down from the last review row enters To fix');
+    await key('k', { code: 'KeyK', keyCode: 75, text: 'k' });
+    assert.equal(await active(), 'pr36173');
     assert.equal(await js('document.activeElement.matches(":focus-visible")'), true, 'The ring shows with keyboard use');
+    // The pointer moves the same selection: after keyboard use, hovering another row leaves exactly one active row.
+    const point = async (id: string) => {
+      const [x, y] = await js<[number, number]>(`(()=>{const r=document.querySelector("[data-row-id=${id}]");r.scrollIntoView({block:"nearest"});const b=r.getBoundingClientRect();return [b.left+b.width/2,b.top+b.height/2]})()`);
+      await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x - 2, y });
+      await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      await new Promise((r) => setTimeout(r, 50));
+    };
+    await point('pr36144');
+    assert.equal(await active(), 'pr36144', 'Hover selects');
+    assert.deepEqual(await selected(), ['pr36144'], 'One active row while hovering after keyboard navigation');
+    await capture('selected-light');
+    // The keyboard carries on from the hovered row; the still pointer does not keep a second highlight.
+    await key('ArrowDown', { keyCode: 40 });
+    assert.equal(await active(), 'pr36175');
+    assert.deepEqual(await selected(), ['pr36175']);
+    assert.equal(await js('document.querySelectorAll(".menubar-row[tabindex=\'0\']").length'), 1);
     // Enter opens the current row by id; the renderer never sends a target.
     await key('Enter', { keyCode: 13, text: '\r' });
-    assert.deepEqual(await lastCall(), ['open', 'pr407']);
+    assert.deepEqual(await lastCall(), ['open', 'pr36175']);
+    await point('pr36160');
+    await key('Enter', { keyCode: 13, text: '\r' });
+    assert.deepEqual(await lastCall(), ['open', 'pr36160'], 'Enter opens the hovered row');
     await key('Escape', { keyCode: 27 });
     assert.deepEqual(await lastCall(), ['close']);
     await key('o', { code: 'KeyO', keyCode: 79, meta: true });
@@ -149,7 +190,7 @@ void app.whenReady().then(async () => {
     // States: all clear with the queue size; signed out offers Connect GitHub; offline keeps rows marked old.
     await js('window.showMenubarState("clear")');
     await wait('document.querySelector(".menubar-title").textContent === "All clear"');
-    assert.match(await js<string>('document.querySelector(".menubar-clear").textContent'), /Nothing needs you\. 14 open PRs in your queue\./);
+    assert.match(await js<string>('document.querySelector(".menubar-clear").textContent'), /Nothing needs you\. 41 open PRs in your queue\./);
     await js('window.showMenubarState("signed-out")');
     await wait('document.querySelector(".menubar-title").textContent === "Not connected to GitHub"');
     assert.equal(await js('!!document.querySelector("[aria-label=Refresh]")'), false);
@@ -157,7 +198,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await lastCall(), ['openApp']);
     await js('window.showMenubarState("offline")');
     await wait('document.querySelector(".menubar-state-line")?.textContent.startsWith("Offline")');
-    assert.equal(await js('document.querySelectorAll(".menubar-row").length'), 8, 'Rows stay while offline');
+    assert.equal(await js('document.querySelectorAll(".menubar-row").length'), 15, 'Rows stay while offline');
     await js('window.showMenubarState("paused")');
     await wait('/GitHub updates paused until/.test(document.querySelector(".menubar-state-line")?.textContent)');
     await js('window.showMenubarState("error")');
