@@ -1537,7 +1537,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pr-queue-navigation button:hover:not(:disabled) { background:var(--accent); color:var(--accent-foreground); }
 .pr-queue-navigation button:disabled { opacity:.35; cursor:default; }
 /* Size containment, not inline-size: .pr-stack-nav sizes itself with 100cqh. */
-.pr-summary-content { flex:1; min-height:0; width:100%; container-type:size; overflow:auto; scrollbar-gutter:stable; padding:16px var(--pr-frame-inset) 32px; }
+.pr-summary-content { flex:1; min-height:0; width:100%; container-type:size; overflow:auto; scrollbar-gutter:stable; padding:16px var(--pr-frame-inset) 32px; padding-inline-end:max(0px, calc(var(--pr-frame-inset) - var(--scrollbar-gutter, 0px))); }
 .pr-summary-content[data-state=inactive] { display:none; }
 .pr-overview-heading { flex-shrink:0; padding:12px var(--pr-frame-inset) 0; }
 .pr-overview-heading h1 { font-size:var(--type-page-title); font-weight:650; line-height:1.4; text-wrap:balance; overflow-wrap:anywhere; }
@@ -2270,7 +2270,12 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-overview-tabs { display:flex;gap:24px;padding:0 var(--pr-frame-inset);width:100%;border-bottom:1px solid var(--border);flex-shrink:0; }
 .pr-overview-tabs button { padding:12px 0 10px;font-size:var(--type-control);color:var(--muted-foreground);border-bottom:2px solid transparent; }
 .pr-overview-tabs button[data-state=active] { color:var(--primary);font-weight:600;border-bottom-color:var(--primary); }
-.pr-overview-tabs button:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
+.pr-overview-tabs button:focus-visible { outline:2px solid var(--ring);outline-offset:-2px;border-radius:var(--radius-sm) var(--radius-sm) 0 0; }
+/* Each label reserves its semibold width, so selecting a tab never moves the tabs after it. */
+.pr-tab-label { display:inline-grid; }
+.pr-tab-label::after { content:attr(data-label) / ""; font-weight:600; height:0; overflow:hidden; visibility:hidden; user-select:none; pointer-events:none; }
+.pr-header-review-panel { flex-shrink:0; max-height:40%; overflow:auto; padding:12px var(--pr-frame-inset); border-bottom:1px solid var(--border); }
+.pr-header-review-panel:empty { display:none; }
 .pr-changes-tab { flex:1;min-height:0;display:flex;flex-direction:column; }
 .pr-changes-tab[data-state=inactive] { display:none; }
 .pr-changes { display:flex;flex:1;flex-direction:column;min-height:0;min-width:0; }
@@ -3251,17 +3256,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .changes-tree-close { display:block;padding:10px 14px;width:100%;text-align:right;border-bottom:1px solid var(--border);font-size:var(--type-control); }
 }
 
-/* Chat borrows space from repeated context, while source and review status stay visible. */
+/* Chat borrows space from the reader's own navigation; the shared PR header never compacts. */
 .chat-message .chat-quote { font-size:var(--type-caption);color:var(--muted-foreground); }
 .review-bottom-nav.is-compact { padding-block:3px;min-height:34px;align-items:center; }
 .review-bottom-nav.is-compact .nav-topic-title { display:none; }
 .review-bottom-nav.is-compact .nav-direction { color:var(--foreground); }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-overview-heading { padding-top:4px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-overview-heading h1 { font-size:var(--type-panel-title); }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-summary-context { display:none; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-merge-status { padding-bottom:2px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-overview-tabs button { padding-block:6px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-summary-toolbar-inner { padding-block:6px; }
 .workbench-review:has(.chat-sheet[data-open=true]) [aria-label="Review pane"] { padding-block:4px; }
 
 /* Shared GitHub comment editor; keep source mounted to preserve drafts and selection. */
@@ -4082,14 +4081,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .workflow-grouping { display:flex; align-items:center; gap:6px; }
 .workflow-grouping > button { min-height:28px; width:110px; font-size:12px; }
 
-/* Checks is an inspection workspace: keep identity, give the evidence the room. */
-.pr-summary-page.showing-checks .pr-summary-toolbar-inner { padding-block:6px; }
-.pr-summary-page.showing-checks .pr-overview-heading { padding-top:4px; }
-.pr-summary-page.showing-checks .pr-overview-heading h1 { font-size:var(--type-body); line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.pr-summary-page.showing-checks .pr-summary-context { display:none; }
-.pr-summary-page.showing-checks .pr-merge-status { padding-block:2px; gap:4px 12px; }
-.pr-summary-page.showing-checks .merge-readiness-checked { display:none; }
-.pr-summary-page.showing-checks .pr-overview-tabs button { padding-block:6px; }
 .checks-toolbar > [hidden], .workflow-host[hidden] { display:none; }
 .checks-graph-panes, .checks-graph-panes.with-detail { display:flex; position:relative; container:checks / inline-size; overflow:hidden; }
 .workflow-host { flex:1; min-width:0; min-height:0; display:flex; }
@@ -4337,19 +4328,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-merge-plan .stack-plan-task[hidden] { display:none; }
 .stack-merge-plan[data-blocked] h2 > svg { color:var(--color-danger); }
 
-/* Feedback owns the response task; shared PR navigation stays compact. */
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-summary-toolbar-inner { padding-block:0; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-overview-heading { padding-top:4px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-title-with-star { align-items:center;flex-wrap:nowrap; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-overview-heading h1 { flex:1;min-width:0;font-size:var(--type-body);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-summary-context { display:none; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-merge-status { padding-block:0;min-height:24px;gap:4px 12px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-merge-status :is(.merge-readiness-checked,.stack-checks-freshness,.pr-summary-review-actions) { display:none; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-workspace-navigation { flex-wrap:nowrap;gap:12px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .stack-scope-bar { width:auto;padding:4px 12px;border-right:1px solid var(--border); }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .stack-scope-bar .selection-trigger { max-width:160px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-overview-tabs { flex:1;min-width:0;width:auto;gap:16px;padding-left:0; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) .pr-overview-tabs button { padding-block:6px; }
 .feedback-conversation-header .feedback-source { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
 .feedback-conversation-header .feedback-source svg { display:inline;vertical-align:-2px; }
 .feedback-thread-navigation > button:last-child:not([aria-label]) { margin-left:auto; }
@@ -4436,10 +4414,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 .feedback-file-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .feedback-conversation-header h2 > svg { flex-shrink:0; }
-/* At extreme zoom, let the page scroll instead of squeezing the reading pane to zero. */
+/* At extreme zoom, every section scrolls the whole page the same way instead of squeezing its pane to zero. */
 @media(max-height:500px) {
-  .pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) { overflow-y:auto; }
-  .pr-changes-tab[data-state=active]:has(.feedback-workspace) { flex:none;height:520px; }
+  .pr-summary-page { overflow-y:auto; }
+  .pr-summary-page > [role=tabpanel][data-state=active] { flex:none;height:520px; }
 }
 
 /* Shared loading feedback: clear copy, stable space, and bounded movement. */
@@ -4650,13 +4628,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
   .explanation-section-text { max-width:72ch; }
   .explanation-document > section { padding:24px 20px; }
 }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .explanation-reader) .pr-summary-toolbar-inner { padding-block:0; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .explanation-reader) .pr-overview-heading { padding-top:4px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .explanation-reader) .pr-overview-heading h1 { font-size:var(--type-panel-title);line-height:1.4; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .explanation-reader) .pr-summary-context { display:none; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .explanation-reader) .pr-merge-status { padding-block:0;min-height:24px; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .explanation-reader) .pr-merge-status :is(.merge-readiness-checked,.stack-checks-freshness,.pr-summary-review-actions) { display:none; }
-.pr-summary-page:has(.pr-changes-tab[data-state=active] .explanation-reader) .pr-overview-tabs button { padding-block:6px; }
 @media(max-width:620px) {
   .explanation-reading-toolbar { flex-wrap:wrap;padding:8px 12px; }
   .explanation-reading-toolbar .selection-trigger { flex:1;max-width:calc(100% - 30px); }
@@ -4687,12 +4658,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 }
 @media(max-width:620px) {
   .explanation-reading-toolbar .review-toolbar { flex-basis:100%;margin:0;justify-content:flex-start; }
-}
-
-/* Keep the document reachable when zoom leaves little vertical room. */
-@media(max-height:500px) {
-  .pr-summary-page:has(.pr-changes-tab[data-state=active] .explanation-reader) { overflow-y:auto; }
-  .pr-changes-tab[data-state=active]:has(.explanation-reader) { flex:none;height:520px; }
 }
 
 /* Reading guidance stays optional; long generated content must not widen the workspace. */

@@ -365,6 +365,17 @@ function PrSummaryContent({
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
   }, []);
+  // Summary keeps a stable scrollbar gutter. Its right padding gives that width back, so the
+  // content's right edge lines up with the header's on classic and overlay scrollbars alike.
+  useLayoutEffect(() => {
+    const element = page.current;
+    if (!element || tab !== 'summary') return;
+    const measure = () => element.style.setProperty('--scrollbar-gutter', `${element.offsetWidth - element.clientWidth}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [tab]);
   useLayoutEffect(() => {
     const element = page.current;
     // The kept summary is hidden on other tabs; restore it only when shown.
@@ -467,7 +478,7 @@ function PrSummaryContent({
       }}
       asChild
     >
-      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''} ${tab === 'checks' ? 'showing-checks' : ''}`}>
+      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''}`}>
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
             <ReviewBreadcrumbs scope={tab} base={[
@@ -557,7 +568,8 @@ function PrSummaryContent({
           <PrStatusLine subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} checks={checks.values} checkErrors={checks.errors}
             showReadiness={stacked || tab !== 'summary'} updating={item.subject.members.some(member => statuses[member.url]?.stale && !statusErrors[member.url])} />
           {stacked && <button aria-label="Refresh status" title="Refresh status" disabled={statusRefreshing || !account} onClick={onRetryStatus}><RefreshCw size={14} className={statusRefreshing ? 'animate-spin' : undefined} /></button>}
-          {!stacked && <div className="pr-summary-review-actions" inert={tab !== 'summary'} style={{ visibility: tab === 'summary' ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>}
+          {/* Changes shows the same review controls for its loaded diff; the slot keeps its space there so the header never moves. */}
+          {!stacked && <div className="pr-summary-review-actions" inert={tab === 'changes'} style={{ visibility: tab === 'changes' ? 'hidden' : 'visible' }}>{summaryReview.controls}</div>}
         </div>
         <div className="pr-workspace-navigation">
         {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
@@ -565,16 +577,17 @@ function PrSummaryContent({
           <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
-          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" />Summary</Tabs.Trigger>
-          <Tabs.Trigger value="changes" data-tour="changes" {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
-          <Tabs.Trigger value="commits" {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
-          <Tabs.Trigger value="checks" {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="feedback" {...tabIntentHandlers('feedback')}><WorkspaceIcon tab="feedback" />Feedback</Tabs.Trigger>
-          <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" />Explanation</Tabs.Trigger>
-          <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" />Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" /><PrTabLabel>Summary</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="changes" data-tour="changes" {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" /><PrTabLabel>Changes</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="commits" {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" /><PrTabLabel>Commits</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="checks" {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" /><PrTabLabel>Checks</PrTabLabel>{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="feedback" {...tabIntentHandlers('feedback')}><WorkspaceIcon tab="feedback" /><PrTabLabel>Feedback</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" /><PrTabLabel>Explanation</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" /><PrTabLabel>Local notes</PrTabLabel>{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
-
         </div>
+        {/* The header's Drafts and Review PR open here on every other section; Summary shows them in its body. */}
+        {!stacked && tab !== 'summary' && tab !== 'changes' && <div className="pr-header-review-panel">{summaryReview.panel}</div>}
         <KeptTab value="changes" tab={tab} visited={visited} arrival={arrival('changes')} className="pr-changes-tab">
           {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
             <PrChangesView
@@ -649,7 +662,7 @@ function PrSummaryContent({
         </Tabs.Content>
         <KeptTab value="summary" tab={tab} visited={visited} arrival={arrival('summary')} className="pr-summary-content" ref={page} onScroll={remember}>
           <div className="pr-summary-body">
-            {summaryReview.panel}
+            {tab === 'summary' && summaryReview.panel}
             {item.subject.warnings.map((warning) => (
               <p key={warning} className="workbench-notice" role="status">
                 {warning}
@@ -695,6 +708,11 @@ function PrSummaryContent({
       </main>
     </Tabs.Root>
   );
+}
+
+/** A tab label that reserves its selected (semibold) width, so selection never shifts the tabs. */
+function PrTabLabel({ children }: { children: string }) {
+  return <span className="pr-tab-label" data-label={children}>{children}</span>;
 }
 
 /** Review status and merge readiness in the page header. It re-renders on each status clock tick. */
