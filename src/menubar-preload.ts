@@ -1,5 +1,5 @@
 /**
- * The menu bar panel's preload (#308): `window.menubar` and nothing else. None of the main window's API.
+ * The menu bar panel's preload (#308): `window.gnosisMenubar` and nothing else. None of the main window's API.
  * The panel sends row ids, never URLs or targets; main resolves them against the state it last pushed.
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
@@ -29,4 +29,5 @@ const api: MenubarApi = {
   refresh: (): Promise<void> => ipcRenderer.invoke('menubar:refresh') as Promise<void>,
   resize: (height: number) => ipcRenderer.send('menubar:resize', height),
 };
-contextBridge.exposeInMainWorld('menubar', api);
+// Not `menubar`: that name is the DOM's `Window.menubar` (BarProp), and the bridge refuses existing properties.
+contextBridge.exposeInMainWorld('gnosisMenubar', api);

@@ -205,7 +205,7 @@ export function menubarSignalRequests(
     .slice(0, limit);
 }
 
-/** `window.menubar`, from `src/menubar-preload.ts`. The browser fixture provides a fake. */
+/** `window.gnosisMenubar`, from `src/menubar-preload.ts`. The browser fixture provides a fake. */
 export interface MenubarApi {
   get(): Promise<MenubarState | null>;
   onState(callback: (state: MenubarState) => void): () => void;

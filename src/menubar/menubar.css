@@ -1,0 +1,380 @@
+/*
+  The menu bar panel (#308). Tokens and fonts are shared with the main window through src/tokens.css; none of the
+  workbench CSS loads here. The panel follows the system appearance (main.tsx sets .dark from the media query).
+*/
+@import 'tailwindcss' source(none);
+@import '../fonts.css';
+@import '../tokens.css';
+
+@source "../../components/MenubarView.tsx";
+
+@custom-variant dark (&:is(.dark *));
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  /* Vibrancy shows through: only the root paints a fill. */
+  background: transparent;
+}
+:root {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
+}
+body {
+  font-family: var(--font-sans);
+  font-size: var(--type-control);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+.menubar {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  /* Opaque by default: no vibrancy in the browser suite, on other platforms, or with reduced transparency. */
+  background: var(--popover);
+  color: var(--popover-foreground);
+  outline: none;
+}
+/* Over the popover material: translucent enough to show it, opaque enough for AA on the muted text. */
+:root[data-vibrancy] .menubar {
+  background: color-mix(in srgb, var(--popover) 84%, transparent);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-vibrancy] .menubar {
+    background: var(--popover);
+  }
+}
+
+.menubar-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 10px 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.menubar-header-text {
+  flex: 1;
+  min-width: 0;
+}
+.menubar-title {
+  margin: 0;
+  font-size: var(--type-control);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.menubar-state-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 0 0;
+  font-size: var(--type-caption);
+  line-height: 1.35;
+  color: var(--muted-foreground);
+}
+.menubar-state-line[data-tone='warning'] .menubar-state-icon {
+  color: var(--color-warning);
+}
+.menubar-state-line[data-tone='danger'] .menubar-state-icon {
+  color: var(--color-danger);
+}
+.menubar-state-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.menubar-header-actions {
+  display: flex;
+  gap: 2px;
+}
+.menubar-icon-button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+}
+.menubar-icon-button svg {
+  width: 15px;
+  height: 15px;
+}
+.menubar-icon-button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.menubar-icon-button:disabled {
+  opacity: 0.45;
+}
+.menubar-inline-button {
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.menubar-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.menubar-content {
+  padding: 6px 0 8px;
+}
+
+.menubar-group + .menubar-group {
+  margin-top: 4px;
+}
+.menubar-group-label {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  padding: 8px 16px 4px;
+  font-size: var(--type-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.menubar-group-count {
+  font-variant-numeric: tabular-nums;
+}
+.menubar-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px;
+}
+
+.menubar-row {
+  display: grid;
+  grid-template-columns: 8px 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 7px;
+  width: 100%;
+  min-height: 44px;
+  padding: 5px 10px 5px 4px;
+  border-radius: 6px;
+  text-align: left;
+  color: inherit;
+}
+.menubar-row:hover,
+.menubar-row:focus-visible,
+.menubar-row[data-current]:focus {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.menubar-row:focus {
+  outline: none;
+}
+.menubar-row:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.menubar-row-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.menubar-row-dot[data-new] {
+  background: var(--primary);
+}
+.menubar-row-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+.menubar-row-icon[data-tone='danger'] {
+  color: var(--color-danger);
+}
+.menubar-row-icon[data-tone='warning'] {
+  color: var(--color-warning);
+}
+.menubar-row-icon[data-tone='success'] {
+  color: var(--color-success);
+}
+.menubar-row-icon[data-tone='info'] {
+  color: var(--color-info);
+}
+.menubar-row-icon[data-tone='review'] {
+  color: var(--primary);
+}
+.menubar-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.menubar-row-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.menubar-row-detail {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--type-caption);
+  line-height: 1.35;
+  color: var(--muted-foreground);
+}
+.menubar-row:hover .menubar-row-detail,
+.menubar-row:focus-visible .menubar-row-detail {
+  color: inherit;
+  opacity: 0.85;
+}
+.menubar-row-hint {
+  visibility: hidden;
+  font-size: var(--type-caption);
+  white-space: nowrap;
+}
+.menubar-row:hover .menubar-row-hint,
+.menubar-row:focus-visible .menubar-row-hint,
+.menubar-row[data-current]:focus .menubar-row-hint {
+  visibility: visible;
+}
+
+.menubar-more {
+  margin: 2px 0 0 37px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  font-size: var(--type-caption);
+  color: var(--primary);
+}
+.menubar-more:hover {
+  text-decoration: underline;
+}
+
+.menubar-task {
+  display: grid;
+  grid-template-columns: 8px 16px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 7px;
+  min-height: 30px;
+  padding: 2px 10px 2px 4px;
+}
+.menubar-task-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--type-caption);
+}
+.menubar-task .menubar-row-icon {
+  grid-column: 2;
+}
+.menubar-task .menubar-task-text {
+  grid-column: 3;
+}
+[data-spin] {
+  animation: menubar-spin 1.2s linear infinite;
+}
+@keyframes menubar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.menubar-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  line-height: 1.45;
+}
+.menubar-message p {
+  margin: 0;
+}
+.menubar-clear {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+.menubar-clear-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--color-success);
+}
+.menubar-muted,
+.menubar-note {
+  color: var(--muted-foreground);
+}
+.menubar-note {
+  margin: 6px 16px 0;
+  font-size: var(--type-caption);
+}
+.menubar-button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+}
+
+.menubar-skeleton {
+  padding: 6px 16px;
+}
+.menubar-skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 8px 23px;
+}
+.menubar-skeleton-row span {
+  height: 9px;
+  border-radius: 4px;
+  background: var(--muted);
+  animation: menubar-pulse 1.4s ease-in-out infinite;
+}
+@keyframes menubar-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.menubar-footer {
+  flex-shrink: 0;
+  padding: 4px 6px 6px;
+  border-top: 1px solid var(--border);
+}
+.menubar-footer-button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-weight: 500;
+  color: inherit;
+}
+.menubar-footer-button:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.menubar-footer-button kbd {
+  font-family: inherit;
+  font-size: var(--type-caption);
+  color: var(--muted-foreground);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-spin],
+  .menubar-skeleton-row span {
+    animation: none;
+  }
+}

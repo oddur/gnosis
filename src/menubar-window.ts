@@ -3,7 +3,7 @@
  * the clicked status item. Created hidden and never destroyed while the tray exists, so a click only positions
  * and shows it.
  *
- * Security: its own sandboxed preload (`window.menubar`), no navigation, no new windows, no webviews. Every
+ * Security: its own sandboxed preload (`window.gnosisMenubar`), no navigation, no new windows, no webviews. Every
  * `menubar:*` handler checks that the sender is this panel's main frame. The renderer sends row ids only.
  */
 import { BrowserWindow, ipcMain, screen, type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle } from 'electron';

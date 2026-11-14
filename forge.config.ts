@@ -66,7 +66,11 @@ const config: ForgeConfig = {
         // The menu bar panel's own small preload (#308), none of the main window's API.
         { entry: 'src/menubar-preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
       ],
-      renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],
+      renderer: [
+        { name: 'main_window', config: 'vite.renderer.config.ts' },
+        // The menu bar panel (#308): menubar.html, src/menubar/main.tsx.
+        { name: 'menubar_window', config: 'vite.menubar.config.ts' },
+      ],
     }),
     new FusesPlugin({
       version: FuseVersion.V1,
