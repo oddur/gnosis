@@ -74,6 +74,8 @@ export interface MenubarState {
   unchecked: number;
   /** A refresh the user asked for is running. */
   refreshing: boolean;
+  /** The first-open tip in the footer (lib/menubar-hint.ts). Only with rows to move through and open. */
+  hint: boolean;
 }
 
 export const MENUBAR_GROUP_LIMIT = 5;
@@ -95,6 +97,8 @@ export interface MenubarInput {
   refreshing?: boolean;
   /** The "Number on the icon" setting, so the header names the same count. Defaults to `new`. */
   badge?: MenubarBadge;
+  /** The first-open tip has not been dismissed and no row has been opened yet. */
+  hint?: boolean;
   now: number;
 }
 
@@ -164,6 +168,7 @@ export function buildMenubarState(input: MenubarInput): { state: MenubarState; i
       queueSize: new Set(open.map((member) => member.url)).size,
       unchecked,
       refreshing: !!input.refreshing,
+      hint: !!input.hint && groups.length > 0,
     },
   };
 }
@@ -246,4 +251,6 @@ export interface MenubarApi {
   close(): void;
   refresh(): Promise<void>;
   resize(height: number): void;
+  /** The first-open tip's close button. Main remembers it and pushes a state without the tip. */
+  dismissHint(): void;
 }

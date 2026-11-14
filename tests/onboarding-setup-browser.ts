@@ -249,6 +249,8 @@ void app.whenReady().then(async () => {
     await click('Next', "document.querySelector('.gnosis-tour')");
     await wait("document.querySelector('[data-tour=explanation]')?.getAttribute('data-state')==='active'");
     await capture('tour-explanation');
+    // Setup already showed this person the icon, so the walkthrough has no menu bar stop.
+    assert.equal(await js("document.querySelector('.gnosis-tour-progress')?.textContent"), '4 of 4');
     await js("document.dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',keyCode:27,bubbles:true,cancelable:true}))");
     await wait("!document.querySelector('.gnosis-tour')");
     // Applying setup keeps the notifications and menu bar answers, so no prompt follows.
@@ -294,6 +296,62 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.workspace-menu-trigger')");
     await new Promise((r) => setTimeout(r, 500));
     assert.equal(await js("!!document.querySelector('[aria-label=\"Notifications setup\"]')"), false, 'shown once');
+    // macOS with the icon on in panel mode, and no menu bar answer from setup: the walkthrough ends in the menu bar.
+    const tourTitle = () => js<string | undefined>("document.querySelector('.driver-popover-title')?.textContent");
+    const tourProgress = () => js<string | undefined>("document.querySelector('.gnosis-tour-progress')?.textContent");
+    const walkthrough = async () => {
+      await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
+      await click('Show walkthrough');
+      await wait("!!document.querySelector('.gnosis-tour .gnosis-tour-progress')");
+    };
+    const endTour = async () => {
+      await js("document.dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',keyCode:27,bubbles:true,cancelable:true}))");
+      await wait("!document.querySelector('.gnosis-tour')");
+    };
+    await js("window.electronAPI.loadPreferences().then(p=>window.electronAPI.savePreferences({...p, trayEnabled: true, menubarSettings: { click: 'panel', badge: 'new' }}))");
+    await walkthrough();
+    // The walkthrough resumes where it was ended, on the explanation; the menu bar stop follows it.
+    assert.equal(await tourProgress(), '4 of 5');
+    assert.equal(await tourTitle(), 'Go deeper when needed', 'the existing steps are unchanged');
+    await click('Next', "document.querySelector('.gnosis-tour')");
+    await wait("document.querySelector('.driver-popover-title')?.textContent==='Gnosis is also in your menu bar'");
+    assert.equal(await tourProgress(), '5 of 5');
+    assert.equal(await js("document.querySelector('.driver-popover-description').textContent"), 'Click the icon to see what needs you and open a PR without switching windows.');
+    assert.equal(await js("!!document.querySelector('[data-tour=queue]') && !document.querySelector('[data-tour=explanation]')"), true, 'the stop is on the queue');
+    assert.deepEqual(await js("[...document.querySelectorAll('.gnosis-tour .driver-popover-navigation-btns button')].map(b=>b.textContent.trim())"), ['Back', 'Show me', 'Finish tour']);
+    await capture('tour-menubar-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('tour-menubar-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    const shows = () => js<number>("window.fixtureNotificationCalls.filter(c=>c==='menubar-show').length");
+    const before = await shows();
+    await click('Show me', "document.querySelector('.gnosis-tour')");
+    await wait(`window.fixtureNotificationCalls.filter(c=>c==='menubar-show').length===${before + 1}`);
+    assert.equal(await tourTitle(), 'Gnosis is also in your menu bar', 'Show me keeps the tour open');
+    await click('Finish tour', "document.querySelector('.gnosis-tour')");
+    await wait("!document.querySelector('.gnosis-tour')");
+    assert.equal(await js("JSON.parse(sessionStorage.getItem('fixture-onboarding')).tourCompleted"), true);
+    // The classic menu has no panel to show: four steps.
+    await js("window.electronAPI.loadPreferences().then(p=>window.electronAPI.savePreferences({...p, menubarSettings: { click: 'menu', badge: 'new' }}))");
+    await walkthrough();
+    assert.equal(await tourProgress(), '1 of 4');
+    await endTour();
+    // The icon off: four steps.
+    await js("window.electronAPI.loadPreferences().then(p=>window.electronAPI.savePreferences({...p, trayEnabled: false, menubarSettings: { click: 'panel', badge: 'new' }}))");
+    await walkthrough();
+    assert.equal(await tourProgress(), '1 of 4');
+    await endTour();
+    // Windows has no summary panel, even with the icon on.
+    await js("sessionStorage.setItem('fixture-platform', 'win32')");
+    win.reload();
+    await wait("!!document.querySelector('.workspace-menu-trigger')");
+    await js("window.electronAPI.loadPreferences().then(p=>window.electronAPI.savePreferences({...p, trayEnabled: true}))");
+    await walkthrough();
+    assert.equal(await tourProgress(), '1 of 4');
+    await endTour();
+    await js("sessionStorage.removeItem('fixture-platform')");
+    win.reload();
+    await wait("!!document.querySelector('.workspace-menu-trigger')");
     // Help still offers the steps after the prompt is dismissed.
     await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await click('Set up notifications and menu bar…');

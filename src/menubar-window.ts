@@ -21,6 +21,8 @@ export interface MenubarPanelDeps {
   open: (id: string) => void;
   openApp: () => void;
   openSettings: () => void;
+  /** The first-open tip was dismissed: remember it and push a state without it. */
+  dismissHint: () => void;
   /** ↻ or ⌘R: an interactive refresh. */
   refresh: () => Promise<void>;
   /** The panel was shown or hidden: rebuild the state, read status on open, wake sync. */
@@ -154,6 +156,9 @@ export function createMenubarPanel(deps: MenubarPanelDeps) {
   });
   ipcMain.on('menubar:close', (event) => {
     if (own(event)) hide('escape');
+  });
+  ipcMain.on('menubar:dismiss-hint', (event) => {
+    if (own(event)) deps.dismissHint();
   });
   ipcMain.on('menubar:resize', (event, height: unknown) => {
     if (!own(event) || typeof height !== 'number' || !Number.isFinite(height) || height <= 0) return;

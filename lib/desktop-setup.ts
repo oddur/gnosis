@@ -1,3 +1,5 @@
+import { menubarSettings } from './menubar-settings';
+
 /**
  * Notifications and the menu bar in setup. Pure, so main, the renderer and unit tests share one reading of the
  * step outcomes, the platform branching and the System Settings links.
@@ -122,6 +124,42 @@ export function systemSettingsPanes(platform: string, release: string): SystemSe
 
 /** The result of "Show me": main opens the panel under the icon when it can. */
 export type MenubarShowResult = 'shown' | 'off' | 'menu' | 'hidden' | 'unsupported';
+
+/**
+ * What "Show me" answers from the platform and preferences alone, before it creates or opens anything: no summary
+ * panel off macOS, the icon turned off, or a click that opens the classic menu. Undefined: it can try to show.
+ * Main's `menubar-show` and the walkthrough's menu bar stop share this reading.
+ */
+export function menubarShowBlocked(
+  platform: string,
+  prefs: { trayEnabled?: boolean; menubarSettings?: unknown }
+): 'unsupported' | 'off' | 'menu' | undefined {
+  if (platform !== 'darwin') return 'unsupported';
+  if (!prefs.trayEnabled) return 'off';
+  if (menubarSettings(prefs).click === 'menu') return 'menu';
+  return undefined;
+}
+
+/**
+ * The walkthrough's last stop, "Gnosis is also in your menu bar": macOS with the icon on in panel mode, GitHub
+ * reviews (not local mode), and only for people who have not already seen the icon in setup's menu bar step.
+ */
+export function offerMenubarTourStop(input: {
+  platform: string;
+  local: boolean;
+  prefs: { trayEnabled?: boolean; menubarSettings?: unknown } | null | undefined;
+  desktop: DesktopSetupState | undefined;
+}): boolean {
+  return !!input.prefs && !input.local && input.desktop?.menubar !== 'completed' && !menubarShowBlocked(input.platform, input.prefs);
+}
+
+/** After the stop's "Show me", when the panel did not open. */
+export function menubarTourFallback(result: MenubarShowResult): string | undefined {
+  if (result === 'hidden') return 'macOS is hiding the icon. In Settings › Notifications, Can’t see the icon? shows how to allow it.';
+  if (result === 'off') return 'The menu bar icon is off. Turn it on in Settings › Integrations.';
+  if (result === 'menu') return 'The icon opens the classic menu. Choose the summary panel in Settings › Notifications.';
+  return undefined;
+}
 
 // ── Copy shared by setup and Settings ──────────────────────────────
 const systemName = (platform: string) =>

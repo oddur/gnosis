@@ -19,6 +19,7 @@ import { useOnboarding } from '../../lib/use-onboarding';
 import { OnboardingSetup } from '../../components/OnboardingSetup';
 import { DesktopSetupDialog } from '../../components/DesktopSetup';
 import { GuidedTour } from '../../components/GuidedTour';
+import { offerMenubarTourStop } from '../../lib/desktop-setup';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
@@ -2425,8 +2426,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       {onboarding.desktopOpen && <DesktopSetupDialog platform={window.electronAPI.platform} state={onboarding.state.desktop}
         onOutcome={onboarding.desktopOutcome} onClose={onboarding.closeDesktop} />}
       {onboarding.tourOpen && <GuidedTour step={onboarding.state.tourStep ?? 0} stacked={summaryItem?.subject.kind === 'stack'} local={prefs?.guestMode || !auth?.authenticated}
+        onShowMenubar={offerMenubarTourStop({ platform: window.electronAPI.platform, local: !!prefs?.guestMode || !auth?.authenticated, prefs, desktop: onboarding.state.desktop }) ? () => window.electronAPI.showMenubarPanel() : undefined}
         onStep={onboarding.tourStep} onClose={onboarding.endTour} prepare={step => {
-          if (step === 0) { setOpenedItem(null); setSavedView(false); setMutedOpen(false); return true; }
+          // The queue steps, and the menu bar stop after them, show the queue.
+          if (step === 0 || step === 4) { setOpenedItem(null); setSavedView(false); setMutedOpen(false); return true; }
           const item = summaryItem ?? orderedItems[0];
           if (!item) return false;
           setOpenedItem(item);

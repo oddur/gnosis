@@ -833,7 +833,8 @@ const mocks = {
     detectedTools.set(provider, result);
     return Promise.resolve(result);
   },
-  platform: 'darwin',
+  // sessionStorage 'fixture-platform' tries another system, such as the walkthrough on Windows.
+  platform: sessionStorage.getItem('fixture-platform') ?? 'darwin',
   isPackaged: false,
 };
 for (const item of items) { item.starredUrls=item.subject.members.filter(m=>fixtureStars.some(e=>e.member.url===m.url)).map(m=>m.url);item.starred=!!item.starredUrls.length; }

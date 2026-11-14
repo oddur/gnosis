@@ -28,6 +28,7 @@ const api: MenubarApi = {
   close: () => ipcRenderer.send('menubar:close'),
   refresh: (): Promise<void> => ipcRenderer.invoke('menubar:refresh') as Promise<void>,
   resize: (height: number) => ipcRenderer.send('menubar:resize', height),
+  dismissHint: () => ipcRenderer.send('menubar:dismiss-hint'),
 };
 // Not `menubar`: that name is the DOM's `Window.menubar` (BarProp), and the bridge refuses existing properties.
 contextBridge.exposeInMainWorld('gnosisMenubar', api);

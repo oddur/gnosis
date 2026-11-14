@@ -204,6 +204,70 @@ void app.whenReady().then(async () => {
     await js('window.showMenubarState("error")');
     await wait('/Could not reach GitHub · Retry/.test(document.querySelector(".menubar-state-line")?.textContent)');
 
+    // The first open: a quiet footer tip names the keys and the icon's right-click menu, until it is dismissed
+    // or a row is opened. Its line stays until the panel next opens, so the footer never moves under the pointer.
+    const hint = () => js<{ text: string; visible: boolean } | null>('(()=>{const h=document.querySelector(".menubar-hint");return h&&{text:h.querySelector("[aria-hidden=true]").textContent,visible:getComputedStyle(h).visibility==="visible"}})()');
+    const footerHeight = () => js<number>('document.querySelector(".menubar-footer").offsetHeight');
+    const firstOpen = async () => {
+      await js('window.resetMenubarHint(); window.showMenubarState("first-open")');
+      await wait('!!document.querySelector(".menubar-hint")');
+      await js('window.fireMenubarShown()');
+      await wait('document.activeElement?.dataset.rowId === "pr377"');
+    };
+    await js('window.showMenubarState("default")');
+    await wait('!document.querySelector(".menubar-hint")');
+    const plainFooter = await footerHeight();
+    await firstOpen();
+    assert.deepEqual(await hint(), { text: '↑↓ move · ↵ open · right-click the icon to quit', visible: true });
+    assert.equal(await js('document.querySelector(".menubar-hint").getAttribute("role")'), 'note');
+    assert.equal(await js('document.querySelector(".menubar-hint").getAttribute("aria-label")'), 'Tip');
+    assert.match(await js<string>('document.querySelector(".menubar-hint .sr-only").textContent'), /arrow keys to move and Return to open a PR\. Right-click the menu bar icon to quit Gnosis\./);
+    assert.equal(await js('!!document.querySelector(".menubar-footer [aria-label=\'Dismiss tip\']")'), true);
+    assert.equal(await js('(()=>{const t=document.querySelector(".menubar-hint-text");return t.scrollWidth<=t.clientWidth})()'), true, 'The tip fits one line');
+    assert.deepEqual(await lefts('.menubar-hint-text > span[aria-hidden]'), [20], 'The tip sits on the footer text edge');
+    assert.equal(await js('Math.round(document.querySelector(".menubar-hint-dismiss svg").getBoundingClientRect().right) === Math.round(document.querySelector(".menubar-footer-button kbd").getBoundingClientRect().right)'), true, 'Its close icon lines up with ⌘O');
+    const hintFooter = await footerHeight();
+    assert.ok(hintFooter > plainFooter, 'The tip adds one footer line');
+    for (const scheme of ['light', 'dark'] as const) {
+      await media([{ name: 'prefers-color-scheme', value: scheme }]);
+      await wait(`document.documentElement.classList.contains('dark') === ${scheme === 'dark'}`);
+      await capture(`first-open-${scheme}`);
+    }
+    await media([{ name: 'prefers-color-scheme', value: 'light' }]);
+    await wait('!document.documentElement.classList.contains("dark")');
+    // Keyboard: Tab reaches the close button after the list; Return dismisses and focus goes back to the list.
+    for (let i = 0; i < 10 && !(await js('document.activeElement?.classList.contains("menubar-hint-dismiss")')); i++) await key('Tab', { keyCode: 9 });
+    assert.equal(await js('document.activeElement?.getAttribute("aria-label")'), 'Dismiss tip');
+    await capture('first-open-focus-light');
+    const resizes = async () => (await calls()).filter(([name]) => name === 'resize').length;
+    const resizesBefore = await resizes();
+    await key('Enter', { keyCode: 13, text: '\r' });
+    assert.deepEqual(await lastCall(), ['dismissHint']);
+    await wait('getComputedStyle(document.querySelector(".menubar-hint")).visibility === "hidden"');
+    assert.equal(await footerHeight(), hintFooter, 'No jump: the line stays while the panel is open');
+    const heights = (await calls()).filter(([name]) => name === 'resize').map(([, height]) => height);
+    assert.equal(new Set(heights.slice(resizesBefore - 1)).size, 1, 'The window keeps its height');
+    assert.equal(await active(), 'pr377', 'Focus returns to the current row');
+    await js('window.fireMenubarShown()');
+    await wait('!document.querySelector(".menubar-hint")');
+    assert.equal(await footerHeight(), plainFooter, 'The next open has no tip');
+    // A click dismisses too.
+    await firstOpen();
+    await js('document.querySelector(".menubar-hint-dismiss").click()');
+    assert.deepEqual(await lastCall(), ['dismissHint']);
+    await wait('getComputedStyle(document.querySelector(".menubar-hint")).visibility === "hidden"');
+    await js('window.fireMenubarShown()');
+    await wait('!document.querySelector(".menubar-hint")');
+    // Opening a row is a successful use: the tip is done, without a dismissal.
+    await firstOpen();
+    await key('Enter', { keyCode: 13, text: '\r' });
+    assert.deepEqual(await lastCall(), ['open', 'pr377']);
+    await wait('getComputedStyle(document.querySelector(".menubar-hint")).visibility === "hidden"');
+    await js('window.fireMenubarShown()');
+    await wait('!document.querySelector(".menubar-hint")');
+    assert.equal((await calls()).filter(([name]) => name === 'dismissHint').length, 2);
+    await js('window.showMenubarState("default")');
+
     // The opaque fill without vibrancy (the browser suite has none), and under reduced transparency.
     const fill = () => js<string>('getComputedStyle(document.querySelector(".menubar")).backgroundColor');
     assert.equal(await fill(), 'rgb(255, 255, 255)');
@@ -229,7 +293,7 @@ void app.whenReady().then(async () => {
     await media([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
     await wait('getComputedStyle(document.querySelector(".menubar-skeleton-row span")).animationName === "none"');
 
-    console.log('PASS: menu bar panel states in light and dark, groups, keyboard, open by id, opaque fill, reduced motion, truncation');
+    console.log('PASS: menu bar panel states in light and dark, groups, keyboard, open by id, first-open tip, opaque fill, reduced motion, truncation');
     app.exit(0);
   } catch (error) {
     console.error(error);

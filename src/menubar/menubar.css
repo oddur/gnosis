@@ -425,6 +425,53 @@ li + .menubar-stack {
   color: var(--muted-foreground);
 }
 
+/*
+  The first-open tip: one caption line above Open Gnosis, on the footer's text edges (20 left, 16 right). Hidden
+  after a dismissal but still taking its line until the panel next opens.
+*/
+.menubar-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px 2px 14px;
+}
+.menubar-hint[data-hidden] {
+  visibility: hidden;
+}
+.menubar-hint-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--type-caption);
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.menubar-hint-text kbd {
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.menubar-hint-dismiss {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--muted-foreground);
+}
+.menubar-hint-dismiss svg {
+  width: 12px;
+  height: 12px;
+}
+.menubar-hint-dismiss:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
 button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
