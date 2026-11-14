@@ -75,6 +75,7 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
   // Only stack rows under the merge filter subscribe, and they render only when one of their own states changes.
   const merge = useMergeStates(account, s.members, s.kind === 'stack' && filters.merge === 'conflicts');
   const matching = s.kind === 'stack' || filters.involvement === 'response' ? matchingStackMembers(item, filters, account, undefined, merge) : [];
+  const selectionCheck = active ? <SquareCheck size={16} className="queue-selection-check" aria-hidden="true" /> : <Square size={16} className="queue-selection-check" aria-hidden="true" />;
   return (
     <div className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''} ${item.briefing?.status === 'generating' ? 'is-briefing-generating' : ''}`}>
       <EntryActions
@@ -83,7 +84,9 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
         description={bulk ? bulkMenu?.description : undefined}
         onBeforeOpen={() => { refreshMenu(); actions.contextSelect(s.id); }}
       >{menu => <div className="queue-row">
-        {s.kind !== 'stack' ? <span className="queue-pr-gutter"><PrStateIcon member={s.members[0]} /></span> : <button
+        {/* While several entries can be selected, a PR's check takes its state icon's place and a stack's check
+            takes its stack icon's place, so titles do not move when selection starts or ends. */}
+        {s.kind !== 'stack' ? <span className="queue-pr-gutter">{multiple ? selectionCheck : <PrStateIcon member={s.members[0]} />}</span> : <button
           className="queue-disclosure"
           aria-label={`${expanded ? 'Collapse' : 'Expand'} ${s.title}`}
           aria-expanded={expanded}
@@ -128,15 +131,11 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
           }}
         >
           <span className="queue-title-line">
-            {multiple && (active ? <SquareCheck size={16} className="queue-selection-check" aria-hidden="true" /> : <Square size={16} className="queue-selection-check" aria-hidden="true" />)}
-            {s.kind === 'stack' && <Layers size={16} aria-label="PR stack" className="queue-stack-icon" />}
+            {s.kind === 'stack' && (multiple ? selectionCheck : <Layers size={16} aria-label="PR stack" className="queue-stack-icon" />)}
             <span className="queue-title">{s.title}</span>
             <PrLabels members={s.members} limit={3} />
           </span>
         </button>
-        <UnreadPrMarker urls={s.members.map(member => member.url)} />
-        <PrStarMarker members={s.members} starredUrls={starredUrls} />
-        {menu}
         {(item.review?.status === 'generating' ||
           item.review?.status === 'completed' ||
           item.briefing?.status === 'generating') && (
@@ -159,6 +158,10 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
             ) : null}
           </span>
         )}
+        {/* The actions menu ends every row, whether or not the entry shows a status. */}
+        <UnreadPrMarker urls={s.members.map(member => member.url)} />
+        <PrStarMarker members={s.members} starredUrls={starredUrls} />
+        {menu}
         </div>
           <QueueMetadata onChecks={() => actions.openChecks(item)} subject={s} account={account} />
           {s.kind === 'stack' && matching.length < s.members.length && <span className="queue-stack-matches">{matching.length} of {s.members.length} PRs match</span>}
