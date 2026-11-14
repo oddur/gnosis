@@ -24,7 +24,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { QueueFilterPanel } from './QueueFilterPanel';
 import {
   SETUP_GOALS,
-  SETUP_STEPS,
+  setupSteps,
   setupViews,
   recommendedSetupModel,
   setupForInstalledProviders,
@@ -34,6 +34,8 @@ import {
 import { normalizeQueueFilters } from '../lib/queue-filters';
 import { PROVIDERS, PROVIDER_IDS, type Provider } from '../lib/models';
 import type { QueueItem } from '../lib/workbench';
+import { MenubarSetupItem, NotificationsSetupItem, useSystemSettingsPanes } from './DesktopSetup';
+import { DESKTOP_STEPS, type DesktopOutcome, type DesktopSetupState, type DesktopStep } from '../lib/desktop-setup';
 
 export function OnboardingSetup({
   draft,
@@ -45,6 +47,8 @@ export function OnboardingSetup({
   items,
   saving,
   saveError,
+  desktop,
+  onDesktopOutcome,
 }: {
   draft: SetupDraft;
   onChange: (draft: SetupDraft) => void;
@@ -55,7 +59,11 @@ export function OnboardingSetup({
   items: QueueItem[];
   saving: boolean;
   saveError: string;
+  desktop?: DesktopSetupState;
+  onDesktopOutcome: (step: DesktopStep, outcome: DesktopOutcome) => void;
 }) {
+  const platform = window.electronAPI.platform;
+  const panes = useSystemSettingsPanes();
   const [error, setError] = useState('');
   const [cli, setCli] = useState<Partial<Record<Provider, 'found' | 'missing' | 'error'>> | null>(null);
   const [retry, setRetry] = useState(0);
@@ -74,7 +82,7 @@ export function OnboardingSetup({
     setError('');
     onChange({ ...draft, ...next });
   };
-  const steps = SETUP_STEPS.filter((step) => !draft.local || !['github', 'repositories', 'filters'].includes(step));
+  const steps = setupSteps(draft.local, platform);
   const active = steps.includes(draft.step) ? draft.step : 'goals';
   useEffect(() => {
     if (active !== 'ai') return;
@@ -115,6 +123,11 @@ export function OnboardingSetup({
       setError(failure);
       return;
     }
+    // Moving past the notifications or menu bar step without an answer counts as skipping it.
+    const from = steps.indexOf(active), to = steps.indexOf(step as SetupStep);
+    for (const passed of steps.slice(from, Math.max(from, to)))
+      if ((DESKTOP_STEPS as readonly string[]).includes(passed) && !desktop?.[passed as DesktopStep])
+        onDesktopOutcome(passed as DesktopStep, 'skipped');
     patch({ step: step as SetupStep });
   };
   const automaticEnabled = draft.autoBriefings || Object.values(draft.repositorySettings ?? {}).some(s => s.autoBriefings === true);
@@ -137,7 +150,7 @@ export function OnboardingSetup({
         <div className="setup-heading">
           <div>
             <DialogTitle>Set up Gnosis</DialogTitle>
-            <DialogDescription>Choose repositories, queue filters, and AI models.</DialogDescription>
+            <DialogDescription>Choose repositories, queue filters, notifications, and AI models.</DialogDescription>
           </div>
           <Button variant="ghost" size="icon" disabled={saving} aria-label="Save setup and close" onClick={onPause}>
             <X size={18} />
@@ -288,6 +301,23 @@ export function OnboardingSetup({
                   />
                 </details>
               </QuestionnaireItem>
+            )}
+            {steps.includes('notifications') && (
+              <NotificationsSetupItem
+                platform={platform}
+                panes={panes}
+                outcome={desktop?.notifications}
+                onOutcome={(outcome) => onDesktopOutcome('notifications', outcome)}
+                onLater={() => move(steps[steps.indexOf('notifications') + 1])}
+              />
+            )}
+            {steps.includes('menubar') && (
+              <MenubarSetupItem
+                panes={panes}
+                outcome={desktop?.menubar}
+                onOutcome={(outcome) => onDesktopOutcome('menubar', outcome)}
+                onLater={() => move(steps[steps.indexOf('menubar') + 1])}
+              />
             )}
             <QuestionnaireItem name="ai">
               <QuestionnaireTitle>Explanations and briefings</QuestionnaireTitle>
@@ -449,7 +479,7 @@ export function OnboardingSetup({
                 Review setup
               </QuestionnaireTitle>
               <QuestionnaireDescription>
-                Review what will change. Nothing is applied until you choose Apply setup.
+                Review your queue and AI choices. They apply when you choose Apply setup.
               </QuestionnaireDescription>
               {!draft.local && (
                 <div className="setup-views">

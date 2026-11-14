@@ -556,6 +556,16 @@ const mocks = {
     return Promise.resolve(prefs.notificationSettings ?? {});
   },
   notificationStatus: () => Promise.resolve({ supported: true, blocked: notificationScenario && new URLSearchParams(location.search).has('blocked') }),
+  // Setup's notifications and menu bar steps, as on macOS 26: both System Settings panes exist.
+  systemSettingsPanes: () => Promise.resolve({ notifications: true, menubar: true }),
+  openSystemSettings: (pane: string) => {
+    fixtureNotifications.fixtureNotificationCalls.push(`settings:${pane}`);
+    return Promise.resolve(true);
+  },
+  showMenubarPanel: () => {
+    fixtureNotifications.fixtureNotificationCalls.push('menubar-show');
+    return Promise.resolve(prefs.trayEnabled ? 'shown' as const : 'off' as const);
+  },
   renderMarkdownReview: (request: import('../../lib/markdown-review').MarkdownReviewRequest) => (window as unknown as { markdownFixture: (request: import('../../lib/markdown-review').MarkdownReviewRequest) => Promise<import('../../lib/markdown-review').MarkdownReview> }).markdownFixture(request),
   getPreparedInventories: () => Promise.resolve({ changes: [], commits: [] }),
   getPrChanges: (url: string) => {
@@ -649,7 +659,8 @@ const mocks = {
     return Promise.resolve({ reviewId: 'workbench-review', prUrl: review.prUrl, prTitle: review.prTitle, author: review.author });
   },
   getPrMetadata: (url: string) => Promise.resolve(items.flatMap((item) => item.subject.members).find((member) => member.url === url) ?? { ...members[0], url, title: 'A PR outside the queue' }),
-  loadOnboarding: () => Promise.resolve(JSON.parse(sessionStorage.getItem('fixture-onboarding') ?? '{}') as OnboardingState),
+  // Other suites start as people who already answered the notifications prompt, so it stays out of their layouts.
+  loadOnboarding: () => Promise.resolve(JSON.parse(sessionStorage.getItem('fixture-onboarding') ?? (onboardingScenario ? '{}' : '{"desktop":{"prompt":"dismissed"}}')) as OnboardingState),
   saveOnboarding: (state: OnboardingState) => { sessionStorage.setItem('fixture-onboarding', JSON.stringify(state)); return Promise.resolve(); },
   applyOnboarding: (draft: SetupDraft) => {
     if (new URLSearchParams(location.search).has('ftue-fail') && !sessionStorage.getItem('ftue-retry')) return Promise.reject(new Error('Disk full. Try again.'));
@@ -658,7 +669,8 @@ const mocks = {
     prefs = setupPreferences(prefs, draft);
     sessionStorage.setItem('fixture-first-run-seen', 'true');
     sessionStorage.setItem('fixture-guest-mode', String(draft.local));
-    sessionStorage.setItem('fixture-onboarding', JSON.stringify({ draft, completed: true, paused: false }));
+    const progress = JSON.parse(sessionStorage.getItem('fixture-onboarding') ?? '{}') as OnboardingState;
+    sessionStorage.setItem('fixture-onboarding', JSON.stringify({ draft, completed: true, paused: false, desktop: progress.desktop }));
     return Promise.resolve(prefs);
   },
   loadHarnessEnvironment: async () => ({ claude: [], codex: [] }),

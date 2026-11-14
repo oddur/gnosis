@@ -15,6 +15,8 @@ import { SearchableSelect } from './SearchableSelect';
 import { DEFAULT_MENUBAR_SETTINGS, menubarSettings, type MenubarSettings } from '../lib/menubar-settings';
 import { Button } from './ui/button';
 import { NotificationSettings } from './NotificationSettings';
+import { useSystemSettingsPanes } from './DesktopSetup';
+import { menubarHelp } from '../lib/desktop-setup';
 import { normalizeNotificationPreferences, type SavedNotificationPreferences } from '../lib/notification-settings';
 import { PrInactivitySetting } from './PrInactivitySetting';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
@@ -46,6 +48,8 @@ interface Props {
   // Reopens the optional setup panel in the review queue.
   onReplayOnboarding?: () => void;
   onShowWalkthrough?: () => void;
+  /** Opens the notifications and menu bar setup steps on their own. */
+  onDesktopSetup?: () => void;
 }
 
 // Quiet toggle switch — drops the bg-primary fill (now ink) and the
@@ -140,12 +144,42 @@ function formatBytes(bytes: number): string {
   return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
 }
 
+/** "Can't see the icon?": macOS 26 can hide it per app; earlier versions hide icons that do not fit. */
+function MenubarMissingHelp() {
+  const panes = useSystemSettingsPanes();
+  const [error, setError] = useState('');
+  return (
+    <details className="settings-menubar-missing">
+      <summary>Can’t see the icon?</summary>
+      <p className="settings-description">{menubarHelp(panes.menubar)}</p>
+      {panes.menubar && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setError('');
+            void window.electronAPI
+              .openSystemSettings('menubar')
+              .then((opened) => { if (!opened) setError('Could not open Menu Bar settings. Open System Settings › Menu Bar instead.'); })
+              .catch(() => setError('Could not open Menu Bar settings. Open System Settings › Menu Bar instead.'));
+          }}
+        >
+          Open menu bar settings
+        </Button>
+      )}
+      {error && <p className="settings-description" role="alert">{error}</p>}
+    </details>
+  );
+}
+
 export function SettingsDialog({
   open,
   onOpenChange,
   onThemeChange,
   onReplayOnboarding,
   onShowWalkthrough,
+  onDesktopSetup,
   initialSection = 'queue',
 }: Props) {
   const [clearingCache, setClearingCache] = useState(false);
@@ -891,6 +925,7 @@ export function SettingsDialog({
                 onChange={(next) => { setNotificationPrefs(next); saveField({ notificationSettings: next }); }}
                 Row={SettingRow}
                 Toggle={Toggle}
+                onDesktopSetup={onDesktopSetup}
               />
               {window.electronAPI.platform === 'darwin' && (
                 <section className="flex flex-col items-start gap-3" aria-labelledby="menubar-settings-title">
@@ -926,6 +961,7 @@ export function SettingsDialog({
                     />
                     <p id="menubar-badge-description" className="settings-description">Also shown on the Dock icon.</p>
                   </div>
+                  {trayEnabled && <MenubarMissingHelp />}
                 </section>
               )}
             </Tabs.Content>

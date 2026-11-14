@@ -49,6 +49,16 @@ SQLite stores the setup draft and walkthrough progress by GitHub account, with a
 Preferences and saved views retain their existing file stores. Apply validates the views before writes and attempts compensating rollback after a failure.
 This is not one atomic transaction across stores. A rollback failure reports that some settings can have changed and offers another setup attempt.
 
+## Notifications and menu bar
+
+After filters, the connected path adds **Get notified when a PR needs you** and, on macOS, **See what needs you from the menu bar**. Local mode skips both.
+**Turn on notifications** sends exactly one test notification, which is also what triggers the macOS permission prompt on a signed build. Gnosis cannot read that permission, so the step asks **Did you see it?**
+**No** explains what may be blocking Gnosis, with **Open notification settings** and **Send again**. Windows links to `ms-settings:notifications`; Linux gets text only.
+The menu bar step shows a drawn slice of the menu bar, **Show me** opens the real panel under the icon, and **No** explains "Allow in the Menu Bar" with **Open menu bar settings** on macOS 26.
+The number on the icon is saved as soon as it is chosen. **Set up later** and Next skip a step without blocking setup.
+[DesktopSetup](../../components/DesktopSetup.tsx) holds both steps. The same steps open on their own from Help, Settings › Notifications, and a one-time banner for people who finished setup earlier.
+Answers live with the setup progress (`desktop`) and survive Apply and replay. System Settings links are exact URLs allowed in [desktop-setup](../../lib/desktop-setup.ts); the renderer names a pane, never a URL.
+
 ## Pause, resume, and walkthrough
 
 **Finish later**, close, and Escape save setup progress before dismissal. A failed save leaves the dialog open with an error.
