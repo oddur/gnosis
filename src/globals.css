@@ -2462,7 +2462,8 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .explanation-status > span { flex:1; min-width:200px; }
 .explanation-generating { display:flex;flex:1;min-height:260px;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:32px 24px; }
 .explanation-generating .loading-state { min-height:0;padding:0; }
-.explanation-empty { padding:32px var(--pr-frame-inset); max-width:720px; }
+/* Content sections start 16px below the tabs, like Summary and Local notes. */
+.explanation-empty { padding:16px var(--pr-frame-inset); max-width:720px; }
 .explanation-empty h2 { font-size:var(--type-title-compact, 18px); font-weight:650; margin-bottom:12px; }
 .explanation-empty p { font-size:var(--type-body); line-height:1.65; color:var(--muted-foreground); }
 .explanation-empty-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:24px 0 12px; }
@@ -3410,7 +3411,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .agent-brief-header h2 span { color:var(--muted-foreground); font-size:var(--type-control); font-weight:400; margin-inline-start:4px; }
 .agent-brief-header p { color:var(--muted-foreground); max-width:65ch; overflow-wrap:anywhere; }
 .agent-brief-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
-.agent-brief-empty { text-align:left; }
+/* The empty note list sits on the section's gutter, under its heading, not indented past it. */
+.agent-brief-empty { text-align:left; padding-inline:0; }
 .agent-brief-group { margin-block:24px; }
 .agent-brief-group-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px; }
 .agent-brief-group h3 { font-weight:600; overflow-wrap:anywhere; }
@@ -4794,3 +4796,12 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .pr-action-confirm ol { margin:6px 0 10px;padding-left:20px;list-style:decimal; }
 .pr-action-confirm li + li { margin-top:4px; }
 
+/* ─── PR section toolbars ───────────────────────────────────────
+   PR section toolbars (Changes, Commits, Checks, Feedback) share one height and inset, so the content
+   below them starts at the same place in each section. Their controls are 32px tall. */
+:is(.changes-toolbar, .checks-toolbar, .feedback-toolbar) { min-height:49px; padding:8px 16px; }
+.checks-toolbar .checks-view-switch { padding:2px; }
+.checks-toolbar .checks-view-switch button { height:26px; }
+@media (max-width:700px) {
+  :is(.changes-toolbar, .checks-toolbar, .feedback-toolbar) { padding:6px 12px; }
+}

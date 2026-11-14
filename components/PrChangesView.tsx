@@ -571,7 +571,7 @@ export function PrChangesView({
         {!commit && !combined && entry && (
           <Button
             variant="ghost"
-            size="icon"
+            size="icon-sm"
             aria-label="Refresh comments"
             title={`Refresh comments for PR #${entry.snapshot.url.split('/').pop()}`}
             onClick={() => void refreshThreads(entry.snapshot.url)}
