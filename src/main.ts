@@ -55,6 +55,7 @@ import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from '../lib/github-c
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import { createAppDataStore } from './app-data-store';
 import { createRendererFlush, saveWorkBeforeQuit } from './quit-flush';
+import { createUpdateController, supportsAutoUpdate, type AppUpdateStatus, type UpdateController, type UpdateMarker } from './update-state';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
@@ -166,7 +167,7 @@ const predictionsOff = process.env.GNOSIS_PREDICT === 'off';
 // for both unless listed here. Wrap before the first registration.
 const startup = createStartup();
 gateHandlers(ipcMain, startup, {
-  ungated: ['load-preferences', 'get-config', 'open-external', 'open-logs-directory', 'get-pending-update-ready', 'dismiss-update'],
+  ungated: ['load-preferences', 'get-config', 'open-external', 'open-logs-directory', 'get-update-status', 'install-update', 'dismiss-update'],
   dataOnly: ['load-review-state', 'save-review-state', 'save-file-progress', 'load-file-filters', 'load-onboarding', 'get-auth-state'],
 });
 const launchedAt = Date.now();
@@ -670,17 +671,58 @@ function stopProactivePolling() {
 
 // ── Auto-updater (Squirrel) ─────────────────────────────────────
 
-// Squirrel fires update-downloaded at most once per launch, and if the
-// download completes before the renderer has mounted its IPC listener,
-// the event is dropped. Cache the last-known ready version so a newly
-// mounted banner can pull it on startup.
-// GNOSIS_FAKE_UPDATE_READY=<version> surfaces the "ready to install" banner
-// in dev without needing a packaged build and Squirrel round-trip.
-let pendingUpdateReadyVersion: string | null = process.env.GNOSIS_FAKE_UPDATE_READY ?? null;
+// See src/update-state.ts for why a natural quit-and-reopen often fails to install.
+// GNOSIS_FAKE_UPDATE_READY=<version> surfaces the "ready to install" banner in dev.
+let updateController: UpdateController | null = null;
+let notifiedUpdateVersion: string | null = null;
+
+function sendUpdateStatus(status: AppUpdateStatus) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.webContents.isDestroyed()) win.webContents.send('update-status', status);
+  }
+}
+
+function updateMarkerPath() {
+  return path.join(app.getPath('userData'), 'pending-update.json');
+}
+
+const updateMarker: UpdateMarker = {
+  read() {
+    try {
+      const value = (JSON.parse(fs.readFileSync(updateMarkerPath(), 'utf-8')) as { version?: unknown }).version;
+      return typeof value === 'string' ? value : null;
+    } catch {
+      return null;
+    }
+  },
+  write(version) {
+    if (version) fs.writeFileSync(updateMarkerPath(), JSON.stringify({ version }));
+    else fs.rmSync(updateMarkerPath(), { force: true });
+  },
+};
+
+async function prepareToQuitForUpdate(): Promise<boolean> {
+  if (!confirmQuitDuringGenerations()) return false;
+  failActiveGenerations();
+  return saveBeforeQuit();
+}
 
 function setupAutoUpdater() {
-  if (!app.isPackaged) return;
-  if (process.platform === 'linux') return;
+  const fakeReadyVersion = process.env.GNOSIS_FAKE_UPDATE_READY ?? null;
+  if (!supportsAutoUpdate(process.platform, app.isPackaged) && !fakeReadyVersion) return;
+
+  if (!app.isPackaged) {
+    // Dev: no Squirrel. "Restart now" logs instead of installing.
+    updateController = createUpdateController({
+      updater: { on: () => undefined, quitAndInstall: () => console.log('[main] Dev: would quit and install the update') },
+      currentVersion: app.getVersion(),
+      marker: { read: () => null, write: () => undefined },
+      prepareToQuit: () => Promise.resolve(true),
+      onChange: sendUpdateStatus,
+      fakeReadyVersion,
+    });
+    return;
+  }
 
   const feedURL = `https://update.electronjs.org/oddur/gnosis/${process.platform}-${process.arch}/${app.getVersion()}`;
   try {
@@ -693,36 +735,52 @@ function setupAutoUpdater() {
   autoUpdater.on('checking-for-update', () => {
     console.log('[main] Auto-updater: checking for update');
   });
-
   autoUpdater.on('update-available', () => {
     console.log('[main] Auto-updater: update available, downloading');
   });
-
   autoUpdater.on('update-not-available', () => {
     console.log('[main] Auto-updater: no update available');
   });
+  autoUpdater.on('before-quit-for-update', () => {
+    console.log('[main] Auto-updater: quitting to install the update');
+  });
 
-  autoUpdater.on('update-downloaded', (_event, _releaseNotes, releaseName) => {
-    const version = releaseName.replace(/^v/, '');
-    const label = version ? ` ${version}` : '';
-    console.log(`[main] Update${label} downloaded, will install on exit`);
-    pendingUpdateReadyVersion = version;
-    if (loadPreferences().notifications) {
-      const notif = new Notification({
-        title: 'A new update is ready to install',
-        body: `Gnosis${label} has been downloaded and will be automatically installed on exit`,
-        silent: true,
+  updateController = createUpdateController({
+    updater: autoUpdater,
+    currentVersion: app.getVersion(),
+    marker: updateMarker,
+    prepareToQuit: prepareToQuitForUpdate,
+    log: message => console.warn(`[main] ${message}`),
+    onChange: (status) => {
+      sendUpdateStatus(status);
+      // A cancelled restart or a later re-download is ready again; notify once per version.
+      if (status.state !== 'ready' || notifiedUpdateVersion === status.version) return;
+      notifiedUpdateVersion = status.version;
+      console.log(`[main] Update ${status.version} downloaded and ready to install`);
+      if (loadPreferences().notifications) {
+        new Notification({
+          title: 'A Gnosis update is ready',
+          body: `Restart Gnosis to install${status.version ? ` v${status.version}` : ' it'}.`,
+          silent: true,
+        }).show();
+      }
+    },
+    // Saved data is closed by now, so Gnosis cannot keep running. Say what failed, then quit.
+    onInstallFailed: (status) => {
+      void dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['Download from GitHub', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'Gnosis could not install the update',
+        detail: `${status.message}\nDownload the new version from GitHub, or reopen Gnosis to try again.`,
+      }).then(({ response }) => {
+        if (response === 0) void shell.openExternal(status.releaseUrl);
+        app.quit();
       });
-      notif.show();
-    }
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('update-ready', version);
-    }
+    },
   });
-
-  autoUpdater.on('error', (err: Error) => {
-    console.warn('[main] Auto-updater error:', err.message);
-  });
+  sendUpdateStatus(updateController.status());
 
   // Check for updates automatically — download happens silently
   autoUpdater.checkForUpdates();
@@ -866,54 +924,75 @@ function maintainStorage(): Promise<void> {
 }
 
 let cacheFlushed = false;
-let cacheFlushing = false;
 const rendererFlush = createRendererFlush();
 ipcMain.on('review-state-flushed', (_event, id: unknown) => rendererFlush.acknowledge(id));
-app.on('before-quit', (event) => {
-  if (!quitConfirmed && activeGenerations.size > 0) {
-    event.preventDefault();
-    const count = activeGenerations.size;
-    const win = BrowserWindow.getAllWindows()[0];
-    const response = dialog.showMessageBoxSync(win, {
-      type: 'question',
-      buttons: ['Cancel', 'Quit Anyway'],
-      defaultId: 0,
-      cancelId: 0,
-      message: `Quit while ${count === 1 ? 'a review is' : `${count} reviews are`} generating?`,
-      detail: `${count === 1 ? 'It' : 'They'} will be cancelled if you quit now.`,
-    });
-    if (response === 1) {
-      quitConfirmed = true;
-      app.quit();
-    }
-    return;
-  }
-  // Mark any in-flight generations as failed
+/** Asks before quitting while reviews generate. Returns false if the user wants to keep them. */
+function confirmQuitDuringGenerations(): boolean {
+  if (quitConfirmed || activeGenerations.size === 0) return true;
+  const count = activeGenerations.size;
+  const win = BrowserWindow.getAllWindows()[0];
+  const response = dialog.showMessageBoxSync(win, {
+    type: 'question',
+    buttons: ['Cancel', 'Quit Anyway'],
+    defaultId: 0,
+    cancelId: 0,
+    message: `Quit while ${count === 1 ? 'a review is' : `${count} reviews are`} generating?`,
+    detail: `${count === 1 ? 'It' : 'They'} will be cancelled if you quit now.`,
+  });
+  if (response !== 1) return false;
+  quitConfirmed = true;
+  return true;
+}
+
+/** Marks in-flight generations as failed, because the app is about to quit. */
+function failActiveGenerations() {
   for (const [id] of activeGenerations) {
     updateHistoryEntry(id, { status: 'failed', error: 'App quit during generation' });
   }
   activeGenerations.clear();
-  if (!cacheFlushed) {
-    event.preventDefault();
-    if (!cacheFlushing) {
-      cacheFlushing = true;
+}
+
+let savingBeforeQuit: Promise<boolean> | null = null;
+/**
+ * Saves user work and closes saved data. Resolves true when the app may quit: work saved, or the
+ * user chose to quit without saving. Resolves false when the user keeps the app open.
+ */
+function saveBeforeQuit(): Promise<boolean> {
+  if (cacheFlushed) return Promise.resolve(true);
+  savingBeforeQuit ??= (async () => {
+    try {
       // User drafts and progress must finish before quitting; only disposable cache has a deadline.
       // Windows send their pending review state first, so the final flush includes it.
-      void saveWorkBeforeQuit({
+      await saveWorkBeforeQuit({
         targets: BrowserWindow.getAllWindows().map((win) => win.webContents),
         flush: (targets) => rendererFlush.flush(targets),
         close: () => appData.close(),
-      })
-        .then(() => Promise.race([githubClients.closeStorage(), new Promise(resolve => setTimeout(resolve, 1500))])
-          .catch((error: unknown) => console.warn('Disposable cache flush failed:',error)))
-        .then(() => { cacheFlushed = true; app.quit(); })
-        .catch(async (error: unknown) => {
-          cacheFlushing = false;
-          const {response} = await dialog.showMessageBox({type:'warning',buttons:['Keep open','Quit without saving'],defaultId:0,cancelId:0,
-            message:'Some changes could not be saved',detail:`${error instanceof Error ? error.message : String(error)}\nFree some disk space, then try quitting again.`});
-          if(response === 1) {cacheFlushed = true;app.quit();}
-        });
+      });
+      await Promise.race([githubClients.closeStorage(), new Promise(resolve => setTimeout(resolve, 1500))])
+        .catch((error: unknown) => console.warn('Disposable cache flush failed:', error));
+      cacheFlushed = true;
+      return true;
+    } catch (error: unknown) {
+      const { response } = await dialog.showMessageBox({ type: 'warning', buttons: ['Keep open', 'Quit without saving'], defaultId: 0, cancelId: 0,
+        message: 'Some changes could not be saved', detail: `${error instanceof Error ? error.message : String(error)}\nFree some disk space, then try quitting again.` });
+      if (response === 1) cacheFlushed = true;
+      return response === 1;
+    } finally {
+      savingBeforeQuit = null;
     }
+  })();
+  return savingBeforeQuit;
+}
+
+app.on('before-quit', (event) => {
+  if (!confirmQuitDuringGenerations()) {
+    event.preventDefault();
+    return;
+  }
+  failActiveGenerations();
+  if (!cacheFlushed) {
+    event.preventDefault();
+    void saveBeforeQuit().then((quit) => { if (quit) app.quit(); });
     return;
   }
   destroyTray();
@@ -1333,7 +1412,8 @@ ipcMain.handle('dismiss-update', (_event, version: string) => {
   dismissedUpdateVersion = version;
 });
 
-ipcMain.handle('get-pending-update-ready', () => pendingUpdateReadyVersion);
+ipcMain.handle('get-update-status', (): AppUpdateStatus => updateController?.status() ?? { state: 'idle' });
+ipcMain.handle('install-update', (): Promise<AppUpdateStatus> => updateController?.restartNow() ?? Promise.resolve({ state: 'idle' }));
 
 ipcMain.handle('open-external', (_event, url: string) => {
   try {
