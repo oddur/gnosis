@@ -324,12 +324,18 @@ void test('PRs in one repository share a store without sharing refs, and concurr
 void test('a linked local clone supplies the commits as an alternate and is never written', async (t) => {
   const f = await remoteFixture(t);
   const clone = path.join(f.dir, 'clone');
-  await exec('git', ['clone', '-q', '--no-local', f.remote, clone]);
-  await exec('git', ['fetch', '-q', 'origin', 'feature:feature'], { cwd: clone });
-  // List every file under .git with Node; `find` is a different program on Windows.
+  // Git's own background housekeeping (auto maintenance after fetch) would otherwise come and go under .git
+  // while the test runs, e.g. objects/maintenance.lock, and look like Gnosis writing to the clone.
+  const quiet = ['-c', 'maintenance.auto=false', '-c', 'gc.auto=0'];
+  await exec('git', [...quiet, 'clone', '-q', '--no-local', f.remote, clone]);
+  await exec('git', ['config', 'maintenance.auto', 'false'], { cwd: clone });
+  await exec('git', ['config', 'gc.auto', '0'], { cwd: clone });
+  await exec('git', [...quiet, 'fetch', '-q', 'origin', 'feature:feature'], { cwd: clone });
+  // List every file under .git with Node; `find` is a different program on Windows. Lock files are Git's own
+  // transient state, never something Gnosis leaves behind, so they are left out of the comparison.
   const snapshot = async () =>
     (await fs.readdir(path.join(clone, '.git'), { recursive: true, withFileTypes: true }))
-      .filter((entry) => entry.isFile())
+      .filter((entry) => entry.isFile() && !entry.name.endsWith('.lock'))
       .map((entry) => path.relative(clone, path.join(entry.parentPath, entry.name)).split(path.sep).join('/'))
       .sort()
       .join('\n');
