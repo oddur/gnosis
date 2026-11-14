@@ -304,11 +304,14 @@ void app.whenReady().then(async () => {
       await click('Show walkthrough');
       await wait("!!document.querySelector('.gnosis-tour .gnosis-tour-progress')");
     };
+    // Saved as Settings saves: the file, then the event the queue listens to.
+    const savePrefs = (patch: string) =>
+      js(`window.electronAPI.loadPreferences().then(async p=>{const next={...p,...${patch}};await window.electronAPI.savePreferences(next);window.dispatchEvent(new CustomEvent('gnosis-preferences-changed',{detail:next}))})`);
     const endTour = async () => {
       await js("document.dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',keyCode:27,bubbles:true,cancelable:true}))");
       await wait("!document.querySelector('.gnosis-tour')");
     };
-    await js("window.electronAPI.loadPreferences().then(p=>window.electronAPI.savePreferences({...p, trayEnabled: true, menubarSettings: { click: 'panel', badge: 'new' }}))");
+    await savePrefs("{trayEnabled: true, menubarSettings: { click: 'panel', badge: 'new' }}");
     await walkthrough();
     // The walkthrough resumes where it was ended, on the explanation; the menu bar stop follows it.
     assert.equal(await tourProgress(), '4 of 5');
@@ -332,12 +335,12 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.gnosis-tour')");
     assert.equal(await js("JSON.parse(sessionStorage.getItem('fixture-onboarding')).tourCompleted"), true);
     // The classic menu has no panel to show: four steps.
-    await js("window.electronAPI.loadPreferences().then(p=>window.electronAPI.savePreferences({...p, menubarSettings: { click: 'menu', badge: 'new' }}))");
+    await savePrefs("{menubarSettings: { click: 'menu', badge: 'new' }}");
     await walkthrough();
     assert.equal(await tourProgress(), '1 of 4');
     await endTour();
     // The icon off: four steps.
-    await js("window.electronAPI.loadPreferences().then(p=>window.electronAPI.savePreferences({...p, trayEnabled: false, menubarSettings: { click: 'panel', badge: 'new' }}))");
+    await savePrefs("{trayEnabled: false, menubarSettings: { click: 'panel', badge: 'new' }}");
     await walkthrough();
     assert.equal(await tourProgress(), '1 of 4');
     await endTour();
@@ -345,7 +348,7 @@ void app.whenReady().then(async () => {
     await js("sessionStorage.setItem('fixture-platform', 'win32')");
     win.reload();
     await wait("!!document.querySelector('.workspace-menu-trigger')");
-    await js("window.electronAPI.loadPreferences().then(p=>window.electronAPI.savePreferences({...p, trayEnabled: true}))");
+    await savePrefs('{trayEnabled: true}');
     await walkthrough();
     assert.equal(await tourProgress(), '1 of 4');
     await endTour();

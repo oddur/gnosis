@@ -107,7 +107,7 @@ export function GuidedTour({
         if (entry !== MENUBAR_TOUR_STOP) return;
         const show = document.createElement('button');
         show.type = 'button';
-        show.className = 'gnosis-tour-action';
+        show.className = 'driver-popover-footer-btn gnosis-tour-action';
         show.textContent = 'Show me';
         show.addEventListener('click', () => {
           show.disabled = true;
