@@ -38,6 +38,15 @@ const groups: ShortcutGroup[] = [
     ],
   },
   {
+    heading: 'Resolving conflicts',
+    shortcuts: [
+      { keys: 'j  k', label: 'Next / previous conflict' },
+      { keys: '1  2  3', label: 'Keep PR change / base change / both' },
+      { keys: 'm', label: 'Mark file reviewed and open the next file' },
+      { keys: 'n  p', label: 'Next / previous file' },
+    ],
+  },
+  {
     heading: 'Review controls',
     shortcuts: [
       { keys: window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K', label: 'Open command palette' },
