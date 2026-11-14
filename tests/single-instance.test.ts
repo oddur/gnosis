@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { instancePolicy, linkFromArgv, linkFromInstanceData, linkSchemes, startSingleInstance, type InstanceApp } from '../src/single-instance';
@@ -104,5 +105,10 @@ void test('development takes no lock and registers nothing unless opted in', asy
   opted.ready();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(opted.calls[0], 'lock {}');
-  assert.match(opted.calls[1], /^register gnosis-dev \/Electron \["\/.+"\]$/, 'Bound to Electron plus the resolved app path');
+  // The app path is resolved to an absolute path: "/…" on macOS and Linux, "D:\\…" on Windows.
+  const registered = /^register gnosis-dev \/Electron (\[.+\])$/.exec(opted.calls[1]);
+  assert.ok(registered, 'Bound to Electron plus the resolved app path');
+  const args = JSON.parse(registered[1]) as string[];
+  assert.equal(args.length, 1);
+  assert.ok(path.isAbsolute(args[0]), `An absolute app path, got ${args[0]}`);
 });

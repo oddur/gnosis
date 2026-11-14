@@ -116,34 +116,32 @@ export function stackMergeSteps(
   });
 }
 
-/** Bringing the base into a conflicted PR, then (optionally) restacking the PRs above it. */
+/**
+ * Bringing the base into a conflicted PR, then (optionally) restacking the PRs above it. One plan
+ * from start to end: resolving and reviewing files, then one confirmation that shows the final
+ * update and pushes it. The plan never gains or loses steps while the user works through it.
+ */
 export function conflictSteps(
   session: ConflictSession,
-  options: { preview: boolean; confirming?: boolean; running?: boolean; failure?: StepFailure }
+  options: { confirming?: boolean; running?: boolean; failure?: StepFailure } = {}
 ): ActionStepPlan {
   const files = session.files;
   const reviewed = files.filter((f) => f.resolved && !f.unsupported).length;
   const dependents = session.dependents?.length ?? 0;
+  const upToDate = session.preparation === 'up-to-date' && !files.length;
   const steps: Omit<ActionStep, 'status'>[] = [
     {
       id: 'resolve',
       label: files.length
-        ? `Resolve ${plural(files.length, 'conflicted file')}`
-        : session.preparation === 'up-to-date'
-          ? 'Branch is already up to date'
-          : 'Merge cleanly, without conflicts',
-      detail: files.length
-        ? `${listSummary(files.map((f) => f.path.split('/').pop() ?? f.path))} · ${reviewed} of ${files.length} reviewed`
-        : undefined,
-    },
-    {
-      id: 'review',
-      label: 'Review the branch update',
-      detail: `${session.baseBranch} into ${session.headBranch}`,
+        ? `Resolve ${plural(files.length, 'file')}`
+        : upToDate
+          ? 'Already up to date'
+          : 'No conflicts to resolve',
+      detail: files.length ? `${reviewed} of ${files.length} reviewed` : undefined,
     },
     {
       id: 'push',
-      label: `Commit and push to ${session.headBranch}`,
+      label: `Confirm and push to ${session.headBranch}`,
       detail: 'Adds a merge commit. The PR stays open.',
       pointOfNoReturn: true,
     },
@@ -156,15 +154,15 @@ export function conflictSteps(
       optional: true,
     });
   if (session.status === 'published')
-    return sequence(steps, dependents ? 3 : 2, { complete: !dependents || session.restack?.status === 'published' });
-  if (session.preparation === 'up-to-date' && !files.length)
+    return sequence(steps, dependents ? 2 : 1, { complete: !dependents || session.restack?.status === 'published' });
+  if (upToDate)
     return {
       current: 0,
       steps: steps.map((step, index) =>
         index === 0 ? { ...step, status: 'done' } : { ...step, status: 'skipped', detail: 'No update is needed.' }
       ),
     };
-  const index = options.confirming ? 2 : options.preview ? 1 : 0;
+  const index = options.confirming || !files.length ? 1 : 0;
   return sequence(steps, index, { running: options.running, failure: options.failure });
 }
 
