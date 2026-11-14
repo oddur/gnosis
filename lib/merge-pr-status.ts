@@ -1,4 +1,5 @@
 import type { PrStatus } from './types';
+import { newerLifecycle } from './pr-lifecycle';
 /** A slow summary read must not overwrite a newer pushed snapshot of the same revision. */
 export function mergePrStatus(previous: PrStatus | undefined, next: PrStatus): PrStatus {
   if (!previous) return next;
@@ -18,8 +19,10 @@ export function mergePrStatus(previous: PrStatus | undefined, next: PrStatus): P
     previous.checkSnapshot.checkedAt > next.checkSnapshot.checkedAt
       ? previous.checkSnapshot
       : next.checkSnapshot;
+  const lifecycle = newerLifecycle(previous.lifecycle, next.lifecycle);
   return {
     ...next,
+    ...(lifecycle ? { lifecycle } : {}),
     signals,
     ciConclusion: signals?.checks.state ?? next.ciConclusion,
     checkSnapshot,

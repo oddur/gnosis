@@ -78,7 +78,8 @@ export function deriveEvents(previous: PrBasis | undefined, next: PrObservation,
   const silent = !context.initialized || !!context.own || (!!previous && !prev);
   const sameHead = prev?.headSha === member.headSha;
   const own = same(member.author, login);
-  const eligible = member.state === 'open' && !member.merged && !member.isDraft && !own;
+  const open = member.state === 'open' && !member.merged;
+  const eligible = open && !member.isDraft && !own;
   const direct = eligible && member.requestedReviewers.some((reviewer) => same(reviewer, login));
   // Only discovery knows the search role. Metadata updates keep the last answer.
   const team = eligible && !direct && (member.role !== undefined ? member.role === 'review-requested' : (prev?.team ?? false));
@@ -88,7 +89,8 @@ export function deriveEvents(previous: PrBasis | undefined, next: PrObservation,
   const kinds: Partial<Record<AttentionKind, string>> = {};
   if (direct) kinds['review-requested'] = 'direct';
   // Status kinds come from signals for this head. A new head resets them to unknown without an event.
-  const status = signals ? memberAttention(member, signals, login) : sameHead ? prev.kinds : {};
+  // A merge keeps the head, so the kinds saved for it must not outlive the PR.
+  const status = !open ? {} : signals ? memberAttention(member, signals, login) : sameHead ? prev.kinds : {};
   for (const kind of STATUS_KINDS) if (status[kind] !== undefined) kinds[kind] = status[kind];
 
   const requestEntered = direct && !prev?.kinds['review-requested'];
@@ -118,7 +120,7 @@ export function deriveEvents(previous: PrBasis | undefined, next: PrObservation,
 
   // A PR seen for the first time, or signals seen for the first time, only start a basis.
   const signalsKnown = prev?.review !== undefined;
-  if (signals && signalsKnown && own && now - signals.checkedAt <= STALE_SIGNALS_MS) {
+  if (open && signals && signalsKnown && own && now - signals.checkedAt <= STALE_SIGNALS_MS) {
     if (latest && review !== prev.review && !same(latest.author, login)) {
       if (latest.state === 'CHANGES_REQUESTED') add('changes-requested', `review|${latest.url}`, 'changes-requested', latest.author);
       else if (latest.state === 'APPROVED') add('approved', `review|${latest.url}`, 'ready-to-merge', latest.author);

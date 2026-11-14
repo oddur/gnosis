@@ -411,3 +411,30 @@ void test('summarizeReviews matches the REST reduction', async () => {
     rest
   );
 });
+
+void test('a fresh read reports the merge, and the saved copy for the unchanged head says merged too', async () => {
+  const h = harness();
+  const merged = { headSha: head, baseSha: 'c'.repeat(40), mergeable: null, mergeableState: 'unknown', merged: true, state: 'closed', updatedAt: '2026-11-14T09:06:41Z', ...core } as unknown as PrMetadata;
+  const status = createPrStatusService({
+    metadata: () => Promise.resolve(merged),
+    reviews: () => Promise.resolve(core.reviewSummary),
+    checks: () => Promise.resolve(undefined),
+    signals: () => Promise.resolve([]),
+    now: () => savedAt,
+  });
+  const result = await status.read(h.client, url, false, head);
+  assert.deepEqual(result.status.lifecycle, { state: 'closed', merged: true, updatedAt: '2026-11-14T09:06:41Z' });
+  assert.deepEqual((await status.cached(h.client, url, head))?.lifecycle, result.status.lifecycle);
+  // A copy saved before lifecycles existed claims nothing.
+  h.cache.set(`pr-status:v1:${url}`, saved());
+  assert.equal((await status.cached(h.client, url, head))?.lifecycle, undefined);
+});
+
+void test('a preloaded copy carries the GraphQL state', async () => {
+  const h = preloadHarness((i) => pull(i === 0 ? { state: 'MERGED', updatedAt: '2026-11-14T09:06:41Z' } : { state: 'OPEN', updatedAt: '2026-11-13T00:00:00Z' }));
+  const status = service(() => savedAt);
+  await status.preload(h.client, [1, 2].map((n) => ({ url: pullUrl(n), headSha: head })));
+  assert.match(h.queries[0], /state updatedAt headRefOid/);
+  assert.deepEqual((await status.cached(h.client, pullUrl(1), head))?.lifecycle, { state: 'closed', merged: true, updatedAt: '2026-11-14T09:06:41Z' });
+  assert.equal((await status.cached(h.client, pullUrl(2), head))?.lifecycle?.state, 'open');
+});

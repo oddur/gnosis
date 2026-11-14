@@ -2296,3 +2296,45 @@ void test('watch mode runs the personal searches only and notifies from them', a
     assert.equal(service.snapshot().items[0].subject.members[0].requestedReviewers[0], 'reviewer');
   } finally { s.cleanup(); }
 });
+
+void test('a PR merged on GitHub leaves the queue, and an older open read does not bring it back', async () => {
+  const s = setup(async () => '', false);
+  try {
+    await s.service.queue();
+    const member = s.service.knownMember(s.pr.html_url)!;
+    assert.equal(s.service.snapshot().items.length, 1);
+    s.service.updatePrMetadata({ ...member, merged: true, state: 'closed', updatedAt: '2026-10-23T09:06:41Z' });
+    assert.equal(s.service.knownMember(s.pr.html_url)?.merged, true);
+    assert.equal(s.service.snapshot().items.length, 0, 'Merged PRs leave the queue');
+    // A status read that started before the merge answers last.
+    s.service.updatePrMetadata({ ...member, title: 'Before the merge' });
+    assert.equal(s.service.knownMember(s.pr.html_url)?.merged, true);
+    assert.equal(s.service.snapshot().items.length, 0);
+  } finally { s.cleanup(); }
+});
+
+void test('a discovery that read a PR before it merged does not publish it as open again', async () => {
+  const s = setup(async () => '', false);
+  try {
+    await s.service.queue();
+    const member = s.service.knownMember(s.pr.html_url)!;
+    const client = s.deps.client() as unknown as { pulls: { get: () => Promise<unknown> } };
+    const original = client.pulls.get;
+    let release: (() => void) | undefined;
+    let started: (() => void) | undefined;
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    client.pulls.get = async () => {
+      started?.();
+      await new Promise<void>((resolve) => { release = resolve; });
+      return original();
+    };
+    const discovery = s.service.queue(true);
+    await reading;
+    // The opened PR's status read learns of the merge while discovery still holds the open copy.
+    s.service.updatePrMetadata({ ...member, merged: true, state: 'closed', updatedAt: '2026-10-23T09:06:41Z' });
+    release?.();
+    await discovery;
+    assert.equal(s.service.knownMember(s.pr.html_url)?.merged, true);
+    assert.equal(s.service.snapshot().items.length, 0);
+  } finally { s.cleanup(); }
+});
