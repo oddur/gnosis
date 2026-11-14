@@ -134,6 +134,8 @@ export function StepCard({
   className,
   ariaLabel,
   autoFocus = false,
+  showSteps = true,
+  compactSteps = false,
 }: {
   title: ReactNode;
   description?: ReactNode;
@@ -160,6 +162,10 @@ export function StepCard({
   ariaLabel?: string;
   /** Take focus as soon as the first step has content, so Enter continues from the start. */
   autoFocus?: boolean;
+  /** Hide the card's own plan and counter when a surrounding step rail already shows the same plan. */
+  showSteps?: boolean;
+  /** Show the plan on one wrapping line, for cards that share a screen with other content. */
+  compactSteps?: boolean;
 }) {
   const id = useId();
   const step = steps[current] as ActionStep | undefined;
@@ -205,20 +211,25 @@ export function StepCard({
         <div id={`${id}-title`} className="step-card-title">
           {title}
         </div>
-        <span className="step-card-count" aria-hidden="true">
-          {current + 1} / {steps.length}
-        </span>
+        {showSteps && (
+          <span className="step-card-count" aria-hidden="true">
+            {current + 1} / {steps.length}
+          </span>
+        )}
       </header>
       {description && <div className="step-card-description">{description}</div>}
-      <StepList
-        steps={steps}
-        current={current}
-        label="Steps"
-        onRetry={onRetry}
-        retryLabel={retryLabel}
-        busy={busy}
-        errorRef={error}
-      />
+      {showSteps && (
+        <StepList
+          compact={compactSteps}
+          steps={steps}
+          current={current}
+          label="Steps"
+          onRetry={onRetry}
+          retryLabel={retryLabel}
+          busy={busy}
+          errorRef={error}
+        />
+      )}
       {children && (
         <div
           ref={body}

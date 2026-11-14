@@ -1,7 +1,10 @@
 import { LoadingIndicator } from './LoadingState';
-import { useEffect, useRef, useState, type ComponentProps } from 'react';
-import { CodeView } from '@pierre/diffs/react';
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { CodeView, EditProvider } from '@pierre/diffs/react';
+import { ArrowRight } from 'lucide-react';
 import { Button } from './ui/button';
+import { ConflictView, ResultEditor, createEditor } from './ConflictBlocks';
+import { conflictLabels } from '../lib/conflict-blocks';
 import { StepCard } from './StepCard';
 import { BranchBadge, PrBadge } from './EntityBadge';
 import { hasConflictMarkers, type ConflictRequest, type ConflictSession } from '../lib/conflict-resolution';
@@ -46,6 +49,17 @@ export function RestackReview({
   }, [session.version]);
   const [review, setReview] = useState<{ token: string; urls: string[] }>({ token: '', urls: [] });
   const [confirming, setConfirming] = useState('');
+  const [editing, setEditing] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const blockedBranch = plan?.blocked ? plan.expected.find((entry) => entry.url === plan.blocked?.url) : undefined;
+  const labels = useMemo(
+    () =>
+      conflictLabels('restack', {
+        head: blockedBranch?.headBranch ?? 'this PR',
+        base: blockedBranch?.baseBranch ?? 'the parent',
+      }),
+    [blockedBranch?.headBranch, blockedBranch?.baseBranch]
+  );
   // Keep a resolved pause in the plan, so the step list does not shrink after Continue restack.
   const paused = useRef(new Set<string>());
   if (plan?.status === 'blocked') paused.current.add(plan.token);
@@ -112,6 +126,7 @@ export function RestackReview({
   return (
     <StepCard
       className="restack-review"
+      compactSteps={!!plan}
       title={
         <h2>
           {published
@@ -138,8 +153,12 @@ export function RestackReview({
       retryLabel={failureStep === 'push' ? 'Check again' : 'Retry'}
       status={
         step.id === 'review' && plan
-          ? `${reviewed.length} of ${plan.branches.length} PR updates reviewed · Nothing pushed yet`
-          : undefined
+          ? reviewed.length === plan.branches.length
+            ? `All ${plan.branches.length} PR updates reviewed · Nothing pushed yet`
+            : `${reviewed.length} of ${plan.branches.length} PR updates reviewed · Mark each update reviewed to continue`
+          : step.id === 'resolve' && !blockedReady
+            ? 'Mark each file reviewed to continue the restack'
+            : undefined
       }
       {...continueProps}
     >
@@ -157,61 +176,74 @@ export function RestackReview({
           {plan.blocked.files.map((file) => {
             const value = drafts[file.path] ?? file.result;
             const dirty = value !== file.result;
+            const markers = hasConflictMarkers(value);
+            const update = (text: string) => {
+              const next = { ...drafts, [file.path]: text };
+              setDrafts(next);
+              onDrafts(next);
+            };
             return (
               <div className="restack-conflict-file" key={file.path}>
                 <h4>
                   {file.path}{' '}
-                  <span>
+                  <span
+                    className="conflict-file-status"
+                    data-stage={
+                      file.unsupported || markers ? 'conflicted' : file.resolved && !dirty ? 'reviewed' : 'resolved'
+                    }
+                  >
                     {file.unsupported
-                      ? 'Needs a local Git tool'
+                      ? 'Needs a local merge tool'
                       : file.resolved && !dirty
                         ? 'Reviewed'
-                        : hasConflictMarkers(value)
+                        : markers
                           ? 'Conflicted'
-                          : 'Resolved · Needs review'}
+                          : 'Resolved · needs review'}
                   </span>
                 </h4>
                 {file.unsupported ? (
                   <p role="alert">{file.unsupported}</p>
                 ) : (
                   <>
-                    <details>
-                      <summary>Compare both versions</summary>
-                      <div className="restack-versions">
-                        <section>
-                          <h5>Updated parent</h5>
-                          <pre>{file.ours}</pre>
-                        </section>
-                        <section>
-                          <h5>This PR’s commit</h5>
-                          <pre>{file.theirs}</pre>
-                        </section>
-                      </div>
-                    </details>
-                    <label>
-                      Resolved file contents
-                      <textarea
-                        aria-label={`Resolution for ${file.path}`}
-                        value={value}
+                    {editing[file.path] ? (
+                      <EditProvider createEditor={createEditor}>
+                        <ResultEditor
+                          key={`${file.path}:${session.version}`}
+                          name={file.path}
+                          initial={value}
+                          onChange={update}
+                        />
+                      </EditProvider>
+                    ) : (
+                      <ConflictView
+                        key={`${file.path}:${session.version}`}
+                        name={file.path}
+                        original={file.original}
+                        contents={value}
+                        labels={labels}
                         disabled={busy}
-                        spellCheck={false}
-                        onChange={(event) => {
-                          const next = { ...drafts, [file.path]: event.target.value };
-                          setDrafts(next);
-                          onDrafts(next);
-                        }}
+                        onChange={update}
                       />
-                    </label>
-                    <Button variant="outline" disabled={busy || !dirty} onClick={() => onSave(file.path, value, false)}>
-                      Save draft
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={busy || hasConflictMarkers(value) || (file.resolved && !dirty)}
-                      onClick={() => onSave(file.path, value, true)}
-                    >
-                      Save &amp; mark reviewed
-                    </Button>
+                    )}
+                    <div className="restack-conflict-actions">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        aria-pressed={editing[file.path]}
+                        onClick={() => setEditing({ ...editing, [file.path]: !editing[file.path] })}
+                      >
+                        {editing[file.path] ? 'Choose changes' : 'Edit result'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy || markers || (file.resolved && !dirty)}
+                        onClick={() => onSave(file.path, value, true)}
+                      >
+                        Mark reviewed
+                      </Button>
+                    </div>
                   </>
                 )}
               </div>
@@ -232,73 +264,91 @@ export function RestackReview({
               Prepare again
             </Button>
           </div>
-          {plan.branches.map((branch, index) => (
-            <details className="restack-branch" key={branch.url} open={index === 0 ? true : undefined}>
-              <summary>
-                <PrBadge url={branch.url} number={prNumber(branch.url)} title={branch.title} /> {branch.title}
-              </summary>
-              <p>
-                <BranchBadge branch={branch.branch} repo={branch.repo} /> onto{' '}
-                <BranchBadge branch={branch.baseBranch} repo={branch.baseRepo} /> · {branch.commits} original{' '}
-                {branch.commits === 1 ? 'commit' : 'commits'}
-                {branch.reused
-                  ? ` · ${branch.reused} remembered file ${branch.reused === 1 ? 'resolution' : 'resolutions'} reused`
-                  : ''}
-              </p>
-              <p className="restack-revisions">
-                <code>{branch.oldSha.slice(0, 7)}</code> → <code>{branch.newSha.slice(0, 7)}</code>
-              </p>
-              {branch.files.length ? (
-                <CodeView
-                  className="restack-diff selectable"
-                  items={branch.files.map((fileDiff, i) => ({
-                    id: `${branch.url}:${i}`,
-                    type: 'diff' as const,
-                    fileDiff,
-                  }))}
-                  options={options}
-                  style={{
-                    height: Math.min(
-                      360,
-                      Math.max(
-                        100,
-                        branch.files.reduce(
-                          (height, file) =>
-                            height +
-                            60 +
-                            file.hunks.reduce(
-                              (lines, hunk) => lines + Math.max(hunk.additionCount, hunk.deletionCount) + 1,
-                              0
-                            ) *
-                              20,
-                          0
-                        )
-                      )
-                    ),
-                    overflow: 'auto',
-                  }}
-                />
-              ) : (
-                <p>File contents are unchanged. Only commit ancestry changes.</p>
-              )}
-              <label className="restack-reviewed">
-                <input
-                  type="checkbox"
-                  checked={reviewed.includes(branch.url)}
-                  disabled={busy}
-                  onChange={(event) =>
-                    setReview({
-                      token: plan.token,
-                      urls: event.target.checked
-                        ? [...reviewed, branch.url]
-                        : reviewed.filter((url) => url !== branch.url),
-                    })
-                  }
-                />
-                Reviewed this PR update
-              </label>
-            </details>
-          ))}
+          {plan.branches.map((branch, index) => {
+            const open = expanded[branch.url] ?? index === 0;
+            return (
+              <section className="restack-branch" key={branch.url} aria-label={`PR #${prNumber(branch.url)} update`}>
+                <div className="restack-branch-header">
+                  <button
+                    type="button"
+                    className="conflict-disclosure"
+                    aria-expanded={open}
+                    onClick={() => setExpanded({ ...expanded, [branch.url]: !open })}
+                  >
+                    <ArrowRight size={14} aria-hidden="true" />
+                    <span>
+                      #{prNumber(branch.url)} {branch.title}
+                    </span>
+                  </button>
+                  <label className="restack-reviewed">
+                    <input
+                      type="checkbox"
+                      checked={reviewed.includes(branch.url)}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setReview({
+                          token: plan.token,
+                          urls: event.target.checked
+                            ? [...reviewed, branch.url]
+                            : reviewed.filter((url) => url !== branch.url),
+                        })
+                      }
+                    />
+                    Reviewed
+                  </label>
+                </div>
+                {open && (
+                  <>
+                    <p>
+                      <PrBadge url={branch.url} number={prNumber(branch.url)} title={branch.title} />{' '}
+                      <BranchBadge branch={branch.branch} repo={branch.repo} /> onto{' '}
+                      <BranchBadge branch={branch.baseBranch} repo={branch.baseRepo} /> · {branch.commits} original{' '}
+                      {branch.commits === 1 ? 'commit' : 'commits'}
+                      {branch.reused
+                        ? ` · ${branch.reused} remembered file ${branch.reused === 1 ? 'resolution' : 'resolutions'} reused`
+                        : ''}
+                    </p>
+                    <p className="restack-revisions">
+                      <code>{branch.oldSha.slice(0, 7)}</code> → <code>{branch.newSha.slice(0, 7)}</code>
+                    </p>
+                    {branch.files.length ? (
+                      <CodeView
+                        className="restack-diff selectable"
+                        items={branch.files.map((fileDiff, i) => ({
+                          id: `${branch.url}:${i}`,
+                          type: 'diff' as const,
+                          fileDiff,
+                        }))}
+                        options={options}
+                        style={{
+                          height: Math.min(
+                            360,
+                            Math.max(
+                              100,
+                              branch.files.reduce(
+                                (height, file) =>
+                                  height +
+                                  60 +
+                                  file.hunks.reduce(
+                                    (lines, hunk) => lines + Math.max(hunk.additionCount, hunk.deletionCount) + 1,
+                                    0
+                                  ) *
+                                    20,
+                                0
+                              )
+                            )
+                          ),
+                          overflow: 'auto',
+                        }}
+                      />
+                    ) : (
+                      <p>File contents are unchanged. Only commit ancestry changes.</p>
+                    )}
+                  </>
+                )}
+              </section>
+            );
+          })}
         </>
       ) : plan ? (
         <div className="restack-confirm">
