@@ -67,3 +67,10 @@ Stack-status clarification: replaced the ambiguous “Confirm merge requirements
 ## Address feedback
 
 Feedback is the sole response workspace for PRs and stacks. Stack review blockers open the source review summary; Address code threads selects related unresolved discussions without leaving Feedback. Changes retains inline comments and provides Address feedback links to exact threads, with normal file/scroll restoration on return. Feedback uses the same full shared header as every other tab, with PR actions visible. Source PR identity remains explicit in the conversation header and list. Old coordinates never attach to current code. Completion distinguishes resolved discussions from required approval and offers explicit review requests.
+
+
+## Summary reading layout — November 2026
+
+Below the full-width merge status and evidence rows, the author description and People & branches form one centered reading group: a 36rem description column, a 40px gap, and the 260px metadata column. Wide windows share spare width on both sides instead of opening a gap between text and metadata. Prose, tables, images, code blocks, diagrams and disclosures share the description column's edges; tables scroll inside it with an edge shade. The change counts end at the column edge. Below 850px of content width, metadata follows the description and both stay left-aligned.
+
+Verification: `--summary-reading` covers a long technical description and a screenshot/wide-table description at 1280, 1600 and 1920 in both themes, plus 540px. It asserts 62–78 characters per full line, one column edge for every block, chips that do not change line spacing, GFM alignment, adjacent change counts and metadata, and no horizontal overflow. Captures: `.impeccable/review/summary-reading/before` and `after`.

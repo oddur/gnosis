@@ -1578,18 +1578,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pr-markdown>:first-child { margin-top:0; }
 /* A long description lays out only the blocks near the viewport. Tables keep visible overflow, so they are left out. */
 .pr-markdown > :not(table) { content-visibility:auto; contain-intrinsic-block-size:auto 48px; overflow-clip-margin:8px; }
-.pr-markdown pre { max-width:100%; white-space:pre; overflow-x:auto; padding:12px; border:1px solid var(--border); border-radius:5px; background:var(--muted); margin:12px 0; }
-.pr-markdown code { font-family:var(--font-mono); font-size:.9em; }
-.pr-markdown :not(pre)>code { background:var(--muted); border:1px solid var(--border); border-radius:3px; padding:.05em .35em; }
-.pr-markdown details { border:1px solid var(--border); border-radius:5px; padding:10px 12px; margin:14px 0; }
-.pr-markdown summary { cursor:pointer; font-size:var(--type-control); font-weight:600; }
-.pr-markdown details[open]>summary { margin-bottom:12px; }
-.pr-markdown input[type=checkbox] { accent-color:var(--ring); margin-right:6px; }
-.pr-markdown .contains-task-list { list-style:none; padding-left:0; }
-.pr-markdown td,.pr-markdown th { overflow-wrap:normal; min-width:8ch; vertical-align:top; }
-.pr-table-scroll { overflow:auto; max-width:100%; margin:12px 0; }
-.pr-table-scroll table { min-width:100%; border-collapse:collapse; font-size:var(--type-control); }
-.pr-markdown td:has(img) { min-width:220px; }
+/* Blocks, tables, code and images inside author Markdown: see "Author Markdown reading" at the end of this file. */
+.pr-markdown code { font-family:var(--font-mono); }
 .markdown-image { display:block; max-width:100%; height:auto; margin:12px 0; border-radius:4px; }
 .markdown-image-fallback { display:block; padding:12px; border:1px solid var(--border); color:var(--muted-foreground); font-size:var(--type-caption); margin:12px 0; }
 .pr-metadata { border-left:1px solid var(--border); padding-left:16px; font-size:var(--type-control); }
@@ -2386,8 +2376,6 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .file-tree-selection-status button:hover { background:var(--accent); }
 .file-tree-selection-status button:focus-visible { outline:2px solid var(--ring);outline-offset:2px; }
 
-/* Bound reading text within the full-width summary; media keeps the flexible column. */
-.pr-summary-body .pr-markdown :is(p,ul,ol,blockquote):not(:has(img,.markdown-image,.mermaid-diagram)) { max-width:var(--measure-prose); }
 .pr-summary-body .pr-stack-nav { top:0; max-height:100cqh; }
 
 /* Review comments stay beside the code; pending feedback is explicitly private. */
@@ -3965,7 +3953,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .review-evidence-compact .review-evidence-summary button:hover { text-decoration:underline; text-underline-offset:3px; }
 .review-evidence-compact .review-evidence-summary svg { flex:none; }
 .review-evidence-compact .review-evidence-controls { margin-left:auto; }
-.pr-details-overview .pr-details-columns { grid-template-columns:minmax(0,1fr) 260px; gap:32px; }
+/* The description and its metadata read as one group: a column at the reading measure with metadata
+   beside it. Spare width on wide windows is shared on both sides instead of opening a gap between them. */
+.pr-details-overview .pr-details-columns { grid-template-columns:minmax(0,var(--measure-reading)) 260px; gap:40px; justify-content:center; }
 .pr-description-heading { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; margin-bottom:12px; }
 .pr-description-heading :is(h2,h3) { font-size:var(--type-control); font-weight:650; margin:0; }
 .pr-description-changes { display:inline-flex; align-items:baseline; gap:8px; font-size:var(--type-caption); color:var(--muted-foreground); min-height:24px; }
@@ -3986,7 +3976,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 @container (max-width:850px) {
   .pr-summary-decision { flex-wrap:wrap; gap:12px; }
   .pr-actions-compact .pr-action-controls { justify-content:flex-start; }
-  .pr-details-overview .pr-details-columns { grid-template-columns:minmax(0,1fr); gap:24px; }
+  .pr-details-overview .pr-details-columns { grid-template-columns:minmax(0,var(--measure-reading)); gap:24px; justify-content:start; }
   .pr-details-overview .pr-metadata { border-left:0; border-top:1px solid var(--border); padding:16px 0 0; }
 }
 
@@ -4809,3 +4799,65 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 @media (max-width:700px) {
   :is(.changes-toolbar, .checks-toolbar, .feedback-toolbar) { padding:6px 12px; }
 }
+
+/* Author Markdown reading: PR descriptions and GitHub comments share one set of reading rules. Inline code,
+   quotes, rules and tables also apply to the other Markdown surfaces; explanations, chat and Markdown file
+   previews keep the larger shared heading scale. */
+:is(.pr-markdown, .github-comment-body) {
+  /* Author headings stay below the PR title (24px) while remaining six distinct steps. */
+  --type-reading-title:1.375em; --type-reading-section:1.25em; --type-reading-subsection:1.125em;
+  --type-reading-detail:1em; --type-reading-minor:.9375em; --type-reading-label:.875em;
+}
+.github-comment-body,.feedback-message > .github-comment-body { max-width:var(--measure-reading); }
+:is(.pr-markdown, .github-comment-body) .markdown-heading { margin-block:1.5em .5em; }
+:is(.pr-markdown, .github-comment-body) .markdown-heading[data-reading-level="6"] { color:var(--muted-foreground); }
+/* Paragraphs separate by a full line, clearly more than the space between lines. */
+.pr-markdown :where(p, ul, ol, blockquote, dl) { margin-block:0 1em; }
+:is(.markdown-body, .github-comment-body) :where(li) { margin-block:.375em; }
+:is(.markdown-body, .github-comment-body) ol { padding-left:1.625em; }
+:is(.markdown-body, .github-comment-body) :is(ul, ol).contains-task-list { list-style:none; padding-left:0; }
+:is(.markdown-body, .github-comment-body) .contains-task-list .contains-task-list { padding-left:1.5em; }
+:is(.markdown-body, .github-comment-body) .task-list-item input[type=checkbox] { width:1em; height:1em; margin:0 .5em 0 0; vertical-align:-.125em; accent-color:var(--ring); }
+/* Inline code follows the text: a smaller mono size matches the sans x-height, line-height 1 keeps chips from
+   pushing lines apart, and long identifiers wrap inside the column. */
+:is(.markdown-body, .github-comment-body) :not(pre) > code {
+  font-family:var(--font-mono); font-size:.85em; font-weight:inherit; line-height:1; color:var(--foreground);
+  padding:.125em .375em; border:1px solid var(--border); border-radius:4px; background:var(--muted);
+  overflow-wrap:anywhere;
+}
+:is(.markdown-body, .github-comment-body) a > code { color:inherit; }
+.pr-markdown pre { max-width:100%; overflow-x:auto; white-space:pre; margin-block:1.25em; padding:12px 14px; border:1px solid var(--border); border-radius:6px; background:var(--muted); font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); }
+.pr-markdown pre code { font-size:inherit; }
+:is(.markdown-body, .github-comment-body) blockquote { margin-inline:0; padding-left:1em; border-left:2px solid var(--input); color:var(--foreground); }
+:is(.markdown-body, .github-comment-body) hr { height:0; margin-block:2em; border:0; border-top:1px solid var(--border); }
+.pr-markdown details { margin-block:1.25em; padding:.5em .875em; border:1px solid var(--border); border-radius:6px; }
+.pr-markdown details > summary { cursor:pointer; min-height:2em; display:list-item; font-size:.9375em; font-weight:600; line-height:2; }
+.pr-markdown details[open] > summary { margin-bottom:.5em; }
+.pr-markdown details > :last-child { margin-bottom:.375em; }
+/* Tables stay inside the reading column: they shrink to their content, wrap text to the column, and scroll
+   sideways only when their columns cannot fit. Rules separate rows; text in the outer columns lines up
+   with the prose edge. */
+.pr-table-scroll { max-width:100%; overflow-x:auto; margin-block:1.25em; }
+/* Overlay scrollbars hide until used, so a soft edge shade marks the side that has more columns. */
+.pr-table-scroll {
+  --scroll-shade:color-mix(in srgb, var(--foreground) 16%, transparent);
+  background:
+    linear-gradient(to right, var(--background) 40%, transparent) left / 20px 100% no-repeat local,
+    linear-gradient(to left, var(--background) 40%, transparent) right / 20px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--scroll-shade), transparent) left / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--scroll-shade), transparent) right / 10px 100% no-repeat scroll;
+}
+.pr-table-scroll:focus-visible { outline:2px solid var(--ring); outline-offset:2px; border-radius:2px; }
+:is(.pr-markdown, .github-comment-body) table { width:auto; min-width:0; border-collapse:collapse; font-size:.9375em; line-height:1.5; font-variant-numeric:tabular-nums; }
+:is(.pr-markdown, .github-comment-body) :is(th, td) { min-width:8ch; padding:.5em .75em; border:0; border-bottom:1px solid var(--border); vertical-align:top; overflow-wrap:normal; }
+:is(.pr-markdown, .github-comment-body) th { font-weight:600; color:var(--foreground); background:none; border-bottom-color:var(--input); }
+:is(.pr-markdown, .github-comment-body) th:not([align], [style*=text-align]) { text-align:start; }
+:is(.pr-markdown, .github-comment-body) :is(th, td):first-child { padding-left:0; }
+:is(.pr-markdown, .github-comment-body) :is(th, td):last-child { padding-right:0; }
+:is(.pr-markdown, .github-comment-body) tbody tr:last-child > td { border-bottom:0; }
+/* Screenshot tables share the column; each image fits its cell. */
+:is(.pr-markdown, .github-comment-body) td:has(img) { min-width:14rem; }
+:is(.pr-markdown, .github-comment-body) td :is(img, .markdown-image) { max-width:100%; height:auto; margin:0; }
+.pr-markdown .markdown-image { margin-block:1.25em; }
+/* A table, code block or disclosure introduced by a heading stays as close to it as a paragraph would. */
+.pr-markdown .markdown-heading + :is(.pr-table-scroll, pre, details) { margin-top:0; }

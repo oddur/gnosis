@@ -118,10 +118,17 @@ const components: Components = {
       <table className="min-w-full text-sm border-collapse">{children}</table>
     </div>
   ),
-  th: ({ children }) => (
-    <th className="border border-border px-2 py-1 text-left font-medium bg-muted/30">{children}</th>
+  // GFM column alignment (`---:`) arrives as an inline text-align style.
+  th: ({ children, style }) => (
+    <th style={style} className="border border-border px-2 py-1 text-left font-medium bg-muted/30">
+      {children}
+    </th>
   ),
-  td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
+  td: ({ children, style }) => (
+    <td style={style} className="border border-border px-2 py-1">
+      {children}
+    </td>
+  ),
   hr: () => <hr className="border-border my-4" />,
   img: ({ src, ...props }) => <MarkdownImage key={src} src={src} {...props} />,
 };

@@ -293,6 +293,84 @@ The outbox owns the pending messages, so replacing the socket does not clear the
   items[1].briefing = undefined;
   items[2].subject.members[0].description = '';
 }
+// Long-form author descriptions for the Summary reading layout. Synthetic content only.
+if (new URLSearchParams(location.search).has('summary-reading')) {
+  const technical = items[1].subject.members[0];
+  technical.changedFileCount = 12;
+  technical.additions = 1781;
+  technical.deletions = 134;
+  technical.description = `**Why it matters:** a reviewer who reconnects on an unreliable network should never see the same message twice or lose the order of a conversation. Before this change a short outage could quietly reorder work that people had already acknowledged, and the only sign of trouble was a confusing gap in the history a few minutes later.
+
+**The bug:** when the transport closes while \`OutboxQueue.flushPending()\` is still awaiting \`TransportSession.acknowledge()\`, the pending batch is released twice. The second release calls \`BatchLedger.markDelivered(batchId, { reason: 'transport-closed' })\` on a batch that was already returned to \`OutboxQueue.pendingBatches\`, so the replayed messages are delivered out of order.
+
+**The fix:** \`flushPending()\` now takes a lease from \`BatchLedger.claim()\` before it sends anything. A lease belongs to one transport generation, and \`TransportSession.close()\` revokes every lease it handed out. Revoked leases return their batches through a single path, \`BatchLedger.releaseRevoked(generation)\`, which keeps the original sequence numbers. The old \`releaseOnClose\` flag and its retry loop are removed.
+
+**Database load:** replay used to read \`outbox_messages\` once per batch with \`SELECT * FROM outbox_messages WHERE batch_id = $1 ORDER BY sequence\`. It now reads every revoked batch in one query keyed on \`(generation, sequence)\`, backed by the new \`outbox_messages_generation_sequence_idx\` index. On the reconnect benchmark this drops replay queries from about 4,100 to 12 per reconnect and keeps p99 replay latency under 40 ms.
+
+**Compatibility:** the wire format is unchanged. Older workers that still send \`releaseOnClose: true\` are accepted, and the flag is ignored with a single \`outbox.deprecated-flag\` warning per connection.
+
+### Tests
+
+- \`OutboxQueue_flushPending_whenTransportClosesMidAcknowledge_releasesBatchExactlyOnce\`
+- \`BatchLedger_releaseRevoked_preservesOriginalSequenceAcrossGenerations\`
+- \`TransportSession_close_revokesEveryLeaseIssuedForItsGeneration_evenWhenAcknowledgeRejects\`
+- \`ReplayReader_readsAllRevokedBatchesInOneQueryOrderedByGenerationAndSequence\`
+- \`OutboxMigration_20261114_addsGenerationSequenceIndexWithoutLockingOutboxMessages\`
+
+> Reviewers: the lease logic is in \`src/outbox/batch-ledger.ts\`. The rest of the diff is mostly tests and the migration.
+
+- [x] Reconnect benchmark run against the staging snapshot
+- [ ] Remove the deprecated flag after the next release
+
+<details><summary>Benchmark details</summary>
+
+| Scenario | Queries per reconnect | p50 replay | p99 replay |
+| --- | ---: | ---: | ---: |
+| Before, 200 pending batches | 4,112 | 180 ms | 1,240 ms |
+| After, 200 pending batches | 12 | 9 ms | 38 ms |
+
+</details>
+
+\`\`\`ts
+const lease = await ledger.claim(batch, { generation: session.generation });
+await session.send(lease.batch);
+\`\`\`
+
+---
+
+The very long identifier \`ReplayCoordinatorConfigurationForMultiRegionTransportGenerationsWithoutBackpressure\` must wrap instead of widening the page.
+`;
+  const visual = items[2].subject.members[0];
+  const shot = `${location.origin}/tests/fixtures/summary-screenshot.svg`;
+  visual.changedFileCount = 4;
+  visual.additions = 212;
+  visual.deletions = 37;
+  visual.description = `Snapshots now serialize into a reused buffer, so the editor no longer pauses while it saves.
+
+## Review notes
+
+- The buffer pool lives in \`src/snapshot/buffer-pool.ts\` and is capped at four buffers per worker.
+- Serialization is unchanged for callers. \`SnapshotWriter.write()\` keeps its signature.
+- The save indicator now waits for the write to finish instead of the request to start, so it stays visible slightly longer on slow disks.
+
+## Screenshots
+
+| View | Before | After |
+| --- | --- | --- |
+| Save indicator | <img src="${shot}" width="1440" alt="Save indicator before"> | <img src="${shot}" width="1440" alt="Save indicator after"> |
+| Settings panel | ![Settings panel before](${shot}) | ![Settings panel after](${shot}) |
+
+## Wide data
+
+| Metric | Baseline | Pooled buffers | Pooled buffers with compression | Pooled buffers with compression and checksums | Notes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Allocations per save | 18,420 | 212 | 230 | 241 | Measured on the synthetic 40 MB document |
+| Pause during save | 96 ms | 4 ms | 6 ms | 7 ms | Main thread only |
+
+![Full width screenshot](${shot})
+`;
+  items[1].briefing = undefined;
+}
 if (new URLSearchParams(location.search).has('target-branch')) {
   items[0].subject.members[0].baseBranch = 'release/1.2';
   items[1].subject.members[0].baseBranch = 'release/2.1';

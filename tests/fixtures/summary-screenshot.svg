@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <rect width="1440" height="900" fill="#f4f5f8"/>
+  <rect width="1440" height="56" fill="#1d2129"/>
+  <circle cx="28" cy="28" r="7" fill="#ff5f57"/><circle cx="52" cy="28" r="7" fill="#febc2e"/><circle cx="76" cy="28" r="7" fill="#28c840"/>
+  <rect x="0" y="56" width="280" height="844" fill="#e9ecf2"/>
+  <g fill="#c9d0dc"><rect x="24" y="88" width="200" height="16" rx="4"/><rect x="24" y="124" width="160" height="16" rx="4"/><rect x="24" y="160" width="220" height="16" rx="4"/><rect x="24" y="196" width="140" height="16" rx="4"/></g>
+  <rect x="320" y="96" width="1080" height="200" rx="10" fill="#fff" stroke="#d5dbe5"/>
+  <rect x="352" y="128" width="420" height="28" rx="6" fill="#284eaf"/>
+  <g fill="#dfe4ec"><rect x="352" y="180" width="980" height="14" rx="4"/><rect x="352" y="210" width="900" height="14" rx="4"/><rect x="352" y="240" width="760" height="14" rx="4"/></g>
+  <rect x="320" y="328" width="520" height="520" rx="10" fill="#fff" stroke="#d5dbe5"/>
+  <rect x="880" y="328" width="520" height="520" rx="10" fill="#fff" stroke="#d5dbe5"/>
+  <g font-family="sans-serif" font-size="40" fill="#242a35" text-anchor="middle"><text x="580" y="600">Synthetic panel A</text><text x="1140" y="600">Synthetic panel B</text></g>
+</svg>

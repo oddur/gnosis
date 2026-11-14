@@ -80,6 +80,9 @@
   /* Bounded reading columns for explanations, descriptions, and chat. */
   --measure-prose: 68ch;
   --measure-prose-narrow: 56ch;
+  /* Author Markdown (PR descriptions, GitHub comments). Plus Jakarta Sans has a wide zero, so 68ch runs to
+     about 100 characters per line; 36rem holds 16px prose to about 74 characters. */
+  --measure-reading: 36rem;
 
   /* ─── Semantic status colors ──────────────────────────────────
      These tokens are used by Badge components, diff stats, and
