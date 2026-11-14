@@ -16,6 +16,7 @@ try {
   for (const [entry, output] of [
     ['tests/electron-smoke.ts', 'smoke.cjs'],
     ['src/preload.ts', 'preload.cjs'],
+    ['src/menubar-preload.ts', 'menubar-preload.cjs'],
     ['src/app-data-worker.ts', 'app-data-worker.js'],
     // The single-instance probe runs real Electron, without the result shim.
     ['tests/electron-lock-probe.ts', 'lock-probe.cjs'],

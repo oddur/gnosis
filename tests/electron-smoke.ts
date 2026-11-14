@@ -10,6 +10,8 @@ import { createDeepLinks } from '../src/deep-link-service';
 import { notificationSettings } from '../lib/notification-settings';
 import { prTarget } from '../lib/deep-link';
 import { createAppWindows } from '../src/app-windows';
+import { createMenubarPanel } from '../src/menubar-window';
+import type { MenubarState } from '../lib/menubar-state';
 
 const directory = process.env.GNOSIS_SMOKE_DIRECTORY;
 if (!directory) throw new Error('Run through npm run test:electron-smoke');
@@ -88,13 +90,32 @@ async function checkAppWindows(main: BrowserWindow) {
   const windows = createAppWindows(() => BrowserWindow.getAllWindows());
   let allClosed = 0;
   app.on('window-all-closed', () => allClosed++);
-  const panel = new BrowserWindow({
-    show: false, width: 360, height: 420, frame: false, skipTaskbar: true,
-    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  // The production panel module and preload, with a data page instead of the panel renderer.
+  const opened: string[] = [];
+  let visibleChanges = 0;
+  const state = { connection: 'ok', loading: false, groups: [], tasks: [], summary: { needYou: 0, ready: 0, fresh: 0, line: 'Nothing needs you' }, queueSize: 0, unchecked: 0, refreshing: false } as MenubarState;
+  const menubar = createMenubarPanel({
+    preload: path.join(root, 'menubar-preload.cjs'),
+    load: (win) => win.loadURL('data:text/html,<title>Menu bar panel</title><p>Panel</p>'),
+    state: () => state,
+    open: (id) => opened.push(id),
+    openApp: () => opened.push('app'),
+    openSettings: () => opened.push('settings'),
+    refresh: () => Promise.resolve(),
+    visibilityChanged: () => visibleChanges++,
+    created: (win) => windows.exclude(win),
+    devTools: false,
   });
-  windows.exclude(panel);
-  await panel.loadURL('data:text/html,<title>Menu bar panel</title>');
+  const panel = menubar.ensure();
+  await new Promise<void>((resolve) => (panel.webContents.isLoading() ? panel.webContents.once('did-finish-load', () => resolve()) : resolve()));
+  assert.equal(panel.isVisible(), false, 'The panel is created hidden');
+  const bridge = (code: string) => panel.webContents.executeJavaScript(code) as Promise<unknown>;
+  assert.equal(await bridge('typeof window.gnosisMenubar.open'), 'function', 'The panel preload exposes window.gnosisMenubar');
+  assert.equal(await bridge('typeof window.electronAPI === "undefined" && typeof window.require === "undefined"'), true, 'None of the main API');
+  assert.deepEqual(await bridge('window.gnosisMenubar.get()'), state, 'menubar:get answers the panel');
+  await bridge('window.gnosisMenubar.open("row-1")');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.deepEqual(opened, ['row-1'], 'A row id from the panel reaches main');
   const reached: string[] = [];
   const send = panel.webContents.send.bind(panel.webContents);
   panel.webContents.send = (channel: string, ...args: unknown[]) => {
@@ -128,7 +149,12 @@ async function checkAppWindows(main: BrowserWindow) {
   const reopened = showOrCreate();
   assert.deepEqual(created, [reopened], 'Activate with only the panel present creates a main window');
   assert.deepEqual(windows.list(), [reopened]);
-  panel.destroy();
+  menubar.toggle({ x: 100, y: 0, width: 30, height: 24 });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(visibleChanges >= 1, 'A click shows the panel');
+  assert.deepEqual(windows.list(), [reopened], 'A visible panel is still not an app window');
+  menubar.destroy();
+  assert.equal(menubar.window(), undefined);
   return { main: reopened };
 }
 
