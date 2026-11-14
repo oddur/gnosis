@@ -2,6 +2,7 @@
 import Base from '../layouts/Base.astro';
 import StackDemo from '../components/StackDemo.astro';
 import FeatureTour from '../components/FeatureTour.astro';
+import NeedsYou from '../components/NeedsYou.astro';
 import ProductShot from '../components/ProductShot.astro';
 import Icon from '../components/Icon.astro';
 import { getReleases, releasesUrl } from '../lib/releases';
@@ -25,7 +26,10 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
             Find the PRs that need attention, understand how the changes fit together, and dig into the code where it
             matters.
           </p>
-          <p>Gnosis brings your review queue, diffs, checks, and AI explanations into one place.</p>
+          <p>
+            Gnosis brings your review queue, diffs, checks, and AI explanations into one place, and tells you when a PR
+            needs you.
+          </p>
           <div class="intro-actions">
             <a class="button button-primary" href={macDownload ?? `${releasesUrl}/latest`}>
               <Icon name="download" />
@@ -41,8 +45,9 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
         </div>
         <ProductShot
           name="review-queue"
-          alt="Gnosis desktop app showing a Review queue with PRs, a grouped stack, check statuses, and a briefing for the selected stack."
-          caption="The Review Queue, with a briefing for the selected stack."
+          alt="Gnosis desktop app showing the Review queue with briefing status filters, approved PRs ready to merge, a grouped stack, and an in-app notification that checks failed on klang/engine #120."
+          caption="The Review Queue, with a notification that checks failed on a PR."
+          height={992}
           loading="eager"
           fetchpriority="high"
           sizes="(max-width: 760px) calc(100vw - 40px), (max-width: 900px) calc(100vw - 64px), (max-width: 1100px) calc((100vw - 112px) * 0.64), (max-width: 1440px) calc((100vw - 160px) * 0.64), 820px"
@@ -57,6 +62,8 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
         <a href="https://github.com/oddur/gnosis/blob/main/LICENSE">MIT license</a>
       </nav>
     </section>
+
+    <NeedsYou />
 
     <FeatureTour />
 
@@ -102,8 +109,8 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
         <div>
           <dt>Saved filters</dt>
           <dd>
-            Save views by repository, author, labels, read status, or target branch—including patterns such as{' '}
-            <code>release/*</code>.
+            Save views by repository, author, labels, read status, briefing status, merge conflicts, or target
+            branch—including patterns such as <code>release/*</code>.
           </dd>
         </div>
         <div>
@@ -135,10 +142,10 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
           </dd>
         </div>
         <div>
-          <dt>Local cache and review progress</dt>
+          <dt>Loaded before you click</dt>
           <dd>
-            Keep viewed-file progress and saved explanations. Background preloading puts GitHub content in the local
-            cache ahead of your next visit.
+            When you open a PR, Gnosis loads its changes, checks, and comments in the background, with fewer GitHub
+            requests. Viewed-file progress and saved explanations stay in a local cache.
           </dd>
         </div>
       </dl>
@@ -179,7 +186,7 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
     <section class="download-section frame" id="download" aria-labelledby="download-title">
       <div class="download-heading">
         <h2 id="download-title">Install Gnosis</h2>
-        <p>Download the app or use Homebrew.</p>
+        <p>Download the app or use Homebrew. Later updates install from the app with Restart now.</p>
       </div>
       <div class="install-options">
         <div class="direct-download">

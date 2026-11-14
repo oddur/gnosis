@@ -1,0 +1,68 @@
+---
+/*
+ * Notifications, the macOS menu bar panel and gnosis:// links. The panel capture is a 360 pt popover, so it sits
+ * under a plain menu bar strip with the app's real tray icon instead of inside a full window frame.
+ */
+---
+
+<section class="needs-you frame" id="needs-you" aria-labelledby="needs-you-title">
+  <div class="needs-you-copy">
+    <h2 id="needs-you-title">Know when a PR needs you</h2>
+    <p class="needs-you-lead">
+      Gnosis watches your review requests and your own PRs while it runs. When one needs you, it tells you once and
+      opens the PR at the right tab.
+    </p>
+    <dl class="needs-you-list">
+      <div>
+        <dt>Notifications</dt>
+        <dd>
+          On the desktop when Gnosis is in the background, in the app when it isn’t. One per event: review requested,
+          approved, changes requested, checks failed, ready to merge, and explanation ready. A notification never writes
+          to GitHub.
+        </dd>
+      </div>
+      <div>
+        <dt>
+          Menu bar panel <span>macOS</span>
+        </dt>
+        <dd>
+          Click the Gnosis icon to see what needs you, grouped as To review, To fix, and Ready. Open a PR with a click,
+          or with the arrow keys and Return. The number on the icon and the Dock counts new PRs that need you.
+        </dd>
+      </div>
+      <div>
+        <dt>Open in Gnosis</dt>
+        <dd>
+          <code>gnosis://</code> links open a PR in Gnosis at a chosen tab. Use Copy Gnosis link in a PR’s actions to
+          share one. An Open in Gnosis extension for Chrome, Edge, and Firefox adds a button to GitHub PR pages. It is
+          coming to the browser stores.
+        </dd>
+      </div>
+    </dl>
+  </div>
+  <figure class="menubar-shot">
+    <div class="menubar-scene">
+      <div class="menubar-strip" aria-hidden="true">
+        <span class="menubar-item">
+          <img src="/menubar-icon.png" alt="" width="22" height="22" />
+          <span>4</span>
+        </span>
+      </div>
+      <img
+        class="menubar-panel"
+        src="/screenshots/menubar-panel.webp"
+        srcset="/screenshots/menubar-panel-small.webp 360w, /screenshots/menubar-panel.webp 720w"
+        sizes="360px"
+        alt="The Gnosis menu bar panel: 6 need you, 4 new, 1 ready. PRs are grouped as To review, including a three-PR stack, To fix, with changes requested and merge conflicts, and Ready."
+        width="360"
+        height="534"
+        loading="lazy"
+        decoding="async"
+      />
+    </div>
+    <figcaption>
+      The menu bar panel, opened from the Gnosis icon.
+      <span>Actual app · sample repository</span>
+    </figcaption>
+  </figure>
+</section>

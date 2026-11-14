@@ -24,6 +24,8 @@ The browser check also requires the root repository's dependencies (`npm ci` at 
 - Fonts are served locally as WOFF2 subsets. The English page loads only Latin and common UI symbols; extended characters load on demand. Source, verification, and regeneration instructions are in `fonts/README.md`. Onest’s license is in `public/fonts/`.
 - `DESIGN.md` and `.impeccable/design.json` describe the website system. The root design documents describe the desktop app.
 - App screenshots use synthetic test fixtures, not private repositories. Their `.webp.json` sidecars record source and conversion details. The screenshots were captured at commit `7d81c79` with `tests/workbench-browser.ts` (`queue-light` and `review-light`), then resized to 1600 and 960 pixels with WebP quality 86. Regenerate with `GNOSIS_SCREENSHOT_DIR=<directory> node scripts/test-workbench.mjs` at the repository root.
+- At commit `6f30649`, the opening Review Queue was refreshed from `--notifications` (`introduction-light`, with an in-app notification), Resolve conflicts from `--conflict-resolution` (`conflicts-light`), and the menu bar panel was added. The menu bar panel comes from the `sample-light` capture of `--menubar`, which uses only the synthetic `klang/engine` sample; it is 360pt wide, so it ships at 720 and 360 pixels.
+- To capture in Docker at 2x without network access (so no live GitHub avatars appear), build the image with `GNOSIS_DOCKER_IMAGE=gnosis-browser-tests-site`, then run the container with `--network none`, a mounted output folder linked to `.impeccable/review` (and `GNOSIS_SCREENSHOT_DIR` for the default run), and Electron launched with `--force-device-scale-factor=2 --enable-features=OverlayScrollbar`.
 
 ## Deployment
 

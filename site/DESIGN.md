@@ -172,7 +172,7 @@ components:
 
 The website presents Gnosis as an open-source tool, with a developer explaining its behavior to another developer. Feature names, factual captions, and plain installation instructions carry the content. Cool lavender surfaces, cobalt actions, and Onest type keep the presentation calm and technical.
 
-The product summary and real Review Queue screenshot introduce the application. The feature tour establishes its breadth before the illustrated explanations demonstrate one mechanism. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement. Source, setup, and issue links make the project directly accessible.
+The product summary and real Review Queue screenshot introduce the application. A compact section then shows how Gnosis says when a PR needs you. The feature tour establishes its breadth before the illustrated explanations demonstrate one mechanism. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement. Source, setup, and issue links make the project directly accessible.
 
 This system covers the website in `site/`. The repository root design files describe the desktop application. The source of visual values is `src/styles/global.css`, with behavior in `src/components/` and `src/scripts/`.
 
@@ -250,7 +250,7 @@ Feature titles use the `feature-title` role and become 23px on mobile. Feature d
 
 The shared frame has a maximum width of 1440px and horizontal padding of 56px. The stylesheet uses contextual spacing, not a universal spacing multiplier. Frontmatter records the recurring steps.
 
-The homepage opens with product copy and the Review Queue screenshot. The feature tour follows. Illustrated explanations then pair the guided review screenshot with the interactive example. Daily features, setup, and installation follow those sections.
+The homepage opens with product copy and the Review Queue screenshot. The "Know when a PR needs you" section and the feature tour follow. Illustrated explanations then pair the guided review screenshot with the interactive example. Daily features, setup, and installation follow those sections.
 
 The product introduction uses columns of `minmax(0, 0.36fr) minmax(0, 0.64fr)` with a 48px gap and centered vertical alignment. Copy occupies the narrower column. The introduction has 48px top padding and 24px bottom padding. Its body text uses 17px, line height 1.6, and a maximum width of 40ch.
 
@@ -346,6 +346,12 @@ Mobile tabs use centered text (12px), padding (12px 2px), and a minimum height (
 Without JavaScript, the labels link to stacked sections and every screenshot remains available. Enhancement adds tab and panel semantics, selects one panel, and gives only the selected tab a place in the Tab order. Left and Right wrap through tabs. Home and End select the first and last tabs. Space selects the focused tab. Panels accept keyboard focus.
 
 Feature fragments select the matching panel on initial load and hash changes. Modified clicks retain normal link behavior. Ordinary tab activation changes the panel without adding a history entry.
+
+### Know when a PR needs you
+
+A ruled section on the canvas pairs a short lead and three definition terms (Notifications, Menu bar panel, Open in Gnosis) with the menu bar panel capture. Columns use `minmax(0, 1fr) minmax(0, 440px)` with a 72px gap, 48px up to 1100px, and one column up to 900px. Terms use 18px weight 550; descriptions use 15px muted text. A small bordered tag marks the macOS-only panel.
+
+The panel capture is a 360pt popover, not a window. It sits under a plain 30px menu bar strip on a pale blue scene, centered beneath the app's real tray icon (`public/menubar-icon.png`) and a count in a selected pill. The strip is decorative and hidden from assistive technology. The panel keeps a fine border and 10px corners, with no shadow, and loads lazily at 360px/720px.
 
 ### Daily features
 
