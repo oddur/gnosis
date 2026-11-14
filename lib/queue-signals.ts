@@ -8,6 +8,8 @@ export interface QueueSignalOptions {
   cachedOnly?: boolean;
   /** Refetch saved revisions whose mergeability GitHub was still computing. Other revisions keep the normal freshness. */
   recheckMerge?: boolean;
+  /** Main only: receives the measured `rateLimit.cost` of a request this call made. */
+  cost?: (cost: number) => void;
 }
 export interface QueueSignals extends QueueSignalRequest {
   checkedAt: number;

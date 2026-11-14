@@ -34,6 +34,9 @@ import type {
 } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot, ReviewSubject } from '../lib/workbench';
+import type { DeepLinkDelivery } from './deep-link-service';
+import type { NotificationKind, NotificationMessage } from '../lib/notification-routing';
+import type { NotificationPreferences } from '../lib/notification-settings';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ChangedFile,
@@ -318,12 +321,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
   offReviewStats: (): void => {
     ipcRenderer.removeAllListeners('review-stats');
   },
-  onReviewNavigate: (callback: (reviewId: string) => void): void => {
-    ipcRenderer.on('review-navigate', (_event, { reviewId }: { reviewId: string }) => callback(reviewId));
+  /** Marks this window ready to navigate and returns the targets that waited for it. */
+  takeDeepLinks: (): Promise<DeepLinkDelivery[]> => ipcRenderer.invoke('deep-link-take'),
+  onDeepLink: (callback: (item: DeepLinkDelivery) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, item: DeepLinkDelivery) => callback(item);
+    ipcRenderer.on('deep-link', handler);
+    return () => {
+      ipcRenderer.removeListener('deep-link', handler);
+    };
   },
-  offReviewNavigate: (): void => {
-    ipcRenderer.removeAllListeners('review-navigate');
+  onNotification: (callback: (message: NotificationMessage) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, message: NotificationMessage) => callback(message);
+    ipcRenderer.on('notification', handler);
+    return () => {
+      ipcRenderer.removeListener('notification', handler);
+    };
   },
+  notificationContext: (activeUrl?: string): void => ipcRenderer.send('notification-context', { activeUrl }),
+  notificationAction: (kind: NotificationKind, action: 'clicked' | 'dismissed' | 'timedOut'): void =>
+    ipcRenderer.send('notification-action', kind, action),
+  notificationIntroduce: (accept: boolean): Promise<'desktop' | 'toast' | 'none'> => ipcRenderer.invoke('notification-introduce', accept),
+  sendTestNotification: (): Promise<'desktop' | 'toast' | 'none'> => ipcRenderer.invoke('notification-test'),
+  pauseNotifications: (paused: boolean): Promise<NotificationPreferences> => ipcRenderer.invoke('notification-pause', paused),
+  notificationStatus: (): Promise<{ supported: boolean; blocked: boolean }> => ipcRenderer.invoke('notification-status'),
   sendSlideChat: (req: SendSlideChatRequest): Promise<string> => ipcRenderer.invoke('send-slide-chat', req),
   onChatProgress: (callback: (chunk: string) => void): void => {
     ipcRenderer.on('chat-progress', (_event, { chunk }: { chunk: string }) => callback(chunk));

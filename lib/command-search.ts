@@ -21,6 +21,10 @@ export type SearchDestination =
       subjectId?: string;
       /** Stored form: the stack member to focus once `subjectId` is resolved. */
       focusUrl?: string;
+      /** Where to land inside the opened PR. `nonce` makes a repeated open run again. */
+      open?: { tab?: import('./navigation-history').WorkspaceTab; nonce: number };
+      /** Queue filters from a deep link, applied as unsaved edits. */
+      filters?: import('./deep-link').LinkFilters;
     }
   | {
       kind: 'review';

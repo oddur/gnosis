@@ -1210,6 +1210,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     if (target.subject) {
       setOpenedItem(target.subject);
       setSelected(target.subject.subject.id);
+      // A deep link or notification lands on its tab, such as Checks for failing checks.
+      if (target.open?.tab) setOverviewTab(target.open.tab);
       return;
     }
     if (target.onboarding) {
@@ -1248,6 +1250,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           starredOnly: target.section === 'starred',
           attention: target.section === 'updated' || target.section === 'requested' ? target.section : 'all',
           kind: target.section === 'stacks' ? 'stack' : 'all',
+          // A catch-up summary opens the Unread view.
+          ...(target.filters?.read ? { readStatus: target.filters.read } : {}),
         });
     }
   }, [commandDestination, prefs, loading, onboarding.ready]);

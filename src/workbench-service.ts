@@ -8,7 +8,10 @@ import { focusStackPr } from '../lib/stack-workspace';
 import { createMemoryStorage, type StateStorage } from './app-data-store';
 import { createPrReadStore } from './pr-read-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
-import type { QueueSignals, QueueSignalRequest } from '../lib/queue-signals';
+import type { QueueSignals, QueueSignalRequest, QueueSignalOptions } from '../lib/queue-signals';
+import { createNotificationStore, type NotificationStore } from './notification-store';
+import type { NotificationEvent, ObservedMember, PrObservation } from '../lib/notification-events';
+import { planSweep } from '../lib/notification-cadence';
 import { normalizePrInactivityDays, isPrRecentlyUpdated } from '../lib/pr-inactivity';
 import { createMutedPrStore, type MutedPrStore } from './muted-pr-store';
 import { isMutedReview, withoutMutedMembers, type MutePrRequest } from '../lib/muted-prs';
@@ -106,9 +109,21 @@ interface Deps {
   client?: () => Octokit;
   cachedDiscussion?: (url: string) => GitHubReviewThreads | undefined;
   cachedSignals?: (requests: QueueSignalRequest[]) => QueueSignals[];
-  signals?: (client: Octokit, requests: QueueSignalRequest[]) => Promise<QueueSignals[]>;
+  signals?: (client: Octokit, requests: QueueSignalRequest[], options?: QueueSignalOptions) => Promise<QueueSignals[]>;
+  /**
+   * The notification observer sees exactly what the unread store sees. Without `deliver`, as in most tests,
+   * nothing is observed.
+   */
+  notifications?: {
+    store?: NotificationStore;
+    deliver: (events: NotificationEvent[]) => void;
+    /** Local counters follow the analytics preference. */
+    count?: () => boolean;
+  };
   provider?: typeof getProvider;
   now?: () => number;
+  /** The shared GitHub pause, for the notification sweep and watch mode. Tests inject one. */
+  backoff?: typeof githubClients.backoff;
 }
 interface VisibleHistory {
   history: readonly ReviewHistoryEntry[];
@@ -138,6 +153,12 @@ export function createWorkbenchService(deps: Deps) {
   const storage = deps.storage ?? createMemoryStorage();
   const reads = createPrReadStore(storage, now);
   const readBaselines = new Set<string>();
+  const notificationStore = deps.notifications ? (deps.notifications.store ?? createNotificationStore(storage, now)) : undefined;
+  /** Member objects are replaced, never edited, so one already observed is skipped on later views. */
+  const notifiedMembers = new WeakMap<object, string>();
+  const swept = new Map<string, number>();
+  let sweepCost = 1;
+  const notificationBackoff: typeof githubClients.backoff = (...args) => (deps.backoff ?? githubClients.backoff)(...args);
   const savedViews = createSavedViewStore(storage);
   const stars = createStarredPrStore(storage, now);
   const mutes = deps.mutes ?? createMutedPrStore(storage, now);
@@ -276,6 +297,55 @@ export function createWorkbenchService(deps: Deps) {
       (m) => m.state === 'open' && (!repositorySettings(preferences, m.repo).ignoreDependabotPrs || !isDependabot(m.author))
     );
   }
+  function observedMember(member: PrMetadata & Partial<Pick<ReviewMember, 'number' | 'repo' | 'role'>>): ObservedMember {
+    const { owner, repo, pullNumber } = parsePrUrl(member.url);
+    return { ...member, number: member.number ?? pullNumber, repo: member.repo ?? `${owner}/${repo}` };
+  }
+  function hasExplanation(url: string) {
+    const entry = visibleHistory().byUrl.get(url)?.entry;
+    return !!entry && (entry.status ?? 'completed') === 'completed';
+  }
+  function notify(account: string, observations: PrObservation[], options: { finishBaseline?: boolean; own?: boolean } = {}) {
+    if (!notificationStore || !deps.notifications) return;
+    if (!observations.length && (!options.finishBaseline || notificationStore.initialized(account))) return;
+    const login = deps.auth().login;
+    if (!login || login.toLowerCase() !== account.toLowerCase()) return;
+    const muted = mutedUrls();
+    const archived = new Set(load().archivedRepos ?? []);
+    const byUrl = new Map(observations.map(observation => [observation.member.url, observation.member]));
+    const events = notificationStore.observe(account, observations, {
+      login,
+      finishBaseline: options.finishBaseline,
+      own: options.own,
+      count: deps.notifications.count?.() ?? false,
+      suppress: event => {
+        if (!event.url) return undefined;
+        if (muted.has(event.url)) return 'muted';
+        const member = byUrl.get(event.url);
+        if (member && (('repoArchived' in member && member.repoArchived === true) || archived.has(member.repo.toLowerCase()))) return 'archived';
+        return undefined;
+      },
+    });
+    if (events.length) deps.notifications.deliver(events);
+  }
+  function notifyMembers(account: string, members: readonly (PrMetadata & Partial<Pick<ReviewMember, 'number' | 'repo' | 'role'>>)[], options: { finishBaseline?: boolean; own?: boolean } = {}) {
+    if (!notificationStore) return;
+    const fresh = options.own ? members : members.filter(member => notifiedMembers.get(member) !== account);
+    notify(account, fresh.map(member => ({ member: observedMember(member), explanation: hasExplanation(member.url) })), options);
+    for (const member of fresh) notifiedMembers.set(member, account);
+  }
+  function knownMembers() {
+    const s = load();
+    return new Map([...stars.load(s.account).map(entry => entry.member), ...s.subjects.flatMap(subject => subject.members)].map(member => [member.url, member] as const));
+  }
+  function notifySignals(account: string, signals: readonly QueueSignals[]) {
+    if (!notificationStore || !signals.length) return;
+    const known = knownMembers();
+    notify(account, signals.flatMap(signal => {
+      const member = known.get(signal.url);
+      return member ? [{ member: observedMember(member), signals: signal, explanation: hasExplanation(member.url) }] : [];
+    }));
+  }
   function view(includeHidden = false): WorkbenchQueue {
     return timed('view', () => buildView(includeHidden), (queue) =>
       `items=${queue.items.length} muted=${queue.mutedPrs?.length ?? 0} history=${deps.history().length}`);
@@ -286,7 +356,9 @@ export function createWorkbenchService(deps: Deps) {
     const allMembers = [...new Map([...stars.load(s.account).map(entry => entry.member), ...s.subjects.flatMap(subject => subject.members)].map(member => [member.url, member])).values()];
     // Existing cached PRs start read exactly once. Empty installations finish their
     // baseline after the first discovery, including its progressive batches.
-    reads.observe(s.account, allMembers, !readBaselines.has(s.account) && allMembers.length > 0);
+    const baseline = !readBaselines.has(s.account) && allMembers.length > 0;
+    reads.observe(s.account, allMembers, baseline);
+    notifyMembers(s.account, allMembers, { finishBaseline: baseline });
     readBaselines.add(s.account);
     const readStates: WorkbenchQueue['readStates'] = reads.snapshot(s.account);
     const mutedIndex = mutes.index(s.account);
@@ -762,6 +834,7 @@ export function createWorkbenchService(deps: Deps) {
       completed.clear();
       const latestMembers = s.subjects.flatMap(subject => subject.members);
       reads.observe(s.account, latestMembers);
+      notifyMembers(s.account, latestMembers);
       // Include changed PRs even when an Unread-only view keeps their rows offscreen.
       // Reuse the normal batched status cache/backoff; never fetch discussion bodies.
       if (deps.signals) {
@@ -773,6 +846,7 @@ export function createWorkbenchService(deps: Deps) {
           const signals = await deps.signals(octokit, batch.map(member => ({ url: member.url, headSha: member.headSha })));
           checkAllowance();
           reads.signals(s.account, signals);
+          notifySignals(s.account, signals);
           for (const signal of signals) {
             const member = batch.find(member => member.url === signal.url);
             if (signal.activity && member && signal.checkedAt >= Date.parse(member.updatedAt)) pendingActivity.delete(signal.url);
@@ -783,11 +857,133 @@ export function createWorkbenchService(deps: Deps) {
       }
       finished = true;
       reads.observe(s.account, latestMembers, true);
+      notifyMembers(s.account, latestMembers, { finishBaseline: true });
       save();
       void pump();
       return view();
     } finally {
       checkpoint();
+    }
+  }
+  /** Open PRs you author, without muted PRs and archived repositories: the own-PR status sweep's scope. */
+  function ownOpenPrs(): ReviewMember[] {
+    const login = deps.auth().login;
+    if (!login) return [];
+    const muted = mutedUrls();
+    return [...knownMembers().values()].filter(member =>
+      member.state === 'open' && !member.merged && member.author.toLowerCase() === login.toLowerCase() &&
+      !muted.has(member.url) && !isArchived(member));
+  }
+  /**
+   * Check results and mergeability do not change a PR's `updated_at`, so discovery never sees them.
+   * Reads them for your own open PRs, 25 per GraphQL request, as automatic background work.
+   */
+  async function sweepOwnPrs(): Promise<{ requests: number; prs: number }> {
+    const { token, login } = deps.auth();
+    const read = deps.signals;
+    if (!token || !login || !read || !notificationStore) return { requests: 0, prs: 0 };
+    const octokit = deps.client?.() ?? getGitHubClient(token);
+    const members = ownOpenPrs();
+    const cached = new Map((deps.cachedSignals?.(members) ?? []).map(value => [value.url, value]));
+    const batches = planSweep({ members, signals: member => cached.get(member.url), sweptAt: swept, now: now(), cost: sweepCost });
+    let requests = 0, prs = 0;
+    for (const batch of batches) {
+      if (notificationBackoff(token, true, ['graphql']) || deps.auth().login !== login) break;
+      let measured: number | undefined;
+      const signals = await withGitHubPriority('background', () => read(octokit, batch, { cost: value => { measured = value; } }), { automatic: true });
+      if (deps.auth().login !== login) break;
+      if (measured !== undefined) {
+        requests++;
+        if (measured !== sweepCost) {
+          console.log(`[notifications] Own-PR status sweep: ${batch.length} PRs cost ${measured} GraphQL point${measured === 1 ? '' : 's'}.${measured > 1 ? ' Widening the sweep cadence.' : ''}`);
+          sweepCost = Math.max(1, measured);
+        }
+      }
+      for (const request of batch) swept.set(request.url, now());
+      prs += batch.length;
+      reads.signals(login, signals);
+      notifySignals(login, signals);
+      deps.changed?.();
+    }
+    return { requests, prs };
+  }
+  /**
+   * Watch mode, while no window is visible: the personal searches only, one PR read per changed PR, and the
+   * signals of changed PRs. No watched-repository listings and no stack lookups. Discovery state is untouched.
+   */
+  async function watch(): Promise<{ changed: number }> {
+    const { token, login } = deps.auth();
+    if (!token || !login || refresh) return { changed: 0 };
+    const allowance = () => {
+      if (deps.auth().login !== login) throw new DiscoverySuperseded();
+      const paused = notificationBackoff(token, true, ['core', 'search']);
+      if (paused) throw paused;
+    };
+    try {
+      allowance();
+      const octokit = deps.client?.() ?? getGitHubClient(token);
+      const prefs = deps.preferences();
+      const days = inactivityDays();
+      const found = await withGitHubPriority('background', () => createDiscoveryListings(octokit, { searches: {}, repos: {} }, {
+        login,
+        includeAssigned: true,
+        updatedSince: days ? new Date(Math.floor((now() - days * 86400000) / 86400000) * 86400000).toISOString().replace('.000Z', 'Z') : undefined,
+        now: now(),
+        beforeRead: allowance,
+        save: () => {},
+        progress: () => {},
+      }).personal(), { automatic: true });
+      const known = knownMembers();
+      const muted = mutedUrls();
+      const archived = new Set(load().archivedRepos ?? []);
+      const changed: ReviewMember[] = [];
+      for (const pr of found) {
+        const repo = `${pr.repoOwner}/${pr.repoName}`;
+        const settings = repositorySettings(prefs, repo);
+        if (!isPrRecentlyUpdated(pr.updatedAt, settings.prInactivityDays, now()) || (settings.ignoreDependabotPrs && isDependabot(pr.author))) continue;
+        if (muted.has(pr.url) || archived.has(repo.toLowerCase())) continue;
+        const cached = known.get(pr.url);
+        if (cached && cached.updatedAt === pr.updatedAt) {
+          if (cached.role !== pr.role) changed.push({ ...cached, role: pr.role });
+          continue;
+        }
+        allowance();
+        changed.push(await withGitHubPriority('background', () => fetchMember(octokit, pr.url, pr.role), { automatic: true }));
+      }
+      if (!changed.length || deps.auth().login !== login) return { changed: 0 };
+      const s = load();
+      const merged = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
+      for (const member of changed) {
+        const cached = merged.get(member.url) ?? known.get(member.url);
+        if (!cached || cached.updatedAt !== member.updatedAt || cached.headSha !== member.headSha)
+          s.unreadActivityPending = [...new Set([...(s.unreadActivityPending ?? []), member.url])];
+        merged.set(member.url, member);
+      }
+      s.subjects = groupSubjects([...merged.values()].filter(member => !isArchived(member)), s.overrides, s.subjects);
+      stars.update(s.account, changed);
+      reads.observe(s.account, changed);
+      notifyMembers(s.account, changed);
+      const pendingActivity = new Set(s.unreadActivityPending ?? []);
+      const read = deps.signals;
+      const signalsFor = changed.filter(member => pendingActivity.has(member.url) && member.state === 'open');
+      for (let i = 0; read && i < signalsFor.length; i += 25) {
+        allowance();
+        const batch = signalsFor.slice(i, i + 25);
+        const signals = await withGitHubPriority('background', () => read(octokit, batch.map(member => ({ url: member.url, headSha: member.headSha }))), { automatic: true });
+        reads.signals(s.account, signals);
+        notifySignals(s.account, signals);
+        for (const signal of signals) {
+          const member = batch.find(member => member.url === signal.url);
+          if (signal.activity && member && signal.checkedAt >= Date.parse(member.updatedAt)) pendingActivity.delete(signal.url);
+        }
+        if (!signals.length) break;
+      }
+      s.unreadActivityPending = [...pendingActivity];
+      save();
+      return { changed: changed.length };
+    } catch (error) {
+      if (error instanceof DiscoverySuperseded) return { changed: 0 };
+      throw error;
     }
   }
   async function queue(force = false, revalidate = force): Promise<WorkbenchQueue> {
@@ -1093,6 +1289,11 @@ export function createWorkbenchService(deps: Deps) {
     snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view()
       : stampQueue({ items: [], warnings: [], remaining: 0 }, visibleHistory().history),
     queue,
+    /** Resolves when a discovery in flight has finished, so a pass can be measured end to end. */
+    refreshing: () => refresh?.promise.then(() => {}, () => {}) ?? Promise.resolve(),
+    watch,
+    sweepOwnPrs,
+    ownOpenPrs,
     mutedUrls,
     /** Saved reviews without muted PRs. Frozen and shared while the index and mutes are unchanged. */
     visibleHistory: () => visibleHistory().history,
@@ -1104,7 +1305,9 @@ export function createWorkbenchService(deps: Deps) {
     },
     observeReadSignals(account: string, signals: QueueSignals[]) {
       if (account !== deps.auth().login) return false;
-      return reads.signals(account, signals);
+      const changed = reads.signals(account, signals);
+      notifySignals(account, signals);
+      return changed;
     },
     noteOwnReview(account: string, url: string, inlineComments: number, reviewUrl?: string) {
       try { if (account === deps.auth().login) reads.ownReview(account, url, inlineComments, now(), reviewUrl); }
@@ -1139,6 +1342,8 @@ export function createWorkbenchService(deps: Deps) {
     },
     updatePrMetadata(metadata: PrMetadata, own = false) {
       reads.observe(load().account, [metadata], false, own);
+      const known = knownMembers().get(metadata.url);
+      notifyMembers(load().account, [known ? { ...known, ...metadata } : metadata], { own });
       const s = load();
       let changed = false;
       s.subjects = s.subjects.map(subject => {

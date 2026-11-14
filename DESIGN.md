@@ -291,6 +291,11 @@ The capsule opens a panel below the title bar, at most 440px wide and within the
 Progress width changes use a 180ms ease-out transition; indeterminate progress uses a 1.5s cycle; the running mark turns once per 1.4s in rows and rests as ◐ in the quiet title bar capsule.
 Reduced motion removes these transitions and stops the running mark as a still ◐, preserving progress and status information.
 
+### Notifications and toasts
+
+Unread is the durable record of what changed. A notification announces the actionable subset once: a review requested from you, changes requested on or approval of your PR, failing checks, ready to merge, and explanation ready. Each event gets exactly one surface: a toast when a Gnosis window has focus, a desktop notification when none does, nothing when the PR is already open in the focused window. Events for one PR settle for 20 seconds and coalesce; three or more after a launch, wake, gap or pause become one summary that opens the Unread view. At most three desktop notifications in five minutes; the rest wait as one digest.
+Toasts use the Base UI toast only. A toast is `role="group"` with `aria-roledescription="notification"`, never a dialog; the viewport is the polite live region. Each notification toast shows a kind icon, a text title that states the status, an `owner/repo #123` line, the PR title, and one action that opens the right tab. A toast raised while the window is unfocused waits and gets 10 seconds once the user returns. Marking a PR read closes its toasts. Notifications never write to GitHub and carry no action buttons on the desktop. Nothing asks for permission on launch: the first PR-event toast offers **Turn on** and **Not now** for desktop delivery.
+
 ### Feedback
 
 Pair concise errors with recovery actions. Put detailed diagnostics behind disclosure controls.

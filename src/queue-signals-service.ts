@@ -152,6 +152,8 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
     const pending = withGitHubPriority(priority, () => createGitHubWork(async () => {
       try {
         const data = await client.graphql<Record<string, { pullRequest: PullSignals | null } | null>>(query);
+        const cost = (data.rateLimit as { cost?: unknown } | null | undefined)?.cost;
+        if (typeof cost === 'number') options.cost?.(cost);
         const fresh: QueueSignals[] = [];
         for (const [i, { request }] of missing.entries()) {
           const pr = data[`p${i}`]?.pullRequest;

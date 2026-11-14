@@ -50,9 +50,9 @@ function transaction<T>(fn: () => T): T {
   }
 }
 /** States saved as a header row plus one `entry:<id>` row per entry, read as `{ ...header, entries }`. */
-const rowState = (name: string) => /^(?:pr-read-|muted-prs:|starred-prs:)/.test(name);
-/** The row states that accept patches: unread progress, mutes and stars. */
-const patchable = /^(?:pr-read-[a-f0-9]{64}\.json|(?:muted|starred)-prs:[a-f0-9]{64})$/;
+const rowState = (name: string) => /^(?:pr-read-|pr-notify-|muted-prs:|starred-prs:)/.test(name);
+/** The row states that accept patches: unread progress, notification state, mutes and stars. */
+const patchable = /^(?:pr-(?:read|notify)-[a-f0-9]{64}\.json|(?:muted|starred)-prs:[a-f0-9]{64})$/;
 /** Separate queue subjects, briefings, unread receipts, mutes and stars into independently updated rows. */
 function rows(name: string, value: unknown): Map<string, string> {
   if (name.startsWith('renderer:')) {

@@ -34,6 +34,9 @@ import './workspace-tabs.css';
 import { useWorkspaceListings } from '../lib/use-workspace-listings';
 import { workbenchStore } from '../lib/workbench-store';
 import { workspaceTabTitle } from '../lib/workspace-listings';
+import { routeDeepLink } from '../lib/deep-link-routing';
+import type { DeepLinkTarget } from '../lib/deep-link';
+import { useNotificationToasts } from '../lib/use-notification-toasts';
 
 const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID(), target);
 const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
@@ -272,6 +275,54 @@ export function App() {
   const openActivity = useCallback(async (task: ActivityTask) => {
     await controllers.current.get(latest.current.active)?.openActivity(task);
   }, []);
+  // "Open Gnosis at this exact place": notification clicks and the tray, through main's ready handshake.
+  const openTarget = useCallback(async (target: DeepLinkTarget) => {
+    const route = routeDeepLink(target, latest.current, workbenchStore.getQueue());
+    if (route.tab.kind === 'new') {
+      open(route.destination);
+      return;
+    }
+    const id = route.tab.kind === 'reuse' ? route.tab.id : latest.current.active;
+    const existing = controllers.current.get(id);
+    if (!existing) {
+      // A restored tab that was never shown has no controller yet.
+      const tab = newTab(route.destination);
+      change({ type: 'replace', id, tab });
+      activate(tab.id);
+      return;
+    }
+    if (id !== latest.current.active) activate(id);
+    await existing.navigate(route.destination);
+  }, [open, change, activate]);
+  useNotificationToasts(openTarget);
+  useEffect(() => {
+    if (!account) return;
+    const api = window.electronAPI;
+    let live = true;
+    const run = (target: DeepLinkTarget) =>
+      void openTarget(target).catch((error: unknown) =>
+        toast.add({
+          type: 'error',
+          title: target.kind === 'review' ? 'Could not open saved review' : 'Could not open this PR',
+          description: error instanceof Error ? error.message : String(error),
+          actionProps: { children: 'Retry', onClick: () => run(target) },
+        })
+      );
+    const stop = api.onDeepLink?.((item) => run(item.target));
+    // Tabs are restored once the account is scoped; an earlier open would be overwritten.
+    void api.takeDeepLinks?.().then((items) => { if (live && Array.isArray(items)) for (const item of items) run(item.target); }).catch(() => {});
+    return () => {
+      live = false;
+      if (typeof stop === 'function') stop();
+    };
+  }, [account, openTarget]);
+  // The PR in the active workspace: an event for it shows nothing while this window has focus.
+  const activeLocation = state.tabs.find((tab) => tab.id === state.active)?.location;
+  const activeItem = activeLocation?.page === 'home' ? activeLocation.home.item : null;
+  const activeUrl = activeItem?.subject.kind === 'pr' ? activeItem.subject.members[0]?.url : undefined;
+  useEffect(() => {
+    window.electronAPI.notificationContext?.(activeUrl);
+  }, [activeUrl]);
   const navigation = useMemo(() => ({ open }), [open]);
   const activityMenu = useMemo(() => ({ open: () => setActivityOpen(true), shortcut: ACTIVITY_SHORTCUT.keys() }), []);
   const recentNavigation = useMemo(

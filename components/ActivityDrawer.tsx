@@ -147,12 +147,14 @@ export const ActivityDrawer = memo(function ActivityDrawer({
                 toast.add({ title: task.title, description: task.detail, type: task.status === 'failed' ? 'error' : 'success' });
                 continue;
               }
+              // "Explanation ready" goes through main's notification router: one surface, by window focus.
+              if (task.kind === 'review') continue;
               const id = toast.add({
-                title: task.kind === 'exploration' ? 'Interactive explanation ready' : 'Review ready',
-                description: task.kind === 'exploration' ? `${task.title} · ${task.detail}` : task.title,
+                title: 'Interactive explanation ready',
+                description: `${task.title} · ${task.detail}`,
                 type: 'success',
                 actionProps: {
-                  children: task.kind === 'exploration' ? 'Open interactive explanation' : 'Open review',
+                  children: 'Open interactive explanation',
                   onClick: () => {
                     toast.update(id, { actionProps: { children: 'Opening…', disabled: true } });
                     void onOpenRef
