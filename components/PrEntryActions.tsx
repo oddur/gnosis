@@ -100,7 +100,7 @@ export function prEntryActionGroups({
         ? [{ label: 'Refresh GitHub status', icon: <RefreshCw size={15} />, disabled: busy, run: onRefresh }]
         : []),
       ...(!stack && !isLocalUrl(members[0].url) && !members[0].merged && members[0].state === 'open'
-        ? [{ label: 'Conflict resolution & restack…', icon: <GitBranch size={15} />, disabled: busy, run: () => openConflictWorkspace(members[0].url) }]
+        ? [{ label: 'Resolve conflicts…', icon: <GitBranch size={15} />, disabled: busy, run: () => openConflictWorkspace(members[0].url) }]
         : []),
     ],
     [

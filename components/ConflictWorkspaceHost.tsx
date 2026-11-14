@@ -26,7 +26,7 @@ export function ConflictWorkspaceHost() {
           <DialogContent>
             <DialogTitle>Resolve conflicts</DialogTitle>
             <DialogDescription className="sr-only">Review and resolve merge conflicts.</DialogDescription>
-            <LoadingState title="Opening the conflict editor…" />
+            <LoadingState title="Opening Resolve conflicts…" />
           </DialogContent>
         </Dialog>
       }
