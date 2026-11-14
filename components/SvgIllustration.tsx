@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Maximize2, Pause, Play, RotateCcw } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
@@ -103,7 +103,10 @@ function IllustrationPlayer({
     const timer = setTimeout(() => void DiagramExplorer.preload(), 1000);
     return () => clearTimeout(timer);
   }, [explorable]);
-  useEffect(() => {
+  // The frame announces 'ready' once. Listen from the commit that inserts it: a passive effect can run
+  // after a fast frame has already posted, and the player then never enabled its controls. The frame
+  // is also asked again when it loads (see onLoad), so a missed announcement is recovered.
+  useLayoutEffect(() => {
     setReady(false);
     setPlaying(false);
     setError('');
@@ -337,6 +340,7 @@ function IllustrationPlayer({
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"
           srcDoc={documentState.html}
+          onLoad={() => send('announce')}
         />
       )}
     </div>
