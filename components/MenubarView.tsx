@@ -210,7 +210,9 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
   // The window fits its content, up to 560 pt; then the list scrolls between the fixed header and footer.
   useLayoutEffect(() => {
     const measure = () => {
-      const height = (header.current?.offsetHeight ?? 0) + (body.current?.scrollHeight ?? 0) + (footer.current?.offsetHeight ?? 0);
+      // The content, not the scrolling body: the body stretches to the window and would never let it shrink.
+      const content = body.current?.firstElementChild as HTMLElement | null | undefined;
+      const height = (header.current?.offsetHeight ?? 0) + (content?.offsetHeight ?? 0) + (footer.current?.offsetHeight ?? 0);
       if (height > 0) api.resize(height);
     };
     measure();

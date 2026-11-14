@@ -1,10 +1,10 @@
 /**
  * Entry of the menu bar panel's renderer (#308), separate from the main window's bundle.
- * The panel is system chrome, so it follows the system appearance, not the app's theme setting.
  */
 import { createRoot } from 'react-dom/client';
 import { MenubarView, useMenubarState } from '../../components/MenubarView';
 import type { MenubarApi } from '../../lib/menubar-state';
+import { followSystemAppearance } from './appearance';
 import './menubar.css';
 
 declare global {
@@ -13,10 +13,7 @@ declare global {
   }
 }
 
-const dark = window.matchMedia('(prefers-color-scheme: dark)');
-const applyAppearance = () => document.documentElement.classList.toggle('dark', dark.matches);
-applyAppearance();
-dark.addEventListener('change', applyAppearance);
+followSystemAppearance();
 // Main loads the page with ?vibrancy=1 when the window has the popover material behind it.
 if (new URLSearchParams(location.search).has('vibrancy')) document.documentElement.dataset.vibrancy = '';
 
