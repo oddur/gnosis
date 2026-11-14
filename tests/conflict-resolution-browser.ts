@@ -22,7 +22,7 @@ void app.whenReady().then(async () => {
       await new Promise((r) => setTimeout(r, 30));
     }
     throw Error(
-      `Timed out: ${code}\nFocus: ${await js<string>("document.activeElement?.outerHTML.slice(0,300)")}\n${await js<string>('document.body.innerText')}`
+      `Timed out: ${code}\nFocus: ${await js<string>('document.activeElement?.outerHTML.slice(0,300)')}\n${await js<string>('document.body.innerText')}`
     );
   };
   // Button names without their keyboard hints.
@@ -693,6 +693,18 @@ void app.whenReady().then(async () => {
         source: 'manual',
       };
     });
+    // The preview matches this session's files: both resolved files plus one clean change from main.
+    const longPatch = files
+      .map(
+        (f) =>
+          `diff --git a/${f.path} b/${f.path}\n--- a/${f.path}\n+++ b/${f.path}\n@@ -1 +1 @@\n-${f.ours.split('\n')[0]}\n+${f.theirs.split('\n')[0]} \n`
+      )
+      .join('');
+    await js(
+      `window.conflictPreview=${JSON.stringify(
+        parsePatchFiles(longPatch + patch.slice(patch.indexOf('diff --git a/src/clock.ts'))).flatMap((p) => p.files)
+      )}`
+    );
     await js(
       `window.conflictFixture.files=${JSON.stringify(files)};window.conflictFixture.stale=false;window.conflictFixture.preparation='conflicts';window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))`
     );
@@ -742,6 +754,10 @@ void app.whenReady().then(async () => {
     assert.match(
       await js<string>("document.querySelector('.conflict-confirm').innerText"),
       /Your resolutions · 2 files/
+    );
+    assert.match(
+      await js<string>("document.querySelector('.conflict-confirm').innerText"),
+      /Changes coming from main · 1 file/
     );
     // File shortcuts pause in the confirmation, and Enter never pushes.
     await key('m');
