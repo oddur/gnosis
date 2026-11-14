@@ -1,0 +1,404 @@
+{
+  "$comment": "Real GitHub page URL shapes from the gnosis:// design, section 3.4 (oddur/gnosis#309, #310). Shared by the browser extension tests and the app protocol tests. \"kind\" and \"target\" use the vocabulary of table 3.4 (summary, feedback, changes, commits, checks, conflicts, commit, compare, queue, unsupported); the app tests own the exact parsed shape. \"extensionButton\" is whether the extension shows its button on the page (its coarse path test may be looser than the grammar, never stricter for pull, commit and compare pages).",
+  "urls": [
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160",
+      "kind": "pull",
+      "target": "summary",
+      "extensionButton": true,
+      "note": "Conversation tab"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/",
+      "kind": "pull",
+      "target": "summary",
+      "extensionButton": true,
+      "note": "Trailing slash"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160#issuecomment-2400000001",
+      "kind": "pull",
+      "target": "feedback",
+      "extensionButton": true
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160#pullrequestreview-2300000002",
+      "kind": "pull",
+      "target": "feedback",
+      "extensionButton": true
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160#discussion_r1800000003",
+      "kind": "pull",
+      "target": "feedback",
+      "extensionButton": true,
+      "note": "Review thread on the Conversation tab"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160#partial-pull-merging",
+      "kind": "pull",
+      "target": "summary",
+      "extensionButton": true,
+      "note": "Unlisted fragment: ignored"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160?notification_referrer_id=NT_kwDOAbc&notifications_query=is%3Aunread",
+      "kind": "pull",
+      "target": "summary",
+      "extensionButton": true,
+      "note": "Tracking parameters: ignored"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Classic Files tab"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/changes",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "New Files tab"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3d",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "File anchor: SHA-256 of src/main.ts"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3dR42",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Line 42, after side"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3dL10",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Line 10, before side"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files#diff-5c519834e12d87d54cbd1feb7f65715ffc2745179de486e94409a4bb1cbb5dbbR42-R58",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Line range, after side"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files#diff-5c519834e12d87d54cbd1feb7f65715ffc2745179de486e94409a4bb1cbb5dbbL12-R14",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Range that mixes sides: keeps the first line"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files#r1800000003",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Review comment, Files-tab form"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files?diff=split&w=1#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3dR42",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Display parameters: ignored"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files?file-filters%5B%5D=.ts&show-viewed-files=true#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3d",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "File filters: ignored"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/changes#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3dR42",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "New Files tab with a line"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files/e49f59e6d81ad44fc709ddd318911b41fad2bc28",
+      "kind": "pull",
+      "target": "commits",
+      "extensionButton": true,
+      "note": "One commit in the Files tab"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/changes/e49f59e6d81ad44fc709ddd318911b41fad2bc28#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3dR7",
+      "kind": "pull",
+      "target": "commits",
+      "extensionButton": true,
+      "note": "One commit in the new Files tab, with a line"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/files/79fde795a7ee5318dc4a7f48d494a439d92577d2..e49f59e6d81ad44fc709ddd318911b41fad2bc28",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Commit range: dropped, whole PR"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/changes/79fde795a7ee5318dc4a7f48d494a439d92577d2..e49f59e6d81ad44fc709ddd318911b41fad2bc28",
+      "kind": "pull",
+      "target": "changes",
+      "extensionButton": true,
+      "note": "Commit range in the new Files tab"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/commits",
+      "kind": "pull",
+      "target": "commits",
+      "extensionButton": true
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/commits/e49f59e6d81ad44fc709ddd318911b41fad2bc28",
+      "kind": "pull",
+      "target": "commits",
+      "extensionButton": true,
+      "note": "commit = sha"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/commits/e49f59e6d81ad44fc709ddd318911b41fad2bc28#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3dR3",
+      "kind": "pull",
+      "target": "commits",
+      "extensionButton": true,
+      "note": "commit = sha, with a line"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/checks",
+      "kind": "pull",
+      "target": "checks",
+      "extensionButton": true
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/checks?check_run_id=31000000004",
+      "kind": "pull",
+      "target": "checks",
+      "extensionButton": true,
+      "note": "check = 31000000004"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160/conflicts",
+      "kind": "pull",
+      "target": "conflicts",
+      "extensionButton": true,
+      "note": "GitHub's web conflict editor"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/actions/runs/12000000005/job/33000000006?pr=160",
+      "kind": "actions",
+      "target": "checks",
+      "extensionButton": false,
+      "note": "Actions job with ?pr=: PR 160, checks"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/actions/runs/12000000005",
+      "kind": "actions",
+      "target": "unsupported",
+      "extensionButton": false,
+      "note": "Without ?pr=: rejected"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/commit/e49f59e6d81ad44fc709ddd318911b41fad2bc28",
+      "kind": "commit",
+      "target": "commit",
+      "extensionButton": true,
+      "note": "Resolved to its PR by the app"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/commit/e49f59e",
+      "kind": "commit",
+      "target": "commit",
+      "extensionButton": true,
+      "note": "Short sha"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/commit/e49f59e6d81ad44fc709ddd318911b41fad2bc28#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3dR3",
+      "kind": "commit",
+      "target": "commit",
+      "extensionButton": true,
+      "note": "With a line"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/commit/e49f59e6d81ad44fc709ddd318911b41fad2bc28#commitcomment-150000007",
+      "kind": "commit",
+      "target": "commit",
+      "extensionButton": true,
+      "note": "Commit comment fragment: ignored"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/commit/e49f59e6d81ad44fc709ddd318911b41fad2bc28?diff=split",
+      "kind": "commit",
+      "target": "commit",
+      "extensionButton": true
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/compare/main...feat/browser-extension",
+      "kind": "compare",
+      "target": "compare",
+      "extensionButton": true,
+      "note": "Three dots; ref with a slash"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/compare/main..feat/browser-extension",
+      "kind": "compare",
+      "target": "compare",
+      "extensionButton": true,
+      "note": "Two dots"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/compare/feat/browser-extension",
+      "kind": "compare",
+      "target": "compare",
+      "extensionButton": true,
+      "note": "Head alone"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/compare/main...someone:feat/browser-extension",
+      "kind": "compare",
+      "target": "compare",
+      "extensionButton": true,
+      "note": "Fork head"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/compare/main...feat/browser-extension?expand=1",
+      "kind": "compare",
+      "target": "compare",
+      "extensionButton": true,
+      "note": "New PR form: expand ignored"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/compare/main...feat/browser-extension#diff-4fab5baaca5c14d2de62d8d2fceef376ddddcc8e9509d86cfa5643f51b89ce3dR42",
+      "kind": "compare",
+      "target": "compare",
+      "extensionButton": true,
+      "note": "With a line"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pulls",
+      "kind": "queue",
+      "target": "queue",
+      "extensionButton": false,
+      "note": "filters.repo = oddur/gnosis"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pulls?q=is%3Apr+is%3Aopen",
+      "kind": "queue",
+      "target": "queue",
+      "extensionButton": false,
+      "note": "?q= ignored"
+    },
+    {
+      "url": "https://github.com/pulls",
+      "kind": "queue",
+      "target": "queue",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/pulls/assigned",
+      "kind": "queue",
+      "target": "queue",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/pulls/mentioned",
+      "kind": "queue",
+      "target": "queue",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/pulls/review-requested",
+      "kind": "queue",
+      "target": "queue",
+      "extensionButton": false,
+      "note": "section = requested"
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160.diff",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/160.patch",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/pull/new/feat/browser-extension",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/blob/main/README.md",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/tree/main/src",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/oddur/gnosis/issues/310",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false
+    },
+    {
+      "url": "https://github.com/oddur/gnosis",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false,
+      "note": "Repository home"
+    },
+    {
+      "url": "http://github.com/oddur/gnosis/pull/160",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false,
+      "note": "http, not https"
+    },
+    {
+      "url": "https://github.com:8443/oddur/gnosis/pull/160",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false,
+      "note": "Port"
+    },
+    {
+      "url": "https://user@github.com/oddur/gnosis/pull/160",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false,
+      "note": "User info"
+    },
+    {
+      "url": "https://www.github.com/oddur/gnosis/pull/160",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false,
+      "note": "Host is not exactly github.com"
+    },
+    {
+      "url": "https://github.example.com/oddur/gnosis/pull/160",
+      "kind": "unsupported",
+      "target": "unsupported",
+      "extensionButton": false,
+      "note": "GitHub Enterprise: unsupported-host for now"
+    }
+  ]
+}

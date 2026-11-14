@@ -14,7 +14,7 @@ void test('only web and mail links may leave the app', () => {
   assert.equal(safeExternalUrl('https://github.com/o/r/pull/1'), 'https://github.com/o/r/pull/1');
   assert.equal(safeExternalUrl('http://example.com'), 'http://example.com');
   assert.equal(safeExternalUrl('mailto:someone@example.com'), 'mailto:someone@example.com');
-  for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'vscode://file/x', 'smb://host/share', 'gnosis://pr/o/r/1', 'not a url', '', 7]) {
+  for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'vscode://file/x', 'smb://host/share', 'gnosis://pr/o/r/1', 'GNOSIS://pr/o/r/1', 'gnosis-dev://pr/o/r/1', 'not a url', '', 7]) {
     assert.equal(safeExternalUrl(bad), null, String(bad));
   }
 });

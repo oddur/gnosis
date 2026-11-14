@@ -1,0 +1,771 @@
+{
+  "$comment": "Malicious-input and route corpus for lib/deep-link.ts parseDeepLink (oddur/gnosis#309, design sections 3 and 7). Each entry states the parsed target, or the expected error code. Links are parsed with the packaged scheme list ['gnosis']. Over-long and over-counted inputs are generated in tests/deep-link-grammar.test.ts.",
+  "valid": [
+    {
+      "name": "pr summary",
+      "link": "gnosis://pr/oddur/gnosis/160",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        }
+      }
+    },
+    {
+      "name": "pr trailing slash",
+      "link": "gnosis://pr/oddur/gnosis/160/",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        }
+      }
+    },
+    {
+      "name": "pr explicit summary is the default",
+      "link": "gnosis://pr/oddur/gnosis/160/summary",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        }
+      }
+    },
+    {
+      "name": "pr checks tab",
+      "link": "gnosis://pr/oddur/gnosis/160/checks",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "checks"
+      }
+    },
+    {
+      "name": "pr notes tab",
+      "link": "gnosis://pr/oddur/gnosis/160/notes",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "notes"
+      }
+    },
+    {
+      "name": "pr file and line range",
+      "link": "gnosis://pr/oddur/gnosis/160/changes?file=src/main.ts&line=342-372&sha=e49f59e6d81ad44fc709ddd318911b41fad2bc28",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "changes",
+        "file": {
+          "path": "src/main.ts",
+          "line": 342,
+          "endLine": 372,
+          "sha": "e49f59e6d81ad44fc709ddd318911b41fad2bc28"
+        }
+      }
+    },
+    {
+      "name": "defaults are dropped",
+      "link": "gnosis://pr/oddur/gnosis/160/changes?file=src/main.ts&side=after&sha=latest",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "changes",
+        "file": {
+          "path": "src/main.ts"
+        }
+      }
+    },
+    {
+      "name": "comment implies feedback",
+      "link": "gnosis://pr/oddur/gnosis/160?comment=1789012345",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "feedback",
+        "commentId": "1789012345"
+      }
+    },
+    {
+      "name": "slide implies explanation",
+      "link": "gnosis://pr/oddur/gnosis/160?slide=s3",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "explanation",
+        "slide": "s3"
+      }
+    },
+    {
+      "name": "a locator for another tab is ignored",
+      "link": "gnosis://pr/oddur/gnosis/160/checks?file=src/main.ts&check=42",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "checks",
+        "check": "42"
+      }
+    },
+    {
+      "name": "line without a file is ignored",
+      "link": "gnosis://pr/oddur/gnosis/160/changes?line=4",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "changes"
+      }
+    },
+    {
+      "name": "unknown parameters are ignored, nothing can act",
+      "link": "gnosis://pr/o/r/1?action=merge&approve=1",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "o",
+          "repo": "r",
+          "number": 1
+        }
+      }
+    },
+    {
+      "name": "tab is a path segment on pr, not a parameter",
+      "link": "gnosis://pr/o/r/1?tab=checks",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "o",
+          "repo": "r",
+          "number": 1
+        }
+      }
+    },
+    {
+      "name": "version 1 is accepted",
+      "link": "gnosis://pr/o/r/1?v=1",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "o",
+          "repo": "r",
+          "number": 1
+        }
+      }
+    },
+    {
+      "name": "mixed-case scheme",
+      "link": "GNOSIS://pr/o/r/1",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "o",
+          "repo": "r",
+          "number": 1
+        }
+      }
+    },
+    {
+      "name": "encoded path segment decoded once",
+      "link": "gnosis://pr/o/my%2Erepo/1",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "o",
+          "repo": "my.repo",
+          "number": 1
+        }
+      }
+    },
+    {
+      "name": "double encoding is decoded once, to a literal name",
+      "link": "gnosis://pr/o/r/1/changes?file=%252e%252e%252fetc",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "o",
+          "repo": "r",
+          "number": 1
+        },
+        "tab": "changes",
+        "file": {
+          "path": "%2e%2e%2fetc"
+        }
+      }
+    },
+    {
+      "name": "stack",
+      "link": "gnosis://stack/oddur/gnosis/157/changes",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 157
+        },
+        "scope": "stack",
+        "tab": "changes"
+      }
+    },
+    {
+      "name": "conflicts",
+      "link": "gnosis://conflicts/oddur/gnosis/160",
+      "target": {
+        "kind": "conflicts",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        }
+      }
+    },
+    {
+      "name": "open with a PR URL",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com%2Foddur%2Fgnosis%2Fpull%2F160",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        }
+      }
+    },
+    {
+      "name": "open with the Checks tab",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com%2Foddur%2Fgnosis%2Fpull%2F160%2Fchecks",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "checks"
+      }
+    },
+    {
+      "name": "open parameters override the URL",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com%2Foddur%2Fgnosis%2Fpull%2F160%2Ffiles&tab=feedback",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "oddur",
+          "repo": "gnosis",
+          "number": 160
+        },
+        "tab": "feedback"
+      }
+    },
+    {
+      "name": "open with an upper-case host",
+      "link": "gnosis://open?url=https%3A%2F%2FGITHUB.COM%2Fo%2Fr%2Fpull%2F1",
+      "target": {
+        "kind": "pr",
+        "pr": {
+          "host": "github.com",
+          "owner": "o",
+          "repo": "r",
+          "number": 1
+        }
+      }
+    },
+    {
+      "name": "queue section",
+      "link": "gnosis://queue?section=requested",
+      "target": {
+        "kind": "queue",
+        "section": "requested"
+      }
+    },
+    {
+      "name": "queue filters",
+      "link": "gnosis://queue?repo=oddur/gnosis&read=unread&status=draft&kind=stack&author=maya&branch=feat/x&q=command+queue",
+      "target": {
+        "kind": "queue",
+        "filters": {
+          "repo": "oddur/gnosis",
+          "author": "maya",
+          "branch": "feat/x",
+          "status": "draft",
+          "read": "unread",
+          "kind": "stack",
+          "query": "command queue"
+        }
+      }
+    },
+    {
+      "name": "queue view by name",
+      "link": "gnosis://queue?view=My%20reviews",
+      "target": {
+        "kind": "queue",
+        "view": "My reviews"
+      }
+    },
+    {
+      "name": "review",
+      "link": "gnosis://review/3f2a9b1c-0d4e-4f5a-8b6c-7d8e9f0a1b2c?slide=s3",
+      "target": {
+        "kind": "review",
+        "reviewId": "3f2a9b1c-0d4e-4f5a-8b6c-7d8e9f0a1b2c",
+        "slide": "s3"
+      }
+    },
+    {
+      "name": "review file and thread",
+      "link": "gnosis://review/3f2a9b1c-0d4e-4f5a-8b6c-7d8e9f0a1b2c?file=src/a.ts&line=4&side=before&thread=PRRT_kw1",
+      "target": {
+        "kind": "review",
+        "reviewId": "3f2a9b1c-0d4e-4f5a-8b6c-7d8e9f0a1b2c",
+        "file": {
+          "path": "src/a.ts",
+          "line": 4,
+          "side": "before"
+        },
+        "threadId": "PRRT_kw1"
+      }
+    },
+    {
+      "name": "settings",
+      "link": "gnosis://settings",
+      "target": {
+        "kind": "settings"
+      }
+    },
+    {
+      "name": "settings section",
+      "link": "gnosis://settings/repositories",
+      "target": {
+        "kind": "settings",
+        "section": "repositories"
+      }
+    },
+    {
+      "name": "activity",
+      "link": "gnosis://activity",
+      "target": {
+        "kind": "activity"
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "name": "traversal in file",
+      "link": "gnosis://pr/o/r/1/changes?file=../../../.ssh/id_rsa",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "encoded traversal in file",
+      "link": "gnosis://pr/o/r/1/changes?file=a%2F..%2F..%2Fb",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "absolute file",
+      "link": "gnosis://pr/o/r/1/changes?file=/etc/passwd",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "drive letter file",
+      "link": "gnosis://pr/o/r/1/changes?file=C:/Windows/win.ini",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "empty file segment",
+      "link": "gnosis://pr/o/r/1/changes?file=a//b",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "dot file segment",
+      "link": "gnosis://pr/o/r/1/changes?file=./a",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "traversal into load-review",
+      "link": "gnosis://review/..%2F..%2Ftoken",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "review id is not a UUID",
+      "link": "gnosis://review/preferences",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "raw dot-dot path segment",
+      "link": "gnosis://pr/o/r/../../1",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "encoded dot-dot path segment",
+      "link": "gnosis://pr/%2e%2e/r/1",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "encoded slash in a segment",
+      "link": "gnosis://pr/o%2Fx/r/1",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "double-encoded owner",
+      "link": "gnosis://pr/%256f/r/1",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "repo dot",
+      "link": "gnosis://pr/o/./1",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "javascript in url",
+      "link": "gnosis://open?url=javascript%3Aalert(1)",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "file in url",
+      "link": "gnosis://open?url=file%3A%2F%2F%2Fetc%2Fpasswd",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "http in url",
+      "link": "gnosis://open?url=http%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "data in url",
+      "link": "gnosis://open?url=data%3Atext%2Fhtml%2C%3Cscript%3E",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "gnosis in url",
+      "link": "gnosis://open?url=gnosis%3A%2F%2Fpr%2Fo%2Fr%2F1",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "user-info trick",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com%40evil.io%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "user and password",
+      "link": "gnosis://open?url=https%3A%2F%2Fuser%3Apass%40github.com%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "explicit default port",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com%3A443%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "other port",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com%3A8443%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-url"
+    },
+    {
+      "name": "look-alike host",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com.evil.io%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-host"
+    },
+    {
+      "name": "trailing-dot host",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com.%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-host"
+    },
+    {
+      "name": "IDN host",
+      "link": "gnosis://open?url=https%3A%2F%2Fg%C3%ADthub.com%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-host"
+    },
+    {
+      "name": "punycode host",
+      "link": "gnosis://open?url=https%3A%2F%2Fxn--gthub-zsa.com%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-host"
+    },
+    {
+      "name": "enterprise host",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.example.com%2Fo%2Fr%2Fpull%2F1",
+      "error": "unsupported-host"
+    },
+    {
+      "name": "open without url",
+      "link": "gnosis://open",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "raw NUL",
+      "link": "gnosis://pr/o/r/1\u0000",
+      "error": "malformed"
+    },
+    {
+      "name": "encoded NUL",
+      "link": "gnosis://pr/o/r/1/changes?file=a%00b",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "encoded newline",
+      "link": "gnosis://pr/o/r/1/changes?file=a%0Ab",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "encoded DEL",
+      "link": "gnosis://pr/o/r/1/changes?file=a%7Fb",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "encoded C1 control",
+      "link": "gnosis://pr/o/r/1/changes?file=a%C2%85b",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "raw backslash",
+      "link": "gnosis://pr/o/r/1/changes?file=a\\b",
+      "error": "malformed"
+    },
+    {
+      "name": "encoded backslash",
+      "link": "gnosis://pr/o/r/1/changes?file=a%5Cb",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bidi spoof in a file",
+      "link": "gnosis://pr/o/r/1?file=a%E2%80%AEtxt.exe",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "raw bidi override",
+      "link": "gnosis://pr/o/r/1/changes?file=a\u202etxt.exe",
+      "error": "malformed"
+    },
+    {
+      "name": "encoded bidi isolate",
+      "link": "gnosis://queue?q=%E2%81%A6x",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "control character inside url",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1%0A",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "repeated parameter",
+      "link": "gnosis://pr/o/r/1/changes?file=a&file=b",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "repeated version",
+      "link": "gnosis://pr/o/r/1?v=1&v=1",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "repeated unknown parameter",
+      "link": "gnosis://pr/o/r/1?x=1&x=2",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "broken percent encoding",
+      "link": "gnosis://pr/o/r/1/changes?file=%E0%A4%A",
+      "error": "malformed"
+    },
+    {
+      "name": "newer version",
+      "link": "gnosis://pr/o/r/1?v=2",
+      "error": "unsupported-version"
+    },
+    {
+      "name": "fragment on the gnosis link",
+      "link": "gnosis://pr/o/r/1#changes",
+      "error": "malformed"
+    },
+    {
+      "name": "upper-case route",
+      "link": "gnosis://PR/o/r/1",
+      "error": "unknown-route"
+    },
+    {
+      "name": "unknown route",
+      "link": "gnosis://merge/o/r/1",
+      "error": "unknown-route"
+    },
+    {
+      "name": "switch injection",
+      "link": "gnosis://x\" --inspect=0.0.0.0:9229",
+      "error": "unknown-route"
+    },
+    {
+      "name": "wrong scheme",
+      "link": "gnosis-dev://pr/o/r/1",
+      "error": "malformed"
+    },
+    {
+      "name": "web URL",
+      "link": "https://github.com/o/r/pull/1",
+      "error": "malformed"
+    },
+    {
+      "name": "no slashes",
+      "link": "gnosis:pr/o/r/1",
+      "error": "malformed"
+    },
+    {
+      "name": "leading zero",
+      "link": "gnosis://pr/o/r/0160",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "zero",
+      "link": "gnosis://pr/o/r/0",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "ten digits",
+      "link": "gnosis://pr/o/r/1234567890",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad owner",
+      "link": "gnosis://pr/-o/r/1",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad tab",
+      "link": "gnosis://pr/o/r/1/settings",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "extra segment",
+      "link": "gnosis://pr/o/r/1/changes/more",
+      "error": "malformed"
+    },
+    {
+      "name": "missing number",
+      "link": "gnosis://pr/o/r",
+      "error": "malformed"
+    },
+    {
+      "name": "bad line",
+      "link": "gnosis://pr/o/r/1/changes?file=a&line=0",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "reversed line range",
+      "link": "gnosis://pr/o/r/1/changes?file=a&line=9-3",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad side",
+      "link": "gnosis://pr/o/r/1/changes?file=a&side=left",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "short sha",
+      "link": "gnosis://pr/o/r/1/changes?file=a&sha=e49f59e",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad comment",
+      "link": "gnosis://pr/o/r/1?comment=12a",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad commit",
+      "link": "gnosis://pr/o/r/1?commit=xyz",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad thread",
+      "link": "gnosis://pr/o/r/1?thread=a%20b",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad section",
+      "link": "gnosis://queue?section=everything",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "view and filters together",
+      "link": "gnosis://queue?view=Mine&repo=o/r",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad repo filter",
+      "link": "gnosis://queue?repo=o/r/x",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad branch filter",
+      "link": "gnosis://queue?branch=feat..x",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "bad settings section",
+      "link": "gnosis://settings/secrets",
+      "error": "bad-parameter"
+    },
+    {
+      "name": "activity takes no path",
+      "link": "gnosis://activity/x",
+      "error": "malformed"
+    },
+    {
+      "name": "unsupported GitHub page",
+      "link": "gnosis://open?url=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F1",
+      "error": "unsupported-url"
+    }
+  ]
+}
