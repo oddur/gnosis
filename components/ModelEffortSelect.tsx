@@ -55,6 +55,9 @@ export function ModelEffortSelect({
   const choices =
     options ??
     Object.values(PROVIDERS).flatMap((p) => p.models.map((m) => ({ value: m.id, label: `${p.label} · ${m.label}` })));
+  // Radix only keeps a popover inside the viewport. Inside a dialog the popups are laid out against the
+  // dialog (its transform makes it the containing block), and the dialog clips them, so collide with it.
+  const boundary = container?.closest<HTMLElement>('[role="dialog"]') ?? null;
   const selectedLabel = choices.find((choice) => choice.value === model)?.label ?? model;
   const normalized = normalizeEffort(provider, model, effort);
   const chooseModel = (value: string) => {
@@ -90,6 +93,7 @@ export function ModelEffortSelect({
             aria-label={`${label} and effort`}
             align="end"
             sideOffset={8}
+            collisionBoundary={boundary}
             collisionPadding={12}
           >
             <div className="model-picker-field">
@@ -99,7 +103,7 @@ export function ModelEffortSelect({
                 value={model}
                 options={choices}
                 onValueChange={chooseModel}
-                popupBoundary="viewport"
+                popupBoundary={boundary ?? 'viewport'}
               />
             </div>
             <fieldset className="model-picker-reasoning">

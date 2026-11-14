@@ -47,6 +47,28 @@ void app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     fs.writeFileSync(path.join(shots, name + '.png'), (await win.webContents.capturePage()).toPNG());
   };
+  // Lists what keeps an open model picker from being fully visible: its trigger outside the
+  // scrolling pane, or the popup outside the dialog or covered at a corner or at Done.
+  const pickerHidden = (label: string) =>
+    js<string>(`(() => {
+      const trigger = document.querySelector('[aria-label="${label}"]');
+      const popup = document.querySelector('.model-picker-popup');
+      const box = (element) => element.getBoundingClientRect();
+      const t = box(trigger), p = box(popup), pane = box(trigger.closest('.settings-panel')), dialog = box(trigger.closest('[role=dialog]'));
+      const hit = (element, x, y) => element.contains(document.elementFromPoint(x, y));
+      const problems = [];
+      if (t.top < pane.top - 1 || t.bottom > pane.bottom + 1) problems.push('trigger outside pane');
+      if (!hit(trigger, t.left + 8, (t.top + t.bottom) / 2)) problems.push('trigger covered');
+      if (p.top < dialog.top || p.bottom > dialog.bottom || p.left < dialog.left || p.right > dialog.right) problems.push('popup outside dialog');
+      for (const [x, y] of [[p.left + 6, p.top + 6], [p.right - 6, p.top + 6], [p.left + 6, p.bottom - 6], [p.right - 6, p.bottom - 6]])
+        if (!hit(popup, x, y)) problems.push('popup clipped at ' + Math.round(x) + ',' + Math.round(y));
+      const done = [...popup.querySelectorAll('button')].find((button) => button.textContent === 'Done');
+      if (!done || !hit(done, (box(done).left + box(done).right) / 2, (box(done).top + box(done).bottom) / 2)) problems.push('Done hidden');
+      const r = (b) => [b.top, b.bottom].map(Math.round);
+      return problems.length ? JSON.stringify({ problems, side: popup.dataset.side, trigger: r(t), popup: r(p), pane: r(pane), dialog: r(dialog) }) : '';
+    })()`);
+  // Waits until Radix has placed the open model picker and its entrance has finished.
+  const pickerPlaced = "(p=>p&&!p.parentElement.style.transform.includes('-200%')&&p.getAnimations().length===0)(document.querySelector('.model-picker-popup'))";
   try {
     const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
     assert.ok(fixtureUrl, 'GNOSIS_WORKBENCH_URL must point to the running fixture');
@@ -143,6 +165,30 @@ void app.whenReady().then(async () => {
     await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('[aria-label=\"Use a different model for briefings\"]')");
     await js("window.selectEffort('Briefing model', 'medium')");
+    // Near the bottom of the scrolling Settings pane, the picker stays fully visible in the dialog.
+    // At 1200px the window has room below the dialog, so a viewport-only check would open downward
+    // into the dialog's clipped edge. The dialog animates its entrance and its size after a resize;
+    // measure once it has settled.
+    const settled = "document.querySelector('.settings-dialog').getAnimations().length===0";
+    for (const height of [700, 967, 1200]) {
+      win.setContentSize(1176, height);
+      await wait(`innerHeight===${height}`);
+      await wait(settled);
+      await js(
+        "(()=>{const p=document.querySelector('[aria-label=\"Briefing model\"]').closest('.settings-panel');p.scrollTop=p.scrollHeight})()"
+      );
+      await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      await click('[aria-label="Briefing model"]');
+      await wait(pickerPlaced);
+      const hidden = await pickerHidden('Briefing model');
+      await capture(`briefing-picker-${height}-dark`);
+      await key('Escape');
+      await wait("!document.querySelector('.model-picker-popup')");
+      assert.equal(hidden, '', `Briefing model picker is fully visible at ${height}px`);
+    }
+    win.setContentSize(1280, 800);
+    await wait('innerHeight===800');
+    await wait(settled);
     await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent==='Review').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await wait("!!document.querySelector('[aria-label=\"Explanation model\"]')");
     assert.equal(await js("document.querySelector('[aria-label=\"Explanation model\"]').querySelector('.model-picker-effort').textContent"), 'Max');
@@ -187,7 +233,11 @@ void app.whenReady().then(async () => {
     await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent==='Review').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await wait("!!document.querySelector('[aria-label=\"Explanation model\"]')");
+    await wait("document.querySelector('.settings-dialog').getAnimations().length===0");
+    await js("document.querySelector('[aria-label=\"Explanation model\"]').scrollIntoView({block:'nearest'})");
     await click('[aria-label="Explanation model"]');
+    await wait(pickerPlaced);
+    assert.equal(await pickerHidden('Explanation model'), '', 'Explanation model picker is fully visible at 2x zoom');
     await click('[aria-label="Explanation model selection"]');
     await wait("!!document.querySelector('[data-slot=combobox-content]')");
     await capture('zoom-dark');
@@ -195,6 +245,13 @@ void app.whenReady().then(async () => {
       await js(
         "(()=>{const r=document.querySelector('[data-slot=combobox-content]').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight})()"
       )
+    );
+    // The dialog clips the nested model list too, so it stays inside the dialog, not just the window.
+    assert.ok(
+      await js(
+        "(()=>{const r=document.querySelector('[data-slot=combobox-content]').getBoundingClientRect(),d=document.querySelector('.settings-dialog').getBoundingClientRect();return r.top>=d.top&&r.bottom<=d.bottom&&r.left>=d.left&&r.right<=d.right})()"
+      ),
+      'Nested model list stays inside the Settings dialog at 2x zoom'
     );
     console.log(
       'Searchable selections passed: keyboard search, cancellation, nested popovers/dialogs, saved values, light/dark, laptop and zoom.'
