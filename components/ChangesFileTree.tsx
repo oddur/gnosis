@@ -64,13 +64,14 @@ export function ChangesFileTree({
       if (!entry) return null;
       const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
       const count = entry.commentCount;
-      const showCommentCount = showComments && count !== 0;
-      const comments =
-        count === undefined
-          ? entry.commentError
-            ? 'Comments unavailable'
-            : 'Loading comments…'
-          : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, including replies and resolved threads`;
+      // Files with comments get a count, and files whose comments could not be read get a dash. Nothing is
+      // shown while comments load: a placeholder would be removed again for most files once they arrive,
+      // shifting every row's stats and file name.
+      const unavailable = count === undefined && !!entry.commentError;
+      const showCommentCount = showComments && (!!count || unavailable);
+      const comments = unavailable
+        ? 'Comments unavailable'
+        : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, including replies and resolved threads`;
       return {
         text: showCommentCount ? `${changes} · ${count ?? '—'}` : changes,
         parts: [

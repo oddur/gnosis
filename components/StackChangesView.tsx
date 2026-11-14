@@ -203,7 +203,7 @@ export function StackChangesView({
       {mode === 'combined' && (
         <Button
           variant="ghost"
-          size="icon"
+          size="icon-sm"
           aria-label="Update combined changes"
           title="Update combined changes"
           disabled={busy || !!reason}

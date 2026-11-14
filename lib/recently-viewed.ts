@@ -14,10 +14,11 @@ export const recentStorageKey = (account: string) => `gnosis-recently-viewed:v1:
 export function homeVisit(home: HomeLocation): RecentVisit {
   const subject = home.item?.subject;
   const member = subject?.members[0];
-  const section = home.savedView
-    ? 'Saved reviews'
-    : home.muted
-      ? 'Muted PRs'
+  // Muted PRs replaces whichever list was open, so it names the visit and its workspace tab.
+  const section = home.muted
+    ? 'Muted PRs'
+    : home.savedView
+      ? 'Saved reviews'
       : home.filters.involvement === 'response' ? 'Needs my response'
       : home.filters.starredOnly
         ? 'Starred'
@@ -28,14 +29,15 @@ export function homeVisit(home: HomeLocation): RecentVisit {
             : home.filters.attention === 'updated'
               ? 'Updated PRs'
               : 'Review queue';
+  const view = home.muted ? null : home.viewId;
   return {
     id: subject
       ? `subject:${subject.id}`
-      : home.viewId
-        ? `view:${home.viewId}`
+      : view
+        ? `view:${view}`
         : `queue:${section}:${home.filters.repo}`,
-    title: subject?.title ?? home.viewName ?? section,
-    label: subject?.kind === 'stack' ? 'Stack' : member ? `#${member.number}` : home.viewId ? 'View' : 'Queue',
+    title: subject?.title ?? (home.muted ? section : (home.viewName ?? section)),
+    label: subject?.kind === 'stack' ? 'Stack' : member ? `#${member.number}` : view ? 'View' : 'Queue',
     detail: subject
       ? [...new Set(subject.members.map((m) => m.repo))].join(', ')
       : home.filters.repo === 'all'
