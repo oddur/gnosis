@@ -146,6 +146,7 @@ import { filterDiff } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import { initialize as initAptabase, trackEvent } from '@aptabase/electron/main';
 import { createTray, updateTrayMenu, destroyTray, setStatusFetcher } from './tray';
+import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
 import { createNotificationService, type ToastAction } from './notification-service';
 import { createDeepLinks } from './deep-link-service';
@@ -346,6 +347,14 @@ function setupLogging() {
 
 let quitConfirmed = false;
 
+/**
+ * The app's windows, without the menu bar panel. Every "main window", "create one if none" and broadcast site uses
+ * this, never `BrowserWindow.getAllWindows()`: the hidden panel would otherwise be shown, block `activate` and
+ * receive every broadcast. See src/app-windows.ts.
+ */
+const windowSet = createAppWindows(() => BrowserWindow.getAllWindows());
+const appWindows = windowSet.list;
+
 // The workbench --background colours in globals.css, so the window opens in the theme the app paints.
 const WINDOW_BACKGROUND = { light: '#fcfcfd', dark: '#171a20' };
 
@@ -371,6 +380,7 @@ function createWindow() {
   attachWindowHistoryNavigation(mainWindow, direction => mainWindow.webContents.send('history-navigate', direction));
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
+  windowSet.watchClose(mainWindow, allAppWindowsClosed);
   // A reload, crash or close clears the ready mark, so the next renderer asks for waiting targets again.
   mainWindow.webContents.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) { deepLinks.reset(ownerId); notificationContexts.delete(ownerId); } });
   mainWindow.webContents.on('render-process-gone', () => deepLinks.reset(ownerId));
@@ -437,8 +447,7 @@ async function runUpdateCheck() {
   if (!update) return;
   if (dismissedUpdateVersion === update.version) return;
 
-  const windows = BrowserWindow.getAllWindows();
-  for (const win of windows) {
+  for (const win of appWindows()) {
     win.webContents.send('update-available', update);
   }
 }
@@ -703,7 +712,7 @@ let updateController: UpdateController | null = null;
 let notifiedUpdateVersion: string | null = null;
 
 function sendUpdateStatus(status: AppUpdateStatus) {
-  for (const win of BrowserWindow.getAllWindows()) {
+  for (const win of appWindows()) {
     if (!win.webContents.isDestroyed()) win.webContents.send('update-status', status);
   }
 }
@@ -917,7 +926,7 @@ void app.whenReady().then(async () => {
   }, PREPARED_TRIM_DELAY_MS).unref();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (appWindows().length === 0) createWindow();
     if (!updateInterval && process.platform === 'linux') startUpdateChecks();
     if (!proactiveInterval && loadPreferences().proactiveMode) startProactivePolling();
   });
@@ -959,7 +968,7 @@ ipcMain.on('review-state-flushed', (_event, id: unknown) => rendererFlush.acknow
 function confirmQuitDuringGenerations(): boolean {
   if (quitConfirmed || activeGenerations.size === 0) return true;
   const count = activeGenerations.size;
-  const win = BrowserWindow.getAllWindows()[0];
+  const win = appWindows()[0];
   const response = dialog.showMessageBoxSync(win, {
     type: 'question',
     buttons: ['Cancel', 'Quit Anyway'],
@@ -993,7 +1002,8 @@ function saveBeforeQuit(): Promise<boolean> {
       // User drafts and progress must finish before quitting; only disposable cache has a deadline.
       // Windows send their pending review state first, so the final flush includes it.
       await saveWorkBeforeQuit({
-        targets: BrowserWindow.getAllWindows().map((win) => win.webContents),
+        // The panel has no pending review state and never acknowledges a flush.
+        targets: appWindows().map((win) => win.webContents),
         flush: (targets) => rendererFlush.flush(targets),
         close: () => appData.close(),
       });
@@ -1027,14 +1037,16 @@ app.on('before-quit', (event) => {
   destroyTray();
 });
 
-app.on('window-all-closed', () => {
+/** The last app window closed. Also runs while the hidden menu bar panel exists, which holds back `window-all-closed`. */
+function allAppWindowsClosed() {
   if (updateInterval) {
     clearInterval(updateInterval);
     updateInterval = null;
   }
   stopProactivePolling();
   if (process.platform !== 'darwin') app.quit();
-});
+}
+app.on('window-all-closed', allAppWindowsClosed);
 
 // ── Review history helpers ───────────────────────────────────────
 
@@ -1212,7 +1224,7 @@ function broadcastWorkbenchChanged(): void {
 }
 
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
-  for (const win of BrowserWindow.getAllWindows()) {
+  for (const win of appWindows()) {
     win.webContents.send(channel, ...args);
   }
 }
@@ -1239,7 +1251,7 @@ function sameAppPage(url: string, current: string): boolean {
 }
 
 function showOrCreateWindow(): void {
-  const windows = BrowserWindow.getAllWindows();
+  const windows = appWindows();
   if (windows.length > 0) {
     const win = windows[0];
     if (win.isMinimized()) win.restore();
@@ -1263,7 +1275,7 @@ function initTrayIfEnabled(): void {
 
   if (!raw || !('trayEnabled' in raw)) {
     // First time — ask via in-app modal once the renderer is ready
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = appWindows().at(0);
     if (win) {
       // The window now opens before startup finishes, so it may have loaded already.
       const prompt = () => win.webContents.send('show-tray-prompt');
@@ -1954,8 +1966,7 @@ ipcMain.handle('disconnect-local-clone', (_event, repo: string) => {
 });
 
 ipcMain.handle('pick-repo-dir', async (): Promise<string | null> => {
-  const windows = BrowserWindow.getAllWindows();
-  const win = BrowserWindow.getFocusedWindow() ?? (windows.length > 0 ? windows[0] : null);
+  const win = windowSet.focused() ?? appWindows().at(0);
   const opts: Electron.OpenDialogOptions = {
     title: 'Select a git repository',
     buttonLabel: 'Select',
@@ -2819,7 +2830,7 @@ const deepLinks = createDeepLinks({
   show: () => {
     showOrCreateWindow();
     // Windows may refuse focus to a background process; raising the window once brings it forward.
-    const win = BrowserWindow.getAllWindows().at(0);
+    const win = appWindows().at(0);
     if (process.platform === 'win32' && win && !win.isFocused()) {
       win.setAlwaysOnTop(true);
       win.setAlwaysOnTop(false);
@@ -2834,14 +2845,15 @@ const deepLinks = createDeepLinks({
   },
   // Prefer the focused window, then the first window.
   preferred: ready => {
-    const focused = BrowserWindow.getFocusedWindow()?.webContents.id;
+    const focused = windowSet.focused()?.webContents.id;
     return focused !== undefined && ready.includes(focused) ? focused : ready[0];
   },
 });
 const notifications = createNotificationService({
   settings: () => notificationSettings(loadPreferences()),
   focus: () => {
-    const win = BrowserWindow.getFocusedWindow();
+    // The menu bar panel having focus is not the app having focus: a notification still shows.
+    const win = windowSet.focused();
     return { focused: !!win, activeUrl: win ? notificationContexts.get(win.webContents.id)?.activeUrl : undefined };
   },
   desktop: {
@@ -2857,7 +2869,7 @@ const notifications = createNotificationService({
     },
   },
   toast: delivery => {
-    const contents = (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(0))?.webContents;
+    const contents = (windowSet.focused() ?? appWindows().at(0))?.webContents;
     if (!contents || contents.isDestroyed() || contents.isLoading() || !notificationContexts.has(contents.id)) return false;
     contents.send('notification', { type: 'show', delivery });
     return true;
@@ -3406,12 +3418,12 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
 });
 
 onClassificationUpdate((key, kinds) => {
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('file-classifications-changed', { key, kinds });
+  for (const win of appWindows()) win.webContents.send('file-classifications-changed', { key, kinds });
 });
 ipcMain.handle('load-file-filters', () => rawFileFilters.read());
 ipcMain.handle('update-file-filters', async (_event, action: FileFilterAction) => {
   const value = await rawFileFilters.update(action);
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('file-filters-changed', value);
+  for (const win of appWindows()) win.webContents.send('file-filters-changed', value);
   return value;
 });
 async function classifySnapshot(client: ReturnType<typeof changesClient>, snapshot: import('../lib/pr-changes').PrChanges) {
@@ -3443,7 +3455,8 @@ function sendSyncUpdates(updates: GitHubSyncUpdate[], failures: GitHubSyncFailur
 }
 let syncCredential: string | null = null;
 let suspended = false;
-const syncEnabled = () => !suspended && net.isOnline() && BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
+const windowVisible = () => appWindows().some(win => win.isVisible() && !win.isMinimized());
+const syncEnabled = () => !suspended && net.isOnline() && windowVisible();
 // ── Navigation predictions ──
 // The renderer predicts where the reader goes next. Main keeps the budget: predictions start only while the window
 // is visible, the system is not idle, and the predicted share and reserve allow it. See lib/github-budget.ts.
@@ -3742,7 +3755,6 @@ function sweepOwnPrs(force = false): Promise<unknown> {
     .finally(() => { sweepPending = undefined; });
   return sweepPending;
 }
-const windowVisible = () => BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
 let watchDue = 0;
 let watchPending = false;
 let watching = false;

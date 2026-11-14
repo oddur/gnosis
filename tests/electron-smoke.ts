@@ -9,6 +9,7 @@ import { createNotificationService, type DesktopNotificationOptions } from '../s
 import { createDeepLinks } from '../src/deep-link-service';
 import { notificationSettings } from '../lib/notification-settings';
 import { prTarget } from '../lib/deep-link';
+import { createAppWindows } from '../src/app-windows';
 
 const directory = process.env.GNOSIS_SMOKE_DIRECTORY;
 if (!directory) throw new Error('Run through npm run test:electron-smoke');
@@ -76,6 +77,59 @@ async function checkLockScoping() {
   assert.equal(await plain.exit(), 0);
   await a.until((event) => event.show === true, 'a launch without a link focuses the first window');
   assert.equal(b.events.some((event) => 'link' in event || 'show' in event), false, 'The other profile receives nothing');
+}
+
+/**
+ * The menu bar panel (#308) is a hidden window that is not part of the app. With it present: "show or create"
+ * shows the main window, broadcasts skip it, `activate` with only the panel creates a main window, and closing
+ * the last app window still reports it, although Electron's `window-all-closed` waits for the panel.
+ */
+async function checkAppWindows(main: BrowserWindow) {
+  const windows = createAppWindows(() => BrowserWindow.getAllWindows());
+  let allClosed = 0;
+  app.on('window-all-closed', () => allClosed++);
+  const panel = new BrowserWindow({
+    show: false, width: 360, height: 420, frame: false, skipTaskbar: true,
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  windows.exclude(panel);
+  await panel.loadURL('data:text/html,<title>Menu bar panel</title>');
+  const reached: string[] = [];
+  const send = panel.webContents.send.bind(panel.webContents);
+  panel.webContents.send = (channel: string, ...args: unknown[]) => {
+    reached.push(channel);
+    send(channel, ...args);
+  };
+  assert.deepEqual(windows.list(), [main], 'The hidden panel is not an app window');
+  const created: BrowserWindow[] = [];
+  const showOrCreate = () => {
+    const win = windows.list().at(0);
+    if (win) {
+      win.show();
+      return win;
+    }
+    const next = new BrowserWindow({ show: false, width: 400, height: 300 });
+    created.push(next);
+    return next;
+  };
+  assert.equal(showOrCreate(), main, 'Show or create shows the main window, never the panel');
+  assert.equal(panel.isVisible(), false);
+  for (const win of windows.list()) win.webContents.send('workbench-changed');
+  assert.deepEqual(reached, [], 'A broadcast does not reach the panel');
+  let lastClosed = 0;
+  windows.watchClose(main, () => lastClosed++);
+  const closed = new Promise<void>((resolve) => main.once('closed', () => resolve()));
+  main.close();
+  await closed;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(lastClosed, 1, 'Closing the last app window is reported while the panel exists');
+  assert.equal(allClosed, 0, "Electron's window-all-closed waits for the panel");
+  const reopened = showOrCreate();
+  assert.deepEqual(created, [reopened], 'Activate with only the panel present creates a main window');
+  assert.deepEqual(windows.list(), [reopened]);
+  panel.destroy();
+  return { main: reopened };
 }
 
 void app.whenReady().then(async () => {
@@ -183,9 +237,11 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await contents.executeJavaScript('window.smokeLinks'), ['review']);
     assert.equal(await contents.executeJavaScript('window.stopLinks() === undefined'), true);
     assert.equal(await contents.executeJavaScript('window.electronAPI.linkScheme'), 'gnosis', 'Without --gnosis-link-dev the preload uses the packaged scheme');
+    const panelChecks = await checkAppWindows(window);
+    window = panelChecks.main;
     await checkLockScoping();
     console.log(
-      `PASS: Electron window, isolated production preload, IPC, SQLite worker persistence, native navigation bridge, notification routing by focus${focused ? '' : ' (focused route skipped: no window focus on this display)'}, deep-link handshake, single-instance lock per --user-data-dir`
+      `PASS: Electron window, isolated production preload, IPC, SQLite worker persistence, native navigation bridge, notification routing by focus${focused ? '' : ' (focused route skipped: no window focus on this display)'}, deep-link handshake, single-instance lock per --user-data-dir, the menu bar panel outside the app's windows`
     );
   } catch (error) {
     console.error(error);
