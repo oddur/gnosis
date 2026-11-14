@@ -23,7 +23,9 @@ export interface ActivityCapsule {
 /** A task's identity at its latest state, so a retried task that fails again is new. */
 export const seenKey = (task: Pick<ActivityTask, 'id' | 'updatedAt'>) => `${task.id}@${task.updatedAt}`;
 
-const quiet = (task: ActivityTask) => task.kind === 'preload' || task.kind === 'github';
+// A provider pause can last hours. It is a notice in the list and on each PR, not running work in the title bar.
+const quiet = (task: ActivityTask) =>
+  task.kind === 'preload' || task.kind === 'github' || task.id.startsWith('briefing-pause:');
 const running = (task: ActivityTask) => task.status === 'running' || task.status === 'paused';
 const unfinished = (task: ActivityTask) => running(task) || task.status === 'queued';
 /** Results someone waits for. A GitHub refresh finishing is not news. */

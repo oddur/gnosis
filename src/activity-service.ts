@@ -78,6 +78,16 @@ export function createActivityService(now = () => Date.now(), changed: () => voi
           tasks.delete(id);
       return [...tasks.values()].map(({ task }) => ({ ...task, ...(task.steps ? { steps: structuredClone(task.steps) } : {}) }));
     },
+    /** Remove failed tasks. Active work and other results stay. */
+    clearFailed() {
+      let removed = false;
+      for (const [id, { task }] of tasks)
+        if (task.status === 'failed') {
+          tasks.delete(id);
+          removed = true;
+        }
+      if (removed) changed();
+    },
     async act(id: string, action: ActivityAction) {
       changed();
       const entry = tasks.get(id);

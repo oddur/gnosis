@@ -2338,3 +2338,157 @@ void test('a discovery that read a PR before it merged does not publish it as op
     assert.equal(s.service.snapshot().items.length, 0);
   } finally { s.cleanup(); }
 });
+
+const codexStyleLimit = 'You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again in 2 hours.';
+async function waitFor(check: () => boolean | Promise<boolean>, label: string) {
+  for (let i = 0; i < 200; i++) {
+    if (await check()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error('Timed out waiting for ' + label);
+}
+
+void test('a usage limit pauses automatic briefings with one notice, refunds the attempt, and resumes after the reset', async () => {
+  let calls = 0, limited = true;
+  const s = setup(() => {
+    calls++;
+    return limited ? Promise.reject(new Error(codexStyleLimit)) : Promise.resolve('{"summary":"Ready","systems":[],"priorities":[]}');
+  });
+  let clock = Date.now();
+  const saved = new Map<string, string>();
+  const deps = { ...s.deps, now: () => clock, storage: createMemoryStorage(saved) };
+  const service = createWorkbenchService(deps);
+  try {
+    await service.queue();
+    await waitFor(() => calls === 1 && service.activity().some((t) => t.id === 'briefing-pause:claude'), 'the pause');
+    const queue = await settle(service, 'paused');
+    assert.match(queue.items[0].briefing?.pauseDetail ?? '', /^Claude usage limit reached\. Automatic briefings resume at .+\. You can still generate one manually\.$/);
+    assert.equal(queue.remaining, 1, 'the rejected attempt is not charged');
+    const tasks = service.activity();
+    assert.deepEqual(tasks.map((t) => [t.id, t.status]), [['briefing-pause:claude', 'paused']], 'one notice, no failed row per PR');
+    // Further pumps do not fire into the limit, including after a restart.
+    for (let i = 0; i < 5; i++) await service.queue();
+    const restarted = createWorkbenchService({ ...deps, storage: createMemoryStorage(saved) });
+    await restarted.queue();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(calls, 1);
+    // After the reset, automatic briefings run again and the notice goes.
+    limited = false;
+    clock += 2 * 60 * 60_000 + 1;
+    await restarted.queue();
+    await settle(restarted, 'ready');
+    assert.equal(calls, 2);
+    assert.equal(restarted.activity().some((t) => t.id.startsWith('briefing-pause:')), false);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('a manual briefing still runs during a pause, and Retry on the notice resumes automatic briefings', async () => {
+  let calls = 0, limited = true;
+  const s = setup(() => {
+    calls++;
+    return limited ? Promise.reject(new Error(codexStyleLimit)) : Promise.resolve('{"summary":"Ready","systems":[],"priorities":[]}');
+  });
+  try {
+    const q = await s.service.queue();
+    await waitFor(() => s.service.activity().some((t) => t.id === 'briefing-pause:claude'), 'the pause');
+    s.service.retry(q.items[0].subject.id, true);
+    const failed = await settle(s.service, 'failed');
+    assert.equal(calls, 2, 'a manual run is attempted');
+    assert.match(failed.items[0].briefing?.error ?? '', /usage limit/);
+    limited = false;
+    s.service.retry(q.items[0].subject.id, false);
+    s.service.resumeAutomaticBriefings();
+    await settle(s.service, 'ready');
+    assert.equal(calls, 3);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('saved limit failures whose reset has passed are queued again instead of shown', async () => {
+  const s = setup(() => Promise.resolve('{"summary":"Ready","systems":[],"priorities":[]}'), false);
+  try {
+    const k = (await s.service.queue()).items[0].briefing?.key ?? '';
+    const file = path.join(s.deps.directory(), 'workbench.json');
+    const state = JSON.parse(fs.readFileSync(file, 'utf8')) as { briefs: Record<string, unknown> };
+    state.briefs[k] = {
+      key: k,
+      status: 'failed',
+      error: 'You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 13th, 2026 1:25 PM.',
+      updatedAt: '2026-11-12T23:05:00.985Z',
+    };
+    fs.writeFileSync(file, JSON.stringify(state));
+    const restarted = createWorkbenchService({ ...s.deps, now: () => Date.parse('2026-11-15T10:00:00Z') });
+    const q = await restarted.queue();
+    assert.notEqual(q.items[0].briefing?.status, 'failed');
+    assert.deepEqual(restarted.activity(), []);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('slow evidence reads defer a briefing without charging it, and a slow model fails with a clear message', async () => {
+  let calls = 0;
+  const s = setup(((options?: { signal?: AbortSignal }) => {
+    calls++;
+    // A CLI killed by the abort reports cancellation; the abort reason must win.
+    return new Promise<string>((_resolve, reject) => options?.signal?.addEventListener('abort', () => reject(new Error('GNOSIS_CANCELLED'))));
+  }) as () => Promise<string>);
+  let hang = true;
+  const listFiles = s.deps.client().pulls.listFiles;
+  Object.assign(s.deps.client().pulls, {
+    listFiles: (...args: Parameters<typeof listFiles>) => (hang ? new Promise(() => {}) : listFiles(...args)),
+  });
+  let clock = Date.now();
+  const service = createWorkbenchService({ ...s.deps, now: () => clock, briefingTimeouts: { evidenceMs: 30, modelMs: 30 } });
+  try {
+    await service.queue();
+    await waitFor(() => service.activity().some((t) => t.status === 'paused' && /GitHub is busy/.test(t.detail)), 'the deferral');
+    assert.equal(calls, 0);
+    assert.equal(service.snapshot().remaining, 1, 'a deferral is not charged');
+    assert.equal(service.isGenerating(), false, 'the pump is free while the reads are slow');
+    hang = false;
+    clock += 5 * 60_000 + 1;
+    await service.queue();
+    const failed = await settle(service, 'failed');
+    assert.equal(calls, 1);
+    assert.match(failed.items[0].briefing?.error ?? '', /^Claude did not finish the briefing within \d+ seconds\. Retry this briefing\.$/);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('dismissed and cleared briefing failures stay hidden after a restart, and old automatic failures leave Activity', async () => {
+  const s = setup(() => Promise.reject(new Error('Provider unavailable')));
+  s.prefs.briefingDailyLimit = 5;
+  let clock = Date.now();
+  const saved = new Map<string, string>();
+  const deps = { ...s.deps, now: () => clock, storage: createMemoryStorage(saved) };
+  const service = createWorkbenchService(deps);
+  try {
+    await service.queue();
+    await settle(service, 'failed');
+    const [task] = service.activity();
+    assert.equal(task.status, 'failed');
+    assert.equal(service.dismissActivity(task.id), true);
+    assert.deepEqual(service.activity(), []);
+    const restarted = createWorkbenchService({ ...deps, storage: createMemoryStorage(saved) });
+    await restarted.queue();
+    assert.deepEqual(restarted.activity(), []);
+    assert.equal((await restarted.queue()).items[0].briefing?.status, 'failed', 'the PR still shows the failure');
+    // A new failure after Retry shows again; Clear failed hides it.
+    restarted.retry(task.subjectId ?? '', true);
+    await waitFor(() => restarted.activity().some((t) => t.status === 'failed'), 'the new failure');
+    restarted.clearFailedActivity();
+    assert.deepEqual(restarted.activity(), []);
+    // An automatic failure older than a day leaves Activity by itself.
+    restarted.retry(task.subjectId ?? '', false);
+    await waitFor(() => restarted.activity().some((t) => t.status === 'failed'), 'the automatic failure');
+    clock += 25 * 60 * 60_000;
+    assert.deepEqual(restarted.activity().filter((t) => t.status === 'failed'), []);
+  } finally {
+    s.cleanup();
+  }
+});

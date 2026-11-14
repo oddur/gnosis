@@ -213,6 +213,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
   activityAction: (id: string, action: ActivityAction): Promise<void> =>
     ipcRenderer.invoke('activity-action', id, action),
+  clearFailedActivity: (): Promise<void> => ipcRenderer.invoke('activity-clear-failed'),
   workbenchMarkPrRead: (request: MarkPrReadRequest): Promise<WorkbenchQueue> =>
     ipcRenderer.invoke('workbench-mark-pr-read', request),
   onPrReadStateChanged: (callback: () => void) => {

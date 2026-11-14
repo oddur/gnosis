@@ -283,6 +283,20 @@ export const ActivityDrawer = memo(function ActivityDrawer({
       if (alive.current) setPending(new Set(pendingActions.current));
     }
   }
+  const [clearing, setClearing] = useState(false);
+  /** Failed rows leave Activity. Briefing failures stay on their PRs, with Retry. */
+  async function clearFailed() {
+    setClearing(true);
+    setError('');
+    try {
+      await window.electronAPI.clearFailedActivity?.();
+      if (alive.current) await refresh(true);
+    } catch (e) {
+      if (alive.current) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (alive.current) setClearing(false);
+    }
+  }
   const running = tasks.filter((t) => t.status === 'running');
   const queued = tasks.filter((t) => t.status === 'queued').length;
   const failed = tasks.filter((t) => t.status === 'failed').length;
@@ -487,6 +501,11 @@ export const ActivityDrawer = memo(function ActivityDrawer({
           <header>
             <h2 id={headingId}>Activity</h2>
             <span className="activity-summary">{summary}</span>
+            {failed > 0 && window.electronAPI.clearFailedActivity && (
+              <button className="activity-clear" disabled={clearing} onClick={() => void clearFailed()}>
+                Clear failed
+              </button>
+            )}
             <button ref={closeButton} className="workbench-icon" aria-label="Close activity" onClick={close}>
               <X size={15} />
             </button>

@@ -47,6 +47,18 @@ import {
 import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
 import { createDiscoveryListings, nextDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
+import { parseModelJson } from '../lib/json-repair';
+import {
+  BRIEFING_DEFER_MS,
+  BRIEFING_EVIDENCE_TIMEOUT_MS,
+  BRIEFING_MAX_DEFERRALS,
+  BRIEFING_MODEL_TIMEOUT_MS,
+  FAILED_BRIEFING_RETENTION_MS,
+  expiredProviderFailure,
+  providerPause,
+  providerPauseNotice,
+  type ProviderPause,
+} from '../lib/provider-limits';
 import {
   groupSubjects,
   isDependabot,
@@ -75,6 +87,8 @@ interface State {
   day: string;
   used: number;
   repositoryUsed?: Record<string, number>;
+  /** Automatic briefings wait for a provider's usage limit, rate limit or sign-in. Survives restarts. */
+  providerPauses?: Partial<Record<ProviderPause['provider'], ProviderPause>>;
   checkedAt?: Record<string, number>;
   filters?: QueueFilters;
   discoveredAt?: number;
@@ -121,6 +135,8 @@ interface Deps {
     count?: () => boolean;
   };
   provider?: typeof getProvider;
+  /** Tests shorten the briefing phase allowances. */
+  briefingTimeouts?: { evidenceMs?: number; modelMs?: number };
   now?: () => number;
   /** The shared GitHub pause, for the notification sweep and watch mode. Tests inject one. */
   backoff?: typeof githubClients.backoff;
@@ -147,6 +163,13 @@ class BriefingPaused extends Error {
     super('Paused for your active review.');
   }
 }
+/** A briefing phase ran past its allowance. `evidence` is the GitHub reads; `model` is generation. */
+class BriefingTimeout extends Error {
+  constructor(readonly phase: 'evidence' | 'model', message: string) {
+    super(message);
+  }
+}
+const providerLabel = (provider: string) => (provider === 'codex' ? 'Codex' : 'Claude');
 export function createWorkbenchService(deps: Deps) {
   const now = deps.now ?? Date.now;
   // Without saved data, as in tests, user stores live in memory for this service.
@@ -238,6 +261,14 @@ export function createWorkbenchService(deps: Deps) {
     if (!state || state.account !== account) {
       try {
         state = (deps.storage ? deps.storage.read(`workbench:${account.toLowerCase()}`) : JSON.parse(fs.readFileSync(cachePath(), 'utf8'))) as State;
+        const provider = briefingModel(deps.preferences()).provider;
+        // A briefing failed by a provider limit that has since reset is queued again, not shown as a failure.
+        // Briefings saved before provider pauses existed failed this way once per PR. The daily limit still applies.
+        state.briefs = Object.fromEntries(
+          Object.entries(state.briefs).filter(
+            ([, brief]) => !(brief?.status === 'failed' && expiredProviderFailure(provider, brief.error, Date.parse(brief.updatedAt), now()))
+          )
+        );
         for (const brief of Object.values(state.briefs))
           if (brief?.status === 'generating') {
             brief.status = 'failed';
@@ -286,6 +317,15 @@ export function createWorkbenchService(deps: Deps) {
     return value;
   }
   const limit = (preferences = deps.preferences()) => Math.min(100, Math.max(0, (preferences.briefingDailyLimit ?? 10) || 0));
+  const withoutProvider = (pauses: State['providerPauses'], provider: ProviderPause['provider']) =>
+    Object.fromEntries(Object.entries(pauses ?? {}).filter(([name]) => name !== provider));
+  /** The provider's active pause. An expired pause is forgotten. */
+  function activePause(s: State, provider: ProviderPause['provider']): ProviderPause | undefined {
+    const pause = s.providerPauses?.[provider];
+    if (pause && pause.until > now()) return pause;
+    if (pause) s.providerPauses = withoutProvider(s.providerPauses, provider);
+    return undefined;
+  }
   const queueSets = (s = load()): QueueSets => ({
     archived: new Set(s.archivedRepos ?? []),
     retired: new Set(s.retiredIds ?? []),
@@ -397,17 +437,19 @@ export function createWorkbenchService(deps: Deps) {
       return (savedMerge ??= mergeStates(members, deps.cachedSignals?.(members) ?? []));
     };
     const responseSignals = new Map((deps.cachedSignals?.(allMembers.filter(member => member.author.toLowerCase() === s.account.toLowerCase())) ?? []).map(value => [value.url, value]));
+    const pause = activePause(s, selection.provider);
+    const pauseNotice = pause && providerPauseNotice(pause, now());
     const allItems = subjects.map((subject) => {
       const review = reviewFor(subject, visible);
       const k = key(subject, selection);
       const cached = s.briefs[k];
-      const block = automaticBriefingBlock(subject, preferences, s.used, s.repositoryUsed ?? {});
+      const block = automaticBriefingBlock(subject, preferences, s.used, s.repositoryUsed ?? {}) ?? pauseNotice;
       const manual = requestedBriefings.has(requestKey(k));
       const briefing: Briefing = !cached || cached.status === 'paused' ? {
         ...(cached ?? {}), key: k,
         status: activeSubjects.has(subject) && (manual || !block) ? (cached?.status ?? 'queued') : 'paused',
         pauseReason: manual ? undefined : !activeSubjects.has(subject) ? 'manual' : block ? automaticBriefingBlockReason(block) : undefined,
-        pauseDetail: manual ? undefined : block,
+        pauseDetail: manual ? undefined : block ?? cached?.pauseDetail,
         updatedAt: cached?.updatedAt ?? new Date(now()).toISOString(),
       } : cached;
       const item = {
@@ -1135,18 +1177,49 @@ export function createWorkbenchService(deps: Deps) {
       const manualItem = items.find((i) => requestedBriefings.has(requestKey(key(i.subject, p))));
       const members = candidates.flatMap(item => item.subject.members);
       const saved = filters.sort.key === 'status' || filters.merge !== 'all' ? deps.cachedSignals?.(members) : undefined;
-      const item = manualItem ?? prioritizeBriefings(candidates, filters, now(), deps.auth().login, filters.sort.key === 'status' ? saved : undefined,
+      // A provider pause stops automatic briefings only. A briefing the user asks for still runs.
+      const providerPaused = activePause(s, p.provider);
+      const item = manualItem ?? (providerPaused ? undefined : prioritizeBriefings(candidates, filters, now(), deps.auth().login, filters.sort.key === 'status' ? saved : undefined,
         filters.merge === 'all' ? undefined : mergeStates(members, saved ?? [])).find(
-        i => !automaticBriefingBlock(i.subject, preferences, s.used, s.repositoryUsed ?? {}) &&
-          (!s.briefs[key(i.subject, p)] || s.briefs[key(i.subject, p)]?.status === 'paused')
-      );
+        i => {
+          const brief = s.briefs[key(i.subject, p)];
+          return !automaticBriefingBlock(i.subject, preferences, s.used, s.repositoryUsed ?? {}) &&
+            (!brief || (brief.status === 'paused' && (brief.retryAt ?? 0) <= now()));
+        }
+      ));
       if (!item) return;
       const subject = item.subject,
         k = key(subject, p);
+      const previous = s.briefs[k];
       const controller = new AbortController();
       running = controller;
       runningKey = k;
-      const timeout = setTimeout(() => controller.abort(new Error('Briefing exceeded 90 seconds.')), 90000);
+      const startedAt = now();
+      const modelTimeoutMs = deps.briefingTimeouts?.modelMs ?? BRIEFING_MODEL_TIMEOUT_MS[p.effort];
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      // Each phase has its own allowance. Waiting for GitHub does not use the model's time.
+      const arm = (phase: 'evidence' | 'model') => {
+        clearTimeout(timeout);
+        timeout = phase === 'evidence'
+          ? setTimeout(() => controller.abort(new BriefingTimeout('evidence', 'GitHub was too slow to load this PR for a briefing. Retry this briefing.')), deps.briefingTimeouts?.evidenceMs ?? BRIEFING_EVIDENCE_TIMEOUT_MS)
+          : setTimeout(() => controller.abort(new BriefingTimeout('model', `${providerLabel(p.provider)} did not finish the briefing within ${Math.round(modelTimeoutMs / 1000)} seconds. Retry this briefing.`)), modelTimeoutMs);
+      };
+      arm('evidence');
+      /** GitHub reads take no signal. Stop waiting for them when the briefing stops. */
+      const abortable = <T,>(work: Promise<T>) =>
+        new Promise<T>((resolve, reject) => {
+          const signal = controller.signal;
+          if (signal.aborted) {
+            reject(signal.reason as Error);
+            return;
+          }
+          const stop = () => reject(signal.reason as Error);
+          signal.addEventListener('abort', stop, { once: true });
+          work.then(
+            (value) => { signal.removeEventListener('abort', stop); resolve(value); },
+            (error: unknown) => { signal.removeEventListener('abort', stop); reject(error instanceof Error ? error : new Error(String(error))); }
+          );
+        });
       const preempt = setInterval(() => {
         if (
           deps.busy() ||
@@ -1162,7 +1235,13 @@ export function createWorkbenchService(deps: Deps) {
         s.repositoryUsed ??= {};
         for (const repo of chargedRepos) s.repositoryUsed[repo] = (s.repositoryUsed[repo] ?? 0) + 1;
       }
-      s.briefs[k] = { key: k, status: 'generating', updatedAt: new Date().toISOString() };
+      const refund = () => {
+        if (manualItem || s.day !== chargedDay) return;
+        s.used = Math.max(0, s.used - 1);
+        s.repositoryUsed ??= {};
+        for (const repo of chargedRepos) s.repositoryUsed[repo] = Math.max(0, (s.repositoryUsed[repo] ?? 0) - 1);
+      };
+      s.briefs[k] = { key: k, status: 'generating', ...(manualItem ? { manual: true } : {}), updatedAt: new Date().toISOString() };
       save();
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-briefing-'));
       let generationStarted = false;
@@ -1172,8 +1251,8 @@ export function createWorkbenchService(deps: Deps) {
         for (const m of subject.members) {
           controller.signal.throwIfAborted();
           const { owner, repo, pullNumber } = parsePrUrl(m.url);
-          const files = await withGitHubPriority(manualItem ? 'foreground' : 'background',
-            () => getChangedFiles(octokit, owner, repo, pullNumber));
+          const files = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
+            () => getChangedFiles(octokit, owner, repo, pullNumber)));
           context.push({
             pr: m.url,
             title: m.title,
@@ -1183,8 +1262,8 @@ export function createWorkbenchService(deps: Deps) {
         }
         controller.signal.throwIfAborted();
         const assertRevision = async () => {
-          const current = await withGitHubPriority(manualItem ? 'foreground' : 'background',
-            () => Promise.all(subject.members.map((m) => fetchMember(octokit, m.url, m.role))));
+          const current = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
+            () => Promise.all(subject.members.map((m) => fetchMember(octokit, m.url, m.role)))));
           if (fingerprint({ ...subject, members: current }) !== fingerprint(subject))
             throw new Error('This change updated during briefing. Refresh the queue for a new briefing.');
         };
@@ -1200,6 +1279,7 @@ export function createWorkbenchService(deps: Deps) {
         controller.signal.throwIfAborted();
         let output = 0;
         generationStarted = true;
+        arm('model');
         const raw = await (deps.provider ?? getProvider)(p.provider).generate({
           model: p.model,
           thinking: p.thinking,
@@ -1216,14 +1296,11 @@ export function createWorkbenchService(deps: Deps) {
           },
         });
         controller.signal.throwIfAborted();
+        arm('evidence');
         await assertRevision();
         controller.signal.throwIfAborted();
-        const body = raw
-          .replace(/^```(?:json)?\s*/, '')
-          .replace(/\s*```$/, '')
-          .trim();
-        const parsed = JSON.parse(body) as { summary?: unknown; systems?: unknown; priorities?: unknown };
-        if (typeof parsed.summary !== 'string' || !parsed.summary.trim())
+        const parsed = parseModelJson(raw) as { summary?: unknown; systems?: unknown; priorities?: unknown } | null;
+        if (!parsed || typeof parsed.summary !== 'string' || !parsed.summary.trim())
           throw new Error('The model returned an invalid briefing.');
         const strings = (value: unknown, max: number) =>
           Array.isArray(value)
@@ -1241,29 +1318,56 @@ export function createWorkbenchService(deps: Deps) {
           priorities: strings(parsed.priorities, 3),
           updatedAt: new Date().toISOString(),
         };
-      } catch (error) {
-        const limited = githubRateLimit(error, now());
+        // A briefing that works shows the provider is available again.
+        if (s.providerPauses?.[p.provider]) s.providerPauses = withoutProvider(s.providerPauses, p.provider);
+        console.log(`[briefing] Ready in ${((now() - startedAt) / 1000).toFixed(1)}s (${p.provider} ${p.model}, ${p.effort})`);
+      } catch (thrown) {
+        // An abort makes the CLI report GNOSIS_CANCELLED. The abort reason says what actually happened.
+        const reason: unknown = controller.signal.aborted ? controller.signal.reason : undefined;
+        const error = reason instanceof Error ? reason : thrown;
+        const message = error instanceof Error ? error.message : String(error);
+        const limited = githubRateLimit(thrown, now());
+        const pause = !controller.signal.aborted && generationStarted ? providerPause(p.provider, thrown, now()) : undefined;
+        const slowGitHub = error instanceof BriefingTimeout && error.phase === 'evidence';
         if (limited) {
           cooldown = { account: s.account, error: limited };
-          if (!generationStarted && !manualItem && s.day === chargedDay) {
-            s.used = Math.max(0, s.used - 1);
-            s.repositoryUsed ??= {};
-            for (const repo of chargedRepos) s.repositoryUsed[repo] = Math.max(0, (s.repositoryUsed[repo] ?? 0) - 1);
-          }
+          if (!generationStarted) refund();
         }
-        s.briefs[k] = {
-          key: k,
-          status:
-            limited || controller.signal.reason instanceof BriefingPaused
-              ? 'paused'
-              : controller.signal.reason instanceof BriefingCancelled
-                ? 'cancelled'
-                : 'failed',
-          error: error instanceof Error ? error.message : String(error),
-          updatedAt: new Date().toISOString(),
-        };
+        if (pause) {
+          // One notice replaces a failure per PR. The provider rejected the attempt, so it is not charged.
+          s.providerPauses = { ...s.providerPauses, [p.provider]: pause };
+          refund();
+          console.warn(`[briefing] ${providerLabel(p.provider)} ${pause.kind} limit. Automatic briefings paused until ${new Date(pause.until).toISOString()}${pause.resetKnown ? '' : ' (backoff)'}: ${pause.message}`);
+        } else if (!(reason instanceof BriefingPaused) && !(reason instanceof BriefingCancelled))
+          console.warn(`[briefing] Failed after ${((now() - startedAt) / 1000).toFixed(1)}s in the ${generationStarted ? 'model' : 'GitHub'} phase (${p.provider} ${p.model}, ${p.effort}): ${message}`);
+        if (pause && !manualItem) s.briefs = Object.fromEntries(Object.entries(s.briefs).filter(([brief]) => brief !== k));
+        else if (slowGitHub && !manualItem && (previous?.deferrals ?? 0) < BRIEFING_MAX_DEFERRALS) {
+          // GitHub reads wait behind interactive work. Try again later instead of failing, and do not charge it.
+          refund();
+          s.briefs[k] = {
+            key: k,
+            status: 'paused',
+            pauseDetail: 'GitHub is busy. This briefing will try again in a few minutes.',
+            retryAt: now() + BRIEFING_DEFER_MS,
+            deferrals: (previous?.deferrals ?? 0) + 1,
+            updatedAt: new Date().toISOString(),
+          };
+        } else
+          s.briefs[k] = {
+            key: k,
+            status:
+              limited || reason instanceof BriefingPaused
+                ? 'paused'
+                : reason instanceof BriefingCancelled
+                  ? 'cancelled'
+                  : 'failed',
+            error: message,
+            ...(manualItem ? { manual: true } : {}),
+            updatedAt: new Date().toISOString(),
+          };
       } finally {
-        if (s.briefs[k].status !== 'paused') requestedBriefings.delete(`${s.account}:${k}`);
+        // A provider pause removes the automatic briefing, so it may be missing here.
+        if (!Object.hasOwn(s.briefs, k) || s.briefs[k]?.status !== 'paused') requestedBriefings.delete(`${s.account}:${k}`);
         clearTimeout(timeout);
         clearInterval(preempt);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -1412,17 +1516,33 @@ export function createWorkbenchService(deps: Deps) {
       void pump(queue);
       const preferences = deps.preferences();
       const p = modelSettings(preferences);
-      return queue.items.flatMap(({ subject, briefing: projected }) => {
+      const pause = activePause(load(), p.provider);
+      // One notice for a provider limit, instead of a failed row for every PR it stopped.
+      const notice: ActivityTask[] = pause
+        ? [{
+            id: `briefing-pause:${pause.provider}`,
+            kind: 'briefing',
+            title: 'Automatic briefings paused',
+            model: p.model,
+            status: 'paused',
+            detail: providerPauseNotice(pause, now()),
+            updatedAt: new Date(pause.at).toISOString(),
+            canCancel: false,
+            // Retry clears the pause, for when the user knows the limit has reset.
+            canRetry: true,
+          }]
+        : [];
+      return [...notice, ...queue.items.flatMap(({ subject, briefing: projected }): ActivityTask[] => {
         if (!projected) return [];
         // pump can start a briefing synchronously before its first network await.
         const cached = load().briefs[projected.key];
         const briefing = cached ?? projected;
         if ((!cached && briefing.status === 'paused') || projected.pauseReason === 'filter') return [];
-        if (
-          (briefing.status === 'ready' || briefing.status === 'cancelled') &&
-          Date.now() - Date.parse(briefing.updatedAt) > ACTIVITY_RETENTION_MS
-        )
-          return [];
+        if (briefing.dismissed) return [];
+        const age = now() - Date.parse(briefing.updatedAt);
+        if ((briefing.status === 'ready' || briefing.status === 'cancelled') && age > ACTIVITY_RETENTION_MS) return [];
+        // An old automatic failure leaves Activity. The PR still shows it, with Retry.
+        if (briefing.status === 'failed' && !briefing.manual && age > FAILED_BRIEFING_RETENTION_MS) return [];
         const status =
           briefing.status === 'generating' ? 'running' : briefing.status === 'ready' ? 'completed' : briefing.status;
         return [
@@ -1450,7 +1570,29 @@ export function createWorkbenchService(deps: Deps) {
             canRetry: ['failed', 'cancelled'].includes(status),
           },
         ];
-      });
+      })];
+    },
+    /** Hide a finished briefing from Activity. Saved, so it stays hidden after a restart. */
+    dismissActivity(id: string) {
+      const brief = load().briefs[id.replace(/^briefing:/, '')];
+      if (!brief || brief.status === 'generating' || brief.status === 'queued' || brief.status === 'paused') return false;
+      brief.dismissed = true;
+      save();
+      return true;
+    },
+    /** Hide every failed briefing from Activity. They still show on their PRs, with Retry. */
+    clearFailedActivity() {
+      const failed = Object.values(load().briefs).filter((brief): brief is Briefing => brief?.status === 'failed' && !brief.dismissed);
+      for (const brief of failed) brief.dismissed = true;
+      if (failed.length) save();
+    },
+    /** Start automatic briefings again before a provider pause ends. */
+    resumeAutomaticBriefings() {
+      const s = load();
+      if (!s.providerPauses || !Object.keys(s.providerPauses).length) return;
+      s.providerPauses = {};
+      save();
+      void pump();
     },
     cancel(id: string) {
       const sub = view(true).items.find((item) => item.subject.id === id)?.subject;

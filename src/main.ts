@@ -3101,7 +3101,6 @@ const workbench = createWorkbenchService({
   busy: () => activeGenerations.size > 0 || activeForegroundChats > 0 || activities.list().some(t=>t.kind==='exploration' && t.status==='running'),
 });
 let activeForegroundChats = 0;
-const dismissedBriefings = new Map<string,string>();
 ipcMain.handle('load-review-state', (_event, legacy: Record<string,string>) => appData.loadReviewState(legacy));
 ipcMain.handle('save-review-state', (_event, value: ReviewStateWrite) => appData.saveReviewState(value));
 ipcMain.handle('save-file-progress', (_event, value: FileProgressPatch) => appData.saveFileProgress(value));
@@ -3109,18 +3108,27 @@ ipcMain.handle('list-activity', () => {
   prMergeMonitor.tick();
   const visibleReviews = new Set(workbench.visibleHistory().map(entry => entry.id));
   const hiddenReviews = new Set(readReviewsIndex().flatMap(entry => visibleReviews.has(entry.id) ? [] : [entry.id]));
-  return [...activities.list().filter(task => (!task.account || task.account === cachedLogin) && (!task.reviewId || !hiddenReviews.has(task.reviewId))), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
+  return [...activities.list().filter(task => (!task.account || task.account === cachedLogin) && (!task.reviewId || !hiddenReviews.has(task.reviewId))), ...workbench.activity()];
 });
 handleInteractive('activity-action', async (_event, id:string, action:ActivityAction) => {
   if (!['cancel','retry','dismiss'].includes(action)) throw new Error('Invalid task action.');
+  if (id.startsWith('briefing-pause:')) {
+    if (action==='retry') {workbench.resumeAutomaticBriefings();return;}
+    throw new Error('This briefing action is no longer available.');
+  }
   const briefing=workbench.activity().find(t=>t.id===id);
   if (briefing) {
-    if (action==='dismiss' && !briefing.canCancel) {dismissedBriefings.set(id,briefing.updatedAt);return;}
+    if (action==='dismiss' && !briefing.canCancel) {workbench.dismissActivity(id);return;}
     if (action==='cancel' && briefing.canCancel && briefing.subjectId) {workbench.cancel(briefing.subjectId);return;}
     if (action==='retry' && briefing.canRetry && briefing.subjectId) {workbench.retry(briefing.subjectId, true);return;}
     throw new Error('This briefing action is no longer available.');
   }
   await activities.act(id,action);
+});
+// Clears finished failures only. Running, queued and paused work stays, and briefing failures still show on their PRs.
+handleInteractive('activity-clear-failed', () => {
+  activities.clearFailed();
+  workbench.clearFailedActivity();
 });
 ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   const token = getResolvedToken();
