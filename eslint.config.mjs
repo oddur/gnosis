@@ -24,6 +24,6 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
-    ignores: ['.vite/**', 'out/**', 'build/**', 'dist/**'],
+    ignores: ['.vite/**', 'out/**', 'build/**', 'dist/**', 'dist-extension/**'],
   }
 );
