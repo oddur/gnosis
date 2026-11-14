@@ -110,6 +110,9 @@ void app.whenReady().then(async () => {
     for (const name of destinations) {
       await destination(name);
       byView[name] = await rects(queueChrome);
+      // The workspace tab names the list on screen.
+      const tabTitle = await js<string>(`document.querySelector('.workspace-tab-select[aria-selected=true]')?.textContent.trim() ?? ''`);
+      expect(`workspace tab names ${name}`, tabTitle.startsWith(name), tabTitle);
       expect(`stray focus after opening ${name}`, !(await strayFocus()), await strayFocus());
       await capture(`queue-${name.replace(/\W+/g, '-').toLowerCase()}`);
     }
