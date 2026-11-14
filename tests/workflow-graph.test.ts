@@ -26,7 +26,17 @@ import { parseWorkflow, assembleWorkflow } from '../src/workflow-definition';
 import { readWorkflowGraph, readWorkflowRuns } from '../src/workflow-graph-service';
 import { createGitHubClientPool, githubCacheFor } from './cache-test-pool';
 import type { WorkflowJob } from '../lib/workflow-graph';
-import type { PrChecks } from '../lib/pr-checks';
+import { checkCounts, checkGroup, orderedChecks, type PrChecks } from '../lib/pr-checks';
+import {
+  actionsNeedAttention,
+  actionsRunId,
+  checkGroupLabel,
+  checkLinkLabel,
+  externalCheckGroups,
+  isActionsCheck,
+  workflowSidebarEntries,
+  workflowWarningSummary,
+} from '../lib/workflow-external';
 
 const source = `name: CI
 on: pull_request
@@ -1314,4 +1324,122 @@ void test('falls back to REST for oversize or failed blobs', async () => {
     failed.calls.some((c) => c.includes('/contents/')),
     'A failed query falls back to REST'
   );
+});
+
+type FixtureCheck = PrChecks['checks'][number];
+const fixtureCheck = (id: number, name: string, conclusion: string | null, extra: Partial<FixtureCheck> = {}) =>
+  ({
+    id: `check:${id}`,
+    databaseId: id,
+    kind: 'check',
+    name,
+    provider: 'GitHub Actions',
+    required: null,
+    status: conclusion ? 'completed' : 'in_progress',
+    conclusion,
+    startedAt: null,
+    completedAt: null,
+    url: `https://github.com/acme/widgets/actions/runs/${id < 20 ? 1 : 2}/job/${id}`,
+    ...extra,
+  }) as FixtureCheck;
+const fixtureRun = (id: number, name: string) => ({
+  id,
+  name,
+  path: `.github/workflows/${id}.yml`,
+  sha: 'abc',
+  attempt: 1,
+  status: 'completed',
+  conclusion: 'success',
+  url: `https://github.com/acme/widgets/actions/runs/${id}`,
+});
+
+void test('checks from other apps and statuses form provider groups that match the tab count', () => {
+  const depot = (id: number, name: string, conclusion: string) =>
+    fixtureCheck(id, name, conclusion, { provider: 'Depot Checks', url: `https://depot.dev/orgs/example/jobs/${id}` });
+  const snapshot: PrChecks = {
+    url: 'https://github.com/acme/widgets/pull/1',
+    headSha: 'abc',
+    checkedAt: 1,
+    checks: [
+      fixtureCheck(1, 'Server check', 'success'),
+      fixtureCheck(2, 'Secret scan', 'skipped'),
+      depot(31, 'Server: CI / Server check', 'failure'),
+      depot(32, 'Server: CI / Server lint', 'failure'),
+      ...[1, 2, 3, 4].map((n) => depot(32 + n, `Server: CI / Server tests ${n}/4`, 'failure')),
+      depot(37, 'E2E: CI / E2E tests', 'skipped'),
+      fixtureCheck(40, 'deploy/preview', 'success', { id: 'status:40', kind: 'status', provider: 'vercel', url: null }),
+      // An Actions job whose run is not in the workflow list (for example, another event).
+      fixtureCheck(21, 'Release notes', 'failure'),
+    ],
+  };
+  assert.equal(isActionsCheck(snapshot.checks[0]), true);
+  assert.equal(isActionsCheck(snapshot.checks[2]), false, 'An external app is not Actions');
+  const groups = externalCheckGroups(snapshot, [fixtureRun(1, 'CI')]);
+  assert.deepEqual(
+    groups.map((g) => [g.name, g.source, g.label, g.checks.length]),
+    [
+      ['Depot Checks', 'external', '6 failed', 7],
+      ['Other GitHub Actions jobs', 'unlisted', '1 failed', 1],
+      ['vercel', 'external', '1 passed', 1],
+    ]
+  );
+  assert.deepEqual(
+    groups[0].checks.map((c) => c.id),
+    orderedChecks(groups[0].checks, 'all').map((c) => c.id),
+    'Group order matches the List view: failures first'
+  );
+  // Every failing check behind the tab count is in Graph: in a listed run, or in a group.
+  const tab = checkCounts(snapshot.checks).attention;
+  const inListedRuns = snapshot.checks.filter(
+    (c) => isActionsCheck(c) && actionsRunId(c) === 1 && checkGroup(c) === 'attention'
+  ).length;
+  assert.equal(tab, 7);
+  assert.equal(inListedRuns + groups.reduce((sum, g) => sum + g.counts.attention, 0), tab);
+  // Without runs, only external providers are grouped; Actions jobs wait for their runs.
+  assert.deepEqual(
+    externalCheckGroups(snapshot).map((g) => g.name),
+    ['Depot Checks', 'vercel']
+  );
+  assert.deepEqual(
+    workflowSidebarEntries([fixtureRun(1, 'CI'), fixtureRun(3, 'Security')], groups).map((e) => e.name),
+    ['Depot Checks', 'Other GitHub Actions jobs', 'CI', 'Security', 'vercel'],
+    'Failures lead the sidebar, then names'
+  );
+  assert.equal(
+    actionsNeedAttention({ ...snapshot, checks: snapshot.checks.slice(0, 9) }, [fixtureRun(1, 'CI')]),
+    false
+  );
+  assert.equal(actionsNeedAttention(snapshot, [fixtureRun(1, 'CI')]), true);
+  assert.equal(actionsNeedAttention(undefined, [{ ...fixtureRun(1, 'CI'), conclusion: 'failure' }]), true);
+});
+
+void test('graph notices name what is missing and links name their destination', () => {
+  assert.equal(
+    workflowWarningSummary([
+      '1 job could not be matched to a definition. Their statuses are shown without dependency arrows.',
+    ]),
+    '1 job has no dependency arrows'
+  );
+  assert.equal(
+    workflowWarningSummary([
+      'Dependencies unavailable: Not Found',
+      'Showing the first 500 jobs. Open GitHub for the full run.',
+      'deploy: Reusable workflow unavailable',
+      '3 jobs could not be matched to a definition. Their statuses are shown without dependency arrows.',
+    ]),
+    'Workflow source could not be read, so jobs have no dependency arrows · Job list is truncated · 3 jobs have no dependency arrows · 1 reusable workflow is unavailable'
+  );
+  assert.equal(
+    checkLinkLabel({ kind: 'check', provider: 'GitHub Actions', url: 'https://github.com/a/b/actions/runs/1/job/2' }),
+    'Open on GitHub'
+  );
+  assert.equal(
+    checkLinkLabel({ kind: 'check', provider: 'Depot Checks', url: 'https://depot.dev/orgs/x/jobs/1' }),
+    'Open in Depot Checks'
+  );
+  const done = (conclusion: string) => fixtureCheck(1, 'n', conclusion);
+  assert.equal(checkGroupLabel([done('failure'), done('timed_out')]), '2 need attention');
+  assert.equal(checkGroupLabel([done('failure')]), '1 failed');
+  assert.equal(checkGroupLabel([done('skipped')]), '1 skipped');
+  assert.equal(checkGroupLabel([done('neutral'), done('skipped')]), '2 skipped / neutral');
 });

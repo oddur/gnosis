@@ -121,9 +121,7 @@ void app
         }
       })()`);
       await click('Graph');
-      await wait(
-        `typeof window.releaseGraphLoading==='function' && !!document.querySelector('.loading-motif')`
-      );
+      await wait(`typeof window.releaseGraphLoading==='function' && !!document.querySelector('.loading-motif')`);
       assert.ok(
         await js(
           `(()=>{const state=document.querySelector('.workflow-graph-state'),copy=document.querySelector('.loading-state-content'),a=state.getBoundingClientRect(),b=copy.getBoundingClientRect();return b.left-a.left>=24 && a.right-b.right>=24 && !document.querySelector('.workflow-viewport-actions')})()`
@@ -139,9 +137,7 @@ void app
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
       });
-      assert.ok(
-        await js(`getComputedStyle(document.querySelector('.loading-signal')).animationName==='none'`)
-      );
+      assert.ok(await js(`getComputedStyle(document.querySelector('.loading-signal')).animationName==='none'`));
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
       win.webContents.debugger.detach();
       win.setContentSize(1280, 800);
@@ -331,12 +327,14 @@ void app
       await js(
         "window.graphRead=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(i,o)=>{if(o?.cachedOnly)return window.graphRead(i,o);throw Error('GitHub API limit reached. Retry after 12:30.');};document.querySelector('[aria-label=\"Refresh checks\"]').click()"
       );
-      await wait("document.querySelector('.workflow-notice')?.textContent.includes('Showing saved workflow')");
+      await wait(
+        "document.querySelector('.workflow-notice:not(.workflow-external-notice)')?.textContent.includes('Showing saved workflow')"
+      );
       assert.equal(await js("document.querySelectorAll('.workflow-job').length"), 4);
       await capture('cached-error-dark');
       await js('void (window.electronAPI.getWorkflowGraph=window.graphRead)');
       await click('Retry workflow');
-      await wait("!document.querySelector('.workflow-notice')");
+      await wait("!document.querySelector('.workflow-notice:not(.workflow-external-notice)')");
       await js(`document.querySelector('.workflow-triage button:nth-child(1)')?.focus()`);
       await click('Next issue');
       await wait(`!!document.querySelector('.check-detail:not([hidden]) .check-attention')`);
@@ -647,7 +645,7 @@ void app
       })()`);
       await click('Graph');
       await wait(
-        `document.querySelectorAll('.workflow-run-option').length===6 && document.querySelector('.workflow-sidebar').getBoundingClientRect().width>0 && !!document.querySelector('.workflow-job')`
+        `document.querySelectorAll('.workflow-run-option').length===7 && document.querySelector('.workflow-sidebar').getBoundingClientRect().width>0 && !!document.querySelector('.workflow-job')`
       );
       assert.ok(
         await js(
@@ -822,6 +820,97 @@ void app
           await wait(`sessionStorage.getItem('fixture-checks-view')==='list'`);
         }
       }
+      // External CI: Actions workflows pass while another app's check runs fail. Graph must not look green.
+      win.setContentSize(1280, 800);
+      await js(`sessionStorage.removeItem('fixture-checks-view');document.documentElement.classList.remove('dark')`);
+      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&checks&external-checks`);
+      await waitForWorkbenchQueue(win.webContents);
+      await js(
+        "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
+      );
+      await click('Open PR overview');
+      await wait(`document.querySelectorAll('.review-evidence-summary > button').length===3`);
+      await js(`document.querySelector('.review-evidence-summary > button').click()`);
+      await wait(`document.querySelectorAll('.check-row').length===12`);
+      const tabCount = Number(await js<string>(`document.querySelector('.checks-tab-count')?.textContent ?? '0'`));
+      assert.equal(tabCount, 6, 'The Checks tab counts the six external failures');
+      const listFailures = await js<string[]>(
+        `[...document.querySelectorAll('.check-row')].filter(r=>r.querySelector('small .check-attention')).map(r=>r.querySelector('strong').textContent)`
+      );
+      assert.equal(listFailures.length, tabCount);
+      await click('Graph');
+      await wait(
+        `!!document.querySelector('.workflow-external') && document.querySelectorAll('.workflow-run-option').length===5`
+      );
+      assert.equal(
+        await js(`document.querySelector('.workflow-active-run').textContent`),
+        'Depot Checks',
+        'With every Actions workflow green, Graph opens the failing provider'
+      );
+      const sidebar = await js<{ first: string; meta: string; heading: string; toggle: string; summary: string }>(
+        `(()=>{const first=document.querySelector('.workflow-run-option');return {first:first.querySelector('strong').textContent,meta:first.querySelector('.workflow-run-meta').textContent,heading:document.querySelector('.workflow-sidebar-heading h2').textContent,toggle:document.querySelector('[aria-label="Show workflows"]').textContent,summary:document.querySelector('.workflow-sidebar-summary').textContent}})()`
+      );
+      assert.equal(sidebar.first, 'Depot Checks', 'The failing provider leads the sidebar');
+      assert.ok(sidebar.meta.includes('6 failed') && sidebar.meta.includes('7 checks'), sidebar.meta);
+      assert.equal(sidebar.heading, 'Workflows 5');
+      assert.equal(sidebar.toggle.trim(), 'Workflows (5)');
+      assert.ok(sidebar.summary.startsWith(`${tabCount} checks need attention`), sidebar.summary);
+      assert.ok(sidebar.summary.includes('All are outside GitHub Actions'), sidebar.summary);
+      assert.deepEqual(
+        await js(
+          `[...document.querySelectorAll('.workflow-run-option')].slice(1).map(n=>n.querySelector('.workflow-run-meta > span').textContent)`
+        ),
+        ['Passed', 'Passed', 'Passed', 'Passed']
+      );
+      const graphFailures = await js<string[]>(
+        `[...document.querySelectorAll('.workflow-external-check[data-outcome="attention"] .workflow-job-name')].map(n=>n.textContent)`
+      );
+      assert.deepEqual(graphFailures, listFailures, 'List and Graph show the same failures in the same order');
+      assert.equal(await js(`document.querySelectorAll('.workflow-external-check').length`), 7);
+      assert.ok(
+        await js(
+          `[...document.querySelectorAll('.workflow-external-check')].slice(0,6).every(n=>n.dataset.outcome==='attention') && document.querySelector('.workflow-external-link').href.startsWith('https://depot.dev/')`
+        ),
+        'Failures come first and link to the provider'
+      );
+      await capture('external-checks-light');
+      await js(`document.documentElement.classList.add('dark')`);
+      await capture('external-checks-dark');
+      await js(`document.querySelector('.workflow-external-check .workflow-job-open').click()`);
+      await wait(
+        `document.querySelector('.check-detail h2')?.textContent.includes('Server: CI / Server check') && [...document.querySelectorAll('.check-detail-header a')].some(a=>a.textContent.trim()==='Open in Depot Checks')`
+      );
+      assert.ok(
+        await js(`document.querySelector('.workflow-issue-navigation [role="status"]').textContent==='Issue 1 of 6'`)
+      );
+      await js(`document.querySelector('[aria-label="Next issue"]').click()`);
+      await wait(`document.querySelector('.check-detail h2')?.textContent.includes('Server: CI / Server lint')`);
+      await capture('external-checks-detail-dark');
+      await click('Close');
+      await wait(`document.activeElement?.closest('.workflow-external-check[data-selected]')`);
+      await js(
+        `[...document.querySelectorAll('.workflow-run-option')].find(n=>n.querySelector('strong').textContent==='Security').click()`
+      );
+      await wait(
+        `document.querySelector('.workflow-active-run').textContent==='Security' && document.querySelectorAll('.react-flow__node').length===2`
+      );
+      assert.ok(
+        await js(
+          `document.querySelector('.workflow-external-notice').textContent.includes('6 failed in Depot Checks')`
+        ),
+        'A green Actions graph names the failures it does not draw'
+      );
+      assert.equal(
+        await js(`document.querySelector('details.workflow-notice summary').textContent`),
+        '1 job has no dependency arrows'
+      );
+      await capture('external-notice-dark');
+      await js(`document.documentElement.classList.remove('dark')`);
+      await capture('external-notice-light');
+      await click('Show Depot Checks');
+      await wait(
+        `document.querySelector('.workflow-active-run').textContent==='Depot Checks' && !!document.querySelector('.workflow-external')`
+      );
       if (process.env.GNOSIS_WORKFLOW_REPLAY) {
         const saved = JSON.parse(fs.readFileSync(process.env.GNOSIS_WORKFLOW_REPLAY, 'utf8'));
         const actual = assembleWorkflow(saved.definitions, saved.jobs, []);

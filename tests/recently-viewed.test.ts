@@ -81,3 +81,8 @@ void test('Needs my response has its own history and recent destination', async 
   assert.notEqual(homeVisit(home).id, homeVisit(response).id);
   assert.equal(locationKey({ page: 'home', home: response }), locationKey({ page: 'home', home: { ...response, filters: { ...response.filters, repo: 'o/r' } } }));
 });
+void test('Muted PRs names the visit even when it was opened from another list', () => {
+  const visit = homeVisit({ ...location('Saved reviews'), savedView: true, muted: true });
+  assert.equal(visit.title, 'Muted PRs');
+  assert.equal(visit.id, `queue:Muted PRs:${DEFAULT_QUEUE_FILTERS.repo}`);
+});

@@ -82,6 +82,19 @@ body:has([role='dialog'][aria-modal='true'], [role='alertdialog']) .app-titlebar
 .app-titlebar-history {
   order: 1;
 }
+/*
+ * The toggle's place is reserved on every page, so history, Back/Forward and the tabs stay put when
+ * the reviewer moves between the queue, which has a sidebar, and a PR, which does not.
+ */
+.app-titlebar-leading > .app-titlebar-slot {
+  position: relative;
+  padding-inline-start: 26px;
+}
+.app-titlebar-sidebar-toggle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+}
 .app-titlebar-window-controls {
   position: absolute;
   inset: 0 auto 0 0;

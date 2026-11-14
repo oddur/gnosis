@@ -77,6 +77,8 @@ export interface WorkflowViewState {
   workflowsOpen?: boolean;
   memberUrl?: string;
   runId?: number;
+  /** Selected provider group from `externalCheckGroups`, shown instead of an Actions run. */
+  externalId?: string;
   expanded: string[];
   showSkipped: boolean;
   showCompleted: boolean;

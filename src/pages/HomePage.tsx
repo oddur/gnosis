@@ -1850,10 +1850,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                         ? 'Stacks'
                         : section === 'response' ? 'Needs my response' : labels[section]}
               </h1>
-              {section !== 'all' && (
-                <p>
+              {/* Every view has a description, so the filters below start at the same place in each. */}
+              <p>
                   {section === 'saved'
                     ? 'Saved AI explanations, ready to resume.'
+                    : section === 'all'
+                      ? activeQueueView ? 'Your saved filters and sort order.' : 'Requested reviews, updates since your review, and work that blocks others.'
                     : section === 'response' ? 'Your PRs with changes requested or unresolved feedback from others.'
                     : section === 'starred' ? 'Your starred PRs, saved on this computer. Stacks stay together.'
                     : section === 'stacks'
@@ -1861,8 +1863,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                       : section === 'requested'
                         ? 'Your review requests. Changed PRs appear under Updated PRs.'
                         : 'PR content or stack changes since your saved AI explanation.'}
-                </p>
-              )}
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <button
