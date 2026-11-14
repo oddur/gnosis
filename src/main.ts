@@ -1,3 +1,4 @@
+import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
 import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
@@ -380,7 +381,8 @@ function createWindow() {
 
   // Open external links in the user's default browser instead of a new Electron window
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    const safe = safeExternalUrl(url);
+    if (safe) void shell.openExternal(safe);
     return { action: 'deny' };
   });
 
@@ -1441,6 +1443,7 @@ ipcMain.handle('open-logs-directory', () => {
 });
 
 ipcMain.handle('open-review-prompt', (_event, id: string) => {
+  assertReviewId(id);
   const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
   if (fs.existsSync(promptPath)) {
     void shell.openPath(promptPath);
@@ -1601,6 +1604,7 @@ ipcMain.handle('list-reviews', () => {
 });
 
 ipcMain.handle('load-review', async (_event, id: string) => {
+  assertReviewId(id);
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
   if (workbench.isMutedReview(review)) throw new Error('This review contains a muted PR. Restore it from Muted PRs first.');
@@ -1620,10 +1624,9 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   return review;
 });
 
-const REVIEW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Topics finished so far in a running explanation, or null once it has finished or stopped. */
 ipcMain.handle('load-draft-review', async (_event, id: unknown) => {
-  if (typeof id !== 'string' || !REVIEW_ID.test(id)) throw new Error('Invalid explanation.');
+  if (!isReviewId(id)) throw new Error('Invalid explanation.');
   const review = explanationBuilds.draft(id);
   if (!review) return null;
   if (workbench.isMutedReview(review)) throw new Error('This review contains a muted PR. Restore it from Muted PRs first.');
@@ -1650,6 +1653,7 @@ ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
 });
 
 ipcMain.handle('mark-review-read', (_event, id: string) => {
+  assertReviewId(id);
   const index = readReviewsIndex().map((e) =>
     e.id === id ? { ...e, unread: false, autoUpdated: false } : e
   );
@@ -1659,6 +1663,7 @@ ipcMain.handle('mark-review-read', (_event, id: string) => {
 });
 
 ipcMain.handle('delete-review', (_event, id: string) => {
+  assertReviewId(id);
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
   if (fs.existsSync(reviewPath)) fs.unlinkSync(reviewPath);
@@ -1669,6 +1674,7 @@ ipcMain.handle('delete-review', (_event, id: string) => {
 });
 
 ipcMain.handle('export-review', async (event, id: string): Promise<string | null> => {
+  assertReviewId(id);
   const index = readReviewsIndex();
   const entry = index.find((e) => e.id === id);
   if (!entry) throw new Error(`Review ${id} not found.`);
