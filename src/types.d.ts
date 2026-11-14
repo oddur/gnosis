@@ -1,3 +1,4 @@
+import type { AppUpdateStatus } from './update-state';
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
 import type { OpenTarget } from '../lib/pr-open-targets';
@@ -202,10 +203,11 @@ declare global {
       reviewThreadAction: (req: ReviewThreadAction) => Promise<GitHubReviewThread>;
       onUpdateAvailable: (callback: (info: UpdateInfo) => void) => void;
       offUpdateAvailable: () => void;
-      onUpdateReady: (callback: (version: string) => void) => void;
-      offUpdateReady: () => void;
+      onUpdateStatus: (callback: (status: AppUpdateStatus) => void) => void;
+      offUpdateStatus: () => void;
       dismissUpdate: (version: string) => Promise<void>;
-      getPendingUpdateReady: () => Promise<string | null>;
+      getUpdateStatus: () => Promise<AppUpdateStatus>;
+      installUpdate: () => Promise<AppUpdateStatus>;
       openExternal: (url: string) => Promise<void>;
       openLogsDirectory: () => Promise<void>;
       openReviewPrompt: (id: string) => Promise<void>;
