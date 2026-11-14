@@ -82,6 +82,9 @@ void app.whenReady().then(async () => {
     const list = Object.values(values).filter((value): value is number => typeof value === 'number');
     expect(name, list.length < 2 || Math.max(...list) - Math.min(...list) <= tolerance, values);
   };
+  // Toolbar children whose vertical centre sits below the first row's: the toolbar wrapped and moved them to a new line.
+  const wrappedChildren = (bar: string) =>
+    `(()=>{const bar=${bar};if(!bar)return [];const kids=[...bar.children].filter(e=>e.checkVisibility()&&e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0);const mid=e=>{const r=e.getBoundingClientRect();return r.top+r.height/2};const first=Math.min(...kids.map(mid));return kids.filter(e=>mid(e)>first+12).map(e=>(e.getAttribute('aria-label')||e.textContent.trim()||e.className).slice(0,30))})()`;
   const titlebar = {
     toggleSlot: '.app-titlebar-leading',
     history: '.recent-history-trigger',
@@ -232,12 +235,37 @@ void app.whenReady().then(async () => {
       const controls = await js<{ x: number; h: number; label: string }[]>(
         `(()=>{const bar=${visible(toolbar)};if(!bar)return [];return [...bar.children].flatMap(c=>c.matches('button,label,[role=group],[role=combobox]')?[c]:[...c.querySelectorAll(':scope>button,:scope>[role=group]')]).filter(e=>e.checkVisibility()).map(e=>{const r=e.getBoundingClientRect();return {x:Math.round(r.x),h:Math.round(r.height),label:(e.getAttribute('aria-label')||e.textContent.trim()).slice(0,30)}})})()`
       );
-      sections[name] = { ...found, controls };
+      const wrapped = await js<string[]>(wrappedChildren(visible(toolbar)));
+      sections[name] = { ...found, controls, wrapped };
+      expect(`${name} toolbar stays on one line`, !wrapped.length, wrapped);
       expect(`stray focus after the ${name} tab`, !(await strayFocus()), await strayFocus());
       await capture(`pr-${name.replace(/\W+/g, '-').toLowerCase()}`);
       await titlebarPass(`pr ${name}`, history);
     }
     record('pr sections', sections);
+    // Wider text: Windows renders the toolbar wider and its window is often narrower than asked, which
+    // wrapped the Changes toolbar to 89px. Letter-spacing adds about 10% to every label, and the toolbar
+    // must still hold one row from 1280px down to the narrow layout.
+    await mouse(named('.pr-overview-tabs [role=tab]', 'Changes'));
+    await sleep(900);
+    await js(`(()=>{const s=document.createElement('style');s.id='wide-text';s.textContent='.changes-toolbar{letter-spacing:.06em}';document.head.append(s)})()`);
+    const changesBar = `document.querySelector('.pr-summary-page [role=tabpanel][data-state=active] .changes-toolbar')`;
+    const wideText: Record<number, unknown> = {};
+    for (const contentWidth of [1280, 1200, 1180, 1100, 1024, 960, 900, 860, 800, 760, 720]) {
+      width = contentWidth;
+      win.setContentSize(contentWidth, 800);
+      await sleep(250);
+      const wrapped = await js<string[]>(wrappedChildren(changesBar));
+      const height = await js<number>(`Math.round(${changesBar}.getBoundingClientRect().height)`);
+      wideText[contentWidth] = { height, wrapped };
+      await capture('changes-wider-text');
+      expect('Changes toolbar with wider text', !wrapped.length && height === 49, { height, wrapped });
+    }
+    width = 1280;
+    record('changes toolbar with wider text', wideText);
+    await js(`document.getElementById('wide-text').remove()`);
+    win.setContentSize(1280, 800);
+    await sleep(300);
     const bars = Object.entries(sections).filter(([, value]) => (value as { toolbar: Rect }).toolbar) as [string, { toolbar: NonNullable<Rect>; controls: { x: number; h: number; label: string }[] }][];
     same('section toolbar height', Object.fromEntries(bars.map(([name, value]) => [name, value.toolbar.h])));
     same('section toolbar first control x', Object.fromEntries(bars.map(([name, value]) => [name, value.controls[0]?.x])));

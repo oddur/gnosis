@@ -4784,6 +4784,26 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
    PR section toolbars (Changes, Commits, Checks, Feedback) share one height and inset, so the content
    below them starts at the same place in each section. Their controls are 32px tall. */
 :is(.changes-toolbar, .checks-toolbar, .feedback-toolbar) { min-height:49px; padding:8px 16px; }
+/* The Changes toolbar stays one row when its width or the platform's text metrics leave less room
+   (Windows at 1280px wrapped it to 89px). Settings menus give way to their icons first, then Update
+   changes shortens to Update, then the file tree drops its label, then the viewed count, then Review PR #n shortens to Review. Hidden
+   words stay in the accessibility tree and in each button's title. */
+.changes-toolbar { container:changes-toolbar / inline-size; }
+@container changes-toolbar (max-width:1180px) {
+  .toolbar-label:not(.is-secondary) { position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap; }
+}
+@container changes-toolbar (max-width:960px) {
+  .toolbar-label-extra { position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap; }
+}
+@container changes-toolbar (max-width:900px) {
+  .toolbar-label.is-secondary { position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap; }
+}
+@container changes-toolbar (max-width:800px) {
+  .changes-progress { display:none; }
+}
+@container changes-toolbar (max-width:720px) {
+  .toolbar-label-extra-narrow { position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap; }
+}
 .checks-toolbar .checks-view-switch { padding:2px; }
 .checks-toolbar .checks-view-switch button { height:26px; }
 @media (max-width:700px) {

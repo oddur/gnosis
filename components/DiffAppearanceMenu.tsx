@@ -39,10 +39,11 @@ export function DiffAppearanceMenu({
         <Button
           size="sm"
           variant="ghost"
+          title="Diff appearance"
           className="data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
         >
           <SlidersHorizontal className="size-3.5" />
-          Diff appearance
+          <span className="toolbar-label">Diff appearance</span>
         </Button>
       </Popover.Trigger>
       <Popover.Portal>

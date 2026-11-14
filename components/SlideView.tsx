@@ -89,6 +89,11 @@ function DeferredDiagram({ enabled, children }: { enabled: boolean; children: Re
   useEffect(() => {
     const element = host.current;
     if (ready || !element) return;
+    // Observe against the nearest scroller. With the implicit viewport root, rootMargin does not
+    // extend a nested scroller's clip, so a diagram below the reading pane's fold never mounted
+    // until it was scrolled into view, and a short window could leave it unrendered.
+    let root = element.parentElement;
+    while (root && !/(auto|scroll)/.test(getComputedStyle(root).overflowY)) root = root.parentElement;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
@@ -96,7 +101,7 @@ function DeferredDiagram({ enabled, children }: { enabled: boolean; children: Re
           observer.disconnect();
         }
       },
-      { rootMargin: '900px' }
+      { root, rootMargin: '900px' }
     );
     observer.observe(element);
     return () => observer.disconnect();

@@ -16,16 +16,16 @@ export async function waitForWorkbenchQueue(contents: WebContents, expectedItems
 
 const loadTimeoutMs = 60_000;
 
-/** loadURL did not settle: the page never reached its load event. */
+/** loadURL did not settle, or the fixture never rendered after it did. */
 class LoadStalled extends Error {}
 
 /**
  * loadURL resolves before the fixture's top-level dynamic imports finish rendering.
  *
- * A page that never reaches its load event is loaded once more. On Windows CI the first load of a
- * suite once stalled for over a minute with no script error, while the same load normally takes a
- * few seconds. The stalled attempt's diagnostics are printed either way, so a stall that recovers
- * still shows which requests were pending.
+ * A page that never reaches its load event, or a fixture that never renders, is loaded once more.
+ * On Windows CI the first load of a suite once stalled for over a minute with no script error,
+ * while the same load normally takes a few seconds. The stalled attempt's diagnostics are printed
+ * either way, so a stall that recovers still shows which requests were pending.
  */
 export async function loadWorkbenchPage(window: BrowserWindow, url: string): Promise<void> {
   const diagnostics = await watchPage(window);
@@ -77,7 +77,9 @@ async function loadAndRender(window: BrowserWindow, url: string): Promise<void> 
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Fixture did not render after loading ${url}`);
+  // The load event can fire while the dev server still holds the fixture's module requests. On Windows CI
+  // over a thousand stayed pending for a minute and the page never rendered, so this is retried as a stall.
+  throw new LoadStalled(`Fixture did not render after loading ${url}`);
 }
 
 /** A new loadURL while the stalled one is still loading would see that load's abort as its own failure. */
