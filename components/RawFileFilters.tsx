@@ -26,8 +26,14 @@ export function RawFileFilters({
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <Button size="sm" variant="ghost" aria-label="Filter files" aria-describedby={hidden ? countId : undefined}>
-          <ListFilter size={15} /> Files
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label="Filter files"
+          title="Filter files"
+          aria-describedby={hidden ? countId : undefined}
+        >
+          <ListFilter size={15} /> <span className="toolbar-label">Files</span>
           {hidden > 0 && (
             <span id={countId} className="file-filter-count">
               {hidden} hidden

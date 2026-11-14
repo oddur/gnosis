@@ -72,8 +72,20 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.explanation-reader')");
+    // A short window puts the diagram below the reading pane's fold. It must still mount ahead of
+    // scrolling; CI's macOS and Windows displays clamp the window to about this height.
+    win.setSize(1280, 560);
     await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
+    await wait("!!document.querySelector('.explanation-diagram')");
+    assert.equal(
+      await js(
+        "document.querySelector('.explanation-diagram').getBoundingClientRect().top>=document.querySelector('.explanation-document').getBoundingClientRect().bottom"
+      ),
+      true,
+      'the diagram starts below the fold'
+    );
     await wait("!!document.querySelector('.mermaid-preview svg')");
+    win.setSize(1280, 800);
     assert.match(await js<string>("document.querySelector('.mermaid-preview').textContent"), /Saved Mermaid/);
     await click('Expand diagram');
     await wait("!!document.querySelector('.mermaid-fullscreen svg')");

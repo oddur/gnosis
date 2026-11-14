@@ -333,8 +333,10 @@ export function useChangesComments({
           }}
         >
           <WorkbenchIcon name="review" />
-          Review PR #{url.split('/').pop() ?? ''}
-          {drafts.length ? ` (${drafts.length})` : ''}
+          <span>
+            Review<span className="toolbar-label-extra-narrow"> PR #{url.split('/').pop() ?? ''}</span>
+            {drafts.length ? ` (${drafts.length})` : ''}
+          </span>
         </Button>
       </>
     ),

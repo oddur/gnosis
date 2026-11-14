@@ -548,13 +548,13 @@ export function PrChangesView({
     >
       <div className="changes-toolbar">
         {toolbar}
-        <Button variant="ghost" size="sm" onClick={() => setTreeOpen((v) => !v)} aria-expanded={treeOpen}>
+        <Button variant="ghost" size="sm" onClick={() => setTreeOpen((v) => !v)} aria-expanded={treeOpen} title={commit ? 'Commits & files' : 'File tree'}>
           <PanelLeft size={15} />
           {commit ? (
-            'Commits & files'
+            <span className="toolbar-label is-secondary">Commits &amp; files</span>
           ) : (
             <>
-              File tree <span>{entries.length}</span>
+              <span className="toolbar-label is-secondary">File tree</span> <span>{entries.length}</span>
             </>
           )}
         </Button>
@@ -604,7 +604,7 @@ export function PrChangesView({
         {!commit && !combined && (
           <Button variant="ghost" size="sm" disabled={loading} aria-label="Update changes" title="Update changes" onClick={() => void load(true)}>
             <RefreshCw size={14} className={loading ? 'motion-safe:animate-spin' : undefined} />
-            {loading ? 'Loading…' : 'Update changes'}
+            <span>{loading ? 'Loading…' : <>Update<span className="toolbar-label-extra"> changes</span></>}</span>
           </Button>
         )}
       </div>
