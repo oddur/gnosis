@@ -23,6 +23,7 @@ import {
   Sparkles,
   TriangleAlert,
   WifiOff,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import { ATTENTION_LABEL, type AttentionKind } from '../lib/attention';
@@ -221,6 +222,26 @@ function Summary({ summary }: { summary: MenubarState['summary'] }) {
   );
 }
 
+/**
+ * The first-open tip (lib/menubar-hint.ts): the panel's keys and the icon's right-click menu, on one footer line in
+ * the panel's caption type. `hidden` keeps its space after a dismissal until the panel next opens, so nothing moves.
+ */
+function Hint({ hidden, onDismiss }: { hidden: boolean; onDismiss: () => void }) {
+  return (
+    <div className="menubar-hint" role="note" aria-label="Tip" data-hidden={hidden || undefined}>
+      <p className="menubar-hint-text">
+        <span aria-hidden="true">
+          <kbd>↑↓</kbd> move · <kbd>↵</kbd> open · right-click the icon to quit
+        </span>
+        <span className="sr-only">Use the arrow keys to move and Return to open a PR. Right-click the menu bar icon to quit Gnosis.</span>
+      </p>
+      <button type="button" className="menubar-hint-dismiss" aria-label="Dismiss tip" title="Dismiss tip" tabIndex={hidden ? -1 : 0} onClick={onDismiss}>
+        <X aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
 export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState | null; api: MenubarApi; now?: number }) {
   const clockNow = useStatusNow();
   const now = fixedNow ?? (clockNow || Date.now());
@@ -235,6 +256,16 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
   const footer = useRef<HTMLElement>(null);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [cooling, setCooling] = useState(false);
+  // The tip shows while main says so. Once seen in this opening, its space stays until the panel opens again, so a
+  // dismissal (or main's state after a row opens) never moves the footer or resizes the window under the pointer.
+  const hint = !!state?.hint && !state.loading;
+  const hintRef = useRef(hint);
+  hintRef.current = hint;
+  const [hintHeld, setHintHeld] = useState(false);
+  const [hintDismissed, setHintDismissed] = useState(false);
+  useEffect(() => {
+    if (hint) setHintHeld(true);
+  }, [hint]);
 
   const focusRow = useCallback((id: string | undefined, options?: FocusOptions) => {
     if (!id) return;
@@ -270,6 +301,8 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
   useEffect(
     () =>
       api.onShown(() => {
+        setHintHeld(hintRef.current);
+        setHintDismissed(false);
         if (first) focusRow(first);
         else root.current?.focus();
       }),
@@ -290,7 +323,7 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
     const observer = new ResizeObserver(measure);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [api, state]);
+  }, [api, state, hint, hintHeld]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -327,6 +360,14 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
     if (next === undefined) return;
     event.preventDefault();
     focusRow(ids[next]);
+  };
+
+  const dismissHint = () => {
+    setHintDismissed(true);
+    api.dismissHint();
+    // The button hides with the tip: focus goes back to the list, or the panel.
+    if (current) focusRow(current);
+    else root.current?.focus();
   };
 
   const signedOut = state?.connection === 'signed-out';
@@ -459,6 +500,7 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
         </div>
       </div>
       <footer ref={footer} className="menubar-footer">
+        {(hint || hintHeld) && <Hint hidden={!hint || hintDismissed} onDismiss={dismissHint} />}
         <button type="button" className="menubar-footer-button" onClick={() => api.openApp()}>
           <span>Open Gnosis</span>
           <kbd aria-hidden="true">⌘O</kbd>

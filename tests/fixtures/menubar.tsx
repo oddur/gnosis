@@ -1,7 +1,8 @@
 /**
  * The menu bar panel (#308) with a fake `window.gnosisMenubar` and named states. `window.showMenubarState(name)`
  * switches state; `window.menubarCalls` records every API call; `window.fireMenubarShown()` acts like main
- * showing the panel. The time is fixed so screenshots are stable.
+ * showing the panel. Like main, a dismissal or an opened row ends the tip; `window.resetMenubarHint()` brings it
+ * back. The time is fixed so screenshots are stable.
  */
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -80,6 +81,7 @@ const base: MenubarState = {
   queueSize: 41,
   unchecked: 0,
   refreshing: false,
+  hint: false,
 };
 const none = { needYou: 0, ready: 0, fresh: 0, marked: 0, line: 'Nothing needs you' };
 const states: Record<string, MenubarState> = {
@@ -90,11 +92,19 @@ const states: Record<string, MenubarState> = {
   offline: { ...base, connection: 'offline', checkedAt: Date.parse('2026-11-14T14:02:00Z'), tasks: [] },
   paused: { ...base, connection: 'paused', retryAt: Date.parse('2026-11-14T14:32:00Z') },
   error: { ...base, connection: 'error' },
+  // The first time the panel opens: the footer tip shows until it is dismissed or a row opens.
+  'first-open': { ...base, hint: true },
 };
 
 type Call = [keyof MenubarApi, ...unknown[]];
 const calls: Call[] = [];
 const shown = new Set<() => void>();
+let hintDone = false;
+let rerender: () => void = () => {};
+const finishHint = () => {
+  hintDone = true;
+  rerender();
+};
 const api: MenubarApi = {
   get: () => Promise.resolve(states.default),
   onState: () => () => {},
@@ -102,7 +112,10 @@ const api: MenubarApi = {
     shown.add(callback);
     return () => shown.delete(callback);
   },
-  open: (id) => calls.push(['open', id]),
+  open: (id) => {
+    calls.push(['open', id]);
+    finishHint();
+  },
   openApp: () => calls.push(['openApp']),
   openSettings: () => calls.push(['openSettings']),
   close: () => calls.push(['close']),
@@ -111,13 +124,20 @@ const api: MenubarApi = {
     return Promise.resolve();
   },
   resize: (height) => calls.push(['resize', height]),
+  dismissHint: () => {
+    calls.push(['dismissHint']);
+    finishHint();
+  },
 };
 
 let show: (name: string) => void = () => {};
 function Fixture() {
   const [name, setName] = useState(new URLSearchParams(location.search).get('state') ?? 'default');
+  const [, setVersion] = useState(0);
   show = setName;
-  return <MenubarView state={states[name]} api={api} now={NOW} />;
+  rerender = () => setVersion((version) => version + 1);
+  const state = states[name];
+  return <MenubarView state={{ ...state, hint: state.hint && !hintDone }} api={api} now={NOW} />;
 }
 followSystemAppearance();
 Object.assign(window, {
@@ -125,6 +145,10 @@ Object.assign(window, {
   menubarStates: Object.keys(states),
   showMenubarState: (name: string) => show(name),
   fireMenubarShown: () => shown.forEach((callback) => callback()),
+  resetMenubarHint: () => {
+    hintDone = false;
+    rerender();
+  },
 });
 const root = document.getElementById('root');
 if (root) createRoot(root).render(<Fixture />);

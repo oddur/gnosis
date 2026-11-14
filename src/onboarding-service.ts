@@ -4,6 +4,9 @@ import type { Preferences } from '../lib/types';
 import { normalizeDesktopSetup } from '../lib/desktop-setup';
 import type { StateStorage } from './app-data-store';
 
+/** The walkthrough's last step: four on the queue and a PR, then the menu bar stop on macOS. */
+export const TOUR_LAST_STEP = 4;
+
 export function createOnboardingService(deps: {
   storage: Pick<StateStorage, 'read' | 'write' | 'flush'>;
   account: () => string | null;
@@ -26,7 +29,7 @@ export function createOnboardingService(deps: {
         completed: state.completed === true,
         tourStep:
           typeof state.tourStep === 'number' && Number.isInteger(state.tourStep)
-            ? Math.min(3, Math.max(0, state.tourStep))
+            ? Math.min(TOUR_LAST_STEP, Math.max(0, state.tourStep))
             : 0,
         tourCompleted: state.tourCompleted === true,
       };

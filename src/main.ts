@@ -146,7 +146,8 @@ import { filterDiff } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import { initialize as initAptabase, trackEvent } from '@aptabase/electron/main';
 import { createTray, updateTrayMenu, destroyTray, setStatusFetcher, setTrayPanel, setTrayBadge, hasTray, trayBounds } from './tray';
-import { isSystemSettingsPane, isSystemSettingsUrl, systemSettingsPanes, systemSettingsUrl, type MenubarShowResult } from '../lib/desktop-setup';
+import { isSystemSettingsPane, isSystemSettingsUrl, menubarShowBlocked, systemSettingsPanes, systemSettingsUrl, type MenubarShowResult } from '../lib/desktop-setup';
+import { MENUBAR_HINT_KEY, menubarHintVisible, normalizeMenubarHint, recordMenubarHint, type MenubarHintDone, type MenubarHintState } from '../lib/menubar-hint';
 import { createMenubarPanel } from './menubar-window';
 import { createStateSignature } from './tray-signature';
 import { buildMenubarState, menubarSignalRequests, menubarTooltip, type MenubarState } from '../lib/menubar-state';
@@ -1352,6 +1353,30 @@ let menubarRefreshing = false;
 let menubarReadAt = 0;
 let menubarRebuild: ReturnType<typeof setTimeout> | undefined;
 const menubarSignature = createStateSignature();
+/** The first-open tip's saved answer, read once. Undefined until the saved state is open. */
+let menubarHint: MenubarHintState | undefined;
+function menubarHintState(): MenubarHintState | undefined {
+  if (menubarHint) return menubarHint;
+  try {
+    menubarHint = normalizeMenubarHint(appData.read(MENUBAR_HINT_KEY));
+  } catch {
+    // Saved state is not open yet: no tip rather than one that cannot be remembered.
+  }
+  return menubarHint;
+}
+/** The tip is done after a dismissal or the first row opened from the panel. Written once. */
+function finishMenubarHint(done: MenubarHintDone): void {
+  const current = menubarHintState();
+  if (!current || !menubarHintVisible(current)) return;
+  menubarHint = recordMenubarHint(current, done, Date.now());
+  try {
+    appData.write(MENUBAR_HINT_KEY, menubarHint);
+    void appData.flush().catch((error: unknown) => console.warn('[menubar] Could not save the tip state:', error instanceof Error ? error.message : error));
+  } catch (error) {
+    console.warn('[menubar] Could not save the tip state:', error instanceof Error ? error.message : error);
+  }
+  scheduleMenubar();
+}
 
 const menubarPanel = process.platform === 'darwin' ? createMenubarPanel({
   preload: path.join(__dirname, 'menubar-preload.js'),
@@ -1363,9 +1388,12 @@ const menubarPanel = process.platform === 'darwin' ? createMenubarPanel({
   // The renderer sent an id; the target comes from the rows main built.
   open: id => {
     const item = menubarItems.find(row => row.id === id);
-    if (item) deepLinks.open(item.target, 'menubar');
-    else showOrCreateWindow();
+    if (item) {
+      finishMenubarHint('opened');
+      deepLinks.open(item.target, 'menubar');
+    } else showOrCreateWindow();
   },
+  dismissHint: () => finishMenubarHint('dismissed'),
   openApp: showOrCreateWindow,
   openSettings: () => deepLinks.open({ kind: 'settings', section: 'notifications' }, 'menubar'),
   refresh: () => readMenubarStatus(true),
@@ -1437,6 +1465,7 @@ function rebuildMenubarNow(): void {
       backoffUntil: token ? githubClients.backoff(token, true, ['graphql'])?.retryAt : undefined,
       refreshing: menubarRefreshing,
       badge: iconBadge,
+      hint: (() => { const hint = menubarHintState(); return !!hint && menubarHintVisible(hint); })(),
       now: Date.now(),
     });
     menubarItems = items;
@@ -3214,9 +3243,11 @@ ipcMain.handle('open-system-settings', async (_event, pane: unknown) => {
 });
 /** Setup's "Show me": opens the summary panel under the menu bar icon, creating the icon if it is on but missing. */
 ipcMain.handle('menubar-show', async (): Promise<MenubarShowResult> => {
-  if (process.platform !== 'darwin' || !menubarPanel) return 'unsupported';
   const prefs = loadPreferences();
-  if (!prefs.trayEnabled) return 'off';
+  // The same reading the walkthrough uses to decide whether to offer its menu bar stop.
+  const blocked = menubarShowBlocked(process.platform, prefs);
+  if (blocked === 'unsupported' || !menubarPanel) return 'unsupported';
+  if (blocked === 'off') return 'off';
   if (!hasTray()) {
     createTray();
     applyTrayMode();
@@ -3225,7 +3256,7 @@ ipcMain.handle('menubar-show', async (): Promise<MenubarShowResult> => {
     // A status item created just now has no position until the menu bar lays it out.
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  if (menubarSettings(prefs).click === 'menu') return 'menu';
+  if (blocked === 'menu') return 'menu';
   const bounds = trayBounds();
   // A status item macOS does not draw reports no size.
   if (!bounds || bounds.width <= 0 || bounds.height <= 0) return 'hidden';

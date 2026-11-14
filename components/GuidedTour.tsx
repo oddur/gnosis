@@ -2,7 +2,14 @@ import { activeWorkspaceRoot } from '../lib/workspace-navigation';
 import { useEffect, useRef } from 'react';
 import { driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
-const steps = [
+import { menubarTourFallback, type MenubarShowResult } from '../lib/desktop-setup';
+interface TourStep {
+  /** No target: the popover sits in the middle of the window. */
+  target?: string;
+  title: string;
+  description: string;
+}
+const steps: TourStep[] = [
   {
     target: '[data-tour="queue"]',
     title: 'Your Review Queue',
@@ -24,6 +31,11 @@ const steps = [
     description: 'Generate an explanation here; press C in a review or file diff to open chat.',
   },
 ];
+/** macOS, after the queue steps, when the icon is on in panel mode (`offerMenubarTourStop`). Points at nothing in the window. */
+export const MENUBAR_TOUR_STOP: TourStep = {
+  title: 'Gnosis is also in your menu bar',
+  description: 'Click the icon to see what needs you and open a PR without switching windows.',
+};
 export function GuidedTour({
   step,
   prepare,
@@ -31,6 +43,7 @@ export function GuidedTour({
   onClose,
   stacked,
   local = false,
+  onShowMenubar,
 }: {
   step: number;
   prepare: (step: number) => boolean;
@@ -38,19 +51,24 @@ export function GuidedTour({
   onClose: (complete?: boolean) => void;
   stacked: boolean;
   local?: boolean;
+  /** Adds the menu bar stop last; its Show me opens the summary panel through `menubar-show`. */
+  onShowMenubar?: () => Promise<MenubarShowResult>;
 }) {
-  const latest = useRef({ prepare, onStep, onClose, stacked });
-  latest.current = { prepare, onStep, onClose, stacked };
+  const latest = useRef({ prepare, onStep, onClose, stacked, onShowMenubar });
+  latest.current = { prepare, onStep, onClose, stacked, onShowMenubar };
+  const menubar = !local && !!onShowMenubar;
   useEffect(() => {
-    const index = local ? 0 : step;
-    const total = local ? 1 : steps.length;
-    const entry = local
+    const list = menubar ? [...steps, MENUBAR_TOUR_STOP] : steps;
+    const total = local ? 1 : list.length;
+    // A saved step past the end (the menu bar stop is no longer offered) resumes at the last stop.
+    const index = local ? 0 : Math.min(Math.max(0, step), total - 1);
+    const entry: TourStep = local
       ? {
           target: '[data-tour="local"]',
           title: 'Review local changes',
           description: 'Choose a repository on your computer to review local changes. Reopen saved explanations from Saved reviews. GitHub sign-in is optional.',
         }
-      : steps[index] ?? steps[0];
+      : list[index];
     let cleaned = false;
     const available = latest.current.prepare(index);
     const tour = driver({
@@ -86,14 +104,30 @@ export function GuidedTour({
         progress.className = 'gnosis-tour-progress';
         progress.textContent = `${index + 1} of ${total}`;
         popover.footer.prepend(progress);
+        if (entry !== MENUBAR_TOUR_STOP) return;
+        const show = document.createElement('button');
+        show.type = 'button';
+        show.className = 'driver-popover-footer-btn gnosis-tour-action';
+        show.textContent = 'Show me';
+        show.addEventListener('click', () => {
+          show.disabled = true;
+          void (latest.current.onShowMenubar?.() ?? Promise.resolve<MenubarShowResult>('unsupported'))
+            .catch((): MenubarShowResult => 'unsupported')
+            .then((result) => {
+              show.disabled = false;
+              const fallback = menubarTourFallback(result);
+              if (fallback) popover.description.textContent = fallback;
+            });
+        });
+        popover.nextButton.before(show);
       },
     });
     const show = () => {
-      let element = activeWorkspaceRoot().querySelector(entry.target);
+      let element = entry.target ? activeWorkspaceRoot().querySelector(entry.target) : null;
       if (!local && index === 0 && (!element || !element.getBoundingClientRect().height)) {
         element = activeWorkspaceRoot().querySelector('[data-tour="queue-fallback"]');
       }
-      if (!element && available) return false;
+      if (!element && available && entry.target) return false;
       tour.highlight({
         element: element ?? undefined,
         popover: {
@@ -138,6 +172,6 @@ export function GuidedTour({
       observer?.disconnect();
       tour.destroy();
     };
-  }, [step, local]);
+  }, [step, local, menubar]);
   return null;
 }
