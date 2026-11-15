@@ -149,6 +149,8 @@ function withOwnView(queue: WorkbenchQueue, own: string | null | undefined): Wor
   return id === (queue.savedViews.activeId ?? null) ? queue : { ...queue, savedViews: { ...queue.savedViews, activeId: id } };
 }
 const NO_READ_STATES: NonNullable<WorkbenchQueue['readStates']> = {};
+/** Scrolling the queue records its position this long after the last scroll event. */
+const SCROLL_RECORD_MS = 150;
 const labels = {
   starred: 'Starred',
   updated: 'Changed since AI explanation',
@@ -1138,6 +1140,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const summaryNavigation = useRef(0);
   const restoredNavigation = useRef(0);
   const historyLocation = useRef<HomeLocation | undefined>(undefined);
+  const scrollRecord = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(scrollRecord.current), []);
   useLayoutEffect(() => {
     if (initializing || loading || !prefs || viewBusy) return;
     if (navigationRestoration && restoredNavigation.current !== navigationRestoration.nonce) {
@@ -2214,7 +2218,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   queueScrollOffset.current = event.currentTarget.scrollTop;
                   if (historyLocation.current) {
                     historyLocation.current = { ...historyLocation.current, scroll: event.currentTarget.scrollTop };
-                    onNavigationChange?.(historyLocation.current);
+                    // Record the position once scrolling pauses, not for every scroll event: each record renders the
+                    // workspace tabs and saves recent visits. Any other record meanwhile carries the latest offset.
+                    clearTimeout(scrollRecord.current);
+                    scrollRecord.current = setTimeout(() => {
+                      if (historyLocation.current) onNavigationChange?.(historyLocation.current);
+                    }, SCROLL_RECORD_MS);
                   }
                 }}
               >

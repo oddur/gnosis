@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useTransitionStore } from './use-transition-store';
 import { span } from './perf-spans';
 import type { QueueItem, WorkbenchQueue, WorkbenchQueueParts } from './workbench';
 import type { ReviewHistoryEntry } from './types';
@@ -350,13 +350,13 @@ export const workbenchStore = createWorkbenchStore(() => window.electronAPI, {
   },
 });
 
-const idle = () => () => {};
+// Queue updates re-render hundreds of rows and every open tab's listings, so they render as transitions (#345).
 export function useWorkbenchQueue(enabled = true, store: WorkbenchStore = workbenchStore) {
-  return useSyncExternalStore(enabled ? store.subscribe : idle, store.getQueue);
+  return useTransitionStore(enabled ? store.subscribe : null, store.getQueue);
 }
 export function useReviewHistory(enabled = true, store: WorkbenchStore = workbenchStore) {
-  return useSyncExternalStore(enabled ? store.subscribe : idle, store.getHistory);
+  return useTransitionStore(enabled ? store.subscribe : null, store.getHistory);
 }
 export function useWorkbenchStatus(enabled = true, store: WorkbenchStore = workbenchStore) {
-  return useSyncExternalStore(enabled ? store.subscribe : idle, store.getStatus);
+  return useTransitionStore(enabled ? store.subscribe : null, store.getStatus);
 }

@@ -32,6 +32,7 @@ import {
 } from '../lib/preload-settings';
 import type { PredictedUsage } from '../lib/github-budget';
 import { useState, useEffect, useRef } from 'react';
+import { useWorkbenchQueue, workbenchStore } from '../lib/workbench-store';
 import { Tabs } from 'radix-ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
@@ -196,14 +197,9 @@ export function SettingsDialog({
   useEffect(() => {
     if (pendingRepository) document.querySelector<HTMLElement>('.repository-editor input')?.focus();
   }, [pendingRepository]);
-  const [budget, setBudget] = useState<BriefingBudget>();
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    const update = () => { void Promise.resolve().then(() => window.electronAPI.workbenchSnapshot()).then(q => { if (live) setBudget(q.briefingBudget); }).catch(() => {}); };
-    const unsubscribe = window.electronAPI.onWorkbenchChanged?.(update);
-    return () => { live = false; unsubscribe?.(); };
-  }, [open]);
+  // The briefing budget comes with the shared queue snapshot, which the store already reads on every change. Reading a
+  // snapshot of its own here deserialized the whole queue again on every background sync while Settings was open (#345).
+  const budget: BriefingBudget | undefined = useWorkbenchQueue(open).briefingBudget;
   const [watchedRepos, setWatchedRepos] = useState<string[]>([]);
   const [watchedRepoInput, setWatchedRepoInput] = useState('');
   const [repoSuggestions, setRepoSuggestions] = useState<RepoSearchResult[]>([]);
@@ -318,7 +314,7 @@ export function SettingsDialog({
       .catch(() => {
         if (active) setLoadState('error');
       });
-    void Promise.resolve().then(() => window.electronAPI.workbenchSnapshot()).then(q => { if (active) setBudget(q.briefingBudget); }).catch(() => {});
+    void workbenchStore.refresh().catch(() => {});
     // Detection is optional: an unavailable tool must not prevent editing settings.
     void window.electronAPI
       .detectBinaryPath('claude')
@@ -360,7 +356,7 @@ export function SettingsDialog({
           await window.electronAPI.savePreferences(next);
           lastSaved.current = next;
           preferencesUpdated(next);
-          void Promise.resolve().then(() => window.electronAPI.workbenchSnapshot()).then(q => setBudget(q.briefingBudget)).catch(() => {});
+          void workbenchStore.refresh().catch(() => {});
         } catch {
           // Keep newer edits when a failed write and another edit share a field.
           pendingChanges.current = { ...patch, ...pendingChanges.current };
