@@ -270,7 +270,7 @@ function PrSummaryContent({
   const evict = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     clearTimeout(evict.current);
-    return () => { evict.current = setTimeout(() => setVisited(new Set([currentTab.current])), 60_000); };
+    return () => { evict.current = scheduleEviction(setVisited, currentTab); };
   }, []);
   // Programmatic jumps remount Feedback, which reads its initial thread and intent once.
   const [feedbackJump, setFeedbackJump] = useState(0);
@@ -768,6 +768,15 @@ function StackMergeActions({ subject, signals, checks, onChanged }: {
   const now = useStatusNow();
   const ready = stackMergeStatus(subject, signals, checks, now).summary.ready;
   return <PrActions member={subject.members[subject.members.length - 1]} stackMembers={subject.members} mergeReady={ready} onChanged={onChanged} />;
+}
+
+/**
+ * Drops a hidden PR's other tabs after a minute. Built outside the component on purpose: a closure made inside it
+ * would share its scope, and a pending timer would then keep the whole page alive, the queue's DOM included, for a
+ * minute after its workspace tab closed (found from a heap snapshot, #345).
+ */
+function scheduleEviction(setVisited: (value: Set<WorkspaceTab>) => void, tab: { current: WorkspaceTab }) {
+  return setTimeout(() => setVisited(new Set([tab.current])), 60_000);
 }
 
 export function PrSummary(props: ComponentProps<typeof PrSummaryContent>) {
