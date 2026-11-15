@@ -4,6 +4,13 @@ export function setTimedSink(next: typeof sink) {
   sink = next;
 }
 
+/** Reports work that already ran, from `start` (performance.now()) to now, to the sink. Cheap when none is set. */
+export function noteWork(label: string, start: number) {
+  if (!sink) return;
+  const end = performance.now();
+  sink(label, performance.timeOrigin + start, performance.timeOrigin + end);
+}
+
 /**
  * Times main-process work when `GNOSIS_PERF_TRACE` is set to any non-empty value, and prints one line
  * such as `[perf] view 11.8ms items=400 muted=649 history=512`. With a sink set it is always timed and reported to

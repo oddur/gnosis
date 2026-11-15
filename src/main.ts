@@ -3,8 +3,8 @@ import { instance as singleInstance } from './single-instance-start';
 import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
 import { diagnosticsSections } from '../lib/diagnostics';
 import { queueDelta } from '../lib/workbench-delta';
-import { correlateInteractions, instrumentIpc, instrumentSends, mainLoopReport, recordMainSpan, startMainLoopMonitor } from './main-blocking';
-import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
+import { correlateInteractions, instrumentIpc, instrumentSends, mainLoopReport, noteMainPhase, recordMainSpan, startMainLoopMonitor } from './main-blocking';
+import { mark, markRenderer, note, noteRenderer, onMark, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
 import { attachWindowChrome, registerWindowChromeIpc, windowChromeOptions } from './window-chrome';
@@ -199,7 +199,9 @@ const startup = createStartup();
 // lag detector for the event loop. Before the first handler registration.
 instrumentIpc(ipcMain as unknown as Parameters<typeof instrumentIpc>[0]);
 setTimedSink(recordMainSpan);
+onMark(noteMainPhase);
 startMainLoopMonitor();
+noteMainPhase('main-eval');
 app.on('web-contents-created', (_event, contents) => instrumentSends(contents));
 gateHandlers(ipcMain, startup, {
   ungated: ['load-preferences', 'get-config', 'open-external', 'open-logs-directory', 'get-update-status', 'install-update', 'dismiss-update'],
@@ -888,7 +890,8 @@ void app.whenReady().then(async () => {
       return;
     }
   }
-  createWindow();
+  timed('startup window', createWindow);
+  mark('window');
   // Links that arrived before the window (macOS cold launch, argv, another launch) go through the service now.
   singleInstance.attach({ receive: (raw, source) => deepLinks.receive(raw, source), show: showOrCreateWindow });
 
@@ -925,12 +928,15 @@ void app.whenReady().then(async () => {
 
   if (prefs.analytics) void trackEvent('app_started');
   menubarStartupDone = true;
-  initTrayIfEnabled();
+  timed('startup tray', initTrayIfEnabled);
+  mark('tray');
   // macOS: the panel replaced the recent-reviews menu and its status poll (#308). Windows and Linux keep both.
   if (process.platform !== 'darwin') setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
   rebuildTrayMenu();
   rebuildMenubarNow();
-  setupAutoUpdater();
+  mark('menubar');
+  timed('startup updater', setupAutoUpdater);
+  mark('updater');
 
   // GitHub release polling only needed on Linux (no native auto-update)
   if (process.platform === 'linux') {

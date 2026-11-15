@@ -4,7 +4,7 @@ import { serialize } from 'node:v8';
 import { groupSubjects, type QueueItem, type ReviewMember, type WorkbenchQueue } from '../lib/workbench';
 import { stampQueue } from '../lib/workbench-revision';
 import { applyQueueDelta, queueDelta } from '../lib/workbench-delta';
-import { correlateInteractions, mainLoopReport, mainSpan, resetMainLoopReport, startMainLoopMonitor } from '../src/main-blocking';
+import { correlateInteractions, mainLoopReport, mainSpan, noteMainPhase, recordMainSpan, resetMainLoopReport, startMainLoopMonitor } from '../src/main-blocking';
 
 const member = (n: number, updatedAt = '2026-11-15T09:00:00Z'): ReviewMember => ({
   number: n, repo: 'owner/repo', baseRepo: 'owner/repo', headRepo: 'owner/repo', url: `https://github.com/owner/repo/pull/${n}`,
@@ -42,8 +42,16 @@ void test('main long tasks are detected, named by the spans inside them, and mat
   const stop = startMainLoopMonitor();
   resetMainLoopReport();
   await new Promise((resolve) => setTimeout(resolve, 60));
+  noteMainPhase('cache-open');
   mainSpan('busy work', () => {
-    const end = performance.now() + 150;
+    // Many short parses, each under the 10 ms span threshold, add up inside one long task.
+    for (let i = 0; i < 20; i++) {
+      const start = performance.timeOrigin + performance.now();
+      const end = performance.now() + 3;
+      while (performance.now() < end);
+      recordMainSpan('cache parse', start);
+    }
+    const end = performance.now() + 90;
     while (performance.now() < end);
   });
   await new Promise((resolve) => setTimeout(resolve, 80));
@@ -52,6 +60,10 @@ void test('main long tasks are detected, named by the spans inside them, and mat
   const task = longTasks.find((t) => t.duration >= 100);
   assert.ok(task, `The 150 ms block is a long task: ${JSON.stringify(longTasks)}`);
   assert.equal(task.spans[0]?.name, 'busy work');
+  const parses = task.work?.find((w) => w.name === 'cache parse');
+  assert.equal(parses?.count, 20, `Short work is summed by name: ${JSON.stringify(task.work)}`);
+  assert.ok((parses?.ms ?? 0) >= 55);
+  assert.equal(task.phase?.after, 'cache-open', 'The task names the startup phase it ran in');
   assert.ok(eventLoopDelay.max >= 100);
   const [delayed, quick] = correlateInteractions(
     [

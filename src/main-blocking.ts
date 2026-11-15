@@ -1,4 +1,4 @@
-import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance, PerformanceObserver } from 'node:perf_hooks';
 
 /**
  * Main-process event-loop blocking (#345). Input reaches a window through the main process, so a busy main process
@@ -24,6 +24,13 @@ export interface MainLongTask {
   duration: number;
   /** Spans inside the long task, longest first. */
   spans: { name: string; duration: number }[];
+  /**
+   * All named work in the task, including pieces under 10 ms, summed by name: many small cache parses or
+   * garbage-collection pauses add up to a long task no single span explains.
+   */
+  work?: { name: string; ms: number; count: number }[];
+  /** The startup phase the task ran in: the last startup mark before it, and how long after it. */
+  phase?: { after: string; ms: number };
 }
 export interface MainLoopReport {
   eventLoopDelay: { mean: number; p50: number; p90: number; p99: number; max: number; samplesFor: number };
@@ -38,12 +45,23 @@ const LONG_TASK_MS = 50;
 const MAX_LONG_TASKS = 200;
 
 let spans: MainSpan[] = [];
+/** Named work since the lag detector last ran, summed by name. */
+let totals = new Map<string, { ms: number; count: number }>();
+let lastMark: { name: string; at: number } | undefined;
+/** Startup marks (src/startup-trace.ts) name the phase a long task ran in, also when tracing is off. */
+export function noteMainPhase(name: string) {
+  lastMark = { name, at: epoch() };
+}
 let longTasks: MainLongTask[] = [];
 let histogram: ReturnType<typeof monitorEventLoopDelay> | undefined;
 let histogramSince = 0;
 const epoch = () => performance.timeOrigin + performance.now();
 
 export function recordMainSpan(name: string, start: number, end = epoch()) {
+  const total = totals.get(name) ?? { ms: 0, count: 0 };
+  total.ms += end - start;
+  total.count++;
+  totals.set(name, total);
   if (end - start < SPAN_MIN_MS) return;
   spans.push({ name, start, end });
   if (spans.length > MAX_SPANS || spans[0].end < end - SPAN_KEEP_MS) spans = spans.filter((s) => s.end >= end - SPAN_KEEP_MS).slice(-MAX_SPANS);
@@ -79,14 +97,41 @@ export function startMainLoopMonitor(): () => void {
     if (lag >= LONG_TASK_MS) {
       const end = performance.timeOrigin + now;
       const start = end - lag;
-      longTasks.push({ at: Math.round(start), duration: Math.round(lag), spans: spansIn(start, end) });
+      const work = [...totals]
+        .filter(([, t]) => t.ms >= 1)
+        .sort((a, b) => b[1].ms - a[1].ms)
+        .slice(0, 8)
+        .map(([name, t]) => ({ name, ms: Math.round(t.ms), count: t.count }));
+      longTasks.push({
+        at: Math.round(start),
+        duration: Math.round(lag),
+        spans: spansIn(start, end),
+        ...(work.length ? { work } : {}),
+        ...(lastMark ? { phase: { after: lastMark.name, ms: Math.round(start - lastMark.at) } } : {}),
+      });
       if (longTasks.length > MAX_LONG_TASKS) longTasks = longTasks.slice(-MAX_LONG_TASKS);
     }
+    totals = new Map();
     last = now;
   }, LAG_INTERVAL_MS);
   timer.unref();
+  // Garbage-collection pauses, by kind, as named work: a large heap pauses main with no script to blame.
+  let gc: PerformanceObserver | undefined;
+  try {
+    gc = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const kind = (entry as { detail?: { kind?: number } }).detail?.kind;
+        const name = kind === 1 ? 'gc minor' : kind === 2 ? 'gc major' : kind === 4 ? 'gc incremental' : kind === 8 ? 'gc weak' : 'gc';
+        recordMainSpan(name, performance.timeOrigin + entry.startTime, performance.timeOrigin + entry.startTime + entry.duration);
+      }
+    });
+    gc.observe({ entryTypes: ['gc'] });
+  } catch {
+    gc = undefined;
+  }
   return () => {
     clearInterval(timer);
+    gc?.disconnect();
     histogram?.disable();
   };
 }
