@@ -141,7 +141,9 @@ void test('a diagnostics report keeps what an input waited behind, long frames a
     interactions: [{ ...interaction(1344), delay: { frames: 1, longTasks: 1, startedBefore: 300, blocking: 370, scripts: [script], secret: 'x' } }],
     longFrames: [{ at: 5, duration: 420, blocking: 370, scripts: [script], title: 'PR title' }],
     startup: { openForMs: 90_000, 'first-contentful-paint': 410 },
+    caches: { domNodes: 5000, inspection: { files: { entries: 12, bytes: 3_000_000 } }, title: 'PR title' },
   });
+  assert.deepEqual(renderer.caches, { domNodes: 5000, inspection: { files: { entries: 12, bytes: 3_000_000 } } }, 'Cache sizes keep numbers only');
   const delay = renderer.interactions[0].delay;
   assert.ok(delay);
   assert.equal('secret' in delay, false);

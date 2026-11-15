@@ -333,8 +333,8 @@ void app.whenReady().then(async () => {
 
     // Five PR tabs, each visited once so it mounts, then back to the queue.
     const tabs = "document.querySelectorAll('.workspace-tab-select')";
-    const openTabs = async () => {
-      for (let i = 0; i < 5; i++) {
+    const openTabs = async (offset = 0) => {
+      for (let i = offset; i < offset + 5; i++) {
         const before = await js<number>(`${tabs}.length`);
         await js(
           `document.querySelector('[data-workspace-active=true] .queue-list').querySelectorAll('.queue-row-main')[${i}].dispatchEvent(new MouseEvent('click',{bubbles:true,metaKey:true}))`
@@ -562,8 +562,9 @@ void app.whenReady().then(async () => {
     await closeTabs();
     counts['tabs closed again'] = await listeners();
     // A longer session: the same cycle three more times. Memory that stays behind grows with every cycle.
+    // Different PRs each time, as a reader works through the queue: per-PR caches must stay bounded too.
     for (let cycle = 3; cycle <= 5; cycle++) {
-      await openTabs();
+      await openTabs((cycle - 2) * 3);
       await closeTabs();
       counts[`tabs closed ${cycle}`] = await listeners();
     }

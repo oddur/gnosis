@@ -15,6 +15,12 @@ export function setDiscussionAccount(next: string) {
   for (const url of urls) listeners.forEach((fn) => fn(url, { headSha: '', baseSha: '', threads: [] }));
 }
 export const peekDiscussion = (url: string) => values.get(url);
+/** Discussions held, their threads and listeners, for the diagnostics export. */
+export function discussionCacheStats() {
+  let threads = 0;
+  for (const value of values.values()) threads += value.threads.length;
+  return { entries: values.size, threads, listeners: listeners.size };
+}
 let optimistic: (() => void) | undefined;
 /**
  * Main shows the reader's writes at once and rolls back failed ones, for every window. Its copy has every pending

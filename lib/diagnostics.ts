@@ -10,6 +10,8 @@ export interface RendererDiagnostics {
   longFrames?: LongFrame[];
   /** The window's own startup: milliseconds from navigation start, and how long the window has been open. */
   startup?: Record<string, number>;
+  /** What holds renderer memory: cache entries and estimated bytes, DOM size and open tabs (#345). */
+  caches?: Record<string, unknown>;
 }
 
 /** The sections main and the renderer add to the diagnostics file, beside sync health (#345). */
@@ -23,6 +25,16 @@ export interface DiagnosticsSections {
 }
 
 const MAX_INTERACTIONS = 500;
+/** Numbers from untrusted nested objects, a few levels deep and a few dozen keys wide. */
+function numbersOnly(value: unknown, depth: number): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>).slice(0, 40)) {
+    const name = key.slice(0, 40);
+    if (typeof entry === 'number' && Number.isFinite(entry)) out[name] = entry;
+    else if (depth > 0 && entry && typeof entry === 'object' && !Array.isArray(entry)) out[name] = numbersOnly(entry, depth - 1);
+  }
+  return out;
+}
 
 /** Keeps only the fields a report needs from untrusted renderer input. */
 export function sanitizeRendererDiagnostics(input: unknown): RendererDiagnostics {
@@ -97,6 +109,7 @@ export function sanitizeRendererDiagnostics(input: unknown): RendererDiagnostics
       : {}),
     ...(longFrames.length ? { longFrames } : {}),
     ...(startup ? { startup } : {}),
+    ...(value.caches && typeof value.caches === 'object' ? { caches: numbersOnly(value.caches, 2) } : {}),
   };
 }
 
@@ -120,7 +133,24 @@ export async function collectRendererDiagnostics(): Promise<RendererDiagnostics>
     ...(memory ? { memory: { usedJSHeapSize: memory.usedJSHeapSize, totalJSHeapSize: memory.totalJSHeapSize } } : {}),
     longFrames: longFrames(),
     startup: rendererStartup(),
+    caches: await rendererCaches(),
   };
+}
+
+/** Sizes of the renderer's caches and DOM, so an export explains a large heap. Each part is optional. */
+async function rendererCaches(): Promise<Record<string, unknown>> {
+  const caches: Record<string, unknown> = {
+    domNodes: document.getElementsByTagName('*').length,
+    workspaceTabs: document.querySelectorAll('.workspace-tab').length,
+  };
+  try {
+    caches.inspection = (await import('./inspection-cache')).inspectionCacheStats();
+    caches.stacks = (await import('./stack-inspection-cache')).stackCacheStats();
+    caches.discussions = (await import('./review-discussion-cache')).discussionCacheStats();
+  } catch {
+    /* A cache that cannot load reports nothing. */
+  }
+  return caches;
 }
 
 /** Navigation and paint timings of this window, and how long it has been open. Main's own marks need GNOSIS_PERF_TRACE;

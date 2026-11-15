@@ -282,7 +282,8 @@ function deleteStoredToken() {
 
 function getResolvedToken(): string | null {
   if (cachedToken) return cachedToken;
-  const token = loadStoredToken();
+  // Decrypting reads the macOS Keychain synchronously on main; the first read can wait on the Keychain for seconds.
+  const token = timed('keychain token', loadStoredToken);
   if (token) cachedToken = token; // cache so keychain is only unlocked once per session
   return token;
 }
