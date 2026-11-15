@@ -2,6 +2,7 @@
 import { instance as singleInstance } from './single-instance-start';
 import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
 import { diagnosticsSections } from '../lib/diagnostics';
+import { correlateInteractions, instrumentIpc, instrumentSends, mainLoopReport, recordMainSpan, startMainLoopMonitor } from './main-blocking';
 import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
@@ -124,7 +125,7 @@ import { isLocalUrl } from '../lib/local-url';
 import type { PrMetadata, PrSearchResult, PrStatus, PrStatusOptions } from '../lib/types';
 import { createPrStatusService, PR_STATUS_MAX_STALE_MS } from './pr-status-service';
 import { createStatCache } from './stat-cache';
-import { timed } from '../lib/perf-trace';
+import { setTimedSink, timed } from '../lib/perf-trace';
 import { deepFreeze } from '../lib/deep-freeze';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -193,6 +194,12 @@ const predictionsOff = process.env.GNOSIS_PREDICT === 'off';
 // The window opens before saved data and the GitHub cache load. Every handler registered below waits
 // for both unless listed here. Wrap before the first registration.
 const startup = createStartup();
+// Name main-process blocking for the diagnostics export (#345): IPC handlers and sends by channel, `timed` work, and a
+// lag detector for the event loop. Before the first handler registration.
+instrumentIpc(ipcMain as unknown as Parameters<typeof instrumentIpc>[0]);
+setTimedSink(recordMainSpan);
+startMainLoopMonitor();
+app.on('web-contents-created', (_event, contents) => instrumentSends(contents));
 gateHandlers(ipcMain, startup, {
   ungated: ['load-preferences', 'get-config', 'open-external', 'open-logs-directory', 'get-update-status', 'install-update', 'dismiss-update'],
   dataOnly: ['load-review-state', 'save-review-state', 'save-file-progress', 'load-file-filters', 'load-onboarding', 'get-auth-state', 'deep-link-take'],
@@ -1234,6 +1241,9 @@ function notifyLocalChange(channel: string) {
 
 /** Every queue change carries its revisions, so renderers skip snapshots they already show. */
 function broadcastWorkbenchChanged(): void {
+  timed('workbench-changed', broadcastWorkbenchChangedNow);
+}
+function broadcastWorkbenchChangedNow(): void {
   let revisions: WorkbenchRevisions | undefined;
   try {
     const queue = workbench.snapshot();
@@ -3800,6 +3810,9 @@ const syncSubscriptions = new Map<string, { owner: Electron.WebContents; id: str
 const syncSignals = new Map<string, QueueSignals>();
 const syncMetadata = new Map<string, PrMetadata>();
 function sendSyncUpdates(fresh: GitHubSyncUpdate[], failures: GitHubSyncFailure[] = []) {
+  timed('github-sync send', () => sendSyncUpdatesNow(fresh, failures));
+}
+function sendSyncUpdatesNow(fresh: GitHubSyncUpdate[], failures: GitHubSyncFailure[]) {
   const token = cachedToken;
   // Windows see the reader's writes GitHub has not shown yet.
   const updates = fresh.map((update): GitHubSyncUpdate =>
@@ -4001,6 +4014,9 @@ ipcMain.on('pr-open-view-hover', afterStartup(startup, (event: Electron.IpcMainE
   if (targets.length && cachedToken && syncEnabled()) void prOpenPreload.tick();
 }));
 function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
+  timed('github-sync publish', () => publishGitHubUpdatesNow(updates));
+}
+function publishGitHubUpdatesNow(updates: GitHubSyncUpdate[]) {
   if (!cachedLogin) return;
   for (const update of updates) {
     // A copy read from GitHub: the optimistic patches it shows are done for its kind.
@@ -4300,11 +4316,24 @@ const syncHealth = createSyncHealthService({
   notify: () => notifyLocalChange('sync-health-changed'),
   appInfo: () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron }),
   // The same file carries system and startup details and the exporting window's slow interactions (#345).
-  extendReport: renderer => ({ ...diagnosticsSections(renderer, {
-    system: { platform: process.platform, arch: process.arch, release: os.release(), cpus: os.cpus().length, memoryBytes: os.totalmem(), packaged: app.isPackaged },
-    versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
-    startup: startupSummary(),
-  }) }),
+  extendReport: renderer => {
+    const sections = diagnosticsSections(renderer, {
+      system: { platform: process.platform, arch: process.arch, release: os.release(), cpus: os.cpus().length, memoryBytes: os.totalmem(), packaged: app.isPackaged },
+      versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
+      startup: startupSummary(),
+    });
+    // Input waits in the main process too: each slow input lists the main-process long tasks during its delay.
+    const main = mainLoopReport();
+    return {
+      ...sections,
+      main: { ...main, memory: process.memoryUsage() },
+      renderer: {
+        ...sections.renderer,
+        interactions: correlateInteractions(sections.renderer.interactions, main.longTasks),
+        slowest: correlateInteractions(sections.renderer.slowest, main.longTasks),
+      },
+    };
+  },
 });
 syncHealth.register();
 void app.whenReady().then(() => {
