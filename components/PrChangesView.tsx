@@ -1,3 +1,4 @@
+import { useRenderSpan } from '../lib/perf-spans';
 import { LoadingState, LoadingIndicator } from './LoadingState';
 import { watchGitHub } from '../lib/watch-github';
 import { stackFileDiscussions } from '../lib/stack-changes';
@@ -113,6 +114,7 @@ export function PrChangesView({
   onOpenBrief?: () => void;
   initialFile?: ChangesInitialFile;
 }) {
+  useRenderSpan('changes render');
   countRender('PrChangesView');
   const positionId = combined ? `combined:${subject.id}` : commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const stream = useRef<CommitDiffStreamHandle>(null);

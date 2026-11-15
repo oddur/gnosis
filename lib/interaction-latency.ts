@@ -68,6 +68,13 @@ export interface InputDelayAttribution {
   /** The scripts that ran in that work, slowest first. Empty when the work was not script, such as garbage
    * collection, or a callback the browser does not attribute, such as an IPC message. */
   scripts: InteractionScript[];
+  /**
+   * Where the time of the overlapping frames went, in ms: attributed script, style and layout, rendering, and the
+   * rest, which is work the browser names no script for (IPC messages and their copies, garbage collection).
+   */
+  split?: { script: number; styleAndLayout: number; render: number; unattributed: number };
+  /** The app's own spans (lib/perf-spans.ts) that overlap that work, longest first, relative to the input. */
+  spans?: { name: string; start: number; duration: number }[];
 }
 
 export interface InteractionMonitorOptions {
@@ -238,6 +245,8 @@ export function attributeFrames(frames: readonly FrameEntry[], start: number, en
   };
 }
 
+import { spansBetween } from './perf-spans';
+
 /**
  * The work an input waited behind: frames and long tasks that overlap `[input, handlers start]`, the input delay. That
  * work started before the input, so it is told apart from the frames that ran the handlers and painted.
@@ -247,14 +256,21 @@ export function attributeInputDelay(
   tasks: readonly { startTime: number; duration: number }[],
   input: number,
   handlers: number,
-  topScripts = 5
+  topScripts = 5,
+  spansBetween?: (start: number, end: number) => readonly { name: string; start: number; end: number }[]
 ): InputDelayAttribution | undefined {
   if (handlers - input < 16) return undefined;
   const overlaps = (f: { startTime: number; duration: number }) => f.startTime < handlers && f.startTime + f.duration > input;
   const blockingFrames = frames.filter(overlaps);
   const blockingTasks = tasks.filter(overlaps);
-  if (!blockingFrames.length && !blockingTasks.length) return undefined;
-  const earliest = Math.min(...[...blockingFrames, ...blockingTasks].map((f) => f.startTime));
+  const earliestWork = Math.min(input, ...[...blockingFrames, ...blockingTasks].map((f) => f.startTime));
+  const spans = (spansBetween?.(earliestWork, handlers) ?? []).slice(0, topScripts).map((s) => ({
+    name: s.name,
+    start: Math.round(s.start - input),
+    duration: Math.round(s.end - s.start),
+  }));
+  if (!blockingFrames.length && !blockingTasks.length && !spans.length) return undefined;
+  const earliest = earliestWork;
   const scripts = blockingFrames
     .flatMap((frame) => frame.scripts ?? [])
     // Scripts that started after the handlers belong to the interaction itself.
@@ -264,12 +280,36 @@ export function attributeInputDelay(
   const blocking = blockingFrames.length
     ? blockingFrames.reduce((sum, f) => sum + (f.blockingDuration ?? 0), 0)
     : blockingTasks.reduce((sum, t) => sum + Math.max(0, t.duration - 50), 0);
+  let split: InputDelayAttribution['split'];
+  if (blockingFrames.length) {
+    let script = 0;
+    let styleAndLayout = 0;
+    let render = 0;
+    let total = 0;
+    for (const frame of blockingFrames) {
+      const end = frame.startTime + frame.duration;
+      total += frame.duration;
+      render += Math.max(0, end - (frame.renderStart || end));
+      styleAndLayout += Math.max(0, end - (frame.styleAndLayoutStart || end));
+      for (const s of frame.scripts ?? []) script += s.duration;
+    }
+    // renderStart covers style and layout too; keep the two apart.
+    render = Math.max(0, render - styleAndLayout);
+    split = {
+      script: Math.round(script),
+      styleAndLayout: Math.round(styleAndLayout),
+      render: Math.round(render),
+      unattributed: Math.max(0, Math.round(total - script - styleAndLayout - render)),
+    };
+  }
   return {
     frames: blockingFrames.length,
     longTasks: blockingTasks.length,
     startedBefore: Math.max(0, Math.round(input - earliest)),
     blocking: Math.round(blocking),
     scripts: scripts.slice(0, topScripts),
+    ...(split ? { split } : {}),
+    ...(spans.length ? { spans } : {}),
   };
 }
 
@@ -409,7 +449,7 @@ class InteractionMonitor {
       ? undefined
       : Math.round(this.frames.filter((t) => t.startTime < end && t.startTime + t.duration > entry.startTime).reduce((sum, t) => sum + t.duration, 0));
     const key = this.keys.get(Math.round(entry.startTime * 10));
-    const delay = attributeInputDelay(this.frameTiming ? this.frames : [], this.frameTiming ? this.tasks : this.frames, entry.startTime, entry.processingStart);
+    const delay = attributeInputDelay(this.frameTiming ? this.frames : [], this.frameTiming ? this.tasks : this.frames, entry.startTime, entry.processingStart, 5, spansBetween);
     const interaction: SlowInteraction = {
       at: Math.round(performance.timeOrigin + entry.startTime),
       type: entry.name,
@@ -454,14 +494,22 @@ function readLogPreference(): boolean {
 
 function logInteraction(entry: SlowInteraction): void {
   const scripts = entry.scripts.slice(0, 3).map((s) => `${s.source} ${s.duration}ms`).join(', ');
-  const delay = entry.delay
-    ? ` · waited behind ${entry.delay.blocking}ms of work started ${entry.delay.startedBefore}ms earlier` +
-      (entry.delay.scripts.length ? `: ${entry.delay.scripts.slice(0, 3).map((s) => `${s.source} ${s.duration}ms [${s.invoker}]`).join(', ')}` : ' (no script attributed)')
-    : '';
+  const delay = entry.delay ? ` · ${describeDelay(entry.delay)}` : '';
   console.warn(
     `[slow interaction] ${entry.type}${entry.key ? ` ${entry.key}` : ''} on ${entry.target}: ${entry.duration}ms ` +
       `(input ${entry.inputDelay}, handlers ${entry.processing}, paint ${entry.presentation})${scripts ? ` · ${scripts}` : ''}${delay}`
   );
+}
+
+/** One line for what an input waited behind: scripts, the app's spans, and where the frames' time went. */
+export function describeDelay(delay: InputDelayAttribution): string {
+  const parts: string[] = [];
+  if (delay.scripts.length)
+    parts.push(delay.scripts.slice(0, 3).map((s) => `${s.source} ${s.duration}ms [${s.invokerType ? `${s.invokerType} ` : ''}${s.invoker}${s.sourceCharPosition !== undefined ? ` @${s.sourceCharPosition}` : ''}]`).join(', '));
+  if (delay.spans?.length) parts.push(`app: ${delay.spans.slice(0, 3).map((s) => `${s.name} ${s.duration}ms`).join(', ')}`);
+  if (delay.split)
+    parts.push(`frames: script ${delay.split.script}, style+layout ${delay.split.styleAndLayout}, render ${delay.split.render}, unattributed ${delay.split.unattributed}`);
+  return `waited behind ${delay.blocking}ms of work started ${delay.startedBefore}ms earlier: ${parts.join(' · ') || 'nothing attributed'}`;
 }
 
 const monitor = new InteractionMonitor();

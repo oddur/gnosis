@@ -1,3 +1,4 @@
+import { useRenderSpan } from '../../lib/perf-spans';
 import { useWorkspaceNavigation, activeWorkspaceRoot } from '../../lib/workspace-navigation';
 import { ExplanationSetupDialog } from '../../components/ExplanationSetupDialog';
 import type { GenerateReviewRequest } from '../../lib/types';
@@ -166,6 +167,7 @@ function markQueuePainted() {
   }));
 }
 export function HomePage({ onAccount, navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+  useRenderSpan('queue page render');
   const tabs = useWorkspaceNavigation();
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
   const [responseUnavailable, setResponseUnavailable] = useState(0);

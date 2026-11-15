@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { span } from './perf-spans';
 import type { QueueItem, WorkbenchQueue, WorkbenchQueueParts } from './workbench';
 import type { ReviewHistoryEntry } from './types';
 import { historyRevision, stampQueue, type WorkbenchRevisions } from './workbench-revision';
@@ -106,6 +107,9 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
     return result;
   }
   function commit(next: WorkbenchQueue) {
+    span('queue store update', () => commitNow(next));
+  }
+  function commitNow(next: WorkbenchQueue) {
     const shared = share(next);
     const keys = new Set([...Object.keys(shared), ...Object.keys(queue)]) as Set<keyof WorkbenchQueue>;
     const changed = [...keys].some((key) => shared[key] !== queue[key]);

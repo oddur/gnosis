@@ -1,3 +1,4 @@
+import { useRenderSpan } from '../lib/perf-spans';
 import { prMetadataItem } from '../lib/deep-link-routing';
 import type { GitHubSyncStatusProps } from '../components/GitHubSyncStatus';
 import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interface-icons';
@@ -64,6 +65,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   setActivityOpen,
   onSyncStatus,
 }: Props) {
+  useRenderSpan('workspace render');
   const [navigationHistory] = useState(() => createNavigationHistory<AppLocation>(locationKey));
   const [homeRestoration, setHomeRestoration] = useState<{ location: HomeLocation; nonce: number }>();
   const lastHome = useRef<HomeLocation | undefined>(undefined);
