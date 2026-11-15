@@ -403,6 +403,22 @@ function ReviewPageContent({
       }
     );
   }, [active, isLocal, review.reviewId]);
+  // Any read in main that sees a new head for one of these PRs, also while this tab is in the background (#339).
+  useEffect(() => {
+    if (isLocal) return;
+    // Test fixtures can stub unknown bridge methods with a Promise; only a function is a valid effect cleanup.
+    const stop = window.electronAPI.onPrHeadChanged?.((change) => {
+      const shown = syncMembers.find((member) => member.url === change.url);
+      if (shown && shown.headSha !== change.to)
+        setFreshness({
+          status: 'stale',
+          aheadBy: 0,
+          commits: [],
+          reason: 'New commits are available. This explanation still shows its saved revision.',
+        });
+    });
+    return typeof stop === 'function' ? stop : undefined;
+  }, [isLocal, review.reviewId]);
   useEffect(() => {
     void writeReviewState(explanationPositionKey(positionId, 'inspected'), currentSlide).catch(() => {});
   }, [positionId, currentSlide]);

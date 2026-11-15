@@ -213,6 +213,12 @@ export interface GitHubWriteEvent {
   urls: string[];
   /** `immediate`: the first read finished. `follow-up`: a later read finished. `settled`: the change is visible. */
   phase: 'immediate' | 'follow-up' | 'settled' | 'gave-up';
+  /**
+   * Set when a change signal, not a write, named the PRs (#337, #338): the notifications feed, the changed-PR
+   * search, or a new head seen by a signals read. Such events use the `external` action: the change happened
+   * outside Gnosis, and main has read the PRs once.
+   */
+  source?: 'notifications' | 'search' | 'head';
 }
 export interface GitHubWriteRefresherDeps {
   now?: () => number;

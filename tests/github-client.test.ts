@@ -1165,3 +1165,19 @@ void test('the predicted hourly budget follows Settings › Preloading and scale
   h.pool.setPredictedPercent(15);
   assert.ok(h.pool.predictedBackoff('one', ['core']), 'Stops at twice the background reserve');
 });
+
+void test('a 304 to an automatic conditional read is not charged to the automatic share', async () => {
+  const h = harness((_url, headers) =>
+    headers.get('if-none-match') === 'W/"feed"'
+      ? new Response(null, { status: 304, headers: { 'x-poll-interval': '60' } })
+      : new Response('[]', { status: 200, headers: { 'content-type': 'application/json', etag: 'W/"feed"' } }));
+  const client = h.pool.client('one');
+  const read = (etag?: string) => withGitHubPriority('background', () => client.request('GET /notifications', {
+    headers: etag ? { 'if-none-match': etag } : {}, request: { cache: 'no-store' },
+  }), { automatic: true });
+  await read();
+  assert.equal(h.pool.automaticUsage('one', 'core').spent, 1, 'a 200 is charged');
+  h.advance(60_000);
+  await assert.rejects(read('W/"feed"'), (error: { status?: number }) => error.status === 304, 'the caller sees the 304');
+  assert.equal(h.pool.automaticUsage('one', 'core').spent, 1, 'the 304 is free');
+});

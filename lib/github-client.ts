@@ -494,6 +494,8 @@ export function createGitHubClientPool(options: Options = {}) {
           const beforeBudget = state.budgets[resource];
           let graphCost: number | undefined;
           let charged: AutomaticUsage | undefined;
+          // GitHub does not count a 304 Not Modified against the rate limit, so neither does the automatic share.
+          let notModified = false;
           // Predictions are charged at start like automatic work, but never paced.
           let predictedCharge: { usage: AutomaticUsage; label: string } | undefined;
           if (predicted) {
@@ -606,6 +608,7 @@ export function createGitHubClientPool(options: Options = {}) {
             if (requestOptions.request.signal?.aborted) throw requestOptions.request.signal.reason;
             const e = error as { status?: number; response?: { headers?: Headers } };
             observe(e.response?.headers ?? {});
+            notModified = e.status === 304;
             if (e.status === 304 && cached) {
               unavailable.delete(requestKey);
               // Shares the frozen saved data; the caller receives a copy below.
@@ -684,6 +687,7 @@ export function createGitHubClientPool(options: Options = {}) {
             throw error;
           } finally {
             flying[resource]--;
+            if (charged && notModified) charged.spent = Math.max(0, charged.spent - 1);
             if (charged) {
               const budget = state.budgets[resource];
               // GraphQL charges points, not HTTP requests. A same-window delta

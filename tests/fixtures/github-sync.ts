@@ -103,6 +103,8 @@ export function installSyncFixture(mocks: Record<string, unknown>, items: QueueI
         });
       },
       activity: () => activityListeners.forEach((callback) => callback()),
+      /** Main's `workbench-changed` broadcast: the queue reads its saved snapshot again. */
+      changed: () => queueListeners.forEach((callback) => callback()),
     },
   });
 }
