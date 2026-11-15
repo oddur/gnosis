@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RingBuffer, attributeFrames, slowestInteractions, splitDuration, type SlowInteraction } from '../lib/interaction-latency';
+import { RingBuffer, attributeFrames, attributeInputDelay, slowestInteractions, splitDuration, type SlowInteraction } from '../lib/interaction-latency';
 import { diagnosticsSections, sanitizeRendererDiagnostics } from '../lib/diagnostics';
 
 void test('the ring buffer keeps the newest entries, oldest first', () => {
@@ -46,10 +46,49 @@ void test('long animation frames that overlap an interaction name its slowest sc
     invokerType: 'event-listener',
     invoker: 'DIV#root.onmousedown',
     source: 'Big.tsx render',
+    sourceURL: 'components/Big.tsx',
+    sourceFunctionName: 'render',
     duration: 95,
     forcedLayout: 12,
   });
   assert.equal(attributeFrames(frames, 400, 500), undefined);
+});
+
+void test('input delay names the work that was already running when the input arrived', () => {
+  // A 400 ms store flush started at 1,000; the click arrived at 1,300 and its handlers ran at 1,400.
+  const frames = [
+    {
+      startTime: 1000,
+      duration: 420,
+      blockingDuration: 370,
+      scripts: [
+        { startTime: 1000, duration: 395, invoker: 'TimerHandler:setTimeout', invokerType: 'user-callback', sourceURL: 'app://gnosis/assets/index-abc.js?v=1', sourceFunctionName: 'flush', sourceCharPosition: 6040 },
+        // The click's own handler started after the delay; it belongs to the interaction, not the delay.
+        { startTime: 1401, duration: 12, invoker: 'DIV#root.onclick', invokerType: 'event-listener', sourceURL: 'app://gnosis/assets/index-abc.js', sourceFunctionName: 'dispatchDiscreteEvent' },
+      ],
+    },
+  ];
+  const delay = attributeInputDelay(frames, [], 1300, 1400);
+  assert.ok(delay);
+  assert.equal(delay.startedBefore, 300);
+  assert.equal(delay.blocking, 370);
+  assert.equal(delay.scripts.length, 1);
+  assert.deepEqual(delay.scripts[0], {
+    invokerType: 'user-callback',
+    invoker: 'TimerHandler:setTimeout',
+    source: 'index-abc.js flush',
+    sourceURL: 'assets/index-abc.js',
+    sourceFunctionName: 'flush',
+    sourceCharPosition: 6040,
+    start: -300,
+    duration: 395,
+    forcedLayout: 0,
+  });
+  // Work the browser reports only as a long task, such as an IPC message or garbage collection, still counts.
+  const tasks = attributeInputDelay([], [{ startTime: 1200, duration: 250 }], 1300, 1400);
+  assert.deepEqual(tasks, { frames: 0, longTasks: 1, startedBefore: 100, blocking: 200, scripts: [] });
+  assert.equal(attributeInputDelay(frames, [], 1300, 1310), undefined, 'Short delays are not attributed');
+  assert.equal(attributeInputDelay(frames, [], 2000, 2100), undefined, 'Nothing overlapped the delay');
 });
 
 const interaction = (duration: number, extra: Partial<SlowInteraction> = {}): SlowInteraction => ({
@@ -94,4 +133,22 @@ void test('a diagnostics report keeps only known fields from the renderer', () =
   assert.equal(sections.system.platform, 'darwin');
   assert.deepEqual(sections.renderer.slowest.map((e) => e.duration), [240, 0]);
   assert.equal(sanitizeRendererDiagnostics(null).interactions.length, 0);
+});
+
+void test('a diagnostics report keeps what an input waited behind, long frames and the window startup', () => {
+  const script = { source: 'index.js flush', sourceURL: 'assets/index.js', sourceFunctionName: 'flush', sourceCharPosition: 6040, start: -300, duration: 395, invoker: 'TimerHandler:setTimeout', invokerType: 'user-callback', forcedLayout: 0, extra: 1 };
+  const renderer = sanitizeRendererDiagnostics({
+    interactions: [{ ...interaction(1344), delay: { frames: 1, longTasks: 1, startedBefore: 300, blocking: 370, scripts: [script], secret: 'x' } }],
+    longFrames: [{ at: 5, duration: 420, blocking: 370, scripts: [script], title: 'PR title' }],
+    startup: { openForMs: 90_000, 'first-contentful-paint': 410 },
+  });
+  const delay = renderer.interactions[0].delay;
+  assert.ok(delay);
+  assert.equal('secret' in delay, false);
+  assert.deepEqual(delay.scripts[0], {
+    source: 'index.js flush', sourceURL: 'assets/index.js', sourceFunctionName: 'flush', sourceCharPosition: 6040, start: -300,
+    duration: 395, invoker: 'TimerHandler:setTimeout', invokerType: 'user-callback', forcedLayout: 0,
+  });
+  assert.deepEqual(renderer.longFrames?.map((f) => [f.duration, f.blocking, f.scripts[0].sourceFunctionName, 'title' in f]), [[420, 370, 'flush', false]]);
+  assert.deepEqual(renderer.startup, { openForMs: 90_000, 'first-contentful-paint': 410 });
 });

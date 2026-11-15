@@ -15,6 +15,12 @@ export interface InteractionScript {
   invoker: string;
   /** The script's file name and function, without the origin or query: `ReviewDiff.tsx renderHunks`. */
   source: string;
+  /** The script's URL without its origin or query, its function and the character position the browser reports. */
+  sourceURL?: string;
+  sourceFunctionName?: string;
+  sourceCharPosition?: number;
+  /** When the script started, in ms relative to the input: negative when it was already running as the input arrived. */
+  start?: number;
   duration: number;
   /** Time the script spent forcing synchronous style and layout. */
   forcedLayout: number;
@@ -42,6 +48,25 @@ export interface SlowInteraction {
   /** Long tasks that overlap the interaction, when long animation frames are unavailable. */
   longTasks?: number;
   /** The slowest scripts in those frames, slowest first. */
+  scripts: InteractionScript[];
+  /**
+   * What kept the main thread busy between the input and its handlers: the long animation frames and long tasks that
+   * overlap the input delay, which began before the input arrived. Present when the input delay is at least 16 ms.
+   */
+  delay?: InputDelayAttribution;
+}
+
+/** The work an input waited behind. */
+export interface InputDelayAttribution {
+  /** Long animation frames overlapping the input delay, and long tasks when frames are unavailable or missed it. */
+  frames: number;
+  longTasks: number;
+  /** How long before the input the earliest of that work started, in ms. */
+  startedBefore: number;
+  /** Their total blocking time, in ms. */
+  blocking: number;
+  /** The scripts that ran in that work, slowest first. Empty when the work was not script, such as garbage
+   * collection, or a callback the browser does not attribute, such as an IPC message. */
   scripts: InteractionScript[];
 }
 
@@ -132,10 +157,33 @@ interface FrameEntry {
     invokerType?: string;
     sourceURL?: string;
     sourceFunctionName?: string;
+    sourceCharPosition?: number;
+    startTime?: number;
     duration: number;
     forcedStyleAndLayoutDuration?: number;
   }[];
 }
+
+/** A script URL without its origin or query, so exports name the bundle file and never a user path. */
+const scriptPath = (url: string) => {
+  if (!url) return '';
+  try {
+    return new URL(url).pathname.split('/').slice(-2).join('/');
+  } catch {
+    return url.split('?')[0].split('/').slice(-2).join('/');
+  }
+};
+const describeScript = (s: NonNullable<FrameEntry['scripts']>[number], origin = 0): InteractionScript => ({
+  invokerType: s.invokerType ?? '',
+  invoker: (s.invoker ?? '').slice(0, 120),
+  source: scriptSource(s.sourceURL ?? '', s.sourceFunctionName ?? ''),
+  ...(s.sourceURL ? { sourceURL: scriptPath(s.sourceURL) } : {}),
+  ...(s.sourceFunctionName ? { sourceFunctionName: s.sourceFunctionName } : {}),
+  ...(s.sourceCharPosition !== undefined && s.sourceCharPosition >= 0 ? { sourceCharPosition: s.sourceCharPosition } : {}),
+  ...(s.startTime !== undefined ? { start: Math.round(s.startTime - origin) } : {}),
+  duration: Math.round(s.duration),
+  forcedLayout: Math.round(s.forcedStyleAndLayoutDuration ?? 0),
+});
 
 interface EventEntry extends PerformanceEntry {
   processingStart: number;
@@ -174,13 +222,7 @@ export function attributeFrames(frames: readonly FrameEntry[], start: number, en
     styleAndLayout += Math.max(0, frameEnd - styleStart);
     for (const s of frame.scripts ?? []) {
       script += s.duration;
-      scripts.push({
-        invokerType: s.invokerType ?? '',
-        invoker: (s.invoker ?? '').slice(0, 120),
-        source: scriptSource(s.sourceURL ?? '', s.sourceFunctionName ?? ''),
-        duration: Math.round(s.duration),
-        forcedLayout: Math.round(s.forcedStyleAndLayoutDuration ?? 0),
-      });
+      scripts.push(describeScript(s, start));
     }
   }
   scripts.sort((a, b) => b.duration - a.duration);
@@ -196,11 +238,64 @@ export function attributeFrames(frames: readonly FrameEntry[], start: number, en
   };
 }
 
+/**
+ * The work an input waited behind: frames and long tasks that overlap `[input, handlers start]`, the input delay. That
+ * work started before the input, so it is told apart from the frames that ran the handlers and painted.
+ */
+export function attributeInputDelay(
+  frames: readonly FrameEntry[],
+  tasks: readonly { startTime: number; duration: number }[],
+  input: number,
+  handlers: number,
+  topScripts = 5
+): InputDelayAttribution | undefined {
+  if (handlers - input < 16) return undefined;
+  const overlaps = (f: { startTime: number; duration: number }) => f.startTime < handlers && f.startTime + f.duration > input;
+  const blockingFrames = frames.filter(overlaps);
+  const blockingTasks = tasks.filter(overlaps);
+  if (!blockingFrames.length && !blockingTasks.length) return undefined;
+  const earliest = Math.min(...[...blockingFrames, ...blockingTasks].map((f) => f.startTime));
+  const scripts = blockingFrames
+    .flatMap((frame) => frame.scripts ?? [])
+    // Scripts that started after the handlers belong to the interaction itself.
+    .filter((s) => s.startTime === undefined || s.startTime < handlers)
+    .map((s) => describeScript(s, input))
+    .sort((a, b) => b.duration - a.duration);
+  const blocking = blockingFrames.length
+    ? blockingFrames.reduce((sum, f) => sum + (f.blockingDuration ?? 0), 0)
+    : blockingTasks.reduce((sum, t) => sum + Math.max(0, t.duration - 50), 0);
+  return {
+    frames: blockingFrames.length,
+    longTasks: blockingTasks.length,
+    startedBefore: Math.max(0, Math.round(input - earliest)),
+    blocking: Math.round(blocking),
+    scripts: scripts.slice(0, topScripts),
+  };
+}
+
+/** A long animation frame or long task kept for the diagnostics export, whether or not input waited behind it. */
+export interface LongFrame {
+  /** Wall-clock start, in epoch milliseconds. */
+  at: number;
+  duration: number;
+  blocking: number;
+  /** The slowest scripts in it, slowest first. */
+  scripts: InteractionScript[];
+}
+/** Frames at least this long are kept for the export, in a ring buffer of `LONG_FRAME_CAPACITY`. */
+const LONG_FRAME_MS = 100;
+const LONG_FRAME_CAPACITY = 100;
+
+/** Recording waits up to this long for the frame entries that cover an input's delay. */
+const ATTRIBUTION_WAIT_MS = 1000;
+
 const namedKey = /^(?:[a-z]|Enter|Escape|Tab|Arrow\w+|Page\w+|Home|End|Backspace|Delete| )$/;
 
 class InteractionMonitor {
   private buffer = new RingBuffer<SlowInteraction>(DEFAULT_CAPACITY);
+  private longFrames = new RingBuffer<LongFrame>(LONG_FRAME_CAPACITY);
   private frames: FrameEntry[] = [];
+  private tasks: { startTime: number; duration: number }[] = [];
   private cleanups: (() => void)[] = [];
   private keys = new Map<number, string>();
   private listeners = new Set<(entry: SlowInteraction) => void>();
@@ -222,7 +317,17 @@ class InteractionMonitor {
     // Keep frames for a few seconds: event entries arrive after the frame that painted them.
     const frames = new PerformanceObserver((list) => {
       const now = performance.now();
-      for (const entry of list.getEntries()) this.frames.push(entry as unknown as FrameEntry);
+      for (const entry of list.getEntries()) {
+        const frame = entry as unknown as FrameEntry;
+        this.frames.push(frame);
+        if (frame.duration >= LONG_FRAME_MS)
+          this.longFrames.push({
+            at: Math.round(performance.timeOrigin + frame.startTime),
+            duration: Math.round(frame.duration),
+            blocking: Math.round(frame.blockingDuration ?? Math.max(0, frame.duration - 50)),
+            scripts: (frame.scripts ?? []).map((script) => describeScript(script, frame.startTime)).sort((a, b) => b.duration - a.duration).slice(0, 5),
+          });
+      }
       this.frames = this.frames.filter((f) => now - (f.startTime + f.duration) < 5000);
     });
     try {
@@ -230,6 +335,20 @@ class InteractionMonitor {
       this.cleanups.push(() => frames.disconnect());
     } catch {
       // Neither API: records keep the Event Timing split alone.
+    }
+    // Long tasks too, alongside frames: a task that blocked input is reported even when no frame entry covers it.
+    if (this.frameTiming && types.includes('longtask')) {
+      const tasks = new PerformanceObserver((list) => {
+        const now = performance.now();
+        for (const entry of list.getEntries()) this.tasks.push({ startTime: entry.startTime, duration: entry.duration });
+        this.tasks = this.tasks.filter((t) => now - (t.startTime + t.duration) < 5000);
+      });
+      try {
+        tasks.observe({ type: 'longtask', buffered: true });
+        this.cleanups.push(() => tasks.disconnect());
+      } catch {
+        // Frames alone still attribute most delays.
+      }
     }
     // Keys are only on the event object, not on the timing entry. Note them by timestamp, which equals startTime.
     const remember = (event: KeyboardEvent) => {
@@ -262,11 +381,24 @@ class InteractionMonitor {
         slowest.set(id, entry);
     }
     if (!slowest.size) return;
-    const pending = [...slowest.values()].map((entry) => ({ entry, target: describeTarget(entry.target) }));
-    // The long animation frame that painted the interaction is reported at about the same time. Wait a frame or two.
-    setTimeout(() => {
-      for (const { entry, target } of pending) this.record(entry, target);
-    }, 50);
+    const pending = [...slowest.values()].map((entry) => ({ entry, target: describeTarget(entry.target), since: performance.now() }));
+    // The long animation frame that painted the interaction is reported at about the same time; the one the input
+    // waited behind can arrive later still when the thread is busy. Wait a frame or two, and up to a second for an
+    // entry that covers the input delay.
+    const settle = () => {
+      const waiting = pending.filter(({ entry, since }) => {
+        if (performance.now() - since >= ATTRIBUTION_WAIT_MS || entry.processingStart - entry.startTime < 50) return false;
+        const covered = (f: { startTime: number; duration: number }) =>
+          f.startTime <= entry.startTime + 1 && f.startTime + f.duration >= entry.processingStart - 1;
+        return !this.frames.some(covered) && !this.tasks.some(covered);
+      });
+      for (const item of pending.splice(0)) {
+        if (waiting.includes(item)) pending.push(item);
+        else this.record(item.entry, item.target);
+      }
+      if (pending.length) setTimeout(settle, 100);
+    };
+    setTimeout(settle, 50);
   }
 
   private record(entry: EventEntry, target: string): void {
@@ -277,6 +409,7 @@ class InteractionMonitor {
       ? undefined
       : Math.round(this.frames.filter((t) => t.startTime < end && t.startTime + t.duration > entry.startTime).reduce((sum, t) => sum + t.duration, 0));
     const key = this.keys.get(Math.round(entry.startTime * 10));
+    const delay = attributeInputDelay(this.frameTiming ? this.frames : [], this.frameTiming ? this.tasks : this.frames, entry.startTime, entry.processingStart);
     const interaction: SlowInteraction = {
       at: Math.round(performance.timeOrigin + entry.startTime),
       type: entry.name,
@@ -286,6 +419,7 @@ class InteractionMonitor {
       ...(attribution ? { frames: attribution.frames } : {}),
       ...(longTasks !== undefined ? { longTasks } : {}),
       scripts: attribution?.scripts ?? [],
+      ...(delay ? { delay } : {}),
     };
     this.buffer.push(interaction);
     if (this.log) logInteraction(interaction);
@@ -294,6 +428,10 @@ class InteractionMonitor {
 
   entries(): SlowInteraction[] {
     return this.buffer.toArray();
+  }
+
+  frameEntries(): LongFrame[] {
+    return this.longFrames.toArray();
   }
 
   clear(): void {
@@ -316,9 +454,13 @@ function readLogPreference(): boolean {
 
 function logInteraction(entry: SlowInteraction): void {
   const scripts = entry.scripts.slice(0, 3).map((s) => `${s.source} ${s.duration}ms`).join(', ');
+  const delay = entry.delay
+    ? ` · waited behind ${entry.delay.blocking}ms of work started ${entry.delay.startedBefore}ms earlier` +
+      (entry.delay.scripts.length ? `: ${entry.delay.scripts.slice(0, 3).map((s) => `${s.source} ${s.duration}ms [${s.invoker}]`).join(', ')}` : ' (no script attributed)')
+    : '';
   console.warn(
     `[slow interaction] ${entry.type}${entry.key ? ` ${entry.key}` : ''} on ${entry.target}: ${entry.duration}ms ` +
-      `(input ${entry.inputDelay}, handlers ${entry.processing}, paint ${entry.presentation})${scripts ? ` · ${scripts}` : ''}`
+      `(input ${entry.inputDelay}, handlers ${entry.processing}, paint ${entry.presentation})${scripts ? ` · ${scripts}` : ''}${delay}`
   );
 }
 
@@ -336,6 +478,11 @@ export function slowInteractions(): SlowInteraction[] {
 
 export function clearSlowInteractions(): void {
   monitor.clear();
+}
+
+/** Long animation frames of 100 ms or more, oldest first, whether or not an input waited behind them. */
+export function longFrames(): LongFrame[] {
+  return monitor.frameEntries();
 }
 
 export function onSlowInteraction(listener: (entry: SlowInteraction) => void): () => void {
