@@ -75,6 +75,12 @@ export function mergeReadiness(
       ...details,
       `GitHub is processing this PR in the merge queue (${status.queueState.toLowerCase().replace(/_/g, ' ')}).`,
     ]);
+  // GitHub reports BLOCKED while required checks run. With no review blocker, that is a wait, not a failure.
+  if (status.mergeState === 'BLOCKED' && snapshot.checks.state === 'pending')
+    return result('Checks running', 'warning', [
+      ...details,
+      'GitHub blocks merging until required checks finish. Recheck when they complete; other requirements may remain.',
+    ]);
   if (status.mergeState === 'BLOCKED')
     return result('Merge blocked', 'danger', [
       ...details,

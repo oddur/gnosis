@@ -44,6 +44,23 @@ void test('clean conflict-free GitHub policy state is required for readiness; pa
   assert.equal(mergeReadiness(member, { ...signals(), readiness: undefined }, now).label, 'Readiness unknown');
   assert.equal(mergeReadiness(member, signals({ mergeable: 'UNKNOWN' }), now).ready, false);
 });
+void test('BLOCKED while required checks run says checks are running, not merge blocked', () => {
+  // klanggames/seed#37235 shape: MERGEABLE, BLOCKED, no review decision, rollup PENDING.
+  const running = { ...signals({ mergeState: 'BLOCKED', reviewDecision: null }), checks: { state: 'pending' as const, total: 5, passed: 2, running: 3 } };
+  const readiness = mergeReadiness(member, running, now);
+  assert.equal(readiness.label, 'Checks running');
+  assert.equal(readiness.tone, 'warning');
+  assert.equal(readiness.ready, false);
+  assert.ok(readiness.details.some((detail) => /required checks finish/.test(detail)));
+  // Finished checks leave GitHub's block as the reason.
+  assert.equal(mergeReadiness(member, signals({ mergeState: 'BLOCKED', reviewDecision: null }), now).label, 'Merge blocked');
+  assert.equal(mergeReadiness(member, { ...running, checks: { state: 'failure', total: 5, passed: 4, failed: 1 } }, now).tone, 'danger');
+  // A review blocker still outranks running checks.
+  for (const [reviewDecision, label] of [['CHANGES_REQUESTED', 'Changes requested'], ['REVIEW_REQUIRED', 'Approval required']]) {
+    const blocked = { ...running, readiness: signals({ mergeState: 'BLOCKED', reviewDecision }).readiness };
+    assert.equal(mergeReadiness(member, blocked, now).label, label);
+  }
+});
 void test('required base update, conflicts and optional updates are distinct and name the PR base branch', () => {
   const required = mergeReadiness(member, signals({ mergeState: 'BEHIND', behindBy: 4 }), now);
   assert.equal(required.label, 'Update required to merge');

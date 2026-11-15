@@ -104,6 +104,41 @@ void test('latest approval is attributed to its actual revision without claiming
     'No submitted reviews'
   );
 });
+void test('the review row shows the open request for changes, not the author’s newer reply', () => {
+  const review = (n: number, author: string, state: string, submittedAt: string, headSha = 'previous') => ({
+    url: `${member.url}#pullrequestreview-${n}`,
+    author,
+    state,
+    submittedAt,
+    headSha,
+  });
+  const signals: QueueSignals = {
+    ...signal(),
+    latestReview: review(4, 'author', 'COMMENTED', '2026-11-04T10:00:00Z', member.headSha),
+    opinions: [
+      review(2, 'evans', 'APPROVED', '2026-11-03T10:00:00Z', member.headSha),
+      review(1, 'marijnz', 'CHANGES_REQUESTED', '2026-11-01T10:00:00Z'),
+    ],
+  };
+  let row = reviewEvidence(member, { now, signals }).rows[1];
+  assert.equal(row.label, 'Changes requested by marijnz · different commit');
+  assert.equal(row.tone, 'danger');
+  assert.equal(row.href, `${member.url}#pullrequestreview-1`);
+  // With no open request, the newest approval explains the state.
+  signals.opinions = signals.opinions?.slice(0, 1);
+  row = reviewEvidence(member, { now, signals }).rows[1];
+  assert.equal(row.label, 'Approved by evans · displayed commit');
+  assert.equal(row.tone, 'success');
+  // With no opinions, the newest review is shown as before.
+  signals.opinions = [];
+  assert.equal(reviewEvidence(member, { now, signals }).rows[1].label, 'Commented by author · displayed commit');
+  // An approval from a reviewer without write access is not among the opinions GitHub counts.
+  signals.latestReview = review(5, 'kirill', 'APPROVED', '2026-11-05T10:00:00Z', member.headSha);
+  row = reviewEvidence(member, { now, signals }).rows[1];
+  assert.equal(row.label, 'Approved by kirill · displayed commit');
+  assert.equal(row.tone, 'muted');
+  assert.match(row.detail, /does not count toward GitHub’s review decision/);
+});
 void test('discussion resolution changes update evidence; old-code unresolved threads still count', () => {
   const thread = {
     id: 't1',

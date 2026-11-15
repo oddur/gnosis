@@ -13,11 +13,24 @@ export interface QueueSignalOptions {
   /** Main only: receives the measured `rateLimit.cost` of a request this call made. */
   cost?: (cost: number) => void;
 }
+export interface SignalReview {
+  url: string;
+  author: string;
+  state: string;
+  submittedAt: string;
+  headSha: string | null;
+}
 export interface QueueSignals extends QueueSignalRequest {
   checkedAt: number;
   comments: number;
   /** Undefined for older cache entries; null means GitHub returned no submitted review. */
-  latestReview?: { url: string; author: string; state: string; submittedAt: string; headSha: string | null } | null;
+  latestReview?: SignalReview | null;
+  /**
+   * GitHub's `latestOpinionatedReviews` from reviewers with write access: each reviewer's latest review that is
+   * `APPROVED` or `CHANGES_REQUESTED`. A later comment does not replace it; a dismissal removes it.
+   * Undefined for older cache entries.
+   */
+  opinions?: SignalReview[];
   activity?: {
     comment?: { id: string; at: string; author: string };
     review?: { id: string; at: string; author: string; state?: string };
@@ -51,5 +64,28 @@ export function checkSignals(checks: CiCheck[]): QueueSignals['checks'] {
     total: checks.length,
   };
 }
-/** v4: check counts leave out jobs of superseded workflow runs. */
-export const queueSignalsCacheKey = (request: QueueSignalRequest) => `queue-signals:v4:${queueSignalKey(request)}`;
+/** v4: check counts leave out jobs of superseded workflow runs. v5: entries carry `opinions`. */
+export const queueSignalsCacheKey = (request: QueueSignalRequest) => `queue-signals:v5:${queueSignalKey(request)}`;
+
+const newestFirst = (a: SignalReview, b: SignalReview) => b.submittedAt.localeCompare(a.submittedAt);
+/**
+ * Open requests for changes by reviewers other than `login`, newest first. Undefined when the snapshot predates
+ * opinionated reviews; then only `latestReview` and `reviewDecision` are known.
+ */
+export function changeRequests(signals: QueueSignals, login: string): SignalReview[] | undefined {
+  return signals.opinions
+    ?.filter((review) => review.state === 'CHANGES_REQUESTED' && review.author.toLowerCase() !== login.toLowerCase())
+    .sort(newestFirst);
+}
+/**
+ * The review that best explains the PR's review state: the newest open request for changes, else the newest
+ * approval, else the newest review of any kind. A later comment never hides an opinion.
+ */
+export function decidingReview(signals: QueueSignals): SignalReview | null | undefined {
+  const opinions = [...(signals.opinions ?? [])].sort(newestFirst);
+  return (
+    opinions.find((review) => review.state === 'CHANGES_REQUESTED') ??
+    opinions.find((review) => review.state === 'APPROVED') ??
+    signals.latestReview
+  );
+}

@@ -46,10 +46,23 @@ export function signals(
     mergeState?: string;
     mergeable?: string;
     checkedAt?: number;
+    /** Each reviewer's latest opinion, as `latestOpinionatedReviews` returns it. */
+    opinions?: { id: string; author: string; state: string; at?: string }[];
   } = {}
 ): QueueSignals {
   const review = options.review;
   return {
+    ...(options.opinions
+      ? {
+          opinions: options.opinions.map((opinion) => ({
+            url: `${pr.url}#pullrequestreview-${opinion.id}`,
+            author: opinion.author,
+            state: opinion.state,
+            submittedAt: opinion.at ?? '2026-11-14T09:00:00Z',
+            headSha: pr.headSha,
+          })),
+        }
+      : {}),
     url: pr.url,
     headSha: pr.headSha,
     checkedAt: options.checkedAt ?? T0,
