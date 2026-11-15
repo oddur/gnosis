@@ -57,7 +57,9 @@ export async function createReviewComment(client: Octokit, req: CreateReviewComm
   if (!validCommentRange(req, lines.get(req.path)))
     throw new Error('These lines are outside GitHub’s current diff. Select lines in a changed section.');
   await assertRevision(client, req);
-  await client.pulls.createReviewComment({ ...target, commit_id: req.headSha, ...coordinates(req) });
+  const { data } = await client.pulls.createReviewComment({ ...target, commit_id: req.headSha, ...coordinates(req) });
+  // The comment's GraphQL id, as review threads report it, so the optimistic copy is replaced and never doubled.
+  return { id: data.node_id, url: data.html_url };
 }
 
 export async function submitPrReview(client: Octokit, req: SubmitReviewRequest, signature: boolean) {

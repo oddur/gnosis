@@ -2027,6 +2027,21 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .github-thread textarea { display:block; width:100%; resize:vertical; padding:8px; border:1px solid var(--input); border-radius:4px; background:var(--background); color:var(--foreground); }
 .github-thread form .github-thread-actions { padding-inline:0; }
 .github-thread-error { padding:8px 12px; color:var(--color-danger); font-size:var(--type-control); overflow-wrap:anywhere; }
+/* Optimistic writes: shown at once, quietly marked until GitHub confirms them. */
+.github-sending { color:var(--muted-foreground); font-size:var(--type-caption); font-style:italic; }
+.github-thread-comments article[data-sending] .github-comment-body,
+.feedback-message[data-sending] .github-comment-body { color:var(--muted-foreground); }
+.github-thread[data-sending=comment] { border-style:dashed; }
+/* A rolled-back write: what did not happen, GitHub's reason, Retry. One quiet line, not a banner. */
+.write-failure { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; color:var(--color-danger); font-size:var(--type-control); line-height:1.5; overflow-wrap:anywhere; }
+/* Focused only so screen readers announce it; Retry and Dismiss carry the visible focus. */
+.write-failure:focus, .write-failure:focus-visible { outline:none; }
+.write-failure > p { flex:1 1 24ch; margin:0; }
+.write-failure strong { font-weight:600; }
+.write-failure-detail { color:var(--foreground); }
+.write-failure-actions { display:flex; gap:12px; }
+.write-failure-actions button { color:var(--ring); text-decoration:underline; text-underline-offset:3px; font-size:var(--type-control); }
+.write-failure-actions button:disabled { opacity:.5; cursor:wait; }
 .github-comment-body { font-size:var(--type-body); line-height:var(--leading-prose); max-width:var(--measure-prose); }
 .github-thread textarea { font-size:var(--type-body); line-height:1.6; }
 .github-comment-body p+p,.github-comment-body pre { margin-top:8px; }

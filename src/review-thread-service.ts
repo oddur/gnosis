@@ -2,6 +2,7 @@ import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
+import { feedbackReplyBody } from '../lib/review-threads';
 import type {
   GitHubReviewComment,
   PrFeedback,
@@ -437,7 +438,7 @@ export function createReviewThreadService(now = Date.now) {
           owner,
           repo,
           issue_number: pull_number,
-          body: `In reply to [this feedback](${source.url}):\n\n${body}`,
+          body: feedbackReplyBody(source.url, body),
         });
       } else {
         if (!feedback.viewerCanUpdate || feedback.state !== 'OPEN')

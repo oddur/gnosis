@@ -36,6 +36,8 @@ import { useSessionDraft, ReviewDraftBoundary } from '../lib/session-drafts';
 import type { ReviewSubject } from '../lib/workbench';
 import { timeAgo } from '../lib/utils';
 import { countRender } from '../lib/render-count';
+import { optimisticWrite } from '../lib/write-failures';
+import { WriteFailureNotice } from './WriteFailureNotice';
 
 const excerpt = (item: FeedbackItem) =>
   (item.comments[0]?.isMinimized ? minimizedLabel(item.comments[0]) : item.comments[0]?.body)
@@ -101,7 +103,6 @@ export function PrFeedbackView({
   const [readError, setReadError] = useState('');
   const [writeError, setWriteError] = useState('');
   const [requesting, setRequesting] = useState('');
-  const [requestError, setRequestError] = useState('');
   const [visibleVisit, setVisibleVisit] = useState(0);
   useEffect(() => {
     const visible = () => {
@@ -289,26 +290,26 @@ export function PrFeedbackView({
       setReadError('Could not save unread status. Try again.');
     }
   }
-  async function requestReview(url: string, login: string, reviewId: string) {
+  /** The reviewer shows as requested at once; a failure rolls that back with Retry. */
+  function requestReview(url: string, login: string, reviewId: string) {
     if (writeLock.current) return;
     writeLock.current = true;
     const key = `${url}:${login}:${reviewId}`;
     setRequesting(key);
-    setRequestError('');
-    try {
-      await window.electronAPI.feedbackAction({ prUrl: url, action: 'request-review', reviewer: login });
-      setRequested((previous) => new Set([...previous, key]));
-      void refreshDiscussion(url).catch(() =>
-        setWriteError('Review requested. Could not refresh feedback; your request was sent.')
-      );
-    } catch (error) {
-      setRequestError(
-        `Could not request a review from ${login}. ${error instanceof Error ? error.message : String(error)}`
-      );
-    } finally {
+    void optimisticWrite({
+      key: `request-review:${url}:${login.toLowerCase()}`,
+      action: 'request-review',
+      write: async () => {
+        await window.electronAPI.feedbackAction({ prUrl: url, action: 'request-review', reviewer: login });
+        setRequested((previous) => new Set([...previous, key]));
+        void refreshDiscussion(url).catch(() =>
+          setWriteError('Review requested. Could not refresh feedback; your request was sent.')
+        );
+      },
+    }).finally(() => {
       writeLock.current = false;
       setRequesting('');
-    }
+    });
   }
   const reviewers = subject.members
     .filter((member) => !prUrl || member.url === prUrl)
@@ -415,11 +416,9 @@ export function PrFeedbackView({
                     </Popover.Close>
                   </header>
                   <p>Request another review after addressing their feedback. Unresolved threads stay open.</p>
-                  {requestError && (
-                    <p role="alert" className="feedback-post-error">
-                      {requestError}
-                    </p>
-                  )}
+                  {reviewers.map((r) => (
+                    <WriteFailureNotice key={`${r.member.url}:${r.login}`} failureKey={`request-review:${r.member.url}:${r.login.toLowerCase()}`} className="feedback-post-error" />
+                  ))}
                   <div>
                     {reviewers.map((r) => {
                       const key = `${r.member.url}:${r.login}:${r.reviewId}`,
@@ -446,10 +445,10 @@ export function PrFeedbackView({
                             aria-label={`${sent ? 'Review requested from' : 'Re-request review from'} ${r.login} on PR #${r.member.number}`}
                             disabled={!r.allowed || !!requesting || sent}
                             title={!r.allowed ? 'Review requests require permission to update an open PR.' : undefined}
-                            onClick={() => void requestReview(r.member.url, r.login, r.reviewId)}
+                            onClick={() => requestReview(r.member.url, r.login, r.reviewId)}
                           >
                             {sent ? <Check size={14} /> : <Send size={14} />}
-                            {sent ? 'Review requested' : requesting === key ? 'Requesting…' : 'Re-request review'}
+                            {requesting === key ? 'Requesting…' : sent ? 'Review requested' : 'Re-request review'}
                           </Button>
                         </div>
                       );
@@ -894,35 +893,33 @@ function FeedbackMessage({
 }) {
   const [draft, setDraft] = useSessionDraft(`feedback-reply:${feedbackKey(item)}`, '');
   const [replying, setReplying] = useSessionDraft(`feedback-replying:${feedbackKey(item)}`, false);
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState(''),
+  const [sending, setSending] = useState(false),
     [sent, setSent] = useState(false);
-  const lock = useRef(false);
-  const footer = useRef<HTMLDivElement>(null);
-  const alert = useRef<HTMLParagraphElement>(null);
-  useEffect(() => {
-    if (error) {
-      footer.current?.scrollIntoView({ block: 'nearest' });
-      alert.current?.focus({ preventScroll: true });
-    }
-  }, [error]);
   const comment = item.comments[0];
-  async function send() {
-    if (lock.current || !draft.trim()) return;
-    lock.current = true;
-    setBusy(true);
-    setError('');
-    try {
-      await onReply(draft);
-      setDraft('');
-      setReplying(false);
-      setSent(true);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
-    } finally {
-      lock.current = false;
-      setBusy(false);
-    }
+  const failureKey = `feedback-reply:${feedbackKey(item)}`;
+  /** The reply shows in the conversation at once, marked as sending. A failure brings the text back with Retry. */
+  function send() {
+    const body = draft;
+    if (sending || !body.trim()) return;
+    setSending(true);
+    setSent(false);
+    void optimisticWrite({
+      key: failureKey,
+      action: 'feedback-reply',
+      body,
+      clear: () => {
+        setDraft('');
+        setReplying(false);
+      },
+      restore: (text) => {
+        setDraft((current) => (current.trim() ? current : text));
+        setReplying(true);
+      },
+      write: async () => {
+        await onReply(body);
+        setSent(true);
+      },
+    }).finally(() => setSending(false));
   }
   const replyButton = (
     <Button
@@ -938,35 +935,50 @@ function FeedbackMessage({
   );
   const replyActions = (
     <div className="feedback-reply-actions">
-      <Button type="submit" form={`feedback-reply-form-${item.id}`} disabled={busy || !draft.trim()} size="sm">
-        {busy ? 'Posting…' : 'Reply on GitHub'}
+      <Button type="submit" form={`feedback-reply-form-${item.id}`} disabled={sending || !draft.trim()} size="sm">
+        Reply on GitHub
       </Button>
-      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setReplying(false)}>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setReplying(false)}>
         Cancel
       </Button>
     </div>
   );
   return (
-    <article className="feedback-message">
+    <article className="feedback-message" data-sending={comment.sending}>
       <header>
         {comment.author ? <GitHubAuthor login={comment.author.login} /> : 'Deleted account'}
-        <time dateTime={comment.createdAt}>{timeAgo(comment.createdAt)}</time>
-        <a href={comment.url} target="_blank" rel="noreferrer">
-          On GitHub
-        </a>
+        {comment.sending ? (
+          <span className="github-sending" role="status">
+            Sending…
+          </span>
+        ) : (
+          <time dateTime={comment.createdAt}>{timeAgo(comment.createdAt)}</time>
+        )}
+        {comment.url && (
+          <a href={comment.url} target="_blank" rel="noreferrer">
+            On GitHub
+          </a>
+        )}
       </header>
       {comment.isMinimized ? (
         <HiddenComment comment={comment} />
       ) : (
         <CommentMarkdown>{comment.body || 'No review summary was provided.'}</CommentMarkdown>
       )}
-      {sent && <p role="status">Reply posted to the PR discussion.</p>}
+      {sending ? (
+        <p role="status" className="github-sending">
+          Sending reply…
+        </p>
+      ) : (
+        sent && <p role="status">Reply posted to the PR discussion.</p>
+      )}
+      {!replying && <WriteFailureNotice failureKey={failureKey} className="feedback-post-error" />}
       {replying ? (
         <form
           id={`feedback-reply-form-${item.id}`}
           onSubmit={(e) => {
             e.preventDefault();
-            void send();
+            send();
           }}
         >
           <label htmlFor={`reply-${item.id}`}>Reply to this feedback</label>
@@ -974,24 +986,13 @@ function FeedbackMessage({
             id={`reply-${item.id}`}
             value={draft}
             onValueChange={setDraft}
-            disabled={busy}
             maxLength={65000}
             rows={4}
             autoFocus
           />
           <p className="feedback-reply-hint">Posts a PR comment with a link to this feedback.</p>
-          <div ref={footer} className="feedback-reply-footer">
-            {error && (
-              <div className="feedback-post-error">
-                <p ref={alert} role="alert" tabIndex={-1}>
-                  Reply wasn’t posted. Your draft is saved. Try again.
-                </p>
-                <details>
-                  <summary>Details</summary>
-                  <p>{error}</p>
-                </details>
-              </div>
-            )}
+          <div className="feedback-reply-footer">
+            <WriteFailureNotice failureKey={failureKey} className="feedback-post-error" />
             {actionContainer ? createPortal(replyActions, actionContainer) : replyActions}
           </div>
         </form>

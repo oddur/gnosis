@@ -1,6 +1,7 @@
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useEffect, useId, useRef, useState } from 'react';
-import { useSessionDraft } from '../lib/session-drafts';
+import { useSessionDraft, useSessionDraftId, writeSessionDraft } from '../lib/session-drafts';
+import { WriteFailureNotice } from './WriteFailureNotice';
 import { Button } from './ui/button';
 
 export function ChangesCommentComposer({
@@ -10,17 +11,26 @@ export function ChangesCommentComposer({
   onAddToBrief,
   onCancel,
   note,
+  failureKey,
 }: {
   draftKey: string;
   label: string;
   /** Absent when GitHub cannot represent this comparison or selection. */
-  onSave?: (body: string, now: boolean) => Promise<void>;
+  /**
+   * `now` posts to GitHub at once. That write does not wait: the comment shows as sending, and on failure the
+   * caller reopens this composer after `restore` put the text back.
+   */
+  onSave?: (body: string, now: boolean, restore: (text: string) => void) => Promise<void>;
+  /** A failed post of this comment, shown with Retry. */
+  failureKey?: string;
   onAddToBrief?: (body: string) => Promise<void>;
   onCancel: () => void;
   note?: string;
 }) {
   const id = useId();
   const [body, setBody] = useSessionDraft(`changes-comment:${draftKey}`, '');
+  const draftId = useSessionDraftId(`changes-comment:${draftKey}`);
+  const restore = (text: string) => writeSessionDraft(draftId, text);
   // Remember intent across files and comparison views, not the immediate-post action.
   const [preferred, setPreferred] = useSessionDraft<'local' | 'review'>('changes-comment-destination', 'review');
   const destination = preferred === 'local' && onAddToBrief ? 'local' : onSave ? 'review' : 'local';
@@ -55,7 +65,7 @@ export function ChangesCommentComposer({
     }
     if (target === 'review' && onSave) {
       setPreferred('review');
-      return run((text) => onSave(text, false));
+      return run((text) => onSave(text, false, restore));
     }
   };
   const shortcut = /Macintosh|Mac OS X/i.test(navigator.userAgent) ? '⌘' : 'Ctrl+';
@@ -125,6 +135,7 @@ export function ChangesCommentComposer({
           {error}
         </p>
       )}
+      <WriteFailureNotice failureKey={failureKey} />
       <div ref={actions} className="changes-comment-buttons">
         <span className="changes-comment-shortcut">
           {shortcut}Enter to {destination === 'local' ? 'add local note' : 'add to review'}
@@ -138,7 +149,7 @@ export function ChangesCommentComposer({
             variant="outline"
             size="sm"
             disabled={busy || !body.trim()}
-            onClick={() => void run((text) => onSave(text, true))}
+            onClick={() => void run((text) => onSave(text, true, restore))}
           >
             Post to GitHub now
           </Button>

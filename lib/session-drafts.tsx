@@ -49,6 +49,15 @@ export function useSessionDraft<T>(key: string, initial: T | (() => T)): [T, Dis
   return [state.id === id ? state.value : read(), set];
 }
 
+/** The stored id of a draft in this scope, so its text can be written back after its editor closed. */
+export function useSessionDraftId(key: string): string {
+  return `${useContext(ReviewDraftScope)}:${key}`;
+}
+/** Writes a draft by its stored id. An editor that mounts later shows it. */
+export function writeSessionDraft(id: string, value: unknown) {
+  values.set(id, value);
+}
+
 /** Persist scroll without rerendering a virtualized list on every wheel event. */
 export function useSessionScroll(key: string) {
   const [position] = useSessionDraft(`scroll:${key}`, () => ({ top: 0, left: 0 }));

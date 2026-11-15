@@ -6,6 +6,7 @@ import { useChangesReviewDrafts, type ChangesReviewDraft } from '../lib/changes-
 import { briefAppliesTo, briefLines, useAgentBrief, type AgentBriefComment, type AgentBriefPin } from '../lib/agent-brief';
 import { toast } from './ui/toast';
 import { ReviewDraftBoundary, useSessionDraft } from '../lib/session-drafts';
+import { optimisticWrite } from '../lib/write-failures';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import { ChangesCommentComposer } from './ChangesCommentComposer';
 import { ChangesDraftComment } from './ChangesDraftComment';
@@ -83,6 +84,8 @@ export function useChangesComments({
     [error, setError] = useState('');
   const [target, setTarget] = useState<PrChanges>();
   const submitting = useRef(false);
+  // Drafts in a review being submitted. Main already shows them as sending threads, so they leave the diff at once.
+  const [submittingIds, setSubmittingIds] = useState<ReadonlySet<string>>(() => new Set());
   const writable = enabled && !!account && snapshot?.metadata.state === 'open' && !snapshot.metadata.merged;
   const current = (d: ChangesReviewDraft) =>
     d.headSha === snapshot?.metadata.headSha &&
@@ -161,7 +164,7 @@ export function useChangesComments({
     return a.metadata;
   };
   inline.forEach((t) => t.line !== null && location(t.line, t.diffSide).threads.push(t));
-  drafts.filter((d) => current(d) && d.filePath === path).forEach((d) => location(d.line, d.side).drafts.push(d));
+  drafts.filter((d) => current(d) && d.filePath === path && !submittingIds.has(d.id)).forEach((d) => location(d.line, d.side).drafts.push(d));
   if (brief)
     agentBrief.comments
       .filter((c) => briefAppliesTo(c, brief.pin))
@@ -247,9 +250,10 @@ export function useChangesComments({
               ? 'GitHub comments need lines from one side of the diff, so save this selection as a local note.'
               : undefined
           }
+          failureKey={`review-comment:${url}:${path}:${metadata.composer.side}:${metadata.composer.startLine ?? ''}:${metadata.composer.line}`}
           onSave={
             writable && !metadata.composer.startSide
-              ? async (body, now) => {
+              ? async (body, now, restore) => {
                   const req = {
                     prUrl: url,
                     headSha: snapshot.metadata.headSha,
@@ -260,8 +264,21 @@ export function useChangesComments({
                     ...(metadata.composer as Location),
                   };
                   if (now) {
-                    await window.electronAPI.createReviewComment(req);
-                    await refresh(url);
+                    // The comment shows at once as a sending thread. On failure the composer reopens with the text.
+                    const where = metadata.composer as Location;
+                    void optimisticWrite({
+                      key: `review-comment:${url}:${path}:${where.side}:${where.startLine ?? ''}:${where.line}`,
+                      action: 'review-comment',
+                      body,
+                      write: async () => {
+                        await window.electronAPI.createReviewComment(req);
+                        void refresh(url);
+                      },
+                      restore: (text) => {
+                        restore(text);
+                        setComposer(where);
+                      },
+                    });
                   } else
                     await change((list) => [
                       ...list,
@@ -403,6 +420,8 @@ export function useChangesComments({
                     )
                   )
                     throw new Error('Remove drafts from earlier versions before submitting.');
+                  const ids = new Set(targetDrafts.map((d) => d.id));
+                  setSubmittingIds(ids);
                   const result = await window.electronAPI.submitReview({
                     prUrl: url,
                     headSha: target.metadata.headSha,
@@ -418,7 +437,6 @@ export function useChangesComments({
                       body: d.body,
                     })),
                   });
-                  const ids = new Set(targetDrafts.map((d) => d.id));
                   // Once GitHub succeeds, a refresh failure must never offer a duplicate submission.
                   try {
                     await change((list) => list.filter((d) => !ids.has(d.id)));
@@ -432,6 +450,7 @@ export function useChangesComments({
                   return result;
                 } finally {
                   submitting.current = false;
+                  setSubmittingIds(new Set());
                 }
               }}
             />
