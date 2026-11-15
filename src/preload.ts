@@ -2,6 +2,7 @@ import type { AppUpdateStatus } from './update-state';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
+import type { GitHubWriteEvent } from '../lib/github-write-refresh';
 import type { OpenTarget } from '../lib/pr-open-targets';
 import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
@@ -92,6 +93,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
       ipcRenderer.removeListener('github-sync', handler);
+    };
+  },
+  /** Main read GitHub again after a write Gnosis made, or after the reader came back from GitHub. */
+  onGitHubWriteRefreshed: (callback: (event: GitHubWriteEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: GitHubWriteEvent) => callback(value);
+    ipcRenderer.on('github-write-refreshed', handler);
+    return () => {
+      ipcRenderer.removeListener('github-write-refreshed', handler);
     };
   },
   onWorkbenchChanged: (callback: (revisions?: WorkbenchRevisions) => void) => {

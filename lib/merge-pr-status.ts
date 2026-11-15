@@ -20,9 +20,15 @@ export function mergePrStatus(previous: PrStatus | undefined, next: PrStatus): P
       ? previous.checkSnapshot
       : next.checkSnapshot;
   const lifecycle = newerLifecycle(previous.lifecycle, next.lifecycle);
+  // A slower read can return an older PR. Keep the newer full report.
+  const metadata =
+    previous.metadata && (!next.metadata || Date.parse(previous.metadata.updatedAt) > Date.parse(next.metadata.updatedAt))
+      ? previous.metadata
+      : next.metadata;
   return {
     ...next,
     ...(lifecycle ? { lifecycle } : {}),
+    ...(metadata ? { metadata } : {}),
     signals,
     ciConclusion: signals?.checks.state ?? next.ciConclusion,
     checkSnapshot,

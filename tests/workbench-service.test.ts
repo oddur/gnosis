@@ -2492,3 +2492,95 @@ void test('dismissed and cleared briefing failures stay hidden after a restart, 
     s.cleanup();
   }
 });
+
+// ── Review requests end ──
+/** The fixture PR, returned only by the `review-requested:` search while `requested` is true. */
+function requestedOnly(s: ReturnType<typeof setup>) {
+  const state = { requested: true };
+  const item = {
+    number: 1, title: s.pr.title, html_url: s.pr.html_url, repository_url: 'https://api.github.com/repos/owner/repo',
+    user: s.pr.user, updated_at: s.pr.updated_at, draft: false,
+  };
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: ({ q }: { q: string }) => Promise.resolve({
+      data: { incomplete_results: false, total_count: 0, items: q.includes('review-requested:') && state.requested ? [{ ...item, updated_at: s.pr.updated_at }] : [] },
+    }),
+  });
+  return state;
+}
+const roleOf = (service: ReturnType<typeof createWorkbenchService>, url: string) => service.knownMember(url)?.role;
+
+void test('a review submitted from Gnosis ends Review requested at once', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const now = Date.parse('2026-10-22T12:00:00Z');
+  const service = createWorkbenchService({ ...s.deps, now: () => now });
+  try {
+    requestedOnly(s);
+    const before = await service.queue(true);
+    assert.equal(roleOf(service, s.pr.html_url), 'review-requested');
+    assert.equal(before.items[0].attention, 'requested');
+    service.reviewSubmitted('someone-else', s.pr.html_url);
+    assert.equal(roleOf(service, s.pr.html_url), 'review-requested', 'Another account changes nothing');
+    service.reviewSubmitted('reviewer', s.pr.html_url);
+    assert.equal(roleOf(service, s.pr.html_url), 'watched');
+    assert.equal(service.snapshot().items[0].attention, 'other');
+  } finally { s.cleanup(); }
+});
+
+void test('a direct request that the reviewer list drops, with no team requested, leaves Review requested', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const service = createWorkbenchService({ ...s.deps, now: () => Date.parse('2026-10-22T12:00:00Z') });
+  try {
+    requestedOnly(s);
+    await service.queue(true);
+    const member = service.knownMember(s.pr.html_url);
+    assert.ok(member);
+    service.updatePrMetadata({ ...member, requestedReviewers: [], requestedTeams: [], updatedAt: '2026-10-22T09:59:00Z' });
+    assert.equal(roleOf(service, s.pr.html_url), 'review-requested', 'No direct request seen: a team request can be hidden from the token');
+    service.updatePrMetadata({ ...member, requestedReviewers: ['Reviewer'], requestedTeams: [], updatedAt: '2026-10-22T10:00:00Z' });
+    service.updatePrMetadata({ ...member, requestedReviewers: [], requestedTeams: ['platform'], updatedAt: '2026-10-22T10:01:00Z' });
+    assert.equal(roleOf(service, s.pr.html_url), 'review-requested', 'A team request may include the reader');
+    service.updatePrMetadata({ ...member, requestedReviewers: ['Reviewer'], requestedTeams: [], updatedAt: '2026-10-22T10:02:00Z' });
+    assert.equal(roleOf(service, s.pr.html_url), 'review-requested', 'A direct request');
+    service.updatePrMetadata({ ...member, requestedReviewers: [], requestedTeams: [], updatedAt: '2026-10-22T10:03:00Z' });
+    assert.equal(roleOf(service, s.pr.html_url), 'watched');
+  } finally { s.cleanup(); }
+});
+
+void test('a starred PR keeps no review request that discovery no longer reports', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const service = createWorkbenchService({ ...s.deps, now: () => Date.parse('2026-10-22T12:00:00Z') });
+  try {
+    const state = requestedOnly(s);
+    const first = await service.queue(true);
+    assert.equal(first.items[0].subject.members[0].role, 'review-requested');
+    service.starPrs({ members: first.items[0].subject.members, starred: true });
+    state.requested = false;
+    const after = await service.queue(true);
+    const member = [...after.items, ...(after.starredItems ?? [])].flatMap(item => item.subject.members).find(m => m.url === s.pr.html_url);
+    assert.equal(member?.role, 'watched');
+    assert.ok([...after.items, ...(after.starredItems ?? [])].every(item => item.attention !== 'requested'));
+    // Requested again: discovery's role wins over the saved star.
+    state.requested = true;
+    const again = await service.queue(true);
+    assert.equal([...again.items, ...(again.starredItems ?? [])].flatMap(item => item.subject.members).find(m => m.url === s.pr.html_url)?.role, 'review-requested');
+  } finally { s.cleanup(); }
+});
+
+void test('watch mode ends a review request that the complete personal searches no longer return', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const now = Date.parse('2026-10-22T12:00:00Z');
+  const service = createWorkbenchService({ ...s.deps, now: () => now, backoff: () => undefined,
+    notifications: { deliver: () => {} }, signals: (_client, requests) => Promise.resolve(requests.map(signalValue(now))) });
+  try {
+    const state = requestedOnly(s);
+    await service.queue(true);
+    assert.equal(roleOf(service, s.pr.html_url), 'review-requested');
+    await service.watch();
+    assert.equal(roleOf(service, s.pr.html_url), 'review-requested', 'Still returned: still requested');
+    state.requested = false;
+    assert.deepEqual(await service.watch(), { changed: 1 });
+    assert.equal(roleOf(service, s.pr.html_url), 'watched');
+    assert.ok(service.snapshot().items.every(item => item.attention !== 'requested'));
+  } finally { s.cleanup(); }
+});
