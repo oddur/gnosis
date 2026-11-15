@@ -233,3 +233,59 @@ test('the attention model: rank order, ready dropped beside a fix, team requests
   assert.deepEqual(memberAttention(team, undefined, LOGIN), {});
   assert.deepEqual(memberAttention(team, undefined, LOGIN, { teamRequests: true }), { 'review-requested': 'team' });
 });
+
+void test('a request for changes stays after your own reply, without a required-review decision', () => {
+  const pr = mine(1);
+  // Unprotected base: GitHub reports no review decision. The newest review is your inline reply.
+  const replied = signals(pr, {
+    decision: null,
+    review: { id: '3', author: LOGIN, state: 'COMMENTED' },
+    opinions: [{ id: '1', author: 'maya', state: 'CHANGES_REQUESTED' }],
+  });
+  assert.equal(memberAttention(pr, replied, LOGIN)['changes-requested'], `${pr.url}#pullrequestreview-1`);
+  // The reviewer's own later comment does not withdraw it either.
+  const commented = signals(pr, {
+    decision: null,
+    review: { id: '3', author: 'maya', state: 'COMMENTED' },
+    opinions: [{ id: '1', author: 'maya', state: 'CHANGES_REQUESTED' }],
+  });
+  assert.equal(memberAttention(pr, commented, LOGIN)['changes-requested'], `${pr.url}#pullrequestreview-1`);
+  // Approval or dismissal removes the reviewer's request from the opinions.
+  assert.equal(memberAttention(pr, signals(pr, { decision: null, opinions: [{ id: '4', author: 'maya', state: 'APPROVED' }] }), LOGIN)['changes-requested'], undefined);
+  assert.equal(memberAttention(pr, signals(pr, { decision: null, opinions: [] }), LOGIN)['changes-requested'], undefined);
+  // The newest of several open requests identifies the kind.
+  const two = signals(pr, {
+    decision: null,
+    opinions: [
+      { id: '1', author: 'maya', state: 'CHANGES_REQUESTED', at: '2026-11-14T08:00:00Z' },
+      { id: '2', author: 'li', state: 'CHANGES_REQUESTED', at: '2026-11-14T09:00:00Z' },
+    ],
+  });
+  assert.equal(memberAttention(pr, two, LOGIN)['changes-requested'], `${pr.url}#pullrequestreview-2`);
+  // Saved signals from before opinions keep the single-review rule.
+  assert.equal(memberAttention(pr, signals(pr, { decision: null, review: { id: '5', author: 'maya', state: 'CHANGES_REQUESTED' } }), LOGIN)['changes-requested'], `${pr.url}#pullrequestreview-5`);
+});
+
+void test('a request for changes notifies once, even when a comment follows it before the next poll', () => {
+  const pr = mine(1);
+  const before = signals(pr, { decision: null, opinions: [] });
+  // Between polls maya requested changes and then you replied: the newest review is your comment.
+  const after = signals(pr, {
+    decision: null,
+    checkedAt: T0 + 1,
+    review: { id: '2', author: LOGIN, state: 'COMMENTED' },
+    opinions: [{ id: '1', author: 'maya', state: 'CHANGES_REQUESTED' }],
+  });
+  const { events, basis } = run([obs(pr, before), obs(pr, after), obs(pr, { ...after, checkedAt: T0 + 2 })]);
+  assert.deepEqual(events, [{ type: 'changes-requested', key: `review|${pr.url}#pullrequestreview-1` }]);
+  assert.deepEqual(basis?.opinions, [`${pr.url}#pullrequestreview-1:CHANGES_REQUESTED`]);
+  // A later approval by the same reviewer is a new edge.
+  const approved = signals(pr, { decision: null, checkedAt: T0 + 3, opinions: [{ id: '6', author: 'maya', state: 'APPROVED' }] });
+  assert.deepEqual(
+    deriveEvents(basis, obs(pr, approved), context(T0 + 600_000)).events.map(({ type, key }) => ({ type, key })),
+    [{ type: 'approved', key: `review|${pr.url}#pullrequestreview-6` }]
+  );
+  // A basis saved before opinions were read starts the opinion baseline without replaying old opinions.
+  const legacy = run([obs(pr, signals(pr, { decision: null, review: { id: '2', author: LOGIN, state: 'COMMENTED' } })), obs(pr, after)]);
+  assert.deepEqual(legacy.events, []);
+});

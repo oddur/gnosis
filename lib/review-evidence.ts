@@ -1,5 +1,5 @@
 import { checkCounts, orderedChecks, type PrChecks } from './pr-checks';
-import type { QueueSignals } from './queue-signals';
+import { decidingReview, type QueueSignals } from './queue-signals';
 import { GITHUB_SYNC_FRESHNESS_MS } from './github-sync';
 import type { GitHubReviewThreads } from './review-threads';
 import type { ReviewMember } from './workbench';
@@ -132,7 +132,8 @@ export function reviewEvidence(
   } else if (input.checks)
     checkRow.detail = 'Saved checks belong to a different commit. Open Checks to inspect the latest results.';
 
-  const latest = signal?.latestReview;
+  // An open request for changes or an approval outranks a newer comment, such as the author's own reply.
+  const latest = signal && decidingReview(signal);
   const decision = signal?.readiness?.reviewDecision;
   const decisionText = decision
     ? `GitHub review decision: ${decision === 'REVIEW_REQUIRED' ? 'Review required' : reviewLabel(decision)}.`
@@ -166,8 +167,16 @@ export function reviewEvidence(
     reviewRow.submittedAt = Number.isFinite(Date.parse(latest.submittedAt)) ? latest.submittedAt : undefined;
     reviewRow.href = latest.url;
     reviewRow.action = `Open ${latest.author}’s review`;
-    reviewRow.tone =
-      latest.state === 'CHANGES_REQUESTED'
+    // An opinion that GitHub does not count, such as one from a reviewer without write access, is shown muted.
+    const uncounted =
+      !!signal.opinions &&
+      ['APPROVED', 'CHANGES_REQUESTED'].includes(latest.state) &&
+      !signal.opinions.some((opinion) => opinion.url === latest.url);
+    if (uncounted)
+      reviewRow.detail = `This review does not count toward GitHub’s review decision. ${reviewRow.detail}`.trim();
+    reviewRow.tone = uncounted
+      ? 'muted'
+      : latest.state === 'CHANGES_REQUESTED'
         ? 'danger'
         : !same
           ? 'warning'

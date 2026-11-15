@@ -45,6 +45,7 @@ function validEntry(value: unknown): value is Entry {
     Number.isSafeInteger(basis.teamRequests) &&
     typeof basis.team === 'boolean' &&
     Number.isFinite(basis.observedAt) &&
+    (basis.opinions === undefined || (Array.isArray(basis.opinions) && basis.opinions.every((pair) => typeof pair === 'string'))) &&
     Object.values(value.fired).every((at) => Number.isFinite(at))
   );
 }
