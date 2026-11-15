@@ -26,7 +26,7 @@ import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { useDiffLayout } from '../lib/use-diff-layout';
 import { diffContextLines } from '../lib/review-diff';
 import { prPreviewSelection } from '../lib/pr-change-preview';
-import { CODE_THEMES } from '../lib/constants';
+import { diffThemeName } from '../lib/diff-worker-pool';
 import type { Preferences } from '../lib/types';
 import type { usePrDiscussions } from '../lib/use-pr-discussions';
 import type { ReviewImageSide } from '../lib/review-images';
@@ -400,7 +400,7 @@ export function PrFileInspection({
     onLineNumberClick: contents?.lfs
       ? undefined
       : (event) => comments.begin({ start: event.lineNumber, end: event.lineNumber, side: event.annotationSide }),
-    theme: `gnosis-${CODE_THEMES.some((t) => t.id === prefs.codeTheme) ? prefs.codeTheme : 'github-dark'}`,
+    theme: diffThemeName(prefs.codeTheme),
     themeType: 'dark',
     diffStyle: entry.file.status === 'added' || entry.file.status === 'deleted' ? 'unified' : layout,
     disableFileHeader: true,
@@ -855,7 +855,12 @@ export function PrFileInspection({
     </div>
   );
   return (
-    <section ref={sectionRef} className="commit-stream-file" aria-label={entry.file.path}>
+    <section
+      ref={sectionRef}
+      className="commit-stream-file"
+      aria-label={entry.file.path}
+      data-markdown-switch={markdown && !compactMove ? '' : undefined}
+    >
       {fileHeader}
       {!commit && comments.feedback}
       {/* Keep editor state and pending-write guards alive when the file collapses. */}

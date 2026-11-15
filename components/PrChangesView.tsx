@@ -12,6 +12,7 @@ import { CommitDiffStream, type CommitDiffStreamHandle } from './CommitDiffStrea
 import { useReviewBreadcrumbs, type ReviewCrumb } from '../lib/review-breadcrumbs';
 import { PrFileInspection, changeFileKey as viewKey, type ChangeFileEntry as Entry } from './PrFileInspection';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
+import { DiffWorkerPool, diffThemeName } from '../lib/diff-worker-pool';
 import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
@@ -768,6 +769,7 @@ export function PrChangesView({
         )}
         <div className="changes-diff-pane">
           {snapshots.length > 0 || commit ? (
+            <DiffWorkerPool theme={diffThemeName(prefs.codeTheme)} lineDiffType={appearance.inline}>
             <CommitDiffStream
               ref={stream}
               files={streamFiles}
@@ -852,6 +854,7 @@ export function PrChangesView({
                 </>
               }
             />
+            </DiffWorkerPool>
           ) : (
             loading ? <LoadingState title="Loading changed files…" hint="You can keep browsing." /> :
             <p className="changes-empty">{loadErrors.length ? 'Changed files are unavailable. Retry or open the PR on GitHub.' : 'No changed files.'}</p>

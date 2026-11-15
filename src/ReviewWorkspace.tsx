@@ -501,7 +501,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
       {/* Update banner shows on the review page. On the home page,
           the newspaper "Extra" notice handles it instead. */}
       {page !== 'home' && <UpdateBanner />}
-      <div className="workspace-content">
+      <div className="workspace-content" data-open-error={initialError ? '' : undefined}>
         {initialError && (
           <div className="workspace-open-error" role="alert">
             <p>Could not open this review.</p>

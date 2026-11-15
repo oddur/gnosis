@@ -82,7 +82,7 @@ import {
   type QueueFilters,
 } from '../../lib/queue-filters';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
-import { Activity, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Activity, Suspense, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
@@ -1065,8 +1065,13 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   // Active and visible PRs, unread work, current view, then the remaining queue. Revision identity
   // prevents routine metadata/CI updates from repeating content downloads.
   const orderedBacklog = useMemo(() => sortQueueItems(queue.items, filters.sort, sortSignals), [queue.items, filters.sort, sortSignals]);
+  // Background preparation follows selection and scrolling in a deferred render, so j/k and scrolling do not
+  // serialize the whole queue before they paint (#346).
+  const preloadSubject = useDeferredValue(statusSubject);
+  const preloadVisibleIds = useDeferredValue(visibleQueueIds);
   const inspectionKey = useMemo(() => {
-    const visible = new Set(visibleQueueIds);
+    const statusSubject = preloadSubject;
+    const visible = new Set(preloadVisibleIds);
     const targets = [...(statusSubject?.members ?? []),
       ...orderedItems.flatMap(item => item.subject.members), ...orderedBacklog.flatMap(item => item.subject.members)];
     return JSON.stringify({
@@ -1080,7 +1085,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       rows: [...new Map([...(statusSubject ? [statusSubject] : []), ...[...orderedItems, ...orderedBacklog].map(item => item.subject)]
         .map(subject => [subject.id, { id: subject.id, members: subject.members.map(({ url, headSha, baseSha, updatedAt }) => ({ url, headSha, baseSha, updatedAt })) }])).values()],
     });
-  }, [statusSubject, orderedItems, orderedBacklog, visibleQueueIds]);
+  }, [preloadSubject, orderedItems, orderedBacklog, preloadVisibleIds]);
   // Status, checks and discussions are saved ahead of opening. Hover and focus intent lives in a ref, so it never re-renders.
   const openIntent = useRef<{ rows: Map<string, { url: string; headSha: string; baseSha: string; updatedAt: string }[]>; intent: RowIntent } | null>(null);
   // Stable, so the memoized queue list does not re-render for hover wiring.

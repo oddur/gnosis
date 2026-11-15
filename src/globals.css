@@ -3148,8 +3148,9 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .markdown-review .markdown-media-change { text-decoration:none; }
 .markdown-media-label { font-size:var(--type-caption); font-weight:600; margin-bottom:6px; }
 @media(max-width:700px) { .markdown-media-change { max-width:100%; } }
-.pr-commits .commit-stream-file:has(.markdown-view-switch) > .changes-file-header { display:flex; }
-.commit-stream-file:has(.markdown-view-switch) .changes-file-actions { min-width:0; }
+/* An attribute, not :has(): typing in a comment re-checked :has() on its file section (#346). */
+.pr-commits .commit-stream-file[data-markdown-switch] > .changes-file-header { display:flex; }
+.commit-stream-file[data-markdown-switch] .changes-file-actions { min-width:0; }
 
 /* Quiet disclosure between rendered Markdown change hunks. */
 .markdown-context-gap { display:flex; align-items:center; justify-content:center; gap:4px; margin:12px 0; color:var(--muted-foreground); }

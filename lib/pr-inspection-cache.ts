@@ -6,6 +6,10 @@ import { createSharedRead, readError } from './shared-read';
 import { createByteCache } from './byte-cache';
 import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
 
+/** Background preparation runs in slices this long, then yields so input and rendering go first (#346). */
+const SLICE_MS = 8;
+/** A macrotask boundary: pending input, rendering and React work run before the next slice. */
+const yieldToInput = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const key = (revision: InspectionRevision) => `${revision.url}@${changesRevision(revision)}`;
 export interface PreparedInventories {
   changes: PrChanges[];
@@ -239,22 +243,56 @@ export function createPrInspectionCache(deps: Dependencies) {
       void drain();
     }, delay);
   }
+  /**
+   * The next job to run, in one pass over the queue order. Re-evaluate intent between every operation. Within a
+   * tier, make both tab inventories available before deep downloads; never let the backlog delay an active PR.
+   * Ranked by: essential stages (both inventories, current files, newest commit, review) before earlier commits;
+   * then tier; then current files before commit comparisons. Ties keep queue order.
+   */
+  function nextJob(): Job | undefined {
+    const at = now();
+    let best: Job | undefined;
+    let bestRank: [number, number, number] = [Infinity, Infinity, Infinity];
+    for (const id of order) {
+      const job = jobs.get(id);
+      if (!job || job.retryAt > at) continue;
+      const rank: [number, number, number] = [
+        job.stage < 5 ? 0 : 1,
+        intentUrls.has(job.revision.url) ? 0 : (priorities.get(job.revision.url) ?? 4),
+        job.stage < 2 ? 0 : job.stage === 2 ? 1 : job.stage < 5 ? 2 : 3,
+      ];
+      if (rank[0] < bestRank[0] || (rank[0] === bestRank[0] && (rank[1] < bestRank[1] || (rank[1] === bestRank[1] && rank[2] < bestRank[2])))) {
+        best = job;
+        bestRank = rank;
+        if (rank[0] === 0 && rank[1] === 0 && rank[2] === 0) break;
+      }
+    }
+    return best;
+  }
   function drain(): Promise<void> {
     if (running) return running;
     const generation = epoch;
     const active = () => !stopped && !!scope && generation === epoch && deps.visible();
     const promise = (async () => {
-      let steps = 0;
+      let sliceStart = performance.now();
       while (active() && pausedUntil <= now()) {
-        // Disk/memory hits can resolve immediately. Let navigation and viewport
-        // updates run instead of consuming a long chain of renderer microtasks.
-        if (++steps % 16 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 0));
+        // Disk/memory hits can resolve immediately. Let input, navigation and viewport
+        // updates run instead of consuming a long chain of renderer microtasks (#346):
+        // yield once this slice has run for a few milliseconds, not after a fixed step count.
+        if (performance.now() - sliceStart > SLICE_MS) {
+          await yieldToInput();
+          sliceStart = performance.now();
           if (!active()) break;
         }
         // Bound disk reads and IPC payloads too, rather than restoring a whole
         // queue's patches into a single transient array.
-        const missing = order.filter((id) => !restored.has(id)).flatMap((id) => jobs.get(id)?.revision ?? []).slice(0, 8);
+        const missing: InspectionRevision[] = [];
+        if (deps.restore)
+          for (const id of order) {
+            if (restored.has(id)) continue;
+            const revision = jobs.get(id)?.revision;
+            if (revision && missing.push(revision) === 8) break;
+          }
         if (deps.restore && missing.length) {
           try {
             const inventories = await deps.restore(missing);
@@ -268,18 +306,7 @@ export function createPrInspectionCache(deps: Dependencies) {
           missing.forEach((revision) => restored.add(key(revision)));
           if (!active()) break;
         }
-        const ready = order.map((id) => jobs.get(id)).filter((job): job is Job => !!job && job.retryAt <= now());
-        // Re-evaluate intent between every operation. Within a tier, make both tab
-        // inventories available before deep downloads; never let the backlog delay an active PR.
-        const tier = (job: Job) => (intentUrls.has(job.revision.url) ? 0 : (priorities.get(job.revision.url) ?? 4));
-        const essentials = ready.filter(job => job.stage < 5);
-        const candidates = essentials.length ? essentials : ready;
-        const highest = candidates.reduce((best, job) => Math.min(best, tier(job)), Infinity);
-        const preferred = candidates.filter(job => tier(job) === highest);
-        // Make each likely destination usable before one PR's history consumes
-        // the tier's allowance. Current files precede commit comparisons.
-        const job = preferred.find(job => job.stage < 2) ?? preferred.find(job => job.stage === 2) ??
-          preferred.find(job => job.stage < 5) ?? preferred.at(0);
+        const job = nextJob();
         if (!job) break;
         currentJob = job;
         try {
