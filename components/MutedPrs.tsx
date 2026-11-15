@@ -1,4 +1,5 @@
 import { PrBadge, RepositoryBadge } from './EntityBadge';
+import { SubjectIcon } from './SubjectIcon';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Search, VolumeX } from 'lucide-react';
@@ -63,7 +64,7 @@ export function MutedPrs({
           {matches.map(({ member: m }) => (
             <li key={m.url}>
               <div>
-                <strong>{m.title}</strong>
+                <strong><SubjectIcon kind="pr" pr={m} decorative />{m.title}</strong>
                 <p>
                   <RepositoryBadge repo={m.repo} /> <PrBadge url={m.url} number={m.number} title={m.title} /> <GitHubAuthor login={m.author} /> ·{' '}
                   {m.merged ? 'Merged' : m.state === 'closed' ? 'Closed' : m.isDraft ? 'Draft' : 'Open'}

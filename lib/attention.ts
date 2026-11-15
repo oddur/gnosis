@@ -137,6 +137,8 @@ export interface AttentionItem {
   repo: string;
   number: number;
   author: string;
+  /** Only open PRs need you, so a row is open or, with this, a draft. */
+  isDraft?: boolean;
   stackSize?: number;
   /** The stack's subject id, shared by every row from the same stack. */
   stackId?: string;
@@ -193,6 +195,7 @@ export function attentionItems(input: {
         repo: member.repo,
         number: member.number,
         author: member.author,
+        ...(member.isDraft ? { isDraft: true } : {}),
         ...(item.subject.kind === 'stack' ? { stackSize: item.subject.members.length, stackId: item.subject.id } : {}),
         isNew,
         ...(fresh && ranked.some((kind) => STATUS_KINDS.includes(kind)) ? { checkedAt: fresh.checkedAt } : {}),

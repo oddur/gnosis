@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { Toggle, SettingRow } from './SettingsControls';
 import { DRIFT_FIELD_LABEL, formatAge, prLabel, type SyncHealthSnapshot } from '../lib/sync-health';
 import { useStatusNow } from '../lib/status-clock';
+import { PrStateIcon } from './PrStateIcon';
 
 const when = (at: number, now: number) => {
   const ms = Math.max(0, now - at);
@@ -11,7 +12,8 @@ const when = (at: number, now: number) => {
 
 function PrLink({ url }: { url: string }) {
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer">
+    <a href={url} target="_blank" rel="noopener noreferrer" className="sync-health-pr">
+      <PrStateIcon pr={{ url }} size={12} />
       {prLabel(url)}
     </a>
   );

@@ -93,7 +93,7 @@ export function StackMergePlan({
                       title={`Open PR #${member.number}: ${member.title}`}
                       aria-label={`Open PR #${member.number}: ${member.title}. ${group.label}`}
                     >
-                      <SubjectIcon kind="pr" />
+                      <SubjectIcon kind="pr" pr={member} decorative />
                       <span className="stack-plan-pr-number">#{member.number}</span>
                       <span>{member.title}</span>
                     </a>

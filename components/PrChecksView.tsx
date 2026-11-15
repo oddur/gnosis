@@ -445,7 +445,7 @@ export function PrChecksView({
               return (
                 <section key={member.url} className="checks-pr-group">
                   <h2>
-                    <SubjectIcon kind="pr" />#{member.number} <span>{member.title}</span>
+                    <SubjectIcon kind="pr" pr={member} />#{member.number} <span>{member.title}</span>
                   </h2>
                   <p className="checks-revision">
                     {snapshot ? (

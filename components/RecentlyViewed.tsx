@@ -4,7 +4,7 @@ import { WorkspaceIcon } from './WorkspaceIcon';
 import { SubjectIcon } from './SubjectIcon';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import type { RecentlyViewedStore, RecentVisit } from '../lib/recently-viewed';
-import { PrStateIcon } from './QueueMetadata';
+import { PrStateIcon } from './PrStateIcon';
 import { useIntent } from '../lib/use-predictions';
 import { openIntent, reviewIntent } from '../lib/navigation-graph';
 
@@ -80,7 +80,7 @@ function HistoryMenu({ store, open }: HistoryContext) {
                     {subject?.kind === 'stack' ? (
                       <SubjectIcon kind="stack" />
                     ) : member ? (
-                      <PrStateIcon member={member} />
+                      <PrStateIcon pr={member} size={17} className="queue-pr-icon" />
                     ) : entry.location.page === 'review' ? (
                       <WorkspaceIcon tab="explanation" />
                     ) : (

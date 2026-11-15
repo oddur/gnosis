@@ -1,4 +1,5 @@
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
+import { PrStateIcon } from './PrStateIcon';
 import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { GitMerge, RefreshCw, GitBranch, ChevronDown, Loader2, ExternalLink } from 'lucide-react';
@@ -262,6 +263,7 @@ export function PrActions({
           <li key={m.url}>
             <div className="entity-badge-group">
               <PrBadge url={m.url} number={m.number} title={m.title} />
+              <PrStateIcon pr={source ?? { url: m.url }} size={14} />
               <a href={m.url} target="_blank" rel="noreferrer">
                 {m.title}
                 <ExternalLink size={12} />

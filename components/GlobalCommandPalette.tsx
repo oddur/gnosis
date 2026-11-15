@@ -25,6 +25,7 @@ import type { AppCommand } from '../lib/command-center';
 import type { SearchDestination, SearchDocument, SearchHit } from '../lib/command-search';
 import type { LocalSearchResponse } from '../src/command-search-service';
 import type { PrSearchResult } from '../lib/types';
+import { PrStateIcon } from './PrStateIcon';
 
 const icons = {
   pr: subjectIcons.pr,
@@ -360,7 +361,9 @@ export function GlobalCommandPalette({
                           >
                             {doc.kind === 'file' && doc.destination.kind === 'review' && doc.destination.filePath
                               ? <FileTypeIcon filePath={doc.destination.filePath} />
-                              : <Icon size={16} aria-hidden="true" />}
+                              : doc.kind === 'pr'
+                                ? <PrStateIcon pr={{ state: doc.state, url: doc.sourceUrl }} size={16} decorative />
+                                : <Icon size={16} aria-hidden="true" />}
                             <span className="global-command-result-copy">
                               <strong>
                                 <Highlight text={doc.title} query={term} />
@@ -446,7 +449,7 @@ export function GlobalCommandPalette({
                       disabled={busy}
                       onSelect={() => void run(() => navigate({ kind: 'home', url: row.url }))}
                     >
-                      <GitPullRequest size={16} />
+                      <PrStateIcon pr={{ state: row.state, merged: row.merged, isDraft: row.isDraft, url: row.url, updatedAt: row.updatedAt }} size={16} />
                       <span className="global-command-result-copy">
                         <strong>{row.title}</strong>
                         <span>
@@ -532,7 +535,7 @@ export function GlobalCommandPalette({
                 </>
               ) : selectedRemote ? (
                 <>
-                  <GitPullRequest size={22} />
+                  <PrStateIcon pr={{ state: selectedRemote.state, merged: selectedRemote.merged, isDraft: selectedRemote.isDraft, url: selectedRemote.url, updatedAt: selectedRemote.updatedAt }} size={22} />
                   <h2>{selectedRemote.title}</h2>
                   <p>
                     <SourceBadges source={`${selectedRemote.repoOwner}/${selectedRemote.repoName} #${selectedRemote.number}`} title={selectedRemote.title} />

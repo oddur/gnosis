@@ -538,6 +538,9 @@ export interface PrSearchResult {
   author: string;
   updatedAt: string;
   isDraft: boolean;
+  /** GitHub search results carry their state; queue searches only return open PRs. */
+  state?: 'open' | 'closed';
+  merged?: boolean;
   role: 'author' | 'assigned' | 'review-requested' | 'watched';
 }
 
