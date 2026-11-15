@@ -17,6 +17,8 @@ export interface WorkbenchStoreApi {
 export interface WorkbenchStoreStatus {
   loaded: boolean;
   error?: string;
+  /** The queue shown is the copy saved at the end of the last session. Main has not answered yet. */
+  saved?: boolean;
 }
 export interface WorkbenchRefresh {
   /** Ask GitHub for changes instead of reading the saved snapshot. */
@@ -65,6 +67,8 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: { revisions?: WorkbenchRevisions; read: boolean } | undefined;
   let snapshotMarked = false;
+  /** The account a saved copy shown before the first snapshot belongs to. */
+  let seededAccount: string | undefined;
 
   const notify = () => { for (const listener of [...listeners]) listener(); };
   const setStatus = (next: WorkbenchStoreStatus) => {
@@ -104,7 +108,7 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
     const keys = new Set([...Object.keys(shared), ...Object.keys(queue)]) as Set<keyof WorkbenchQueue>;
     const changed = [...keys].some((key) => shared[key] !== queue[key]);
     if (changed) queue = Object.freeze(shared);
-    const statusChanged = !status.loaded || status.error !== undefined;
+    const statusChanged = !status.loaded || status.error !== undefined || !!status.saved;
     if (statusChanged) status = { loaded: true };
     if (changed || statusChanged) notify();
     if (next.historyRevision === undefined || next.historyRevision !== held) void loadHistory();
@@ -155,7 +159,7 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
       let started = { epoch, generation };
       try {
         // Until a queue is shown, ask for saved status too, so the first rows show their badges.
-        let next = kind === 'snapshot' ? await api().workbenchSnapshot(!status.loaded) : await api().workbenchQueue(kind === 'force');
+        let next = kind === 'snapshot' ? await api().workbenchSnapshot(!status.loaded || !!status.saved) : await api().workbenchQueue(kind === 'force');
         if (!snapshotMarked && kind === 'snapshot') {
           snapshotMarked = true;
           api().perfMark?.('snapshot-ipc');
@@ -163,7 +167,7 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
         // A write that started and finished during this read may be missing from it, so read once more.
         if (started.generation === generation && !holds && started.epoch !== epoch) {
           started = { epoch, generation };
-          next = await api().workbenchSnapshot(!status.loaded);
+          next = await api().workbenchSnapshot(!status.loaded || !!status.saved);
         }
         if (started.generation !== generation) return;
         if (holds > 0) {
@@ -237,6 +241,22 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
       };
     },
     getQueue: () => queue,
+    /** The account the queue belongs to, once the window knows it. */
+    getAccount: () => account,
+    /**
+     * Shows the queue saved at the end of the last session until main's first snapshot arrives. It is ignored once a
+     * snapshot has loaded. Its rows keep the revisions they were saved with, and status reports `saved`.
+     */
+    seed(saved: WorkbenchQueue, owner: string) {
+      if (status.loaded || account !== undefined) return false;
+      const rest: WorkbenchQueue = { ...saved };
+      delete rest.savedSignals;
+      queue = Object.freeze(share(rest));
+      seededAccount = owner;
+      status = { loaded: true, saved: true };
+      notify();
+      return true;
+    },
     getHistory: () => history,
     getStatus: () => status,
     async refresh(request: WorkbenchRefresh = {}) {
@@ -283,8 +303,19 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
       if (next === account) return;
       const first = account === undefined;
       account = next;
-      // The first account is the one any loaded snapshot already belongs to.
-      if (first) return;
+      // The first account is the one any loaded snapshot already belongs to. A saved copy from another account is
+      // dropped; main's first snapshot is still on its way and belongs to this one.
+      if (first) {
+        const seeded = seededAccount;
+        seededAccount = undefined;
+        if (seeded !== undefined && seeded !== next && status.saved) {
+          queue = EMPTY_QUEUE;
+          status = { loaded: false };
+          notify();
+        }
+        return;
+      }
+      seededAccount = undefined;
       generation++;
       queue = EMPTY_QUEUE;
       history = EMPTY_HISTORY;

@@ -39,6 +39,8 @@ const reads: PredictorReads = {
     api()?.prOpenIntent?.(targets(members, 1));
     void PrSummary.preload();
   },
+  // Main's committed owner, in a slot of its own per PR, so the open PR's work is never replaced by a neighbour's.
+  neighbour: (members, label) => api()?.prOpenCommitted?.(targets(members, 1), label) ?? Promise.resolve(),
   graph: (members, label) =>
     api()?.predictWorkflowGraph?.(members.map(({ url, headSha }) => ({ url, headSha })), label) ?? Promise.resolve(),
   chunk(name) {

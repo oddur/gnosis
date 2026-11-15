@@ -176,6 +176,7 @@ function PrSummaryContent({
   muteBusy,
   account,
   statusRefreshing,
+  revalidating,
   tab,
   onTabChange,
   preferences,
@@ -213,6 +214,8 @@ function PrSummaryContent({
   onStarChange: (members: QueueItem['subject']['members'], starred: boolean) => void;
   account: string | null;
   statusRefreshing: boolean;
+  /** The PR comes from the queue saved at the end of the last session; main has not confirmed it yet. */
+  revalidating?: boolean;
   tab: WorkspaceTab;
   onTabChange: (tab: WorkspaceTab) => void;
   preferences: Preferences | null;
@@ -567,7 +570,7 @@ function PrSummaryContent({
                 </>
               )}
             </span>
-            <PrFreshness className="pr-freshness" checkedAt={checkedAt} />
+            <PrFreshness className="pr-freshness" checkedAt={checkedAt} refreshing={revalidating} />
             {!stacked && (
               <a className="pr-github-link" href={first.url} target="_blank" rel="noopener noreferrer">
                 GitHub <ExternalLink size={13} />

@@ -11,6 +11,7 @@ import { LoadingState } from '../components/LoadingState';
 import { toast, Toaster } from '../components/ui/toast';
 import { createRecentlyViewed, type RecentVisit } from '../lib/recently-viewed';
 import { readReviewState, scheduleReviewStateWrite, writeReviewState } from '../lib/renderer-review-state';
+import { keepSavedQueue } from '../lib/saved-queue';
 import { useFileFilterSync } from '../lib/use-raw-file-filters';
 import { WorkspaceDraftBoundary, retainWorkspaceDrafts } from '../lib/session-drafts';
 import { CommandCenter } from '../lib/command-center';
@@ -44,6 +45,12 @@ const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID()
 /** A PR link that arrived signed out is kept this long and opens once GitHub is connected. */
 const SIGNED_OUT_HOLD_MS = 10 * 60_000;
 const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
+let savedQueue: ReturnType<typeof keepSavedQueue> | undefined;
+/** Shows the queue saved at the end of the last session, once per window, and keeps that copy current. */
+function startSavedQueue() {
+  savedQueue ??= keepSavedQueue(workbenchStore, { read: readReviewState, write: writeReviewState });
+  return savedQueue.account;
+}
 /** Diff layout keys and commands need the command center, so they live inside it. */
 function DiffLayoutShortcuts() {
   useDiffLayoutShortcuts();
@@ -60,6 +67,8 @@ export function App() {
     // A restored PR tab opens its summary first.
     void PrSummary.preload();
   }, []);
+  // Before the first render: the saved queue and its account let the saved tabs open without waiting for main.
+  const [savedAccount] = useState(startSavedQueue);
   const [recentlyViewed] = useState(() => createRecentlyViewed(readReviewState, writeReviewState));
   const [state, setState] = useState<WorkspaceTabsState>(() => initialWorkspaceTabs(newTab()));
   const [account, setAccount] = useState<string>();
@@ -132,6 +141,10 @@ export function App() {
     },
     [recentlyViewed, persist]
   );
+  // The saved copy's account opens its saved tabs at once. Main's answer below switches if the account changed.
+  useLayoutEffect(() => {
+    if (savedAccount) scopeAccount(savedAccount);
+  }, [savedAccount, scopeAccount]);
   useEffect(() => {
     let live = true;
     void window.electronAPI

@@ -116,6 +116,7 @@ function running(options: { concurrency?: number } = {}) {
     changesReady: (m) => warm.has(`changes ${m.url}`),
     open: (members, label) => done(`open ${members.map((m) => m.url).join(',')} ${label}`),
     openIntent: (members) => void calls.push(`intent ${members ? members.map((m) => m.url).join(',') : 'clear'}`),
+    neighbour: (members, label) => done(`neighbour ${members.map((m) => m.url).join(',')} ${label}`),
     graph: (members, label) => done(`graph ${members.map((m) => m.url).join(',')} ${label}`),
     chunk: (name) => done(`chunk ${name}`),
     review: (id) => done(`review ${id}`),
@@ -299,14 +300,39 @@ void test('hover intent forwards a PR to the queue preparation and clears it on 
   h.predictor.intent('palette', null);
   h.predictor.intent('palette', { destination: { kind: 'review', reviewId: 'r1', diagrams: ['mermaid'] }, weight: 1, strength: 'intent' });
   await h.flush();
-  assert.deepEqual(h.calls, [`intent ${member.url}`, 'intent clear', 'review r1', 'chunk review-page', 'chunk mermaid']);
+  // The hovered PR's inventory and first file start at once, and finish after the pointer leaves.
+  assert.deepEqual(h.calls, [`intent ${member.url}`, 'intent clear', `changes ${member.url} files=1 pr-open`, 'review r1', 'chunk review-page', 'chunk mermaid']);
+});
+
+void test('the next and previous PR read their inventories, first file, status and threads once', async () => {
+  const h = running({ concurrency: 1 });
+  const other = { ...member, url: member.url.replace(/\d+$/, '2') };
+  const neighbour = (m: typeof member, weight: number) => ({
+    destination: { kind: 'pr-open' as const, subjectId: m.url, members: [m], neighbour: true }, weight, strength: 'intent' as const,
+  });
+  h.predictor.declare('pr-neighbours', [neighbour(member, 0.5), neighbour(other, 0.3)]);
+  await h.flush();
+  assert.deepEqual(h.calls, [
+    `neighbour ${member.url} pr-neighbour`, `changes ${member.url} files=1 pr-neighbour`,
+    `neighbour ${other.url} pr-neighbour`, `changes ${other.url} files=1 pr-neighbour`,
+  ], 'The next PR goes first');
+  // Moving on declares the same PRs again: nothing is read twice.
+  h.predictor.declare('pr-neighbours', [neighbour(other, 0.5)]);
+  await h.flush();
+  assert.equal(h.calls.length, 4);
+  // A blurred window starts no neighbour reads.
+  h.conditions.focused = false;
+  h.advance(120_000);
+  h.predictor.declare('pr-neighbours', [neighbour({ ...member, headSha: 'new' }, 0.5)]);
+  await h.flush();
+  assert.equal(h.calls.length, 4);
 });
 
 void test('predictions can reach only read executors', () => {
-  const allowed = ['changes', 'changesReady', 'open', 'openIntent', 'graph', 'chunk', 'review', 'reviewReady'];
+  const allowed = ['changes', 'changesReady', 'open', 'openIntent', 'neighbour', 'graph', 'chunk', 'review', 'reviewReady'];
   assert.deepEqual([...PREDICTOR_READS].sort(), [...allowed].sort());
   // The type has exactly these keys: adding a write or generate executor fails to compile here.
-  const keys: Record<keyof PredictorReads, true> = { changes: true, changesReady: true, open: true, openIntent: true, graph: true, chunk: true, review: true, reviewReady: true };
+  const keys: Record<keyof PredictorReads, true> = { changes: true, changesReady: true, open: true, openIntent: true, neighbour: true, graph: true, chunk: true, review: true, reviewReady: true };
   assert.deepEqual(Object.keys(keys).sort(), [...allowed].sort());
   assert.ok(!allowed.some((name) => /write|post|submit|generate|mark|merge|comment|download|lfs/i.test(name)));
 });

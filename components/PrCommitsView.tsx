@@ -324,6 +324,15 @@ export function PrCommitsView({
       clearInterval(timer);
     };
   }, [lists]);
+  // A saved commit list for an older head, or a queue update while the tab is kept, is never shown as current.
+  const queueHeads = subject.members.map((member) => `${member.url}:${member.headSha}`).join('|');
+  useEffect(() => {
+    const moved = lists.some((list) => {
+      const member = subject.members.find((m) => m.url === list.url);
+      return !!member?.headSha && member.headSha !== list.metadata.headSha;
+    });
+    if (moved) setNewer(true);
+  }, [queueHeads, lists]);
   useEffect(() => {
     setComparisonError('');
     if (!key || !selection || peekComparison(selection)) return;
