@@ -49,6 +49,10 @@ export function itemRevision(item: QueueItem, reuseMembers = false): string {
   return hash({
     ...item,
     subject: item.subject && { ...item.subject, members: item.subject.members.map(m => memberRevision(m, reuseMembers)) },
+    // A saved review carries its whole subject snapshot. Main's history is frozen, so its hash is computed once per
+    // entry instead of re-serializing every review on every view (#345: most of view()'s time on large queues).
+    review: item.review && hash(item.review),
+    parentStack: item.parentStack && { ...item.parentStack, members: item.parentStack.members.map(m => memberRevision(m, reuseMembers)) },
     revision: undefined,
     briefing: item.briefing && { ...item.briefing, updatedAt: undefined },
   });
