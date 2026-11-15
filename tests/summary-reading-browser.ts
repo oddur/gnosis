@@ -10,6 +10,7 @@ interface Box {
   left: number;
   right: number;
   top: number;
+  bottom: number;
   width: number;
 }
 interface Metrics {
@@ -68,7 +69,7 @@ void app.whenReady().then(async () => {
   };
   const metrics = () =>
     js<Metrics>(`(() => {
-      const box = e => { const r = e.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), width: Math.round(r.width) }; };
+      const box = e => { const r = e.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom), width: Math.round(r.width) }; };
       const q = s => document.querySelector(s);
       const md = q('.pr-summary-page .pr-markdown');
       const content = q('.pr-summary-content');
@@ -155,16 +156,30 @@ void app.whenReady().then(async () => {
           Math.abs(m.stat.right - proseEdge) <= 2,
           `${name}: change counts ${m.stat.right} detached from the prose edge ${proseEdge}`
         );
-      // Metadata follows the wide track directly.
-      if (m.metadata && m.metadata.top < m.markdown.top + 200)
+      // Metadata sits beside the prose (two-column mode) and no block runs under it.
+      if (m.metadata && m.metadata.top < m.markdown.top + 200) {
         assert.ok(
-          m.metadata.left - m.markdown.right <= 48,
-          `${name}: metadata ${m.metadata.left} is ${m.metadata.left - m.markdown.right}px from the description`
+          m.metadata.left - proseEdge <= 48 && m.metadata.left > proseEdge,
+          `${name}: metadata ${m.metadata.left} is ${m.metadata.left - proseEdge}px from the prose edge ${proseEdge}`
         );
+        const aside = m.metadata;
+        for (const block of [...m.prose, ...m.blocks, ...m.images, ...m.tableImages, ...m.tables.map((t) => t.wrapper)])
+          if (block.bottom > aside.top && block.top < aside.bottom && block.width > 0)
+            assert.ok(
+              block.right <= aside.left,
+              `${name}: block ${JSON.stringify(block)} overlaps the metadata ${JSON.stringify(aside)}`
+            );
+      }
     }
     if (m.innerWidth >= 1600) {
+      // Below the metadata, wide blocks use the whole wide track.
+      const below = [...m.blocks, ...m.images, ...m.tables.map((t) => t.wrapper)].filter(
+        (b) => b.width > 0 && (!m.metadata || b.top >= m.metadata.bottom)
+      );
+      for (const block of below)
+        assert.ok(block.width >= 900, `${name}: a wide block below the metadata is only ${block.width}px wide`);
       // Wide content uses the wide track: tables fit without scrolling and screenshots stay legible.
-      for (const table of m.tables)
+      for (const table of m.tables.filter((t) => !m.metadata || t.wrapper.top >= m.metadata.bottom))
         assert.equal(table.scrolls, false, `${name}: a table scrolls despite the wide track`);
       for (const image of m.tableImages)
         assert.ok(image.width >= 400, `${name}: a screenshot in a table is only ${image.width}px wide`);
@@ -221,6 +236,22 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.pr-summary-content').scrollTop = 0");
     check('technical-540-dark', await metrics());
     await capture('technical-540-dark');
+
+    // Wide blocks that start beside the metadata stay at the prose width instead of running under it.
+    await resize(1600, 1000);
+    await js("document.documentElement.classList.remove('dark')");
+    await js(`(async()=>{
+      const q=await window.electronAPI.workbenchQueue();
+      const member=q.items.find(i=>i.subject.title.includes('Fix reconnect')).subject.members[0];
+      const fence=String.fromCharCode(96).repeat(3);
+      member.description = fence+'ts\\nconst beside = await ledger.claim(batch, { generation: session.generation, reason: "a deliberately long line that would run under the metadata" });\\n'+fence+'\\n\\n| Column one | Column two | Column three | Column four | Column five | Column six |\\n| --- | --- | --- | --- | --- | --- |\\n| A long cell that wants room | Another long cell | Third | Fourth | Fifth | Sixth |\\n\\n' + member.description;
+    })()`);
+    await wait(
+      "document.querySelector('.pr-description .pr-markdown > pre')?.textContent.includes('deliberately long')"
+    );
+    await js("document.querySelector('.pr-summary-content').scrollTop = 0");
+    check('wide-beside-metadata-1600-light', await metrics());
+    await capture('wide-beside-metadata-1600-light');
 
     await resize(1280, 1000);
     await back();

@@ -71,8 +71,18 @@ Feedback is the sole response workspace for PRs and stacks. Stack review blocker
 
 ## Summary reading layout — November 2026
 
-Below the full-width merge status and evidence rows, the author description has two tracks that share the status rows' left edge. Prose (paragraphs, lists, headings, quotes, the description heading with its change counts, and the AI briefing) stays at `--measure-reading` (36rem). Tables, images, code blocks, diagrams and disclosures extend right across `--measure-wide` (64rem). People & branches (260px) follows the wide track after 40px. Tables use the wide track before they scroll, with an edge shade. Below 850px of content width, metadata follows the description.
+Below the full-width merge status and evidence rows, the description and People & branches share the status rows' left edge. Prose (paragraphs, lists, headings, quotes, the description heading with its change counts, and the AI briefing) stays at `--measure-reading` (36rem). People & branches (260px) floats 40px after the prose edge, so text-only descriptions keep their metadata beside them. Tables, images, code blocks, diagrams and disclosures use `--measure-wide` (64rem). Beside the metadata they stop at the prose edge; below it they span the whole wide track. Each top-level block is its own formatting context (`display: flow-root`), so it narrows beside the float instead of running under it. The float must precede the description in source order, so the overview renders the aside first. Tables use the wide track before they scroll, with an edge shade. Below 850px of content width, a one-column grid with `order` puts metadata after the description.
 
-An earlier pass used a single 36rem column centered with the metadata. Review rejected it: wide tables wrapped their headers over five lines and in-table screenshots shrank to about 220px.
+Earlier passes were rejected in review:
+- a single 36rem column centered with the metadata: wide tables wrapped their headers over five lines, and in-table screenshots shrank to about 220px;
+- metadata after the full wide track: text-only descriptions left about 490px between prose and metadata at 1920px.
 
-Verification: `--summary-reading` covers a long technical description and a screenshot/wide-table description at 1280, 1600 and 1920 in both themes, plus 540px. It asserts 62–78 characters per full line, the shared left edge with the status rows, prose within the reading measure, wide blocks within the wide track, tables that do not scroll and in-table screenshots of at least 400px from 1600px, chips that do not change line spacing, GFM alignment, adjacent change counts and metadata, and no horizontal overflow. Captures: `.impeccable/review/summary-reading/before` and `after`.
+Verification: `--summary-reading` covers a long technical description and a screenshot/wide-table description at 1280, 1600 and 1920 in both themes, plus 540px and a case with wide blocks beside the metadata. It asserts:
+- 62–78 characters per full line;
+- the shared left edge with the status rows, and prose within the reading measure;
+- metadata within 48px of the prose edge, with no block overlapping it;
+- from 1600px, wide blocks below the metadata at least 900px wide, tables there fitting without scrolling, and in-table screenshots of at least 400px;
+- inline code that does not change line spacing, GFM alignment, and change counts at the prose edge;
+- no horizontal overflow.
+
+Captures: `.impeccable/review/summary-reading/before` and `after`.

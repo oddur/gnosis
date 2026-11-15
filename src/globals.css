@@ -3954,8 +3954,14 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .review-evidence-compact .review-evidence-summary svg { flex:none; }
 .review-evidence-compact .review-evidence-controls { margin-left:auto; }
 /* Two tracks share the summary's left edge: prose stays at the reading measure, and tables, images, code,
-   diagrams and disclosures extend right across the wide track. Metadata follows the wide track. */
-.pr-details-overview .pr-details-columns { grid-template-columns:minmax(0,var(--measure-wide)) 260px; gap:40px; justify-content:start; }
+   diagrams and disclosures use the wide track. People & branches floats 40px after the prose edge: its right
+   margin fills the rest of the wide track, so beside it every block is held to the prose width, and wide
+   blocks below it span the whole wide track. Blocks are their own formatting contexts, so they narrow beside
+   the float instead of running under it. */
+.pr-details-overview .pr-details-columns { display:flow-root; max-width:var(--measure-wide); }
+.pr-details-overview .pr-metadata { float:right; width:260px; margin:0 max(0px, calc(100% - var(--measure-reading) - 300px)) 24px 40px; }
+.pr-details-overview .pr-description > :not(.pr-markdown, .pr-description-heading),
+.pr-details-overview .pr-markdown > :is(p, ul, ol, dl, blockquote, pre, hr, details, h1, h2, h3, h4, h5, h6, .pr-table-scroll, .markdown-image, .mermaid-diagram, .d2-diagram) { display:flow-root; }
 .pr-details-overview :is(.pr-description-heading, .pr-briefing) { max-width:var(--measure-reading); }
 .pr-details-overview .pr-markdown > :is(p, ul, ol, blockquote, dl, .markdown-heading):not(:has(img, .markdown-image, .mermaid-diagram, .d2-diagram)),
 .pr-details-overview .pr-markdown details > :is(p, ul, ol, blockquote, dl, .markdown-heading):not(:has(img, .markdown-image, .mermaid-diagram, .d2-diagram)) { max-width:var(--measure-reading); }
@@ -3979,8 +3985,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 @container (max-width:850px) {
   .pr-summary-decision { flex-wrap:wrap; gap:12px; }
   .pr-actions-compact .pr-action-controls { justify-content:flex-start; }
-  .pr-details-overview .pr-details-columns { grid-template-columns:minmax(0,var(--measure-wide)); gap:24px; }
-  .pr-details-overview .pr-metadata { border-left:0; border-top:1px solid var(--border); padding:16px 0 0; }
+  .pr-details-overview .pr-details-columns { display:grid; grid-template-columns:minmax(0,1fr); gap:24px; }
+  .pr-details-overview .pr-metadata { order:1; float:none; width:auto; max-width:var(--measure-reading); margin:0; border-left:0; border-top:1px solid var(--border); padding:16px 0 0; }
 }
 
 /* Identity icons stay with names, while status keeps its own semantic color. */

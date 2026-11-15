@@ -50,6 +50,76 @@ export function PrDetails({
   const SectionHeading = showTitle ? 'h3' : 'h2';
   const meta = status ?? m;
   const state = m.merged ? 'Merged' : m.state === 'closed' ? 'Closed' : m.isDraft ? 'Draft' : 'Open';
+  const metadata = (
+    <aside className="pr-metadata" aria-label={`Metadata for PR #${m.number}`}>
+      {overview?.stackContext}
+      <SectionHeading>People & branches</SectionHeading>
+      <dl>
+        <dt>Branches</dt>
+        <dd className="pr-branches">
+          {m.headRepo !== m.baseRepo && <RepositoryBadge repo={m.headRepo} />}
+          <BranchBadge branch={m.headBranch} repo={m.headRepo} />
+          <span aria-label="into">→</span>
+          <BranchBadge branch={m.baseBranch} repo={m.baseRepo} />
+        </dd>
+        <dt>Labels</dt>
+        <dd>{m.labels.length ? <PrLabels members={[m]} /> : 'None'}</dd>
+        <dt>Assignees</dt>
+        <dd>
+          {m.assignees?.length ? (
+            <span className="entity-badge-group">
+              {m.assignees.map((login) => (
+                <GitHubAuthor key={login} login={login} />
+              ))}
+            </span>
+          ) : (
+            'Unassigned'
+          )}
+        </dd>
+        <dt>Review requested from</dt>
+        <dd>
+          {meta.requestedReviewers.length || meta.requestedTeams.length ? (
+            <span className="entity-badge-group">
+              {meta.requestedReviewers.map((login) => (
+                <GitHubAuthor key={login} login={login} />
+              ))}
+              {meta.requestedTeams.map((team) => (
+                <span key={team}>Team {team}</span>
+              ))}
+            </span>
+          ) : (
+            'No reviewers requested'
+          )}
+        </dd>
+      </dl>
+      <details className="pr-secondary-metadata">
+        <summary>More PR details</summary>
+        <dl>
+          <dt>Commits</dt>
+          <dd>{meta.commitCount}</dd>
+          <dt>Head revision</dt>
+          <dd>
+            <CommitBadge sha={m.headSha} repo={m.headRepo} />
+          </dd>
+          <dt>Created</dt>
+          <dd>
+            <time dateTime={m.createdAt}>{date(m.createdAt)}</time>
+          </dd>
+          <dt>Updated</dt>
+          <dd>
+            <time dateTime={m.updatedAt}>{date(m.updatedAt)}</time>
+          </dd>
+          <dt>Auto-merge</dt>
+          <dd>{meta.autoMerge ? `Enabled (${meta.autoMerge.method})` : 'Off'}</dd>
+          <dt>Milestone</dt>
+          <dd>
+            {meta.milestone?.title || 'None'}
+            {meta.milestone?.dueOn && ` · due ${date(meta.milestone.dueOn)}`}
+          </dd>
+        </dl>
+      </details>
+    </aside>
+  );
   return (
     <article className={`pr-details ${overview ? 'pr-details-overview' : ''}`} aria-label={`Pull request #${m.number}`}>
       {showIdentity && (
@@ -86,6 +156,8 @@ export function PrDetails({
         onRetry={onRetryStatus}
       />
       <div className="pr-details-columns">
+        {/* The overview floats metadata beside the prose, so it must precede the description in source order. */}
+        {overview && metadata}
         <section className="pr-description" aria-label={`Author description for PR #${m.number}`}>
           {overview?.briefing}
           <div className="pr-description-heading">
@@ -116,74 +188,7 @@ export function PrDetails({
             </p>
           )}
         </section>
-        <aside className="pr-metadata" aria-label={`Metadata for PR #${m.number}`}>
-          {overview?.stackContext}
-          <SectionHeading>People & branches</SectionHeading>
-          <dl>
-            <dt>Branches</dt>
-            <dd className="pr-branches">
-              {m.headRepo !== m.baseRepo && <RepositoryBadge repo={m.headRepo} />}
-              <BranchBadge branch={m.headBranch} repo={m.headRepo} />
-              <span aria-label="into">→</span>
-              <BranchBadge branch={m.baseBranch} repo={m.baseRepo} />
-            </dd>
-            <dt>Labels</dt>
-            <dd>{m.labels.length ? <PrLabels members={[m]} /> : 'None'}</dd>
-            <dt>Assignees</dt>
-            <dd>
-              {m.assignees?.length ? (
-                <span className="entity-badge-group">
-                  {m.assignees.map((login) => (
-                    <GitHubAuthor key={login} login={login} />
-                  ))}
-                </span>
-              ) : (
-                'Unassigned'
-              )}
-            </dd>
-            <dt>Review requested from</dt>
-            <dd>
-              {meta.requestedReviewers.length || meta.requestedTeams.length ? (
-                <span className="entity-badge-group">
-                  {meta.requestedReviewers.map((login) => (
-                    <GitHubAuthor key={login} login={login} />
-                  ))}
-                  {meta.requestedTeams.map((team) => (
-                    <span key={team}>Team {team}</span>
-                  ))}
-                </span>
-              ) : (
-                'No reviewers requested'
-              )}
-            </dd>
-          </dl>
-          <details className="pr-secondary-metadata">
-            <summary>More PR details</summary>
-            <dl>
-              <dt>Commits</dt>
-              <dd>{meta.commitCount}</dd>
-              <dt>Head revision</dt>
-              <dd>
-                <CommitBadge sha={m.headSha} repo={m.headRepo} />
-              </dd>
-              <dt>Created</dt>
-              <dd>
-                <time dateTime={m.createdAt}>{date(m.createdAt)}</time>
-              </dd>
-              <dt>Updated</dt>
-              <dd>
-                <time dateTime={m.updatedAt}>{date(m.updatedAt)}</time>
-              </dd>
-              <dt>Auto-merge</dt>
-              <dd>{meta.autoMerge ? `Enabled (${meta.autoMerge.method})` : 'Off'}</dd>
-              <dt>Milestone</dt>
-              <dd>
-                {meta.milestone?.title || 'None'}
-                {meta.milestone?.dueOn && ` · due ${date(meta.milestone.dueOn)}`}
-              </dd>
-            </dl>
-          </details>
-        </aside>
+        {!overview && metadata}
       </div>
     </article>
   );
