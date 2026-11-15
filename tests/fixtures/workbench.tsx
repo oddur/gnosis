@@ -612,6 +612,10 @@ const mocks = {
   },
   commandGitHubSearch: () => Promise.resolve([{number:999,title:'Remote queue improvement',url:'https://github.com/klang/engine/pull/999',repoOwner:'klang',repoName:'engine',author:'sam',updatedAt:date,isDraft:false,role:'watched' as const}]),
   listActivity: () => Promise.resolve(activities),
+  clearFailedActivity: () => {
+    activities = activities.filter((t) => t.status !== 'failed');
+    return Promise.resolve();
+  },
   activityAction: (id: string, action: ActivityAction) => {
     if (action === 'dismiss') activities = activities.filter((t) => t.id !== id);
     else

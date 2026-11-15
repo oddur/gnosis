@@ -89,6 +89,8 @@ declare global {
       onFlushReviewState: (callback: () => Promise<void>) => void;
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
+      /** Optional: older test fixtures do not provide it. */
+      clearFailedActivity?: () => Promise<void>;
       workbenchSnapshot: (withSignals?: boolean) => Promise<WorkbenchQueue>;
       workbenchRenameStack: (id: string, name: string, account?: string) => Promise<WorkbenchQueue>;
       workbenchMutePrs: (request: MutePrRequest) => Promise<WorkbenchQueue>;

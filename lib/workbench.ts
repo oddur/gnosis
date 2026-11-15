@@ -42,6 +42,14 @@ export interface Briefing {
   /** Why an automatic briefing waits: the daily limit, the queue filters, or automatic briefings are off. */
   pauseReason?: 'filter' | 'limit' | 'manual';
   pauseDetail?: string;
+  /** A deferred automatic briefing waits until this time (epoch ms) before it tries again. */
+  retryAt?: number;
+  /** How many times slow GitHub reads deferred this briefing. */
+  deferrals?: number;
+  /** Generated because the user asked, not by the automatic queue. */
+  manual?: boolean;
+  /** The user dismissed this result from Activity. It still shows on the PR. */
+  dismissed?: boolean;
   updatedAt: string;
 }
 export interface QueueItem {
