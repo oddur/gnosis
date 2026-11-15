@@ -2,6 +2,7 @@
 import { instance as singleInstance } from './single-instance-start';
 import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
 import { diagnosticsSections } from '../lib/diagnostics';
+import { queueDelta } from '../lib/workbench-delta';
 import { correlateInteractions, instrumentIpc, instrumentSends, mainLoopReport, recordMainSpan, startMainLoopMonitor } from './main-blocking';
 import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
@@ -96,7 +97,7 @@ import { createReviewComment, submitPrReview } from './review-write-service';
 import type { ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
 import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
-import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
+import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride, type WorkbenchQueue } from '../lib/workbench';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell, session, net, powerMonitor, webContents } from 'electron';
 import path from 'path';
@@ -1243,10 +1244,35 @@ function notifyLocalChange(channel: string) {
 function broadcastWorkbenchChanged(): void {
   timed('workbench-changed', broadcastWorkbenchChangedNow);
 }
+/**
+ * Snapshots main sent recently, by revision, so a window's next read can be a delta from the one it holds (#345).
+ * The broadcast's snapshot also answers the reads it causes, within a moment and with no change pending since.
+ */
+const recentQueues = new Map<string, WorkbenchQueue>();
+let broadcastQueue: { queue: WorkbenchQueue; at: number } | undefined;
+function rememberQueue(queue: WorkbenchQueue) {
+  if (!queue.revision) return;
+  recentQueues.delete(queue.revision);
+  recentQueues.set(queue.revision, queue);
+  while (recentQueues.size > 4) {
+    const oldest = recentQueues.keys().next().value;
+    if (oldest === undefined) break;
+    recentQueues.delete(oldest);
+  }
+}
+function currentQueue(): WorkbenchQueue {
+  const fresh = broadcastQueue && Date.now() - broadcastQueue.at < 500 && !localChangeTimers.has('workbench-changed');
+  const queue = fresh && broadcastQueue ? broadcastQueue.queue : workbench.snapshot();
+  rememberQueue(queue);
+  return queue;
+}
 function broadcastWorkbenchChangedNow(): void {
   let revisions: WorkbenchRevisions | undefined;
+  broadcastQueue = undefined;
   try {
     const queue = workbench.snapshot();
+    rememberQueue(queue);
+    broadcastQueue = { queue, at: Date.now() };
     // The menu bar reuses this snapshot instead of building another.
     menubarQueue = { account: cachedLogin, queue };
     scheduleMenubar();
@@ -3176,7 +3202,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
 const SAVED_SIGNAL_LIMIT = 300;
 ipcMain.handle('workbench-snapshot', (_event, withSignals?: unknown) => {
   if (withSignals !== undefined && typeof withSignals !== 'boolean') throw new Error('Invalid snapshot request.');
-  const queue = workbench.snapshot();
+  const queue = currentQueue();
   const token = getResolvedToken();
   const account = cachedLogin;
   if (!withSignals || !token || !account) return queue;
@@ -3191,6 +3217,15 @@ ipcMain.handle('workbench-snapshot', (_event, withSignals?: unknown) => {
   const values = cachedQueueSignals(getGitHubClient(token), [...members.values()]);
   note('snapshot-signals', { members: members.size, values: values.length, ms: Math.round((performance.now() - started) * 10) / 10 });
   return { ...queue, savedSignals: { account, values } };
+});
+// The queue as the change from a snapshot this window holds: rows it has are named by revision (#345).
+ipcMain.handle('workbench-snapshot-delta', (_event, base: unknown) => {
+  if (typeof base !== 'string') throw new Error('Invalid snapshot request.');
+  const queue = currentQueue();
+  if (queue.revision === base) return { same: true };
+  const previous = recentQueues.get(base);
+  const delta = previous && timed('workbench-delta', () => queueDelta(previous, queue));
+  return delta ? { delta } : { queue };
 });
 ipcMain.handle('workbench-rename-stack', (_event, id: string, name: string, account?: string) => workbench.renameStack(id, name, account));
 ipcMain.handle('pr-badge-preview', (_event, url: string) => {
