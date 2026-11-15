@@ -675,8 +675,11 @@ void app.whenReady().then(async () => {
       const huge=lines(3000,k=>'export function generated'+k+'(input: number): number { return input * '+k+' + '+(k%7)+'; }');
       files.splice(5,0,{path:'src/a-generated/huge.ts',status:'added',additions:3000,deletions:0,changeId:'huge',patch:'@@ -0,0 +1,3000 @@\n'+huge.split('\n').map(l=>'+'+l).join('\n')});
       window.bigFiles=files;
-      const changes=window.electronAPI.getPrChanges;
-      window.electronAPI.getPrChanges=async(url,...rest)=>{const s=await changes(url,...rest);return url===prUrl?{...s,files}:s};
+      // A revision of its own: the small fixture's content for head-0 may already be prepared, and views open on it (#351).
+      const head='head-large';
+      const changes=window.electronAPI.getPrChanges,commits=window.electronAPI.getPrCommits;
+      window.electronAPI.getPrChanges=async(url,...rest)=>{const s=await changes(url,...rest);return url===prUrl?{...s,files,metadata:{...s.metadata,headSha:head}}:s};
+      window.electronAPI.getPrCommits=async(url,...rest)=>{const s=await commits(url,...rest);return url===prUrl?{...s,metadata:{...s.metadata,headSha:head}}:s};
       const read=window.electronAPI.getPrChangeFile;
       window.electronAPI.getPrChangeFile=async r=>{
         if(r.url!==prUrl)return read(r);
@@ -694,7 +697,7 @@ void app.whenReady().then(async () => {
       const feedback={comments:Array.from({length:120},(_,n)=>comment('ic-'+n,body(1000+n),n%3?'sam':'owen')),
         reviews:Array.from({length:20},(_,n)=>({...comment('r-'+n,'Review '+n+'. '+body(2000+n)),state:n%4?'COMMENTED':'CHANGES_REQUESTED',submittedAt:stamp})),
         requestedReviewers:[],viewerCanUpdate:true,state:'OPEN'};
-      const data={headSha:'head-0',baseSha:'base-0',checkedAt:Date.now(),threads,feedback};
+      const data={headSha:head,baseSha:'base-0',checkedAt:Date.now(),threads,feedback};
       const cached=window.electronAPI.getCachedReviewThreads,threadsRead=window.electronAPI.getReviewThreads;
       window.electronAPI.getCachedReviewThreads=async(url,...rest)=>url===prUrl?structuredClone(data):cached?.(url,...rest);
       window.electronAPI.getReviewThreads=async(url,...rest)=>url===prUrl?structuredClone(data):threadsRead(url,...rest);
@@ -704,6 +707,7 @@ void app.whenReady().then(async () => {
       const pr=original.items.find(i=>i.subject.title?.includes('Fix reconnect')||i.subject.members[0].title.includes('Fix reconnect'));
       const description=Array.from({length:60},(_,n)=>'## Section '+n+'\n\nThis change keeps **pending commands** ordered when the worker restarts. It touches \`queue.ts\`, \`dispatch.ts\` and the [scheduler](https://example.com/s'+n+').\n\n| Case | Before | After |\n| --- | --- | --- |\n| Retry | lost | kept |\n| Cancel | leaked | released |\n\n\`\`\`ts\nexport function dispatch'+n+'(command: Command) {\n  return queue.acquire().then(slot => run(command).finally(() => slot.release()));\n}\n\`\`\`').join('\n\n');
       pr.subject.members[0].description=description;
+      pr.subject.members[0].headSha=head;
       const items=[pr,...Array.from({length:999},(_,i)=>{
         const item=structuredClone(pr);
         item.subject.id='synthetic-'+i;
