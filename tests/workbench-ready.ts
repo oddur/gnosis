@@ -31,13 +31,15 @@ export async function loadWorkbenchPage(window: BrowserWindow, url: string): Pro
   const diagnostics = await watchPage(window);
   try {
     try {
-      await loadAndRender(window, url);
+      // A fixture renders in a few seconds even on Windows CI. The first attempt gives up sooner, so a
+      // stalled dev server leaves the retry time inside each suite's own timeout.
+      await loadAndRender(window, url, 30_000);
     } catch (error) {
       if (!(error instanceof LoadStalled)) throw error;
       console.warn(`${error.message}; loading it once more.\n${await diagnostics.report()}`);
       diagnostics.mark('loading the page once more');
       await stopLoading(window.webContents);
-      await loadAndRender(window, url);
+      await loadAndRender(window, url, 60_000);
     }
   } catch (error) {
     throw new Error(`${(error as Error).message}\n${await diagnostics.report()}`);
@@ -46,7 +48,7 @@ export async function loadWorkbenchPage(window: BrowserWindow, url: string): Pro
   }
 }
 
-async function loadAndRender(window: BrowserWindow, url: string): Promise<void> {
+async function loadAndRender(window: BrowserWindow, url: string, renderTimeoutMs: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const loading = window.loadURL(url);
   // A stalled load is abandoned; its later rejection must not become an unhandled rejection.
@@ -65,7 +67,7 @@ async function loadAndRender(window: BrowserWindow, url: string): Promise<void> 
     clearTimeout(timer);
   }
   if (!new URL(url).pathname.startsWith('/tests/fixtures/')) return;
-  const deadline = Date.now() + 60_000;
+  const deadline = Date.now() + renderTimeoutMs;
   while (Date.now() < deadline) {
     if (await window.webContents.executeJavaScript("Boolean(document.querySelector('#root')?.firstElementChild)")) {
       // Screens load on first use. In production that is a local chunk; here the dev server compiles it,

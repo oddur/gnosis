@@ -141,6 +141,7 @@ const SVG_PLAYER_RUNTIME = String.raw`
           await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
           notify('captured');
         }
+        if(d.command==='announce')announce();
         if(d.command==='pause')motion.pause();
         if(d.command==='resume')motion.resume();
         if(d.command==='theme')theme(d.dark===true);
@@ -176,6 +177,8 @@ const SVG_PLAYER_RUNTIME = String.raw`
     addEventListener('pagehide',()=>motion.pause());
     let resizeTimer=0;
     addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>motion.sync(),120);});
-    document.fonts.ready.then(()=>notify('ready',{width:extent[2],height:extent[3],bounds:bounds()}));
+    // The parent asks again with 'announce' when this frame loads, in case it missed the first one.
+    function announce(){document.fonts.ready.then(()=>notify('ready',{width:extent[2],height:extent[3],bounds:bounds()}));}
+    announce();
   }catch(error){notify('error',{message:String(error.message).slice(0,700)});}
 })();`;

@@ -192,9 +192,15 @@ void app.whenReady().then(async () => {
       /260/
     );
     await capture('motion-next');
+    // Lose the expanded frame's first 'ready' announcement, as when it arrives before the player
+    // listens. The player asks again when the frame loads, so its controls still enable.
+    await js(
+      `window.__droppedReady=0;window.addEventListener('message',e=>{if(!window.__droppedReady&&e.data?.type==='gnosis-illustration'&&e.data.event==='ready'){window.__droppedReady=1;e.stopImmediatePropagation()}})`
+    );
     await click('Expand illustration');
     await wait("!!document.querySelector('[role=dialog] iframe')");
     await wait('!document.querySelector(\'[aria-label="Next illustration step"]\').disabled');
+    assert.equal(await js('window.__droppedReady'), 1, 'a ready announcement was dropped');
     assert.equal(await js("document.querySelector('.mechanism-event-count').textContent"), '2 / 3');
     await click('Previous illustration step');
     await new Promise((r) => setTimeout(r, 600));
@@ -224,6 +230,12 @@ void app.whenReady().then(async () => {
     console.log('SVG illustration browser checks passed. Captures: ' + dir);
   } catch (error) {
     console.error(error);
+    // Say whether the player reported a load error or is still waiting for its frame.
+    console.error(
+      await js(
+        `({iframes:document.querySelectorAll('iframe').length,status:[...document.querySelectorAll('.svg-illustration [role=alert],.svg-illustration [role=status]')].map(e=>e.textContent.trim()).slice(0,3),next:document.querySelector('[aria-label="Next illustration step"]')?.disabled})`
+      ).catch(() => 'Illustration state unavailable')
+    );
     process.exitCode = 1;
   } finally {
     win.destroy();
