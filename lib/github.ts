@@ -9,6 +9,7 @@ import { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { readGitHubFile } from '../src/github-file-content';
 import { filesOfUnifiedDiff } from './diff-files';
 import { githubReadSignal } from './github-scheduler';
+import { reportPrHead } from './pr-heads';
 export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -44,6 +45,8 @@ export async function getPrMetadata(
   fresh = false
 ): Promise<PrMetadata> {
   const { data } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber, ...(fresh ? { headers: { 'cache-control': 'no-cache' } } : {}) });
+  // Every PR read reports its head: a new one invalidates what belonged to the old one (lib/pr-heads.ts).
+  reportPrHead(octokit, data.html_url, data.head.sha, { updatedAt: data.updated_at, source: 'metadata' });
   return {
     title: data.title,
     commentCount: data.comments,

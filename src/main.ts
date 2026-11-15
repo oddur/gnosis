@@ -33,7 +33,7 @@ import { createConflictResolutionService } from './conflict-resolution-service';
 import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-resolution';
 import { parseGitHubSyncInterest } from '../lib/github-sync';
 import { createGitHubSyncService } from './github-sync-service';
-import { createGitHubWriteRefresher, githubPrUrl, type GitHubWriteAction, type WriteDetails, type WriteObservation } from '../lib/github-write-refresh';
+import { createGitHubWriteRefresher, githubPrUrl, type GitHubWriteAction, type WriteDetails, type WriteObservation, type GitHubWriteEvent } from '../lib/github-write-refresh';
 import type { GitHubSyncInterest, GitHubSyncUpdate, GitHubSyncKind, GitHubSyncFailure } from '../lib/github-sync';
 import { createStackChangesService } from './stack-changes-service';
 import { approximateBytes } from '../lib/byte-cache';
@@ -161,6 +161,8 @@ import { createDeepLinks } from './deep-link-service';
 import { notificationSettings, normalizeNotificationPreferences, PAUSE_DURATION } from '../lib/notification-settings';
 import { isCatchUp, type NotificationKind } from '../lib/notification-routing';
 import { syncMode, watchInterval } from '../lib/notification-cadence';
+import { createChangeSignals, parseChangedPrs, CHANGED_PRS_QUERY, CHANGE_PAGE, type NotificationsResponse, type ChangeSource } from '../lib/github-change-signals';
+import { createHeadInvalidation, setPrHeadReporter, type HeadChange, type HeadObservation } from '../lib/pr-heads';
 import { prRef, prUrl as deepLinkPrUrl } from '../lib/deep-link';
 import type {
   ChangedFile,
@@ -3455,6 +3457,8 @@ const getQueueSignals = createQueueSignalsService(Date.now, (client, url, headSh
   let revisions = signalRevisions.get(client);
   if (!revisions) { revisions = new Map(); signalRevisions.set(client, revisions); }
   revisions.set(url, headSha);
+  // The signals read saw a new head. The sync read that asked for them reads the PR next.
+  if (client === getGitHubClient(cachedToken)) noteHeadSha(url, headSha, { source: 'signals' });
 });
 ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[], options?: QueueSignalOptions) => {
   const token = getResolvedToken();
@@ -3896,7 +3900,9 @@ function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
       update.value = withCachedCheckDetails(getGitHubClient(cachedToken), update.value);
     } else if (update.kind === 'metadata') {
       const previous = syncMetadata.get(update.url);
-      if (previous && (previous.headSha !== update.value.headSha || previous.baseSha !== update.value.baseSha)) {
+      // A new head is handled in one place. A new base alone still changes signals, checks and threads.
+      noteHeadSha(update.url, update.value.headSha, { updatedAt: update.value.updatedAt, source: 'metadata' });
+      if (previous && previous.headSha === update.value.headSha && previous.baseSha !== update.value.baseSha) {
         githubSync.invalidate([update.url], ['signals', 'checks', 'discussion']);
       }
       syncMetadata.delete(update.url);
@@ -3922,6 +3928,155 @@ function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
   if (updates.some(update => update.kind === 'signals' || update.kind === 'discussion')) notifyLocalChange('workbench-changed');
   sendSyncUpdates(updates);
 }
+// ── Head changes (#339) ──
+// A PR's head is the main invalidation trigger. Every read that sees a head reports it here: PR reads through
+// `reportPrHead` in lib/github.ts, status preloads, signals reads, the changed-PR search and published metadata.
+// A new head drops what belonged to the old one and refreshes the open views, once, whichever read saw it first.
+const heads = createHeadInvalidation({
+  known: url => {
+    const value = syncMetadata.get(url) ?? workbench.knownMember(url);
+    return value && { headSha: value.headSha, updatedAt: value.updatedAt };
+  },
+  dropSaved: (url, oldHead) => {
+    const cache = githubCacheFor(getGitHubClient(cachedToken));
+    cache?.delete(queueSignalsCacheKey({ url, headSha: oldHead }));
+    cache?.delete(prChecksCacheKey({ url, headSha: oldHead }));
+    if (syncSignals.get(url)?.headSha === oldHead) syncSignals.delete(url);
+  },
+  dropThreads: url => reviewThreads.invalidate(getGitHubClient(cachedToken), url),
+  invalidateViews: (url, kinds) => { githubSync.invalidate([url], kinds); void githubSync.tick(); },
+  readPr: url => queueChangedRefresh([url], 'head'),
+  broadcast: change => {
+    // Every window, including the menu bar panel through the queue: explanations and briefings show they are outdated.
+    broadcastToAllWindows('pr-head-changed', change);
+    notifyLocalChange('workbench-changed');
+  },
+  log: line => console.log(line),
+});
+setPrHeadReporter((client, url, sha, observation) => {
+  if (cachedToken && client === getGitHubClient(cachedToken)) noteHeadSha(url, sha, observation);
+});
+/** A read saw this head. See `createHeadInvalidation` in lib/pr-heads.ts. */
+function noteHeadSha(url: string, sha: string, observation: HeadObservation): HeadChange | undefined {
+  return cachedToken ? heads.note(url, sha, observation) : undefined;
+}
+// ── Change signals (#337, #338) ──
+// The notifications feed and one changed-PR search name the PRs that changed; only those are read again. See
+// lib/github-change-signals.ts. Discovery runs less often while they answer, and they bring it forward when they see
+// a PR Gnosis does not hold.
+const DISCOVERY_INTERVAL_MS = 120_000;
+const DISCOVERY_WITH_SIGNALS_MS = 300_000;
+const discoveryInterval = () => (changeSignals.healthy() ? DISCOVERY_WITH_SIGNALS_MS : DISCOVERY_INTERVAL_MS);
+/** The newest saved copy of a PR. Local only. */
+function savedChangeTarget(url: string) {
+  if (workbench.mutedUrls().has(url)) return;
+  const synced = syncMetadata.get(url), member = workbench.knownMember(url);
+  const value = synced && (!member || Date.parse(synced.updatedAt) >= Date.parse(member.updatedAt)) ? synced : member;
+  return value && { updatedAt: value.updatedAt, headSha: value.headSha };
+}
+/** Changed PRs read per sweep at most. A larger burst waits for discovery. */
+const CHANGED_REFRESH_LIMIT = 20;
+/**
+ * Reads the named PRs again as automatic work: the PR, then its signals for the head it reports. Publishing updates
+ * the queue, unread state and desktop notifications, and pushes to every view that watches the PR.
+ */
+async function refreshChangedPrs(urls: string[], source: ChangeSource | 'head') {
+  const token = cachedToken;
+  if (!token) return;
+  const client = getGitHubClient(token);
+  const targets = [...new Set(urls)].filter(url => !workbench.mutedUrls().has(url)).slice(0, CHANGED_REFRESH_LIMIT);
+  const read: PrMetadata[] = [];
+  for (const url of targets) {
+    try {
+      const { owner, repo, pullNumber } = parsePrUrl(url);
+      const value = await withGitHubPriority('foreground', () => getPrMetadata(client, owner, repo, pullNumber, true), { automatic: true });
+      if (token !== cachedToken) return;
+      read.push(value);
+      publishGitHubUpdates([{ kind: 'metadata', url, value }]);
+    } catch (error) {
+      // A rate limit stops the sweep. Another PR's failure does not.
+      if (githubRateLimit(error)) break;
+    }
+  }
+  const open = read.filter(value => value.state === 'open' && !value.merged);
+  if (open.length) {
+    try {
+      const values = await withGitHubPriority('foreground',
+        () => getQueueSignals(client, open.map(value => ({ url: value.url, headSha: value.headSha })), { force: true, active: true }), { automatic: true });
+      if (token !== cachedToken) return;
+      publishGitHubUpdates(values.map(value => ({ kind: 'signals', url: value.url, value })));
+    } catch {
+      // Normal sync reads the signals later.
+    }
+  }
+  // The same message as a read after a write: every window, including the menu bar panel, refreshes these PRs.
+  if (targets.length) broadcastToAllWindows('github-write-refreshed', { action: 'external', urls: targets, phase: 'settled', source } satisfies GitHubWriteEvent);
+}
+const changeRefreshQueue = new Set<string>();
+let changeRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+/** Batches head reports from several reads into one refresh. */
+function queueChangedRefresh(urls: string[], source: 'head') {
+  for (const url of urls) changeRefreshQueue.add(url);
+  if (changeRefreshTimer) return;
+  changeRefreshTimer = setTimeout(() => {
+    changeRefreshTimer = undefined;
+    const batch = [...changeRefreshQueue];
+    changeRefreshQueue.clear();
+    void refreshChangedPrs(batch, source);
+  }, 500);
+}
+const changeSignals = createChangeSignals({
+  mode: () => syncMode({ signedIn: !!cachedToken, suspended, online: net.isOnline(), windowVisible: windowVisible() || !!menubarPanel?.visible(), desktopNotifications: notificationSettings(loadPreferences()).desktop }),
+  idleSeconds: () => powerMonitor.getSystemIdleTime(),
+  watchInterval: () => watchInterval(onBattery),
+  account: () => (cachedToken && cachedLogin ? cachedLogin : null),
+  blockedUntil: resource => (cachedToken ? githubClients.backoff(cachedToken, true, [resource])?.retryAt : undefined),
+  notifications: async ({ lastModified, etag }): Promise<NotificationsResponse> => {
+    const token = cachedToken;
+    const client = getGitHubClient(token);
+    const pollInterval = (headers: Record<string, unknown> | undefined) => Number(headers?.['x-poll-interval']) || undefined;
+    try {
+      // Read only: Gnosis never marks threads read. Validators are its own, so a 304 reaches this code and costs nothing.
+      const response = await withGitHubPriority('background', () => client.request('GET /notifications', {
+        all: true,
+        participating: false,
+        per_page: CHANGE_PAGE,
+        headers: { ...(etag ? { 'if-none-match': etag } : {}), ...(lastModified ? { 'if-modified-since': lastModified } : {}) },
+        request: { cache: 'no-store' },
+      }), { automatic: true });
+      return {
+        status: 200,
+        threads: response.data,
+        lastModified: typeof response.headers['last-modified'] === 'string' ? response.headers['last-modified'] : undefined,
+        etag: typeof response.headers.etag === 'string' ? response.headers.etag : undefined,
+        pollInterval: pollInterval(response.headers),
+      };
+    } catch (error) {
+      const e = error as { status?: number; response?: { headers?: Record<string, unknown> } };
+      if (e.status === 304) return { status: 304, pollInterval: pollInterval(e.response?.headers) };
+      // Fine-grained and GitHub App tokens cannot read notifications, and classic tokens need the scope.
+      if ((e.status === 401 || e.status === 403 || e.status === 404) && !githubRateLimit(error)) return { status: 'unavailable', code: e.status };
+      throw error;
+    }
+  },
+  search: async (queries) => {
+    const client = getGitHubClient(cachedToken);
+    const response = await withGitHubPriority('background',
+      () => client.request('POST /graphql', { query: CHANGED_PRS_QUERY, variables: { ...queries, first: CHANGE_PAGE } }), { automatic: true });
+    const body = response.data as { data?: unknown; errors?: { message?: string }[] };
+    if (!body.data) throw new Error(body.errors?.[0]?.message ?? 'GitHub returned no search data.');
+    return parseChangedPrs(body.data);
+  },
+  known: savedChangeTarget,
+  ignored: url => workbench.mutedUrls().has(url),
+  head: (url, sha, updatedAt) => { noteHeadSha(url, sha, { updatedAt, source: 'search' }); },
+  refresh: (urls, source) => refreshChangedPrs(urls, source),
+  discover: () => {
+    discoveryDue = Math.min(discoveryDue, Date.now() + 5_000);
+    watchDue = Math.min(watchDue, Date.now() + 5_000);
+  },
+  log: line => console.debug(line),
+});
 const githubSync = createGitHubSyncService({
   account: () => cachedToken,
   enabled: syncEnabled,
@@ -4070,7 +4225,7 @@ async function tickGitHubSync() {
     checkDetailsPreload.clear();
     prOpenPreload.clear();
     updateCheckDetailTargets();
-    syncCredential = token; syncMetadata.clear(); syncSignals.clear(); discoveryDue = 0;
+    syncCredential = token; syncMetadata.clear(); syncSignals.clear(); heads.clear(); discoveryDue = 0;
     for (const subscription of syncSubscriptions.values()) if (!subscription.owner.isDestroyed())
       subscription.owner.send('github-sync', { account: cachedLogin, subscriptionId: subscription.id, reset: true, updates: [] });
   }
@@ -4078,13 +4233,14 @@ async function tickGitHubSync() {
   if (!available) {
     syncWasAvailable = false;
     const mode = syncMode({ signedIn: !!token, suspended, online: net.isOnline(), windowVisible: windowVisible(), desktopNotifications: notificationSettings(loadPreferences()).desktop });
-    if (token && mode === 'watch') void tickWatch(token);
+    if (token && mode === 'watch') { void tickWatch(token); changeSignals.tick(); }
     return;
   }
   watching = false;
-  if (!syncWasAvailable) { githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); }
+  if (!syncWasAvailable) { githubSync.wake(); changeSignals.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); }
   syncWasAvailable = true;
   void githubSync.tick();
+  changeSignals.tick();
   void workflowGraphPreload.tick();
   void checkDetailsPreload.tick();
   void prOpenPreload.tick();
@@ -4092,9 +4248,11 @@ async function tickGitHubSync() {
   if (!discoveryPending && cachedLogin) void sweepOwnPrs();
   if (discoveryPending || Date.now() < discoveryDue) return;
   discoveryPending = true;
-  discoveryDue = Date.now() + 120_000;
+  // While the change signals answer, they name changed PRs within a minute or two: discovery can wait longer.
+  const interval = discoveryInterval();
+  discoveryDue = Date.now() + interval;
   let success = false;
-  beginSyncPass(120_000);
+  beginSyncPass(interval);
   try {
     if (!cachedLogin) {
       const login = await resolveGitHubLogin(token);
@@ -4108,7 +4266,7 @@ async function tickGitHubSync() {
     await workbench.refreshing();
     await sweepOwnPrs(true);
     if (token !== cachedToken) return;
-    discoveryDue = queue.sync?.retryAt ?? Date.now() + 120_000;
+    discoveryDue = queue.sync?.retryAt ?? Date.now() + discoveryInterval();
     success = queue.sync?.status !== 'paused';
   } catch (error) {
     discoveryDue = githubRateLimit(error)?.retryAt ?? Date.now() + 60_000;
@@ -4117,7 +4275,7 @@ async function tickGitHubSync() {
 void app.whenReady().then(() => {
   const timer = setInterval(() => void tickGitHubSync(), 1000);
   timer.unref();
-  const wake = () => { suspended = false; githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); void tickGitHubSync(); };
+  const wake = () => { suspended = false; githubSync.wake(); changeSignals.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); void tickGitHubSync(); };
   powerMonitor.on('suspend', () => { suspended = true; });
   powerMonitor.on('resume', () => { resumedSinceSync = true; watchDue = Math.min(watchDue, Date.now() + 10_000); wake(); });
   // On battery, predictions keep running but read one file body instead of three.

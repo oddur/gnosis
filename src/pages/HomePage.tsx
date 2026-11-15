@@ -728,6 +728,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     const stopWrites = statusSubject && window.electronAPI.onGitHubWriteRefreshed?.(event => {
       if (event.urls.some(url => statusSubject.members.some(member => member.url === url))) refreshStatuses();
     });
+    // A new head seen by any read, in any window: the shown status belongs to the old head.
+    const stopHeads = statusSubject && window.electronAPI.onPrHeadChanged?.(change => {
+      if (statusSubject.members.some(member => member.url === change.url)) refreshStatuses();
+    });
     document.addEventListener('visibilitychange', refreshStatuses);
     let refreshingSignals = false;
     const refreshSignals = async () => {
@@ -778,6 +782,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       if (stopSignals) stopSignals();
       if (stopChecks) stopChecks();
       if (typeof stopWrites === 'function') stopWrites();
+      if (typeof stopHeads === 'function') stopHeads();
       document.removeEventListener('visibilitychange', refreshStatuses);
     };
   }, [

@@ -925,6 +925,10 @@ if (new URLSearchParams(location.search).has('github-writes')) {
   const { installGitHubWritesFixture } = await import('./github-writes');
   installGitHubWritesFixture(mocks, items);
 }
+if (new URLSearchParams(location.search).has('change-signals')) {
+  const { installChangeSignalsFixture } = await import('./change-signals');
+  installChangeSignalsFixture(mocks, items);
+}
 // Main stamps every snapshot it returns. Stamp here too, after any test override, so revisions
 // always describe what the override returned. Reading saved reviews for the stamp is not counted.
 const stampedReads = new Set(['workbenchQueue', 'workbenchSnapshot', 'workbenchStarPrs', 'workbenchMutePrs', 'workbenchSetFilters',

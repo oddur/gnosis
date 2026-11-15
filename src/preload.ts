@@ -3,6 +3,7 @@ import type { WorkbenchRevisions } from '../lib/workbench-revision';
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
 import type { GitHubWriteEvent } from '../lib/github-write-refresh';
+import type { HeadChange } from '../lib/pr-heads';
 import type { OpenTarget } from '../lib/pr-open-targets';
 import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
@@ -101,6 +102,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('github-write-refreshed', handler);
     return () => {
       ipcRenderer.removeListener('github-write-refreshed', handler);
+    };
+  },
+  /** A read saw a new head for a PR: everything keyed to the old head is out of date (#339). */
+  onPrHeadChanged: (callback: (change: HeadChange) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: HeadChange) => callback(value);
+    ipcRenderer.on('pr-head-changed', handler);
+    return () => {
+      ipcRenderer.removeListener('pr-head-changed', handler);
     };
   },
   onWorkbenchChanged: (callback: (revisions?: WorkbenchRevisions) => void) => {

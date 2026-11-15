@@ -8,6 +8,7 @@ import type { QueueSignalOptions, QueueSignalRequest, QueueSignals } from '../li
 import type { PrMetadata, PrStatus, ReviewSummary } from '../lib/types';
 import { withCachedCheckDetails } from './pr-checks-service';
 import { lifecycleOf, type PrLifecycle } from '../lib/pr-lifecycle';
+import { reportPrHead } from '../lib/pr-heads';
 
 /** A saved status core older than this is never shown; the PR waits for GitHub instead. */
 export const PR_STATUS_MAX_STALE_MS = 24 * 60 * 60_000;
@@ -264,6 +265,7 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
         for (const [i, { target }] of parsed.entries()) {
           const pr = failed.has(`p${i}`) ? undefined : result.data[`p${i}`]?.pullRequest;
           // A new head, a write during the query, or a newer read must not be replaced by this copy.
+          if (pr) reportPrHead(client, target.url, pr.headRefOid, { updatedAt: pr.updatedAt, source: 'status' });
           if (!pr || pr.headRefOid !== target.headSha || !cache || cache.version() !== version) continue;
           const existing = cache.get(key(target.url), isSavedPrStatus);
           if (existing && existing.value.checkedAt > checkedAt) continue;
