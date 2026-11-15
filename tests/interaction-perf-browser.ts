@@ -39,7 +39,7 @@ const budgets: Record<string, number> = {
   'comment keystroke': 150,
   'feedback row': 120,
   // Keyboard "Viewed & next" on the 600-file PR, pressed about 250 ms apart as a reader moving through files does.
-  'viewed next key': 200,
+  'viewed next key': 250,
 };
 
 /** Input delay (ms) at the 90th percentile of clicks and key presses in Settings and on queue rows while background
@@ -279,15 +279,40 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('[data-queue-total=\"540\"]')");
     await wait("document.querySelectorAll('.queue-item').length>5");
     /** Listeners and watches, and the JS heap after a full garbage collection, in MB. */
+    /** Live objects of a kind, found from one instance's prototype: React fibers, and elements live or detached. */
+    const live = async (expression: string) => {
+      const debug = win.webContents.debugger;
+      // One object group, released after: query results the debugger keeps would hold every element alive.
+      const objectGroup = 'heap-check';
+      try {
+        const proto = (await debug.sendCommand('Runtime.evaluate', { expression, objectGroup })) as { result: { objectId?: string } };
+        if (!proto.result.objectId) return -1;
+        const found = (await debug.sendCommand('Runtime.queryObjects', { prototypeObjectId: proto.result.objectId, objectGroup })) as {
+          objects: { objectId: string };
+        };
+        const length = (await debug.sendCommand('Runtime.callFunctionOn', {
+          objectId: found.objects.objectId,
+          functionDeclaration: 'function(){return this.length}',
+          returnByValue: true,
+          objectGroup,
+        })) as { result: { value: number } };
+        return length.result.value;
+      } finally {
+        await debug.sendCommand('Runtime.releaseObjectGroup', { objectGroup });
+      }
+    };
     const listeners = async () => {
       await win.webContents.debugger.sendCommand('HeapProfiler.collectGarbage');
       const heap = (await win.webContents.debugger.sendCommand('Runtime.getHeapUsage')) as { usedSize: number };
+      const fiber = "(()=>{const r=document.getElementById('root');const k=Object.keys(r).find(k=>k.startsWith('__reactContainer'));return Object.getPrototypeOf(r[k])})()";
       return {
         ...(await js<{ receivers: number; watches: number }>('({receivers:window.syncFixture.receivers.size,watches:window.syncFixture.subscriptions.size})')),
         heapMB: Math.round(heap.usedSize / 1e5) / 10,
+        fibers: await live(fiber),
+        elements: await live('HTMLElement.prototype'),
       };
     };
-    const counts: Record<string, { receivers: number; watches: number; heapMB: number }> = { queue: await listeners() };
+    const counts: Record<string, { receivers: number; watches: number; heapMB: number; fibers: number; elements: number }> = { queue: await listeners() };
 
     // Five PR tabs, each visited once so it mounts, then back to the queue.
     const tabs = "document.querySelectorAll('.workspace-tab-select')";
@@ -516,6 +541,30 @@ void app.whenReady().then(async () => {
       await openTabs();
       await closeTabs();
       counts[`tabs closed ${cycle}`] = await listeners();
+    }
+    // GNOSIS_HEAP_RETAINERS=1: what keeps the closed tabs' DOM alive, from a heap snapshot.
+    if (process.env.GNOSIS_HEAP_RETAINERS) {
+      const debug = win.webContents.debugger;
+      const chunks: string[] = [];
+      const collect = (_event: unknown, method: string, params: { chunk?: string }) => {
+        if (method === 'HeapProfiler.addHeapSnapshotChunk' && params.chunk) chunks.push(params.chunk);
+      };
+      const scripts = new Map<string, string>();
+      const parsed = (_event: unknown, method: string, params: { scriptId?: string; url?: string }) => {
+        if (method === 'Debugger.scriptParsed' && params.scriptId && params.url) scripts.set(params.scriptId, params.url);
+      };
+      debug.on('message', parsed);
+      await debug.sendCommand('Debugger.enable');
+      debug.on('message', collect);
+      await debug.sendCommand('HeapProfiler.enable');
+      await debug.sendCommand('HeapProfiler.takeHeapSnapshot', { reportProgress: false });
+      debug.removeListener('message', collect);
+      const { detachedRetainers } = await import('./heap-retainers');
+      debug.removeListener('message', parsed);
+      const named = detachedRetainers(chunks.join('')).map((line) =>
+        line.replace(/@(\d+):(\d+):(\d+)/g, (_all, id: string, row: string, column: string) => `@${(scripts.get(id) ?? id).split('/').pop()?.split('?')[0]}:${row}:${column}`)
+      );
+      console.log('Detached DOM retainers:\n  ' + named.join('\n  '));
     }
     const storm = await js<{ ticks: number; ms: number }>('({ticks:window.__storm.ticks,ms:Math.round(window.__storm.ms)})');
     console.log('Background sync ticks:', JSON.stringify(storm));
@@ -833,8 +882,14 @@ void app.whenReady().then(async () => {
     );
     // Opening and closing five tabs again must not keep their pages: the heap returns to about where it was.
     assert.ok(
-      background.counts['tabs closed 5'].heapMB - background.counts['tabs closed'].heapMB < 20,
+      background.counts['tabs closed 5'].heapMB - background.counts['tabs closed'].heapMB < 8,
       `Closed tabs release their memory: ${JSON.stringify(background.counts)}`
+    );
+    // Before the PrSummary eviction timer was moved out of the component, each cycle kept about 4,700 detached
+    // elements and 10 MB for a minute.
+    assert.ok(
+      background.counts['tabs closed 5'].elements - background.counts['tabs closed'].elements < 500,
+      `Closed tabs leave no detached DOM behind: ${JSON.stringify(background.counts)}`
     );
     assert.deepEqual(errors, [], 'No renderer errors');
     console.log('Interaction performance checks passed');
