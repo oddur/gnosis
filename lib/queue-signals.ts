@@ -1,3 +1,5 @@
+import { checkCounts } from './pr-checks';
+import type { CiCheck } from './types';
 export interface QueueSignalRequest {
   url: string;
   headSha: string;
@@ -37,3 +39,17 @@ export interface QueueSignals extends QueueSignalRequest {
 export const QUEUE_SIGNALS_TTL = 2 * 60_000;
 export const ACTIVE_SIGNALS_TTL = 25_000;
 export const queueSignalKey = (request: QueueSignalRequest) => `${request.url}@${request.headSha}`;
+/** Queue check counts from a check list, so rows agree with the Checks tab. */
+export function checkSignals(checks: CiCheck[]): QueueSignals['checks'] {
+  const counts = checkCounts(checks);
+  return {
+    state: counts.attention ? 'failure' : counts.running ? 'pending' : checks.length ? 'success' : 'neutral',
+    passed: counts.passed,
+    failed: counts.attention,
+    running: counts.running,
+    skipped: counts.skipped,
+    total: checks.length,
+  };
+}
+/** v4: check counts leave out jobs of superseded workflow runs. */
+export const queueSignalsCacheKey = (request: QueueSignalRequest) => `queue-signals:v4:${queueSignalKey(request)}`;

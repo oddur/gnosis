@@ -47,7 +47,7 @@ import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
 import type { EnvironmentVariable } from '../lib/harness-environment';
 import { createChatRuns, waitForChatContext } from './chat-runs';
 import { readPrChecks, readCurrentPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, failingRunJobs, rerunChecks, savedPrChecks } from './pr-checks-service';
-import { checkGroup, type CheckTarget, type CheckSelection, type ChecksOptions } from '../lib/pr-checks';
+import { checkGroup, prChecksCacheKey, type CheckTarget, type CheckSelection, type ChecksOptions } from '../lib/pr-checks';
 import { createMarkdownReviewService } from './markdown-review-service';
 import type { MarkdownReviewRequest } from '../lib/markdown-review';
 import { fileClassifications, onClassificationUpdate } from './file-classification-service';
@@ -79,7 +79,7 @@ import { localClones } from '../lib/local-clone';
 import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
 import { createQueueSignalsService, cachedQueueSignals, savedQueueSignals } from './queue-signals-service';
-import type { QueueSignalRequest, QueueSignalOptions, QueueSignals } from '../lib/queue-signals';
+import { queueSignalsCacheKey, type QueueSignalRequest, type QueueSignalOptions, type QueueSignals } from '../lib/queue-signals';
 import { createSearchIndexer } from './command-search-service';
 import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
@@ -3890,7 +3890,7 @@ function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
         githubSync.invalidate([update.url], ['discussion']);
       }
       if (previous && JSON.stringify(previous.checks) !== JSON.stringify(update.value.checks)) {
-        githubCacheFor(getGitHubClient(cachedToken))?.delete(`pr-checks:v1:${update.url}@${update.value.headSha}`);
+        githubCacheFor(getGitHubClient(cachedToken))?.delete(prChecksCacheKey({ url: update.url, headSha: update.value.headSha }));
         githubSync.invalidate([update.url], ['checks']);
       }
       if (workbench.observeReadSignals(cachedLogin, [update.value])) notifyLocalChange('workbench-changed');
@@ -4122,8 +4122,8 @@ function refreshAfterGitHubWrite(urls: string[], kinds?: GitHubSyncKind[], follo
   for (const url of urls) {
     const sha = syncMetadata.get(url)?.headSha ?? workbench.prPreview(url)?.member.headSha;
     if (sha) {
-      if (!kinds || kinds.includes('signals')) cache?.delete(`queue-signals:v3:${url}@${sha}`);
-      if (!kinds || kinds.includes('checks')) cache?.delete(`pr-checks:v1:${url}@${sha}`);
+      if (!kinds || kinds.includes('signals')) cache?.delete(queueSignalsCacheKey({ url, headSha: sha }));
+      if (!kinds || kinds.includes('checks')) cache?.delete(prChecksCacheKey({ url, headSha: sha }));
     }
   }
   githubSync.invalidate(urls, kinds, { followUp });

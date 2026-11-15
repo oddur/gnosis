@@ -9,6 +9,11 @@ export interface PrCheck extends CiCheck {
   startedAt: string | null;
   completedAt: string | null;
   description?: string;
+  /**
+   * Actions jobs only: the workflow run the job belongs to. A commit can hold several runs of one workflow,
+   * for example when concurrency cancels older runs; only the newest run of each workflow and event counts.
+   */
+  workflowRun?: { id: number; workflowId: number; event: string };
 }
 export interface CheckTarget {
   url: string;
@@ -123,6 +128,55 @@ export function orderedChecks(checks: PrCheck[], filter: CheckFilter) {
     .sort((a, b) => rank[checkGroup(a)] - rank[checkGroup(b)] || a.name.localeCompare(b.name));
 }
 export const checkKey = (target: CheckTarget) => `${target.url}@${target.headSha}`;
+/** v2: snapshots hold only current check runs, without jobs from superseded workflow runs. */
+export const prChecksCacheKey = (target: CheckTarget) => `pr-checks:v2:${checkKey(target)}`;
+
+const ACTIONS_JOB_URL = /^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/(\d+)\/job\/\d+/;
+/** The workflow run of an Actions job, from its job URL. */
+export function actionsRunId(check: Pick<PrCheck, 'kind' | 'url'>): number | undefined {
+  if (check.kind !== 'check') return;
+  const match = check.url?.match(ACTIONS_JOB_URL);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * The check runs GitHub counts for a commit, and the superseded ones it hides. A commit's check rollup also
+ * lists jobs of older runs of the same workflow, such as runs cancelled by a concurrency group when newer
+ * events arrived. GitHub's merge box, `gh pr checks` and branch protection use only the newest run of each
+ * workflow and event, and the newest attempt of each job in it. Runs of different workflows never replace
+ * each other, even when their jobs share a name. Commit statuses and other apps' check runs stay as reported.
+ */
+export function currentChecks(checks: PrCheck[]): { checks: PrCheck[]; superseded: PrCheck[] } {
+  const latestRun = new Map<string, number>();
+  const workflowKey = (run: NonNullable<PrCheck['workflowRun']>) => `${run.workflowId}:${run.event}`;
+  for (const check of checks) {
+    if (check.kind !== 'check' || !check.workflowRun) continue;
+    const key = workflowKey(check.workflowRun);
+    latestRun.set(key, Math.max(latestRun.get(key) ?? 0, check.workflowRun.id));
+  }
+  const newest = new Map<string, PrCheck>();
+  const superseded: PrCheck[] = [];
+  for (const check of checks) {
+    if (check.kind !== 'check') continue;
+    if (check.workflowRun && check.workflowRun.id !== latestRun.get(workflowKey(check.workflowRun))) {
+      superseded.push(check);
+      continue;
+    }
+    // A re-run adds a new check run with the same name to the same workflow run; the newest attempt wins.
+    const run = check.workflowRun?.id ?? actionsRunId(check);
+    if (run === undefined) continue;
+    const key = `${run}:${check.name}`;
+    const previous = newest.get(key);
+    if (!previous) newest.set(key, check);
+    else if (check.databaseId > previous.databaseId) {
+      superseded.push(previous);
+      newest.set(key, check);
+    } else superseded.push(check);
+  }
+  if (!superseded.length) return { checks, superseded };
+  const hidden = new Set(superseded);
+  return { checks: checks.filter((check) => !hidden.has(check)), superseded };
+}
 
 export interface ChecksOptions {
   cachedOnly?: boolean;

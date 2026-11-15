@@ -123,14 +123,19 @@ export async function readWorkflowRuns(
           );
           // The latest execution of each workflow/event is the relevant one, not historical reruns.
           const latest = new Map<string, ApiRun>();
+          const total = new Map<string, number>();
+          const runKey = (run: ApiRun) => `${run.workflow_id}:${run.event}`;
           for (const run of runs) {
-            const key = `${run.workflow_id}:${run.event}`;
-            const previous = latest.get(key);
-            if (!previous || run.id > previous.id) latest.set(key, run);
+            const previous = latest.get(runKey(run));
+            total.set(runKey(run), (total.get(runKey(run)) ?? 0) + 1);
+            if (!previous || run.id > previous.id) latest.set(runKey(run), run);
           }
           return {
             ...input,
-            runs: [...latest.values()].map(info),
+            runs: [...latest.values()].map((run) => {
+              const superseded = (total.get(runKey(run)) ?? 1) - 1;
+              return superseded ? { ...info(run), supersededRuns: superseded } : info(run);
+            }),
             checkedAt: Date.now(),
             ...(data.total_count > 100
               ? { warning: 'Showing workflows from the latest 100 runs on this commit.' }

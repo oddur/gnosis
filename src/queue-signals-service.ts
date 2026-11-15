@@ -6,11 +6,31 @@ import {
   QUEUE_SIGNALS_TTL,
   ACTIVE_SIGNALS_TTL,
   queueSignalKey,
+  queueSignalsCacheKey,
+  checkSignals,
   type QueueSignalRequest,
   type QueueSignals,
   type QueueSignalOptions,
 } from '../lib/queue-signals';
 import { mergeConflictState } from '../lib/merge-conflicts';
+import { readPrChecksBatch } from './pr-checks-service';
+
+interface SuiteRun {
+  workflowRun: { databaseId: number | null; event: string; workflow: { databaseId: number | null } } | null;
+}
+/** Whether a commit holds more than one run of a workflow for one event, so the rollup counts superseded jobs. */
+export function hasSupersededRuns(suites: (SuiteRun | null)[]) {
+  const runs = new Map<string, number>();
+  for (const suite of suites) {
+    const run = suite?.workflowRun;
+    if (!run?.databaseId || !run.workflow.databaseId) continue;
+    const key = `${run.workflow.databaseId}:${run.event}`;
+    const previous = runs.get(key);
+    if (previous !== undefined && previous !== run.databaseId) return true;
+    runs.set(key, run.databaseId);
+  }
+  return false;
+}
 
 interface PullSignals {
   headRefOid: string;
@@ -29,6 +49,7 @@ interface PullSignals {
   commits: {
     nodes: {
       commit: {
+        checkSuites?: { nodes: (SuiteRun | null)[] | null } | null;
         statusCheckRollup: null | {
           state: string;
           contexts: {
@@ -77,11 +98,11 @@ function isSignals(value: unknown): value is QueueSignals {
 /** Read-only ordering input; never starts a GitHub request. */
 export function cachedQueueSignals(client: Octokit, requests: QueueSignalRequest[]): QueueSignals[] {
   const cache = githubCacheFor(client);
-  return requests.flatMap(request => cache?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals)?.value ?? []);
+  return requests.flatMap(request => cache?.get(queueSignalsCacheKey(request), isSignals)?.value ?? []);
 }
 /** Local data only. The saved signals for one PR revision and whether a write marked them stale. */
 export function savedQueueSignals(client: Octokit, request: QueueSignalRequest) {
-  const saved = githubCacheFor(client)?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals);
+  const saved = githubCacheFor(client)?.get(queueSignalsCacheKey(request), isSignals);
   return saved && { value: saved.value, revalidate: saved.revalidate };
 }
 /** Visible-row reads, batched across repositories, with credential-scoped snapshots and backoff. */
@@ -108,7 +129,7 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
     const result: QueueSignals[] = [];
     const stale: QueueSignals[] = [];
     const missing = parsed.filter(({ request }) => {
-      const saved = cache?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals);
+      const saved = cache?.get(queueSignalsCacheKey(request), isSignals);
       if (
         !options.force &&
         saved &&
@@ -142,7 +163,9 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
       mergeQueue { id } mergeQueueEntry { state }
       comments(last:1) { totalCount nodes { id createdAt author { login } } }
       reviews(last:1,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]) { nodes { id url submittedAt state author { login } commit { oid } } }
-      commits(last:1) { nodes { commit { statusCheckRollup { state contexts {
+      commits(last:1) { nodes { commit {
+        checkSuites(first:100) { nodes { workflowRun { databaseId event workflow { databaseId } } } }
+        statusCheckRollup { state contexts {
         totalCount checkRunCountsByState { state count } statusContextCountsByState { state count }
       } } } } }
     } }`
@@ -151,10 +174,21 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
     const state = account;
     const pending = withGitHubPriority(priority, () => createGitHubWork(async () => {
       try {
-        const data = await client.graphql<Record<string, { pullRequest: PullSignals | null } | null>>(query);
+        type Data = Record<string, { pullRequest: PullSignals | null } | null>;
+        let data: Data;
+        try {
+          data = await client.graphql<Data>(query);
+        } catch (error) {
+          // Without Actions access GitHub cannot list workflow runs; the rollup is still the best available answer.
+          const partial = error as { data?: Data; errors?: { path?: (string | number)[] }[] };
+          if (!partial.data || !partial.errors?.length || partial.errors.some((e) => !e.path?.includes('checkSuites')))
+            throw error;
+          data = partial.data;
+        }
         const cost = (data.rateLimit as { cost?: unknown } | null | undefined)?.cost;
         if (typeof cost === 'number') options.cost?.(cost);
         const fresh: QueueSignals[] = [];
+        const superseded: QueueSignals[] = [];
         for (const [i, { request }] of missing.entries()) {
           const pr = data[`p${i}`]?.pullRequest;
           // Never attach a green check from a different revision to the displayed PR.
@@ -211,8 +245,28 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
             },
           };
           fresh.push(value);
-          if (cache?.version() === version) cache?.set(`queue-signals:v3:${queueSignalKey(request)}`, value);
+          // The rollup also counts jobs of superseded workflow runs, such as runs cancelled by a concurrency group.
+          // When those could change the outcome, count the current check runs instead, as the Checks tab does.
+          if (
+            rollup &&
+            (value.checks.state !== 'success' || value.checks.failed || value.checks.running) &&
+            hasSupersededRuns(pr.commits.nodes[0]?.commit.checkSuites?.nodes ?? [])
+          )
+            superseded.push(value);
         }
+        if (superseded.length) {
+          try {
+            const snapshots = await readPrChecksBatch(client, superseded.map(({ url, headSha }) => ({ url, headSha })));
+            for (const value of superseded) {
+              const snapshot = snapshots.find((item) => item.url === value.url && item.headSha === value.headSha);
+              if (snapshot) value.checks = checkSignals(snapshot.checks);
+            }
+          } catch {
+            // Keep GitHub's rollup when the check list cannot be read; the next refresh tries again.
+          }
+        }
+        for (const value of fresh)
+          if (cache?.version() === version) cache?.set(queueSignalsCacheKey(value), value);
         return fresh;
       } catch {
         // The shared GitHub client owns Retry-After and rate-limit deadlines.

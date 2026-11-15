@@ -1,6 +1,43 @@
 import { withWorkflowSteps } from '../../lib/workflow-graph';
 import type { WorkflowGraph, WorkflowGraphInput, WorkflowJob, WorkflowRuns } from '../../lib/workflow-graph';
 import type { CheckTarget, PrChecks } from '../../lib/pr-checks';
+import { supersededWorkflowRuns } from './superseded-runs';
+/** Three rounds of the same workflows on one commit; Graph lists the newest run of each. */
+function supersededWorkflowMocks(snapshots: Map<string, PrChecks>) {
+  return {
+    getWorkflowRuns: (input: CheckTarget): Promise<WorkflowRuns> =>
+      Promise.resolve({ ...input, runs: supersededWorkflowRuns(input.headSha), checkedAt: Date.now() }),
+    getWorkflowGraph: (input: WorkflowGraphInput): Promise<WorkflowGraph> => {
+      const runs = supersededWorkflowRuns(input.headSha);
+      const run = runs.find((r) => r.id === input.runId) ?? runs[0];
+      const jobs = (snapshots.get(input.url)?.checks ?? [])
+        .filter((check) => check.workflowRun?.id === run.id)
+        .map(
+          (check): WorkflowJob => ({
+            id: check.databaseId,
+            checkId: check.id,
+            name: check.name,
+            status: check.status,
+            conclusion: check.conclusion,
+            startedAt: check.startedAt,
+            completedAt: check.completedAt,
+            url: check.url ?? '',
+            steps: [],
+          })
+        );
+      return Promise.resolve({
+        target: input,
+        run,
+        totalJobs: jobs.length,
+        checkedAt: Date.now(),
+        warnings: [],
+        groups: [],
+        nodes: jobs.map((job, i) => ({ id: `job-${job.id}`, name: job.name, jobs: [job], x: 0, y: i * 140 })),
+        edges: [],
+      });
+    },
+  };
+}
 /** Four passing Actions workflows; their jobs have no dependencies between them. */
 function externalWorkflowMocks(snapshots: Map<string, PrChecks>) {
   const runs = [
@@ -64,6 +101,8 @@ function externalWorkflowMocks(snapshots: Map<string, PrChecks>) {
   };
 }
 export function workflowMocks(snapshots: Map<string, PrChecks>) {
+  if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('superseded-runs'))
+    return supersededWorkflowMocks(snapshots);
   if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('external-checks'))
     return externalWorkflowMocks(snapshots);
   const run = {
