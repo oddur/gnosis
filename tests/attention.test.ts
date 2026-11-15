@@ -43,7 +43,7 @@ void test('each kind comes from its source fields, one row per PR', () => {
       item([changes]),
       item([failing]),
       item([conflicted]),
-      item([replies], { responses: { [replies.url]: { changesRequested: false, unresolvedThreads: 2 } as never } }),
+      item([replies], { responses: { [replies.url]: { changesRequested: false, unresolvedThreads: 2, awaitingReply: 2 } as never } }),
       item([ready]),
       item([explained], { review: review(explained.url) }),
     ],
@@ -125,7 +125,7 @@ void test('ready to merge is dropped beside a fix kind', () => {
   const pr = mine(1);
   const value = { ...readySignals(pr), checks: { state: 'failure' as const, passed: 0, total: 1 } };
   assert.deepEqual(rows([item([pr])], { signals: { [pr.url]: value } })[0].kinds, ['checks-failed']);
-  const threads = rows([item([pr], { responses: { [pr.url]: { changesRequested: false, unresolvedThreads: 1 } as never } })], {
+  const threads = rows([item([pr], { responses: { [pr.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1 } as never } })], {
     signals: { [pr.url]: readySignals(pr) },
   });
   assert.deepEqual(threads[0].kinds, ['replies']);
@@ -165,7 +165,7 @@ void test('merged and closed PRs leave the needs-you list, even with replies or 
   const parent = member(4, { requestedReviewers: [LOGIN], merged: true, state: 'closed' });
   assert.deepEqual(
     rows([
-      item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 2 } as never } }),
+      item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 2, awaitingReply: 2 } as never } }),
       item([explained], { review: review(explained.url) }),
       item([updated], { attention: 'updated', review: review(updated.url, { unread: false }) }),
       item([parent, child], { review: review(parent.url) }),

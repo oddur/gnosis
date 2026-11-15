@@ -46,6 +46,7 @@ void app.whenReady().then(async () => {
         const t={id:'t-'+m.number,path:index===1?'src/uploads/confirm.ts':index===2?'src/new.ts':'src/worker.ts',line:index===2?2:36,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:index===1,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{...c,id:'tc-'+m.number,diffHunk:'@@ -38,5 +38,6 @@\n const pending = await uploads.find(id);\n-if (pending.owner === owner) {\n+if (pending.owner === owner &&\n+    pending.generation === generation) {\n   await uploads.confirm(id);\n }',pullRequestReview:{id:'r-'+m.number},viewerCanUpdate:false,viewerCanDelete:false}]};
         window.feedbackData.set(m.url,{headSha:m.headSha,baseSha:m.baseSha,checkedAt:Date.now(),threads:[t],feedback:{comments:[{...c,body:'The migration is safe to run before this deploy. Can you add the rollback command to the PR description?'}],reviews:[{...c,id:'r-'+m.number,state:'CHANGES_REQUESTED',submittedAt:stamp,body:'The new upload path is easier to follow. One correctness issue remains in confirmation.\n\n- Keep the generation check before committing.\n- Return a conflict if the pending owner changed.'}],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN'}});
       }
+      {const first=window.feedbackData.get(stack.subject.members.find(m=>m.number===120).url).threads[0];const base=first.comments[0];first.comments.push({...base,id:'hidden-reply',body:'This note was superseded.',author:{login:'sam',avatarUrl:''},isMinimized:true,minimizedReason:'outdated'},{...base,id:'pending-reply',body:'Added the generation check to the confirm path.',author:{login:'oddur',avatarUrl:''},pullRequestReview:{id:'draft-review',state:'PENDING'}});}
       for(const data of window.feedbackData.values())data.feedback.comments.push({...data.feedback.comments[0],id:'actions-'+data.feedback.comments[0].id,body:'Client/server tests passed',author:{login:'github-actions[bot]',avatarUrl:''}});
       window.electronAPI.getCachedReviewThreads=async url=>structuredClone(window.feedbackData.get(url));
       window.electronAPI.getReviewThreads=async url=>{window.feedbackReads++;if(window.failFeedback)throw Error('GitHub is temporarily unavailable');return structuredClone(window.feedbackData.get(url)??{headSha:'',baseSha:'',threads:[],feedback:{comments:[],reviews:[],requestedReviewers:[],viewerCanUpdate:false,state:'OPEN'}})};
@@ -84,6 +85,22 @@ void app.whenReady().then(async () => {
     );
     assert.match(await js<string>("document.querySelector('.feedback-conversation').textContent"), /pending owner/);
     await capture('thread-light');
+    // Your unsubmitted reply is marked and not counted as posted; a hidden comment stays collapsed.
+    assert.equal(
+      await js("document.querySelector('.feedback-conversation [data-pending] .github-comment-pending')?.textContent.trim()"),
+      'Pending · not submitted'
+    );
+    assert.match(await js<string>("document.querySelector('.feedback-conversation .github-thread > summary').textContent"), /2 comments · 1 pending/);
+    assert.equal(
+      await js("document.querySelector('.feedback-conversation .github-comment-hidden')?.open"),
+      false
+    );
+    assert.match(await js<string>("document.querySelector('.feedback-conversation .github-comment-hidden summary').textContent"), /Hidden on GitHub as outdated/);
+    await js("document.querySelector('.feedback-conversation [data-pending]').scrollIntoView({block:'center'})");
+    await capture('pending-reply-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('pending-reply-dark');
+    await js("document.documentElement.classList.remove('dark')");
     await click('Resolve thread');
     await wait("document.querySelector('.github-thread-state').textContent.includes('Resolved')");
     assert.equal(await js('window.feedbackWrites.at(-1).prUrl'), await js('window.feedbackSubject.members[0].url'));
@@ -348,6 +365,7 @@ void app.whenReady().then(async () => {
     await js(`(async()=>{
       const m=window.feedbackSubject.members[0],data=window.feedbackData.get(m.url);
       const thread=data.threads[0];thread.path='project/workers/unity-client/Assets/Klang/Seed/Scripts/Client/UI/EvolveUI/ClientLocalizationCompilation.asset';
+      thread.comments=thread.comments.filter(c=>c.id!=='hidden-reply'&&c.id!=='pending-reply');
       thread.isResolved=true;thread.isOutdated=true;thread.comments[0].body='Unrelated change?';
       thread.comments[1].body='Yes. The latest commit removes the unrelated asset change.';
       const {receiveDiscussion}=await import('/lib/review-discussion-cache.ts');receiveDiscussion(m.url,structuredClone(data));

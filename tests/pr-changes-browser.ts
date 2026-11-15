@@ -316,8 +316,10 @@ void app.whenReady().then(async () => {
     await click('Resolve thread');
     await wait("document.querySelector('.github-thread-state')?.textContent.includes('Resolved')");
     await js("document.querySelector('.github-thread summary').click()");
-    assert.match(await js<string>("window.treeCount('src/worker.ts')"), /2 GitHub comments/);
+    // The tree counts conversations still open on the current diff; Feedback keeps resolved ones.
+    await wait("window.treeCount('src/worker.ts')===undefined");
     await click('Reopen thread');
+    await wait("window.treeCount('src/worker.ts')?.includes('2 GitHub comments')");
     await click('Edit');
     await js("window.fill('.github-thread textarea','Updated review comment')");
     await click('Save changes');

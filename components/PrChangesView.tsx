@@ -38,6 +38,7 @@ import type { ReviewSubject } from '../lib/workbench';
 import type { Preferences } from '../lib/types';
 import { usePrDiscussions } from '../lib/use-pr-discussions';
 import { countRender } from '../lib/render-count';
+import { openDiffComments } from '../lib/response-needed';
 
 interface Position {
   selected: string;
@@ -377,9 +378,11 @@ export function PrChangesView({
           deletions: e.file.deletions,
           commentCount: combinedDiscussion
             ? combinedDiscussion.count
-            : discussion.discussions[e.snapshot.url]?.data?.threads
-                .filter((t) => t.path === e.file.path || t.path === e.file.previousPath)
-                .reduce((total, thread) => total + thread.comments.length, 0),
+            : openDiffComments(
+                discussion.discussions[e.snapshot.url]?.data?.threads.filter(
+                  (t) => t.path === e.file.path || t.path === e.file.previousPath
+                )
+              ),
           commentError: combinedDiscussion
             ? combinedDiscussion.failures.length > 0
             : !!discussion.discussions[e.snapshot.url]?.error,

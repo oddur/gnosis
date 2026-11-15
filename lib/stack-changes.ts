@@ -2,6 +2,7 @@ import type { ReviewSubject, ReviewMember } from './workbench';
 import type { PrChanges, PrChangeFile } from './pr-changes';
 import type { PrMetadata } from './types';
 import type { GitHubReviewThread, GitHubReviewThreads } from './review-threads';
+import { openDiffComments } from './response-needed';
 
 export interface StackComparison {
   key: string;
@@ -136,5 +137,5 @@ export function stackFileDiscussions(
           })) ?? []
       );
     }) ?? [];
-  return { threads, failures, count: complete ? threads.reduce((n, t) => n + t.thread.comments.length, 0) : undefined };
+  return { threads, failures, count: complete ? openDiffComments(threads.map((t) => t.thread)) : undefined };
 }

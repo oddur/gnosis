@@ -1,5 +1,10 @@
-import { changesRequestedReviews, isResponseThread } from './response-needed';
-import type { GitHubReviewComment, GitHubReviewThread, GitHubReviewThreads } from './review-threads';
+import { changesRequestedReviews, isResponseThread, isUnresolvedThread } from './response-needed';
+import {
+  isPendingComment,
+  type GitHubReviewComment,
+  type GitHubReviewThread,
+  type GitHubReviewThreads,
+} from './review-threads';
 import type { ReviewMember } from './workbench';
 export interface FeedbackItem {
   id: string;
@@ -26,15 +31,18 @@ export function feedbackItems(member: ReviewMember, snapshot?: GitHubReviewThrea
   }));
   for (const review of snapshot.feedback?.reviews ?? []) {
     if (review.state === 'PENDING') continue;
+    const relatedThreads = snapshot.threads
+      .filter((t) => t.comments.some((c) => c.pullRequestReview?.id === review.id))
+      .map((t) => t.id);
+    // Each inline comment or reply is submitted as a comment review with no text. GitHub shows only the thread.
+    if (review.state === 'COMMENTED' && !review.body.trim() && relatedThreads.length) continue;
     items.push({
       id: review.id,
       member,
       kind: 'review',
       state: review.state,
       comments: [{ ...review, createdAt: review.submittedAt ?? review.createdAt }],
-      relatedThreads: snapshot.threads
-        .filter((t) => t.comments.some((c) => c.pullRequestReview?.id === review.id))
-        .map((t) => t.id),
+      relatedThreads,
     });
   }
   for (const comment of snapshot.feedback?.comments ?? [])
@@ -46,9 +54,14 @@ export function feedbackItems(member: ReviewMember, snapshot?: GitHubReviewThrea
 export const feedbackKey = (item: FeedbackItem) => `${item.member.url}#${item.id}`;
 export const feedbackReadKey = (account: string, item: FeedbackItem) =>
   `gnosis-feedback-read:v1:${encodeURIComponent(account.toLowerCase())}:${feedbackKey(item)}`;
-/** Own replies do not make feedback unread. The edited timestamp tracks changed comments too. */
+/**
+ * Own replies, unsubmitted comments and comments hidden on GitHub do not make feedback unread. The edited
+ * timestamp tracks changed comments too.
+ */
 export function feedbackFingerprint(item: FeedbackItem, account: string): string {
-  const comments = item.comments.filter((c) => c.author?.login.toLowerCase() !== account.toLowerCase());
+  const comments = item.comments.filter(
+    (c) => c.author?.login.toLowerCase() !== account.toLowerCase() && !isPendingComment(c) && !c.isMinimized
+  );
   return comments.length ? JSON.stringify(comments.map((c) => [c.id, c.updatedAt ?? c.createdAt])) : '';
 }
 export function feedbackReviewers(snapshot: GitHubReviewThreads) {
@@ -62,7 +75,7 @@ export function feedbackReviewers(snapshot: GitHubReviewThreads) {
         requested:
           snapshot.feedback?.requestedReviewers.some((name) => name.toLowerCase() === login.toLowerCase()) ?? false,
         unresolved: snapshot.threads.filter(
-          (t) => !t.isResolved && t.comments.some((c) => c.author?.login.toLowerCase() === login.toLowerCase())
+          (t) => isUnresolvedThread(t) && t.comments.some((c) => c.author?.login.toLowerCase() === login.toLowerCase())
         ).length,
       },
     ];
@@ -117,7 +130,7 @@ export function responseFeedbackTarget(
   account: string,
   intent: ResponseIntent
 ): FeedbackItem | undefined {
-  const threads = items.filter((item) => item.thread && isResponseThread(item.thread, account));
+  const threads = items.filter((item) => item.thread && isResponseThread(item.thread, account, item.member.author));
   const byPr = new Map<string, FeedbackItem[]>();
   for (const item of items)
     if (item.kind === 'review') byPr.set(item.member.url, [...(byPr.get(item.member.url) ?? []), item]);

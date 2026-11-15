@@ -502,3 +502,44 @@ void test('preload leaves pending reads alone', async () => {
   release();
   await reading;
 });
+
+void test('the queue reads a saved discussion for 24 hours, and new activity marks it stale instead of deleting it', async () => {
+  const h = harness(() => response(pr(page([{ ...thread, comments: page([comment]) }]))));
+  let now = 1_000;
+  const service = createReviewThreadService(() => now);
+  const client = h.pool.client('one');
+  assert.equal(service.latest(client, review.prUrl), undefined, 'Nothing saved yet');
+  await service.list(client, review.prUrl);
+  const fresh = service.latest(client, review.prUrl);
+  assert.equal(fresh?.threads.length, 1);
+  assert.equal(fresh.stale, undefined);
+  // An activity change: the count keeps its last value, flagged stale, and the next read refreshes it.
+  service.markStale(client, review.prUrl);
+  const stale = service.latest(client, review.prUrl);
+  assert.equal(stale?.threads.length, 1, 'The count does not drop to 0');
+  assert.equal(stale.stale, true);
+  assert.equal(service.saved(client, review.prUrl)?.revalidate, true, 'The preloader reads it again');
+  assert.equal(service.stale(client, review.prUrl), undefined, 'Discussion views never show it as current');
+  await service.list(client, review.prUrl);
+  assert.equal(h.calls.length, 2, 'A stale copy is read again');
+  assert.equal(service.latest(client, review.prUrl)?.stale, undefined);
+  now = 2_000 + REVIEW_THREADS_MAX_STALE_MS;
+  assert.equal(service.latest(client, review.prUrl), undefined, 'Past 24 hours the queue waits for GitHub');
+  assert.ok(service.cached(client, review.prUrl), 'Search still indexes old discussions');
+});
+
+void test('a write through Gnosis keeps the queue’s last discussion, marked stale, until it is read again', async () => {
+  const h = harness((query) =>
+    query.startsWith('mutation')
+      ? response({ data: { resolveReviewThread: { thread: { isResolved: true, viewerCanResolve: false, viewerCanUnresolve: true } } } })
+      : response(pr(page([{ ...thread, comments: page([comment]) }])))
+  );
+  const service = createReviewThreadService(() => 1_000);
+  const client = h.pool.client('one');
+  await service.list(client, review.prUrl);
+  await service.act(client, { prUrl: review.prUrl, threadId: thread.id, action: 'resolve' });
+  const kept = service.latest(client, review.prUrl);
+  assert.equal(kept?.threads.length, 1, 'The count does not drop to 0 after a write');
+  assert.equal(kept.stale, true);
+  assert.equal(service.stale(client, review.prUrl), undefined, 'Discussion views read GitHub again');
+});

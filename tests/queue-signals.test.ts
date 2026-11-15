@@ -271,3 +271,43 @@ void test('signals carry each writer’s latest opinion, which a newer comment b
   assert.deepEqual((await restarted(h.client, [second]))[0].opinions, value.opinions, 'Saved signals keep the opinions');
   assert.equal(h.calls(), calls);
 });
+void test('signals carry GitHub’s comment total, recent authors, the head author and unresolved thread ids', async () => {
+  const h = harness();
+  const pr = (patch: Record<string, unknown>) => ({
+    headRefOid: 'abc123', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN',
+    reviewDecision: null, baseRefName: 'main', baseRefOid: 'base', baseRef: null, mergeQueue: null, mergeQueueEntry: null,
+    commits: { nodes: [{ commit: { author: { user: { login: 'me' } }, committer: { user: null }, statusCheckRollup: null } }] },
+    ...patch,
+  });
+  // The klanggames/seed#27707 shape: 4 conversation comments, 24 in GitHub's list.
+  h.respond({ p0: { pullRequest: pr({
+    totalCommentsCount: 24,
+    comments: { totalCount: 4, nodes: [
+      { id: 'C1', createdAt: '2026-11-01T10:00:00Z', isMinimized: false, author: { __typename: 'Bot', login: 'github-actions' } },
+      { id: 'C2', createdAt: '2026-11-01T11:00:00Z', isMinimized: true, author: { __typename: 'User', login: 'jan' } },
+    ] },
+    reviews: { nodes: [
+      { id: 'R1', url: `${request.url}#pullrequestreview-1`, submittedAt: '2026-11-01T09:00:00Z', state: 'CHANGES_REQUESTED', author: { __typename: 'User', login: 'jan' }, commit: null },
+      { id: 'R2', url: `${request.url}#pullrequestreview-2`, submittedAt: '2026-11-01T12:00:00Z', state: 'COMMENTED', author: { __typename: 'User', login: 'me' }, commit: { oid: 'abc123' } },
+    ] },
+    reviewThreads: { totalCount: 3, nodes: [{ id: 'T1', isResolved: false }, { id: 'T2', isResolved: true }, { id: 'T3', isResolved: false }] },
+  }) } });
+  const [value] = await h.get(h.client, [request]);
+  assert.equal(value.comments, 24, 'Issue comments plus review comments, as in GitHub’s PR list');
+  assert.equal(value.latestReview?.url, `${request.url}#pullrequestreview-2`, 'The newest review is the last node');
+  assert.deepEqual(value.activity?.recent?.map((e) => [e.kind, e.author, e.automated, e.minimized, e.state ?? null]), [
+    ['comment', 'github-actions', true, false, null],
+    ['comment', 'jan', false, true, null],
+    ['review', 'jan', false, false, 'CHANGES_REQUESTED'],
+    ['review', 'me', false, false, 'COMMENTED'],
+  ]);
+  assert.deepEqual(value.activity.head, { author: 'me', committer: null });
+  assert.deepEqual(value.threads, { unresolved: ['T1', 'T3'], complete: true });
+  assert.match(h.queries[0], /totalCommentsCount/);
+  assert.match(h.queries[0], /reviewThreads\(first:100\) \{ totalCount nodes \{ id isResolved \} \}/);
+  // Without `totalCommentsCount`, the conversation count still shows.
+  h.respond({ p0: { pullRequest: pr({ comments: { totalCount: 4, nodes: [] }, reviews: { nodes: [] }, reviewThreads: { totalCount: 101, nodes: [] } }) } });
+  const [fallback] = await h.get(h.client, [request], { force: true });
+  assert.equal(fallback.comments, 4);
+  assert.equal(fallback.threads?.complete, false, 'Past the first 100 threads');
+});

@@ -3094,7 +3094,7 @@ const workbench = createWorkbenchService({
   storage: appData,
   signals: (client, requests, options) => getQueueSignals(client, requests, options),
   notifications: { store: notificationStore, deliver: events => notifications.deliver(events), count: notificationAnalytics },
-  cachedDiscussion: url => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
+  cachedDiscussion: url => { const token = getResolvedToken(); return token ? reviewThreads.latest(getGitHubClient(token), url) : undefined; },
   cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests) : []; },
   activities,
   directory: () => app.getPath('userData'),
@@ -3909,7 +3909,8 @@ function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
       syncSignals.set(update.url, update.value);
       while (syncSignals.size > 500) syncSignals.delete(syncSignals.keys().next().value as string);
       if (previous && JSON.stringify(previous.activity) !== JSON.stringify(update.value.activity)) {
-        reviewThreads.invalidate(getGitHubClient(cachedToken), update.url);
+        // Keep the last known threads for the queue's counts until the discussion is read again.
+        reviewThreads.markStale(getGitHubClient(cachedToken), update.url);
         githubSync.invalidate([update.url], ['discussion']);
       }
       if (previous && JSON.stringify(previous.checks) !== JSON.stringify(update.value.checks)) {
@@ -4155,7 +4156,7 @@ function invalidateAfterGitHubWrite(urls: string[], kinds: GitHubSyncKind[], fol
       if (kinds.includes('signals')) cache?.delete(queueSignalsCacheKey({ url, headSha: sha }));
       if (kinds.includes('checks')) cache?.delete(prChecksCacheKey({ url, headSha: sha }));
     }
-    if (kinds.includes('discussion')) reviewThreads.invalidate(client, url);
+    if (kinds.includes('discussion')) reviewThreads.markStale(client, url);
   }
   githubSync.invalidate(urls, kinds);
   // Views that watch these kinds read them again a few times while GitHub starts the new work.

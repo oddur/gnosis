@@ -7,7 +7,24 @@ import { useId, useState, useRef, useEffect } from 'react';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
 import { CommentMarkdown } from './CommentMarkdown';
 import { timeAgo } from '../lib/utils';
-import type { GitHubReviewThread as Thread, ReviewThreadAction, ReviewCommentAction } from '../lib/review-threads';
+import {
+  isPendingComment,
+  minimizedLabel,
+  type GitHubReviewComment,
+  type GitHubReviewThread as Thread,
+  type ReviewThreadAction,
+  type ReviewCommentAction,
+} from '../lib/review-threads';
+
+/** A comment hidden on GitHub stays collapsed behind its reason, as on GitHub. */
+export function HiddenComment({ comment }: { comment: Pick<GitHubReviewComment, 'body' | 'minimizedReason'> }) {
+  return (
+    <details className="github-comment-hidden">
+      <summary>{minimizedLabel(comment)}</summary>
+      <CommentMarkdown>{comment.body}</CommentMarkdown>
+    </details>
+  );
+}
 
 interface Props {
   thread: Thread;
@@ -126,6 +143,8 @@ export function GitHubReviewThread({
     </div>
   );
   const first = thread.comments.length ? thread.comments[0] : undefined;
+  const pendingCount = thread.comments.filter(isPendingComment).length;
+  const published = thread.comments.length - pendingCount;
   return (
     <details
       className="github-thread"
@@ -137,8 +156,9 @@ export function GitHubReviewThread({
         <ChevronRight className="github-thread-chevron" size={12} aria-hidden="true" />
         <MessageSquare size={14} aria-hidden="true" />
         <span>
-          {first?.author?.login ?? 'GitHub'} · {thread.comments.length}{' '}
-          {thread.comments.length === 1 ? 'comment' : 'comments'}
+          {first?.author?.login ?? 'GitHub'} · {published}{' '}
+          {published === 1 ? 'comment' : 'comments'}
+          {pendingCount > 0 && ` · ${pendingCount} pending`}
         </span>
         <span className="github-thread-state">
           {thread.isResolved ? (
@@ -146,8 +166,10 @@ export function GitHubReviewThread({
               <Check size={13} aria-hidden="true" />
               Resolved
             </span>
-          ) : (
+          ) : published ? (
             'Unresolved'
+          ) : (
+            'Not submitted'
           )}
           {thread.isOutdated ? ' · Earlier revision' : ''}
         </span>
@@ -155,12 +177,18 @@ export function GitHubReviewThread({
       {reason && <p className="github-thread-reason">{reason}</p>}
       <div className="github-thread-comments">
         {thread.comments.map((comment) => (
-          <article key={comment.id}>
+          <article key={comment.id} data-pending={isPendingComment(comment) || undefined}>
             <header>
               <strong>{comment.author ? <GitHubAuthor login={comment.author.login} /> : 'Deleted account'}</strong>
-              <time dateTime={comment.createdAt} title={new Date(comment.createdAt).toLocaleString()}>
-                {timeAgo(comment.createdAt)}
-              </time>
+              {isPendingComment(comment) ? (
+                <span className="github-comment-pending" title="Only you can see this comment until you submit your review on GitHub">
+                  Pending · not submitted
+                </span>
+              ) : (
+                <time dateTime={comment.createdAt} title={new Date(comment.createdAt).toLocaleString()}>
+                  {timeAgo(comment.createdAt)}
+                </time>
+              )}
               <button onClick={() => void window.electronAPI.openExternal(comment.url)}>On GitHub</button>
             </header>
             {editing === comment.id ? (
@@ -187,6 +215,8 @@ export function GitHubReviewThread({
                   </button>
                 </div>
               </form>
+            ) : comment.isMinimized ? (
+              <HiddenComment comment={comment} />
             ) : (
               <CommentMarkdown>{comment.body}</CommentMarkdown>
             )}

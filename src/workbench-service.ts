@@ -1448,7 +1448,7 @@ export function createWorkbenchService(deps: Deps) {
       return changed;
     },
     noteOwnReview(account: string, url: string, inlineComments: number, reviewUrl?: string) {
-      try { if (account === deps.auth().login) reads.ownReview(account, url, inlineComments, now(), reviewUrl); }
+      try { if (account === deps.auth().login) reads.ownReview(account, url, reviewUrl); }
       catch (error) { console.warn('Review posted, but its unread progress could not be saved:', error); }
     },
     isMutedReview: (entry: Pick<ReviewHistoryEntry, 'prUrl' | 'snapshot'>) => isMutedReview(entry, mutedUrls()),

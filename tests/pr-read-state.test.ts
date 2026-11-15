@@ -85,7 +85,7 @@ void test('existing queue initializes quietly; later discoveries and meaningful 
     h.store.observe('me', [
       member(1, { headSha: 'new', isDraft: true, reviewCommentCount: 2, updatedAt: '2026-10-26T10:02:00Z' }),
     ]);
-    assert.deepEqual(h.state().unread, ['commits', 'comments', 'state']);
+    assert.deepEqual(h.state().unread, ['commits', 'state'], 'A comment count names no author, so signals decide');
     h.mark();
     assert.deepEqual(h.state().unread, []);
   } finally {
@@ -162,23 +162,150 @@ void test('repeated reviews trigger unread, CI does not, stale signals cannot ro
     h.cleanup();
   }
 });
-void test('late signal hydration does not repeat comments already seen through metadata', () => {
+const event = (
+  kind: 'comment' | 'review',
+  id: string,
+  author: string,
+  at: string,
+  extra: { automated?: boolean; minimized?: boolean; state?: string } = {}
+) => ({ kind, id, author, at, automated: false, ...extra });
+void test('comment counts alone never mark unread; each new comment is judged by its author', () => {
   const h = harness();
   try {
     h.store.observe('me', [member()], true);
-    const current = member(1, { commentCount: 1, updatedAt: '2026-10-26T10:01:00Z' });
-    h.store.observe('me', [current]);
+    h.store.observe('me', [member(1, { commentCount: 4, reviewCommentCount: 6, updatedAt: '2026-10-26T10:01:00Z' })]);
+    assert.deepEqual(h.state().unread, [], 'Counts rose, but whose comments they are is unknown');
+    // Bob comments, then you reply from github.com before the next poll: Bob's comment is still news.
+    h.store.signals('me', [
+      h.signal({
+        comments: 10,
+        activity: {
+          recent: [
+            event('comment', 'c1', 'bob', '2026-10-26T10:00:30Z'),
+            event('comment', 'c2', 'me', '2026-10-26T10:00:40Z'),
+          ],
+        },
+      }),
+    ]);
+    assert.deepEqual(h.state().unread, ['comments']);
     h.mark();
     h.store.signals('me', [
-      h.signal({ comments: 1, activity: { comment: { id: 'comment', at: current.updatedAt, author: 'alice' } } }),
+      h.signal({
+        comments: 11,
+        activity: {
+          recent: [
+            event('comment', 'c1', 'bob', '2026-10-26T10:00:30Z'),
+            event('comment', 'c2', 'me', '2026-10-26T10:00:40Z'),
+            event('comment', 'c3', 'ME', '2026-10-26T10:00:50Z'),
+          ],
+        },
+      }),
     ]);
-    h.store.observe('me', [current]);
+    assert.deepEqual(h.state().unread, [], 'Your own comment from any client is not news');
+  } finally {
+    h.cleanup();
+  }
+});
+void test('bot comments, GitHub Apps and hidden comments do not mark a PR unread', () => {
+  const h = harness();
+  try {
+    h.store.observe('me', [member()], true);
+    // The klanggames/seed#35389 shape: seven `github-actions` comments within 81 minutes. GraphQL names the
+    // App `github-actions` with type Bot; REST names it `github-actions[bot]`.
+    const ci = Array.from({ length: 7 }, (_, i) =>
+      event('comment', `ci-${i}`, 'github-actions', `2026-10-26T10:0${i}:30Z`, { automated: true })
+    );
+    h.store.signals('me', [h.signal({ comments: 7, activity: { recent: ci } })]);
     assert.deepEqual(h.state().unread, []);
-    h.store.signals('me', [h.signal({ comments: 2 })]);
+    h.store.signals('me', [
+      h.signal({
+        comments: 9,
+        activity: {
+          recent: [
+            ...ci,
+            event('comment', 'hidden', 'carol', '2026-10-26T10:08:00Z', { minimized: true }),
+            event('review', 'copilot', 'copilot-pull-request-reviewer', '2026-10-26T10:09:00Z', {
+              automated: true,
+              state: 'COMMENTED',
+            }),
+          ],
+        },
+      }),
+    ]);
+    assert.deepEqual(h.state().unread, []);
+    // Signals saved before `recent` existed carry only the newest event. A `[bot]` login is still a bot.
+    h.store.signals('me', [
+      h.signal({ activity: { comment: { id: 'legacy', at: '2026-10-26T10:10:00Z', author: 'renovate[bot]' } } }),
+    ]);
+    assert.deepEqual(h.state().unread, []);
+    h.store.signals('me', [
+      h.signal({
+        activity: {
+          recent: [
+            event('comment', 'legacy', 'renovate[bot]', '2026-10-26T10:10:00Z', { automated: true }),
+            event('comment', 'human', 'carol', '2026-10-26T10:11:00Z'),
+          ],
+        },
+      }),
+    ]);
+    assert.deepEqual(h.state().unread, ['comments']);
+  } finally {
+    h.cleanup();
+  }
+});
+void test('reviews: inline replies read as comments, decisions as reviews, your own never', () => {
+  const h = harness();
+  try {
+    h.store.observe('me', [member()], true);
+    const own = event('review', 'r-own', 'me', '2026-10-26T10:01:00Z', { state: 'COMMENTED' });
+    const reply = event('review', 'r-bob', 'bob', '2026-10-26T10:02:00Z', { state: 'COMMENTED' });
+    h.store.signals('me', [h.signal({ activity: { recent: [own] } })]);
+    assert.deepEqual(h.state().unread, [], 'Your reply on github.com');
+    h.store.signals('me', [h.signal({ activity: { recent: [own, reply] } })]);
+    assert.deepEqual(h.state().unread, ['comments'], "Bob's inline reply");
     h.mark();
-    h.store.observe('me', [current]);
-    h.store.signals('me', [h.signal({ comments: 2 })]);
+    const decision = (state: string) => event('review', 'r-bob-2', 'bob', '2026-10-26T10:03:00Z', { state });
+    h.store.signals('me', [h.signal({ activity: { recent: [own, reply, decision('CHANGES_REQUESTED')] } })]);
+    assert.deepEqual(h.state().unread, ['reviews']);
+    h.mark();
+    // A dismissal changes the state of a review already seen.
+    h.store.signals('me', [h.signal({ activity: { recent: [own, reply, decision('DISMISSED')] } })]);
+    assert.deepEqual(h.state().unread, ['reviews']);
+  } finally {
+    h.cleanup();
+  }
+});
+void test('your own pushes do not mark a PR unread; pushes by others do', () => {
+  const h = harness();
+  try {
+    const mine = (patch: Partial<ReviewMember> = {}) => member(1, { author: 'me', ...patch });
+    h.store.observe('me', [mine(), member(2)], true);
+    const push = (n: number, headSha: string, author: string | null, committer: string | null, at: string) => {
+      h.store.observe('me', [n === 1 ? mine({ headSha, updatedAt: at }) : member(2, { headSha, updatedAt: at })]);
+      return h.signal({ url: member(n).url, headSha, activity: { head: { author, committer } } });
+    };
+    // Your PR, pushed from a terminal: nothing shows before or after the author is known.
+    const terminal = push(1, 'head-mine', 'me', 'me', '2026-10-26T10:01:00Z');
     assert.deepEqual(h.state().unread, []);
+    h.store.signals('me', [terminal]);
+    assert.deepEqual(h.state().unread, []);
+    // "Update branch" on github.com: you are the author and GitHub's web-flow commits.
+    h.store.signals('me', [push(1, 'head-web', 'ME', 'web-flow', '2026-10-26T10:02:00Z')]);
+    assert.deepEqual(h.state().unread, []);
+    // A colleague pushes to your PR.
+    h.store.signals('me', [push(1, 'head-bob', 'bob', 'bob', '2026-10-26T10:03:00Z')]);
+    assert.deepEqual(h.state().unread, ['commits']);
+    // Someone else's PR: unread at once, and undone when the head turns out to be your push.
+    const other = push(2, 'head-2-mine', 'me', 'me', '2026-10-26T10:04:00Z');
+    assert.deepEqual(h.state(2).unread, ['commits']);
+    h.store.signals('me', [other]);
+    assert.deepEqual(h.state(2).unread, []);
+    h.store.signals('me', [push(2, 'head-2-bob', 'bob', 'me', '2026-10-26T10:05:00Z')]);
+    assert.deepEqual(h.state(2).unread, ['commits'], "You rebased Bob's commit: still his change");
+    // A PR you opened yourself is not "New PR".
+    h.store.observe('me', [member(3, { author: 'ME' }), member(4)]);
+    assert.deepEqual(h.state(3).unread, []);
+    assert.deepEqual(h.state(4).unread, ['new']);
   } finally {
     h.cleanup();
   }
@@ -187,13 +314,20 @@ void test('successful own actions do not generate unread but preserve already un
   const h = harness();
   try {
     h.store.observe('me', [member()], true);
-    h.store.ownReview('me', member().url, 2, Date.parse('2026-10-26T10:02:00Z'));
-    h.store.observe('me', [member(1, { reviewCommentCount: 3, updatedAt: '2026-10-26T10:02:00Z' })]);
-    assert.deepEqual(h.state().unread, ['comments'], 'one other comment remains unread');
+    const posted = 'https://github.com/o/r/pull/1#pullrequestreview-9';
+    h.store.ownReview('me', member().url, posted);
     h.store.signals('me', [
-      h.signal({ activity: { review: { id: 'own', at: '2026-10-26T10:01:00Z', author: 'ME' } } }),
+      h.signal({
+        activity: {
+          recent: [
+            event('review', 'other', 'bob', '2026-10-26T10:00:30Z', { state: 'APPROVED' }),
+            // A review posted through Gnosis, reported under a login that differs from the account.
+            event('review', posted, 'renamed', '2026-10-26T10:01:00Z', { state: 'COMMENTED' }),
+          ],
+        },
+      }),
     ]);
-    assert.deepEqual(h.state().unread, ['comments']);
+    assert.deepEqual(h.state().unread, ['reviews'], "Bob's approval remains unread");
     h.mark();
     h.store.observe(
       'me',
@@ -265,7 +399,12 @@ void test('a no-op signal does not write', (t) => {
     assert.equal(h.store.snapshot('me'), before, 'The snapshot is shared until a change is saved');
     assert.ok(Object.isFrozen(before) && Object.isFrozen(before[member().url]));
     t.mock.restoreAll();
-    assert.equal(h.store.signals('me', [h.signal({ comments: 3 })]), true);
+    assert.equal(
+      h.store.signals('me', [
+        h.signal({ comments: 3, activity: { recent: [event('comment', 'c', 'bob', '2026-10-26T10:05:00Z')] } }),
+      ]),
+      true
+    );
     assert.notEqual(h.store.snapshot('me'), before);
     assert.deepEqual(h.state().unread, ['comments']);
     assert.deepEqual(h.state(2).unread, [], 'Untouched entries keep their state');
