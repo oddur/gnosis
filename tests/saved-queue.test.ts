@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { groupSubjects, type QueueItem, type ReviewMember, type WorkbenchQueue } from '../lib/workbench';
 import { stampQueue } from '../lib/workbench-revision';
 import { createWorkbenchStore } from '../lib/workbench-store';
-import { keepSavedQueue, parseSavedQueue, savedQueueFor, SAVED_QUEUE_KEY, SAVED_QUEUE_MAX_AGE_MS } from '../lib/saved-queue';
+import { keepSavedQueue, parseSavedQueue, savedQueueFor, serializeSavedQueue, serializeSavedQueueInSlices, SAVED_QUEUE_KEY, SAVED_QUEUE_MAX_AGE_MS } from '../lib/saved-queue';
 
 const member = (n: number, headSha = `head-${n}`, description = ''): ReviewMember => ({
   number: n, repo: 'owner/repo', baseRepo: 'owner/repo', headRepo: 'owner/repo', url: `https://github.com/owner/repo/pull/${n}`,
@@ -96,4 +96,81 @@ void test('only complete, recent copies are shown, and large queues keep fewer r
   assert.ok(bounded.queue.items.length < 150 && bounded.queue.items.length >= 10);
   assert.ok(JSON.stringify(bounded).length <= 1_500_000);
   assert.equal(bounded.queue.savedSignals, undefined, 'Saved status is never part of the copy');
+});
+
+void test('the copy is serialized in slices, as one JSON string, and not saved again for the same content', async () => {
+  const large = queueOf(...Array.from({ length: 150 }, (_, n) => item(n + 1, undefined, 'x'.repeat(8_000))));
+  // Slices yield only when one runs long; the text must not depend on where.
+  const json = await serializeSavedQueueInSlices(large, 'alice', Date.now(), () => Promise.resolve());
+  const savedAt = (JSON.parse(json) as { savedAt: number }).savedAt;
+  assert.equal(json, serializeSavedQueue(large, 'alice', savedAt), 'Slices produce the same text');
+  assert.equal(parseSavedQueue(json)?.queue.items.length, 150);
+
+  const main = backend(large);
+  main.release();
+  const store = createWorkbenchStore(() => main.api, { delay: 5 });
+  const disk = storage();
+  const kept = keepSavedQueue(store, disk, { delay: 5 });
+  store.reset('alice');
+  const stop = store.subscribe(() => {});
+  await sleep(80);
+  assert.equal(disk.writes.length, 1);
+  assert.equal(typeof disk.writes[0], 'string', 'The copy crosses IPC as one string');
+  await store.refresh();
+  await sleep(80);
+  assert.equal(disk.writes.length, 1, 'A queue with the same content revision is not saved again');
+  stop();
+  kept.stop();
+});
+
+void test('status that arrives after the queue is saved with it', async () => {
+  let checkedAt = 1;
+  let listener: (() => void) | undefined;
+  const signals = {
+    read: (_account: string, requests: { url: string; headSha: string }[]) => requests.map((r) => ({ ...r, checkedAt, comments: 0,
+      checks: { state: 'success' as const, passed: 1, skipped: 0, total: 1 } })),
+    publish: () => {},
+    stamp: () => String(checkedAt),
+    subscribe: (_account: string, next: () => void) => { listener = next; return () => { listener = undefined; }; },
+  };
+  const main = backend(queueOf(item(1)));
+  main.release();
+  const store = createWorkbenchStore(() => main.api, { delay: 5 });
+  const disk = storage();
+  const kept = keepSavedQueue(store, disk, { delay: 5, signals });
+  store.reset('alice');
+  await sleep(60);
+  assert.equal(disk.writes.length, 1);
+  checkedAt = 2;
+  listener?.();
+  await sleep(60);
+  assert.equal(disk.writes.length, 2, 'New status for a saved row saves the copy again');
+  assert.equal(parseSavedQueue(disk.values.get(SAVED_QUEUE_KEY))?.signals?.[0].checkedAt, 2);
+  kept.stop();
+});
+
+void test('saved rows keep their saved status, and the store names their account before the window does', async () => {
+  const status = (url: string, headSha: string) => ({ url, headSha, checkedAt: 1_000, comments: 0,
+    checks: { state: 'success' as const, passed: 3, skipped: 0, total: 3 } });
+  const published: { account: string; urls: string[] }[] = [];
+  const signals = {
+    read: (_account: string, requests: { url: string; headSha: string }[]) => requests.map((r) => status(r.url, r.headSha)),
+    publish: (account: string, values: { url: string }[]) => void published.push({ account, urls: values.map((v) => v.url) }),
+  };
+  const text = serializeSavedQueue(queueOf(item(1), item(2)), 'alice', Date.now(), signals.read);
+  assert.deepEqual(parseSavedQueue(text)?.signals?.map((s) => s.headSha), ['head-1', 'head-2']);
+  const main = backend(queueOf(item(1)));
+  const store = createWorkbenchStore(() => main.api, { delay: 5 });
+  const kept = keepSavedQueue(store, storage(text), { delay: 5, signals });
+  assert.deepEqual(published, [{ account: 'alice', urls: [item(1).subject.members[0].url, item(2).subject.members[0].url] }]);
+  assert.equal(store.getShownAccount(), 'alice');
+  kept.stop();
+  // Without a saved copy, main's first snapshot names the account with its saved status.
+  const fresh = backend(queueOf(item(1)));
+  fresh.api.workbenchSnapshot = () => Promise.resolve({ ...queueOf(item(1)), savedSignals: { account: 'carol', values: [] } });
+  const other = createWorkbenchStore(() => fresh.api, { delay: 5 });
+  const stop = other.subscribe(() => {});
+  await sleep();
+  assert.equal(other.getShownAccount(), 'carol');
+  stop();
 });

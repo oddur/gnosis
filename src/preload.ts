@@ -97,6 +97,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('github-sync', handler);
     };
   },
+  /** A write the reader made, shown before GitHub confirms it, or rolled back. See lib/optimistic-patches.ts. */
+  onGitHubOptimistic: (callback: (event: { url: string; discussion: GitHubReviewThreads }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: { url: string; discussion: GitHubReviewThreads }) => callback(value);
+    ipcRenderer.on('github-optimistic', handler);
+    return () => {
+      ipcRenderer.removeListener('github-optimistic', handler);
+    };
+  },
   /** Main read GitHub again after a write Gnosis made, or after the reader came back from GitHub. */
   onGitHubWriteRefreshed: (callback: (event: GitHubWriteEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, value: GitHubWriteEvent) => callback(value);

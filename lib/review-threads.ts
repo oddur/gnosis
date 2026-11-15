@@ -17,6 +17,11 @@ export interface GitHubReviewComment {
   createdAt: string;
   url: string;
   author: { login: string; avatarUrl: string; __typename?: string } | null;
+  /**
+   * The reader's write, shown before GitHub confirmed it. Not GitHub's pending review comment
+   * (`isPendingComment`). See lib/optimistic-patches.ts.
+   */
+  sending?: true;
 }
 /** Your own review comment that you have not submitted yet. Only you can see it on GitHub. */
 export const isPendingComment = (comment: Pick<GitHubReviewComment, 'pullRequestReview'>) =>
@@ -37,6 +42,8 @@ export interface GitHubReviewThread {
   viewerCanResolve: boolean;
   viewerCanUnresolve: boolean;
   comments: GitHubReviewComment[];
+  /** A write to the thread GitHub has not confirmed yet. See lib/optimistic-patches.ts. */
+  sending?: 'comment' | 'resolving' | 'reopening';
 }
 export interface FeedbackReview extends GitHubReviewComment {
   state: string;
@@ -61,6 +68,8 @@ export interface GitHubReviewThreads {
   baseSha: string;
   threads: GitHubReviewThread[];
 }
+/** GitHub's text for a reply to conversation feedback. */
+export const feedbackReplyBody = (sourceUrl: string, body: string) => `In reply to [this feedback](${sourceUrl}):\n\n${body}`;
 export interface ReviewThreadAction {
   prUrl: string;
   threadId: string;

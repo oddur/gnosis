@@ -15,7 +15,21 @@ export function setDiscussionAccount(next: string) {
   for (const url of urls) listeners.forEach((fn) => fn(url, { headSha: '', baseSha: '', threads: [] }));
 }
 export const peekDiscussion = (url: string) => values.get(url);
+let optimistic: (() => void) | undefined;
+/**
+ * Main shows the reader's writes at once and rolls back failed ones, for every window. Its copy has every pending
+ * write applied, so it replaces this cache's copy, as a pushed refresh does.
+ */
+function listenForOptimisticWrites() {
+  if (optimistic || typeof window === 'undefined') return;
+  // Browser fixtures and older hosts may not expose it.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const stop = window.electronAPI?.onGitHubOptimistic?.(({ url, discussion }) => receiveDiscussion(url, discussion));
+  // Browser fixtures answer unknown methods with a Promise: keep only a real unsubscribe.
+  optimistic = typeof stop === 'function' ? stop : () => {};
+}
 export function subscribeDiscussions(callback: (url: string, data: GitHubReviewThreads) => void) {
+  listenForOptimisticWrites();
   listeners.add(callback);
   return () => {
     listeners.delete(callback);
@@ -88,6 +102,7 @@ async function readSaved(
   return shown;
 }
 export function readDiscussion(url: string, refresh = false): Promise<GitHubReviewThreads> {
+  listenForOptimisticWrites();
   const cached = values.get(url);
   if (!refresh && cached) return Promise.resolve(cached);
   const existing = pending.get(url);

@@ -33,6 +33,9 @@ import { createConflictResolutionService } from './conflict-resolution-service';
 import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-resolution';
 import { parseGitHubSyncInterest } from '../lib/github-sync';
 import { createGitHubSyncService } from './github-sync-service';
+import { createOptimisticService } from './optimistic-service';
+import { prActionChange, type OptimisticChange, type OptimisticKind } from '../lib/optimistic-patches';
+import { feedbackReplyBody } from '../lib/review-threads';
 import { createGitHubWriteRefresher, githubPrUrl, type GitHubWriteAction, type WriteDetails, type WriteObservation, type GitHubWriteEvent } from '../lib/github-write-refresh';
 import type { GitHubSyncInterest, GitHubSyncUpdate, GitHubSyncKind, GitHubSyncFailure } from '../lib/github-sync';
 import { createStackChangesService } from './stack-changes-service';
@@ -1455,7 +1458,7 @@ function rebuildMenubarNow(): void {
     // Saved status only, for your own open PRs: the only rows that use it. Never a request.
     const own = (queue?.items ?? []).flatMap(item => item.subject.members)
       .filter(member => member.state === 'open' && !member.merged && member.author.toLowerCase() === login?.toLowerCase());
-    const saved = new Map(token && own.length ? cachedQueueSignals(getGitHubClient(token), own).map(value => [value.url, value]) : []);
+    const saved = new Map(token && own.length ? cachedQueueSignals(getGitHubClient(token), own).map(value => [value.url, optimistic.signals(value)]) : []);
     const prefs = loadPreferences();
     const iconBadge = menubarSettings(prefs).badge;
     const { state, items } = buildMenubarState({
@@ -2097,7 +2100,7 @@ async function fetchPrStatus(prUrl: string, force = false, expectedHead?: string
 handleInteractive('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
   if (workbench.mutedUrls().has(prUrl)) throw new Error('This PR is muted. Restore it from Muted PRs first.');
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-  try { return await getPrMetadata(getGitHubClient(getResolvedToken()), owner, repo, pullNumber); }
+  try { return optimistic.metadata(await getPrMetadata(getGitHubClient(getResolvedToken()), owner, repo, pullNumber)); }
   catch (error) { throw new Error(githubAccessMessage(error, `${owner}/${repo}`)); }
 });
 
@@ -2124,7 +2127,7 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = f
     // Local data only: no scheduler and no request. The renderer then asks GitHub.
     const token = getResolvedToken();
     if (!token || typeof options.headSha !== 'string') return null;
-    return (await prStatus.cached(getGitHubClient(token), prUrl, options.headSha)) ?? null;
+    return optimistic.status(prUrl, (await prStatus.cached(getGitHubClient(token), prUrl, options.headSha)) ?? null);
   }
   // Opening a PR is user-driven, so its read is exempt from automatic pacing. With nothing to show
   // yet, it is also interactive, so it does not wait behind background reads.
@@ -2133,7 +2136,7 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = f
   const priority = force || (opened && !showablePrStatus(prUrl, headSha)) ? 'interactive' : 'foreground';
   const status = await withGitHubPriority(priority, () => fetchPrStatus(prUrl, force, headSha), { automatic: !(force || opened) });
   if (!status) throw new Error('Not authenticated');
-  return status;
+  return optimistic.status(prUrl, status);
 });
 
 ipcMain.handle(
@@ -3097,8 +3100,10 @@ const workbench = createWorkbenchService({
   storage: appData,
   signals: (client, requests, options) => getQueueSignals(client, requests, options),
   notifications: { store: notificationStore, deliver: events => notifications.deliver(events), count: notificationAnalytics },
-  cachedDiscussion: url => { const token = getResolvedToken(); return token ? reviewThreads.latest(getGitHubClient(token), url) : undefined; },
-  cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests) : []; },
+  cachedDiscussion: url => { const token = getResolvedToken(); const value = token ? reviewThreads.latest(getGitHubClient(token), url) : undefined; return value && optimistic.discussion(url, value); },
+  cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests).map(optimistic.signals) : []; },
+  // The reader's writes GitHub has not shown yet: draft state, auto-merge, reviewers and comment counts.
+  overlayMember: member => optimistic.metadata(member),
   activities,
   directory: () => app.getPath('userData'),
   auth: () => ({ token: getResolvedToken(), login: cachedLogin }),
@@ -3468,7 +3473,8 @@ ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[
   const values = await withGitHubPriority(options?.force ? 'interactive' : options?.active ? 'foreground' : 'background',
     () => getQueueSignals(getGitHubClient(token), requests, options), { automatic: !options?.force });
   if (account && workbench.observeReadSignals(account, values)) broadcastToAllWindows('pr-read-state-changed');
-  return values;
+  for (const value of values) optimistic.observe(value.url, 'signals', value);
+  return values.map(optimistic.signals);
 });
 handleInteractive('get-github-profile', (_event, login:string) => {
   const token=getResolvedToken();
@@ -3476,6 +3482,46 @@ handleInteractive('get-github-profile', (_event, login:string) => {
   return getGitHubProfile(getGitHubClient(token),login);
 });
 const reviewThreads = createReviewThreadService();
+// ── Optimistic writes ──
+// Every write the reader makes shows at once in every window and the menu bar, before GitHub answers. Main applies one
+// layer of patches over each copy of a PR it hands out, and clears a patch once GitHub's own copy shows the change, or
+// removes it when the write fails. See lib/optimistic-patches.ts.
+const optimistic = createOptimisticService({
+  viewer: () => (cachedLogin ? { login: cachedLogin, avatarUrl: `https://github.com/${encodeURIComponent(cachedLogin)}.png` } : undefined),
+  before: url => {
+    const metadata = syncMetadata.get(url) ?? workbench.knownMember(url);
+    const signals = syncSignals.get(url) ?? (metadata && cachedToken ? cachedQueueSignals(getGitHubClient(cachedToken), [{ url, headSha: metadata.headSha }])[0] : undefined);
+    return { commentCount: metadata?.commentCount, reviewCommentCount: metadata?.reviewCommentCount, comments: signals?.comments };
+  },
+  changed: publishOptimistic,
+});
+/** Pushes a PR's copies, with every optimistic patch applied, to the windows and the menu bar that show them. */
+function publishOptimistic(url: string, kinds: OptimisticKind[]) {
+  const token = cachedToken;
+  if (!token) return;
+  const client = getGitHubClient(token);
+  if (kinds.includes('discussion')) {
+    const discussion = reviewThreads.latest(client, url) ?? reviewThreads.stale(client, url);
+    // Every window: any of them may show this PR's comments, and none has to watch it for a write it made.
+    if (discussion) broadcastToAllWindows('github-optimistic', { url, discussion: optimistic.discussion(url, discussion) });
+  }
+  const metadata = syncMetadata.get(url) ?? workbench.knownMember(url);
+  const updates: GitHubSyncUpdate[] = [];
+  if (metadata && kinds.includes('metadata')) updates.push({ kind: 'metadata', url, value: metadata });
+  const signals = syncSignals.get(url) ?? (metadata ? cachedQueueSignals(client, [{ url, headSha: metadata.headSha }])[0] : undefined);
+  if (signals && kinds.includes('signals')) updates.push({ kind: 'signals', url, value: signals });
+  // `sendSyncUpdates` applies the patches.
+  if (updates.length) sendSyncUpdates(updates);
+  // The queue rows, attention and the menu bar.
+  notifyLocalChange('workbench-changed');
+}
+/** The URL of the conversation feedback a reply answers, from the saved discussion. */
+function discussionSource(url: string, sourceId: unknown): string | undefined {
+  if (typeof sourceId !== 'string' || !cachedToken) return undefined;
+  const client = getGitHubClient(cachedToken);
+  const feedback = (reviewThreads.latest(client, url) ?? reviewThreads.stale(client, url))?.feedback;
+  return feedback && [...feedback.comments, ...feedback.reviews].find(comment => comment.id === sourceId)?.url;
+}
 const SEARCH_INDEX_DELAY_MS = 3_000;
 /** Incremental: the cache hook and queue changes send only changed feeds to the saved-work worker. */
 const searchIndex = createSearchIndexer({
@@ -3516,40 +3562,67 @@ function discussionClient() {
   if (!token) throw new Error('Sign in to GitHub to load review comments.');
   return getGitHubClient(token);
 }
-ipcMain.handle('cached-review-threads', (_event, prUrl: string) => reviewThreads.stale(discussionClient(), prUrl));
+ipcMain.handle('cached-review-threads', (_event, prUrl: string) => {
+  const value = reviewThreads.stale(discussionClient(), prUrl);
+  return value && optimistic.discussion(prUrl, value);
+});
 handleInteractive('feedback-action', async (_event, req: import('../lib/review-threads').FeedbackAction) => {
   const account = cachedLogin;
+  const source = req.action === 'reply' ? discussionSource(req.prUrl, req.sourceId) : undefined;
+  const change: OptimisticChange | undefined = req.action === 'request-review'
+    ? { action: 'request-review', reviewer: req.reviewer }
+    : source && typeof req.body === 'string' ? { action: 'feedback-reply', body: feedbackReplyBody(source, req.body.trim()) } : undefined;
   await gitHubWrite(req.action === 'request-review' ? 'request-review' : 'feedback-reply', [req.prUrl],
-    () => reviewThreads.feedbackAction(discussionClient(), req),
+    () => change ? optimistic.run(req.prUrl, change, () => reviewThreads.feedbackAction(discussionClient(), req)) : reviewThreads.feedbackAction(discussionClient(), req),
     () => (req.action === 'request-review' ? { reviewer: req.reviewer } : {}));
   if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
 });
-ipcMain.handle('get-review-threads', (_event, prUrl: string, refresh: boolean, options?: { revalidate?: boolean }) =>
+ipcMain.handle('get-review-threads', async (_event, prUrl: string, refresh: boolean, options?: { revalidate?: boolean }) => {
   // Refreshing a displayed saved copy runs ahead of background work but leaves the interactive slots free.
-  options?.revalidate
+  const value = await (options?.revalidate
     ? withGitHubPriority('foreground', () => reviewThreads.list(discussionClient(), prUrl, false), { automatic: false })
     : withGitHubPriority('interactive', () => reviewThreads.list(discussionClient(), prUrl, refresh)));
+  optimistic.observe(prUrl, 'discussion', value);
+  return optimistic.discussion(prUrl, value);
+});
 handleInteractive('review-thread-action', async (_event, req: ReviewThreadAction) => {
   const account = cachedLogin;
   const action = req.action === 'reply' ? 'thread-reply' : req.action === 'unresolve' ? 'thread-unresolve' : 'thread-resolve';
-  const result = await gitHubWrite(action, [req.prUrl], () => reviewThreads.act(discussionClient(), req));
+  const change: OptimisticChange = req.action === 'reply'
+    ? { action: 'thread-reply', threadId: req.threadId, body: typeof req.body === 'string' ? req.body.trim() : '' }
+    : { action: req.action === 'unresolve' ? 'thread-unresolve' : 'thread-resolve', threadId: req.threadId };
+  const result = await gitHubWrite(action, [req.prUrl],
+    () => optimistic.run(req.prUrl, change, () => reviewThreads.act(discussionClient(), req), thread => ({ thread })));
   if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
-  return result;
+  return optimistic.thread(req.prUrl, result);
 });
 
 handleInteractive('review-comment-action', async (_event, req: ReviewCommentAction) => {
-  return gitHubWrite(req.action === 'delete' ? 'comment-delete' : 'comment-edit', [req.prUrl], () => reviewThreads.comment(discussionClient(), req));
+  const change: OptimisticChange = req.action === 'delete'
+    ? { action: 'comment-delete', threadId: req.threadId, commentId: req.commentId }
+    : { action: 'comment-edit', threadId: req.threadId, commentId: req.commentId, body: typeof req.body === 'string' ? req.body.trim() : '' };
+  const thread = await gitHubWrite(req.action === 'delete' ? 'comment-delete' : 'comment-edit', [req.prUrl],
+    () => optimistic.run(req.prUrl, change, () => reviewThreads.comment(discussionClient(), req), value => ({ thread: value })));
+  return optimistic.thread(req.prUrl, thread);
 });
 handleInteractive('create-review-comment', async (_event, req: CreateReviewCommentRequest) => {
   const client = discussionClient();
   const account = cachedLogin;
-  await gitHubWrite('review-comment', [req.prUrl], () => createReviewComment(client, req));
+  await gitHubWrite('review-comment', [req.prUrl], () => optimistic.run(req.prUrl,
+    { action: 'review-comment', path: req.path, line: req.line, startLine: req.startLine, side: req.side, body: typeof req.body === 'string' ? req.body.trim() : '' },
+    () => createReviewComment(client, req), comment => (comment.id ? { comment } : {})));
   if (account) workbench.noteOwnReview(account, req.prUrl, 1);
 });
 handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   const client = discussionClient();
   const account = cachedLogin;
-  const result = await gitHubWrite('submit-review', [req.prUrl], () => submitPrReview(client, req, loadPreferences().reviewSignature),
+  // The review shows at once: the decision, the reviewer list, the queue section and the inline comments.
+  const change: OptimisticChange = {
+    action: 'submit-review', event: req.event, body: typeof req.body === 'string' ? req.body : '', headSha: req.headSha,
+    comments: Array.isArray(req.comments) ? req.comments.map(c => ({ path: c.path, line: c.line, startLine: c.startLine, side: c.side, body: c.body })) : [],
+  };
+  const result = await gitHubWrite('submit-review', [req.prUrl],
+    () => optimistic.run(req.prUrl, change, () => submitPrReview(client, req, loadPreferences().reviewSignature), value => ({ reviewUrl: value.reviewUrl })),
     result => ({ reviewUrl: result.reviewUrl }));
   // Optimistic: the reader's own review counts as read, and the PR leaves Review requested, at once. The follow-up
   // reconciles the review decision and the reviewer list with GitHub.
@@ -3652,7 +3725,7 @@ const prMergeMonitor = createPrMergeMonitor({
   activity: activities, poll: (client, operation) => prActions.poll(client, operation),
   changed: (_client, urls) => githubWrites.after('stack-merged', urls),
 });
-handleInteractive('get-pr-action-state', (_event, url: string, force: boolean) => prActions.read(discussionClient(), url, force));
+handleInteractive('get-pr-action-state', async (_event, url: string, force: boolean) => optimistic.actionState(await prActions.read(discussionClient(), url, force)));
 handleInteractive('get-stack-merge-plan', (_event, urls: string[]) => prActions.stackPlan(discussionClient(), urls, true));
 handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) => {
   const client = discussionClient();
@@ -3672,13 +3745,14 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
         : request.kind === 'mark-ready' ? 'mark-ready' : request.kind === 'convert-draft' ? 'convert-draft' : 'update-branch';
   try {
     let result: PrActionResult;
-    try { result = await prActions.act(client, request); } catch (error) {
+    // Draft state and auto-merge show at once. Merges and branch updates wait for GitHub.
+    const change = prActionChange(request.kind, request.method);
+    try { result = await (change ? optimistic.run(urls, change, () => prActions.act(client, request)) : prActions.act(client, request)); } catch (error) {
       // A failed write may still have reached GitHub: read once, without a follow-up.
       void githubWrites.after(write(), urls, url => ({ before: before.get(url) }), { followUp: false });
       throw error;
     }
     if (result.status === 'merged') confirmedMetadata(urls, { merged: true, state: 'closed' });
-    if (request.kind === 'mark-ready' || request.kind === 'convert-draft') confirmedMetadata(urls, { isDraft: request.kind === 'convert-draft' });
     const refreshed = githubWrites.after(write(result), urls, url => ({ before: before.get(url), viewer: login }));
     if (result.operation) {
       activities.finish(id, 'cancelled', 'Following the submitted merge in Activity.');
@@ -3722,8 +3796,13 @@ const stackChanges = createStackChangesService(prChanges);
 const syncSubscriptions = new Map<string, { owner: Electron.WebContents; id: string; token: string | null; interest: GitHubSyncInterest }>();
 const syncSignals = new Map<string, QueueSignals>();
 const syncMetadata = new Map<string, PrMetadata>();
-function sendSyncUpdates(updates: GitHubSyncUpdate[], failures: GitHubSyncFailure[] = []) {
+function sendSyncUpdates(fresh: GitHubSyncUpdate[], failures: GitHubSyncFailure[] = []) {
   const token = cachedToken;
+  // Windows see the reader's writes GitHub has not shown yet.
+  const updates = fresh.map((update): GitHubSyncUpdate =>
+    update.kind === 'metadata' ? { ...update, value: optimistic.metadata(update.value) }
+      : update.kind === 'signals' ? { ...update, value: optimistic.signals(update.value) }
+        : update.kind === 'discussion' ? { ...update, value: optimistic.discussion(update.url, update.value) } : update);
   for (const subscription of syncSubscriptions.values()) {
     if (subscription.token !== token || subscription.owner.isDestroyed()) continue;
     const matches = (update: {kind: GitHubSyncKind; url: string}) => subscription.interest.kind === update.kind && subscription.interest.targets.some(target => target.url === update.url);
@@ -3912,6 +3991,8 @@ ipcMain.on('pr-open-intent', afterStartup(startup, (event: Electron.IpcMainEvent
 function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
   if (!cachedLogin) return;
   for (const update of updates) {
+    // A copy read from GitHub: the optimistic patches it shows are done for its kind.
+    if (update.kind !== 'checks') optimistic.observe(update.url, update.kind, update.value);
     if (update.kind === 'checks') {
       checkDetailsPreload.observe(update.value);
       void checkDetailsPreload.tick();
@@ -4274,7 +4355,7 @@ async function tickGitHubSync() {
     checkDetailsPreload.clear();
     prOpenPreload.clear();
     updateCheckDetailTargets();
-    syncCredential = token; syncMetadata.clear(); syncSignals.clear(); heads.clear(); discoveryDue = 0;
+    syncCredential = token; syncMetadata.clear(); syncSignals.clear(); heads.clear(); discoveryDue = 0; optimistic.clear();
     for (const subscription of syncSubscriptions.values()) if (!subscription.owner.isDestroyed())
       subscription.owner.send('github-sync', { account: cachedLogin, subscriptionId: subscription.id, reset: true, updates: [] });
   }

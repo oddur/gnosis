@@ -59,6 +59,7 @@ declare global {
       predictionState?: () => Promise<import('../lib/navigation-predictor').PredictionState>;
       onPredictionState?: (callback: (state: import('../lib/navigation-predictor').PredictionState) => void) => () => void;
       onGitHubSync?: (callback: (event: GitHubSyncEvent) => void) => () => void;
+      onGitHubOptimistic?: (callback: (event: { url: string; discussion: GitHubReviewThreads }) => void) => () => void;
       onGitHubWriteRefreshed?: (callback: (event: import('../lib/github-write-refresh').GitHubWriteEvent) => void) => () => void;
       onPrHeadChanged?: (callback: (change: import('../lib/pr-heads').HeadChange) => void) => () => void;
       onWorkbenchChanged?: (callback: (revisions?: import('../lib/workbench-revision').WorkbenchRevisions) => void) => () => void;

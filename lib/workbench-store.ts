@@ -69,6 +69,8 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
   let snapshotMarked = false;
   /** The account a saved copy shown before the first snapshot belongs to. */
   let seededAccount: string | undefined;
+  /** The account main named with the first snapshot's saved status. */
+  let signalsAccount: string | undefined;
 
   const notify = () => { for (const listener of [...listeners]) listener(); };
   const setStatus = (next: WorkbenchStoreStatus) => {
@@ -180,7 +182,10 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
         }
         // Saved status is not part of the queue: it never reaches its identity or revisions.
         const { savedSignals, ...queued } = next;
-        if (savedSignals) options.onSavedSignals?.(savedSignals.account, savedSignals.values);
+        if (savedSignals) {
+          signalsAccount = savedSignals.account;
+          options.onSavedSignals?.(savedSignals.account, savedSignals.values);
+        }
         commit(queued.revision ? queued : stampQueue(queued));
       } catch (error) {
         if (started.generation === generation) setStatus({ loaded: status.loaded, error: error instanceof Error ? error.message : String(error) });
@@ -243,6 +248,11 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
     getQueue: () => queue,
     /** The account the queue belongs to, once the window knows it. */
     getAccount: () => account,
+    /**
+     * The account the shown queue belongs to, as soon as anything names it: the window, the saved copy, or main's first
+     * snapshot. Rows read their saved status with it before the window has asked main who is signed in.
+     */
+    getShownAccount: () => account ?? seededAccount ?? signalsAccount,
     /**
      * Shows the queue saved at the end of the last session until main's first snapshot arrives. It is ignored once a
      * snapshot has loaded. Its rows keep the revisions they were saved with, and status reports `saved`.

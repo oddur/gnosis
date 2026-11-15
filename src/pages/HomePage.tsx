@@ -175,6 +175,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const storeQueue = useWorkbenchQueue();
   const history = useReviewHistory();
   const storeStatus = useWorkbenchStatus();
+  // Until the window knows who is signed in, rows read saved status for the account the shown queue belongs to.
+  const shownAccount = useSyncExternalStore(workbenchStore.subscribe, workbenchStore.getShownAccount);
+  // Reading saved status only: actions and GitHub reads still wait for the window's own account.
+  const statusAccount = auth ? auth.login : shownAccount && shownAccount !== 'local' ? shownAccount : null;
   // The saved view this tab shows. It starts from the view that was active when the queue first loaded.
   const [ownViewState, setOwnViewId] = useState<string | null | undefined>(undefined);
   const ownViewId = ownViewState === undefined ? storeQueue.savedViews?.activeId : ownViewState;
@@ -1008,7 +1012,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const signalMembers = useMemo(() => statusSort
     ? [...queueItems.flatMap(item => item.subject.members), ...(savedView ? visibleHistory.flatMap(entry => entry.snapshot?.subject.members ?? []) : [])]
     : [], [statusSort, queueItems, savedView, visibleHistory]);
-  const sortSignals = useCachedQueueSignals(auth?.login ?? null, signalMembers, statusSort);
+  const sortSignals = useCachedQueueSignals(statusAccount, signalMembers, statusSort);
   const sortedSaved = useMemo(() => sortSavedReviews(
     visibleHistory.filter(h => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())), savedSort, starredUrls, sortSignals),
   [visibleHistory, query, savedSort, starredUrls, sortSignals]);
@@ -1556,10 +1560,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     const bulk = multiple && active;
     return <QueueRow key={id} item={item} focused={focused} active={active} multiple={multiple} bulk={bulk}
       tabStop={focused || fallbackTabStop === id} expanded={expanded.has(id)} selectedCount={selectedItems.length}
-      account={auth?.login ?? null} filters={filters} starredUrls={starredUrls} readStates={readStates}
+      account={statusAccount} filters={filters} starredUrls={starredUrls} readStates={readStates}
       menuKey={menuKey} bulkMenu={bulk ? bulkMenu : undefined} actions={rowActions} />;
   // Selection keys are compared by content.
-  }, [selected, selectionSignature, multiple, fallbackTabStop, expanded, selectedItems.length, auth?.login, filters, starredUrls, readStates, menuKey, bulkMenu, rowActions]);
+  }, [selected, selectionSignature, multiple, fallbackTabStop, expanded, selectedItems.length, statusAccount, filters, starredUrls, readStates, menuKey, bulkMenu, rowActions]);
   const sidebarCounts = useMemo(() => ({
     response: queue.items.filter(item => matchesQueueFilters(item, { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' }, clock, login)).length,
     stacks: queue.items.filter(item => item.subject.kind === 'stack').length,

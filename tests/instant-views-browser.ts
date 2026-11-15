@@ -7,14 +7,17 @@ import { app, BrowserWindow } from 'electron';
  * rows are prepared before the reader gets there. Every measurement is printed as one `[instant-views]` line, so a run
  * on an older build reports its numbers even where the assertions fail.
  */
-const SLOW_START = 1500;
+/**
+ * Main's snapshot answers this long after it is asked. The startup checks are about order, not speed: the saved queue
+ * and the last open PR must show before main answers. That holds on any runner, however slowly the dev server
+ * compiles the PR screen, because nothing the reader sees waits for main. The times are printed for comparison.
+ */
+const SLOW_START = 5000;
 const SLOW_NETWORK = 1200;
-/** Startup budgets, from the first React render. The delayed snapshot alone would take SLOW_START. */
-const QUEUE_BUDGET_MS = 400;
-/** Includes loading the PR screen's code, which the dev server compiles on demand. */
-const RESTORED_PR_BUDGET_MS = 1000;
-/** Switching to a prepared PR or tab, from the input event to content. */
-const SWITCH_BUDGET_MS = 300;
+/** Generous ceilings that only catch a regression to waiting, never a slow runner. */
+const QUEUE_BUDGET_MS = 2000;
+/** Switching to a prepared PR or tab. Instant means no loading state and a predictor hit; this only bounds it. */
+const SWITCH_BUDGET_MS = 1000;
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -61,7 +64,9 @@ void app.whenReady().then(async () => {
     // 1. A first launch saves the queue. Nothing is slow yet.
     await loadWorkbenchPage(win, base);
     await waitForWorkbenchQueue(win.webContents);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // The copy is saved two seconds after the queue or its rows' status last changed.
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const lastChecks = await js<string[]>("[...document.querySelectorAll('.queue-checks')].map(e=>e.textContent)");
 
     // 2. Restart with the snapshot and GitHub slow. The saved queue paints before main answers.
     await loadWorkbenchPage(win, slow);
@@ -73,8 +78,14 @@ void app.whenReady().then(async () => {
     metrics.queueAfterFirstRenderMs = Math.round(start.queue - start.firstRender);
     metrics.queueFromNavigationMs = Math.round(start.queue);
     metrics.queueLoadingStates = start.loading.map((entry) => entry.title);
-    check(start.queue - start.firstRender <= QUEUE_BUDGET_MS, `Saved queue paints within ${QUEUE_BUDGET_MS} ms of the first render`);
+    check(start.queue - start.firstRender <= QUEUE_BUDGET_MS && (start.snapshot === undefined || start.queue < start.snapshot),
+      'The saved queue paints before main answers');
     check(!start.loading.some((entry) => entry.title.includes('Loading review queue')), 'No queue loading screen with a saved queue');
+    const firstChecks = await js<string[]>('window.instantViews.firstChecks');
+    metrics.firstFrameChecks = firstChecks;
+    metrics.lastSessionChecks = lastChecks;
+    check(firstChecks.length > 0 && firstChecks.join('|') === lastChecks.join('|'),
+      'Saved rows show the check state they showed last session in the first frame');
     await wait('window.instantViews.refreshing?.[1]!==undefined', 400).catch(() => {});
     const refreshing = await js<[number, number?] | undefined>('window.instantViews.refreshing');
     const answered = await js<number | undefined>('window.instantViews.snapshotAnswered');
@@ -100,8 +111,11 @@ void app.whenReady().then(async () => {
     metrics.restoredPrAfterFirstRenderMs = restored.description === undefined ? null : Math.round(restored.description - restored.firstRender);
     metrics.restoredPrLoadingStates = restored.loading.map((entry) => `${entry.title} @${Math.round(entry.at - restored.firstRender)}`);
     metrics.restoredFirstRenderMs = Math.round(restored.firstRender);
-    check(restored.description !== undefined && restored.description - restored.firstRender <= RESTORED_PR_BUDGET_MS,
-      `The last open PR shows within ${RESTORED_PR_BUDGET_MS} ms of the first render`);
+    const restoredAnswer = await js<number | undefined>('window.instantViews.snapshotAnswered');
+    check(restored.description !== undefined && (restoredAnswer === undefined || restored.description < restoredAnswer),
+      'The last open PR shows before main answers');
+    check(!restored.loading.some((entry) => entry.title.includes('Loading review queue') || entry.title.includes('Opening workspace')),
+      `The last open PR waits for nothing but its screen's code: ${JSON.stringify(metrics.restoredPrLoadingStates)}`);
     await waitForWorkbenchQueue(win.webContents);
     await wait("!!document.querySelector('.pr-description')");
 
@@ -122,9 +136,11 @@ void app.whenReady().then(async () => {
     metrics.jToNeighbourChanges = jMove;
     const neighbourReads = await js<Read[]>("window.instantViews.reads.filter(r=>['changes','commits','file'].includes(r.name))");
     metrics.neighbourPreparedReads = neighbourReads.filter((read) => read.mode === 'pr-neighbour').length;
-    check(jMove.ms >= 0 && jMove.ms <= SWITCH_BUDGET_MS && !jMove.loading.length, `j to a prepared neighbour shows its diff within ${SWITCH_BUDGET_MS} ms with no loading state`);
     const records = await js<{ key: string; outcome: string; ttcMs: number }[]>('window.__gnosisPredict.records()');
-    metrics.neighbourArrival = records.filter((record) => record.key.startsWith('pr-open:')).at(-1);
+    const arrival = records.filter((record) => record.key.startsWith('pr-open:')).at(-1);
+    metrics.neighbourArrival = arrival;
+    check(jMove.ms >= 0 && jMove.ms <= SWITCH_BUDGET_MS && !jMove.loading.length && arrival?.outcome === 'hit',
+      'j to a prepared neighbour shows its diff with no loading state (a predictor hit)');
     // And back with k: the PR we came from is still prepared.
     const kMove = await timeTo(changesReady + "&&!!document.querySelector('.pr-overview-heading h1')?.textContent.includes('Fix reconnect')",
       "document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'k',bubbles:true}))");

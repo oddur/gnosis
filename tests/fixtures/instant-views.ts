@@ -19,6 +19,8 @@ export function installInstantViews(mocks: Mocks) {
     marks: {} as Record<string, number>,
     firstQueueRow: undefined as number | undefined,
     firstDescription: undefined as number | undefined,
+    /** The check badges of the first frame with queue rows. */
+    firstChecks: [] as string[],
     /** When "Refreshing…" first showed in the queue header, and when it went away. */
     refreshing: undefined as [number, number?] | undefined,
     /** When main first answered with a queue: its snapshot or discovery. */
@@ -116,7 +118,10 @@ export function installInstantViews(mocks: Mocks) {
   const visible = (element: Element) => (element as HTMLElement).offsetParent !== null;
   const observer = new MutationObserver(() => {
     const at = performance.now();
-    if (state.firstQueueRow === undefined && [...document.querySelectorAll('.queue-item')].some(visible)) state.firstQueueRow = at;
+    if (state.firstQueueRow === undefined && [...document.querySelectorAll('.queue-item')].some(visible)) {
+      state.firstQueueRow = at;
+      state.firstChecks = [...document.querySelectorAll('.queue-checks')].map((element) => element.textContent);
+    }
     if (state.firstDescription === undefined && [...document.querySelectorAll('.pr-description')].some(visible)) state.firstDescription = at;
     const refreshing = [...document.querySelectorAll('.queue-freshness.is-refreshing')].some(visible);
     if (refreshing && !state.refreshing) state.refreshing = [at];

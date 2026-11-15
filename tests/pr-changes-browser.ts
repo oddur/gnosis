@@ -285,29 +285,37 @@ void app.whenReady().then(async () => {
       true
     );
     await click('Cancel');
-    // Collapsing during a write must not reset its duplicate-submission guard.
+    // A reply shows at once as sending. Collapsing and expanding the file during the write keeps it, never posts it
+    // twice, and a failure afterwards still brings the text back with the error. This stands in for main: the write
+    // waits, main pushes the discussion with the reply applied, then rolls it back when GitHub refuses.
     await js(`window.savedReplyAction=window.electronAPI.reviewThreadAction;window.pendingReplyCalls=0;
-      window.electronAPI.reviewThreadAction=async()=>{window.pendingReplyCalls++;await new Promise((resolve,reject)=>window.rejectReply=()=>reject(Error('Reply failed; try again.')))};void 0`);
+      window.electronAPI.reviewThreadAction=async r=>{window.pendingReplyCalls++;
+        const shown=structuredClone(window.discussion);const t=shown.threads.find(t=>t.id===r.threadId);
+        t.comments.push({...t.comments[0],id:'optimistic:reply',body:r.body,url:'',author:{login:'oddur',avatarUrl:''},sending:true,viewerCanUpdate:false,viewerCanDelete:false});
+        window.fixtureOptimistic.emit(r.prUrl,shown);
+        try{await new Promise((resolve,reject)=>window.rejectReply=()=>reject(Error('Reply failed; try again.')))}
+        finally{window.fixtureOptimistic.emit(r.prUrl,structuredClone(window.discussion))}};void 0`);
     await click('Reply');
-    await js(
-      "window.fill('.github-thread textarea','Pending reply survives Viewed.');window.replyElement=document.querySelector('.github-thread textarea')"
-    );
+    await js("window.fill('.github-thread textarea','Pending reply survives Viewed.')");
     await click('Reply on GitHub');
     await wait('window.pendingReplyCalls===1');
+    const sending = "[...document.querySelectorAll('.github-thread article[data-sending]')].some(a=>a.textContent.includes('Sending…')&&a.textContent.includes('Pending reply survives Viewed.'))";
+    await wait(sending);
+    assert.equal(await js("!!document.querySelector('.github-thread textarea')"), false, 'The composer closed: the reply shows as sending');
     await toggleWorkerViewed();
     await toggleWorkerViewed();
-    await wait('window.replyElement.getClientRects().length>0');
-    assert.equal(
-      await js(
-        "document.querySelector('.github-thread textarea')===window.replyElement && window.replyElement.disabled"
-      ),
-      true
-    );
+    await wait(`${sending} && document.querySelector('.github-thread article[data-sending]').getClientRects().length>0`);
+    // A second reply cannot be sent while the first is sending, even after the thread remounted.
+    await click('Reply');
+    await js("window.fill('.github-thread textarea','Pending reply survives Viewed.')");
+    assert.equal(await js("[...document.querySelectorAll('.github-thread button')].find(b=>b.textContent.trim()==='Reply on GitHub').disabled"), true);
     await js("document.querySelector('.github-thread form').requestSubmit()");
-    assert.equal(await js('window.pendingReplyCalls'), 1);
+    assert.equal(await js('window.pendingReplyCalls'), 1, 'No duplicate submission');
+    await click('Cancel');
     await js('window.rejectReply()');
     await wait("document.querySelector('.github-thread')?.textContent.includes('Reply failed; try again.')");
-    assert.equal(await js('window.replyElement.value'), 'Pending reply survives Viewed.');
+    await wait("document.querySelector('.github-thread textarea')?.value==='Pending reply survives Viewed.'");
+    assert.equal(await js("!!document.querySelector('.github-thread article[data-sending]')"), false, 'The reply rolled back');
     await js('window.electronAPI.reviewThreadAction=window.savedReplyAction;void 0');
     await js("window.fill('.github-thread textarea','The retry stays inside the boundary.')");
     await click('Reply on GitHub');
@@ -604,20 +612,34 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent==='Post to GitHub now').click()"
     );
     await wait('!!window.rejectComment');
+    // The comment is posting: main shows it as a sending thread, so the composer closes at once.
+    await wait("!document.querySelector('#large-stream-test .changes-comment-composer')");
     await js(
       `(()=>{const el=document.querySelector('#large-stream-test .commit-diff-stream');el.dispatchEvent(new WheelEvent('wheel',{deltaY:-10000,bubbles:true}));el.scrollTop=0;el.focus()})()`
     );
     await wait(
       "document.querySelector('#large-stream-test .commit-stream-row[data-active=true]')?.dataset.file==='src/file000.ts'"
     );
-    assert.equal(
-      await js("document.querySelector('#large-stream-test .changes-comment-composer textarea').value"),
-      'Keep this pending comment.'
-    );
     assert.equal(await js('window.pendingComment.path'), 'src/file119.ts');
+    // GitHub refuses while the file is out of view: the failure still reaches the reader, with Retry.
     await js('window.rejectComment()');
+    await wait("[...document.querySelectorAll('[class*=toast], li, [role=dialog], [role=alertdialog], [role=alert], [role=status]')].some(e=>e.textContent.includes('Comment wasn’t posted')&&e.textContent.includes('Offline: retry your comment.'))");
+    // Back on the file, the composer is open again with the text and the error.
+    await js(
+      `(()=>{const root=document.querySelector('#large-stream-test');const row=window.deepAll('[role=treeitem]',root).find(e=>e.getAttribute('data-item-path')==='src/file119.ts');if(!row)throw Error('Missing tree row src/file119.ts');row.click()})()`
+    );
+    await wait(
+      "document.querySelector('#large-stream-test .commit-stream-row[data-active=true]')?.dataset.file==='src/file119.ts'"
+    );
+    await wait("document.querySelector('#large-stream-test .changes-comment-composer textarea')?.value==='Keep this pending comment.'");
     await wait(
       "document.querySelector('#large-stream-test .changes-comment-composer')?.textContent.includes('Offline: retry')"
+    );
+    await js(
+      `(()=>{const el=document.querySelector('#large-stream-test .commit-diff-stream');el.dispatchEvent(new WheelEvent('wheel',{deltaY:-100000,bubbles:true}));el.scrollTop=0;el.focus()})()`
+    );
+    await wait(
+      "document.querySelector('#large-stream-test .commit-stream-row[data-active=true]')?.dataset.file==='src/file000.ts'"
     );
     assert.ok((await js<number>("document.querySelectorAll('#large-stream-test .commit-stream-row').length")) < 16);
     await capture('continuous-files');

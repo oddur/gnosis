@@ -123,6 +123,11 @@ interface Deps {
   client?: () => Octokit;
   cachedDiscussion?: (url: string) => GitHubReviewThreads | undefined;
   cachedSignals?: (requests: QueueSignalRequest[]) => QueueSignals[];
+  /**
+   * The reader's own writes that GitHub has not shown yet, applied over each member the queue shows. Saved members,
+   * notifications and read state never see them.
+   */
+  overlayMember?: (member: ReviewMember) => ReviewMember;
   signals?: (client: Octokit, requests: QueueSignalRequest[], options?: QueueSignalOptions) => Promise<QueueSignals[]>;
   /**
    * The notification observer sees exactly what the unread store sees. Without `deliver`, as in most tests,
@@ -430,14 +435,21 @@ export function createWorkbenchService(deps: Deps) {
     const mutedIndex = mutes.index(s.account);
     const muted = mutedIndex.urls;
     const sets = queueSets(s);
-    const hiddenUrls = new Set([...muted, ...s.subjects.flatMap(subject => subject.members.filter(member => isArchived(member, sets.archived)).map(member => member.url))]);
-    const visibleSubjects = s.subjects.flatMap(subject => { const visible = withoutMutedMembers(subject, hiddenUrls); return visible ? [visible] : []; });
-    const starredPrs = stars.load(s.account).filter(entry => !muted.has(entry.member.url) && !isArchived(entry.member, sets.archived));
+    const overlay = deps.overlayMember;
+    // Unchanged members and subjects keep their identity, so their revisions are reused.
+    const shown = overlay ? s.subjects.map(subject => {
+      const members = subject.members.map(member => overlay(member));
+      return members.every((member, index) => member === subject.members[index]) ? subject : { ...subject, members };
+    }) : s.subjects;
+    const hiddenUrls = new Set([...muted, ...shown.flatMap(subject => subject.members.filter(member => isArchived(member, sets.archived)).map(member => member.url))]);
+    const visibleSubjects = shown.flatMap(subject => { const visible = withoutMutedMembers(subject, hiddenUrls); return visible ? [visible] : []; });
+    const starredPrs = stars.load(s.account).filter(entry => !muted.has(entry.member.url) && !isArchived(entry.member, sets.archived))
+      .map(entry => { const member = overlay ? overlay(entry.member) : entry.member; return member === entry.member ? entry : { ...entry, member }; });
     const starredUrls = new Set(starredPrs.map((entry) => entry.member.url));
     const visible = visibleHistory(muted);
     const filters = normalizeQueueFilters(s.filters);
     const selection = modelSettings(preferences);
-    const knownUrls = new Set(s.subjects.flatMap((subject) => subject.members.map((m) => m.url)));
+    const knownUrls = new Set(shown.flatMap((subject) => subject.members.map((m) => m.url)));
     const activeSubjects = new Set(visibleSubjects.filter(subject => includeSubject(subject, muted, starredUrls, preferences, sets)));
     const subjects = [
       ...visibleSubjects,
