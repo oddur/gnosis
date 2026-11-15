@@ -296,7 +296,7 @@ export function ReviewEvidence({
               <div className="review-evidence-scope">
                 {subject.kind === 'stack' && (
                   <h3>
-                    <SubjectIcon kind="pr" /><a href={member.url} target="_blank" rel="noopener noreferrer">
+                    <SubjectIcon kind="pr" pr={member} /><a href={member.url} target="_blank" rel="noopener noreferrer">
                       #{member.number}
                     </a>{' '}
                     {member.title}

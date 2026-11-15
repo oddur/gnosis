@@ -44,7 +44,7 @@ const groups: MenubarState['groups'] = [
     label: 'To fix',
     count: 9,
     rows: [
-      row('pr36160', { title: 'fix: refuse a long-running command when the sandbox is already busy', kinds: ['changes-requested'], own: true, isNew: true }),
+      row('pr36160', { title: 'fix: refuse a long-running command when the sandbox is already busy', kinds: ['changes-requested'], own: true, isNew: true, isDraft: true }),
       row('pr36144', {
         title: 'fix: forward only a verified player on reconnect to the session host, never the cached one',
         kinds: ['changes-requested', 'checks-failed'],

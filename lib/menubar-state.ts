@@ -33,6 +33,8 @@ export interface MenubarRow {
   author: string;
   /** Your own PR: the author is not shown. */
   own: boolean;
+  /** Rows are open PRs; a draft shows GitHub's draft icon. */
+  isDraft?: boolean;
   stackSize?: number;
   /** Rows from the same stack share it; the panel shows them together under one stack line. */
   stackId?: string;
@@ -202,6 +204,7 @@ export function menubarRow(item: AttentionItem, login: string): MenubarRow {
     number: item.number,
     author: item.author,
     own: isOwnPr(item, login),
+    ...(item.isDraft ? { isDraft: true } : {}),
     ...(item.stackSize ? { stackSize: item.stackSize } : {}),
     ...(item.stackId ? { stackId: item.stackId } : {}),
     isNew: item.isNew,

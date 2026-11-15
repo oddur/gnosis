@@ -1,4 +1,5 @@
 import { SearchableSelect } from './SearchableSelect';
+import { SubjectIcon } from './SubjectIcon';
 import { PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrDetails, type PrOverviewContent } from './PrDetails';
 import { memberReadiness } from '../lib/merge-readiness';
@@ -76,7 +77,7 @@ export function PrSubjectDetails({
                     <span className="pr-stack-number">{i + 1}</span>
                     <span>
                       <strong>
-                        #{m.number} {m.title}
+                        <SubjectIcon kind="pr" pr={m} />#{m.number} {m.title}
                       </strong>
                       <small>{relationship(m.url)}</small>
                       {onRetryStatus && <MemberReviewStatus member={m} signals={signals.find(s => s.url === m.url && s.headSha === m.headSha) ?? statuses[m.url]?.signals} checking={statusChecking && !statusErrors[m.url]} />}
@@ -93,7 +94,7 @@ export function PrSubjectDetails({
           {!compactIdentity && <div className="pr-stack-select">
             <label htmlFor="pr-stack-member">PR in stack</label>
             <SearchableSelect id="pr-stack-member" label="PR in stack" value={member.url} onValueChange={onSelect}
-              options={subject.members.map((m, i) => ({ value: m.url,
+              options={subject.members.map((m, i) => ({ value: m.url, kind: 'pr' as const, pr: m,
                 label: `${i + 1} of ${subject.members.length} · #${m.number} · ${memberReadiness(
                   m, statuses[m.url], statusErrors[m.url], signals.find(s => s.url === m.url)
                 )} — ${m.title}` }))}

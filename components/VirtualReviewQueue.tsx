@@ -227,7 +227,7 @@ export const SavedRow = memo(function SavedRow({ entry, starredUrls, actions }: 
         onClick={event => { if (tabs && entry.status === 'completed' && (event.metaKey || event.ctrlKey)) tabs.open({ kind: 'review', reviewId: entry.id }, !event.shiftKey); else choose(); }}
         onAuxClick={event => { if (event.button === 1 && tabs && entry.status === 'completed') { event.preventDefault(); tabs.open({ kind: 'review', reviewId: entry.id }, true); } }}
       >
-        <span className="queue-title">{!entry.prUrl.startsWith('local:') && <SubjectIcon kind={entry.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} />}{entry.prTitle}</span>
+        <span className="queue-title">{!entry.prUrl.startsWith('local:') && <SubjectIcon kind={entry.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} pr={entry.snapshot?.subject.members[0] ?? { url: entry.prUrl }} />}{entry.prTitle}</span>
       </button>
         <span className="queue-meta">
           {entry.snapshot?.subject.kind === 'stack'

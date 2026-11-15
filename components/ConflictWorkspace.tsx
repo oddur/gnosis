@@ -1,4 +1,5 @@
 import { LoadingIndicator } from './LoadingState';
+import { PrStateIcon } from './PrStateIcon';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { CodeView, EditProvider, File } from '@pierre/diffs/react';
 import {
@@ -707,6 +708,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
               {session ? (
                 <>
                   <RepositoryBadge repo={session.baseRepo} /> <PrBadge url={session.url} title={session.title} />{' '}
+                  <PrStateIcon pr={{ url: session.url }} size={14} className="conflict-heading-state" />
                   <span className="conflict-heading-title">{session.title}</span>
                 </>
               ) : (

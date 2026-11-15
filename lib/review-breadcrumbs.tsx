@@ -9,12 +9,15 @@ import {
   type ReactNode,
 } from 'react';
 import type { SelectionOption } from '../components/SearchableSelect';
+import type { PrStateSource } from './pr-state';
 
 export interface ReviewCrumb {
   id: string;
   label: string;
   title?: string;
   kind?: 'stack' | 'pr' | 'repository' | 'commit';
+  /** The PR a `pr` crumb names, for its state icon; null while it loads. */
+  pr?: PrStateSource | null;
   filePath?: string;
   workspaceTab?: WorkspaceTab;
   navigate?: () => void;

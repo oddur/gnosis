@@ -204,6 +204,15 @@ body:has([role='dialog'][aria-modal='true'], [role='alertdialog']) .app-titlebar
   width: 14px;
   height: 14px;
 }
+/* The state icon takes the same 14px slot as the other tab icons. */
+.workspace-tab .pr-state-icon {
+  width: 14px;
+  height: 14px;
+}
+.workspace-tab .pr-state-icon > svg {
+  width: 100%;
+  height: 100%;
+}
 .workspace-tab-title {
   min-width: 0;
   overflow: hidden;

@@ -1,9 +1,10 @@
 import { memo, useReducer, type ReactNode } from 'react';
-import { ArrowRight, Check, ChevronDown, ChevronRight, GitPullRequest, Layers, Loader2, MessageSquare, Square, SquareCheck } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, ChevronRight, Layers, Loader2, MessageSquare, Square, SquareCheck } from 'lucide-react';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrEntryActions, PrStarMarker } from './PrEntryActions';
 import { PrLabels } from './PrLabels';
-import { QueueMetadata, PrStateIcon } from './QueueMetadata';
+import { QueueMetadata } from './QueueMetadata';
+import { PrStateIcon } from './PrStateIcon';
 import { UnreadPrMarker } from './UnreadPrMarker';
 import { awaitingReplyLabel, needsResponse } from '../lib/response-needed';
 import { focusStackPr, matchingStackMembers } from '../lib/stack-workspace';
@@ -86,7 +87,7 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
       >{menu => <div className="queue-row">
         {/* While several entries can be selected, a PR's check takes its state icon's place and a stack's check
             takes its stack icon's place, so titles do not move when selection starts or ends. */}
-        {s.kind !== 'stack' ? <span className="queue-pr-gutter">{multiple ? selectionCheck : <PrStateIcon member={s.members[0]} />}</span> : <button
+        {s.kind !== 'stack' ? <span className="queue-pr-gutter">{multiple ? selectionCheck : <PrStateIcon pr={s.members[0]} size={17} className="queue-pr-icon" />}</span> : <button
           className="queue-disclosure"
           aria-label={`${expanded ? 'Collapse' : 'Expand'} ${s.title}`}
           aria-expanded={expanded}
@@ -169,7 +170,7 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
             const response = item.responses?.[member.url];
             if (!response || !needsResponse(response) || !matching.includes(member.url)) return [];
             return [<span key={member.url} className="queue-response-pr">
-              {s.kind === 'stack' && <span className="queue-response-source"><GitPullRequest size={12} aria-hidden="true" />#{member.number}</span>}
+              {s.kind === 'stack' && <span className="queue-response-source"><PrStateIcon pr={member} size={12} />#{member.number}</span>}
               {response.changesRequested && <button onClick={() => actions.openResponse(focusStackPr(item, member), 'response-review')} aria-label={`Read changes requested on PR #${member.number}: ${member.title}`}><MessageSquare size={14} aria-hidden="true" />Changes requested<ArrowRight size={12} aria-hidden="true" /></button>}
               {response.awaitingReply > 0 && <button onClick={() => actions.openResponse(focusStackPr(item, member), 'response-threads')} title={`${response.unresolvedThreads} unresolved on GitHub`} aria-label={`Reply to ${response.awaitingReply} ${response.awaitingReply === 1 ? 'thread' : 'threads'} on PR #${member.number}: ${member.title}. ${response.unresolvedThreads} unresolved on GitHub.`}>{awaitingReplyLabel(response.awaitingReply)}<ArrowRight size={12} aria-hidden="true" /></button>}
             </span>];
@@ -181,7 +182,7 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
         <div id={`members-${s.id}`}>
           {s.members.map((m) => (
             <PrEntryActions key={m.url} {...actions.memberMenu(m)}>{menu => <div className={`queue-member ${readStates[m.url]?.unread.length ? 'is-unread' : ''}`}>
-              <PrStateIcon member={m} />
+              <PrStateIcon pr={m} size={17} className="queue-pr-icon" />
               <div className="queue-member-content">
                 <button className="queue-member-title" onClick={event => actions.openMember(item, m, event)}>
                   <span className="truncate">{m.title}</span>

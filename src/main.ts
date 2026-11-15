@@ -3552,7 +3552,7 @@ handleInteractive('command-github-search', async (_event, query: string) => {
     const {data} = await getGitHubClient(token).search.issuesAndPullRequests({ q: `is:pr ${query.trim()} archived:false`, sort:'updated', order:'desc', per_page:30 });
     return data.items.filter(item=>item.pull_request && !workbench.mutedUrls().has(item.html_url)).map(item=>{
       const parts=item.repository_url.split('/');
-      return {number:item.number,title:item.title,url:item.html_url,repoOwner:parts.at(-2)??'',repoName:parts.at(-1)??'',author:item.user?.login??'unknown',updatedAt:item.updated_at,isDraft:item.draft??false,role:'watched' as const};
+      return {number:item.number,title:item.title,url:item.html_url,repoOwner:parts.at(-2)??'',repoName:parts.at(-1)??'',author:item.user?.login??'unknown',updatedAt:item.updated_at,isDraft:item.draft??false,state:item.state==='closed'?'closed' as const:'open' as const,merged:!!item.pull_request?.merged_at,role:'watched' as const};
     });
   } catch (error) { friendlyRateLimitError(error); throw error; }
 });

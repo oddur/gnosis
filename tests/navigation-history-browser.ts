@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, reloadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { attachWindowHistoryNavigation } from '../src/window-history-navigation';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -174,9 +174,8 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.recent-history-menu')");
     await js("[...document.querySelectorAll('.recent-history-item')].find(e=>e.textContent.includes('Fix reconnect')).click()");
     await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Changes'");
-    win.reload();
     // After a reload the restored tab may show a PR; the queue only has to exist.
-    await wait("!!document.querySelector('.queue-list')");
+    await reloadWorkbenchPage(win, "document.querySelector('.queue-list')");
     await js("document.querySelector('[aria-label=\"Recently viewed\"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))");
     await wait("!!document.querySelector('.recent-history-menu')");
     assert.ok(await js("document.querySelector('.recent-history-menu').textContent.includes('Fix reconnect')"));

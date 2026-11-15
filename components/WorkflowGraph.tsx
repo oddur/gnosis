@@ -1233,7 +1233,7 @@ export function WorkflowGraphView({
             label="PR for workflow graph"
             value={member?.url ?? ''}
             options={subject.members.map((m) => ({
-              value: m.url,
+              value: m.url, kind: 'pr' as const, pr: m,
               label: `#${m.number} · ${prChecksHint(values[m.url])} · ${m.title}`,
             }))}
             onValueChange={(value) => {

@@ -34,6 +34,6 @@ export function matchingStackMembers(item: QueueItem, filters: QueueFilters, log
 export function stackScopeChoices(stack: ReviewSubject) {
   return [
     { value: stack.id, kind: 'stack' as const, label: `Whole stack · ${stack.title}` },
-    ...stack.members.map((m, index) => ({ value: m.url, kind: 'pr' as const, label: `${index + 1}. #${m.number} · ${m.title}` })),
+    ...stack.members.map((m, index) => ({ value: m.url, kind: 'pr' as const, pr: m, label: `${index + 1}. #${m.number} · ${m.title}` })),
   ];
 }

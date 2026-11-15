@@ -403,7 +403,7 @@ export function PrCommitsView({
                   >
                     {closedGroups.has(group.member.url) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                     <span>
-                      <strong><SubjectIcon kind="pr" />#{group.member.number}</strong>
+                      <strong><SubjectIcon kind="pr" pr={group.member} />#{group.member.number}</strong>
                       <small>{group.member.title}</small>
                     </span>
                     <span className="commit-pr-count">{group.commits.length}</span>
@@ -634,13 +634,14 @@ export function PrCommitsView({
               ? [
                   {
                     id: 'member', kind: 'pr' as const,
+                    pr: groups.find((group) => group.member.url === selection.url)?.member ?? null,
                     label: `Source #${selection.url.split('/').pop()}`,
                     pickerLabel: 'Source PR in combined commits',
                     value: selection.url,
                     options: groups
                       .filter((group) => group.commits.length)
                       .map((group) => ({
-                        value: group.member.url, kind: 'pr' as const,
+                        value: group.member.url, kind: 'pr' as const, pr: group.member,
                         label: `#${group.member.number} · ${group.member.title}`,
                       })),
                     select: (url: string) => {
