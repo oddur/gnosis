@@ -6,7 +6,7 @@ import type { PrChecks } from '../lib/pr-checks';
 import type { CiCheck } from '../lib/types';
 import { checkCounts, checkGroup, checkLabel, checkSummary } from '../lib/pr-checks';
 import { workflowJobCount } from '../lib/workflow-navigation';
-import { workflowSidebarEntries, type ExternalCheckGroup } from '../lib/workflow-external';
+import { attentionSourceSummary, workflowSidebarEntries, type ExternalCheckGroup } from '../lib/workflow-external';
 import { Button } from './ui/button';
 
 export function WorkflowSidebar({
@@ -65,7 +65,7 @@ export function WorkflowSidebar({
         ? 'passed'
         : 'skipped';
   const SummaryIcon = checkGroupIcons[summaryGroup];
-  const externalAttention = external.reduce((sum, group) => sum + group.counts.attention, 0);
+  const attentionSource = totals?.attention ? attentionSourceSummary(external, totals.attention) : '';
   return (
     <aside
       id={id}
@@ -93,16 +93,7 @@ export function WorkflowSidebar({
           <SummaryIcon size={14} className={`check-${summaryGroup}`} aria-hidden="true" />
           <span>
             <span className={`check-${summaryGroup}`}>{checkSummary(snapshot.checks)}</span>
-            {externalAttention > 0 && (
-              <span className="workflow-sidebar-summary-detail">
-                {externalAttention === totals?.attention
-                  ? externalAttention === 1
-                    ? 'It is'
-                    : 'All are'
-                  : `${externalAttention} ${externalAttention === 1 ? 'is' : 'are'}`}{' '}
-                outside GitHub Actions
-              </span>
-            )}
+            {attentionSource && <span className="workflow-sidebar-summary-detail">{attentionSource}</span>}
           </span>
         </p>
       )}
@@ -225,6 +216,14 @@ export function WorkflowSidebar({
                       : 'Jobs: —'}
                   </span>
                   {run.attempt > 1 && <span>Attempt {run.attempt}</span>}
+                  {!!run.supersededRuns && (
+                    <span
+                      className="workflow-run-superseded"
+                      title={`${run.supersededRuns} earlier ${run.supersededRuns === 1 ? 'run' : 'runs'} of this workflow on this commit ${run.supersededRuns === 1 ? 'was' : 'were'} replaced by this run. Like on GitHub, their jobs do not count.`}
+                    >
+                      {run.supersededRuns} earlier {run.supersededRuns === 1 ? 'run' : 'runs'}
+                    </span>
+                  )}
                 </span>
               </span>
             </button>

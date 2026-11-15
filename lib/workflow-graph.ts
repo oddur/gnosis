@@ -2,6 +2,8 @@ import type { CheckTarget, CheckStep, PrCheck, CheckDetails } from './pr-checks'
 
 export interface WorkflowRunInfo {
   jobCount?: number;
+  /** Older runs of this workflow and event on the same commit, such as runs a concurrency group cancelled. */
+  supersededRuns?: number;
   event?: string;
   id: number;
   name: string;

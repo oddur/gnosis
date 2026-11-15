@@ -575,7 +575,7 @@ void test('completed detail cache is revision/account scoped, coalesces reads, a
       completedAt: null,
     })),
   };
-  githubCacheFor(h.client)!.set(`pr-checks:v1:${url}@${sha}`, changed);
+  githubCacheFor(h.client)!.set(`pr-checks:v2:${url}@${sha}`, changed);
   assert.equal(cachedCheckDetails(h.client, input), undefined, 'Same-ID rerun must not reuse a previous attempt');
   await readCheckDetails(h.client, input);
   assert.equal(h.calls.filter((c) => c.path === '/repos/o/r/check-runs/1').length, 2);
@@ -591,7 +591,7 @@ void test('running details keep a stale copy but refresh; force bypasses complet
   await readCheckDetails(h.client, input, { force: true });
   assert.ok(h.calls.length > count);
   const running = { ...snapshot.checks[0], status: 'in_progress' as const, conclusion: null, completedAt: null };
-  githubCacheFor(h.client)!.set(`pr-checks:v1:${url}@${sha}`, { ...snapshot, checks: [running] });
+  githubCacheFor(h.client)!.set(`pr-checks:v2:${url}@${sha}`, { ...snapshot, checks: [running] });
   githubCacheFor(h.client)!.set(`check-details:v1:${url}@${sha}:check:1`, {
     value: { ...value, state: running },
     version: JSON.stringify([running.status, running.conclusion, running.startedAt, running.completedAt]),

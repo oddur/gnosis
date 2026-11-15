@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { expectedCurrent, supersededWorkflows } from './fixtures/superseded-runs';
 app.disableHardwareAcceleration();
 void app
   .whenReady()
@@ -911,6 +912,68 @@ void app
       await wait(
         `document.querySelector('.workflow-active-run').textContent==='Depot Checks' && !!document.querySelector('.workflow-external')`
       );
+      // Superseded runs: concurrency cancelled two earlier rounds of the same workflows on this commit, with
+      // failed "Result" gates. GitHub counts only the newest run of each workflow, so the PR is all green here too.
+      await js(`sessionStorage.removeItem('fixture-checks-view')`);
+      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&checks&superseded-runs`);
+      await waitForWorkbenchQueue(win.webContents);
+      await js(
+        "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
+      );
+      await click('Open PR overview');
+      await wait(`document.querySelectorAll('.review-evidence-summary > button').length===3`);
+      await js(`document.querySelector('.review-evidence-summary > button').click()`);
+      const current = expectedCurrent();
+      await wait(`document.querySelectorAll('.check-row').length===${current.total}`);
+      assert.equal(
+        Number(await js<string>(`document.querySelector('.checks-tab-count')?.textContent ?? '0'`)),
+        0,
+        'Superseded runs never add to the Checks tab badge'
+      );
+      const supersededList = await js<{ attention: number; names: string[] }>(
+        `({attention:document.querySelectorAll('.check-row small .check-attention').length,names:[...document.querySelectorAll('.check-row strong')].map(n=>n.textContent).sort()})`
+      );
+      assert.equal(supersededList.attention, 0, 'No cancelled or failed jobs from earlier rounds in List');
+      await capture('superseded-runs-list-light');
+      await click('Graph');
+      await wait(`document.querySelectorAll('.workflow-run-option').length===${supersededWorkflows.length}`);
+      const supersededSidebar = await js<{ external: number; names: string[]; summary: string; metas: string[] }>(
+        `({external:document.querySelectorAll('.workflow-run-option[data-external]').length,names:[...document.querySelectorAll('.workflow-run-option strong')].map(n=>n.textContent),summary:document.querySelector('.workflow-sidebar-summary')?.textContent ?? '',metas:[...document.querySelectorAll('.workflow-run-option .workflow-run-meta')].map(n=>n.textContent)})`
+      );
+      assert.equal(supersededSidebar.external, 0, 'No "Other GitHub Actions jobs" group');
+      assert.ok(!supersededSidebar.names.includes('Other GitHub Actions jobs'), supersededSidebar.names.join());
+      assert.ok(!/attention|outside|failed/i.test(supersededSidebar.summary), supersededSidebar.summary);
+      assert.ok(supersededSidebar.summary.includes(`${current.passed} passed`), supersededSidebar.summary);
+      assert.ok(
+        supersededSidebar.metas.every((meta) => meta.startsWith('Passed')),
+        supersededSidebar.metas.join(' | ')
+      );
+      assert.equal(
+        supersededSidebar.metas.reduce((sum, meta) => sum + Number(/(\d+) jobs?/.exec(meta)?.[1] ?? 0), 0),
+        current.total,
+        'Graph lists the same jobs as List'
+      );
+      assert.equal(supersededSidebar.metas.filter((meta) => meta.includes('2 earlier runs')).length, 3);
+      assert.ok(!(await js(`!!document.querySelector('.workflow-external-notice')`)));
+      // Every workflow's graph draws exactly the List's checks.
+      const graphNames: string[] = [];
+      for (const name of supersededSidebar.names) {
+        await js(
+          `[...document.querySelectorAll('.workflow-run-option')].find(n=>n.querySelector('strong').textContent===${JSON.stringify(name)}).click()`
+        );
+        await wait(`document.querySelector('.workflow-active-run')?.textContent===${JSON.stringify(name)}`);
+        await wait(`document.querySelectorAll('.workflow-job').length>0`);
+        graphNames.push(
+          ...(await js<string[]>(
+            `[...document.querySelectorAll('.workflow-job .workflow-job-name')].map(n=>n.textContent)`
+          ))
+        );
+      }
+      assert.deepEqual(graphNames.sort(), supersededList.names, 'List and Graph agree');
+      await capture('superseded-runs-graph-light');
+      await js(`document.documentElement.classList.add('dark')`);
+      await capture('superseded-runs-graph-dark');
+      await js(`document.documentElement.classList.remove('dark')`);
       if (process.env.GNOSIS_WORKFLOW_REPLAY) {
         const saved = JSON.parse(fs.readFileSync(process.env.GNOSIS_WORKFLOW_REPLAY, 'utf8'));
         const actual = assembleWorkflow(saved.definitions, saved.jobs, []);

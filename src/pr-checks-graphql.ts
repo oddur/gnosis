@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import type { CheckTarget, PrCheck, PrChecks } from '../lib/pr-checks';
+import { currentChecks, type CheckTarget, type PrCheck, type PrChecks } from '../lib/pr-checks';
 import { prActionTarget } from './pr-actions-service';
 
 interface Context {
@@ -20,7 +20,10 @@ interface Context {
   createdAt?: string;
   updatedAt?: string;
   description?: string | null;
-  checkSuite?: { app: { name: string } | null } | null;
+  checkSuite?: {
+    app: { name: string } | null;
+    workflowRun?: { databaseId: number | null; event: string; workflow: { databaseId: number | null } } | null;
+  } | null;
   creator?: { login: string } | null;
 }
 interface PullChecks {
@@ -49,6 +52,11 @@ function normalize(node: Context): PrCheck {
   const check = node.__typename === 'CheckRun';
   if (check && (!node.databaseId || !Number.isSafeInteger(node.databaseId)))
     throw Error('GitHub returned a check without a valid ID. Refresh checks.');
+  const run = check ? node.checkSuite?.workflowRun : undefined;
+  const workflowRun =
+    run && Number.isSafeInteger(run.databaseId) && Number.isSafeInteger(run.workflow.databaseId)
+      ? { id: run.databaseId as number, workflowId: run.workflow.databaseId as number, event: run.event }
+      : undefined;
   const status = check ? node.status?.toLowerCase() : node.state === 'PENDING' ? 'in_progress' : 'completed';
   return {
     id: check ? `check:${node.databaseId}` : `status:${node.id}`,
@@ -68,6 +76,7 @@ function normalize(node: Context): PrCheck {
     startedAt: check ? (node.startedAt ?? null) : (node.createdAt ?? null),
     completedAt: check ? (node.completedAt ?? null) : status === 'completed' ? (node.updatedAt ?? null) : null,
     ...(!check && node.description ? { description: node.description } : {}),
+    ...(workflowRun ? { workflowRun } : {}),
   };
 }
 
@@ -93,7 +102,7 @@ export async function readChecksGraphQL(client: Octokit, targets: CheckTarget[])
       pullRequest(number:${pull_number}) { headRefOid commits(last:1) { nodes { commit { oid statusCheckRollup {
         contexts(first:100,after:${JSON.stringify(cursor)}) { pageInfo { hasNextPage endCursor } nodes {
           __typename
-          ... on CheckRun { id databaseId name status conclusion isRequired(pullRequestNumber:${pull_number}) url detailsUrl startedAt completedAt checkSuite { app { name } } }
+          ... on CheckRun { id databaseId name status conclusion isRequired(pullRequestNumber:${pull_number}) url detailsUrl startedAt completedAt checkSuite { app { name } workflowRun { databaseId event workflow { databaseId } } } }
           ... on StatusContext { id context state isRequired(pullRequestNumber:${pull_number}) targetUrl createdAt updatedAt description creator { login } }
         } }
       } } } } }
@@ -105,8 +114,13 @@ export async function readChecksGraphQL(client: Octokit, targets: CheckTarget[])
       data = await client.graphql<Response>(query);
     } catch (error) {
       const partial = error as { data?: Response; errors?: { path?: (string | number)[] }[] };
-      // Unknown requirements must not erase otherwise usable results. Other errors keep the old snapshot.
-      if (!partial.data || !partial.errors?.length || partial.errors.some((e) => e.path?.at(-1) !== 'isRequired'))
+      // Unknown requirements or workflow runs (a token without Actions access) must not erase otherwise usable
+      // results. Other errors keep the old snapshot.
+      if (
+        !partial.data ||
+        !partial.errors?.length ||
+        partial.errors.some((e) => e.path?.at(-1) !== 'isRequired' && !e.path?.includes('workflowRun'))
+      )
         throw error;
       data = partial.data;
     }
@@ -130,12 +144,16 @@ export async function readChecksGraphQL(client: Octokit, targets: CheckTarget[])
       }
     }
   }
-  return states.map(({ target, checks }) => ({
-    ...target,
-    checkedAt: Date.now(),
-    checks: [...checks.values()],
-    ...([...checks.values()].some((check) => check.required === null)
-      ? { warning: 'GitHub could not confirm which checks are required. Requirements are shown as unknown.' }
-      : {}),
-  }));
+  return states.map(({ target, checks: all }) => {
+    // Jobs of superseded workflow runs stay in GitHub's rollup but no longer count, so every view drops them here.
+    const { checks } = currentChecks([...all.values()]);
+    return {
+      ...target,
+      checkedAt: Date.now(),
+      checks,
+      ...(checks.some((check) => check.required === null)
+        ? { warning: 'GitHub could not confirm which checks are required. Requirements are shown as unknown.' }
+        : {}),
+    };
+  });
 }

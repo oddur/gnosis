@@ -1,5 +1,16 @@
 import { workflowMocks } from './workflow-graph';
-import type { CheckDetails, CheckSelection, CheckTarget, PrChecks, PrCheck } from '../../lib/pr-checks';
+import {
+  currentChecks,
+  type CheckDetails,
+  type CheckSelection,
+  type CheckTarget,
+  type PrChecks,
+  type PrCheck,
+} from '../../lib/pr-checks';
+import { supersededChecks } from './superseded-runs';
+/** Concurrency-cancelled earlier rounds of the same workflows; the newest round is green. */
+const supersededScenario =
+  typeof location !== 'undefined' && new URLSearchParams(location.search).has('superseded-runs');
 /** Passing Actions workflows while an external CI app reports the failures (no dependency data). */
 export const externalScenario =
   typeof location !== 'undefined' && new URLSearchParams(location.search).has('external-checks');
@@ -50,22 +61,25 @@ export function checksMocks() {
         ...input,
         headSha: newer ? 'new-head' : input.headSha,
         checkedAt: Date.now(),
-        checks: externalScenario
-          ? externalChecks(check)
-          : [
-              check(1, 'Tests / macOS', 'failure'),
-              check(2, 'TypeScript', 'failure'),
-              check(3, 'Build / Linux', null),
-              check(4, 'Lint', 'success'),
-              check(5, 'Deploy preview', 'neutral', { required: false }),
-              check(6, 'Buildkite / integration', 'error', {
-                id: 'status:6',
-                kind: 'status',
-                provider: 'Buildkite',
-                required: null,
-                description: 'Integration test service is unavailable. Retry from Buildkite.',
-              }),
-            ],
+        // Main drops superseded runs while it builds the snapshot (pr-checks-graphql), so the renderer never sees them.
+        checks: supersededScenario
+          ? currentChecks(supersededChecks()).checks
+          : externalScenario
+            ? externalChecks(check)
+            : [
+                check(1, 'Tests / macOS', 'failure'),
+                check(2, 'TypeScript', 'failure'),
+                check(3, 'Build / Linux', null),
+                check(4, 'Lint', 'success'),
+                check(5, 'Deploy preview', 'neutral', { required: false }),
+                check(6, 'Buildkite / integration', 'error', {
+                  id: 'status:6',
+                  kind: 'status',
+                  provider: 'Buildkite',
+                  required: null,
+                  description: 'Integration test service is unavailable. Retry from Buildkite.',
+                }),
+              ],
       };
       snapshots.set(input.url, value);
     }
