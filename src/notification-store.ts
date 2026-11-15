@@ -5,7 +5,7 @@ import { deriveEvents, type NotificationEvent, type PrBasis, type PrObservation 
 import type { NotificationEventType } from '../lib/notification-settings';
 
 /** Why a derived event was not delivered. Counted locally only. */
-export type SuppressReason = 'own' | 'muted' | 'archived' | 'type-off' | 'active' | 'duplicate' | 'paused' | 'in-app-off' | 'banner';
+export type SuppressReason = 'own' | 'muted' | 'snoozed' | 'archived' | 'type-off' | 'active' | 'duplicate' | 'paused' | 'in-app-off' | 'banner';
 export type CounterField =
   | 'derived'
   | `suppressed:${SuppressReason}`

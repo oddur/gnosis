@@ -7,14 +7,14 @@ import type { WorkbenchQueue } from './workbench';
 import type { WorkspaceTabEntry } from './workspace-tabs';
 import type { SearchDestination } from './command-search';
 
-type Listing = { kind: 'queue' | 'saved' | 'muted'; filters: QueueFilters; query: string };
+type Listing = { kind: 'queue' | 'saved' | 'muted' | 'snoozed'; filters: QueueFilters; query: string };
 export type WorkspaceListingRequest = Listing | { destination: Extract<SearchDestination, { kind: 'home' }> };
 export interface WorkspaceListingCount {
   count: number;
   unread: boolean;
 }
-const fromHome = (home: Pick<HomeLocation, 'savedView' | 'muted' | 'filters' | 'savedQuery'>): Listing => ({
-  kind: home.muted ? 'muted' : home.savedView ? 'saved' : 'queue',
+const fromHome = (home: Pick<HomeLocation, 'savedView' | 'muted' | 'snoozed' | 'filters' | 'savedQuery'>): Listing => ({
+  kind: home.muted ? 'muted' : home.snoozed ? 'snoozed' : home.savedView ? 'saved' : 'queue',
   filters: home.filters,
   query: home.savedQuery,
 });
@@ -46,7 +46,7 @@ function resolveListing(request: WorkspaceListingRequest, queue: WorkbenchQueue)
     return view ? { kind: 'queue', filters: view.draft, query: '' } : undefined;
   }
   if (target.repo) filters = normalizeQueueFilters({ repo: target.repo });
-  else if (target.section && target.section !== 'saved' && target.section !== 'muted') {
+  else if (target.section && target.section !== 'saved' && target.section !== 'muted' && target.section !== 'snoozed') {
     filters = {
       ...filters,
       involvement:
@@ -57,7 +57,7 @@ function resolveListing(request: WorkspaceListingRequest, queue: WorkbenchQueue)
     };
   }
   return {
-    kind: target.section === 'saved' ? 'saved' : target.section === 'muted' ? 'muted' : 'queue',
+    kind: target.section === 'saved' ? 'saved' : target.section === 'muted' ? 'muted' : target.section === 'snoozed' ? 'snoozed' : 'queue',
     filters,
     query: '',
   };
@@ -85,6 +85,8 @@ export function countWorkspaceListing(
   };
   if (listing.kind === 'muted') {
     for (const entry of queue.mutedPrs ?? []) add(entry.member.url);
+  } else if (listing.kind === 'snoozed') {
+    for (const entry of queue.snoozedPrs ?? []) add(entry.member.url);
   } else if (listing.kind === 'saved') {
     const muted = new Set(queue.mutedPrs?.map((entry) => entry.member.url));
     for (const entry of history) {

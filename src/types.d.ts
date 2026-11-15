@@ -14,6 +14,7 @@ import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
 import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import type { MutePrRequest } from '../lib/muted-prs';
+import type { SnoozeRequest, SnoozeResult } from '../lib/snooze';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
 import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
@@ -97,6 +98,7 @@ declare global {
       workbenchSnapshot: (withSignals?: boolean) => Promise<WorkbenchQueue>;
       workbenchRenameStack: (id: string, name: string, account?: string) => Promise<WorkbenchQueue>;
       workbenchMutePrs: (request: MutePrRequest) => Promise<WorkbenchQueue>;
+      workbenchSnoozePrs: (request: SnoozeRequest) => Promise<SnoozeResult<WorkbenchQueue>>;
       workbenchMarkPrRead: (request: MarkPrReadRequest) => Promise<WorkbenchQueue>;
       onPrReadStateChanged: (callback: () => void) => () => void;
       workbenchStarPrs: (request: StarPrRequest) => Promise<WorkbenchQueue>;

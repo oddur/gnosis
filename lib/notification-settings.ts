@@ -9,7 +9,9 @@ export type NotificationEventType =
   | Extract<AttentionKind, 'review-requested' | 'changes-requested' | 'checks-failed' | 'ready-to-merge' | 'explanation-ready'>
   | 'team-review-requested'
   | 'approved'
-  | 'update-ready';
+  | 'update-ready'
+  /** A snoozed PR came back and no other event says why. */
+  | 'snooze-ended';
 export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
   'review-requested',
   'team-review-requested',
@@ -19,6 +21,7 @@ export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
   'ready-to-merge',
   'explanation-ready',
   'update-ready',
+  'snooze-ended',
 ];
 /** Team review requests are the largest source of noise in organisations with CODEOWNERS teams. */
 export const DEFAULT_NOTIFICATION_EVENTS: Readonly<Record<NotificationEventType, boolean>> = {
@@ -30,6 +33,7 @@ export const DEFAULT_NOTIFICATION_EVENTS: Readonly<Record<NotificationEventType,
   'ready-to-merge': true,
   'explanation-ready': true,
   'update-ready': true,
+  'snooze-ended': true,
 };
 /** Events about a PR. Until the user has seen the introduction, these are delivered in the app only. */
 export const PR_EVENT_TYPES: readonly NotificationEventType[] = [
@@ -39,6 +43,7 @@ export const PR_EVENT_TYPES: readonly NotificationEventType[] = [
   'approved',
   'checks-failed',
   'ready-to-merge',
+  'snooze-ended',
 ];
 export const isPrEvent = (type: NotificationEventType) => PR_EVENT_TYPES.includes(type);
 

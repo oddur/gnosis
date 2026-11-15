@@ -40,8 +40,8 @@ export interface LinkFilters {
   read?: 'unread' | 'read';
   kind?: 'pr' | 'stack';
 }
-export type QueueSection = 'all' | 'response' | 'requested' | 'updated' | 'stacks' | 'saved' | 'starred' | 'muted';
-export const QUEUE_SECTIONS: readonly QueueSection[] = ['all', 'response', 'requested', 'updated', 'stacks', 'saved', 'starred', 'muted'];
+export type QueueSection = 'all' | 'response' | 'requested' | 'updated' | 'stacks' | 'saved' | 'starred' | 'snoozed' | 'muted';
+export const QUEUE_SECTIONS: readonly QueueSection[] = ['all', 'response', 'requested', 'updated', 'stacks', 'saved', 'starred', 'snoozed', 'muted'];
 export type LinkSettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'notifications' | 'integrations';
 export const SETTINGS_SECTIONS: readonly LinkSettingsSection[] = ['queue', 'repositories', 'review', 'appearance', 'notifications', 'integrations'];
 
@@ -673,6 +673,7 @@ export function targetFromLocation(location: AppLocation): DeepLinkTarget | unde
     return { kind: 'pr', pr: ref, ...(item.subject.kind === 'stack' ? { scope: 'stack' as const } : {}), ...(tab !== 'summary' ? { tab } : {}) };
   }
   if (home.muted) return { kind: 'queue', section: 'muted' };
+  if (home.snoozed) return { kind: 'queue', section: 'snoozed' };
   if (home.viewId) return { kind: 'queue', view: home.viewId };
   if (home.savedView) return { kind: 'queue', section: 'saved' };
   const f = home.filters;

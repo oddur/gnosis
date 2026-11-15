@@ -35,6 +35,7 @@ import { PrSummary } from './lazy-screens';
 import './workspace-tabs.css';
 import { useWorkspaceListings } from '../lib/use-workspace-listings';
 import { workbenchStore } from '../lib/workbench-store';
+import { SnoozePickerHost } from '../components/SnoozePicker';
 import { workspaceTabTitle } from '../lib/workspace-listings';
 import { linkErrorNotice, linkSupport, prLinkBlock, prMetadataItem, queueItemFor, routeDeepLink, type LinkAction, type LinkNotice } from '../lib/deep-link-routing';
 import { formatDeepLink, githubUrl, parseDeepLinkError, parseDeepLinkTarget, prUrl, targetFromLocation, type DeepLinkTarget } from '../lib/deep-link';
@@ -531,6 +532,7 @@ export function App() {
               capsuleTarget={titlebarTrailing}
             />
             <ConflictWorkspaceHost />
+            <SnoozePickerHost />
             <Toaster />
           </CommandCenter>
         </WorkspaceNavigation.Provider>
