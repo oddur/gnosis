@@ -94,7 +94,8 @@ export function DiffAppearanceMenu({
                 </select>
               </label>
               <p id={contextDescriptionId} className="text-xs text-muted-foreground leading-relaxed mt-1">
-                Lines before and after each change, where available. You can reveal more in the diff.
+                Lines before and after each change, where available. Changes shows up to the 3 that GitHub sends;
+                reveal more from any gap in the diff.
               </p>
             </div>
             <label className="flex items-center justify-between gap-3">

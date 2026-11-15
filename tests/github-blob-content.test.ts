@@ -265,3 +265,26 @@ void test('the patch check accepts only text whose new-side lines match', () => 
   assert.equal(matchesPatch(Buffer.from(lines.join('\n').replace('d', 'e')), patch), false);
   assert.equal(matchesPatch(Buffer.from('anything'), ''), false, 'No hunk, nothing to check');
 });
+
+void test('an after-only read for context gaps makes one request, and none once the blob is cached (#299)', async () => {
+  const s = server();
+  const old = text('gap', 1),
+    current = text('gap', 2);
+  s.commit(merge, { 'gap.ts': old });
+  s.commit(head(1), { 'gap.ts': current });
+  const load = createSnapshotFileLoader();
+  const file = changed('gap.ts', current);
+  const value = snapshot(head(1), [file]);
+  const request = { url, path: 'gap.ts', baseSha: base, headSha: head(1), afterOnly: true };
+  const result = await load(s.client, request, value, file);
+  assert.deepEqual(result.after, { kind: 'text', content: current });
+  assert.deepEqual(result.before, { kind: 'absent' }, 'The before side is not read');
+  assert.equal(s.reads.length, 1, 'One request, for the after blob');
+  assert.equal(s.pathReads(merge).length, 0, 'The merge base is not read');
+  await load(s.client, { ...request, headSha: head(2) }, snapshot(head(2), [file]), file);
+  assert.equal(s.reads.length, 1, 'The same blob at a new head needs no request');
+  // A full read afterwards reads only the before side.
+  await load(s.client, { ...request, afterOnly: undefined }, value, file);
+  assert.equal(s.reads.length, 2);
+  assert.equal(s.pathReads(merge).length, 1);
+});

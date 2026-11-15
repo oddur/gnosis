@@ -76,6 +76,7 @@ declare global {
       getPrChanges: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
       cancelInspection: (requestId: string) => Promise<void>;
       getPrChangeFile: (request: PrFileRequest, background?: import('../lib/pr-changes').InspectionMode) => Promise<PrFileContents>;
+      getPrChangeFileAfter: (request: PrFileRequest, background?: import('../lib/pr-changes').InspectionMode) => Promise<import('../lib/pr-changes').PrFileSide>;
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
       cancelChat: (requestId: string) => Promise<void>;
       onFileChatProgress: (callback: (event: { requestId: string; chunk: string }) => void) => () => void;

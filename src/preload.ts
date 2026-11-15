@@ -21,7 +21,7 @@ import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { SyncHealthSnapshot } from '../lib/sync-health';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
-import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
+import type { PrChanges, PrFileRequest, PrFileContents, PrFileSide, FileChatRequest } from '../lib/pr-changes';
 import type { GitHubProfile } from '../lib/github-profile';
 import type { QueueSignalRequest, QueueSignals, QueueSignalOptions } from '../lib/queue-signals';
 import type { LocalSearchResponse } from './command-search-service';
@@ -210,6 +210,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cancelInspection: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-inspection', requestId),
   getPrChangeFile: (request: PrFileRequest, background?: InspectionMode): Promise<PrFileContents> =>
     ipcRenderer.invoke('pr-change-file', request, background),
+  getPrChangeFileAfter: (request: PrFileRequest, background?: InspectionMode): Promise<PrFileSide> =>
+    ipcRenderer.invoke('pr-change-file-after', request, background),
   checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> =>
     ipcRenderer.invoke('pr-changes-revision', url),
   cancelChat: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-chat', requestId),
