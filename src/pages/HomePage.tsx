@@ -33,6 +33,8 @@ import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import type { GitHubSyncStatusProps } from '../../components/GitHubSyncStatus';
+import { PrFreshness } from '../../components/PrFreshness';
+import { useFocusRefresh } from '../../lib/use-focus-refresh';
 import { inspectionData } from '../../lib/inspection-cache';
 import { createRowIntent, type RowIntent } from '../../lib/row-intent';
 import { setPredictionAccount, intentsEnabled, currentPreloadSettings, onPreloadSettings } from '../../lib/predictions';
@@ -507,6 +509,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setOverviewTab('explanation');
   }, [explanationDestination]);
   const statusSubject = summaryItem?.subject ?? selectedItem?.subject;
+  // Switching to a PR tab reads it again, at most every 30 s. Returning to Gnosis is main's wake (30 s floor).
+  useFocusRefresh(summaryItem?.subject.members.slice(0, 10).map(member => member.url));
   const briefingSelection = prefs ? briefingModel(prefs) : undefined;
   const briefingModelLabel = briefingSelection
     ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
@@ -1890,6 +1894,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <PrFreshness className="queue-freshness" queue checkedAt={queue.sync?.checkedAt} />
               <button
                 className="workbench-icon"
                 aria-label="Refresh queue"

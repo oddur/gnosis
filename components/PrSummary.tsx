@@ -54,6 +54,7 @@ import { ArrivalProbe, contentMarkers, useIntent, usePredictions } from '../lib/
 import { predictableMembers, prOpenPredictions, tabIntent } from '../lib/navigation-graph';
 import { needsResponse } from '../lib/response-needed';
 import type { ReviewMember } from '../lib/workbench';
+import { PrFreshness, subjectCheckedAt } from './PrFreshness';
 
 /**
  * Restores scroll positions inside a kept tab. Hidden content has no layout, so Chromium can reset
@@ -362,6 +363,15 @@ function PrSummaryContent({
   useEffect(() => statusClock.tick(), [statuses, statusErrors]);
   const commonRepo = stacked && new Set(item.subject.members.map(m => m.repo)).size === 1 ? first.repo : undefined;
   const state = first.merged ? 'Merged' : first.state === 'closed' ? 'Closed' : first.isDraft ? 'Draft' : 'Open';
+  // When Gnosis last read each PR from GitHub: its signals for the shown head, or its status core.
+  const checkedAt = subjectCheckedAt(item.subject.members.map((member) => {
+    const status = statuses[member.url];
+    const reads = [
+      ...signals.filter((value) => value.url === member.url && value.headSha === member.headSha).map((value) => value.checkedAt),
+      ...(status?.checkedAt !== undefined && !status.stale ? [status.checkedAt] : []),
+    ];
+    return reads.length ? Math.max(...reads) : undefined;
+  }));
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
   }, []);
@@ -557,6 +567,7 @@ function PrSummaryContent({
                 </>
               )}
             </span>
+            <PrFreshness className="pr-freshness" checkedAt={checkedAt} />
             {!stacked && (
               <a className="pr-github-link" href={first.url} target="_blank" rel="noopener noreferrer">
                 GitHub <ExternalLink size={13} />

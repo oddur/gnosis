@@ -14,6 +14,8 @@ import { GITHUB_CACHE_SIZES_MB, DEFAULT_GITHUB_CACHE_MB, normalizeGitHubCacheMB 
 import { SearchableSelect } from './SearchableSelect';
 import { DEFAULT_MENUBAR_SETTINGS, menubarSettings, type MenubarSettings } from '../lib/menubar-settings';
 import { Button } from './ui/button';
+import { Toggle, SettingRow } from './SettingsControls';
+import { SyncHealthSettings } from './SyncHealthSettings';
 import { NotificationSettings } from './NotificationSettings';
 import { useSystemSettingsPanes } from './DesktopSetup';
 import { menubarHelp } from '../lib/desktop-setup';
@@ -38,7 +40,7 @@ import { applyTheme, type ThemeChoice } from '@/lib/theme';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
 import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
 
-export type SettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'notifications' | 'integrations';
+export type SettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'notifications' | 'integrations' | 'diagnostics';
 
 interface Props {
   initialSection?: SettingsSection;
@@ -50,30 +52,6 @@ interface Props {
   onShowWalkthrough?: () => void;
   /** Opens the notifications and menu bar setup steps on their own. */
   onDesktopSetup?: () => void;
-}
-
-// Quiet toggle switch — drops the bg-primary fill (now ink) and the
-// shadow-sm thumb in favor of a warm-amber active state and a flat
-// thumb. Used across all the on/off settings.
-function Toggle({ checked, onChange, ariaLabel }: { checked: boolean; onChange: () => void; ariaLabel?: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
-      onClick={onChange}
-      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors ${
-        checked ? 'bg-[var(--ring)] border-[var(--ring)]' : 'bg-transparent border-border'
-      }`}
-    >
-      <span
-        className={`pointer-events-none block h-3.5 w-3.5 rounded-full transition-transform translate-y-px ${
-          checked ? 'bg-background translate-x-[1.125rem]' : 'bg-muted-foreground translate-x-[2px]'
-        }`}
-      />
-    </button>
-  );
 }
 
 // Quiet text-only chip — same vocabulary as DiffLayoutToggle. Active
@@ -103,27 +81,6 @@ function Chip({
     >
       {children}
     </button>
-  );
-}
-
-// Single setting row — label + description on the left, control on the right.
-function SettingRow({
-  label,
-  description,
-  children,
-}: {
-  label: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="settings-row flex items-center justify-between gap-4 py-1">
-      <div className="flex flex-col gap-0.5 min-w-0">
-        <span className="text-sm font-medium text-foreground">{label}</span>
-        {description && <span className="settings-description">{description}</span>}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
   );
 }
 
@@ -559,6 +516,7 @@ export function SettingsDialog({
               <Tabs.Trigger value="appearance">Appearance</Tabs.Trigger>
               <Tabs.Trigger value="notifications">Notifications</Tabs.Trigger>
               <Tabs.Trigger value="integrations">Integrations</Tabs.Trigger>
+              <Tabs.Trigger value="diagnostics">Diagnostics</Tabs.Trigger>
             </Tabs.List>
             <Tabs.Content forceMount value="repositories" className="settings-panel settings-repositories">
               <div className="repository-panel-heading">
@@ -1188,6 +1146,9 @@ export function SettingsDialog({
                 Open logs directory →
               </button>
               {logsError && <p role="alert" className="text-sm text-destructive">{logsError}</p>}
+            </Tabs.Content>
+            <Tabs.Content value="diagnostics" className="settings-panel">
+              <SyncHealthSettings />
             </Tabs.Content>
           </Tabs.Root>
         )}

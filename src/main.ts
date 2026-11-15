@@ -82,6 +82,7 @@ import { createGitHubProfileService } from './github-profile-service';
 import { createQueueSignalsService, cachedQueueSignals, savedQueueSignals } from './queue-signals-service';
 import { queueSignalsCacheKey, type QueueSignalRequest, type QueueSignalOptions, type QueueSignals } from '../lib/queue-signals';
 import { createSearchIndexer } from './command-search-service';
+import { createSyncHealthService } from './sync-health-service';
 import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
 import { createReviewThreadService } from './review-thread-service';
@@ -4161,6 +4162,36 @@ ipcMain.on('github-sync-watch', afterStartup(startup, (event: Electron.IpcMainEv
     return value ? [{ kind: 'metadata' as const, url: target.url, value }] : [];
   }));
 }));
+// ── Sync health ──
+// A few PRs every 12 minutes while sync is active, compared with GitHub's own computed fields. Settings › Diagnostics
+// shows mismatches, the log names them and the diagnostics export carries them. See lib/sync-health.ts.
+const syncHealth = createSyncHealthService({
+  storage: appData,
+  token: () => cachedToken,
+  login: () => cachedLogin,
+  client: token => getGitHubClient(token),
+  syncActive: () => !!cachedToken && syncEnabled(),
+  blocked: (token, background) => !!githubClients.backoff(token, background, ['graphql']),
+  automaticUsage: token => githubClients.automaticUsage(token, 'graphql'),
+  queueUrls: () => workbench.snapshot().items.flatMap(item => item.subject.members.map(member => member.url)),
+  member: url => {
+    const known = workbench.knownMember(url), synced = syncMetadata.get(url);
+    return known && synced ? (Date.parse(synced.updatedAt) > Date.parse(known.updatedAt) ? synced : known) : known ?? synced;
+  },
+  signals: (client, url, headSha) => cachedQueueSignals(client, [{ url, headSha }])[0],
+  status: (client, url, headSha) => prStatus.cached(client, url, headSha),
+  threads: (client, url) => reviewThreads.cached(client, url),
+  // Switching to a PR or returning to Gnosis: its metadata and signals, unless read within 30 s.
+  refreshOpen: urls => { if (githubSync.refresh(urls, ['metadata', 'signals']).length) void githubSync.tick(); },
+  notify: () => notifyLocalChange('sync-health-changed'),
+  appInfo: () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron }),
+});
+syncHealth.register();
+void app.whenReady().then(() => {
+  const timer = setInterval(() => { if (startup.ready('all')) syncHealth.tick(); }, 15_000);
+  timer.unref();
+  app.once('will-quit', () => clearInterval(timer));
+});
 let discoveryDue = 0;
 let discoveryPending = false;
 let syncWasAvailable = false;
