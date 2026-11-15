@@ -1,5 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import { clearWriteFailure, useWriteFailure } from '../lib/write-failures';
+import { clearWriteFailure, onUnseenWriteFailure, showingWriteFailure, useWriteFailure } from '../lib/write-failures';
+import { toast } from './ui/toast';
+
+// A failure whose own notice is not on screen, such as a comment on a file scrolled out of view, still reaches the
+// reader: as a toast with the same text and Retry. The typed text is already back in its composer.
+onUnseenWriteFailure((failure) => {
+  const id = toast.add({
+    title: failure.title,
+    description: failure.detail,
+    type: 'error',
+    ...(failure.retry
+      ? {
+          actionProps: {
+            children: 'Retry',
+            onClick: () => {
+              toast.close(id);
+              void failure.retry?.();
+            },
+          },
+        }
+      : {}),
+  });
+});
 
 /**
  * A GitHub write that failed and was rolled back: what did not happen, GitHub's reason, and Retry. The reader's text
@@ -9,6 +31,8 @@ export function WriteFailureNotice({ failureKey, className }: { failureKey: stri
   const failure = useWriteFailure(failureKey);
   const [retrying, setRetrying] = useState(false);
   const element = useRef<HTMLDivElement>(null);
+  const shown = !!failure;
+  useEffect(() => (failureKey && shown ? showingWriteFailure(failureKey) : undefined), [failureKey, shown]);
   useEffect(() => {
     if (!failure) return;
     element.current?.scrollIntoView({ block: 'nearest' });

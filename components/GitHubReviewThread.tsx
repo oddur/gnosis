@@ -2,9 +2,9 @@ import { createPortal } from 'react-dom';
 import { Button } from './ui/button';
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { GitHubAuthor } from './GitHubAuthor';
-import { useSessionDraft } from '../lib/session-drafts';
+import { readSessionDraft, useSessionDraft, useSessionDraftId, writeSessionDraft } from '../lib/session-drafts';
 import { useId, useState, useRef, useEffect } from 'react';
-import { optimisticWrite } from '../lib/write-failures';
+import { optimisticWrite, useWriteInFlight } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
 import { CommentMarkdown } from './CommentMarkdown';
@@ -51,6 +51,10 @@ export function GitHubReviewThread({
 }: Props) {
   const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`, false);
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
+  const draftId = useSessionDraftId(`thread-reply:${thread.id}`);
+  const replyingId = useSessionDraftId(`thread-replying:${thread.id}`);
+  // One reply per thread at a time: a second one waits until GitHub answers the first.
+  const replySending = useWriteInFlight(`thread-reply:${thread.id}`);
   // Writes show at once: main applies them to the thread before GitHub answers, and rolls them back on failure.
   // Nothing here waits, so the controls stay available; a failure brings the typed text back with Retry.
   const replyForm = useRef<HTMLFormElement>(null);
@@ -96,10 +100,12 @@ export function GitHubReviewThread({
           setDraft('');
           setReplying(false);
         },
-        // Text typed since stays: the failed reply is kept in the notice and sent again by Retry.
+        // Written by id: the thread may have remounted since, for example after the file was collapsed and
+        // expanded. Text typed since stays; the failed reply is kept in the notice and sent again by Retry.
         restore: (text) => {
-          setDraft((current) => (current.trim() ? current : text));
-          setReplying(true);
+          const current = readSessionDraft(draftId);
+          if (typeof current !== 'string' || !current.trim()) writeSessionDraft(draftId, text);
+          writeSessionDraft(replyingId, true);
         },
         write: () => onAction('reply', body),
       });
@@ -132,7 +138,8 @@ export function GitHubReviewThread({
       {!replying && actionButton('Reply', () => setReplying(true))}
       {replying && actionContainer && (
         <>
-          <Button size="sm" type="submit" form={`${inputId}-form`} disabled={!draft.trim()}>
+          <Button size="sm" type="submit" form={`${inputId}-form`} disabled={!draft.trim() || replySending}
+            title={replySending ? 'Your previous reply is still sending.' : undefined}>
             Reply on GitHub
           </Button>
           {actionButton('Cancel', () => setReplying(false))}
@@ -293,7 +300,8 @@ export function GitHubReviewThread({
           />
           {!actionContainer && (
             <div className="github-thread-actions">
-              <button type="submit" disabled={!draft.trim()}>
+              <button type="submit" disabled={!draft.trim() || replySending}
+            title={replySending ? 'Your previous reply is still sending.' : undefined}>
                 Reply on GitHub
               </button>
               <button type="button" onClick={() => setReplying(false)}>

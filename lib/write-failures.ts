@@ -18,6 +18,24 @@ export interface WriteFailure {
   retry?: () => Promise<unknown>;
 }
 const failures = new Map<string, WriteFailure>();
+/** Notices on screen, by failure key. A failure no notice shows is announced another way. */
+const notices = new Map<string, number>();
+let unseen: ((failure: WriteFailure) => void) | undefined;
+/** How a failure is shown when no notice for it is on screen, such as after its file scrolled away. */
+export function onUnseenWriteFailure(handler: (failure: WriteFailure) => void) {
+  unseen = handler;
+}
+/** A notice for this key is on screen. Returns the cleanup. */
+export function showingWriteFailure(key: string) {
+  notices.set(key, (notices.get(key) ?? 0) + 1);
+  return () => {
+    const count = (notices.get(key) ?? 1) - 1;
+    if (count) notices.set(key, count);
+    else notices.delete(key);
+  };
+}
+/** Targets with a write GitHub has not answered. A second write to one waits, so nothing is posted twice. */
+const inFlight = new Set<string>();
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((listener) => listener());
 
@@ -31,8 +49,13 @@ export function writeErrorDetail(error: unknown): string {
 }
 export function reportWriteFailure(input: Omit<WriteFailure, 'title' | 'detail'> & { error: unknown; title?: string }) {
   const { error, title, ...rest } = input;
-  failures.set(input.key, { ...rest, title: title ?? failureTitle(input.action), detail: writeErrorDetail(error) });
+  const failure = { ...rest, title: title ?? failureTitle(input.action), detail: writeErrorDetail(error) };
+  failures.set(input.key, failure);
   emit();
+  // The view that made the write may have gone, or not come back yet after the rollback restored its composer.
+  setTimeout(() => {
+    if (failures.get(input.key) === failure && !notices.has(input.key)) unseen?.(failure);
+  }, 400);
 }
 export function clearWriteFailure(key: string) {
   if (failures.delete(key)) emit();
@@ -43,6 +66,11 @@ export function subscribeWriteFailures(listener: () => void) {
   return () => {
     listeners.delete(listener);
   };
+}
+export const isWriteInFlight = (key: string) => inFlight.has(key);
+/** Whether a write to this target is waiting for GitHub. Survives the view remounting. */
+export function useWriteInFlight(key: string): boolean {
+  return useSyncExternalStore(subscribeWriteFailures, () => inFlight.has(key));
 }
 export function useWriteFailure(key: string | undefined): WriteFailure | undefined {
   return useSyncExternalStore(subscribeWriteFailures, () => (key ? failures.get(key) : undefined));
@@ -61,8 +89,12 @@ export async function optimisticWrite<T>(input: {
   clear?: () => void;
   restore?: (body: string) => void;
 }): Promise<T | undefined> {
+  // The same target is already being written, for example a reply sent twice: the first one stands.
+  if (inFlight.has(input.key)) return undefined;
+  inFlight.add(input.key);
   clearWriteFailure(input.key);
   input.clear?.();
+  emit();
   try {
     return await input.write();
   } catch (error) {
@@ -75,5 +107,8 @@ export async function optimisticWrite<T>(input: {
       retry: () => optimisticWrite(input),
     });
     return undefined;
+  } finally {
+    inFlight.delete(input.key);
+    emit();
   }
 }

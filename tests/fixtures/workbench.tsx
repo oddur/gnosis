@@ -511,6 +511,10 @@ window.addEventListener('fixture-new-commit', () => {
   updateFixtureUnread();
   window.dispatchEvent(new Event('fixture-pr-read-change'));
 });
+const fixtureOptimistic = new Set<(event: { url: string; discussion: unknown }) => void>();
+Object.assign(window, {
+  fixtureOptimistic: { emit: (url: string, discussion: unknown) => fixtureOptimistic.forEach((callback) => callback({ url, discussion })) },
+});
 const mocks = {
   getPrBadgePreview: (url:string) => {
     const item=items.find(item=>item.subject.members.some(member=>member.url===url));
@@ -799,6 +803,14 @@ const mocks = {
   // Fixtures keep no saved status, so the cached-first read finds nothing and does not consume a failure.
   // Main tells every window after it read GitHub again following a write. Fixtures without writes never call it.
   onGitHubWriteRefreshed: () => () => {},
+  // Main pushes discussions with the reader's writes applied before GitHub answers. Tests that stand in for main
+  // push through window.fixtureOptimistic.emit; the others never do.
+  onGitHubOptimistic: (callback: (event: { url: string; discussion: unknown }) => void) => {
+    fixtureOptimistic.add(callback);
+    return () => {
+      fixtureOptimistic.delete(callback);
+    };
+  },
   getPrStatus: async (url: string, _force?: boolean, options?: { cachedOnly?: boolean }) =>
     options?.cachedOnly ? null : statusFailures-- > 0
       ? Promise.reject(new Error('API rate limit exceeded. Request ID fixture-request. Retry after the limit resets.'))

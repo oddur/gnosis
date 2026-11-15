@@ -5,7 +5,7 @@ import type { GitHubReviewThread as Thread } from '../lib/review-threads';
 import { useChangesReviewDrafts, type ChangesReviewDraft } from '../lib/changes-review-drafts';
 import { briefAppliesTo, briefLines, useAgentBrief, type AgentBriefComment, type AgentBriefPin } from '../lib/agent-brief';
 import { toast } from './ui/toast';
-import { ReviewDraftBoundary, useSessionDraft } from '../lib/session-drafts';
+import { ReviewDraftBoundary, useSessionDraft, useSessionDraftId, writeSessionDraft } from '../lib/session-drafts';
 import { optimisticWrite } from '../lib/write-failures';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import { ChangesCommentComposer } from './ChangesCommentComposer';
@@ -79,6 +79,7 @@ export function useChangesComments({
   const { drafts, update } = useChangesReviewDrafts(account, url);
   const agentBrief = useAgentBrief(brief?.subjectId ?? '');
   const [composer, setComposer] = useSessionDraft<Location | null>(`changes-composer:${account}:${activeKey}`, null);
+  const composerId = useSessionDraftId(`changes-composer:${account}:${activeKey}`);
   const [reviewOpen, setReviewOpen] = useState(false),
     [draftsOpen, setDraftsOpen] = useState(false),
     [error, setError] = useState('');
@@ -276,7 +277,8 @@ export function useChangesComments({
                       },
                       restore: (text) => {
                         restore(text);
-                        setComposer(where);
+                        // By id: the reader may have moved to another file since. The composer is back when they return.
+                        writeSessionDraft(composerId, where);
                       },
                     });
                   } else

@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   createContext,
   useContext,
   useState,
@@ -9,6 +10,8 @@ import {
 } from 'react';
 // Session-only draft storage survives route changes without writing private text to disk.
 const values = new Map<string, unknown>();
+/** Editors showing a draft, so a draft written by id after a remount reaches the one now on screen. */
+const watchers = new Map<string, Set<(value: unknown) => void>>();
 export const ReviewDraftScope = createContext('');
 const WorkspaceDraftScope = createContext('');
 /** Closed-tab recovery is bounded; release drafts once a destination leaves that history. */
@@ -39,6 +42,16 @@ export function useSessionDraft<T>(key: string, initial: T | (() => T)): [T, Dis
   };
   const [state, setState] = useState(() => ({ id, value: read() }));
   if (state.id !== id) setState({ id, value: read() });
+  useEffect(() => {
+    const watch = (value: unknown) => setState({ id, value: value as T });
+    let set = watchers.get(id);
+    if (!set) watchers.set(id, (set = new Set()));
+    set.add(watch);
+    return () => {
+      set.delete(watch);
+      if (!set.size) watchers.delete(id);
+    };
+  }, [id]);
   const set: Dispatch<SetStateAction<T>> = (next) =>
     setState((previous) => {
       const old = previous.id === id ? previous.value : read();
@@ -53,9 +66,12 @@ export function useSessionDraft<T>(key: string, initial: T | (() => T)): [T, Dis
 export function useSessionDraftId(key: string): string {
   return `${useContext(ReviewDraftScope)}:${key}`;
 }
+/** Reads a draft by its stored id, without an editor. */
+export const readSessionDraft = (id: string): unknown => values.get(id);
 /** Writes a draft by its stored id. An editor that mounts later shows it. */
 export function writeSessionDraft(id: string, value: unknown) {
   values.set(id, value);
+  watchers.get(id)?.forEach((watch) => watch(value));
 }
 
 /** Persist scroll without rerendering a virtualized list on every wheel event. */
