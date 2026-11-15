@@ -1,22 +1,32 @@
 import { freshnessLabel } from '../lib/focus-refresh';
 import { useStatusNow } from '../lib/status-clock';
+import { LoadingIndicator } from './LoadingState';
 
 /**
- * "Checked 2m ago": when Gnosis last read this PR from GitHub. Ages on the shared status clock, so only this label
+ * "Checked 2m ago": when Gnosis last read this PR from GitHub. While the copy saved last session is on screen and
+ * main has not answered yet, the same slot says "Refreshing…" instead: one label, in one place, so nothing moves. Ages on the shared status clock, so only this label
  * renders again. The slot keeps its width before the first read, so nothing beside it moves.
  */
 export function PrFreshness({
   checkedAt,
   className,
   queue = false,
+  refreshing = false,
 }: {
   checkedAt?: number;
   className: string;
   queue?: boolean;
+  refreshing?: boolean;
 }) {
   // The shared status clock renders this again every 30 s and on focus; the label reads the time itself.
   useStatusNow();
   const now = Date.now();
+  if (refreshing)
+    return (
+      <span className={`${className} is-refreshing`} title="Showing what Gnosis saved last session while it reads GitHub again.">
+        <LoadingIndicator announce={false}>Refreshing…</LoadingIndicator>
+      </span>
+    );
   // The PR header reserves the slot so its row never moves; the queue toolbar's actions are right-aligned anyway.
   if (checkedAt === undefined) return queue ? null : <span className={className} aria-hidden="true" />;
   const label = freshnessLabel(checkedAt, now);

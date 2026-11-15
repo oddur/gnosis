@@ -58,3 +58,9 @@ export function signalValues(scope: string, requests: readonly QueueSignalReques
 export function signalStamp(scope: string, requests: readonly QueueSignalRequest[]): string {
   return requests.map((request) => value(scope, request)?.checkedAt).join();
 }
+
+/** Calls `listener` whenever the account's saved status changes. Returns a function that stops it. */
+export function onQueueSignals(scope: string, listener: () => void) {
+  updates.addEventListener(scope, listener);
+  return () => updates.removeEventListener(scope, listener);
+}

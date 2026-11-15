@@ -94,9 +94,12 @@ void app.whenReady().then(async () => {
     await js(`(async()=>{window.tabIntents=[];window.electronAPI.prOpenIntent=targets=>{window.tabIntents.push(targets&&targets.map(t=>t.url))};
       const tab=document.querySelectorAll('.workspace-tab-select')[1];tab.dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));
       await new Promise(r=>setTimeout(r,300));tab.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,relatedTarget:document.body}));})()`);
-    await wait('window.tabIntents.length===2');
-    assert.ok(await js<boolean>("window.tabIntents[0]?.length===1&&window.tabIntents[0][0].startsWith('https://github.com/')"), 'The tab\'s PR is prepared');
-    assert.equal(await js('window.tabIntents[1]'), null, 'Leaving the tab clears the intent');
+    // The queue row that keeps keyboard focus after the click may prepare the same PR too; leaving the tab clears it.
+    await wait('window.tabIntents.length>=2&&window.tabIntents.at(-1)===null').catch(async (error: unknown) => {
+      throw new Error(`${String(error)} ${JSON.stringify(await js("({intents:window.tabIntents,focus:document.hasFocus()})"))}`);
+    });
+    assert.ok(await js<boolean>("window.tabIntents.slice(0,-1).every(t=>t?.length===1&&t[0].startsWith('https://github.com/'))"), 'The tab\'s PR is prepared');
+    assert.equal(await js('window.tabIntents.filter(t=>t===null).length'), 1, 'Leaving the tab clears the intent');
     assert.equal(await js('window.tabReads'), 0, 'Preparing a tab does not mark its PR read');
     await js(`document.querySelectorAll('.workspace-tab-select')[1].click()`);
     await wait(`${root}.querySelector('.pr-summary-page')!==null`);

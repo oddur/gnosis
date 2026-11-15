@@ -37,8 +37,11 @@ import { PrFreshness } from '../../components/PrFreshness';
 import { useFocusRefresh } from '../../lib/use-focus-refresh';
 import { inspectionData } from '../../lib/inspection-cache';
 import { createRowIntent, type RowIntent } from '../../lib/row-intent';
-import { setPredictionAccount, intentsEnabled, currentPreloadSettings, onPreloadSettings } from '../../lib/predictions';
-import { openRows, type OpenTarget } from '../../lib/pr-open-targets';
+import { setPredictionAccount, currentPreloadSettings, onPreloadSettings, predictor } from '../../lib/predictions';
+import { openIntent as openPrediction, predictableMembers } from '../../lib/navigation-graph';
+import { usePredictions } from '../../lib/use-predictions';
+import type { Prediction } from '../../lib/navigation-predictor';
+import { openRows } from '../../lib/pr-open-targets';
 import { EntryActions } from '../../components/EntryActions';
 import { prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
 import { MutedPrs } from '../../components/MutedPrs';
@@ -76,7 +79,7 @@ import {
   type QueueFilters,
 } from '../../lib/queue-filters';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
-import { Activity, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Activity, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
@@ -172,6 +175,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const storeQueue = useWorkbenchQueue();
   const history = useReviewHistory();
   const storeStatus = useWorkbenchStatus();
+  // Until the window knows who is signed in, rows read saved status for the account the shown queue belongs to.
+  const shownAccount = useSyncExternalStore(workbenchStore.subscribe, workbenchStore.getShownAccount);
+  // Reading saved status only: actions and GitHub reads still wait for the window's own account.
+  const statusAccount = auth ? auth.login : shownAccount && shownAccount !== 'local' ? shownAccount : null;
   // The saved view this tab shows. It starts from the view that was active when the queue first loaded.
   const [ownViewState, setOwnViewId] = useState<string | null | undefined>(undefined);
   const ownViewId = ownViewState === undefined ? storeQueue.savedViews?.activeId : ownViewState;
@@ -1005,7 +1012,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const signalMembers = useMemo(() => statusSort
     ? [...queueItems.flatMap(item => item.subject.members), ...(savedView ? visibleHistory.flatMap(entry => entry.snapshot?.subject.members ?? []) : [])]
     : [], [statusSort, queueItems, savedView, visibleHistory]);
-  const sortSignals = useCachedQueueSignals(auth?.login ?? null, signalMembers, statusSort);
+  const sortSignals = useCachedQueueSignals(statusAccount, signalMembers, statusSort);
   const sortedSaved = useMemo(() => sortSavedReviews(
     visibleHistory.filter(h => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())), savedSort, starredUrls, sortSignals),
   [visibleHistory, query, savedSort, starredUrls, sortSignals]);
@@ -1053,7 +1060,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     });
   }, [statusSubject, orderedItems, orderedBacklog, visibleQueueIds]);
   // Status, checks and discussions are saved ahead of opening. Hover and focus intent lives in a ref, so it never re-renders.
-  const openIntent = useRef<{ rows: Map<string, OpenTarget[]>; intent: RowIntent } | null>(null);
+  const openIntent = useRef<{ rows: Map<string, { url: string; headSha: string; baseSha: string; updatedAt: string }[]>; intent: RowIntent } | null>(null);
   // Stable, so the memoized queue list does not re-render for hover wiring.
   const onQueueIntent = useCallback((id: string | null) => { if (id) openIntent.current?.intent.enter(id); else openIntent.current?.intent.leave(); }, []);
   // Settings › Preloading › "Prepare the top of the queue". Off: only the open PR is prepared in the background.
@@ -1068,18 +1075,19 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       setPredictionAccount(auth.authenticated ? auth.login : null);
       const open = openRows(rows, intent ?? {});
       window.electronAPI.prOpenPreload?.(auth.authenticated && prepareQueue ? open.targets.slice(0, 200) : []);
-      openIntent.current ??= { rows: open.rows, intent: createRowIntent({
+      const subjects = new Map(rows.map(row => [row.id, row.members]));
+      // A row the pointer or focus rests on is a predicted PR open: main prepares its status, checks and threads, and
+      // the predictor its inventories and first file. Settings › Preloading › "Preload likely next pages" covers it.
+      openIntent.current ??= { rows: subjects, intent: createRowIntent({
         fire: id => {
           const members = openIntent.current?.rows.get(id) ?? [];
-          // Settings › Preloading › "Preload likely next pages" covers queue-row hover and focus too.
-          if (!members.length || !intentsEnabled()) return;
-          inspectionData.setIntent(members.map(member => member.url));
-          window.electronAPI.prOpenIntent?.(members);
-          void PrSummary.preload();
+          if (workbenchStore.getStatus().saved) return;
+          const prediction = openPrediction(id, members);
+          if (prediction) predictor.intent('queue-row', prediction);
         },
-        clear: () => { inspectionData.setIntent([]); window.electronAPI.prOpenIntent?.(null); },
+        clear: () => predictor.intent('queue-row', null),
       }) };
-      openIntent.current.rows = open.rows;
+      openIntent.current.rows = subjects;
     };
     preload();
     document.addEventListener('visibilitychange', preload);
@@ -1175,6 +1183,22 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     const next = summaryChoices[summaryIndex + direction];
     if (summaryIndex >= 0 && summaryIndex + direction >= 0 && summaryIndex + direction < summaryChoices.length) void selectSummary(next.value);
   };
+  // The next and previous PR of the open one are prepared while it is open, so j and k show them at once: the next one
+  // first, since readers move forward more often. They stay within the predicted budget and pause when unfocused.
+  const neighbourOwner = `pr-neighbours:${useId()}`;
+  const neighbourPredictions = useMemo((): Prediction[] => {
+    // Rows from the copy saved last session may name old heads; main's snapshot names the ones worth reading.
+    if (!summaryItem || savedView || !auth?.authenticated || summaryIndex < 0 || storeStatus.saved) return [];
+    return ([[1, 0.5], [-1, 0.3]] as const).flatMap(([offset, weight]) => {
+      const choice = summaryIndex + offset >= 0 ? summaryChoices.at(summaryIndex + offset) : undefined;
+      const item = choice && orderedItems.find(entry => entry.subject.id === choice.value);
+      const members = item ? predictableMembers(item.subject.members) : [];
+      return item && members.length
+        ? [{ destination: { kind: 'pr-open' as const, subjectId: item.subject.id, members, neighbour: true }, weight, strength: 'intent' as const }]
+        : [];
+    });
+  }, [summaryItem, savedView, auth?.authenticated, summaryIndex, summaryChoices, orderedItems, storeStatus.saved]);
+  usePredictions(neighbourOwner, neighbourPredictions);
   const openSettings = (next: SettingsSection = 'queue') => {
     setSettingsSection(next);
     setSettings(true);
@@ -1536,10 +1560,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     const bulk = multiple && active;
     return <QueueRow key={id} item={item} focused={focused} active={active} multiple={multiple} bulk={bulk}
       tabStop={focused || fallbackTabStop === id} expanded={expanded.has(id)} selectedCount={selectedItems.length}
-      account={auth?.login ?? null} filters={filters} starredUrls={starredUrls} readStates={readStates}
+      account={statusAccount} filters={filters} starredUrls={starredUrls} readStates={readStates}
       menuKey={menuKey} bulkMenu={bulk ? bulkMenu : undefined} actions={rowActions} />;
   // Selection keys are compared by content.
-  }, [selected, selectionSignature, multiple, fallbackTabStop, expanded, selectedItems.length, auth?.login, filters, starredUrls, readStates, menuKey, bulkMenu, rowActions]);
+  }, [selected, selectionSignature, multiple, fallbackTabStop, expanded, selectedItems.length, statusAccount, filters, starredUrls, readStates, menuKey, bulkMenu, rowActions]);
   const sidebarCounts = useMemo(() => ({
     response: queue.items.filter(item => matchesQueueFilters(item, { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' }, clock, login)).length,
     stacks: queue.items.filter(item => item.subject.kind === 'stack').length,
@@ -1659,6 +1683,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         onStarChange={(members, value) => void changeStars(members, value)}
         account={auth?.login ?? null}
         statusRefreshing={statusRefreshing}
+        revalidating={!!storeStatus.saved}
         tab={overviewTab}
         onTabChange={setOverviewTab}
         preferences={prefs}
@@ -1894,7 +1919,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <PrFreshness className="queue-freshness" queue checkedAt={queue.sync?.checkedAt} />
+              <PrFreshness className="queue-freshness" queue checkedAt={queue.sync?.checkedAt} refreshing={!!storeStatus.saved} />
               <button
                 className="workbench-icon"
                 aria-label="Refresh queue"
@@ -2090,6 +2115,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 aria-label="Review queue"
                 ref={attachQueueScroll}
                 onScroll={(event) => {
+                  // Rows passing under a still pointer are not hovers.
+                  openIntent.current?.intent.scrolled();
                   if (!attachedQueue.current) return;
                   queueScrollOffset.current = event.currentTarget.scrollTop;
                   if (historyLocation.current) {

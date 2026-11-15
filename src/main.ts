@@ -3900,6 +3900,11 @@ const prOpenPreload = createPrOpenPreloader({
   committedDetails: () => predictedPlan().details,
   usage: () => githubClients.automaticUsage(cachedToken, 'graphql'),
   idleSeconds: () => powerMonitor.getSystemIdleTime(),
+  saved: (target, kind) => {
+    const client = getGitHubClient(cachedToken);
+    const saved = kind === 'status' ? prStatus.saved(client, target.url) : savedQueueSignals(client, target)?.value;
+    return !!saved && saved.headSha === target.headSha;
+  },
   need: (target, kind) => {
     const client = getGitHubClient(cachedToken), now = Date.now();
     if (kind === 'details') return checksNeedingDetails(target).length > 0;
@@ -3945,7 +3950,7 @@ function prOpenOwner(event: Pick<Electron.IpcMainEvent, 'sender' | 'senderFrame'
   const owner = event.sender.id;
   if (!prOpenOwners.has(owner)) {
     prOpenOwners.add(owner);
-    event.sender.once('destroyed', () => { prOpenOwners.delete(owner); prOpenPreload.removeOwner(String(owner)); });
+    event.sender.once('destroyed', () => { prOpenOwners.delete(owner); neighbourSlots.delete(String(owner)); prOpenPreload.removeOwner(String(owner)); });
   }
   return String(owner);
 }
@@ -3962,8 +3967,20 @@ ipcMain.handle('pr-open-committed', async (event, raw: unknown, label: unknown) 
   if (!owner) return;
   const targets = raw === null ? null : parseOpenTargets(raw, 5);
   if (targets === undefined) return;
-  await prOpenPreload.setCommitted(`${owner}:committed`, targets, predictionLabel(label));
+  const slot = predictionLabel(label) === 'pr-neighbour' && targets?.length ? neighbourSlot(owner, targets[0].url) : `${owner}:committed`;
+  await prOpenPreload.setCommitted(slot, targets, predictionLabel(label));
 });
+// The next and previous PR of the open one each have a slot, so neither replaces the other or the open PR's work.
+// A window keeps the two most recent; an older neighbour that has not run yet is dropped.
+const neighbourSlots = new Map<string, string[]>();
+function neighbourSlot(owner: string, url: string) {
+  const slot = `${owner}:neighbour:${url}`;
+  const slots = (neighbourSlots.get(owner) ?? []).filter(key => key !== slot);
+  slots.push(slot);
+  while (slots.length > 2) void prOpenPreload.setCommitted(slots.shift() as string, null);
+  neighbourSlots.set(owner, slots);
+  return slot;
+}
 ipcMain.on('pr-open-intent', afterStartup(startup, (event: Electron.IpcMainEvent, raw: unknown) => {
   const owner = prOpenOwner(event);
   if (!owner) return;

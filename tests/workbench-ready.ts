@@ -48,6 +48,56 @@ export async function loadWorkbenchPage(window: BrowserWindow, url: string): Pro
   }
 }
 
+/**
+ * Reloads a fixture page and waits until `ready` is true, with the same stalled-load retry as loadWorkbenchPage.
+ *
+ * A bare reload followed by a short wait once timed out on Windows CI with no explanation (#357). When the suite
+ * already attached the debugger, its session is used to track requests, so a stall lists what was still pending.
+ */
+export async function reloadWorkbenchPage(window: BrowserWindow, ready: string): Promise<void> {
+  const diagnostics = await watchPage(window, { shareDebugger: true });
+  try {
+    try {
+      await reloadUntil(window, ready, 30_000);
+    } catch (error) {
+      if (!(error instanceof LoadStalled)) throw error;
+      console.warn(`${error.message}; reloading once more.\n${await diagnostics.report()}`);
+      diagnostics.mark('reloading the page once more');
+      await stopLoading(window.webContents);
+      await reloadUntil(window, ready, 60_000);
+    }
+  } catch (error) {
+    throw new Error(`${(error as Error).message}\n${await diagnostics.report()}`);
+  } finally {
+    diagnostics.stop();
+  }
+}
+
+async function reloadUntil(window: BrowserWindow, ready: string, timeoutMs: number): Promise<void> {
+  const contents = window.webContents;
+  // The old document can still answer for a moment after reload(); the marker tells the two apart.
+  await contents.executeJavaScript('window.__gnosisBeforeReload = true');
+  contents.reload();
+  const check = `!window.__gnosisBeforeReload && Boolean(${ready})`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    // webContents.executeJavaScript waits while the page loads, which may be what stalled. The frame does not.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = await Promise.race([
+      contents.mainFrame.executeJavaScript(check).catch(() => false),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), 5_000);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (done) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new LoadStalled(
+    `${ready} was not true ${timeoutMs / 1000}s after reloading ${contents.getURL().slice(0, 200)}`
+  );
+}
+
 async function loadAndRender(window: BrowserWindow, url: string, renderTimeoutMs: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const loading = window.loadURL(url);
@@ -120,12 +170,15 @@ const pageStateScript = `(()=>{
  * errors, uncaught errors and unhandled rejections, failed and still-pending requests, frame load
  * failures, renderer crashes and hangs, and how far the document got.
  */
-async function watchPage(window: BrowserWindow) {
+async function watchPage(window: BrowserWindow, options: { shareDebugger?: boolean } = {}) {
   const contents = window.webContents;
   const started = Date.now();
   const events: string[] = [];
   const pending = new Map<string, { url: string; at: number }>();
   let ownsDebugger = false;
+  // True once this watcher enabled CDP events, on its own session or on the suite's.
+  let tracksRequests = false;
+  let sharesDebugger = false;
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
   const mark = (line: string) => {
     events.push(`+${seconds(Date.now() - started)} ${line}`);
@@ -135,7 +188,7 @@ async function watchPage(window: BrowserWindow) {
     const { level, message } = details;
     if (level !== 'error' && level !== 'warning' && !message.includes('[vite]')) return;
     // With CDP, uncaught errors and rejections are recorded with their stack below.
-    if (ownsDebugger && message.startsWith('Uncaught')) return;
+    if (tracksRequests && message.startsWith('Uncaught')) return;
     const source = level === 'error' && details.sourceId ? ` (${details.sourceId}:${details.lineNumber ?? 0})` : '';
     mark(`console ${level}: ${message.slice(0, 1000)}${source}`);
   };
@@ -172,11 +225,16 @@ async function watchPage(window: BrowserWindow) {
   window.on('unresponsive', onUnresponsive);
   window.on('responsive', onResponsive);
   contents.debugger.on('message', onCdp);
-  // A suite that attached the debugger itself keeps its session; then only Electron's events are recorded.
-  if (!contents.debugger.isAttached()) {
+  // A suite that attached the debugger itself keeps its session; then only Electron's events are recorded,
+  // unless the caller asked to share that session.
+  if (!contents.debugger.isAttached() || options.shareDebugger) {
     try {
-      contents.debugger.attach('1.3');
-      ownsDebugger = true;
+      if (contents.debugger.isAttached()) sharesDebugger = true;
+      else {
+        contents.debugger.attach('1.3');
+        ownsDebugger = true;
+      }
+      tracksRequests = true;
       // A window that has never loaded a page may not answer until it navigates; do not wait for it then.
       const enabled = Promise.all([
         contents.debugger.sendCommand('Runtime.enable'),
@@ -206,10 +264,10 @@ async function watchPage(window: BrowserWindow) {
     return [
       `Page state after ${seconds(now - started)}: ${JSON.stringify(state)}`,
       `Loading: ${contents.isLoading()}, main frame loading: ${contents.isLoadingMainFrame()}, crashed: ${contents.isCrashed()}`,
-      ownsDebugger
+      tracksRequests
         ? `Pending requests (${pending.size}):`
         : 'Pending requests: not tracked, the suite owns the debugger',
-      ...(ownsDebugger ? (waiting.length ? waiting : ['  (none)']) : []),
+      ...(tracksRequests ? (waiting.length ? waiting : ['  (none)']) : []),
       'Page log:',
       ...(events.length ? events.slice(-40) : ['  (none)']),
     ].join('\n');
@@ -224,6 +282,11 @@ async function watchPage(window: BrowserWindow) {
     window.off('responsive', onResponsive);
     contents.debugger.off('message', onCdp);
     if (ownsDebugger && !contents.isDestroyed() && contents.debugger.isAttached()) contents.debugger.detach();
+    // The suite's session stays attached; only the events this watcher turned on are turned off again.
+    if (sharesDebugger && contents.debugger.isAttached()) {
+      void contents.debugger.sendCommand('Network.disable').catch(() => {});
+      void contents.debugger.sendCommand('Runtime.disable').catch(() => {});
+    }
   };
 
   return { mark, report, stop };
