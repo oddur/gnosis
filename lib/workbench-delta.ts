@@ -26,10 +26,10 @@ export function queueDelta(base: WorkbenchQueue, next: WorkbenchQueue): Workbenc
   for (const item of [...base.items, ...(base.starredItems ?? [])]) if (item.revision) known.add(item.revision);
   const rows = (items: QueueItem[]) => items.map((item) => (item.revision && known.has(item.revision) ? item.revision : item));
   const sameParts = PARTS.filter((part) => base.parts?.[part] === next.parts?.[part]);
-  const queue: Partial<WorkbenchQueue> = { ...next };
-  delete queue.items;
-  delete queue.starredItems;
-  for (const part of sameParts) delete queue[part];
+  const same = new Set<string>(sameParts);
+  const queue = Object.fromEntries(
+    Object.entries(next).filter(([key]) => key !== 'items' && key !== 'starredItems' && !same.has(key))
+  ) as Partial<WorkbenchQueue>;
   return {
     base: base.revision,
     queue: queue as WorkbenchQueueDelta['queue'],
@@ -47,17 +47,18 @@ export function applyQueueDelta(current: WorkbenchQueue, delta: WorkbenchQueueDe
   if (current.revision !== delta.base) return undefined;
   const byRevision = new Map<string, QueueItem>();
   for (const item of [...current.items, ...(current.starredItems ?? [])]) if (item.revision) byRevision.set(item.revision, item);
-  let missing = false;
-  const rows = (entries: (string | QueueItem)[]) =>
-    entries.map((entry) => {
-      if (typeof entry !== 'string') return entry;
-      const item = byRevision.get(entry);
-      if (!item) missing = true;
-      return item as QueueItem;
-    });
+  const rows = (entries: (string | QueueItem)[]) => {
+    const out: QueueItem[] = [];
+    for (const entry of entries) {
+      const item = typeof entry === 'string' ? byRevision.get(entry) : entry;
+      if (!item) return undefined;
+      out.push(item);
+    }
+    return out;
+  };
   const items = rows(delta.items);
   const starredItems = delta.starredItems ? rows(delta.starredItems) : undefined;
-  if (missing) return undefined;
+  if (!items || (delta.starredItems && !starredItems)) return undefined;
   const queue: WorkbenchQueue = { ...(delta.queue as WorkbenchQueue), items, ...(starredItems ? { starredItems } : {}) };
   for (const part of delta.sameParts) if (part in current) Object.assign(queue, { [part]: current[part] });
   return queue;
