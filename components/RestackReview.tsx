@@ -1,4 +1,5 @@
 import { LoadingIndicator } from './LoadingState';
+import { PrStateIcon } from './PrStateIcon';
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { CodeView, EditProvider } from '@pierre/diffs/react';
 import { ArrowRight } from 'lucide-react';
@@ -276,6 +277,7 @@ export function RestackReview({
                     onClick={() => setExpanded({ ...expanded, [branch.url]: !open })}
                   >
                     <ArrowRight size={14} aria-hidden="true" />
+                    <PrStateIcon pr={{ url: branch.url }} size={14} />
                     <span>
                       #{prNumber(branch.url)} {branch.title}
                     </span>
@@ -358,6 +360,7 @@ export function RestackReview({
           <ul>
             {plan.branches.map((branch) => (
               <li key={branch.url}>
+                <PrStateIcon pr={{ url: branch.url }} size={14} className="restack-confirm-state" />
                 <PrBadge url={branch.url} number={prNumber(branch.url)} title={branch.title} />{' '}
                 <BranchBadge branch={branch.branch} repo={branch.repo} /> <code>{branch.oldSha.slice(0, 7)}</code> →{' '}
                 <code>{branch.newSha.slice(0, 7)}</code>

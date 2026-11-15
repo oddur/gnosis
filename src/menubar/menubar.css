@@ -243,6 +243,22 @@ body {
   min-width: 0;
   padding-left: 8px;
 }
+/* GitHub's PR state before each title; rows are open PRs or drafts. */
+.menubar-row-title .pr-state-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--color-success);
+}
+.menubar-row-title .pr-state-icon > svg {
+  width: 100%;
+  height: 100%;
+}
+.menubar-row-title .pr-state-icon.is-draft {
+  color: var(--muted-foreground);
+}
 .menubar-row-title {
   overflow: hidden;
   white-space: nowrap;

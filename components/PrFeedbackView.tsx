@@ -371,6 +371,7 @@ export function PrFeedbackView({
                   value: member.url,
                   label: `#${member.number} ${member.title}`,
                   kind: 'pr' as const,
+                  pr: member,
                 })),
               ]}
               onValueChange={(value) => {
@@ -430,7 +431,7 @@ export function PrFeedbackView({
                           </div>
                           {subject.kind === 'stack' && (
                             <span className="feedback-source">
-                              <SubjectIcon kind="pr" />#{r.member.number} {r.member.title}
+                              <SubjectIcon kind="pr" pr={r.member} />#{r.member.number} {r.member.title}
                             </span>
                           )}
                           <span className="feedback-reviewer-state">
@@ -610,7 +611,7 @@ export function PrFeedbackView({
                       )}
                       {subject.kind === 'stack' && (
                         <span className="feedback-source" title={`#${item.member.number} ${item.member.title}`}>
-                          <SubjectIcon kind="pr" />
+                          <SubjectIcon kind="pr" pr={item.member} />
                           <span>
                             #{item.member.number} {item.member.title}
                           </span>
@@ -680,7 +681,7 @@ export function PrFeedbackView({
                   </Button>
                   <div>
                     <span className="feedback-source" title={`#${selected.member.number} ${selected.member.title}`}>
-                      <SubjectIcon kind="pr" />#{selected.member.number} {selected.member.title}
+                      <SubjectIcon kind="pr" pr={selected.member} />#{selected.member.number} {selected.member.title}
                     </span>
                     <h2 ref={detail} tabIndex={-1} title={selected.thread?.path}>
                       {selected.thread && <FileTypeIcon filePath={selected.thread.path} />}

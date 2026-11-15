@@ -1092,8 +1092,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   useEffect(() => { onReviewOriginChange?.(JSON.parse(originSignature) as { name: string; reviews: { id: string; title: string }[] }); }, [originSignature, onReviewOriginChange]);
   const summaryChoices = useMemo(() => savedView
     ? [...new Map(saved.map(entry => [entry.snapshot?.subject.id ?? entry.prUrl,
-      { value: entry.snapshot?.subject.id ?? entry.prUrl, label: entry.prTitle, kind: entry.snapshot?.subject.kind === 'stack' ? 'stack' as const : entry.prUrl.startsWith('local:') ? undefined : 'pr' as const }])).values()]
-    : orderedItems.map(item => ({ value: item.subject.id, kind: item.subject.kind === 'stack' ? 'stack' as const : 'pr' as const, label: item.subject.kind === 'stack'
+      { value: entry.snapshot?.subject.id ?? entry.prUrl, label: entry.prTitle, kind: entry.snapshot?.subject.kind === 'stack' ? 'stack' as const : entry.prUrl.startsWith('local:') ? undefined : 'pr' as const, pr: entry.snapshot?.subject.members[0] ?? { url: entry.prUrl } }])).values()]
+    : orderedItems.map(item => ({ value: item.subject.id, kind: item.subject.kind === 'stack' ? 'stack' as const : 'pr' as const, pr: item.subject.members[0], label: item.subject.kind === 'stack'
       ? `Stack · ${item.subject.title}` : `${item.subject.members[0].repo} #${item.subject.members[0].number} · ${item.subject.title}` })), [savedView, saved, orderedItems]);
   const summaryNavigation = useRef(0);
   const restoredNavigation = useRef(0);
@@ -2229,7 +2229,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
             {selectedItem && items.some((i) => i.subject.id === selected) && section !== 'saved' && (
               <aside className="briefing-panel" aria-label="Change briefing">
                 <div className="briefing-top">
-                  <h2><SubjectIcon kind={selectedItem.subject.kind === 'stack' ? 'stack' : 'pr'} />{selectedItem.subject.title}</h2>
+                  <h2><SubjectIcon kind={selectedItem.subject.kind === 'stack' ? 'stack' : 'pr'} pr={selectedItem.subject.members[0]} />{selectedItem.subject.title}</h2>
                   <button className="workbench-icon" aria-label="Close briefing" onClick={() => setSelected(null)}>
                     <X size={16} />
                   </button>
@@ -2353,7 +2353,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                             void window.electronAPI.openExternal(m.url);
                           }}
                         >
-                          <SubjectIcon kind="pr" />#{m.number} {m.title}
+                          <SubjectIcon kind="pr" pr={m} decorative />#{m.number} {m.title}
                         </a>
                         <PrLabels members={[m]} />
                         <p>
@@ -2426,7 +2426,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   />
                   <SearchableSelect label="Dependent PR" value={childUrl} onValueChange={setChildUrl}
                     placeholder="Choose dependent PR"
-                    options={selectedItem.subject.members.map(m => ({ value: m.url, kind: 'pr' as const, label: `#${m.number} ${m.title}` }))}
+                    options={selectedItem.subject.members.map(m => ({ value: m.url, kind: 'pr' as const, pr: m, label: `#${m.number} ${m.title}` }))}
                   />
                   <Button
                     size="sm"

@@ -494,7 +494,7 @@ function PrSummaryContent({
             <ReviewBreadcrumbs scope={tab} base={[
               { id: 'origin', label: navigation.viewName, navigate: () => { remember(); (onQueue ?? onBack)(); } },
               ...(parentStack ? [{ id: 'parent-stack', kind: 'stack' as const, label: parentStack.title, title: 'Stack', navigate: () => changeScope(parentStack.id) }] : []),
-              { id: 'subject', kind: stacked ? 'stack' : 'pr', label: stacked ? item.subject.title : `${first.repo} #${first.number}`,
+              { id: 'subject', kind: stacked ? 'stack' : 'pr', pr: stacked ? undefined : first, label: stacked ? item.subject.title : `${first.repo} #${first.number}`,
                 title: item.subject.title, navigate: () => { remember(); onTabChange('summary'); },
                 pickerLabel: parentStack ? 'PR in stack' : 'PR or stack', value: item.subject.id, options: parentStack ? stackScopeChoices(parentStack).slice(1) : navigation.choices,
                 select: id => { remember(); if (parentStack) changeScope(id); else navigation.select(id); } },
@@ -530,7 +530,7 @@ function PrSummaryContent({
           onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
           <div className="pr-title-with-star">
             <h1 ref={heading} tabIndex={-1} title={item.subject.title}>
-              <SubjectIcon kind={stacked ? 'stack' : 'pr'} />{item.subject.title}
+              <SubjectIcon kind={stacked ? 'stack' : 'pr'} pr={stacked ? undefined : item.subject.members[0]} decorative />{item.subject.title}
             </h1>
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
             {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}

@@ -1,14 +1,8 @@
 import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { checkSummaryIcons } from '../lib/interface-icons';
-import {
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-  GitPullRequestDraft,
-  MessageSquare,
-} from 'lucide-react';
+import { MessageSquare } from 'lucide-react';
 import { GitHubAuthor } from './GitHubAuthor';
-import type { ReviewMember, ReviewSubject } from '../lib/workbench';
+import type { ReviewSubject } from '../lib/workbench';
 import { useQueueSignals } from '../lib/use-queue-signals';
 import { prCommentTotal, QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
 import { timeAgo } from '../lib/utils';
@@ -16,27 +10,6 @@ import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge } from './MergeReadiness';
 import { SubjectReviewStatus } from './PrReviewStatus';
 
-export function PrStateIcon({ member }: { member: ReviewMember }) {
-  const state = member.merged ? 'merged' : member.state === 'closed' ? 'closed' : member.isDraft ? 'draft' : 'open';
-  const Icon =
-    state === 'merged'
-      ? GitMerge
-      : state === 'closed'
-        ? GitPullRequestClosed
-        : state === 'draft'
-          ? GitPullRequestDraft
-          : GitPullRequest;
-  return (
-    <span
-      className={`queue-pr-icon is-${state}`}
-      role="img"
-      aria-label={`${state} pull request`}
-      title={`${state[0].toUpperCase()}${state.slice(1)} pull request`}
-    >
-      <Icon size={17} aria-hidden="true" />
-    </span>
-  );
-}
 export function QueueMetadata({ subject, account, onChecks }: { subject: ReviewSubject; account: string | null; onChecks?: () => void }) {
   const { ref, values, loaded } = useQueueSignals(
     account,

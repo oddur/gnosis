@@ -27,6 +27,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { ATTENTION_LABEL, type AttentionKind } from '../lib/attention';
+import { PrStateIcon } from './PrStateIcon';
 import type { MenubarApi, MenubarGroup, MenubarRow, MenubarState, MenubarTask } from '../lib/menubar-state';
 import { useStatusNow } from '../lib/status-clock';
 
@@ -143,7 +144,10 @@ function Row({
         </span>
         {row.kinds[0] === GROUP_KIND[group] ? <span className="menubar-row-icon" /> : <Icon aria-hidden="true" className="menubar-row-icon" data-tone={tone} />}
         <span className="menubar-row-text">
-          <span className="menubar-row-title">{row.title}</span>
+          <span className="menubar-row-title">
+            <PrStateIcon state="open" isDraft={row.isDraft} size={14} />
+            {row.title}
+          </span>
           <span className="menubar-row-detail">
             {reason && <span className="menubar-row-reason">{reason}</span>}
             {rest && <span className="menubar-row-meta">{reason ? `\u00a0· ${rest}` : rest}</span>}

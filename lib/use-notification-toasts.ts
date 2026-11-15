@@ -54,10 +54,11 @@ export function useNotificationToasts(open: (target: DeepLinkTarget) => Promise<
         data: {
           kind,
           subtitle: kind === delivery.kind ? delivery.subtitle : undefined,
+          prUrl: kind === delivery.kind ? delivery.url : undefined,
           introduce: delivery.introduce
             ? (accept) => {
                 void api.notificationIntroduce(accept).catch(() => {});
-                toast.update(id, { data: { kind, subtitle: delivery.subtitle, onDismiss } });
+                toast.update(id, { data: { kind, subtitle: delivery.subtitle, prUrl: delivery.url, onDismiss } });
               }
             : undefined,
           onDismiss,

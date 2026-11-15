@@ -462,11 +462,12 @@ export function PrChangesView({
         ? [
             {
               id: 'member', kind: 'pr' as const,
+              pr: subject.members.find((member) => member.url === entry.snapshot.url) ?? null,
               label: `Source #${entry.snapshot.url.split('/').pop()}`,
               pickerLabel: 'Source PR in stack changes',
               value: entry.snapshot.url,
               options: subject.members.map((member) => ({
-                value: member.url, kind: 'pr' as const,
+                value: member.url, kind: 'pr' as const, pr: member,
                 label: `#${member.number} · ${member.title}`,
               })),
               select: (url: string) => {

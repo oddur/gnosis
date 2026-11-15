@@ -12,6 +12,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { SubjectIcon } from './SubjectIcon';
+import type { PrStateSource } from '../lib/pr-state';
 import { EntryActions } from './EntryActions';
 import { sameTabChrome, workspaceTabDescription, type WorkspaceTabsState } from '../lib/workspace-tabs';
 
@@ -30,6 +31,15 @@ function tabPrediction(tab: WorkspaceTabsState['tabs'][number]): Prediction | nu
   // A tab opened in the background has not been shown yet: use what it was opened with.
   return !location && tab.initial && tab.initial.kind !== 'location' && tab.initial.kind !== 'restore'
     ? destinationIntent(tab.initial) : null;
+}
+
+/** The PR a tab shows, for its state icon: its copy once shown, its URL while opening, null when unknown. */
+function tabPr(tab: WorkspaceTabsState['tabs'][number]): PrStateSource | null {
+  const location = tab.location;
+  const initial = !location && tab.initial?.kind === 'home' ? tab.initial : undefined;
+  const subject = location?.page === 'home' ? location.home.item?.subject : initial?.subject?.subject;
+  if (subject && subject.kind !== 'stack') return subject.members[0] ?? null;
+  return initial?.url ? { url: initial.url } : null;
 }
 
 /** The PR number shown before a tab's title; narrow tabs hide it, so names and tooltips repeat it. */
@@ -222,7 +232,7 @@ export const WorkspaceTabs = memo(
                       ) : tab.label === 'Queue' || tab.label === 'View' ? (
                         <Inbox size={15} />
                       ) : (
-                        <SubjectIcon kind={tab.label === 'Stack' ? 'stack' : 'pr'} />
+                        <SubjectIcon kind={tab.label === 'Stack' ? 'stack' : 'pr'} pr={tab.label === 'Stack' ? undefined : tabPr(tab)} />
                       )}
                       {tabNumber(tab) && <span className="workspace-tab-number">{tab.label}</span>}
                       <span className="workspace-tab-title" dir="auto">

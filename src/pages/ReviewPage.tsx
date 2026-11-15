@@ -913,7 +913,7 @@ function ReviewPageContent({
             value={submitUrl}
             onValueChange={setSubmitUrl}
             options={review.snapshot.subject.members.map((m) => ({
-              value: m.url,
+              value: m.url, kind: 'pr' as const, pr: m,
               label: `#${m.number} ${m.repo} · ${m.title}${m.merged ? ' (merged)' : ''}`,
             }))}
           />

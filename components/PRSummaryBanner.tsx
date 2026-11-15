@@ -52,7 +52,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
               Back
             </button>
           )}
-          <h1 className="text-sm font-semibold tracking-tight truncate text-foreground/90">{!isLocal && <SubjectIcon kind={review.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} />}{review.prTitle}</h1>
+          <h1 className="text-sm font-semibold tracking-tight truncate text-foreground/90">{!isLocal && <SubjectIcon kind={review.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} pr={review.snapshot?.subject.members[0] ?? { url: review.prUrl }} />}{review.prTitle}</h1>
           <span className={`${risk.badgeClassName} shrink-0 text-xs px-1.5 py-0.5 rounded-sm leading-normal`}>
             {risk.label}
           </span>

@@ -1,15 +1,6 @@
 import type { ReactNode } from 'react';
-import {
-  CheckCircle2,
-  CircleHelp,
-  Clock3,
-  GitBranch,
-  GitMerge,
-  GitPullRequestClosed,
-  GitPullRequestDraft,
-  AlertCircle,
-  ChevronRight,
-} from 'lucide-react';
+import { GitBranch, ChevronRight } from 'lucide-react';
+import { PrStateIcon } from './PrStateIcon';
 import { BranchBadge, PrBadge, RepositoryBadge } from './EntityBadge';
 import { stackDependencyOrder, stackMergeLabel, stackMergeTarget } from '../lib/stack-overview';
 import type { QueueSignals } from '../lib/queue-signals';
@@ -70,20 +61,6 @@ export function StackDependencyChain({
           const parents = subject.edges
             .filter((edge) => edge.child === member.url)
             .flatMap((edge) => subject.members.filter((parent) => parent.url === edge.parent));
-          const Icon =
-            state.label === 'Merged'
-              ? GitMerge
-              : state.label === 'Draft'
-                ? GitPullRequestDraft
-                : state.label === 'Closed'
-                  ? GitPullRequestClosed
-                  : state.tone === 'success'
-                    ? CheckCircle2
-                    : state.tone === 'danger'
-                      ? AlertCircle
-                      : state.tone === 'warning'
-                        ? Clock3
-                        : CircleHelp;
           return (
             <li
               key={member.url}
@@ -91,8 +68,9 @@ export function StackDependencyChain({
               aria-current={currentUrl === member.url ? 'page' : undefined}
               className={`stack-overview-member ${unreadUrls?.includes(member.url) ? 'is-unread' : ''}`}
             >
-              <span className={`stack-chain-node is-${state.tone}`}>
-                <Icon size={16} aria-hidden="true" />
+              {/* The node shows the PR's GitHub state, like GitHub's stack list; readiness is written beside it. */}
+              <span className="stack-chain-node">
+                <PrStateIcon pr={member} size={16} />
               </span>
               <div className="stack-member-main">
                 <div className="stack-member-title">

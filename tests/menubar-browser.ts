@@ -107,8 +107,8 @@ void app.whenReady().then(async () => {
     assert.equal(await detail('pr91'), 'seed-web #91 · checked 3 min ago');
     assert.equal(await detail('pr399'), 'Explanation ready\u00a0· seed #399');
     assert.equal(await js('[...document.querySelectorAll(".menubar-row-detail")].some(e=>/Review requested|Ready to merge/.test(e.textContent))'), false);
-    assert.equal(await js('!!document.querySelector("[data-row-id=pr377] svg") || !!document.querySelector("[data-row-id=pr36170] svg")'), false);
-    assert.equal(await js('!!document.querySelector("[data-row-id=pr36171] svg") && !!document.querySelector("[data-row-id=pr36144] svg")'), true);
+    assert.equal(await js('!!document.querySelector("[data-row-id=pr377] svg.menubar-row-icon") || !!document.querySelector("[data-row-id=pr36170] svg.menubar-row-icon")'), false);
+    assert.equal(await js('!!document.querySelector("[data-row-id=pr36171] svg.menubar-row-icon") && !!document.querySelector("[data-row-id=pr36144] svg.menubar-row-icon")'), true);
     // A stack shows once, above its rows, which keep only their number.
     assert.deepEqual(await js('[...document.querySelectorAll(".menubar-stack-line")].map(e=>e.textContent)'), ['Stack · 9 PRs · ivaremilsson', 'Stack · 4 PRs']);
     assert.deepEqual(await js('[...document.querySelectorAll(".menubar-stack")].map(s=>[...s.querySelectorAll(".menubar-row")].map(r=>r.dataset.rowId))'), [['pr36170', 'pr36171', 'pr36172', 'pr36173'], ['pr36175', 'pr36176']]);

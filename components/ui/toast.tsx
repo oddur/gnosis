@@ -2,12 +2,15 @@ import { useSyncExternalStore } from 'react';
 import { Toast } from '@base-ui/react/toast';
 import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Sparkles, Inbox, BellRing, type LucideIcon } from 'lucide-react';
 import type { NotificationKind } from '../../lib/notification-routing';
+import { PrStateIcon } from '../PrStateIcon';
 
 /** Notification toasts carry their kind, so status has an icon as well as a title. Colour stays secondary. */
 export interface ToastData {
   kind?: NotificationKind;
   /** `owner/repo #123`. */
   subtitle?: string;
+  /** The PR the subtitle names, so it shows that PR's state icon. */
+  prUrl?: string;
   /** The first PR-event toast offers desktop delivery. */
   introduce?: (accept: boolean) => void;
   onDismiss?: () => void;
@@ -74,7 +77,12 @@ function ToastList() {
           <Icon className="app-toast-icon" size={17} aria-hidden="true" />
           <div className="app-toast-copy">
             <Toast.Title className="app-toast-title" />
-            {item.data?.subtitle && <p className="app-toast-subtitle">{item.data.subtitle}</p>}
+            {item.data?.subtitle && (
+              <p className="app-toast-subtitle">
+                {item.data.prUrl && <PrStateIcon pr={{ url: item.data.prUrl }} size={12} />}
+                {item.data.subtitle}
+              </p>
+            )}
             <Toast.Description className="app-toast-description" />
             <Toast.Action className="app-toast-action" />
             {introduce && (

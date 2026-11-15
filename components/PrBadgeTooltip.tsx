@@ -35,7 +35,7 @@ export function PrBadgeTooltip({
   const comments = prCommentTotal(member, signals);
   return (
     <div className="pr-badge-preview">
-      <strong className="pr-badge-preview-title"><SubjectIcon kind="pr" />{member.title}</strong>
+      <strong className="pr-badge-preview-title"><SubjectIcon kind="pr" pr={member} />{member.title}</strong>
       <span className="pr-badge-preview-meta">
         By {member.author} · Updated {timeAgo(member.updatedAt)}
       </span>
