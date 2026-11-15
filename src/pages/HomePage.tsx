@@ -1069,7 +1069,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const orderedBacklog = useMemo(() => sortQueueItems(queue.items, filters.sort, sortSignals), [queue.items, filters.sort, sortSignals]);
   // Background preparation follows selection and scrolling in a deferred render, so j/k and scrolling do not
   // serialize the whole queue before they paint (#346).
-  const preloadSubject = useDeferredValue(statusSubject);
+  // Only moving the selection is deferred. The open PR, and a new revision of the subject already chosen, are prepared
+  // at once: a deferred copy can lag behind them for as long as other renders keep interrupting it.
+  const deferredSubject = useDeferredValue(statusSubject);
+  const preloadSubject = statusSubject && (summaryItem || statusSubject.id === deferredSubject?.id) ? statusSubject : deferredSubject;
   const preloadVisibleIds = useDeferredValue(visibleQueueIds);
   const inspectionKey = useMemo(() => {
     const statusSubject = preloadSubject;
