@@ -52,6 +52,8 @@ export interface PrOpenPreloaderDependencies {
   committedDetails?: () => boolean;
   usage: () => { spent: number; limit: number };
   idleSeconds: () => number;
+  /** Whether a saved copy exists for the target's head, however old. Neighbours leave refreshing it to the open PR. */
+  saved?: (target: OpenTarget, kind: 'status' | 'signals') => boolean;
   /** `details` is used by hover prefetch only: failing checks without fresh details. */
   need: (target: OpenTarget, kind: OpenKind | 'details') => boolean;
   status: (targets: OpenTarget[], intent: boolean) => Promise<unknown>;
@@ -184,8 +186,12 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
    * Committed work for the open PR skips status and signals: live sync revalidates them on open. At the Light
    * amount it skips failing check details too.
    */
-  const committedKinds = (target: OpenTarget): (OpenKind | 'details')[] => {
-    const list: (OpenKind | 'details')[] = target.tier === 0 ? ['threads', 'details'] : kinds;
+  const committedKinds = (target: OpenTarget, owner: string): (OpenKind | 'details')[] => {
+    let list: (OpenKind | 'details')[] = target.tier === 0 ? ['threads', 'details'] : kinds;
+    // A neighbour's status and signals are read again when the reader moves to it (refresh-open-pr, #349). Here they
+    // are read only when nothing is saved for its head, so moving to it never shows an empty status.
+    if (owner.includes(':neighbour:') && deps.saved)
+      list = list.filter((kind) => (kind !== 'status' && kind !== 'signals') || !deps.saved?.(target, kind));
     return deps.committedDetails?.() === false ? list.filter((kind) => kind !== 'details') : list;
   };
   const intentEnabled = () => deps.intentEnabled?.() !== false;
@@ -198,10 +204,12 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
       committed.clear();
       return;
     }
-    const [owner, entry] = committed.entries().next().value as [string, { targets: OpenTarget[]; label: string; done: (() => void)[] }];
+    // The open PR goes first; neighbours of it (`<window>:neighbour:<url>`) wait for it.
+    const entries = [...committed.entries()];
+    const [owner, entry] = entries.find(([key]) => !key.includes(':neighbour:')) ?? entries[0];
     committed.delete(owner);
     const work = entry.targets.flatMap((target) => {
-      const allowed = committedKinds(target);
+      const allowed = committedKinds(target, owner);
       const needed = new Set(allowed.filter((kind) => deps.need(target, kind)));
       return needed.size ? [{ target, needed, details: allowed.includes('details') }] : [];
     });
@@ -265,7 +273,8 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
     removeOwner(owner: string) {
       owners.delete(owner);
       if (queued?.owner === owner) queued = undefined;
-      for (const key of [owner, `${owner}:committed`]) {
+      for (const key of [...committed.keys()]) {
+        if (key !== `${owner}:committed` && !key.startsWith(`${owner}:neighbour:`)) continue;
         settle(committed.get(key));
         committed.delete(key);
       }

@@ -67,7 +67,7 @@ const visible = (element: Element) => (element as HTMLElement).offsetParent !== 
 /** A loading state the reader can see. Files further down a diff stream may load without the reader seeing it. */
 function loadingShown(root: Element) {
   return [...root.querySelectorAll('.loading-state, .loading-indicator')].some(
-    (element) => visible(element) && !element.closest('.commit-stream-row:not([data-active="true"]), .pr-summary-toolbar, .pr-merge-status')
+    (element) => visible(element) && !element.closest('.commit-stream-row:not([data-active="true"]), .pr-summary-toolbar, .pr-merge-status, .pr-freshness')
   );
 }
 const state = (root: Element, content: boolean): ContentState => (content ? 'content' : loadingShown(root) ? 'loading' : 'blank');

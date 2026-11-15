@@ -21,6 +21,8 @@ import { toast } from '../components/ui/toast';
 
 import { focusStackPr } from '../lib/stack-workspace';
 import { normalizeQueueFilters } from '../lib/queue-filters';
+import { workbenchStore } from '../lib/workbench-store';
+import type { WorkbenchQueue } from '../lib/workbench';
 import { isLocalUrl } from '../lib/local-url';
 import { rememberExplanation, loadExplanation, peekExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
 import { navigationStart, predictor } from '../lib/predictions';
@@ -342,9 +344,14 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     const saved = initial.saved;
     if (saved.reviewId) return navigate({ kind: 'review', reviewId: saved.reviewId }, true);
     if (!saved.home) return saved.destination ? navigate(saved.destination, true) : undefined;
-    const queue = await window.electronAPI.workbenchSnapshot();
-    if (attempt !== initialAttempt.current) return;
     const { subjectId, url, ...home } = saved.home;
+    // The queue on screen, even the copy saved last session, restores the tab before main's snapshot arrives. A PR
+    // that copy does not have waits for the snapshot.
+    const shown = workbenchStore.getStatus().loaded ? workbenchStore.getQueue() : undefined;
+    const has = (queue: WorkbenchQueue) => [...queue.items, ...(queue.starredItems ?? []), ...(queue.stacks ?? []).map((subject) => ({ subject }))]
+      .some((entry) => entry.subject.id === subjectId || entry.subject.members.some((m) => m.url === subjectId));
+    const queue = shown && (!subjectId || has(shown)) ? shown : await window.electronAPI.workbenchSnapshot();
+    if (attempt !== initialAttempt.current) return;
     const items = [...queue.items, ...(queue.starredItems ?? [])];
     for (const stack of queue.stacks ?? [])
       if (!items.some((item) => item.subject.id === stack.id)) items.push({ subject: stack, attention: 'other' });

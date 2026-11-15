@@ -24,7 +24,8 @@ export type ChunkName = 'workflow-graph' | 'mermaid' | 'd2' | 'review-page' | 'p
 export type Destination =
   /** `epoch` changes when the destination needs its reads again, such as a new failing-check count. */
   | { kind: 'pr-tab'; tab: WorkspaceTab; subjectId: string; members: PredictMember[]; epoch?: string }
-  | { kind: 'pr-open'; subjectId: string; members: PredictMember[] }
+  /** Opening a PR: a hovered row (`intent`), or the next and previous PR of the open one (`neighbour`). */
+  | { kind: 'pr-open'; subjectId: string; members: PredictMember[]; neighbour?: boolean }
   | { kind: 'review'; reviewId: string; diagrams?: ('mermaid' | 'd2')[] }
   | { kind: 'chunk'; name: ChunkName };
 export interface Prediction {
@@ -40,6 +41,7 @@ export type Outcome = 'hit' | 'joined' | 'cold' | 'kept' | 'left';
 /** The destination kind, such as `pr-tab:changes`. Used for metrics and as the spend label in main. */
 export function destinationKind(destination: Destination): string {
   if (destination.kind === 'pr-tab') return `pr-tab:${destination.tab}`;
+  if (destination.kind === 'pr-open' && destination.neighbour) return 'pr-neighbour';
   if (destination.kind === 'chunk') return `chunk:${destination.name}`;
   return destination.kind;
 }
@@ -75,6 +77,8 @@ export interface PredictorReads {
   open(members: PredictMember[], label: string): Promise<unknown>;
   /** Hover intent on a PR: the queue row's existing preparation. `null` clears it. */
   openIntent(members: PredictMember[] | null): void;
+  /** The next or previous PR of the open one: status, signals, checks and threads, through main's committed owner. */
+  neighbour(members: PredictMember[], label: string): Promise<unknown>;
   /** The workflow run the Checks graph opens on (the member with failing checks, its failed or running run) and its graph. */
   graph(members: PredictMember[], label: string): Promise<unknown>;
   chunk(name: ChunkName): Promise<unknown>;
@@ -82,7 +86,11 @@ export interface PredictorReads {
   review(reviewId: string): Promise<unknown>;
   reviewReady(reviewId: string): boolean;
 }
-export const PREDICTOR_READS = ['changes', 'changesReady', 'open', 'openIntent', 'graph', 'chunk', 'review', 'reviewReady'] as const;
+export const PREDICTOR_READS = ['changes', 'changesReady', 'open', 'openIntent', 'neighbour', 'graph', 'chunk', 'review', 'reviewReady'] as const;
+/** File bodies an opened PR warms before it is open: the file Changes lands on. */
+export const OPEN_FILES = 1;
+/** Stack members whose inventories an opened PR warms before it is open. */
+const OPEN_MEMBERS = 2;
 
 export interface NavigationRecord {
   key: string;
@@ -220,8 +228,22 @@ export function resourcesFor(prediction: Prediction, plan: Readonly<AmountPlan> 
     const name = destination.name;
     return [{ key: `chunk:${name}`, label, strength, run: (reads) => reads.chunk(name) }];
   }
-  // A PR open is hover intent; it is forwarded to the queue's existing preparation, not queued here.
-  return [];
+  // Opening a PR lands on Summary, or on the tab the reader is on when moving with j/k. The inventories and the first
+  // file make Changes and Commits instant. Hover forwards status, checks and threads to the queue's existing
+  // preparation (`openIntent`); a neighbour asks main for them as a prediction.
+  const { members, subjectId } = destination;
+  const changes = members.slice(0, OPEN_MEMBERS).map((member) => ({
+    key: `changes:${revision(member)}:${OPEN_FILES}`,
+    label,
+    strength,
+    ready: (reads: PredictorReads) => reads.changesReady(member, subjectId, OPEN_FILES),
+    run: (reads: PredictorReads) => reads.changes(member, subjectId, OPEN_FILES, label),
+  }));
+  if (!destination.neighbour) return changes;
+  return [
+    { key: `neighbour:${members.map(revision).join('|')}`, label, strength, run: (reads) => reads.neighbour(members, label) },
+    ...changes,
+  ];
 }
 
 export function createNavigationPredictor(deps: PredictorDependencies) {

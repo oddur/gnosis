@@ -138,8 +138,12 @@ void app.whenReady().then(async () => {
     assert.ok(reads.filter((read) => read.name === 'file' && read.mode === 'pr-tab:changes').length <= 3, 'At most three file bodies');
     const opening = reads.slice(await js<number>('window.readsBeforeChanges'));
     assert.ok(!opening.some((read) => read.mode === 'user'), `Opening Changes needed no read of its own: ${JSON.stringify(reads)}`);
-    assert.deepEqual(await js('window.committed.map(c=>[c.urls,c.tiers])'), [[[await js<string>('window.predictUrl')], [0]]],
+    assert.deepEqual(await js("window.committed.filter(c=>c.label!=='pr-neighbour').map(c=>[c.urls,c.tiers])"), [[[await js<string>('window.predictUrl')], [0]]],
       'Threads and failing check details were requested once, for the open PR');
+    // The next and previous PR in the view are prepared too, each once, as queue PRs (tier 1) in their own slot.
+    const neighbours = await js<{ urls: string[]; tiers: number[] }[]>("window.committed.filter(c=>c.label==='pr-neighbour')");
+    assert.ok(neighbours.length >= 1 && neighbours.every((c) => c.tiers.every((tier) => tier === 1)), JSON.stringify(neighbours));
+    assert.equal(new Set(neighbours.map((c) => c.urls.join())).size, neighbours.length, 'Each neighbour is requested once');
     const predicted = await js<Partial<Record<string, { hit: number; cold: number }>>>('window.__gnosisPredict.summary().destinations');
     assert.ok((predicted['pr-tab:changes']?.hit ?? 0) >= 2, `Predicted Changes measures as a hit: ${JSON.stringify(await js('window.__gnosisPredict.records()'))}`);
     await click('Commits');

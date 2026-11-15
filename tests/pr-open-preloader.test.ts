@@ -49,6 +49,7 @@ function harness() {
     usage: () => state.usage,
     idleSeconds: () => state.idle,
     need: (t, kind) => (kind === 'details' ? details.has(t.url) : needsRefresh(kind, saved.get(`${kind}:${t.url}`), t, now)),
+    saved: (t, kind) => saved.get(`${kind}:${t.url}`)?.headSha === t.headSha,
     status: step('status'),
     signals: step('signals'),
     checks: step('checks'),
@@ -381,4 +382,20 @@ void test('at the Light amount, a committed prediction reads threads but no chec
   h.state.details = true;
   await h.preloader.setCommitted('window:committed', [open], 'pr-tab:checks');
   assert.deepEqual(h.calls.map((call) => call.kind), ['details'], 'Normal and Eager read failing check details');
+});
+
+void test('a neighbour reads checks and threads, and status and signals only when nothing is saved for its head', async () => {
+  const h = harness();
+  const next = target(7), previous = target(8);
+  // The next PR's status and signals are saved but old; the previous PR has none.
+  h.save('status', [next]);
+  h.save('signals', [next]);
+  h.advance(7 * HOUR);
+  await h.preloader.setCommitted('window:neighbour:' + next.url, [next], 'pr-neighbour');
+  await h.preloader.setCommitted('window:neighbour:' + previous.url, [previous], 'pr-neighbour');
+  await settle();
+  const kinds = (url: string) => h.calls.filter((call) => call.urls.includes(url)).map((call) => call.kind).sort();
+  assert.deepEqual(kinds(next.url), ['checks', 'full'], 'Moving to it reads its status again (refresh-open-pr)');
+  assert.deepEqual(kinds(previous.url), ['checks', 'full', 'signals', 'status']);
+  assert.ok(h.calls.every((call) => call.predicted === 'pr-neighbour'));
 });

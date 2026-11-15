@@ -945,6 +945,10 @@ if (new URLSearchParams(location.search).has('optimistic-actions')) {
   const { installOptimisticActionsFixture } = await import('./optimistic-actions');
   installOptimisticActionsFixture(mocks, items);
 }
+if (new URLSearchParams(location.search).has('instant-views')) {
+  const { installInstantViews } = await import('./instant-views');
+  installInstantViews(mocks as unknown as Record<string, unknown>);
+}
 // Main stamps every snapshot it returns. Stamp here too, after any test override, so revisions
 // always describe what the override returned. Reading saved reviews for the stamp is not counted.
 const stampedReads = new Set(['workbenchQueue', 'workbenchSnapshot', 'workbenchStarPrs', 'workbenchMutePrs', 'workbenchSetFilters',
