@@ -11,7 +11,12 @@ import { WorkflowSidebar } from './WorkflowSidebar';
 import { WorkflowGraphState } from './WorkflowGraphState';
 import { WorkflowDetailNavigation } from './WorkflowDetailNavigation';
 import { WorkflowExternalChecks } from './WorkflowExternalChecks';
-import { actionsNeedAttention, externalCheckGroups, workflowWarningSummary } from '../lib/workflow-external';
+import {
+  actionsNeedAttention,
+  externalCheckGroups,
+  hiddenFailureNotice,
+  workflowWarningSummary,
+} from '../lib/workflow-external';
 import { createPortal } from 'react-dom';
 import {
   attentionJobs,
@@ -1464,12 +1469,7 @@ export function WorkflowGraphView({
           {hiddenFailures.length > 0 && (
             <div className="workflow-notice workflow-external-notice" role="status">
               <CircleAlert size={14} className="check-attention" aria-hidden="true" />
-              <span>
-                {hiddenFailures.map((group) => `${group.label} in ${group.name}`).join(' · ')}
-                {hiddenFailures.some((group) => group.source === 'external')
-                  ? ', outside GitHub Actions.'
-                  : ', outside the listed workflows.'}
-              </span>
+              <span>{hiddenFailureNotice(hiddenFailures)}</span>
               {hiddenFailures.map((group) => (
                 <Button key={group.id} size="sm" variant="outline" onClick={() => chooseExternal(group.id)}>
                   Show {group.name}

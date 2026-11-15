@@ -3,6 +3,7 @@ import { githubCacheFor } from '../lib/github-client';
 import { CheckHeadChanged, readChecksGraphQL } from './pr-checks-graphql';
 import {
   checkKey,
+  prChecksCacheKey,
   checkVersion,
   checkGroup,
   type CheckTarget,
@@ -53,7 +54,7 @@ export async function readCurrentPrChecks(
 /** Local data only. The saved check list for one PR revision and whether a write marked it stale. */
 export function savedPrChecks(client: Octokit, input: CheckTarget) {
   const saved = githubCacheFor(client)?.get(
-    `pr-checks:v1:${checkKey(input)}`,
+    prChecksCacheKey(input),
     (v): v is PrChecks =>
       !!v && typeof v === 'object' && 'checks' in v && Array.isArray(v.checks) && 'checkedAt' in v && typeof v.checkedAt === 'number'
   );
@@ -76,7 +77,7 @@ export async function readPrChecksBatch(
   for (const input of new Map(inputs.map((input) => [checkKey(input), input])).values()) {
     target(input);
     const saved = cache?.get(
-      `pr-checks:v1:${checkKey(input)}`,
+      prChecksCacheKey(input),
       (v): v is PrChecks => !!v && typeof v === 'object' && 'checks' in v && Array.isArray(v.checks) && 'checkedAt' in v
     );
     if (
@@ -101,7 +102,7 @@ export async function readPrChecksBatch(
         promise: job.promise
           .then((values) => {
             const value = values[index];
-            if (cache?.version() === version) cache?.set(`pr-checks:v1:${key}`, value);
+            if (cache?.version() === version) cache?.set(prChecksCacheKey(input), value);
             return value;
           })
           .finally(() => {
@@ -153,7 +154,7 @@ const detailCacheKey = (input: CheckSelection) => `check-details:v1:${checkKey(i
 function currentCheck(client: Octokit, input: CheckSelection) {
   return githubCacheFor(client)
     ?.get(
-      `pr-checks:v1:${checkKey(input)}`,
+      prChecksCacheKey(input),
       (value): value is PrChecks =>
         !!value && typeof value === 'object' && 'checks' in value && Array.isArray(value.checks)
     )
@@ -436,6 +437,6 @@ export async function rerunChecks(client: Octokit, input: CheckSelection & { mod
   if (workflow.status !== 'completed') throw Error('This workflow is already queued or running.');
   if (input.mode === 'failed') await client.actions.reRunWorkflowFailedJobs({ owner, repo, run_id: job.runId });
   else await client.actions.reRunWorkflow({ owner, repo, run_id: job.runId });
-  githubCacheFor(client)?.delete(`pr-checks:v1:${checkKey(input)}`);
+  githubCacheFor(client)?.delete(prChecksCacheKey(input));
   githubCacheFor(client)?.delete(detailCacheKey(input));
 }

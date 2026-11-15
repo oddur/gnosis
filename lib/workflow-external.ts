@@ -1,17 +1,12 @@
-import { checkCounts, checkGroup, orderedChecks, type PrCheck, type PrChecks } from './pr-checks';
+import { actionsRunId, checkCounts, checkGroup, orderedChecks, type PrCheck, type PrChecks } from './pr-checks';
 import type { WorkflowRunInfo } from './workflow-graph';
 
 /** GraphQL reports the check suite's app name; Actions jobs also carry an Actions run URL. */
 export const ACTIONS_PROVIDER = 'GitHub Actions';
-const ACTIONS_JOB_URL = /^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/(\d+)\/job\/\d+/;
 const RANK = { attention: 0, running: 1, passed: 2, skipped: 3 } as const;
 type Outcome = keyof typeof RANK;
 
-export function actionsRunId(check: Pick<PrCheck, 'kind' | 'url'>): number | undefined {
-  if (check.kind !== 'check') return;
-  const match = check.url?.match(ACTIONS_JOB_URL);
-  return match ? Number(match[1]) : undefined;
-}
+export { actionsRunId };
 
 /** Commit statuses and check runs from other apps (Depot, CircleCI, Buildkite…) have no Actions workflow run. */
 export function isActionsCheck(check: Pick<PrCheck, 'kind' | 'url' | 'provider'>) {
@@ -91,6 +86,35 @@ export function externalCheckGroups(snapshot?: PrChecks, runs?: WorkflowRunInfo[
       return { id, ...group, checks, counts, outcome: outcomeOf(counts), label: checkGroupLabel(checks) };
     })
     .sort((a, b) => RANK[a.outcome] - RANK[b.outcome] || a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
+/**
+ * Where the failing checks the graph cannot draw come from. Other providers are outside GitHub Actions; unlisted
+ * Actions jobs are Actions jobs whose run is not in the workflow list, so the copy never mixes the two.
+ */
+export function attentionSourceSummary(groups: ExternalCheckGroup[], attention: number) {
+  const phrase = (count: number, where: string) =>
+    `${count === attention ? (count === 1 ? 'It is' : 'All are') : `${count} ${count === 1 ? 'is' : 'are'}`} ${where}`;
+  const count = (source: ExternalCheckGroup['source']) =>
+    groups.filter((group) => group.source === source).reduce((sum, group) => sum + group.counts.attention, 0);
+  const external = count('external'),
+    unlisted = count('unlisted');
+  return [
+    external && phrase(external, 'outside GitHub Actions'),
+    unlisted && phrase(unlisted, 'in workflow runs not listed here'),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** The notice for failures the selected workflow cannot show, naming each group and where it comes from. */
+export function hiddenFailureNotice(groups: ExternalCheckGroup[]) {
+  return `${groups
+    .map(
+      (group) =>
+        `${group.label} in ${group.name}${group.source === 'external' ? ', outside GitHub Actions' : ', from workflow runs not listed here'}`
+    )
+    .join(' · ')}.`;
 }
 
 export type WorkflowSidebarEntry =

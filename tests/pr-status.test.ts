@@ -80,8 +80,8 @@ function service(now: () => number) {
 void test('cached status is served without requests for the same head', async () => {
   const h = harness();
   h.cache.set(`pr-status:v1:${url}`, saved());
-  h.cache.set(`pr-checks:v1:${url}@${head}`, checks(head));
-  h.cache.set(`queue-signals:v3:${url}@${head}`, signals(head));
+  h.cache.set(`pr-checks:v2:${url}@${head}`, checks(head));
+  h.cache.set(`queue-signals:v5:${url}@${head}`, signals(head));
   const status = await service(() => savedAt + 60_000).cached(h.client, url, head);
   assert.equal(h.calls.length, 0);
   assert.ok(status);
@@ -120,8 +120,8 @@ void test('cached status is refused for another head, after a write, and past 24
 void test('stale CI comes only from same-head snapshots', async () => {
   const h = harness();
   h.cache.set(`pr-status:v1:${url}`, saved());
-  h.cache.set(`pr-checks:v1:${url}@${otherHead}`, checks(otherHead));
-  h.cache.set(`queue-signals:v3:${url}@${otherHead}`, signals(otherHead));
+  h.cache.set(`pr-checks:v2:${url}@${otherHead}`, checks(otherHead));
+  h.cache.set(`queue-signals:v5:${url}@${otherHead}`, signals(otherHead));
   const status = await service(() => savedAt).cached(h.client, url, head);
   assert.ok(status);
   assert.deepEqual(status.ciChecks, []);
@@ -302,8 +302,8 @@ void test('preload saves cores from one query for 25 PRs', async () => {
   assert.equal(h.queries.length, 1);
   assert.match(h.queries[0], /commits \{ totalCount \}/);
   await assert.rejects(status.preload(h.client, [...targets, { url: pullUrl(26), headSha: head }]));
-  h.cache.set(`pr-checks:v1:${pullUrl(25)}@${head}`, { ...checks(head), url: pullUrl(25) });
-  h.cache.set(`queue-signals:v3:${pullUrl(25)}@${head}`, { ...signals(head), url: pullUrl(25) });
+  h.cache.set(`pr-checks:v2:${pullUrl(25)}@${head}`, { ...checks(head), url: pullUrl(25) });
+  h.cache.set(`queue-signals:v5:${pullUrl(25)}@${head}`, { ...signals(head), url: pullUrl(25) });
   const saved = await status.cached(h.client, pullUrl(25), head);
   assert.ok(saved);
   assert.deepEqual(
@@ -473,7 +473,7 @@ void test('both status paths read the reviews that count, with more than 100 rev
     await status.preload(h.client, [{ url: pullUrl(1), headSha: head }]);
     assert.doesNotMatch(h.queries[0], /\breviews\(/);
     h.cache.set(`pr-checks:v1:${pullUrl(1)}@${head}`, { ...checks(head), url: pullUrl(1) });
-    h.cache.set(`queue-signals:v3:${pullUrl(1)}@${head}`, { ...signals(head), url: pullUrl(1) });
+    h.cache.set(`queue-signals:v5:${pullUrl(1)}@${head}`, { ...signals(head), url: pullUrl(1) });
     assert.deepEqual((await status.cached(h.client, pullUrl(1), head))?.reviewSummary, fresh);
   }
 });

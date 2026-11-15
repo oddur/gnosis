@@ -1,3 +1,5 @@
+import { checkCounts } from './pr-checks';
+import type { CiCheck } from './types';
 export interface QueueSignalRequest {
   url: string;
   headSha: string;
@@ -49,6 +51,21 @@ export interface QueueSignals extends QueueSignalRequest {
 }
 export const QUEUE_SIGNALS_TTL = 2 * 60_000;
 export const ACTIVE_SIGNALS_TTL = 25_000;
+export const queueSignalKey = (request: QueueSignalRequest) => `${request.url}@${request.headSha}`;
+/** Queue check counts from a check list, so rows agree with the Checks tab. */
+export function checkSignals(checks: CiCheck[]): QueueSignals['checks'] {
+  const counts = checkCounts(checks);
+  return {
+    state: counts.attention ? 'failure' : counts.running ? 'pending' : checks.length ? 'success' : 'neutral',
+    passed: counts.passed,
+    failed: counts.attention,
+    running: counts.running,
+    skipped: counts.skipped,
+    total: checks.length,
+  };
+}
+/** v4: check counts leave out jobs of superseded workflow runs. v5: entries carry `opinions`. */
+export const queueSignalsCacheKey = (request: QueueSignalRequest) => `queue-signals:v5:${queueSignalKey(request)}`;
 
 const newestFirst = (a: SignalReview, b: SignalReview) => b.submittedAt.localeCompare(a.submittedAt);
 /**
@@ -72,4 +89,3 @@ export function decidingReview(signals: QueueSignals): SignalReview | null | und
     signals.latestReview
   );
 }
-export const queueSignalKey =(request: QueueSignalRequest) => `${request.url}@${request.headSha}`;
