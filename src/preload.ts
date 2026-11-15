@@ -317,7 +317,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
   },
   diagnosticsReport: (): Promise<unknown> => ipcRenderer.invoke('diagnostics-report'),
-  exportDiagnostics: (): Promise<string | null> => ipcRenderer.invoke('export-diagnostics'),
+  /** Saves one diagnostics file: app, system and startup details, sync health, and this window's slow interactions. */
+  exportDiagnostics: (renderer?: import('../lib/diagnostics').RendererDiagnostics): Promise<string | null> =>
+    ipcRenderer.invoke('export-diagnostics', renderer),
   refreshOpenPr: (urls: string[]) => ipcRenderer.send('refresh-open-pr', urls),
   onReviewProgress: (callback: (reviewId: string, chunk: string, isThinking: boolean) => void): void => {
     ipcRenderer.on(

@@ -15,7 +15,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { DEFAULT_MENUBAR_SETTINGS, menubarSettings, type MenubarSettings } from '../lib/menubar-settings';
 import { Button } from './ui/button';
 import { Toggle, SettingRow } from './SettingsControls';
-import { SyncHealthSettings } from './SyncHealthSettings';
+import { DiagnosticsSettings } from './DiagnosticsSettings';
 import { NotificationSettings } from './NotificationSettings';
 import { useSystemSettingsPanes } from './DesktopSetup';
 import { menubarHelp } from '../lib/desktop-setup';
@@ -1148,7 +1148,7 @@ export function SettingsDialog({
               {logsError && <p role="alert" className="text-sm text-destructive">{logsError}</p>}
             </Tabs.Content>
             <Tabs.Content value="diagnostics" className="settings-panel">
-              <SyncHealthSettings />
+              <DiagnosticsSettings />
             </Tabs.Content>
           </Tabs.Root>
         )}

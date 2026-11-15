@@ -37,6 +37,9 @@ export interface SyncHealthDeps {
   refreshOpen: (urls: string[]) => void;
   notify: () => void;
   appInfo: () => Record<string, unknown>;
+  /** More sections for the diagnostics file, from main and from the renderer's payload: system, startup and the
+   * window's slow interactions (#345). */
+  extendReport?: (renderer: unknown) => Record<string, unknown>;
   now?: () => number;
 }
 
@@ -160,7 +163,7 @@ export function createSyncHealthService(deps: SyncHealthDeps) {
     changed: deps.notify,
   });
   const focusThrottle = createRefreshThrottle(undefined, now);
-  function report() {
+  function report(renderer?: unknown) {
     const token = deps.token();
     const state = detector.state();
     return {
@@ -178,6 +181,7 @@ export function createSyncHealthService(deps: SyncHealthDeps) {
         runs: state.runs,
         unconfirmed: state.suspects,
       },
+      ...deps.extendReport?.(renderer),
     };
   }
   function register() {
@@ -185,8 +189,8 @@ export function createSyncHealthService(deps: SyncHealthDeps) {
     ipcMain.handle('sync-health-check-now', (_event, raw: unknown) => detector.checkNow(prUrls(raw ?? [], 3) ?? []));
     ipcMain.handle('sync-health-enabled', (_event, enabled: unknown) => detector.setEnabled(enabled === true));
     ipcMain.handle('sync-health-clear', () => detector.clear());
-    ipcMain.handle('diagnostics-report', () => report());
-    ipcMain.handle('export-diagnostics', async (event) => {
+    ipcMain.handle('diagnostics-report', (_event, renderer: unknown) => report(renderer));
+    ipcMain.handle('export-diagnostics', async (event, renderer: unknown) => {
       const win = BrowserWindow.fromWebContents(event.sender);
       const stamp = new Date(now()).toISOString().slice(0, 10);
       const options = {
@@ -196,7 +200,7 @@ export function createSyncHealthService(deps: SyncHealthDeps) {
       };
       const chosen = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
       if (chosen.canceled || !chosen.filePath) return null;
-      fs.writeFileSync(chosen.filePath, JSON.stringify(report(), null, 2));
+      fs.writeFileSync(chosen.filePath, JSON.stringify(report(renderer), null, 2));
       return chosen.filePath;
     });
     // The reader switched to a PR tab or returned to Gnosis with one open.

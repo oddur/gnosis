@@ -1807,6 +1807,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .settings-sections button[data-state=active] { border-color:var(--ring); color:var(--foreground); font-weight:600; }
 .settings-panel { min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:20px; padding:20px 4px 4px; }
 .settings-panel[data-state=inactive] { display:none; }
+.diagnostics-settings { display:flex; flex-direction:column; gap:28px; }
+.diagnostics-section { display:flex; flex-direction:column; align-items:stretch; gap:10px; }
+.diagnostics-section .numeric, .diagnostics-saved { font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .sync-health { display:flex; flex-direction:column; align-items:stretch; gap:10px; }
 .sync-health-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .sync-health-heading { margin-top:10px; font-size:var(--type-control); font-weight:600; }
