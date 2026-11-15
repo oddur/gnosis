@@ -38,6 +38,8 @@ const budgets: Record<string, number> = {
   // About 75 ms of it is one style recalculation per keystroke; see the report in #346.
   'comment keystroke': 150,
   'feedback row': 120,
+  // Keyboard "Viewed & next" on the 600-file PR, pressed about 250 ms apart as a reader moving through files does.
+  'viewed next key': 200,
 };
 
 /** Input delay (ms) at the 90th percentile of clicks and key presses in Settings and on queue rows while background
@@ -130,7 +132,8 @@ void app.whenReady().then(async () => {
         const k=window.__perf.describeTarget(m.target.nodeType===1?m.target:m.target.parentElement)+' '+(m.type==='attributes'?'@'+m.attributeName:m.type);
         window.__mutations.set(k,(window.__mutations.get(k)??0)+1)}});
         window.__mutationObserver.observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true})})()`);
-    const since = await js<number>('performance.timeOrigin+performance.now()');
+    // Node's clock, not a round trip to the page: a script call would wait for, and so hide, work already running.
+    const since = Date.now() - 5;
     await act();
     await wait(done);
     await js(frames);
@@ -450,6 +453,45 @@ void app.whenReady().then(async () => {
       counts[`settings closed ${round + 1}`] = await listeners();
     }
 
+    // ── Briefing chips and the queue list, stepped through quickly ──
+    // A reader trying filters clicks a chip, then another, or the list, a moment later. The second input meets the
+    // first one's follow-up work: the filter save 300 ms later and the queue it returns.
+    const chips = await js<string[]>(
+      "[...document.querySelectorAll('[data-workspace-active=true] .briefing-chip')].map(c=>c.dataset.state)"
+    );
+    const chip = (state: string) => `document.querySelector('[data-workspace-active=true] .briefing-chip[data-state="${state}"]')`;
+    const list = "document.querySelector('[data-workspace-active=true] section.queue-list')";
+    const pressAt = ({ x, y }: { x: number; y: number }) => () => {
+      win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+      win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+      win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+    };
+    const listEdge = await js<{ x: number; y: number }>(
+      `(()=>{const r=${list}.getBoundingClientRect();return {x:Math.round(r.right-4),y:Math.round(r.top+r.height/2)}})()`
+    );
+    const gaps = [40, 120, 200];
+    for (let i = 0; i < 12; i++) {
+      const state = chips[1 + (i % Math.max(1, chips.length - 1))] ?? chips[0];
+      const at = await point(chip(state));
+      await measure('bg briefing chip', pressAt(at), 'true');
+      await sleep(gaps[i % gaps.length]);
+      await measure('bg queue list press', pressAt(listEdge), 'true');
+      await sleep(gaps[(i + 1) % gaps.length]);
+    }
+    await js(`${chip('all')}?.click()`);
+    await sleep(500);
+
+    // ── Workspace tabs, switched one after another ──
+    for (let round = 0; round < 2; round++)
+      for (let i = 1; i < 6; i++) {
+        const at = await point(`document.querySelectorAll('.workspace-tab-select')[${i}]`);
+        await measure('bg workspace tab', pressAt(at), `document.querySelectorAll('.workspace-tab-select')[${i}].getAttribute('aria-selected')==='true'`);
+        await sleep(150);
+      }
+    await js(`document.querySelectorAll('.workspace-tab-select')[0].click()`);
+    await wait(`!!document.querySelector('[data-workspace-active=true] .queue-list')`);
+    await sleep(300);
+
     // ── Queue rows under background sync ──
     const row = (i: number) =>
       `document.querySelector('[data-workspace-active=true] .queue-list').querySelectorAll('.queue-row-main')[${i}]`;
@@ -469,6 +511,12 @@ void app.whenReady().then(async () => {
     counts['five tabs again'] = await listeners();
     await closeTabs();
     counts['tabs closed again'] = await listeners();
+    // A longer session: the same cycle three more times. Memory that stays behind grows with every cycle.
+    for (let cycle = 3; cycle <= 5; cycle++) {
+      await openTabs();
+      await closeTabs();
+      counts[`tabs closed ${cycle}`] = await listeners();
+    }
     const storm = await js<{ ticks: number; ms: number }>('({ticks:window.__storm.ticks,ms:Math.round(window.__storm.ms)})');
     console.log('Background sync ticks:', JSON.stringify(storm));
     console.log('github-sync listeners (renderer receivers / watches) and JS heap after GC:', JSON.stringify(counts));
@@ -742,6 +790,18 @@ void app.whenReady().then(async () => {
       );
     }
 
+    // ── Changes: "Viewed & next" from the keyboard, file after file ──
+    // Each press marks the file viewed and moves to the next one, whose button takes focus. The next press comes
+    // 250 ms later, so it meets any work the previous one left behind.
+    const viewedNext = "[...document.querySelectorAll('.commit-stream-row [data-viewed-next]')].find(b=>b.checkVisibility())";
+    await wait(`!!${viewedNext}`);
+    await js(`${viewedNext}.focus()`);
+    for (let i = 0; i < 8; i++) {
+      if (!(await js<boolean>("!!document.activeElement?.matches('[data-viewed-next]')"))) await js(`${viewedNext}?.focus()`);
+      await measure('viewed next key', () => key('Enter', true), 'true');
+      await sleep(250);
+    }
+
     // ── Diagnostics export carries the ring buffer ────────────────
     await js(`(async()=>{const {collectRendererDiagnostics}=await import('/lib/diagnostics.ts');await window.electronAPI.exportDiagnostics(await collectRendererDiagnostics())})()`);
     const exported = await js<{ interactions: Interaction[]; monitor: { threshold: number } }>('window.exportedDiagnostics');
@@ -773,7 +833,7 @@ void app.whenReady().then(async () => {
     );
     // Opening and closing five tabs again must not keep their pages: the heap returns to about where it was.
     assert.ok(
-      background.counts['tabs closed again'].heapMB - background.counts['tabs closed'].heapMB < 20,
+      background.counts['tabs closed 5'].heapMB - background.counts['tabs closed'].heapMB < 20,
       `Closed tabs release their memory: ${JSON.stringify(background.counts)}`
     );
     assert.deepEqual(errors, [], 'No renderer errors');
