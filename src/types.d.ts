@@ -132,6 +132,16 @@ declare global {
       deleteAllReviews: () => Promise<void>;
       exportReview: (id: string) => Promise<string | null>;
       importReview: () => Promise<ReviewHistoryEntry | null>;
+      /** Settings › Diagnostics › Sync health. Optional: preview fixtures may leave it out. */
+      syncHealth?: () => Promise<import('../lib/sync-health').SyncHealthSnapshot>;
+      checkSyncHealth?: (urls: string[]) => Promise<import('../lib/sync-health').SyncHealthSnapshot>;
+      setSyncHealthEnabled?: (enabled: boolean) => Promise<import('../lib/sync-health').SyncHealthSnapshot>;
+      clearSyncHealth?: () => Promise<import('../lib/sync-health').SyncHealthSnapshot>;
+      onSyncHealthChanged?: (callback: () => void) => () => void;
+      diagnosticsReport?: () => Promise<unknown>;
+      exportDiagnostics?: () => Promise<string | null>;
+      /** The reader switched to these PRs or returned to Gnosis. Main reads them again, at most every 30 s each. */
+      refreshOpenPr?: (urls: string[]) => void;
       onReviewProgress: (callback: (reviewId: string, chunk: string, isThinking: boolean) => void) => void;
       offReviewProgress: () => void;
       onReviewToolUse: (callback: (reviewId: string, toolName: string) => void) => void;

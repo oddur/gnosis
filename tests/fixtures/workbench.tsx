@@ -958,6 +958,30 @@ if (updateScenario) {
     },
   });
 }
+// Settings › Diagnostics › Sync health and the open PR's refresh on focus. Tests seed `window.fixtureSyncHealth` and read
+// `window.fixtureFocusRefreshes` and `window.fixtureSyncHealthChecks`.
+{
+  type Snapshot = import('../../lib/sync-health').SyncHealthSnapshot;
+  const fixtureWindow = window as unknown as { fixtureSyncHealth?: Snapshot; fixtureFocusRefreshes: string[][]; fixtureSyncHealthChecks: string[][] };
+  fixtureWindow.fixtureFocusRefreshes = [];
+  fixtureWindow.fixtureSyncHealthChecks = [];
+  const health = (): Snapshot => fixtureWindow.fixtureSyncHealth ?? { enabled: true, active: true, checking: false, drifts: [], stale: [], runs: [], unconfirmed: 0 };
+  Object.assign(mocks, {
+    syncHealth: () => Promise.resolve(health()),
+    checkSyncHealth: (urls: string[]) => {
+      fixtureWindow.fixtureSyncHealthChecks.push(urls);
+      const current = health();
+      fixtureWindow.fixtureSyncHealth = { ...current, runs: [{ at: Date.now(), trigger: 'manual', sampled: 3, cost: 3, drift: current.drifts.length, stale: 0, failed: 0 }, ...current.runs] };
+      return Promise.resolve(fixtureWindow.fixtureSyncHealth);
+    },
+    setSyncHealthEnabled: (enabled: boolean) => Promise.resolve(fixtureWindow.fixtureSyncHealth = { ...health(), enabled }),
+    clearSyncHealth: () => Promise.resolve(fixtureWindow.fixtureSyncHealth = { ...health(), drifts: [], stale: [], runs: [], unconfirmed: 0 }),
+    onSyncHealthChanged: () => () => {},
+    diagnosticsReport: () => Promise.resolve({ kind: 'gnosis-diagnostics', version: 1, syncHealth: health() }),
+    exportDiagnostics: () => Promise.resolve('/tmp/gnosis-diagnostics.json'),
+    refreshOpenPr: (urls: string[]) => { fixtureWindow.fixtureFocusRefreshes.push(urls); },
+  });
+}
 Object.defineProperty(window, 'electronAPI', {
   value: new Proxy(mocks, {
     get: (target, key) => {

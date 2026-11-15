@@ -114,7 +114,7 @@ void test('pause offline/hidden and during shared backoff; wake revalidates once
   f.time(80_000);
   await f.sync.tick();
   assert.equal(f.calls.length, 1);
-  f.time(90_000);
+  f.time(110_000);
   f.sync.wake();
   await f.sync.tick();
   assert.equal(f.calls.length, 2);
@@ -250,7 +250,11 @@ void test('rapid navigation preserves freshness and does not refetch the same PR
   f.sync.wake();
   await f.sync.tick();
   assert.equal(f.calls.length, 1);
+  // Returning to the app reads each PR at most every 30 s.
   f.time(10_000);
+  await f.sync.tick();
+  assert.equal(f.calls.length, 1);
+  f.time(30_000);
   await f.sync.tick();
   assert.equal(f.calls.length, 2);
 });
@@ -448,4 +452,32 @@ void test('only bounded write follow-ups borrow requested capacity from the tran
   now += 300_000;
   await sync.tick();
   assert.deepEqual(requested, [false, true, false]);
+});
+void test('returning to the app or switching to a PR reads it at most every 30 seconds', async () => {
+  const f = fixture();
+  f.pending(false);
+  f.sync.observe('1:a', watch('visible'));
+  await f.sync.tick();
+  assert.equal(f.calls.length, 1);
+  // Visible rows wait two minutes between reads; focus brings that forward, but not within 30 s of the last read.
+  f.time(10_000);
+  f.sync.wake();
+  await f.sync.tick();
+  assert.equal(f.calls.length, 1);
+  f.time(31_000);
+  f.sync.wake();
+  await f.sync.tick();
+  assert.equal(f.calls.length, 2);
+  f.time(40_000);
+  assert.deepEqual(f.sync.refresh([target().url], ['signals']), []);
+  await f.sync.tick();
+  assert.equal(f.calls.length, 2);
+  f.time(62_000);
+  assert.deepEqual(f.sync.refresh([target().url], ['signals']), [target().url]);
+  await f.sync.tick();
+  assert.equal(f.calls.length, 3);
+  // Only watched PRs and kinds are read.
+  f.time(200_000);
+  assert.deepEqual(f.sync.refresh([target(9).url], ['signals']), []);
+  assert.deepEqual(f.sync.refresh([target().url], ['metadata']), []);
 });

@@ -253,8 +253,24 @@ export function createGitHubSyncService(deps: Deps) {
           task.interval = intervals[task.kind];
         }
     },
-    wake() {
-      for (const task of tasks.values()) task.due = Math.min(task.due, Math.max(now(), task.lastAttempt + 10_000));
+    /** Returning to the app, resuming or becoming visible again: everything watched is read, at most every 30 s. */
+    wake(floor = 30_000) {
+      for (const task of tasks.values()) task.due = Math.min(task.due, Math.max(now(), task.lastAttempt + floor));
+    },
+    /**
+     * The reader switched to these PRs or returned to them: read their watched kinds now, unless a read started within
+     * `floor`. Returns the URLs that will be read.
+     */
+    refresh(urls: string[], kinds: GitHubSyncKind[], floor = 30_000) {
+      const wanted = new Set(urls);
+      const refreshed = new Set<string>();
+      for (const task of tasks.values()) {
+        if (!task.observed || !wanted.has(task.target.url) || !kinds.includes(task.kind)) continue;
+        if (now() - task.lastAttempt < floor) continue;
+        task.due = Math.min(task.due, now());
+        refreshed.add(task.target.url);
+      }
+      return [...refreshed];
     },
     tick,
   };

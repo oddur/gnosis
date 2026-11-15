@@ -19,6 +19,7 @@ import type { InspectionRevision, InspectionLoadOptions, InspectionMode } from '
 import type { PredictionState } from '../lib/navigation-predictor';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
+import type { SyncHealthSnapshot } from '../lib/sync-health';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
 import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
 import type { GitHubProfile } from '../lib/github-profile';
@@ -293,6 +294,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteAllReviews: (): Promise<void> => ipcRenderer.invoke('delete-all-reviews'),
   exportReview: (id: string): Promise<string | null> => ipcRenderer.invoke('export-review', id),
   importReview: (): Promise<ReviewHistoryEntry | null> => ipcRenderer.invoke('import-review'),
+  syncHealth: (): Promise<SyncHealthSnapshot> => ipcRenderer.invoke('sync-health'),
+  checkSyncHealth: (urls: string[]): Promise<SyncHealthSnapshot> => ipcRenderer.invoke('sync-health-check-now', urls),
+  setSyncHealthEnabled: (enabled: boolean): Promise<SyncHealthSnapshot> => ipcRenderer.invoke('sync-health-enabled', enabled),
+  clearSyncHealth: (): Promise<SyncHealthSnapshot> => ipcRenderer.invoke('sync-health-clear'),
+  onSyncHealthChanged: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('sync-health-changed', handler);
+    return () => {
+      ipcRenderer.removeListener('sync-health-changed', handler);
+    };
+  },
+  diagnosticsReport: (): Promise<unknown> => ipcRenderer.invoke('diagnostics-report'),
+  exportDiagnostics: (): Promise<string | null> => ipcRenderer.invoke('export-diagnostics'),
+  refreshOpenPr: (urls: string[]) => ipcRenderer.send('refresh-open-pr', urls),
   onReviewProgress: (callback: (reviewId: string, chunk: string, isThinking: boolean) => void): void => {
     ipcRenderer.on(
       'review-progress',
