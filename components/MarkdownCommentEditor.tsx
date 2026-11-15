@@ -1,5 +1,14 @@
 import '@github/markdown-toolbar-element';
-import { createElement, useId, useRef, useState, type ComponentProps, type RefObject } from 'react';
+import {
+  createElement,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type RefObject,
+} from 'react';
 import { Tabs } from 'radix-ui';
 import {
   Bold,
@@ -53,6 +62,14 @@ export function MarkdownCommentEditor({
   const [previewHeight, setPreviewHeight] = useState(120);
   const selection = useRef({ start: 0, end: 0, scroll: 0 });
   const unavailable = disabled || readOnly;
+  // The field's value is written here, not through React's `value` prop. For a controlled textarea React also
+  // writes `defaultValue` on every change, which rewrites the textarea's child text. That DOM change invalidates
+  // the `:has()` rules on its ancestors (body, workspace, file section) and restyles the whole page, diff
+  // included, on every key (#354). A typed key already matches `value`, so nothing is written then.
+  useLayoutEffect(() => {
+    const field = input.current;
+    if (field && field.value !== value) field.value = value;
+  });
   function changeMode(next: string) {
     const field = input.current;
     if (next === 'preview' && field) {
@@ -156,7 +173,7 @@ export function MarkdownCommentEditor({
           {...props}
           id={id}
           ref={input}
-          value={value}
+          style={{ ...props.style, '--comment-editor-rows': rows } as CSSProperties}
           disabled={disabled}
           readOnly={readOnly}
           rows={rows}

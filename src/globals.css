@@ -3317,6 +3317,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .comment-editor .comment-editor-toolbar button:hover { color:var(--foreground); }
 .comment-editor .comment-editor-panel[hidden] { display:none; }
 .comment-editor .comment-editor-panel textarea { display:block;width:100%;min-height:96px;margin:0;border:0;border-radius:0;padding:10px 12px;background:transparent;color:var(--foreground);font:var(--type-body)/1.6 var(--font-sans);resize:vertical; }
+/* Size and layout containment make the field its own relayout boundary: a typed key lays out the field, not the
+   diff around it (#354). Its height still comes from its rows, as without containment; resizing sets a height. */
+.comment-editor .comment-editor-panel textarea { contain:size layout;contain-intrinsic-block-size:calc(var(--comment-editor-rows,4) * 1lh); }
 .comment-editor .comment-editor-panel textarea:focus-visible { outline:2px solid var(--ring);outline-offset:-2px;box-shadow:none; }
 .comment-editor-preview { overflow:auto;padding:10px 12px;min-height:96px; }
 .comment-editor-empty { font-size:var(--type-body);color:var(--muted-foreground); }
