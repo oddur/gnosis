@@ -11,7 +11,7 @@ import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { QueueSignals, QueueSignalRequest, QueueSignalOptions } from '../lib/queue-signals';
 import { createNotificationStore, type NotificationStore } from './notification-store';
 import type { NotificationEvent, ObservedMember, PrObservation } from '../lib/notification-events';
-import { planSweep } from '../lib/notification-cadence';
+import { planSweep, sweepCostFactor } from '../lib/notification-cadence';
 import { normalizePrInactivityDays, isPrRecentlyUpdated } from '../lib/pr-inactivity';
 import { createMutedPrStore, type MutedPrStore } from './muted-pr-store';
 import { isMutedReview, withoutMutedMembers, type MutePrRequest } from '../lib/muted-prs';
@@ -965,7 +965,7 @@ export function createWorkbenchService(deps: Deps) {
       if (measured !== undefined) {
         requests++;
         if (measured !== sweepCost) {
-          console.log(`[notifications] Own-PR status sweep: ${batch.length} PRs cost ${measured} GraphQL point${measured === 1 ? '' : 's'}.${measured > 1 ? ' Widening the sweep cadence.' : ''}`);
+          console.log(`[notifications] Own-PR status sweep: ${batch.length} PRs cost ${measured} GraphQL point${measured === 1 ? '' : 's'}.${sweepCostFactor(measured) > 1 ? ' Widening the sweep cadence.' : ''}`);
           sweepCost = Math.max(1, measured);
         }
       }
@@ -1448,7 +1448,7 @@ export function createWorkbenchService(deps: Deps) {
       return changed;
     },
     noteOwnReview(account: string, url: string, inlineComments: number, reviewUrl?: string) {
-      try { if (account === deps.auth().login) reads.ownReview(account, url, inlineComments, now(), reviewUrl); }
+      try { if (account === deps.auth().login) reads.ownReview(account, url, reviewUrl); }
       catch (error) { console.warn('Review posted, but its unread progress could not be saved:', error); }
     },
     isMutedReview: (entry: Pick<ReviewHistoryEntry, 'prUrl' | 'snapshot'>) => isMutedReview(entry, mutedUrls()),

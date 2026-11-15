@@ -251,7 +251,13 @@ void test('response evidence excludes own/resolved/automation-only threads and r
     { ...thread, id: 'own', comments: [{ ...comment, author: { login: 'ODDUR', avatarUrl: '' } }] },
     { ...thread, id: 'bot', comments: [{ ...comment, author: { login: 'github-actions[bot]', avatarUrl: '' } }] },
   ];
-  assert.deepEqual(responseNeeded(own, 'ODDUR', undefined, data), { changesRequested: false, unresolvedThreads: 1, complete: true });
+  // GitHub counts every unresolved conversation, automation and your own included. Only Maya's waits for you.
+  assert.deepEqual(responseNeeded(own, 'ODDUR', undefined, data), {
+    changesRequested: false,
+    unresolvedThreads: 3,
+    awaitingReply: 1,
+    complete: true,
+  });
   assert.equal(needsResponse(responseNeeded({ ...own, author: 'someone' }, 'oddur', undefined, data)), false);
   assert.equal(needsResponse(responseNeeded({ ...own, state: 'closed' }, 'oddur', undefined, data)), false);
   assert.equal(responseNeeded(own, 'oddur').complete, false);
@@ -289,15 +295,173 @@ void test('response links select the exact kind of outstanding feedback, ignorin
   const { responseFeedbackTarget } = await import('../lib/feedback');
   const data = structuredClone(snapshot);
   data.threads.unshift({ ...thread, id: 'own', comments: [{ ...comment, author: { login: 'oddur', avatarUrl: '' } }] });
-  const items = feedbackItems(member, data);
+  const own = { ...member, author: 'oddur' } as ReviewMember;
+  const items = feedbackItems(own, data);
   assert.equal(responseFeedbackTarget(items, 'oddur', 'response-threads')?.id, 'T1');
   assert.equal(responseFeedbackTarget(items, 'oddur', 'response-review')?.id, 'R1');
   assert.equal(responseFeedbackTarget(items, 'oddur', 'response')?.id, 'R1');
   data.feedback!.reviews.push({ ...review, id: 'new-comment', state: 'COMMENTED', submittedAt: '2026-11-02T10:00:00Z' });
   assert.equal(feedbackReviewers(data).length, 1, 'A comment does not withdraw changes requested');
   data.feedback!.reviews.push({ ...review, id: 'approved', state: 'APPROVED', submittedAt: '2026-11-03T10:00:00Z' });
-  assert.equal(responseFeedbackTarget(feedbackItems(member, data), 'oddur', 'response-review'), undefined);
-  assert.equal(responseFeedbackTarget(feedbackItems(member, data), 'oddur', 'response')?.id, 'T1');
+  assert.equal(responseFeedbackTarget(feedbackItems(own, data), 'oddur', 'response-review'), undefined);
+  assert.equal(responseFeedbackTarget(feedbackItems(own, data), 'oddur', 'response')?.id, 'T1');
   data.threads = data.threads.map(thread => ({ ...thread, isResolved: true }));
-  assert.equal(responseFeedbackTarget(feedbackItems(member, data), 'oddur', 'response'), undefined);
+  assert.equal(responseFeedbackTarget(feedbackItems(own, data), 'oddur', 'response'), undefined);
+});
+
+// Real GitHub shapes, with synthetic people. A comment's author, its review state and whether it is hidden.
+const by = (login: string, id: string, extra: Record<string, unknown> = {}) => ({
+  ...comment,
+  id,
+  author: { login, avatarUrl: '' } as { login: string; avatarUrl: string; __typename?: string },
+  pullRequestReview: { id: `review-${id}`, state: 'COMMENTED' },
+  ...extra,
+});
+const conversation = (id: string, ...comments: ReturnType<typeof by>[]) => ({ ...thread, id, isOutdated: false, comments });
+const own = { ...member, state: 'open', merged: false, author: 'oddur', headSha: 'head' } as ReviewMember;
+
+void test('a thread waits for you when its last human comment is from someone else, whoever started it', async () => {
+  const { isResponseThread, isUnresolvedThread } = await import('../lib/response-needed');
+  const started = conversation('started', by('oddur', 'a'), by('jan', 'b'));
+  const answered = conversation('answered', by('jan', 'a'), by('oddur', 'b'));
+  assert.equal(isResponseThread(started, 'oddur', 'oddur'), true, 'You asked, a reviewer answered');
+  assert.equal(isUnresolvedThread(answered), true);
+  assert.equal(isResponseThread(answered, 'oddur', 'oddur'), false, 'You replied last');
+  // Bots neither ask for nor give a reply; hidden comments do not either.
+  const botLast = conversation('bot', by('jan', 'a'), by('oddur', 'b'), by('github-actions', 'c'));
+  assert.equal(isResponseThread(botLast, 'oddur', 'oddur'), false);
+  assert.equal(isResponseThread(conversation('app', by('copilot-pull-request-reviewer', 'a', { author: { login: 'copilot-pull-request-reviewer', avatarUrl: '', __typename: 'Bot' } })), 'oddur', 'oddur'), false);
+  const hiddenLast = conversation('hidden', by('oddur', 'a'), by('jan', 'b', { isMinimized: true, minimizedReason: 'outdated' }));
+  assert.equal(isResponseThread(hiddenLast, 'oddur', 'oddur'), false);
+  // Someone else's PR: only threads you joined wait for you.
+  assert.equal(isResponseThread(conversation('theirs', by('jan', 'a')), 'oddur', 'maya'), false);
+  assert.equal(isResponseThread(started, 'oddur', 'maya'), true);
+});
+
+void test('the unresolved count matches GitHub; "needs your response" counts only threads waiting for you', async () => {
+  const { responseNeeded } = await import('../lib/response-needed');
+  const data = structuredClone(snapshot);
+  data.feedback!.reviews = [];
+  // klanggames/service-wallet#68: six unresolved, one of them outdated and started by the PR author.
+  data.threads = [
+    conversation('w1', by('alim', 'a'), by('jan', 'b')),
+    conversation('w2', by('alim', 'a')),
+    conversation('w3', by('alim', 'a')),
+    conversation('w4', by('alim', 'a')),
+    conversation('w5', by('jan', 'a')),
+    { ...conversation('w6', by('oddur', 'a'), by('jan', 'b')), isOutdated: true },
+  ];
+  assert.deepEqual(responseNeeded(own, 'oddur', undefined, data), {
+    changesRequested: false,
+    unresolvedThreads: 6,
+    awaitingReply: 6,
+    complete: true,
+  });
+  // klanggames/seed#25117: seven unresolved, you wrote the last comment in five of them.
+  data.threads = [
+    conversation('s1', by('marijnz', 'a'), by('oddur', 'b')),
+    conversation('s2', by('marijnz', 'a'), by('oddur', 'b')),
+    conversation('s3', by('marijnz', 'a'), by('ivan', 'b'), by('oddur', 'c')),
+    conversation('s4', by('ivan', 'a'), by('ivan', 'b'), by('oddur', 'c'), by('ivan', 'd')),
+    conversation('s5', by('ivan', 'a'), by('oddur', 'b')),
+    conversation('s6', by('ivan', 'a'), by('oddur', 'b'), by('ivan', 'c')),
+    { ...conversation('s7', by('ivan', 'a'), by('oddur', 'b')), isOutdated: true },
+  ];
+  const result = responseNeeded(own, 'oddur', undefined, data);
+  assert.equal(result.unresolvedThreads, 7);
+  assert.equal(result.awaitingReply, 2);
+});
+
+void test('your pending review comments are marked, never counted and never unread', async () => {
+  const { responseNeeded, isUnresolvedThread, isResponseThread } = await import('../lib/response-needed');
+  const { isPendingComment } = await import('../lib/review-threads');
+  const pending = { pullRequestReview: { id: 'draft-review', state: 'PENDING' } };
+  // klanggames/seed#9413 shape: a reviewer's thread with your unsubmitted reply.
+  const draftReply = conversation('draft-reply', by('mike', 'a'), by('oddur', 'b', pending));
+  const draftOnly = conversation('draft-only', by('oddur', 'a', pending));
+  assert.equal(isPendingComment(draftReply.comments[1]), true);
+  assert.equal(isResponseThread(draftReply, 'oddur', 'oddur'), true, 'An unsubmitted reply answers nobody yet');
+  assert.equal(isUnresolvedThread(draftOnly), false, 'GitHub shows nobody else this thread');
+  const data = structuredClone(snapshot);
+  data.feedback!.reviews = [];
+  data.threads = [draftReply, draftOnly];
+  assert.deepEqual(responseNeeded(own, 'oddur', undefined, data), {
+    changesRequested: false,
+    unresolvedThreads: 1,
+    awaitingReply: 1,
+    complete: true,
+  });
+  const [item] = feedbackItems(member, { ...data, threads: [draftOnly] });
+  assert.equal(feedbackFingerprint(item, 'someone-else'), '', 'Pending comments never make feedback unread');
+});
+
+void test('an inline comment appears once in Feedback, not also as its empty comment review', () => {
+  const data = structuredClone(snapshot);
+  const inline = { ...comment, id: 'TC9', pullRequestReview: { id: 'R9', state: 'COMMENTED' } };
+  data.threads = [{ ...thread, id: 'T9', comments: [inline] }];
+  data.feedback!.comments = [];
+  data.feedback!.reviews = [
+    // GitHub's wrapper for the inline comment: COMMENTED, no body.
+    { ...review, id: 'R9', state: 'COMMENTED', body: '' },
+    // A comment review with a summary is its own feedback.
+    { ...review, id: 'R10', state: 'COMMENTED', body: 'Two small things inline.' },
+    // An empty comment review whose thread is gone stays as an event.
+    { ...review, id: 'R11', state: 'COMMENTED', body: '' },
+  ];
+  data.threads[0].comments.push({ ...inline, id: 'TC10', pullRequestReview: { id: 'R10', state: 'COMMENTED' } });
+  assert.deepEqual(
+    feedbackItems(member, data).map((item) => item.id).sort(),
+    ['R10', 'R11', 'T9']
+  );
+});
+
+void test('hidden comments never make feedback unread', () => {
+  const data = structuredClone(snapshot);
+  data.feedback!.reviews = [];
+  data.threads = [];
+  data.feedback!.comments = [{ ...comment, isMinimized: true, minimizedReason: 'outdated' }];
+  const [item] = feedbackItems(member, data);
+  assert.equal(feedbackFingerprint(item, 'oddur'), '');
+});
+
+void test('newer signals carry resolutions made on github.com; a stale discussion keeps its last count', async () => {
+  const { responseNeeded } = await import('../lib/response-needed');
+  const data = structuredClone(snapshot);
+  data.feedback!.reviews = [];
+  data.checkedAt = 10;
+  data.threads = [conversation('a', by('jan', 'a')), conversation('b', by('jan', 'b'))];
+  const signals = (unresolved: string[], checkedAt = 20, complete = true) =>
+    ({ url, headSha: 'head', checkedAt, comments: 2, checks: { state: 'success', passed: 0, total: 0 }, threads: { unresolved, complete } }) as import('../lib/queue-signals').QueueSignals;
+  assert.equal(responseNeeded(own, 'oddur', undefined, data).awaitingReply, 2);
+  const resolved = responseNeeded(own, 'oddur', signals(['a']), data);
+  assert.equal(resolved.unresolvedThreads, 1, 'Thread b was resolved on github.com');
+  assert.equal(resolved.awaitingReply, 1);
+  assert.equal(responseNeeded(own, 'oddur', signals(['a'], 5), data).unresolvedThreads, 2, 'Older signals lose to the discussion');
+  assert.equal(responseNeeded(own, 'oddur', signals(['a'], 20, false), data).unresolvedThreads, 2, 'Past 100 threads, absence proves nothing');
+  // A thread started after the discussion was read: counted, but its author is unknown until it is read again.
+  const started = responseNeeded(own, 'oddur', signals(['a', 'b', 'new']), data);
+  assert.equal(started.unresolvedThreads, 3);
+  assert.equal(started.awaitingReply, 2);
+  assert.equal(started.complete, false);
+  // New activity marked the discussion stale: the count stays, flagged incomplete, instead of dropping to 0.
+  const stale = responseNeeded(own, 'oddur', undefined, { ...data, stale: true });
+  assert.equal(stale.awaitingReply, 2);
+  assert.equal(stale.complete, false);
+});
+
+void test('the Changes file tree counts conversations open on the current diff', async () => {
+  const { isOpenOnCurrentDiff, openDiffComments } = await import('../lib/response-needed');
+  // klanggames/seed#27707 shape: half of the unresolved threads are outdated.
+  assert.equal(
+    openDiffComments([
+      conversation('open', by('jan', 'a'), by('oddur', 'b'), by('oddur', 'c', { pullRequestReview: { id: 'p', state: 'PENDING' } })),
+      { ...conversation('old', by('jan', 'a')), isOutdated: true },
+      { ...conversation('done', by('jan', 'a')), isResolved: true },
+    ]),
+    2
+  );
+  assert.equal(isOpenOnCurrentDiff(conversation('open', by('jan', 'a'))), true);
+  assert.equal(isOpenOnCurrentDiff({ ...conversation('old', by('jan', 'a')), isOutdated: true }), false);
+  assert.equal(isOpenOnCurrentDiff({ ...conversation('done', by('jan', 'a')), isResolved: true }), false);
+  assert.equal(isOpenOnCurrentDiff(conversation('draft', by('oddur', 'a', { pullRequestReview: { id: 'p', state: 'PENDING' } }))), false);
 });

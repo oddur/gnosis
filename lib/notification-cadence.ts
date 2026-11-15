@@ -10,10 +10,17 @@ export const SWEEP_BATCH = 25;
 export const SWEEP_ACTIVE_MS = 120_000;
 export const SWEEP_SETTLED_MS = 5 * 60_000;
 
-/** One sweep interval per PR. A measured `rateLimit.cost` above 1 widens it by the same factor. */
+/**
+ * A 25-PR batch may cost this many GraphQL points at the normal cadence. At the 2-minute active interval that is
+ * at most 60 points an hour per 25 PRs, a small part of the automatic share of 5000.
+ */
+export const SWEEP_EXPECTED_COST = 2;
+/** The factor a measured batch cost widens the sweep by: 1 up to the expected cost, then in proportion. */
+export const sweepCostFactor = (cost = 1) => Math.max(1, cost / SWEEP_EXPECTED_COST);
+/** One sweep interval per PR. A measured `rateLimit.cost` above the expected cost widens it in proportion. */
 export function sweepInterval(signals: QueueSignals | undefined, cost = 1): number {
   const active = !signals || signals.checks.state === 'pending' || mergeConflictState(signals) === 'computing';
-  return (active ? SWEEP_ACTIVE_MS : SWEEP_SETTLED_MS) * Math.max(1, cost);
+  return (active ? SWEEP_ACTIVE_MS : SWEEP_SETTLED_MS) * sweepCostFactor(cost);
 }
 /** The PRs due for a status read, in batches of at most 25. A fresh visible-row read counts as a sweep. */
 export function planSweep(input: {

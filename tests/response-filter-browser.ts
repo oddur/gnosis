@@ -40,7 +40,7 @@ void app.whenReady().then(async () => {
       const stack = q.items.find(item => item.subject.kind === 'stack');
       window.responseUrl = stack.subject.members[0].url;
       window.responseHead = stack.subject.members[0].headSha;
-      window.responseState = {changesRequested:true,unresolvedThreads:2,complete:true};
+      window.responseState = {changesRequested:true,unresolvedThreads:3,awaitingReply:2,complete:true};
       const m = stack.subject.members[0];
       const c = {id:'c-response',body:'Keep the cancellation guard before publishing the result.',author:{login:'maya',avatarUrl:''},createdAt:'2026-11-03T10:00:00Z',url:m.url+'#discussion-1'};
       const t = {id:'t-response',path:'src/worker.ts',line:36,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:false,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{...c,diffHunk:'@@ -1 +1 @@\\n-old\\n+new',pullRequestReview:{id:'r-response'}}]};
@@ -48,7 +48,7 @@ void app.whenReady().then(async () => {
       window.responseReads = 0;
       window.electronAPI.getCachedReviewThreads = async url => url === m.url ? structuredClone(window.responseData) : undefined;
       window.electronAPI.getReviewThreads = async url => {window.responseReads++;return url === m.url ? structuredClone(window.responseData) : {headSha:'',baseSha:'',threads:[],feedback:{comments:[],reviews:[],requestedReviewers:[],viewerCanUpdate:false,state:'OPEN'}}};
-      window.electronAPI.reviewThreadAction = async req => {const t=window.responseData.threads.find(t=>t.id===req.threadId);t.isResolved=req.action==='resolve';t.viewerCanResolve=!t.isResolved;t.viewerCanUnresolve=t.isResolved;window.responseState.unresolvedThreads=window.responseData.threads.filter(t=>!t.isResolved&&t.id!=='t-own').length;return structuredClone(t)};
+      window.electronAPI.reviewThreadAction = async req => {const t=window.responseData.threads.find(t=>t.id===req.threadId);t.isResolved=req.action==='resolve';t.viewerCanResolve=!t.isResolved;t.viewerCanUnresolve=t.isResolved;window.responseState.unresolvedThreads=window.responseData.threads.filter(t=>!t.isResolved).length;window.responseState.awaitingReply=window.responseData.threads.filter(t=>!t.isResolved&&t.id!=='t-own').length;return structuredClone(t)};
       window.responseWatches = new Map(); window.responseListeners = new Set();
       window.electronAPI.githubSyncVersion = 1;
       window.electronAPI.watchGitHub = (id, interest) => { if (interest) window.responseWatches.set(id,interest); else window.responseWatches.delete(id); };
@@ -77,7 +77,7 @@ void app.whenReady().then(async () => {
     await sidebar('Needs my response');
     await wait("document.querySelector('h1')?.textContent==='Needs my response'");
     await wait(
-      "document.querySelectorAll('.queue-item').length===1 && document.querySelector('.queue-response-reasons')?.textContent.includes('2 unresolved threads')"
+      "document.querySelectorAll('.queue-item').length===1 && document.querySelector('.queue-response-reasons')?.textContent.includes('2 threads await your reply')"
     );
     assert.ok(await js("document.querySelector('.queue-stack-matches')?.textContent.includes('1 of')"));
     assert.ok(
@@ -110,15 +110,15 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-response-status button').click()");
     await wait("document.querySelector('.queue-response-status')?.textContent.includes('Feedback checked at')");
     assert.ok(await js('window.responseReads > 0'), 'Retry refreshes failed feedback');
-    await js('window.responseState={changesRequested:false,unresolvedThreads:0,complete:false};window.emitResponse()');
+    await js('window.responseState={changesRequested:false,unresolvedThreads:0,awaitingReply:0,complete:false};window.emitResponse()');
     await wait("document.querySelector('.queue-empty h2')?.textContent==='Feedback is not fully checked'");
-    await js('window.responseState={changesRequested:false,unresolvedThreads:0,complete:true};window.emitResponse()');
+    await js('window.responseState={changesRequested:false,unresolvedThreads:1,awaitingReply:0,complete:true};window.emitResponse()');
     await wait("document.querySelector('.queue-empty h2')?.textContent==='No PRs need your response in this view'");
     await capture('complete-light');
     await sidebar('Review queue');
     await wait("document.querySelectorAll('.queue-item').length>1");
     await sidebar('Needs my response');
-    await js('window.responseState={changesRequested:true,unresolvedThreads:2,complete:true};window.emitResponse()');
+    await js('window.responseState={changesRequested:true,unresolvedThreads:3,awaitingReply:2,complete:true};window.emitResponse()');
     await wait("!!document.querySelector('.queue-response-reasons button')");
     await js(
       "window.responseQueueWatchIds=[...window.responseWatches.keys()];document.querySelector('.queue-response-reasons button').click()"
@@ -141,8 +141,8 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.review-breadcrumbs button')].find(b=>b.textContent.trim()==='Needs my response').click()"
     );
-    await wait("!!document.querySelector('.queue-response-reasons button[aria-label^=Address]')");
-    await js("document.querySelector('.queue-response-reasons button[aria-label^=Address]').click()");
+    await wait("!!document.querySelector('.queue-response-reasons button[aria-label^=Reply]')");
+    await js("document.querySelector('.queue-response-reasons button[aria-label^=Reply]').click()");
     await wait("document.querySelector('[data-feedback-id=\"t-response\"]')?.getAttribute('aria-current')==='true'");
     assert.equal(
       await js("document.querySelectorAll('.feedback-row').length"),

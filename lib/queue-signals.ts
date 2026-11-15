@@ -22,6 +22,7 @@ export interface SignalReview {
 }
 export interface QueueSignals extends QueueSignalRequest {
   checkedAt: number;
+  /** GitHub's `totalCommentsCount`: conversation comments and inline review comments, as in its PR list. */
   comments: number;
   /** Undefined for older cache entries; null means GitHub returned no submitted review. */
   latestReview?: SignalReview | null;
@@ -34,7 +35,27 @@ export interface QueueSignals extends QueueSignalRequest {
   activity?: {
     comment?: { id: string; at: string; author: string };
     review?: { id: string; at: string; author: string; state?: string };
+    /**
+     * The last ten conversation comments and submitted reviews, oldest first, so unread state can skip your
+     * own, bot and hidden ones. Absent in older cache entries.
+     */
+    recent?: {
+      kind: 'comment' | 'review';
+      id: string;
+      at: string;
+      author: string;
+      automated: boolean;
+      minimized?: boolean;
+      state?: string;
+    }[];
+    /** Logins of the head commit's author and committer; null when GitHub matched no account. */
+    head?: { author: string | null; committer: string | null };
   };
+  /**
+   * Unresolved review thread ids. Resolving a thread changes no other signal. `complete` is false past the
+   * first 100 threads. Absent in older cache entries.
+   */
+  threads?: { unresolved: string[]; complete: boolean };
   checks: { state: 'success' | 'failure' | 'pending' | 'neutral'; passed: number; failed?: number; running?: number; skipped?: number; total: number };
   readiness?: {
     state: string;
@@ -64,8 +85,11 @@ export function checkSignals(checks: CiCheck[]): QueueSignals['checks'] {
     total: checks.length,
   };
 }
-/** v4: check counts leave out jobs of superseded workflow runs. v5: entries carry `opinions`. */
-export const queueSignalsCacheKey = (request: QueueSignalRequest) => `queue-signals:v5:${queueSignalKey(request)}`;
+/**
+ * v4: check counts leave out jobs of superseded workflow runs. v5: entries carry `opinions`. v6: `comments` is
+ * GitHub's total, and entries carry recent activity authors, the head commit author and unresolved thread ids.
+ */
+export const queueSignalsCacheKey = (request: QueueSignalRequest) => `queue-signals:v6:${queueSignalKey(request)}`;
 
 const newestFirst = (a: SignalReview, b: SignalReview) => b.submittedAt.localeCompare(a.submittedAt);
 /**
@@ -88,4 +112,12 @@ export function decidingReview(signals: QueueSignals): SignalReview | null | und
     opinions.find((review) => review.state === 'APPROVED') ??
     signals.latestReview
   );
+}
+/** GitHub's PR list count: saved signals first, then the REST metadata's conversation and inline counts. */
+export function prCommentTotal(
+  member: { commentCount?: number; reviewCommentCount?: number },
+  signals?: Pick<QueueSignals, 'comments'>
+): number | undefined {
+  if (signals) return signals.comments;
+  return member.commentCount === undefined ? undefined : member.commentCount + (member.reviewCommentCount ?? 0);
 }

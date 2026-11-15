@@ -5,15 +5,27 @@ import { prepareReviewHunk } from './review-diff';
 export interface GitHubReviewComment {
   updatedAt?: string;
   diffHunk?: string;
-  pullRequestReview?: { id: string };
+  /** `state` is absent in older saved discussions. `PENDING` means the author has not submitted it. */
+  pullRequestReview?: { id: string; state?: string };
+  /** Hidden on GitHub by a maintainer or the author. Absent in older saved discussions. */
+  isMinimized?: boolean;
+  minimizedReason?: string | null;
   viewerCanUpdate?: boolean;
   viewerCanDelete?: boolean;
   id: string;
   body: string;
   createdAt: string;
   url: string;
-  author: { login: string; avatarUrl: string } | null;
+  author: { login: string; avatarUrl: string; __typename?: string } | null;
 }
+/** Your own review comment that you have not submitted yet. Only you can see it on GitHub. */
+export const isPendingComment = (comment: Pick<GitHubReviewComment, 'pullRequestReview'>) =>
+  comment.pullRequestReview?.state === 'PENDING';
+/** GitHub reports the reason in lower case, such as `outdated` or `off-topic`. */
+export const minimizedLabel = (comment: Pick<GitHubReviewComment, 'minimizedReason'>) => {
+  const reason = comment.minimizedReason?.toLowerCase().replace(/_/g, '-');
+  return reason ? `Hidden on GitHub as ${reason}` : 'Hidden on GitHub';
+};
 export interface GitHubReviewThread {
   id: string;
   path: string;

@@ -107,9 +107,9 @@ void app.whenReady().then(async () => {
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     await wait("!!document.querySelector('.queue-list') && !document.querySelector('.pr-state')");
     await wait(`[...window.syncFixture.subscriptions.values()].some(s=>s.kind==='signals'&&s.targets.some(t=>t.url===${o}))`);
-    await js(`window.writeFixture.github(${o},{commentCount:7},{comments:7})`);
+    await js(`window.writeFixture.github(${o},{commentCount:7,reviewCommentCount:0},{comments:7})`);
     const comments = (count: number) =>
-      `[...document.querySelectorAll('.queue-item')].some(row=>row.textContent.includes(${JSON.stringify(other.title)})&&!!row.querySelector('.queue-comments[aria-label="${count} conversation comments"]'))`;
+      `[...document.querySelectorAll('.queue-item')].some(row=>row.textContent.includes(${JSON.stringify(other.title)})&&!!row.querySelector('.queue-comments[aria-label="${count} comments, including inline review comments"]'))`;
     await writing(`await window.electronAPI.feedbackAction({prUrl:${o},action:'reply',sourceId:'c1',body:'Thanks'})`);
     await wait(comments(7));
     await settled('feedback-reply');

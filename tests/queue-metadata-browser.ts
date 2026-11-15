@@ -42,7 +42,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.queue-checks.is-success')");
     assert.match(await js<string>("document.querySelector('.queue-meta').textContent"), /#\d+ opened .* by /);
     assert.ok(await js("document.querySelector('.queue-checks').textContent.includes('130/130')"));
-    assert.ok(await js('!!document.querySelector(\'.queue-comments[aria-label="4 conversation comments"]\')'));
+    assert.ok(await js('!!document.querySelector(\'.queue-comments[aria-label="4 comments, including inline review comments"]\')'));
     assert.match(
       await js<string>("document.querySelector('.queue-checks').getAttribute('aria-label')"),
       /129 of 130 checks passed, 1 skipped or neutral/

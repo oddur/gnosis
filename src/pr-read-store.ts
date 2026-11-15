@@ -12,6 +12,7 @@ import {
 import type { PrMetadata } from '../lib/types';
 import { deepFreeze } from '../lib/deep-freeze';
 import type { QueueSignals } from '../lib/queue-signals';
+import { isAutomationActor, sameLogin } from '../lib/github-actors';
 
 type Basis = ReturnType<typeof prReadMetadata> & {
   latestComment?: string;
@@ -26,10 +27,15 @@ interface Entry {
   signalsAt?: number;
   metadataAt?: string;
   metadataKey?: string;
-  ownReviewUntil?: number;
   ownReviewIds?: string[];
-  ownInlineCredits?: number;
-  ownInlineUntil?: number;
+  /** Newest conversation comment and review seen, for finding the events a signal adds. */
+  latestCommentAt?: string;
+  latestReviewAt?: string;
+  /**
+   * A head change waiting for its commit's author. On your own PR the bump waits for it. On another PR it
+   * is undone when the new head turns out to be your push and the commits were read before it.
+   */
+  headCheck?: { sha: string; deferred: boolean; wasRead: boolean };
 }
 interface State {
   initialized: boolean;
@@ -40,6 +46,41 @@ interface Draft {
   initialized: boolean;
   entry(url: string): Entry | undefined;
   add(url: string, entry: Entry): void;
+}
+type ActivityEvent = NonNullable<NonNullable<QueueSignals['activity']>['recent']>[number];
+const eventIdentity = (event: ActivityEvent) => (event.kind === 'review' ? `${event.id}:${event.state ?? ''}` : event.id);
+/** Signals saved before `recent` existed carry only the newest comment and review. */
+function legacyEvents(signal: QueueSignals): ActivityEvent[] {
+  const { comment, review } = signal.activity ?? {};
+  return [
+    ...(comment ? [{ kind: 'comment' as const, ...comment, automated: isAutomationActor({ login: comment.author }) }] : []),
+    ...(review ? [{ kind: 'review' as const, ...review, automated: isAutomationActor({ login: review.author }) }] : []),
+  ];
+}
+/**
+ * The events after the last one seen, oldest first. A review whose state changed, such as a dismissal,
+ * counts again. Without a known position, events after the newest seen time count. A first observation
+ * counts only events after the PR was first tracked.
+ */
+function unseen(events: ActivityEvent[], seen: string | undefined, seenAt: string | undefined, since: number) {
+  if (seen === undefined) return events.filter((event) => Date.parse(event.at) > since);
+  let index = events.length - 1;
+  while (index >= 0 && seen !== eventIdentity(events[index]) && !seen.startsWith(`${events[index].id}:`)) index--;
+  if (index >= 0) return events.slice(eventIdentity(events[index]) === seen ? index + 1 : index);
+  if (seenAt) return events.filter((event) => event.at > seenAt);
+  // Saved before positions were kept: only the newest event can be judged.
+  return events.slice(-1).filter((event) => eventIdentity(event) !== seen);
+}
+/** Your own comment or review, from any client. Review ids cover reviews posted through Gnosis. */
+function isOwnEvent(event: ActivityEvent, entry: Entry, account: string) {
+  return sameLogin(event.author, account) || (event.kind === 'review' && (entry.ownReviewIds ?? []).includes(event.id));
+}
+/** Your push: you wrote the head commit and committed it yourself or through GitHub's web interface. */
+function isOwnCommit(head: { author: string | null; committer: string | null }, account: string) {
+  return (
+    sameLogin(head.author, account) &&
+    (head.committer === null || sameLogin(head.committer, account) || sameLogin(head.committer, 'web-flow'))
+  );
 }
 const validUrl = (url: string) => /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url);
 /** Durable user progress. Cache eviction and stack regrouping never change its identity. */
@@ -126,9 +167,10 @@ export function createPrReadStore(storage: StateStorage, now = Date.now) {
     entry.versions[reason]++;
     if (own && wasRead) entry.read[reason] = entry.versions[reason];
   };
-  function observeMetadata(state: Draft, meta: PrMetadata, own = false) {
+  function observeMetadata(state: Draft, meta: PrMetadata, account: string, own = false) {
     if (!validUrl(meta.url)) return;
     const metadataKey = JSON.stringify(prReadMetadata(meta));
+    const ownPr = sameLogin(meta.author, account);
     let entry = state.entry(meta.url);
     if (!entry) {
       entry = {
@@ -139,7 +181,8 @@ export function createPrReadStore(storage: StateStorage, now = Date.now) {
         metadataAt: meta.updatedAt,
         metadataKey,
       };
-      if (state.initialized && !own) bump(entry, 'new');
+      // A PR you opened yourself, from a terminal or on github.com, is not news to you.
+      if (state.initialized && !own && !ownPr) bump(entry, 'new');
       state.add(meta.url, entry);
       return;
     }
@@ -148,22 +191,21 @@ export function createPrReadStore(storage: StateStorage, now = Date.now) {
     if (entry.metadataKey === metadataKey) return;
     entry.metadataKey = metadataKey;
     const next = prReadMetadata(meta);
-    if (next.headSha !== entry.basis.headSha) bump(entry, 'commits', own);
-    if (next.state !== entry.basis.state) bump(entry, 'state', own);
-    for (const key of ['comments', 'inlineComments'] as const) {
-      const before = entry.basis[key],
-        after = next[key];
-      if (after === undefined) continue;
-      if (before !== undefined && after > before) {
-        const increase = after - before;
-        const credit = key === 'inlineComments' ? Math.min(increase, entry.ownInlineCredits ?? 0) : 0;
-        if (credit) entry.ownInlineCredits = (entry.ownInlineCredits ?? 0) - credit;
-        if (increase > credit) bump(entry, 'comments', own);
+    if (next.headSha !== entry.basis.headSha) {
+      const wasRead = entry.read.commits === entry.versions.commits;
+      if (own) {
+        bump(entry, 'commits', true);
+        delete entry.headCheck;
+      } else {
+        // On your own PR this is usually your push: wait for the head commit's author before calling it new.
+        if (!ownPr) bump(entry, 'commits');
+        entry.headCheck = { sha: next.headSha, deferred: ownPr, wasRead };
       }
-      entry.basis[key] = after;
     }
-    // Credits describe one successful local write, not a permanent allowance.
-    if (Date.parse(meta.updatedAt) + 1000 >= (entry.ownInlineUntil ?? Infinity)) entry.ownInlineCredits = 0;
+    if (next.state !== entry.basis.state) bump(entry, 'state', own);
+    // Comment counts name no author, so comments become unread from signals, which do.
+    entry.basis.comments = next.comments ?? entry.basis.comments;
+    entry.basis.inlineComments = next.inlineComments ?? entry.basis.inlineComments;
     entry.basis.headSha = next.headSha;
     entry.basis.state = next.state;
     entry.metadataAt = meta.updatedAt;
@@ -180,7 +222,7 @@ export function createPrReadStore(storage: StateStorage, now = Date.now) {
       });
       if (!changed.length && (!finishBaseline || current.initialized)) return false;
       return edit(account, (state) => {
-        for (const member of changed) observeMetadata(state, member, own);
+        for (const member of changed) observeMetadata(state, member, account, own);
         if (finishBaseline) state.initialized = true;
       });
     },
@@ -193,30 +235,32 @@ export function createPrReadStore(storage: StateStorage, now = Date.now) {
           const entry = state.entry(signal.url);
           if (!entry) continue;
           entry.signalsAt = signal.checkedAt;
-          if (entry.basis.comments !== undefined && signal.comments > entry.basis.comments) bump(entry, 'comments');
           entry.basis.comments = signal.comments;
-          for (const [key, reason, event] of [
-            ['latestComment', 'comments', signal.activity?.comment],
-            ['latestReview', 'reviews', signal.activity?.review],
-          ] as const) {
-            if (!event) continue;
-            const old = entry.basis[key];
-            const identity =
-              reason === 'reviews' ? `${event.id}:${'state' in event ? (event.state ?? '') : ''}` : event.id;
-            if (
-              identity !== old &&
-              (old !== undefined || Date.parse(event.at) > entry.since) &&
-              (reason !== 'comments' || Date.parse(event.at) > Date.parse(entry.metadataAt ?? ''))
-            ) {
-              const own =
-                reason === 'reviews' &&
-                ((entry.ownReviewIds ?? []).includes(event.id) ||
-                  (event.author.toLowerCase() === account.toLowerCase() &&
-                    Date.parse(event.at) <= (entry.ownReviewUntil ?? 0)));
-              if (own) entry.ownReviewIds = entry.ownReviewIds?.filter((id) => id !== event.id);
-              bump(entry, reason, own);
+          const head = signal.activity?.head;
+          if (head && entry.headCheck?.sha === signal.headSha) {
+            const mine = isOwnCommit(head, account);
+            if (entry.headCheck.deferred && !mine) bump(entry, 'commits');
+            if (!entry.headCheck.deferred && mine && entry.headCheck.wasRead) entry.read.commits = entry.versions.commits;
+            delete entry.headCheck;
+          }
+          // Your own comments and reviews, from any client, and bot or hidden comments are never news.
+          const recent = signal.activity?.recent ?? legacyEvents(signal);
+          for (const kind of ['comment', 'review'] as const) {
+            const events = recent.filter((event) => event.kind === kind);
+            const newest = events.at(-1);
+            if (!newest) continue;
+            const key = kind === 'comment' ? 'latestComment' : 'latestReview';
+            const atKey = kind === 'comment' ? 'latestCommentAt' : 'latestReviewAt';
+            const added = unseen(events, entry.basis[key], entry[atKey], entry.since);
+            for (const event of added) {
+              if (isOwnEvent(event, entry, account) || event.automated || event.minimized) continue;
+              // A comment-only review is how GitHub submits inline comments and replies.
+              bump(entry, kind === 'comment' || event.state === 'COMMENTED' ? 'comments' : 'reviews');
             }
-            entry.basis[key] = identity;
+            if (kind === 'review' && entry.ownReviewIds)
+              entry.ownReviewIds = entry.ownReviewIds.filter((id) => !added.some((event) => event.id === id));
+            entry.basis[key] = eventIdentity(newest);
+            entry[atKey] = newest.at;
           }
           if (signal.readiness && signal.checkedAt >= Date.parse(entry.metadataAt ?? '')) {
             const ready = signal.readiness;
@@ -239,14 +283,15 @@ export function createPrReadStore(storage: StateStorage, now = Date.now) {
         }
       });
     },
-    ownReview(account: string, url: string, inlineComments: number, until = now(), reviewUrl?: string) {
+    /**
+     * A review posted through Gnosis. Its author is the account, which already makes it your own; the
+     * saved id also covers a login GitHub reports differently. Replies and comments need nothing here.
+     */
+    ownReview(account: string, url: string, reviewUrl?: string) {
+      if (!reviewUrl) return false;
       return edit(account, (state) => {
         const entry = state.entry(url);
-        if (!entry) return;
-        if (reviewUrl) entry.ownReviewIds = [...(entry.ownReviewIds ?? []), reviewUrl].slice(-100);
-        else entry.ownReviewUntil = until;
-        entry.ownInlineCredits = (entry.ownInlineCredits ?? 0) + inlineComments;
-        entry.ownInlineUntil = until;
+        if (entry) entry.ownReviewIds = [...(entry.ownReviewIds ?? []), reviewUrl].slice(-100);
       });
     },
     /** Frozen and shared until the next saved change. */

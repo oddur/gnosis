@@ -1998,6 +1998,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .github-thread-comments article { padding:10px 12px; border-top:1px solid var(--border); }
 .github-thread-comments header { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; margin-bottom:6px; font-size:var(--type-caption); }
 .github-thread-comments time { color:var(--muted-foreground); }
+.github-comment-pending { padding:1px 6px; border-radius:4px; background:var(--status-warning-bg); color:var(--color-warning); font-weight:500; }
+.github-thread-comments article[data-pending] .github-comment-body { color:var(--muted-foreground); }
+.github-comment-hidden > summary { cursor:pointer; color:var(--muted-foreground); font-size:var(--type-caption); }
+.github-comment-hidden[open] > summary { margin-bottom:6px; }
 .github-thread-comments header button { margin-left:auto; }
 .github-thread button,.github-comment-body a { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
 .github-thread button:disabled { opacity:.5; cursor:wait; }

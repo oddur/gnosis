@@ -10,7 +10,7 @@ import {
 import { GitHubAuthor } from './GitHubAuthor';
 import type { ReviewMember, ReviewSubject } from '../lib/workbench';
 import { useQueueSignals } from '../lib/use-queue-signals';
-import { QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
+import { prCommentTotal, QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
 import { timeAgo } from '../lib/utils';
 import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge } from './MergeReadiness';
@@ -75,7 +75,7 @@ export function QueueMetadata({ subject, account, onChecks }: { subject: ReviewS
     ? checkLabel
     : `${passed} of ${total} checks passed${skipped ? `, ${skipped} skipped or neutral` : ''}${state === 'failure' ? ', some checks failed' : state === 'pending' ? ', checks pending' : ''}${stack ? ' across this stack' : ''}. Last checked ${lastChecked}.`;
   const counts = subject.members.map(
-    (m) => values.find((v) => v.url === m.url && v.headSha === m.headSha)?.comments ?? m.commentCount
+    (m) => prCommentTotal(m, values.find((v) => v.url === m.url && v.headSha === m.headSha))
   );
   const comments = counts.every((n) => n !== undefined) ? counts.reduce<number>((n, count) => n + count, 0) : undefined;
   const timestamp = stack
@@ -114,8 +114,8 @@ export function QueueMetadata({ subject, account, onChecks }: { subject: ReviewS
         {comments !== undefined && comments > 0 && (
           <span
             className="queue-comments"
-            title={`${comments} conversation comment${comments === 1 ? '' : 's'}${stack ? ' across this stack' : ''}`}
-            aria-label={`${comments} conversation comments`}
+            title={`${comments} comment${comments === 1 ? '' : 's'}, including inline review comments${stack ? ' across this stack' : ''}`}
+            aria-label={`${comments} comments, including inline review comments`}
           >
             <MessageSquare size={15} aria-hidden="true" />
             {comments}
