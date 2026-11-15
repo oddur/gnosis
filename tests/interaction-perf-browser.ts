@@ -1,6 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 
 /**
  * Interaction latency on large synthetic fixtures (#345, #346). Every input here is a trusted input event sent
@@ -39,6 +40,10 @@ const budgets: Record<string, number> = {
   'feedback row': 120,
 };
 
+/** Input delay (ms) at the 90th percentile of clicks and key presses in Settings and on queue rows while background
+ * sync runs: 540 rows with PR descriptions, five PR tabs, and sync, queue and change-signal events every 2 s. Calibrated in Docker. */
+const BACKGROUND_INPUT_DELAY_P90 = 50;
+
 type Interaction = {
   type: string;
   key?: string;
@@ -49,6 +54,7 @@ type Interaction = {
   presentation: number;
   frames?: { count: number; script: number; styleAndLayout: number; render: number };
   scripts: { source: string; invoker: string; duration: number }[];
+  delay?: { startedBefore: number; blocking: number; scripts: { source: string; sourceFunctionName?: string; invoker: string; duration: number }[] };
   at: number;
 };
 
@@ -230,6 +236,269 @@ void app.whenReady().then(async () => {
     }
   };
 
+  // ── Background sync (#345 input delay) ─────────────────────────────
+  /**
+   * Input delay with a real-sized queue and background sync: 540 rows (180 open, a 360-row backlog), five open PR tabs, and every 2 s main's
+   * `workbench-changed` with a few rows updated, `github-sync` updates for a third of the watched PRs, and a
+   * change-signals tick. Clicks and key presses in Settings and on queue rows must not wait behind that work.
+   * Also checks that `github-sync` listeners stay bounded however many views watch GitHub.
+   */
+  const backgroundSync = async () => {
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&github-sync&change-signals`);
+    if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await waitForWorkbenchQueue(win.webContents);
+    await js(`(async()=>{window.__perf=await import('/lib/interaction-latency.ts');
+      window.__perf.startInteractionMonitor({threshold:16,capacity:500});window.__perf.clearSlowInteractions()})()`);
+    // Every long animation frame from here on, with its scripts.
+    await js(`(()=>{window.__frames=[];new PerformanceObserver(list=>{for(const e of list.getEntries())window.__frames.push({start:e.startTime,duration:e.duration,
+      blocking:e.blockingDuration,scripts:e.scripts.map(s=>({fn:s.sourceFunctionName,url:s.sourceURL,at:s.sourceCharPosition,invoker:s.invoker,type:s.invokerType,duration:s.duration}))})}).observe({type:'long-animation-frame'})})()`);
+    // 540 rows, each PR with a 4 KB description. Each read returns a fresh copy, as main's snapshot over IPC does.
+    await js(String.raw`(async()=>{
+      const original=await window.electronAPI.workbenchQueue();
+      const items=Array.from({length:540},(_,i)=>{
+        const item=structuredClone(original.items[i%original.items.length]);
+        if(i>=original.items.length){
+          item.subject.id='bg-'+i;
+          item.subject.members=item.subject.members.map((m,j)=>({...m,title:'Background PR '+i,number:20000+i*4+j,url:'https://github.com/fixture/bg/pull/'+(20000+i*4+j)}));
+          if(item.subject.kind==='pr')item.subject.title='Background PR '+i;
+        }
+        item.subject.members=item.subject.members.map(m=>({...m,description:('## Change '+i+'\n\nThis keeps **pending commands** ordered when the worker restarts. ').repeat(50)}));
+        item.attention=i<180?'updated':i<300?'requested':'other';
+        return item;
+      });
+      window.__bgItems=items;
+      const read=async()=>structuredClone({...original,items});
+      window.electronAPI.workbenchQueue=read;
+      window.electronAPI.workbenchSnapshot=read;
+      document.querySelector('.queue-toolbar button[aria-label]').click();
+    })()`);
+    await wait("!!document.querySelector('[data-queue-total=\"540\"]')");
+    await wait("document.querySelectorAll('.queue-item').length>5");
+    /** Listeners and watches, and the JS heap after a full garbage collection, in MB. */
+    const listeners = async () => {
+      await win.webContents.debugger.sendCommand('HeapProfiler.collectGarbage');
+      const heap = (await win.webContents.debugger.sendCommand('Runtime.getHeapUsage')) as { usedSize: number };
+      return {
+        ...(await js<{ receivers: number; watches: number }>('({receivers:window.syncFixture.receivers.size,watches:window.syncFixture.subscriptions.size})')),
+        heapMB: Math.round(heap.usedSize / 1e5) / 10,
+      };
+    };
+    const counts: Record<string, { receivers: number; watches: number; heapMB: number }> = { queue: await listeners() };
+
+    // Five PR tabs, each visited once so it mounts, then back to the queue.
+    const tabs = "document.querySelectorAll('.workspace-tab-select')";
+    const openTabs = async () => {
+      for (let i = 0; i < 5; i++) {
+        const before = await js<number>(`${tabs}.length`);
+        await js(
+          `document.querySelector('[data-workspace-active=true] .queue-list').querySelectorAll('.queue-row-main')[${i}].dispatchEvent(new MouseEvent('click',{bubbles:true,metaKey:true}))`
+        );
+        await wait(`${tabs}.length===${before + 1}`);
+      }
+      const total = await js<number>(`${tabs}.length`);
+      for (let i = 1; i < total; i++) {
+        await js(`${tabs}[${i}].click()`);
+        await wait(`!!document.querySelector('[data-workspace-active=true] .pr-summary-page')`);
+        await sleep(400);
+      }
+      await js(`${tabs}[0].click()`);
+      await wait(`!!document.querySelector('[data-workspace-active=true] .queue-list')`);
+    };
+    const closeTabs = async () => {
+      for (let open = await js<number>(`${tabs}.length`); open > 1; open--) {
+        await js(`document.querySelectorAll('.workspace-tab-close')[${open - 1}].click()`);
+        await wait(`${tabs}.length===${open - 1}`);
+      }
+      await wait(`!!document.querySelector('[data-workspace-active=true] .queue-list')`);
+    };
+    await openTabs();
+    counts['five tabs'] = await listeners();
+
+    // What main sends while the reader works.
+    await js(String.raw`(()=>{
+      window.__storm={ticks:0,ms:0};
+      const tick=async()=>{
+        const started=performance.now();
+        const n=++window.__storm.ticks;
+        const now=new Date().toISOString();
+        const items=window.__bgItems;
+        for(let k=0;k<6;k++){const item=items[(n*7+k*13)%items.length];item.subject={...item.subject,members:item.subject.members.map(m=>({...m,updatedAt:now}))};}
+        window.syncFixture.changed();
+        const watched=new Map();
+        for(const interest of window.syncFixture.subscriptions.values())for(const t of interest.targets)watched.set(interest.kind+' '+t.url,{kind:interest.kind,...t});
+        const due=[...watched.values()].filter((_,i)=>i%3===n%3);
+        const signals=due.filter(t=>t.kind==='signals');
+        const values=signals.length?await window.electronAPI.getQueueSignals(signals.map(t=>({url:t.url,headSha:t.headSha??''}))):[];
+        for(const value of values)window.syncFixture.emit({kind:'signals',url:value.url,value:{...value,checkedAt:Date.now()}});
+        const members=new Map(items.flatMap(i=>i.subject.members).map(m=>[m.url,m]));
+        for(const t of due)if(t.kind==='metadata'&&members.has(t.url))window.syncFixture.emit({kind:'metadata',url:t.url,value:{...members.get(t.url),updatedAt:now}});
+        await window.changeFixture?.tick(1000);
+        window.__storm.ms+=performance.now()-started;
+      };
+      window.__storm.tick=tick;
+      window.__storm.timer=setInterval(()=>void tick(),2000);
+    })()`);
+    await sleep(3000);
+
+    // A quiet stretch: what runs on the main thread while the reader does nothing.
+    const debug = win.webContents.debugger;
+    const quietSince = await js<number>('performance.now()');
+    if (profiling) {
+      await debug.sendCommand('Profiler.enable');
+      await debug.sendCommand('Profiler.setSamplingInterval', { interval: 250 });
+      await debug.sendCommand('Profiler.start');
+    }
+    await sleep(12_000);
+    if (profiling) {
+      const { profile } = (await debug.sendCommand('Profiler.stop')) as {
+        profile: {
+          nodes: { id: number; children?: number[]; callFrame: { functionName: string; url: string; lineNumber: number } }[];
+          samples: number[];
+          timeDeltas: number[];
+        };
+      };
+      const parent = new Map<number, number>();
+      for (const node of profile.nodes) for (const child of node.children ?? []) parent.set(child, node.id);
+      const byId = new Map(profile.nodes.map((n) => [n.id, n.callFrame]));
+      const label = (f: { functionName: string; url: string; lineNumber: number }) =>
+        `${f.functionName || '(anonymous)'} ${f.url.split('/').pop()?.split('?')[0]}:${f.lineNumber + 1}`;
+      const inclusive = new Map<string, number>();
+      const self = new Map<string, number>();
+      profile.samples.forEach((sample, i) => {
+        const ms = profile.timeDeltas[i] / 1000;
+        const top = byId.get(sample);
+        if (!top || top.functionName === '(idle)' || top.functionName === '(program)') return;
+        self.set(label(top), (self.get(label(top)) ?? 0) + ms);
+        const seen = new Set<string>();
+        for (let id: number | undefined = sample; id !== undefined; id = parent.get(id)) {
+          const frame = byId.get(id);
+          if (!frame || !/\/(lib|components|src|tests)\//.test(frame.url)) continue;
+          const where = label(frame);
+          if (seen.has(where)) continue;
+          seen.add(where);
+          inclusive.set(where, (inclusive.get(where) ?? 0) + ms);
+        }
+      });
+      const top = (map: Map<string, number>, n: number) =>
+        [...map].sort((a, b) => b[1] - a[1]).slice(0, n).map(([where, ms]) => `${ms.toFixed(0)}ms ${where}`).join('; ');
+      console.log(`Background profile, 12 s with sync and no input (inclusive, app code): ${top(inclusive, 30)}`);
+      console.log(`Background profile (self): ${top(self, 20)}`);
+    }
+    const quiet = await js<{ count: number; total: number; blocking: number; max: number; top: [string, number, number, number][] }>(`(()=>{
+      const frames=window.__frames.filter(f=>f.start>=${quietSince});
+      const by=new Map();
+      for(const f of frames)for(const s of f.scripts){const k=(s.invoker||s.type)+' · '+(s.fn||'(anonymous)')+' '+s.url.split('/').pop().split('?')[0]+':'+s.at;
+        const v=by.get(k)??[0,0,0];v[0]+=s.duration;v[1]++;v[2]=Math.max(v[2],s.duration);by.set(k,v)}
+      return {count:frames.length,total:Math.round(frames.reduce((a,f)=>a+f.duration,0)),blocking:Math.round(frames.reduce((a,f)=>a+f.blocking,0)),
+        max:Math.round(Math.max(0,...frames.map(f=>f.duration))),top:[...by].sort((a,b)=>b[1][0]-a[1][0]).slice(0,15).map(([k,v])=>[k,Math.round(v[0]),v[1],Math.round(v[2])])}})()`);
+    console.log(`Background long frames in 12 s without input: ${quiet.count} frames, ${quiet.total} ms (blocking ${quiet.blocking} ms), longest ${quiet.max} ms`);
+    for (const [where, total, n, max] of quiet.top) console.log(`  ${total} ms in ${n} scripts (max ${max}): ${where}`);
+
+    // From here each input lands while a sync event is being handled: the test sends the event, then the input
+    // 20-120 ms later, when the queue snapshot it caused is read and rendered. Without this, inputs would mostly fall
+    // between events, and the check would pass however long the event's work blocked input.
+    await js('clearInterval(window.__storm.timer)');
+    const offsets = [20, 45, 70, 95, 120];
+    let sent = 0;
+    const synced = (prepare: () => Promise<() => void>) => async () => {
+      const send = await prepare();
+      await js('void window.__storm.tick()');
+      await sleep(offsets[sent++ % offsets.length]);
+      send();
+    };
+    const click = (expression: string) => async () => {
+      const { x, y } = await point(expression);
+      return () => {
+        win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+        win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+        win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+      };
+    };
+    const press = (ch: string) => () => Promise.resolve(() => key(ch, true));
+
+    // ── Settings under background sync ──
+    const dialogTab = (label: string) =>
+      `[...document.querySelectorAll('[role=dialog] [role=tab]')].find(t=>t.textContent.trim()===${JSON.stringify(label)})`;
+    for (let round = 0; round < 3; round++) {
+      await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
+      await wait("!!document.querySelector('[role=dialog] [role=tab]')");
+      await sleep(300);
+      for (const label of ['Queue', 'Review', 'Appearance', 'Notifications', 'Diagnostics', 'Integrations']) {
+        if (!(await js<boolean>(`!!${dialogTab(label)}`))) continue;
+        await measure('bg settings tab', synced(click(dialogTab(label))), `${dialogTab(label)}.getAttribute('aria-selected')==='true'`);
+        await sleep(150);
+        const description = "[...document.querySelectorAll('[role=dialog] .settings-description')].find(e=>e.checkVisibility())";
+        if (await js<boolean>(`!!${description}`)) {
+          await measure('bg settings description', synced(click(description)), 'true');
+          await sleep(150);
+        }
+      }
+      if (await js<boolean>("!!document.querySelector('#claude-path')")) {
+        await measure('bg settings input', synced(click("document.querySelector('#claude-path')")), "document.activeElement?.id==='claude-path'");
+        let typed = await js<string>("document.querySelector('#claude-path').value");
+        for (const ch of 'claude') {
+          typed += ch;
+          await measure('bg settings keystroke', synced(press(ch)), `document.querySelector('#claude-path').value===${JSON.stringify(typed)}`);
+        }
+        for (let i = 0; i < 6; i++) key('Backspace', false);
+        await sleep(200);
+      }
+      key('Escape', false);
+      await wait("!document.querySelector('[role=dialog] [role=tab]')");
+      await sleep(300);
+      counts[`settings closed ${round + 1}`] = await listeners();
+    }
+
+    // ── Queue rows under background sync ──
+    const row = (i: number) =>
+      `document.querySelector('[data-workspace-active=true] .queue-list').querySelectorAll('.queue-row-main')[${i}]`;
+    const badge = (i: number) =>
+      `[...document.querySelectorAll('[data-workspace-active=true] .queue-metadata .merge-readiness-badge, [data-workspace-active=true] .queue-metadata')].filter(e=>e.checkVisibility())[${i}]`;
+    for (let i = 0; i < 16; i++) {
+      await measure('bg queue row', synced(click(row(i % 8))), 'true');
+      await sleep(120);
+      await measure('bg queue badge', synced(click(badge(i % 6))), 'true');
+      await sleep(120);
+    }
+
+    // Opening and closing tabs again leaves no listeners behind.
+    await closeTabs();
+    counts['tabs closed'] = await listeners();
+    await openTabs();
+    counts['five tabs again'] = await listeners();
+    await closeTabs();
+    counts['tabs closed again'] = await listeners();
+    const storm = await js<{ ticks: number; ms: number }>('({ticks:window.__storm.ticks,ms:Math.round(window.__storm.ms)})');
+    console.log('Background sync ticks:', JSON.stringify(storm));
+    console.log('github-sync listeners (renderer receivers / watches) and JS heap after GC:', JSON.stringify(counts));
+
+    const measured = [...results].filter(([name]) => name.startsWith('bg '));
+    const delays = measured.flatMap(([, list]) => list.map((e) => e.inputDelay)).sort((a, b) => a - b);
+    const quantile = (values: number[], q: number) => values[Math.min(values.length - 1, Math.ceil(values.length * q) - 1)];
+    console.log(`Background input delay (ms): n=${delays.length} p50 ${quantile(delays, 0.5)} p90 ${quantile(delays, 0.9)} max ${delays.at(-1)}`);
+    for (const [name, list] of measured) {
+      const d = list.map((e) => e.inputDelay).sort((a, b) => a - b);
+      console.log(
+        `  ${name.padEnd(26)} input p50 ${quantile(d, 0.5)} p90 ${quantile(d, 0.9)} max ${d.at(-1)} [${list.map((e) => e.inputDelay).join(',')}]`
+      );
+    }
+    const worst = measured
+      .flatMap(([name, list]) => list.map((e) => ({ name, ...e })))
+      .sort((a, b) => b.inputDelay - a.inputDelay)
+      .slice(0, 6);
+    for (const e of worst)
+      console.log(
+        `  input ${e.inputDelay} ms ${e.name} (${e.type} on ${e.target}): ` +
+          (e.scripts.slice(0, 4).map((s) => `${s.source} ${s.duration}ms [${s.invoker}]`).join('; ') || 'no long scripts') +
+          (e.delay
+            ? ` · waited behind work started ${e.delay.startedBefore} ms earlier: ` +
+              (e.delay.scripts.map((s) => `${s.source} ${s.duration}ms [${s.invoker}]`).join('; ') || 'no script attributed')
+            : '')
+      );
+    return { p90: quantile(delays, 0.9), counts };
+  };
+
   try {
     if (process.platform === 'darwin') app.show();
     win.show();
@@ -260,6 +529,36 @@ void app.whenReady().then(async () => {
       assert.ok(
         probe.scripts.some((s) => s.duration >= 150 && /click/i.test(s.invoker)),
         `Long animation frames name the click handler: ${JSON.stringify(probe.scripts)}`
+      );
+    await js("document.querySelector('.perf-probe').remove()");
+    results.delete('probe');
+
+
+    // GNOSIS_INTERACTION_ONLY=background runs only the background-sync check below.
+    large: {
+    if (process.env.GNOSIS_INTERACTION_ONLY === 'background') break large;
+
+    // ── A click that waits behind work already running names that work (input-delay attribution) ──
+    await js(`(()=>{const b=document.createElement('button');b.className='perf-probe';b.textContent='Probe';
+      b.style.cssText='position:fixed;right:8px;bottom:8px;z-index:9999';document.body.append(b)})()`);
+    const probePoint = await point("document.querySelector('.perf-probe')");
+    const waited = await measure(
+      'probe',
+      async () => {
+        await js('setTimeout(function busyBeforeInput(){const end=performance.now()+300;while(performance.now()<end);},20),void 0');
+        await sleep(90);
+        win.webContents.sendInputEvent({ type: 'mouseDown', ...probePoint, button: 'left', clickCount: 1 });
+        win.webContents.sendInputEvent({ type: 'mouseUp', ...probePoint, button: 'left', clickCount: 1 });
+      },
+      'true'
+    );
+    console.log('Input-delay probe:', JSON.stringify(waited));
+    assert.ok(waited.inputDelay >= 100, `The click waited behind the busy timer: ${JSON.stringify(waited)}`);
+    assert.ok(waited.delay && waited.delay.startedBefore > 0, `The record says what it waited behind: ${JSON.stringify(waited)}`);
+    if (monitor.frameTiming)
+      assert.ok(
+        waited.delay.scripts.some((s) => s.sourceFunctionName === 'busyBeforeInput' && /setTimeout/.test(s.invoker) && s.duration >= 200),
+        `Input delay names the timer that blocked it: ${JSON.stringify(waited.delay)}`
       );
     await js("document.querySelector('.perf-probe').remove()");
     results.delete('probe');
@@ -451,7 +750,9 @@ void app.whenReady().then(async () => {
       exported.interactions.every((e) => typeof e.target === 'string' && e.duration >= 16 && e.inputDelay + e.processing <= e.duration + 8),
       'Exported interactions carry a target and a consistent split'
     );
+    }
 
+    const background = await backgroundSync();
     const summary = report();
     if (profiling) await profileSources();
     const over = summary.filter((s) => s.budget && s.checked > s.budget);
@@ -459,6 +760,21 @@ void app.whenReady().then(async () => {
       over.map((s) => `${s.name}: ${s.checked} ms > ${s.budget} ms`),
       [],
       'Interactions stay within budget'
+    );
+    assert.ok(
+      background.p90 <= BACKGROUND_INPUT_DELAY_P90,
+      `Input delay under background sync stays within ${BACKGROUND_INPUT_DELAY_P90} ms at p90: ${background.p90} ms`
+    );
+    for (const [moment, count] of Object.entries(background.counts))
+      assert.ok(count.receivers < 3, `github-sync listeners stay bounded (${moment}): ${count.receivers} for ${count.watches} watches`);
+    assert.ok(
+      background.counts['tabs closed again'].watches <= background.counts['tabs closed'].watches,
+      `Closed tabs leave no watches behind: ${JSON.stringify(background.counts)}`
+    );
+    // Opening and closing five tabs again must not keep their pages: the heap returns to about where it was.
+    assert.ok(
+      background.counts['tabs closed again'].heapMB - background.counts['tabs closed'].heapMB < 20,
+      `Closed tabs release their memory: ${JSON.stringify(background.counts)}`
     );
     assert.deepEqual(errors, [], 'No renderer errors');
     console.log('Interaction performance checks passed');
