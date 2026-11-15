@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { itemWithLifecycle, newerLifecycle, withLifecycle, type PrLifecycle } from '../lib/pr-lifecycle';
+import { freshPr, itemWithLifecycle, newerLifecycle, withLifecycle, type PrLifecycle } from '../lib/pr-lifecycle';
 import { resolveWorkspace } from '../lib/stack-workspace';
 import { mergePrStatus } from '../lib/merge-pr-status';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
@@ -71,4 +71,45 @@ void test('the status lifecycle survives later partial updates and late saved co
   assert.equal(mergePrStatus(fresh, base).lifecycle, merged, 'A read without a lifecycle keeps the known one');
   assert.equal(mergePrStatus(fresh, { ...base, lifecycle: { state: 'open', merged: false, updatedAt: '2026-11-13T00:00:00Z' } }).lifecycle, merged);
   assert.equal(mergePrStatus(fresh, { ...base, stale: true, lifecycle: { state: 'open', merged: false, updatedAt: '2026-11-15T00:00:00Z' } }).lifecycle, merged);
+});
+
+void test('a PR open in a tab outside the queue takes the whole fresh PR: title, draft flag, base and head', () => {
+  const opened = itemOf(member({ role: 'watched' }));
+  // Opened by URL, or a review request that left the search: no queue item replaces the opened copy.
+  const source = resolveWorkspace(opened, []);
+  const pushed = {
+    ...member(), role: undefined, title: 'Seed change, renamed', isDraft: true, baseBranch: 'release', baseSha: 'c'.repeat(40),
+    headSha: 'd'.repeat(40), headBranch: 'topic-2', updatedAt: '2026-11-13T13:00:00Z',
+  };
+  const shown = itemWithLifecycle(source, () => pushed).subject.members[0];
+  assert.equal(shown.title, 'Seed change, renamed');
+  assert.equal(shown.isDraft, true);
+  assert.equal(shown.baseBranch, 'release');
+  assert.equal(shown.headSha, 'd'.repeat(40), 'Signals and checks follow the new head');
+  assert.equal(shown.role, 'watched', 'Fields GitHub does not report stay');
+  // An older read changes nothing, and an equal one keeps the item's identity.
+  assert.equal(itemWithLifecycle(source, () => ({ ...pushed, title: 'Older', updatedAt: '2026-11-13T11:00:00Z' })), source);
+  const current = itemWithLifecycle(source, () => pushed);
+  assert.equal(itemWithLifecycle(current, () => pushed), current);
+  // A report of the same time never reopens a merged copy.
+  const mergedCopy = itemOf(member({ merged: true, state: 'closed', updatedAt: pushed.updatedAt }));
+  assert.equal(itemWithLifecycle(mergedCopy, () => pushed), mergedCopy);
+});
+
+void test('a status read carries its PR; the newer report wins', () => {
+  const base: PrStatus = {
+    labels: [], mergeable: null, isDraft: false, ciChecks: [], ciConclusion: 'neutral',
+    reviewSummary: { approved: 0, commented: 0, changesRequested: 0 }, baseBranch: 'main', commitCount: 1,
+    requestedReviewers: [], requestedTeams: [], mergeableState: null, autoMerge: null, milestone: null,
+  };
+  const newer = { ...member(), title: 'Newer', updatedAt: '2026-11-13T13:00:00Z' };
+  const older = { ...member(), title: 'Older', updatedAt: '2026-11-13T11:00:00Z' };
+  assert.equal(mergePrStatus({ ...base, metadata: newer }, { ...base, metadata: older }).metadata?.title, 'Newer');
+  assert.equal(mergePrStatus({ ...base, metadata: older }, { ...base, metadata: newer }).metadata?.title, 'Newer');
+  assert.equal(mergePrStatus({ ...base, metadata: newer }, base).metadata?.title, 'Newer');
+  // The fresh report: the read's PR with the newer lifecycle.
+  assert.equal(freshPr({ ...base, metadata: newer, lifecycle: merged })?.merged, true);
+  assert.equal(freshPr({ ...base, metadata: newer })?.title, 'Newer');
+  assert.equal(freshPr({ ...base, lifecycle: merged }), merged);
+  assert.equal(freshPr(undefined), undefined);
 });

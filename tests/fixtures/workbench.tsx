@@ -797,6 +797,8 @@ const mocks = {
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
   getReviewThreads: () => Promise.resolve({ headSha: 'fixture-head', baseSha: 'fixture-base', threads: [] }),
   // Fixtures keep no saved status, so the cached-first read finds nothing and does not consume a failure.
+  // Main tells every window after it read GitHub again following a write. Fixtures without writes never call it.
+  onGitHubWriteRefreshed: () => () => {},
   getPrStatus: async (url: string, _force?: boolean, options?: { cachedOnly?: boolean }) =>
     options?.cachedOnly ? null : statusFailures-- > 0
       ? Promise.reject(new Error('API rate limit exceeded. Request ID fixture-request. Retry after the limit resets.'))
@@ -918,6 +920,10 @@ if (new URLSearchParams(location.search).has('merge-conflicts')) {
 if (new URLSearchParams(location.search).has('github-sync')) {
   const { installSyncFixture } = await import('./github-sync');
   installSyncFixture(mocks, items);
+}
+if (new URLSearchParams(location.search).has('github-writes')) {
+  const { installGitHubWritesFixture } = await import('./github-writes');
+  installGitHubWritesFixture(mocks, items);
 }
 // Main stamps every snapshot it returns. Stamp here too, after any test override, so revisions
 // always describe what the override returned. Reading saved reviews for the stamp is not counted.

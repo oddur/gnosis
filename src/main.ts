@@ -33,6 +33,7 @@ import { createConflictResolutionService } from './conflict-resolution-service';
 import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-resolution';
 import { parseGitHubSyncInterest } from '../lib/github-sync';
 import { createGitHubSyncService } from './github-sync-service';
+import { createGitHubWriteRefresher, githubPrUrl, type GitHubWriteAction, type WriteDetails, type WriteObservation } from '../lib/github-write-refresh';
 import type { GitHubSyncInterest, GitHubSyncUpdate, GitHubSyncKind, GitHubSyncFailure } from '../lib/github-sync';
 import { createStackChangesService } from './stack-changes-service';
 import { approximateBytes } from '../lib/byte-cache';
@@ -62,7 +63,7 @@ import { createUpdateController, supportsAutoUpdate, type AppUpdateStatus, type 
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
-import type { PrActionRequest } from '../lib/pr-actions';
+import type { PrActionRequest, PrActionResult } from '../lib/pr-actions';
 import { requestGitHubCacheClear, applyPendingGitHubCacheClear, hasPendingGitHubCacheClear } from './github-cache-reset';
 import { withGitHubPriority, githubPriority, githubPredicted, githubPredictedJoins } from '../lib/github-scheduler';
 import { predictionStateFor, type PredictionState } from '../lib/github-budget';
@@ -408,7 +409,7 @@ function createWindow() {
       return { action: 'deny' };
     }
     const safe = safeExternalUrl(url);
-    if (safe) void shell.openExternal(safe);
+    if (safe) { noteGitHubHandOff(safe); void shell.openExternal(safe); }
     return { action: 'deny' };
   });
   // The main window never leaves the app. A clicked gnosis link is routed in the app instead.
@@ -1680,6 +1681,7 @@ ipcMain.handle('open-external', (_event, url: string) => {
   }
   try {
     if (new URL(url).protocol === 'https:') {
+      noteGitHubHandOff(url);
       void shell.openExternal(url);
     }
   } catch {
@@ -2085,7 +2087,8 @@ async function fetchPrStatus(prUrl: string, force = false, expectedHead?: string
   } catch (error) {
     console.warn('Could not update the saved starred PR metadata:', error);
   }
-  return status;
+  // The whole fresh PR, so a tab that holds a PR outside the queue updates its title, draft flag, base and head too.
+  return { ...status, metadata };
 }
 
 handleInteractive('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
@@ -3511,9 +3514,10 @@ function discussionClient() {
 ipcMain.handle('cached-review-threads', (_event, prUrl: string) => reviewThreads.stale(discussionClient(), prUrl));
 handleInteractive('feedback-action', async (_event, req: import('../lib/review-threads').FeedbackAction) => {
   const account = cachedLogin;
-  await reviewThreads.feedbackAction(discussionClient(), req);
+  await gitHubWrite(req.action === 'request-review' ? 'request-review' : 'feedback-reply', [req.prUrl],
+    () => reviewThreads.feedbackAction(discussionClient(), req),
+    () => (req.action === 'request-review' ? { reviewer: req.reviewer } : {}));
   if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
-  refreshAfterGitHubWrite([req.prUrl], ['discussion', 'signals']);
 });
 ipcMain.handle('get-review-threads', (_event, prUrl: string, refresh: boolean, options?: { revalidate?: boolean }) =>
   // Refreshing a displayed saved copy runs ahead of background work but leaves the interactive slots free.
@@ -3522,32 +3526,33 @@ ipcMain.handle('get-review-threads', (_event, prUrl: string, refresh: boolean, o
     : withGitHubPriority('interactive', () => reviewThreads.list(discussionClient(), prUrl, refresh)));
 handleInteractive('review-thread-action', async (_event, req: ReviewThreadAction) => {
   const account = cachedLogin;
-  const result = await reviewThreads.act(discussionClient(), req);
+  const action = req.action === 'reply' ? 'thread-reply' : req.action === 'unresolve' ? 'thread-unresolve' : 'thread-resolve';
+  const result = await gitHubWrite(action, [req.prUrl], () => reviewThreads.act(discussionClient(), req));
   if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
-  refreshAfterGitHubWrite([req.prUrl], ['discussion', 'signals']);
   return result;
 });
 
 handleInteractive('review-comment-action', async (_event, req: ReviewCommentAction) => {
-  const result = await reviewThreads.comment(discussionClient(), req);
-  refreshAfterGitHubWrite([req.prUrl], ['discussion', 'signals']);
-  return result;
+  return gitHubWrite(req.action === 'delete' ? 'comment-delete' : 'comment-edit', [req.prUrl], () => reviewThreads.comment(discussionClient(), req));
 });
 handleInteractive('create-review-comment', async (_event, req: CreateReviewCommentRequest) => {
   const client = discussionClient();
   const account = cachedLogin;
-  await createReviewComment(client, req);
+  await gitHubWrite('review-comment', [req.prUrl], () => createReviewComment(client, req));
   if (account) workbench.noteOwnReview(account, req.prUrl, 1);
-  reviewThreads.invalidate(client, req.prUrl);
-  refreshAfterGitHubWrite([req.prUrl]);
 });
 handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   const client = discussionClient();
   const account = cachedLogin;
-  const result = await submitPrReview(client, req, loadPreferences().reviewSignature);
-  if (account) workbench.noteOwnReview(account, req.prUrl, req.comments.length - result.droppedCommentCount, result.reviewUrl);
-  reviewThreads.invalidate(client, req.prUrl);
-  refreshAfterGitHubWrite([req.prUrl]);
+  const result = await gitHubWrite('submit-review', [req.prUrl], () => submitPrReview(client, req, loadPreferences().reviewSignature),
+    result => ({ reviewUrl: result.reviewUrl }));
+  // Optimistic: the reader's own review counts as read, and the PR leaves Review requested, at once. The follow-up
+  // reconciles the review decision and the reviewer list with GitHub.
+  if (account) {
+    workbench.noteOwnReview(account, req.prUrl, req.comments.length - result.droppedCommentCount, result.reviewUrl);
+    workbench.reviewSubmitted(account, req.prUrl);
+    notifyLocalChange('workbench-changed');
+  }
   return result;
 });
 
@@ -3614,8 +3619,7 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
     const result = await conflicts.run(request, controller.signal, detail => { if (tracked) activities.update(id, detail); });
     if (request.kind === 'publish' || request.kind === 'restack-publish') {
       const urls = request.kind === 'restack-publish' ? result.session.restack?.branches.map(branch => branch.url) ?? [] : [result.session.url];
-      refreshAfterGitHubWrite(urls);
-      void refreshActionTargets(discussionClient(), urls).catch(() => {});
+      void githubWrites.after('push', urls);
     }
     if (tracked) activities.finish(id, 'completed', ['restack-prepare', 'restack-continue'].includes(request.kind) ? (result.session.restack?.status === 'blocked' ? 'Restack paused on new conflicts. Open the workspace to resolve and continue.' : 'Dependent PR updates prepared. Review the result before pushing.') : request.kind === 'restack-publish' ? 'Dependent PR branches updated together.' : result.session.status === 'published' ? 'PR branch updated. GitHub checks will run for the new commit.' : 'Conflict workspace ready. Open Resolve conflicts on the PR to continue.');
     return result;
@@ -3624,21 +3628,24 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
     throw error;
   }
 });
-async function refreshActionTargets(client: ReturnType<typeof getGitHubClient>, urls: string[]) {
+/**
+ * Optimistic: a change GitHub's response confirmed, shown before the follow-up reads it. Stamped 1 ms after the copy it
+ * replaces, so a lagging read of the old state cannot undo it, and GitHub's own report, stamped later, replaces it.
+ */
+function confirmedMetadata(urls: string[], patch: Partial<PrMetadata>) {
   for (const url of urls) {
-    const { owner, repo, pullNumber } = parsePrUrl(url);
-    const metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
-    // Do not reconcile an old account's result into the newly signed-in account.
-    if (client !== getGitHubClient(getResolvedToken())) return;
-    workbench.updatePrMetadata(metadata, true);
-    publishGitHubUpdates([{ kind: 'metadata', url, value: metadata }]);
-    refreshAfterGitHubWrite([url]);
+    const known = syncMetadata.get(url) ?? workbench.knownMember(url);
+    if (!known) continue;
+    const value = { ...known, ...patch, updatedAt: new Date(Date.parse(known.updatedAt) + 1).toISOString() };
+    workbench.updatePrMetadata(value, true);
+    publishGitHubUpdates([{ kind: 'metadata', url, value }]);
   }
 }
 const prMergeMonitor = createPrMergeMonitor({
   directory: () => app.getPath('userData'),
   auth: () => ({ login: cachedLogin, client: getResolvedToken() ? getGitHubClient(getResolvedToken()) : null }),
-  activity: activities, poll: (client, operation) => prActions.poll(client, operation), changed: refreshActionTargets,
+  activity: activities, poll: (client, operation) => prActions.poll(client, operation),
+  changed: (_client, urls) => githubWrites.after('stack-merged', urls),
 });
 handleInteractive('get-pr-action-state', (_event, url: string, force: boolean) => prActions.read(discussionClient(), url, force));
 handleInteractive('get-stack-merge-plan', (_event, urls: string[]) => prActions.stackPlan(discussionClient(), urls, true));
@@ -3650,16 +3657,32 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
   const title = request.kind === 'merge' ? 'Merging PRs' : request.kind.startsWith('update-') ? 'Updating PR branch' : request.kind === 'mark-ready' ? 'Marking PR ready for review' : request.kind === 'convert-draft' ? 'Converting PR to draft' : 'Updating auto-merge';
   const id = `pr-action:${crypto.randomUUID()}`;
   activities.start({ id, kind: 'pr-action', account: login, title, detail: 'Checking the confirmed revisions and GitHub permissions.' }, {});
+  // IPC payloads are runtime inputs even when the preload types are narrow.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const urls = Array.isArray(request.revisions) ? request.revisions.flatMap(r => typeof r?.url === 'string' ? [r.url] : []) : [];
+  const before = githubWrites.capture(urls);
+  const write = (result?: PrActionResult): GitHubWriteAction =>
+    request.kind === 'merge' ? (result?.operation ? 'merge-submitted' : result?.status === 'enqueued' ? 'merge-queue' : 'merge')
+      : request.kind === 'enable-auto' ? 'enable-auto-merge' : request.kind === 'disable-auto' ? 'disable-auto-merge'
+        : request.kind === 'mark-ready' ? 'mark-ready' : request.kind === 'convert-draft' ? 'convert-draft' : 'update-branch';
   try {
-    const result = await prActions.act(client, request);
+    let result: PrActionResult;
+    try { result = await prActions.act(client, request); } catch (error) {
+      // A failed write may still have reached GitHub: read once, without a follow-up.
+      void githubWrites.after(write(), urls, url => ({ before: before.get(url) }), { followUp: false });
+      throw error;
+    }
+    if (result.status === 'merged') confirmedMetadata(urls, { merged: true, state: 'closed' });
+    if (request.kind === 'mark-ready' || request.kind === 'convert-draft') confirmedMetadata(urls, { isDraft: request.kind === 'convert-draft' });
+    const refreshed = githubWrites.after(write(result), urls, url => ({ before: before.get(url), viewer: login }));
     if (result.operation) {
       activities.finish(id, 'cancelled', 'Following the submitted merge in Activity.');
       try { prMergeMonitor.track(login, `Merging ${request.revisions.length} PR${request.revisions.length === 1 ? '' : 's'}`, result.operation); }
       catch { result.message += ' Progress could not be saved locally. Check the PR on GitHub if you restart Gnosis.'; }
       prMergeMonitor.tick();
     } else {
-      try { await refreshActionTargets(client, request.revisions.map(r => r.url)); }
-      catch { result.message += ' Local status could not be refreshed yet; the next GitHub sync will reconcile it.'; }
+      // The first read finishes before the action does, so the reader sees GitHub's state when the dialog closes.
+      await refreshed;
       activities.finish(id, 'completed', result.message);
     }
     return result;
@@ -4114,20 +4137,105 @@ void app.whenReady().then(() => {
     app.once('will-quit', () => clearInterval(spendLog));
   }
   app.on('browser-window-focus', wake);
+  // Back from "Open on GitHub": read the PRs the reader took there once.
+  app.on('browser-window-focus', refreshHandedOff);
   app.once('will-quit', () => clearInterval(timer));
 });
-function refreshAfterGitHubWrite(urls: string[], kinds?: GitHubSyncKind[], followUp = false) {
+// ── After a GitHub write ──
+// Every write Gnosis makes goes through `githubWrites`: it marks the saved copies the write changed stale, reads the PR
+// again at once at the interactive tier, and follows up with backoff until GitHub shows the change. See
+// lib/github-write-refresh.ts for what each write changes.
+function invalidateAfterGitHubWrite(urls: string[], kinds: GitHubSyncKind[], followUpKinds: GitHubSyncKind[] = []) {
+  if (!cachedToken) return;
   const client = getGitHubClient(cachedToken);
   const cache = githubCacheFor(client);
   for (const url of urls) {
     const sha = syncMetadata.get(url)?.headSha ?? workbench.prPreview(url)?.member.headSha;
     if (sha) {
-      if (!kinds || kinds.includes('signals')) cache?.delete(queueSignalsCacheKey({ url, headSha: sha }));
-      if (!kinds || kinds.includes('checks')) cache?.delete(prChecksCacheKey({ url, headSha: sha }));
+      if (kinds.includes('signals')) cache?.delete(queueSignalsCacheKey({ url, headSha: sha }));
+      if (kinds.includes('checks')) cache?.delete(prChecksCacheKey({ url, headSha: sha }));
     }
+    if (kinds.includes('discussion')) reviewThreads.invalidate(client, url);
   }
-  githubSync.invalidate(urls, kinds, { followUp });
+  githubSync.invalidate(urls, kinds);
+  // Views that watch these kinds read them again a few times while GitHub starts the new work.
+  if (followUpKinds.length) githubSync.invalidate(urls, followUpKinds, { followUp: true });
   void githubSync.tick();
+}
+const githubWrites = createGitHubWriteRefresher({
+  active: () => !!cachedToken && syncEnabled(),
+  account: () => cachedToken,
+  baseline: (url): WriteObservation => {
+    const metadata = syncMetadata.get(url) ?? workbench.knownMember(url);
+    const signals = metadata && cachedToken ? cachedQueueSignals(getGitHubClient(cachedToken), [{ url, headSha: metadata.headSha }])[0] : undefined;
+    return { metadata, signals };
+  },
+  invalidate: invalidateAfterGitHubWrite,
+  read: async (probe, target, phase, action) => {
+    const token = cachedToken;
+    if (!token) return;
+    const client = getGitHubClient(token);
+    // The first read follows the user's action. Follow-ups are still the user's, so they are never paced as automatic.
+    const priority = phase === 'immediate' ? 'interactive' : 'foreground';
+    if (probe === 'metadata') {
+      const { owner, repo, pullNumber } = parsePrUrl(target.url);
+      const value = await withGitHubPriority(priority, () => getPrMetadata(client, owner, repo, pullNumber, true), { automatic: false });
+      if (token !== cachedToken) return;
+      // The reader's own change is read, not news: no notification and no unread mark. Changes made on GitHub are news.
+      if (action !== 'external') workbench.updatePrMetadata(value, true);
+      publishGitHubUpdates([{ kind: 'metadata', url: target.url, value }]);
+      return value;
+    }
+    if (!target.headSha) return;
+    const startedAt = Date.now();
+    const headSha = target.headSha;
+    const value = (await withGitHubPriority(priority,
+      () => getQueueSignals(client, [{ url: target.url, headSha }], { force: true, active: true }), { automatic: false })).at(0);
+    // The service answers a failed read with the saved copy. That is not news from GitHub.
+    if (token !== cachedToken || !value || value.checkedAt < startedAt) return;
+    if (cachedLogin && workbench.observeReadSignals(cachedLogin, [value])) broadcastToAllWindows('pr-read-state-changed');
+    publishGitHubUpdates([{ kind: 'signals', url: target.url, value }]);
+    return value;
+  },
+  blockedUntil: () => (cachedToken ? githubClients.backoff(cachedToken, false, ['core', 'graphql'])?.retryAt : undefined),
+  refreshed: event => {
+    // Every window, and the menu bar panel through the queue broadcast.
+    broadcastToAllWindows('github-write-refreshed', event);
+    notifyLocalChange('workbench-changed');
+  },
+  // Searches lag behind writes. Bring discovery forward a little, not to now.
+  queue: () => { discoveryDue = Math.min(discoveryDue, Date.now() + 5_000); },
+});
+/** Runs one GitHub write and then refreshes what it changed, also when the write failed: it may still have reached GitHub. */
+async function gitHubWrite<T>(action: GitHubWriteAction, urls: string[], write: () => Promise<T>,
+  details: (result: T) => Omit<WriteDetails, 'before'> = () => ({})): Promise<T> {
+  const before = githubWrites.capture(urls);
+  let result: T;
+  try {
+    result = await write();
+  } catch (error) {
+    // A failed write may still have reached GitHub: read once, without a follow-up.
+    void githubWrites.after(action, urls, url => ({ before: before.get(url) }), { followUp: false });
+    throw error;
+  }
+  const extra = details(result);
+  void githubWrites.after(action, urls, url => ({ ...extra, viewer: cachedLogin ?? undefined, before: before.get(url) }));
+  return result;
+}
+// "Open on GitHub": the reader may merge, review or comment there. One read of that PR when Gnosis has focus again.
+const handedOff = new Map<string, number>();
+function noteGitHubHandOff(link: string) {
+  const url = githubPrUrl(link);
+  if (!url) return;
+  handedOff.delete(url);
+  handedOff.set(url, Date.now());
+  while (handedOff.size > 20) handedOff.delete(handedOff.keys().next().value as string);
+}
+function refreshHandedOff() {
+  if (!handedOff.size || !cachedToken) return;
+  const recent = [...handedOff].filter(([, at]) => Date.now() - at < 60 * 60_000).map(([url]) => url);
+  handedOff.clear();
+  if (recent.length) void githubWrites.after('external', recent.slice(-5));
 }
 
 const changesClient = () => {
@@ -4202,8 +4310,7 @@ ipcMain.handle('cached-check-details', (_event, input: CheckSelection) => checkA
 handleInteractive('check-details', (_event, input: CheckSelection, options?: { force?: boolean }) => checkAccount(client => readCheckDetails(client, input, { force: options?.force === true })));
 handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));
 handleInteractive('rerun-checks', async (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => {
-  await checkAccount(client => rerunChecks(client, input));
-  refreshAfterGitHubWrite([input.url], ['checks', 'signals'], true);
+  await gitHubWrite('rerun-checks', [input.url], () => checkAccount(client => rerunChecks(client, input)));
 });
 /** Settings shows these beside the cache size. File sizes only, with no worker request. */
 ipcMain.handle('storage-sizes', async () => {

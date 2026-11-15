@@ -383,6 +383,23 @@ export function createWorkbenchService(deps: Deps) {
     notify(account, fresh.map(member => ({ member: observedMember(member), explanation: hasExplanation(member.url) })), options);
     for (const member of fresh) notifiedMembers.set(member, account);
   }
+  /** A member whose review request ended: Author for the reader's own PR, otherwise Watched unless a search says more. */
+  function withoutStaleRequest(member: ReviewMember, role?: ReviewMember['role']): ReviewMember {
+    if (member.role !== 'review-requested') return member;
+    const login = deps.auth().login?.toLowerCase();
+    return { ...member, role: role && role !== 'review-requested' ? role : member.author.toLowerCase() === login ? 'author' : 'watched' };
+  }
+  /**
+   * A direct request that GitHub's reviewer list no longer shows, with no team requested, has ended: the reader
+   * reviewed or the request was withdrawn. Without a direct request before, the role stays: a team request can be
+   * hidden from a token that cannot read the organization's teams.
+   */
+  function withRequestOf(previous: ReviewMember, member: ReviewMember): ReviewMember {
+    const login = deps.auth().login?.toLowerCase();
+    const named = (m: ReviewMember) => m.requestedReviewers.some(reviewer => reviewer.toLowerCase() === login);
+    if (member.role !== 'review-requested' || !login || !named(previous) || named(member) || member.requestedTeams.length) return member;
+    return withoutStaleRequest(member);
+  }
   function knownMembers() {
     const s = load();
     return new Map([...stars.load(s.account).map(entry => entry.member), ...s.subjects.flatMap(subject => subject.members)].map(member => [member.url, member] as const));
@@ -654,8 +671,10 @@ export function createWorkbenchService(deps: Deps) {
       // Explicit bookmarks remain discovery seeds even when their activity is old.
       const discovered = new Set(seeds.keys());
       for (const { member } of stars.load(s.account)) {
+        // Discovery's role wins. A star it did not find keeps no review request: that role came from a search
+        // that no longer returns the PR.
         if (member.state === 'open' && !member.merged && !isArchived(member) && !mutedUrls().has(member.url))
-          seeds.set(member.url, member);
+          seeds.set(member.url, discovered.has(member.url) ? { ...member, role: seeds.get(member.url)?.role ?? member.role } : withoutStaleRequest(member));
       }
       const add = async (
         url: string,
@@ -1001,6 +1020,12 @@ export function createWorkbenchService(deps: Deps) {
         allowance();
         changed.push(await withGitHubPriority('background', () => fetchMember(octokit, pr.url, pr.role), { automatic: true }));
       }
+      // The personal searches are complete here. A recent PR they no longer return as requested is not requested.
+      const requested = new Set(found.filter(pr => pr.role === 'review-requested').map(pr => pr.url));
+      for (const member of known.values())
+        if (member.role === 'review-requested' && !requested.has(member.url) && !changed.some(next => next.url === member.url) &&
+          isPrRecentlyUpdated(member.updatedAt, repositorySettings(prefs, member.repo).prInactivityDays, now()))
+          changed.push(withoutStaleRequest(member, found.find(pr => pr.url === member.url)?.role));
       if (!changed.length || deps.auth().login !== login) return { changed: 0 };
       const s = load();
       const merged = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
@@ -1470,7 +1495,7 @@ export function createWorkbenchService(deps: Deps) {
         const members = subject.members.map(member => {
           // A slow read must not undo a newer one, such as an open copy arriving after the merge.
           if (member.url !== metadata.url || Date.parse(metadata.updatedAt) < Date.parse(member.updatedAt)) return member;
-          const next = { ...member, ...metadata };
+          const next = withRequestOf(member, { ...member, ...metadata });
           if (isDeepStrictEqual(member, next)) return member;
           changed = subjectChanged = true;
           return next;
@@ -1480,8 +1505,24 @@ export function createWorkbenchService(deps: Deps) {
         return subjectChanged ? { ...subject, members, ...(subject.kind === 'pr' ? { title: members[0].title } : {}) } : subject;
       });
       const saved = stars.load(s.account).find(entry => entry.member.url === metadata.url);
-      if (saved && !(Date.parse(metadata.updatedAt) < Date.parse(saved.member.updatedAt))) stars.update(s.account, [{ ...saved.member, ...metadata }]);
+      if (saved && !(Date.parse(metadata.updatedAt) < Date.parse(saved.member.updatedAt))) stars.update(s.account, [withRequestOf(saved.member, { ...saved.member, ...metadata })]);
       if (changed) save();
+    },
+    /**
+     * The reader submitted a review from Gnosis. GitHub's `review-requested:` search stops returning the PR, so it
+     * leaves Review requested at once instead of at the next discovery.
+     */
+    reviewSubmitted(account: string, url: string) {
+      if (account !== deps.auth().login) return;
+      const s = load();
+      const requested = (subject: ReviewSubject) => subject.members.some(member => member.url === url && member.role === 'review-requested');
+      const saved = stars.load(s.account).find(entry => entry.member.url === url);
+      if (saved?.member.role === 'review-requested') stars.update(s.account, [withoutStaleRequest(saved.member)]);
+      if (!s.subjects.some(requested)) return;
+      s.subjects = s.subjects.map(subject => requested(subject)
+        ? { ...subject, members: subject.members.map(member => member.url === url ? withoutStaleRequest(member) : member) }
+        : subject);
+      save();
     },
     updateStarredMetadata(metadata: PrMetadata) {
       const account = deps.auth().login;

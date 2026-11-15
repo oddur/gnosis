@@ -21,7 +21,7 @@ import { DesktopSetupDialog } from '../../components/DesktopSetup';
 import { GuidedTour } from '../../components/GuidedTour';
 import { offerMenubarTourStop } from '../../lib/desktop-setup';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
-import { itemWithLifecycle } from '../../lib/pr-lifecycle';
+import { freshPr, itemWithLifecycle, lifecycleOf } from '../../lib/pr-lifecycle';
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
@@ -485,15 +485,16 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     };
   }, [openedItem, workspaceItems, visibleHistory, requestedReviews]);
   // A merged or closed PR leaves the queue, so `resolveWorkspace` keeps the copy taken when it opened, or the
-  // one a saved tab restored. The status read is the fresh source: its lifecycle wins over that copy.
+  // one a saved tab restored. The status read and the metadata watch are the fresh source: they win over that copy,
+  // including its title, draft flag, base and head, so signals and checks follow the new head.
   const summaryItem = useMemo(
-    () => summarySource && itemWithLifecycle(summarySource, url => statuses[url]?.lifecycle),
+    () => summarySource && itemWithLifecycle(summarySource, url => freshPr(statuses[url])),
     [summarySource, statuses]
   );
   // Saved tabs and navigation history store the opened item, so they restore the fresh state as well.
   useEffect(() => {
     if (!openedItem) return;
-    const next = itemWithLifecycle(openedItem, url => statuses[url]?.lifecycle);
+    const next = itemWithLifecycle(openedItem, url => freshPr(statuses[url]));
     if (next !== openedItem) setOpenedItem(next);
   }, [openedItem, statuses]);
   const appliedExplanation = useRef<ExplanationDestination | undefined>(undefined);
@@ -653,10 +654,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setStatusErrors({});
     let force = lastStatusAttempt.current !== statusAttempt;
     let refreshingStatus = false;
+    let refreshAgain = false;
     let opened = true;
     lastStatusAttempt.current = statusAttempt;
     const refreshStatuses = () => {
-      if (statusSubject && !refreshingStatus && document.visibilityState !== 'hidden') {
+      if (statusSubject && refreshingStatus) refreshAgain = true;
+      else if (statusSubject && document.visibilityState !== 'hidden') {
         refreshingStatus = true;
         if (force || !statusSubject.members.every(member => cachedStatuses.current.has(cacheKey(member.url, member.headSha)))) setStatusRefreshing(true);
         const refreshNow = force;
@@ -682,12 +685,15 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           }))
         ).then((results) => {
           refreshingStatus = false;
+          // Main read the PR again while this read was in flight: show what it read.
+          if (refreshAgain && !cancelled) queueMicrotask(() => { refreshAgain = false; refreshStatuses(); });
           if (!cancelled) {
             setStatusRefreshing(false);
             results.forEach((r, i) => {
               if (r.status !== 'fulfilled') return;
               const m = statusSubject.members[i];
-              if (!r.value.status.stale) cachedStatuses.current.set(cacheKey(m.url, m.headSha), r.value.status);
+              // Saved under the head the status describes: after a push, the opened copy moves to that head and finds it.
+              if (!r.value.status.stale) cachedStatuses.current.set(cacheKey(m.url, r.value.status.headSha ?? m.headSha), r.value.status);
               if (auth?.login && r.value.status.signals) publishQueueSignals(auth.login, [r.value.status.signals]);
             });
             setStatusErrors(
@@ -708,8 +714,20 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       }
     };
     refreshStatuses();
-    const stopMetadata = statusSubject && watchGitHub({ kind: 'metadata', priority: 'active', targets: statusSubject.members.map(member => ({ url: member.url })) }, () => refreshStatuses());
+    const stopMetadata = statusSubject && watchGitHub({ kind: 'metadata', priority: 'active', targets: statusSubject.members.map(member => ({ url: member.url })) }, update => {
+      // The pushed PR applies at once, also to a tab outside the queue; the status read then follows its head.
+      if (update.kind === 'metadata')
+        setStatuses(previous => {
+          const status = previous[update.url];
+          return status ? { ...previous, [update.url]: mergePrStatus(status, { ...status, metadata: update.value, lifecycle: lifecycleOf(update.value) }) } : previous;
+        });
+      refreshStatuses();
+    });
     const timer = stopMetadata ? undefined : setInterval(refreshStatuses, 120000);
+    // Main read the PR again after a write, from this window or another, including the menu bar panel.
+    const stopWrites = statusSubject && window.electronAPI.onGitHubWriteRefreshed?.(event => {
+      if (event.urls.some(url => statusSubject.members.some(member => member.url === url))) refreshStatuses();
+    });
     document.addEventListener('visibilitychange', refreshStatuses);
     let refreshingSignals = false;
     const refreshSignals = async () => {
@@ -759,6 +777,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       if (stopMetadata) stopMetadata();
       if (stopSignals) stopSignals();
       if (stopChecks) stopChecks();
+      if (typeof stopWrites === 'function') stopWrites();
       document.removeEventListener('visibilitychange', refreshStatuses);
     };
   }, [

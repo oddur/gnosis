@@ -307,6 +307,8 @@ export interface PrStatus {
    * older queue or tab copy of the PR, which never learns of a merge on its own.
    */
   lifecycle?: import('./pr-lifecycle').PrLifecycle;
+  /** The PR as the GitHub read behind this status reported it. Saved copies omit it. */
+  metadata?: PrMetadata;
 }
 
 /** `cachedOnly` returns the saved status for `headSha`, or null, without a GitHub request. */
