@@ -21,6 +21,9 @@ import {
   type PrMergePlan,
 } from '../lib/pr-actions';
 import type { ReviewMember } from '../lib/workbench';
+import { applyToActionState, prActionChange, type OptimisticChange } from '../lib/optimistic-patches';
+import { optimisticWrite } from '../lib/write-failures';
+import { WriteFailureNotice } from './WriteFailureNotice';
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const revision = (m: PrActionMember) => ({
@@ -49,7 +52,10 @@ export function PrActions({
   /** A contextual action loads permissions only when invoked. */
   trigger?: (open: (kind: PrActionKind) => void, busy: boolean) => ReactNode;
 }) {
-  const [state, setState] = useState<PrActionState>();
+  const [loaded, setState] = useState<PrActionState>();
+  // A draft or auto-merge change shows at once, while GitHub applies it. Main shows it everywhere else.
+  const [sending, setSending] = useState<OptimisticChange>();
+  const state = loaded && sending ? applyToActionState(loaded, sending) : loaded;
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [dialog, setDialog] = useState<{ kind: PrActionKind; plan?: PrMergePlan }>();
@@ -191,6 +197,38 @@ export function PrActions({
     setError('');
     setErrorStep('submit');
     const started = current.current;
+    const change = prActionChange(kind, showMethod ? method : undefined);
+    if (change) {
+      const request = {
+        account: plan.target.account,
+        kind,
+        url: plan.target.url,
+        revisions: members.map(revision),
+        method: showMethod ? method : undefined,
+      };
+      setDialog(undefined);
+      pending.current = false;
+      setBusy(false);
+      void optimisticWrite({
+        key: `pr-action:${plan.target.url}:${change.action}`,
+        action: change.action,
+        write: async () => {
+          setSending(change);
+          try {
+            const response = await window.electronAPI.performPrAction(request);
+            onChanged?.();
+            window.dispatchEvent(new CustomEvent('gnosis-pr-action-completed', { detail: members.map((m) => m.url) }));
+            if (current.current === started) {
+              setResult(response.message);
+              await refresh();
+            }
+          } finally {
+            setSending(undefined);
+          }
+        },
+      });
+      return;
+    }
     try {
       const response = await window.electronAPI.performPrAction({
         account: plan.target.account,
@@ -459,11 +497,26 @@ export function PrActions({
           <button onClick={() => void (stackMembers ? open('merge') : refresh())}>Retry loading actions</button>
         </p>
       )}
-      {result && (
-        <p role="status" className="pr-action-note">
-          {result}
+      {sending ? (
+        <p role="status" className="pr-action-note github-sending">
+          {sending.action === 'mark-ready'
+            ? 'Marking ready for review…'
+            : sending.action === 'convert-draft'
+              ? 'Converting to draft…'
+              : sending.action === 'enable-auto-merge'
+                ? 'Turning on auto-merge…'
+                : 'Turning off auto-merge…'}
         </p>
+      ) : (
+        result && (
+          <p role="status" className="pr-action-note">
+            {result}
+          </p>
+        )
       )}
+      {(['mark-ready', 'convert-draft', 'enable-auto-merge', 'disable-auto-merge'] as const).map((action) => (
+        <WriteFailureNotice key={action} failureKey={`pr-action:${member.url}:${action}`} className="pr-action-error" />
+      ))}
       <Dialog
         open={!!dialog}
         onOpenChange={(value) => {

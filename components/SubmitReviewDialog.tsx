@@ -15,6 +15,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { PendingReviewComment, ReviewEvent } from '@/lib/types';
+import { writeErrorDetail } from '@/lib/write-failures';
+import { failureTitle } from '@/lib/optimistic-patches';
 
 interface Props {
   open: boolean;
@@ -54,6 +56,8 @@ export function SubmitReviewDialog({
   const signatureEpoch = useRef(0);
   const signaturePending = useRef(false);
   const pending = useRef(false);
+  /** The decision last submitted, for Retry after a failure. */
+  const lastEvent = useRef<ReviewEvent | undefined>(undefined);
   const decisionId = useId();
   const [decision, setDecision] = useState<ReviewEvent>('COMMENT');
   const [busyDraftIds, setBusyDraftIds] = useState<Set<string>>(() => new Set());
@@ -137,11 +141,12 @@ export function SubmitReviewDialog({
     setError(null);
     try {
       setSubmittedCount(comments.length);
+      lastEvent.current = event;
       const result = await onSubmit(event, body);
       setSuccessUrl(result.reviewUrl);
       setDroppedCount(result.droppedCommentCount);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't submit the review.");
+      setError(writeErrorDetail(err));
     } finally {
       pending.current = false;
       setSubmitting(false);
@@ -358,9 +363,19 @@ export function SubmitReviewDialog({
             </div>
           )}
           {error && (
-            <p className="review-submit-error" role="alert">
-              {error}
-            </p>
+            // The review was rolled back everywhere it showed. The text and comments stay here for Retry.
+            <div className="review-submit-error write-failure" role="alert">
+              <p>
+                <strong>{failureTitle('submit-review')}</strong> <span className="write-failure-detail">{error}</span>
+              </p>
+              {lastEvent.current && (
+                <div className="write-failure-actions">
+                  <button type="button" disabled={!canSubmit} onClick={() => lastEvent.current && void handleSubmit(lastEvent.current)}>
+                    Retry
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
         <DialogFooter className="review-submit-footer">

@@ -2,8 +2,10 @@ import { createPortal } from 'react-dom';
 import { Button } from './ui/button';
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { GitHubAuthor } from './GitHubAuthor';
-import { useSessionDraft } from '../lib/session-drafts';
+import { readSessionDraft, useSessionDraft, useSessionDraftId, writeSessionDraft } from '../lib/session-drafts';
 import { useId, useState, useRef, useEffect } from 'react';
+import { optimisticWrite, useWriteInFlight } from '../lib/write-failures';
+import { WriteFailureNotice } from './WriteFailureNotice';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
 import { CommentMarkdown } from './CommentMarkdown';
 import { timeAgo } from '../lib/utils';
@@ -49,16 +51,12 @@ export function GitHubReviewThread({
 }: Props) {
   const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`, false);
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [failedAction, setFailedAction] = useState<string>();
-  const errorElement = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (error) {
-      errorElement.current?.scrollIntoView({ block: 'nearest' });
-      errorElement.current?.focus({ preventScroll: true });
-    }
-  }, [error]);
+  const draftId = useSessionDraftId(`thread-reply:${thread.id}`);
+  const replyingId = useSessionDraftId(`thread-replying:${thread.id}`);
+  // One reply per thread at a time: a second one waits until GitHub answers the first.
+  const replySending = useWriteInFlight(`thread-reply:${thread.id}`);
+  // Writes show at once: main applies them to the thread before GitHub answers, and rolls them back on failure.
+  // Nothing here waits, so the controls stay available; a failure brings the typed text back with Retry.
   const replyForm = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (!replying || !actionContainer) return;
@@ -66,55 +64,71 @@ export function GitHubReviewThread({
     return () => cancelAnimationFrame(frame);
   }, [replying, actionContainer]);
   const inputId = useId();
-  const pending = useRef(false);
   const [editing, setEditing] = useState<string>();
   const [deleting, setDeleting] = useState<string>();
   const [editBody, setEditBody] = useSessionDraft(`thread-edit:${thread.id}`, '');
-  async function changeComment(id: string, action: ReviewCommentAction['action']) {
-    if (!onCommentAction || pending.current) return;
-    pending.current = true;
-    setBusy(true);
-    setError('');
-    try {
-      await onCommentAction(id, action, action === 'edit' ? editBody : undefined);
-      setEditing(undefined);
-      setDeleting(undefined);
-      setEditBody('');
-    } catch (e) {
-      setFailedAction(action);
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      pending.current = false;
-      setBusy(false);
-    }
+  function changeComment(id: string, action: ReviewCommentAction['action']) {
+    if (!onCommentAction) return;
+    const body = action === 'edit' ? editBody : undefined;
+    if (action === 'edit' && !body?.trim()) return;
+    void optimisticWrite({
+      key: `comment-change:${id}`,
+      action: action === 'edit' ? 'comment-edit' : 'comment-delete',
+      body,
+      clear: () => {
+        setEditing(undefined);
+        setDeleting(undefined);
+        if (action === 'edit') setEditBody('');
+      },
+      restore: (text) => {
+        setEditing(id);
+        setEditBody(text);
+      },
+      write: () => onCommentAction(id, action, body),
+    });
   }
-  async function act(action: ReviewThreadAction['action'], advance = false) {
-    if (!onAction || pending.current) return;
-    pending.current = true;
-    setBusy(true);
-    setError('');
-    try {
-      await onAction(action, action === 'reply' ? draft : undefined);
-      if (advance) onResolvedNext?.();
-      if (action === 'reply') {
-        setDraft('');
-        setReplying(false);
-      }
-    } catch (e) {
-      setFailedAction(action);
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      pending.current = false;
-      setBusy(false);
+  function act(action: ReviewThreadAction['action'], advance = false) {
+    if (!onAction) return;
+    if (action === 'reply') {
+      const body = draft;
+      if (!body.trim()) return;
+      void optimisticWrite({
+        key: `thread-reply:${thread.id}`,
+        action: 'thread-reply',
+        body,
+        clear: () => {
+          setDraft('');
+          setReplying(false);
+        },
+        // Written by id: the thread may have remounted since, for example after the file was collapsed and
+        // expanded. Text typed since stays; the failed reply is kept in the notice and sent again by Retry.
+        restore: (text) => {
+          const current = readSessionDraft(draftId);
+          if (typeof current !== 'string' || !current.trim()) writeSessionDraft(draftId, text);
+          writeSessionDraft(replyingId, true);
+        },
+        write: () => onAction('reply', body),
+      });
+      return;
     }
+    // The thread shows its new state at once. "Resolve & next" moves on once GitHub accepted it, so a failure stays
+    // beside the thread it belongs to.
+    void optimisticWrite({
+      key: `thread-state:${thread.id}`,
+      action: action === 'resolve' ? 'thread-resolve' : 'thread-unresolve',
+      write: async () => {
+        await onAction(action);
+        if (advance) onResolvedNext?.();
+      },
+    });
   }
   const actionButton = (label: string, onClick: () => void, primary = false) =>
     actionContainer ? (
-      <Button size="sm" variant={primary ? 'default' : 'outline'} disabled={busy} onClick={onClick}>
+      <Button size="sm" variant={primary ? 'default' : 'outline'} onClick={onClick}>
         {label}
       </Button>
     ) : (
-      <button disabled={busy} onClick={onClick}>
+      <button onClick={onClick}>
         {label}
       </button>
     );
@@ -124,7 +138,8 @@ export function GitHubReviewThread({
       {!replying && actionButton('Reply', () => setReplying(true))}
       {replying && actionContainer && (
         <>
-          <Button size="sm" type="submit" form={`${inputId}-form`} disabled={busy || !draft.trim()}>
+          <Button size="sm" type="submit" form={`${inputId}-form`} disabled={!draft.trim() || replySending}
+            title={replySending ? 'Your previous reply is still sending.' : undefined}>
             Reply on GitHub
           </Button>
           {actionButton('Cancel', () => setReplying(false))}
@@ -133,13 +148,12 @@ export function GitHubReviewThread({
       {((thread.isResolved && thread.viewerCanUnresolve) || (!thread.isResolved && thread.viewerCanResolve)) &&
         actionButton(
           thread.isResolved ? 'Reopen thread' : 'Resolve thread',
-          () => void act(thread.isResolved ? 'unresolve' : 'resolve')
+          () => act(thread.isResolved ? 'unresolve' : 'resolve')
         )}
       {onResolvedNext &&
         !thread.isResolved &&
         thread.viewerCanResolve &&
-        actionButton('Resolve & next', () => void act('resolve', true), true)}
-      {busy && <span role="status">Saving to GitHub…</span>}
+        actionButton('Resolve & next', () => act('resolve', true), true)}
     </div>
   );
   const first = thread.comments.length ? thread.comments[0] : undefined;
@@ -150,6 +164,7 @@ export function GitHubReviewThread({
       className="github-thread"
       data-thread-id={thread.id}
       data-resolved={thread.isResolved}
+      data-sending={thread.sending}
       open={expanded ?? !thread.isResolved}
     >
       <summary>
@@ -161,7 +176,11 @@ export function GitHubReviewThread({
           {pendingCount > 0 && ` · ${pendingCount} pending`}
         </span>
         <span className="github-thread-state">
-          {thread.isResolved ? (
+          {thread.sending === 'resolving' ? (
+            <span className="github-sending" role="status">Resolving…</span>
+          ) : thread.sending === 'reopening' ? (
+            <span className="github-sending" role="status">Reopening…</span>
+          ) : thread.isResolved ? (
             <span className="github-thread-resolution">
               <Check size={13} aria-hidden="true" />
               Resolved
@@ -177,10 +196,13 @@ export function GitHubReviewThread({
       {reason && <p className="github-thread-reason">{reason}</p>}
       <div className="github-thread-comments">
         {thread.comments.map((comment) => (
-          <article key={comment.id} data-pending={isPendingComment(comment) || undefined}>
+          <article key={comment.id} data-pending={isPendingComment(comment) || undefined} data-sending={comment.sending}>
             <header>
               <strong>{comment.author ? <GitHubAuthor login={comment.author.login} /> : 'Deleted account'}</strong>
-              {isPendingComment(comment) ? (
+              {comment.sending ? (
+                // The reader's write, before GitHub confirmed it. A new comment has no URL yet; an edited one keeps its own.
+                <span className="github-sending" role="status">{comment.url ? 'Saving…' : 'Sending…'}</span>
+              ) : isPendingComment(comment) ? (
                 <span className="github-comment-pending" title="Only you can see this comment until you submit your review on GitHub">
                   Pending · not submitted
                 </span>
@@ -189,13 +211,13 @@ export function GitHubReviewThread({
                   {timeAgo(comment.createdAt)}
                 </time>
               )}
-              <button onClick={() => void window.electronAPI.openExternal(comment.url)}>On GitHub</button>
+              {comment.url && <button onClick={() => void window.electronAPI.openExternal(comment.url)}>On GitHub</button>}
             </header>
             {editing === comment.id ? (
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void changeComment(comment.id, 'edit');
+                  changeComment(comment.id, 'edit');
                 }}
               >
                 <label htmlFor={`${inputId}-edit`}>Edit your comment</label>
@@ -203,14 +225,14 @@ export function GitHubReviewThread({
                   id={`${inputId}-edit`}
                   value={editBody}
                   onValueChange={setEditBody}
-                  disabled={busy}
+                 
                   maxLength={65536}
                   rows={3}
                   autoFocus
                 />
                 <div className="github-thread-actions">
-                  <button disabled={busy || !editBody.trim()}>Save changes</button>
-                  <button type="button" disabled={busy} onClick={() => setEditing(undefined)}>
+                  <button disabled={!editBody.trim()}>Save changes</button>
+                  <button type="button" onClick={() => setEditing(undefined)}>
                     Cancel
                   </button>
                 </div>
@@ -220,11 +242,12 @@ export function GitHubReviewThread({
             ) : (
               <CommentMarkdown>{comment.body}</CommentMarkdown>
             )}
-            {onCommentAction && !editing && (
+            <WriteFailureNotice failureKey={`comment-change:${comment.id}`} className="github-thread-error" />
+            {onCommentAction && !editing && !comment.sending && (
               <div className="github-thread-actions">
                 {comment.viewerCanUpdate && (
                   <button
-                    disabled={busy}
+                   
                     onClick={() => {
                       setEditing(comment.id);
                       setEditBody(comment.body);
@@ -238,15 +261,15 @@ export function GitHubReviewThread({
                   (deleting === comment.id ? (
                     <>
                       <span>Delete this comment from GitHub?</span>
-                      <button disabled={busy} onClick={() => void changeComment(comment.id, 'delete')}>
+                      <button onClick={() => changeComment(comment.id, 'delete')}>
                         Delete comment
                       </button>
-                      <button disabled={busy} onClick={() => setDeleting(undefined)}>
+                      <button onClick={() => setDeleting(undefined)}>
                         Cancel
                       </button>
                     </>
                   ) : (
-                    <button disabled={busy} onClick={() => setDeleting(comment.id)}>
+                    <button onClick={() => setDeleting(comment.id)}>
                       Delete
                     </button>
                   ))}
@@ -262,7 +285,7 @@ export function GitHubReviewThread({
           ref={replyForm}
           onSubmit={(e) => {
             e.preventDefault();
-            void act('reply');
+            act('reply');
           }}
         >
           <label htmlFor={inputId}>Reply to this GitHub thread</label>
@@ -272,42 +295,24 @@ export function GitHubReviewThread({
             onValueChange={setDraft}
             rows={3}
             maxLength={65536}
-            disabled={busy}
+           
             autoFocus
           />
           {!actionContainer && (
             <div className="github-thread-actions">
-              <button type="submit" disabled={busy || !draft.trim()}>
+              <button type="submit" disabled={!draft.trim() || replySending}
+            title={replySending ? 'Your previous reply is still sending.' : undefined}>
                 Reply on GitHub
               </button>
-              <button type="button" disabled={busy} onClick={() => setReplying(false)}>
+              <button type="button" onClick={() => setReplying(false)}>
                 Cancel
               </button>
             </div>
           )}
         </form>
       )}
-      {error && (
-        <div ref={errorElement} role="alert" tabIndex={-1} className="github-thread-error">
-          <p>
-            {failedAction === 'reply'
-              ? 'Reply wasn’t posted. Your draft is saved. Try again.'
-              : failedAction === 'resolve'
-                ? 'Thread wasn’t resolved. Try again.'
-                : failedAction === 'unresolve'
-                  ? 'Thread wasn’t reopened. Try again.'
-                  : failedAction === 'edit'
-                    ? 'Changes weren’t saved. Your draft is saved. Try again.'
-                    : failedAction === 'delete'
-                      ? 'Comment wasn’t deleted. Try again.'
-                      : 'Could not save the change. Try again.'}
-          </p>
-          <details>
-            <summary>Details</summary>
-            <p>{error}</p>
-          </details>
-        </div>
-      )}
+      <WriteFailureNotice failureKey={`thread-reply:${thread.id}`} className="github-thread-error" />
+      <WriteFailureNotice failureKey={`thread-state:${thread.id}`} className="github-thread-error" />
     </details>
   );
 }
