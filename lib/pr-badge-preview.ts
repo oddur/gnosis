@@ -16,6 +16,7 @@ export interface PrBadgePreview {
     | 'isDraft'
     | 'updatedAt'
     | 'commentCount'
+    | 'reviewCommentCount'
   >;
   briefing?: Pick<Briefing, 'status' | 'summary' | 'updatedAt'>;
   stack?: { title: string; count: number };
@@ -43,6 +44,7 @@ export function prBadgePreview(
     isDraft,
     updatedAt,
     commentCount,
+    reviewCommentCount,
   } = member;
   return {
     member: {
@@ -59,6 +61,7 @@ export function prBadgePreview(
       isDraft,
       updatedAt,
       commentCount,
+      reviewCommentCount,
     },
     briefing: briefing
       ? { status: briefing.status, summary: briefing.summary, updatedAt: briefing.updatedAt }

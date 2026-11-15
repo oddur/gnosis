@@ -54,7 +54,7 @@ export const ATTENTION_LABEL: Readonly<Record<AttentionKind, string>> = {
   'changes-requested': 'Changes requested',
   'checks-failed': 'Checks failed',
   conflicts: 'Merge conflicts',
-  replies: 'Unresolved threads',
+  replies: 'Awaiting your reply',
   restack: 'Restack needed',
   'ready-to-merge': 'Ready to merge',
   'explanation-ready': 'Explanation ready',
@@ -170,7 +170,7 @@ export function attentionItems(input: {
       const level = memberAttention(member, fresh, input.login, { teamRequests: input.teamRequests });
       const kinds = new Set(Object.keys(level) as AttentionKind[]);
       if (item.attention === 'updated' && !isOwnPr(member, input.login)) kinds.add('updated-since-review');
-      if ((item.responses?.[member.url]?.unresolvedThreads ?? 0) > 0) kinds.add('replies');
+      if ((item.responses?.[member.url]?.awaitingReply ?? 0) > 0) kinds.add('replies');
       // A finished, current, unread explanation. It folds into a review request on the same row.
       const explanation = explanationFor(item, member.url);
       if (explanation?.unread) kinds.add('explanation-ready');

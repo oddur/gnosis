@@ -4,7 +4,7 @@ import { checkSummaryIcons } from '../lib/interface-icons';
 import type { PrBadgePreview } from '../lib/pr-badge-preview';
 import { prReviewStatus } from '../lib/pr-review-status';
 import { mergeReadiness } from '../lib/merge-readiness';
-import { QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
+import { prCommentTotal, QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
 import { timeAgo } from '../lib/utils';
 import { StatusBadge } from './PrReviewStatus';
 import { ReadinessBadge } from './MergeReadiness';
@@ -32,7 +32,7 @@ export function PrBadgeTooltip({
   const readiness = mergeReadiness(member, signals);
   const checks = signals?.checks;
   const CheckIcon = checkSummaryIcons[checks?.state ?? 'unknown'];
-  const comments = signals?.comments ?? member.commentCount;
+  const comments = prCommentTotal(member, signals);
   return (
     <div className="pr-badge-preview">
       <strong className="pr-badge-preview-title"><SubjectIcon kind="pr" />{member.title}</strong>

@@ -71,7 +71,7 @@ export function ChangesFileTree({
       const showCommentCount = showComments && (!!count || unavailable);
       const comments = unavailable
         ? 'Comments unavailable'
-        : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, including replies and resolved threads`;
+        : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, in unresolved threads on the current diff`;
       return {
         text: showCommentCount ? `${changes} · ${count ?? '—'}` : changes,
         parts: [

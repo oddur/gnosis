@@ -13,8 +13,8 @@ import type {
   ReviewCommentAction,
 } from '../lib/review-threads';
 
-const bodyFields = 'id body createdAt updatedAt url author { login avatarUrl }';
-const commentFields = `${bodyFields} viewerCanUpdate viewerCanDelete diffHunk pullRequestReview { id }`;
+const bodyFields = 'id body createdAt updatedAt url isMinimized minimizedReason author { __typename login avatarUrl }';
+const commentFields = `${bodyFields} viewerCanUpdate viewerCanDelete diffHunk pullRequestReview { id state }`;
 const reviewFields = `${bodyFields} state submittedAt`;
 type ReviewRequest = { requestedReviewer: { login?: string } | null };
 interface FeedbackPage {
@@ -251,7 +251,7 @@ export function createReviewThreadService(now = Date.now) {
         );
         thread.comments = thread.comments.filter((c) => c.id !== comment.id);
       }
-      service.invalidate(client, req.prUrl);
+      service.markStale(client, req.prUrl);
       return thread;
     },
     /**
@@ -269,6 +269,42 @@ export function createReviewThreadService(now = Date.now) {
       const entry = cacheFor(client).get(prUrl);
       if (entry?.value && (!persistent || entry.version === persistent.version()) && servable(entry.value))
         return structuredClone(entry.value);
+    },
+    /**
+     * Local data only, for the queue's unresolved-thread count. The last discussion while it is under 24
+     * hours old. A copy that new activity or a write marked stale is still returned, with `stale: true`,
+     * so the count keeps its last known value until the next read replaces it.
+     */
+    latest(client: Octokit, prUrl: string): GitHubReviewThreads | undefined {
+      const servable = (value: GitHubReviewThreads) => {
+        const age = now() - (value.checkedAt ?? Number.NaN);
+        return age >= 0 && age < REVIEW_THREADS_MAX_STALE_MS;
+      };
+      const persistent = githubCacheFor(client);
+      const saved = persistent?.get(`review-threads:${prUrl}`, isSavedThreads);
+      const entry = cacheFor(client).get(prUrl);
+      const memory = entry?.value && servable(entry.value) ? entry : undefined;
+      if (saved && servable(saved.value.value) && (saved.value.value.checkedAt ?? 0) >= (memory?.value?.checkedAt ?? 0))
+        return saved.revalidate ? { ...saved.value.value, stale: true } : saved.value.value;
+      if (memory?.value) return memory.expires > 0 ? memory.value : { ...memory.value, stale: true };
+    },
+    /**
+     * New activity: the saved discussion is out of date, but its threads are still the best local evidence.
+     * Marks it for revalidation instead of deleting it. A read in flight may predate the activity, so it is
+     * not saved.
+     */
+    markStale(client: Octokit, prUrl: string) {
+      const cache = cacheFor(client);
+      const entry = cache.get(prUrl);
+      const persistent = githubCacheFor(client);
+      if (persistent) {
+        cache.delete(prUrl);
+        const key = `review-threads:${prUrl}`;
+        // Older records have no `url` to match, so they cannot be marked and are deleted as before.
+        if (persistent.get(key, isSavedThreads)?.value.url === undefined) persistent.delete(key);
+        else persistent.invalidate((value) => isCacheRecord(value) && value.url === prUrl);
+      } else if (entry?.value) cache.set(prUrl, { value: entry.value, expires: 0 });
+      else cache.delete(prUrl);
     },
     cached(client: Octokit, prUrl: string): GitHubReviewThreads | undefined {
       return (
@@ -415,7 +451,7 @@ export function createReviewThreadService(now = Date.now) {
         if (feedback.requestedReviewers.some((login) => login.toLowerCase() === req.reviewer.toLowerCase())) return;
         await client.pulls.requestReviewers({ owner, repo, pull_number, reviewers: [req.reviewer] });
       }
-      service.invalidate(client, req.prUrl);
+      service.markStale(client, req.prUrl);
     },
     async act(client: Octokit, req: ReviewThreadAction): Promise<GitHubReviewThread> {
       parseUrl(req.prUrl);
@@ -445,7 +481,7 @@ export function createReviewThreadService(now = Date.now) {
         );
         Object.assign(thread, result[field].thread);
       }
-      service.invalidate(client, req.prUrl);
+      service.markStale(client, req.prUrl);
       return thread;
     },
   };

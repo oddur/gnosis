@@ -5,7 +5,7 @@ import { PrEntryActions, PrStarMarker } from './PrEntryActions';
 import { PrLabels } from './PrLabels';
 import { QueueMetadata, PrStateIcon } from './QueueMetadata';
 import { UnreadPrMarker } from './UnreadPrMarker';
-import { needsResponse } from '../lib/response-needed';
+import { awaitingReplyLabel, needsResponse } from '../lib/response-needed';
 import { focusStackPr, matchingStackMembers } from '../lib/stack-workspace';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useMergeStates } from '../lib/use-queue-signals';
@@ -171,7 +171,7 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
             return [<span key={member.url} className="queue-response-pr">
               {s.kind === 'stack' && <span className="queue-response-source"><GitPullRequest size={12} aria-hidden="true" />#{member.number}</span>}
               {response.changesRequested && <button onClick={() => actions.openResponse(focusStackPr(item, member), 'response-review')} aria-label={`Read changes requested on PR #${member.number}: ${member.title}`}><MessageSquare size={14} aria-hidden="true" />Changes requested<ArrowRight size={12} aria-hidden="true" /></button>}
-              {response.unresolvedThreads > 0 && <button onClick={() => actions.openResponse(focusStackPr(item, member), 'response-threads')} aria-label={`Address ${response.unresolvedThreads} unresolved threads on PR #${member.number}: ${member.title}`}>{response.unresolvedThreads} unresolved {response.unresolvedThreads === 1 ? 'thread' : 'threads'}<ArrowRight size={12} aria-hidden="true" /></button>}
+              {response.awaitingReply > 0 && <button onClick={() => actions.openResponse(focusStackPr(item, member), 'response-threads')} title={`${response.unresolvedThreads} unresolved on GitHub`} aria-label={`Reply to ${response.awaitingReply} ${response.awaitingReply === 1 ? 'thread' : 'threads'} on PR #${member.number}: ${member.title}. ${response.unresolvedThreads} unresolved on GitHub.`}>{awaitingReplyLabel(response.awaitingReply)}<ArrowRight size={12} aria-hidden="true" /></button>}
             </span>];
           })}</div>}
           {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}

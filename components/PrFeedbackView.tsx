@@ -1,4 +1,4 @@
-import { isResponseThread } from '../lib/response-needed';
+import { isResponseThread, isUnresolvedThread } from '../lib/response-needed';
 import { createPortal } from 'react-dom';
 import { FeedbackCodeContext } from './FeedbackCodeContext';
 import type { Preferences } from '../lib/types';
@@ -11,7 +11,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from './ui/button';
 import { GitHubAuthor } from './GitHubAuthor';
 import { SubjectIcon } from './SubjectIcon';
-import { GitHubReviewThread } from './GitHubReviewThread';
+import { GitHubReviewThread, HiddenComment } from './GitHubReviewThread';
+import { isPendingComment, minimizedLabel } from '../lib/review-threads';
 import { CommentMarkdown } from './CommentMarkdown';
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useEvidenceDiscussions } from '../lib/use-evidence-discussions';
@@ -37,7 +38,7 @@ import { timeAgo } from '../lib/utils';
 import { countRender } from '../lib/render-count';
 
 const excerpt = (item: FeedbackItem) =>
-  item.comments[0]?.body
+  (item.comments[0]?.isMinimized ? minimizedLabel(item.comments[0]) : item.comments[0]?.body)
     .replace(/^[#>*\s]+/, '')
     .replace(/\s+/g, ' ')
     .slice(0, 180) ||
@@ -50,7 +51,9 @@ const kindLabel = (item: FeedbackItem) =>
   item.thread
     ? item.thread.isResolved
       ? 'Resolved'
-      : 'Unresolved'
+      : isUnresolvedThread(item.thread)
+        ? 'Unresolved'
+        : 'Not submitted'
     : item.kind === 'review'
       ? feedbackStateLabel(item.state)
       : 'PR comment';
@@ -128,13 +131,13 @@ export function PrFeedbackView({
     return !!fingerprint && readReviewState(feedbackReadKey(account, item)) !== fingerprint;
   };
   const unread = scoped.filter(isUnread).length;
-  const unresolved = scoped.filter((item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account) : !item.thread.isResolved)).length;
+  const unresolved = scoped.filter((item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account, item.member.author) : isUnresolvedThread(item.thread))).length;
   const shown = scoped.filter(
     (item) =>
       (!prUrl || item.member.url === prUrl) &&
       (filter === 'all' ||
         feedbackKey(item) === selectedKey ||
-        (filter === 'unread' ? isUnread(item) : item.thread && (responseOnly && account ? isResponseThread(item.thread, account) : !item.thread.isResolved)))
+        (filter === 'unread' ? isUnread(item) : item.thread && (responseOnly && account ? isResponseThread(item.thread, account, item.member.author) : isUnresolvedThread(item.thread))))
   );
   useEffect(() => {
     if (!intent?.startsWith('response') || initialSelection.current || !account) return;
@@ -173,7 +176,7 @@ export function PrFeedbackView({
     const items = latestScoped.current;
     const at = items.findIndex((item) => feedbackKey(item) === feedbackKey(selected));
     const next = [...items.slice(at + 1), ...items.slice(0, at)].find(
-      (item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account) : !item.thread.isResolved) && feedbackKey(item) !== feedbackKey(selected)
+      (item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account, item.member.author) : isUnresolvedThread(item.thread)) && feedbackKey(item) !== feedbackKey(selected)
     );
     if (next) select(next);
     else {
@@ -585,8 +588,9 @@ export function PrFeedbackView({
                         <span className="feedback-row-update">
                           <Reply size={12} />
                           <span>
-                            {item.comments.at(-1)?.author?.login ?? 'Deleted account'}:{' '}
-                            {item.comments.at(-1)?.body.replace(/\s+/g, ' ').slice(0, 120)}
+                            {last.author?.login ?? 'Deleted account'}
+                            {isPendingComment(last) ? ' (pending)' : ''}:{' '}
+                            {last.isMinimized ? minimizedLabel(last) : last.body.replace(/\s+/g, ' ').slice(0, 120)}
                           </span>
                           <span>{item.comments.length} comments</span>
                         </span>
@@ -850,7 +854,7 @@ export function PrFeedbackView({
                   <Button
                     size="sm"
                     onClick={() => {
-                      const next = scoped.find((item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account) : !item.thread.isResolved));
+                      const next = scoped.find((item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account, item.member.author) : isUnresolvedThread(item.thread)));
                       if (next) select(next);
                     }}
                   >
@@ -951,7 +955,11 @@ function FeedbackMessage({
           On GitHub
         </a>
       </header>
-      <CommentMarkdown>{comment.body || 'No review summary was provided.'}</CommentMarkdown>
+      {comment.isMinimized ? (
+        <HiddenComment comment={comment} />
+      ) : (
+        <CommentMarkdown>{comment.body || 'No review summary was provided.'}</CommentMarkdown>
+      )}
       {sent && <p role="status">Reply posted to the PR discussion.</p>}
       {replying ? (
         <form

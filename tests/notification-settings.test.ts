@@ -38,7 +38,12 @@ test('sweep cadence: 120 s while checks run or mergeability is computing, 5 min 
   assert.equal(sweepInterval(signals(pr, { checks: 'pending' })), SWEEP_ACTIVE_MS);
   assert.equal(sweepInterval(signals(pr, { checks: 'success', mergeable: 'UNKNOWN' })), SWEEP_ACTIVE_MS);
   assert.equal(sweepInterval(readySignals(pr)), SWEEP_SETTLED_MS);
-  assert.equal(sweepInterval(readySignals(pr), 2), 2 * SWEEP_SETTLED_MS);
+  // The signals query costs 2 points per 25 PRs once it reads unresolved thread ids: no slower cadence.
+  assert.equal(sweepInterval(readySignals(pr), 2), SWEEP_SETTLED_MS);
+  assert.equal(sweepInterval(undefined, 2), SWEEP_ACTIVE_MS);
+  // Genuinely expensive batches still widen it in proportion.
+  assert.equal(sweepInterval(readySignals(pr), 4), 2 * SWEEP_SETTLED_MS);
+  assert.equal(sweepInterval(readySignals(pr), 10), 5 * SWEEP_SETTLED_MS);
 });
 
 test('the sweep plans only due PRs, in batches of 25, and counts a fresh visible-row read', () => {
