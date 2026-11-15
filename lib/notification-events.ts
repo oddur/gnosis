@@ -46,6 +46,8 @@ export interface PrBasis {
   team: boolean;
   /** Latest review identity; `null` means none, `undefined` means signals were never seen. */
   review?: string | null;
+  /** Sorted `url:state` of each counted opinionated review. Undefined until signals with opinions were seen. */
+  opinions?: string[];
   signalsAt?: number;
   observedAt: number;
 }
@@ -97,6 +99,8 @@ export function deriveEvents(previous: PrBasis | undefined, next: PrObservation,
   const teamEntered = team && !prev?.team;
   const latest = signals?.latestReview;
   const review = signals ? (latest ? `${latest.url}:${latest.state}` : latest === null ? null : (prev?.review ?? null)) : prev?.review;
+  const pair = (opinion: { url: string; state: string }) => `${opinion.url}:${opinion.state}`;
+  const opinions = signals?.opinions ? signals.opinions.map(pair).sort() : prev?.opinions;
   const basis: PrBasis = {
     headSha: member.headSha,
     kinds,
@@ -104,7 +108,8 @@ export function deriveEvents(previous: PrBasis | undefined, next: PrObservation,
     teamRequests: (prev?.teamRequests ?? 0) + (teamEntered ? 1 : 0),
     team,
     ...(review !== undefined ? { review } : {}),
-    ...(signals ? { signalsAt: signals.checkedAt } : prev?.signalsAt !== undefined && sameHead ? { signalsAt: prev.signalsAt } : {}),
+    ...(opinions ? { opinions } : {}),
+    ...(signals ?{ signalsAt: signals.checkedAt } : prev?.signalsAt !== undefined && sameHead ? { signalsAt: prev.signalsAt } : {}),
     observedAt: now,
   };
   if (silent) return { basis, events: [] };
@@ -121,10 +126,16 @@ export function deriveEvents(previous: PrBasis | undefined, next: PrObservation,
   // A PR seen for the first time, or signals seen for the first time, only start a basis.
   const signalsKnown = prev?.review !== undefined;
   if (open && signals && signalsKnown && own && now - signals.checkedAt <= STALE_SIGNALS_MS) {
-    if (latest && review !== prev.review && !same(latest.author, login)) {
-      if (latest.state === 'CHANGES_REQUESTED') add('changes-requested', `review|${latest.url}`, 'changes-requested', latest.author);
-      else if (latest.state === 'APPROVED') add('approved', `review|${latest.url}`, 'ready-to-merge', latest.author);
-    }
+    const opinion = (review: { url: string; state: string; author: string }) => {
+      if (same(review.author, login)) return;
+      if (review.state === 'CHANGES_REQUESTED') add('changes-requested', `review|${review.url}`, 'changes-requested', review.author);
+      else if (review.state === 'APPROVED') add('approved', `review|${review.url}`, 'ready-to-merge', review.author);
+    };
+    // Each reviewer's latest opinion is an edge when it is new, even if a comment followed it before this poll.
+    if (signals.opinions && prev.opinions) {
+      const seen = new Set(prev.opinions);
+      for (const entry of signals.opinions) if (!seen.has(pair(entry))) opinion(entry);
+    } else if (latest && review !== prev.review) opinion(latest);
     if (kinds['checks-failed'] && prev.kinds['checks-failed'] !== kinds['checks-failed'])
       add('checks-failed', `checks-failed|${member.url}|${member.headSha}`, 'checks-failed');
     if (kinds['ready-to-merge'] && prev.kinds['ready-to-merge'] !== kinds['ready-to-merge'])

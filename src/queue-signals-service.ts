@@ -46,6 +46,7 @@ interface PullSignals {
   mergeQueueEntry: { state: string } | null;
   comments: { totalCount: number; nodes?: { id: string; createdAt: string; author: { login: string } | null }[] };
   reviews?: { nodes: { id: string; url?: string; submittedAt: string | null; state: string; author: { login: string } | null; commit?: { oid: string } | null }[] };
+  latestOpinionatedReviews?: { nodes: ({ url: string; submittedAt: string | null; state: string; author: { login: string } | null; commit: { oid: string } | null } | null)[] | null } | null;
   commits: {
     nodes: {
       commit: {
@@ -62,12 +63,12 @@ interface PullSignals {
     }[];
   };
 }
+const isReview = (review: unknown) =>
+  isCacheRecord(review) && ['url', 'author', 'state', 'submittedAt'].every(key => typeof review[key] === 'string') &&
+  (review.headSha === null || typeof review.headSha === 'string');
 function isSignals(value: unknown): value is QueueSignals {
-  if (isCacheRecord(value) && value.latestReview != null) {
-    const review = value.latestReview;
-    if (!isCacheRecord(review) || !['url', 'author', 'state', 'submittedAt'].every(key => typeof review[key] === 'string') ||
-      (review.headSha !== null && typeof review.headSha !== 'string')) return false;
-  }
+  if (isCacheRecord(value) && value.latestReview != null && !isReview(value.latestReview)) return false;
+  if (isCacheRecord(value) && value.opinions !== undefined && !(Array.isArray(value.opinions) && value.opinions.every(isReview))) return false;
   if (isCacheRecord(value) && value.readiness !== undefined) {
     const readiness = value.readiness;
     if (
@@ -163,6 +164,7 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
       mergeQueue { id } mergeQueueEntry { state }
       comments(last:1) { totalCount nodes { id createdAt author { login } } }
       reviews(last:1,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]) { nodes { id url submittedAt state author { login } commit { oid } } }
+      latestOpinionatedReviews(first:100,writersOnly:true) { nodes { url submittedAt state author { login } commit { oid } } }
       commits(last:1) { nodes { commit {
         checkSuites(first:100) { nodes { workflowRun { databaseId event workflow { databaseId } } } }
         statusCheckRollup { state contexts {
@@ -209,6 +211,11 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
               submittedAt: pr.reviews.nodes[0].submittedAt,
               headSha: pr.reviews.nodes[0].commit?.oid ?? null,
             } : null } : {}),
+            ...(pr.latestOpinionatedReviews ? { opinions: (pr.latestOpinionatedReviews.nodes ?? []).flatMap(review =>
+              review?.submittedAt && ['APPROVED', 'CHANGES_REQUESTED'].includes(review.state) ? [{
+                url: review.url, author: review.author?.login ?? 'Deleted user', state: review.state,
+                submittedAt: review.submittedAt, headSha: review.commit?.oid ?? null,
+              }] : []) } : {}),
             activity: {
               comment: pr.comments.nodes?.[0] ? { id: pr.comments.nodes[0].id, at: pr.comments.nodes[0].createdAt, author: pr.comments.nodes[0].author?.login ?? '' } : undefined,
               review: pr.reviews?.nodes[0]?.submittedAt ? { id: pr.reviews.nodes[0].url ?? pr.reviews.nodes[0].id, state: pr.reviews.nodes[0].state, at: pr.reviews.nodes[0].submittedAt, author: pr.reviews.nodes[0].author?.login ?? '' } : undefined,

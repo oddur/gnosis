@@ -201,3 +201,73 @@ void test('a head mismatch signals a targeted metadata refresh without publishin
   assert.deepEqual(await read(h.client, [{ ...request, headSha: 'oldsha' }]), []);
   assert.deepEqual(changed, [`${request.url}@abc123`]);
 });
+
+void test('signals carry each writer’s latest opinion, which a newer comment by the author does not hide', async () => {
+  const h = harness();
+  const base = (await h.get(h.client, [request]))[0];
+  assert.equal(base.opinions, undefined, 'A response without opinions claims none');
+  assert.match(
+    h.queries[0],
+    /latestOpinionatedReviews\(first:100,writersOnly:true\) \{ nodes \{ url submittedAt state author \{ login \} commit \{ oid \} \} \}/
+  );
+  const second = { ...request, headSha: 'def456' };
+  const review = (n: number, login: string, state: string, oid: string | null = 'def456') => ({
+    id: `R${n}`,
+    url: `${request.url}#pullrequestreview-${n}`,
+    submittedAt: `2026-11-0${n}T10:00:00Z`,
+    state,
+    author: { login },
+    commit: oid ? { oid } : null,
+  });
+  h.respond({
+    p0: {
+      pullRequest: {
+        headRefOid: 'def456',
+        state: 'OPEN',
+        isDraft: false,
+        mergeable: 'MERGEABLE',
+        mergeStateStatus: 'BLOCKED',
+        reviewDecision: null,
+        baseRefName: 'main',
+        baseRefOid: 'base',
+        baseRef: null,
+        mergeQueue: null,
+        mergeQueueEntry: null,
+        comments: { totalCount: 0, nodes: [] },
+        // The newest review is the author's own reply in a thread (klanggames/seed#37045 shape).
+        reviews: { nodes: [review(4, 'author', 'COMMENTED')] },
+        latestOpinionatedReviews: {
+          nodes: [
+            review(1, 'marijnz', 'CHANGES_REQUESTED', null),
+            review(2, 'evans', 'APPROVED'),
+            review(3, 'ana', 'DISMISSED'),
+            null,
+          ],
+        },
+        commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
+      },
+    },
+  });
+  const [value] = await h.get(h.client, [second]);
+  assert.equal(value.latestReview?.author, 'author');
+  assert.deepEqual(value.opinions, [
+    {
+      url: `${request.url}#pullrequestreview-1`,
+      author: 'marijnz',
+      state: 'CHANGES_REQUESTED',
+      submittedAt: '2026-11-01T10:00:00Z',
+      headSha: null,
+    },
+    {
+      url: `${request.url}#pullrequestreview-2`,
+      author: 'evans',
+      state: 'APPROVED',
+      submittedAt: '2026-11-02T10:00:00Z',
+      headSha: 'def456',
+    },
+  ]);
+  const calls = h.calls();
+  const restarted = createQueueSignalsService(() => 1_000_000);
+  assert.deepEqual((await restarted(h.client, [second]))[0].opinions, value.opinions, 'Saved signals keep the opinions');
+  assert.equal(h.calls(), calls);
+});

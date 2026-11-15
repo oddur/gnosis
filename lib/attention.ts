@@ -7,7 +7,7 @@
  *
  * Built by #307 Phase 1; #308 Phase 1 adds `explanation-ready` rows. `restack` is not derived yet (#308 Phase 2).
  */
-import type { QueueSignals } from './queue-signals';
+import { changeRequests, type QueueSignals } from './queue-signals';
 import type { QueueItem, ReviewMember } from './workbench';
 import { mergeReadiness } from './merge-readiness';
 import { mergeConflictState } from './merge-conflicts';
@@ -100,9 +100,12 @@ export function memberAttention(
   if (!isOpen(member) || !isOwnPr(member, login)) return kinds;
   const current = signals && signals.url === member.url && signals.headSha === member.headSha ? signals : undefined;
   if (!current) return kinds;
+  // Each reviewer's latest opinion counts; a later comment, including the author's reply, does not clear it.
+  // Snapshots saved before opinions were read know only the single newest review.
   const review = current.latestReview;
-  const reviewByOther = review && !same(review.author, login) ? review : undefined;
-  if (reviewByOther?.state === 'CHANGES_REQUESTED') kinds['changes-requested'] = reviewByOther.url;
+  const requested = changeRequests(current, login)?.[0] ??
+    (!current.opinions && review && !same(review.author, login) && review.state === 'CHANGES_REQUESTED' ? review : undefined);
+  if (requested) kinds['changes-requested'] = requested.url;
   else if (current.readiness?.reviewDecision === 'CHANGES_REQUESTED') kinds['changes-requested'] = 'decision';
   if (current.checks.state === 'failure') kinds['checks-failed'] = member.headSha;
   if (mergeConflictState(current) === 'conflicts') kinds.conflicts = `${member.headSha}:${current.readiness?.baseSha ?? member.baseSha}`;

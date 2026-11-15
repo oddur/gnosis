@@ -1,7 +1,7 @@
 import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
-import { parsePrUrl, summarizeReviews } from '../lib/github';
+import { LATEST_REVIEW_FIELDS, parsePrUrl, summarizeLatestReviews, type LatestReviews } from '../lib/github';
 import { checkCounts, type CheckTarget, type PrChecks } from '../lib/pr-checks';
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import type { QueueSignalOptions, QueueSignalRequest, QueueSignals } from '../lib/queue-signals';
@@ -68,7 +68,7 @@ function ciConclusion(signals: QueueSignals | undefined, checks: PrChecks | unde
   return counts.attention ? 'failure' : counts.running ? 'pending' : checks.checks.length ? 'success' : 'neutral';
 }
 
-interface PreloadedPull {
+interface PreloadedPull extends LatestReviews {
   /** GraphQL reports MERGED for a merged PR. Absent from responses mocked before 0.40. */
   state?: 'OPEN' | 'CLOSED' | 'MERGED';
   updatedAt?: string;
@@ -83,7 +83,6 @@ interface PreloadedPull {
   } | null;
   autoMergeRequest: { mergeMethod: string } | null;
   milestone: { title: string; dueOn: string | null } | null;
-  reviews: { nodes: ({ state: string; author: { login: string } | null } | null)[] | null } | null;
 }
 const prUrlPattern = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)$/;
 function coreOf(pr: PreloadedPull): StatusCore {
@@ -97,11 +96,7 @@ function coreOf(pr: PreloadedPull): StatusCore {
     requestedTeams: reviewers.flatMap((r) => (r.__typename === 'Team' && r.name ? [r.name] : [])),
     autoMerge: pr.autoMergeRequest ? { method: pr.autoMergeRequest.mergeMethod.toLowerCase() } : null,
     milestone: pr.milestone ? { title: pr.milestone.title, dueOn: pr.milestone.dueOn } : null,
-    reviewSummary: summarizeReviews(
-      (pr.reviews?.nodes ?? []).flatMap((review) =>
-        review ? [{ login: review.author?.login ?? 'unknown', state: review.state }] : []
-      )
-    ),
+    reviewSummary: summarizeLatestReviews(pr),
   };
 }
 
@@ -248,7 +243,7 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
       reviewRequests(first:100) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { name } } } }
       autoMergeRequest { mergeMethod }
       milestone { title dueOn }
-      reviews(last:100,states:[APPROVED,CHANGES_REQUESTED,COMMENTED]) { nodes { state author { login } } }
+      ${LATEST_REVIEW_FIELDS}
     } }`
         )
         .join('\n')} }`;

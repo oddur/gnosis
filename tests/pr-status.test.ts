@@ -81,7 +81,7 @@ void test('cached status is served without requests for the same head', async ()
   const h = harness();
   h.cache.set(`pr-status:v1:${url}`, saved());
   h.cache.set(`pr-checks:v2:${url}@${head}`, checks(head));
-  h.cache.set(`queue-signals:v4:${url}@${head}`, signals(head));
+  h.cache.set(`queue-signals:v5:${url}@${head}`, signals(head));
   const status = await service(() => savedAt + 60_000).cached(h.client, url, head);
   assert.equal(h.calls.length, 0);
   assert.ok(status);
@@ -121,7 +121,7 @@ void test('stale CI comes only from same-head snapshots', async () => {
   const h = harness();
   h.cache.set(`pr-status:v1:${url}`, saved());
   h.cache.set(`pr-checks:v2:${url}@${otherHead}`, checks(otherHead));
-  h.cache.set(`queue-signals:v4:${url}@${otherHead}`, signals(otherHead));
+  h.cache.set(`queue-signals:v5:${url}@${otherHead}`, signals(otherHead));
   const status = await service(() => savedAt).cached(h.client, url, head);
   assert.ok(status);
   assert.deepEqual(status.ciChecks, []);
@@ -264,10 +264,10 @@ const pull = (overrides: Record<string, unknown> = {}) => ({
   },
   autoMergeRequest: { mergeMethod: 'SQUASH' },
   milestone: { title: 'v2', dueOn: null },
-  reviews: {
+  latestOpinionatedReviews: { nodes: [{ state: 'APPROVED', author: { login: 'ana' } }] },
+  latestReviews: {
     nodes: [
-      { state: 'CHANGES_REQUESTED', author: { login: 'ana' } },
-      { state: 'APPROVED', author: { login: 'ana' } },
+      { state: 'COMMENTED', author: { login: 'ana' } },
       { state: 'COMMENTED', author: { login: 'li' } },
     ],
   },
@@ -303,7 +303,7 @@ void test('preload saves cores from one query for 25 PRs', async () => {
   assert.match(h.queries[0], /commits \{ totalCount \}/);
   await assert.rejects(status.preload(h.client, [...targets, { url: pullUrl(26), headSha: head }]));
   h.cache.set(`pr-checks:v2:${pullUrl(25)}@${head}`, { ...checks(head), url: pullUrl(25) });
-  h.cache.set(`queue-signals:v4:${pullUrl(25)}@${head}`, { ...signals(head), url: pullUrl(25) });
+  h.cache.set(`queue-signals:v5:${pullUrl(25)}@${head}`, { ...signals(head), url: pullUrl(25) });
   const saved = await status.cached(h.client, pullUrl(25), head);
   assert.ok(saved);
   assert.deepEqual(
@@ -391,25 +391,91 @@ void test('cached waits briefly for an in-flight preload', async () => {
   assert.ok(waited >= 240 && waited < 1000, `Waited ${waited} ms`);
 });
 
-void test('summarizeReviews matches the REST reduction', async () => {
-  const reviews = [
-    { user: { login: 'ana' }, state: 'CHANGES_REQUESTED' },
-    { user: { login: 'ana' }, state: 'APPROVED' },
-    { user: { login: 'ana' }, state: 'DISMISSED' },
-    { user: { login: 'li' }, state: 'COMMENTED' },
-    { user: { login: 'li' }, state: 'PENDING' },
-    { user: { login: 'kai' }, state: 'CHANGES_REQUESTED' },
-    { user: null, state: 'APPROVED' },
-  ];
-  const octokit = { pulls: { listReviews: () => Promise.resolve({ data: reviews }) } } as unknown as Parameters<
-    typeof getReviewStatus
-  >[0];
-  const rest = await getReviewStatus(octokit, 'o', 'r', 1);
-  assert.deepEqual(rest, { approved: 2, changesRequested: 1, commented: 1 });
+void test('a later comment never replaces an approval or a request for changes; a dismissal clears it', () => {
+  const r = (login: string, state: string, canPush?: boolean) => ({ login, state, canPush });
+  // A request for changes, then a reply in the thread (an empty COMMENTED review).
+  assert.deepEqual(summarizeReviews([r('marijnz', 'CHANGES_REQUESTED'), r('marijnz', 'COMMENTED')]), {
+    approved: 0,
+    changesRequested: 1,
+    commented: 0,
+  });
+  // An approval, then a comment by the same reviewer.
+  assert.deepEqual(summarizeReviews([r('evans', 'APPROVED'), r('evans', 'COMMENTED')]), {
+    approved: 1,
+    changesRequested: 0,
+    commented: 0,
+  });
+  assert.deepEqual(summarizeReviews([r('ana', 'APPROVED'), r('ana', 'DISMISSED')]), {
+    approved: 0,
+    changesRequested: 0,
+    commented: 0,
+  });
+  assert.deepEqual(summarizeReviews([r('ana', 'CHANGES_REQUESTED'), r('Ana', 'APPROVED')]).changesRequested, 0);
+  // The author's own reply is a comment, not an opinion.
   assert.deepEqual(
-    summarizeReviews(reviews.map((review) => ({ login: review.user?.login ?? 'unknown', state: review.state }))),
-    rest
+    summarizeReviews([r('marijnz', 'CHANGES_REQUESTED'), r('author', 'COMMENTED'), r('li', 'COMMENTED'), r('li', 'PENDING')]),
+    { approved: 0, changesRequested: 1, commented: 2 }
   );
+  // Opinions of reviewers without write access do not count (klanggames/seed#24325 shape).
+  assert.deepEqual(summarizeReviews([r('daniil', 'CHANGES_REQUESTED', true), r('kirill', 'CHANGES_REQUESTED', false)]), {
+    approved: 0,
+    changesRequested: 1,
+    commented: 0,
+  });
+  assert.equal(summarizeReviews([r('kirill', 'APPROVED', false)]).approved, 0);
+});
+
+/** A GitHub stand-in that applies `latestOpinionatedReviews(writersOnly:true)` and `latestReviews` to a history. */
+function reviewHistoryGraph(history: { login: string; state: string; canPush: boolean }[]) {
+  const latest = new Map<string, { login: string; state: string; canPush: boolean }>();
+  const opinionated = new Map<string, { login: string; state: string; canPush: boolean }>();
+  for (const review of history) {
+    latest.set(review.login, review);
+    if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) opinionated.set(review.login, review);
+  }
+  const nodes = (reviews: { login: string; state: string }[]) => ({
+    nodes: reviews.map(({ login, state }) => ({ state, author: { login } })),
+  });
+  return {
+    latestOpinionatedReviews: nodes([...opinionated.values()].filter((review) => review.canPush)),
+    latestReviews: nodes([...latest.values()]),
+  };
+}
+
+void test('both status paths read the reviews that count, with more than 100 reviews and non-writers', async () => {
+  // 101 reviews. The only request for changes is first, which a `reviews(last:100)` read would miss.
+  const first = [
+    { login: 'pawel', state: 'CHANGES_REQUESTED', canPush: true },
+    ...Array.from({ length: 100 }, (_, i) => ({ login: i % 2 ? 'author' : 'pawel', state: 'COMMENTED', canPush: true })),
+  ];
+  // 101 reviews. The only request for changes is last, which a `listReviews` first page would miss.
+  const last = [
+    ...Array.from({ length: 100 }, (_, i) => ({ login: i % 2 ? 'author' : 'pawel', state: 'COMMENTED', canPush: true })),
+    { login: 'pawel', state: 'CHANGES_REQUESTED', canPush: true },
+    { login: 'kirill', state: 'APPROVED', canPush: false },
+  ];
+  for (const history of [first, last]) {
+    const graph = reviewHistoryGraph(history);
+    const queries: string[] = [];
+    const octokit = {
+      graphql: (query: string) => {
+        queries.push(query);
+        return Promise.resolve({ repository: { pullRequest: graph } });
+      },
+    } as unknown as Parameters<typeof getReviewStatus>[0];
+    const fresh = await getReviewStatus(octokit, 'o', 'r', 1);
+    assert.deepEqual(fresh, { approved: 0, changesRequested: 1, commented: 1 });
+    assert.match(queries[0], /latestOpinionatedReviews\(first:100,writersOnly:true\)/);
+    assert.doesNotMatch(queries[0], /\breviews\(/);
+
+    const h = preloadHarness(() => pull(graph));
+    const status = service(() => savedAt);
+    await status.preload(h.client, [{ url: pullUrl(1), headSha: head }]);
+    assert.doesNotMatch(h.queries[0], /\breviews\(/);
+    h.cache.set(`pr-checks:v1:${pullUrl(1)}@${head}`, { ...checks(head), url: pullUrl(1) });
+    h.cache.set(`queue-signals:v5:${pullUrl(1)}@${head}`, { ...signals(head), url: pullUrl(1) });
+    assert.deepEqual((await status.cached(h.client, pullUrl(1), head))?.reviewSummary, fresh);
+  }
 });
 
 void test('a fresh read reports the merge, and the saved copy for the unchanged head says merged too', async () => {

@@ -450,38 +450,72 @@ export async function getCiStatus(
   return readCommitChecks(octokit, owner, repo, ref);
 }
 
+/** The review fields both status paths read. GitHub selects them; `summarizeLatestReviews` counts them. */
+export const LATEST_REVIEW_FIELDS =
+  'latestOpinionatedReviews(first:100,writersOnly:true) { nodes { state author { login } } } latestReviews(first:100) { nodes { state author { login } } }';
+type ReviewNodes = { nodes?: ({ state: string; author: { login: string } | null } | null)[] | null } | null | undefined;
+export interface LatestReviews {
+  latestOpinionatedReviews?: ReviewNodes;
+  latestReviews?: ReviewNodes;
+}
+
+/**
+ * Reads the reviews that count, as GitHub selects them: one per reviewer, from the whole review history.
+ * REST `listReviews` returns only the oldest 100 reviews and does not say who has write access.
+ */
 export async function getReviewStatus(
   octokit: Octokit,
   owner: string,
   repo: string,
   pullNumber: number
 ): Promise<ReviewSummary> {
-  const { data: reviews } = await octokit.pulls.listReviews({
-    owner,
-    repo,
-    pull_number: pullNumber,
-    per_page: 100,
-  });
-
-  return summarizeReviews(reviews.map((r) => ({ login: r.user?.login ?? 'unknown', state: r.state })));
+  const data = await octokit.graphql<{ repository: { pullRequest: LatestReviews | null } | null }>(
+    `query($owner:String!,$repo:String!,$number:Int!) { repository(owner:$owner,name:$repo) { pullRequest(number:$number) { ${LATEST_REVIEW_FIELDS} } } }`,
+    { owner, repo, number: pullNumber }
+  );
+  const pr = data.repository?.pullRequest;
+  if (!pr) throw new Error(`Pull request ${owner}/${repo}#${pullNumber} was not found.`);
+  return summarizeLatestReviews(pr);
 }
 
-/** Counts each reviewer's latest submitted review. Dismissed and pending reviews never replace an earlier one. */
-export function summarizeReviews(reviews: { login: string; state: string }[]): ReviewSummary {
-  const latestByUser = new Map<string, string>();
-  for (const { login, state } of reviews) {
-    if (state === 'DISMISSED' || state === 'PENDING') continue;
-    latestByUser.set(login, state);
+/**
+ * GitHub's opinionated reviews from writers decide approvals and requests for changes. A reviewer whose latest
+ * review is a comment, and who has no opinion that counts, is a commenter.
+ */
+export function summarizeLatestReviews(pr: LatestReviews): ReviewSummary {
+  const entries = (nodes: ReviewNodes) =>
+    (nodes?.nodes ?? []).flatMap((review) =>
+      review ? [{ login: review.author?.login ?? 'unknown', state: review.state }] : []
+    );
+  return summarizeReviews([
+    ...entries(pr.latestReviews).filter((review) => review.state === 'COMMENTED'),
+    ...entries(pr.latestOpinionatedReviews),
+  ]);
+}
+
+/**
+ * Reduces reviews in submission order with GitHub's rule: each reviewer's latest opinionated review counts.
+ * `APPROVED` and `CHANGES_REQUESTED` set the opinion, `DISMISSED` clears it, and `COMMENTED` never replaces it.
+ * Opinions of a reviewer without write access (`canPush: false`) do not count.
+ */
+export function summarizeReviews(reviews: { login: string; state: string; canPush?: boolean }[]): ReviewSummary {
+  const opinions = new Map<string, string | null>();
+  const commenters = new Set<string>();
+  for (const { login, state, canPush } of reviews) {
+    const key = login.toLowerCase();
+    if (state === 'COMMENTED') commenters.add(key);
+    else if (canPush === false) continue;
+    else if (state === 'APPROVED' || state === 'CHANGES_REQUESTED') opinions.set(key, state);
+    else if (state === 'DISMISSED') opinions.set(key, null);
   }
 
   let approved = 0;
   let changesRequested = 0;
-  let commented = 0;
-  for (const state of latestByUser.values()) {
+  for (const state of opinions.values()) {
     if (state === 'APPROVED') approved++;
     else if (state === 'CHANGES_REQUESTED') changesRequested++;
-    else if (state === 'COMMENTED') commented++;
   }
+  const commented = [...commenters].filter((login) => !opinions.get(login)).length;
 
   return { approved, changesRequested, commented };
 }
