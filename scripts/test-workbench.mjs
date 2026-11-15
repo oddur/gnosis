@@ -109,7 +109,8 @@ try {
         child.kill();
         reject(new Error('Workbench browser checks timed out'));
       },
-      splitDiff || threads ? 90000 : prSummary ? 180000 : process.argv.includes('--header-stability') ? 600000 : 300000
+      // Short suites still leave room for one stalled fixture load and its retry (tests/workbench-ready.ts).
+      splitDiff || threads ? 150000 : prSummary ? 180000 : process.argv.includes('--header-stability') ? 600000 : 300000
     );
     child.on('error', (error) => {
       clearTimeout(timer);
