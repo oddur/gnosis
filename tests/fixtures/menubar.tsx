@@ -133,6 +133,8 @@ const states: Record<string, MenubarState> = {
   error: { ...base, connection: 'error' },
   // The first time the panel opens: the footer tip shows until it is dismissed or a row opens.
   'first-open': { ...base, hint: true },
+  // A PR back from a snooze: the row says "Back" before its status, and the footer counts the snoozed PRs.
+  back: { ...base, snoozed: 3, groups: base.groups.map((group, index) => (index ? group : { ...group, rows: group.rows.map((row, i) => (i === 0 ? { ...row, back: true } : row)) })) },
   sample,
 };
 

@@ -166,7 +166,8 @@ export function attentionItems(input: {
   for (const item of input.items) {
     for (const member of item.subject.members) {
       // A merged or closed PR needs nobody: no replies, explanations or status kinds keep it listed.
-      if (!isOpen(member)) continue;
+      // A snoozed PR in a stack that stays in the queue needs nobody until it wakes.
+      if (!isOpen(member) || item.snoozedUrls?.includes(member.url)) continue;
       const signals = input.signals(member);
       const fresh = signals && input.now - signals.checkedAt <= ATTENTION_SIGNALS_MAX_AGE ? signals : undefined;
       const level = memberAttention(member, fresh, input.login, { teamRequests: input.teamRequests });

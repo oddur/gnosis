@@ -18,6 +18,7 @@ import type { PreparedInventories } from '../lib/pr-inspection-cache';
 import type { InspectionRevision, InspectionLoadOptions, InspectionMode } from '../lib/pr-changes';
 import type { PredictionState } from '../lib/navigation-predictor';
 import type { MutePrRequest } from '../lib/muted-prs';
+import type { SnoozeRequest, SnoozeResult } from '../lib/snooze';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { SyncHealthSnapshot } from '../lib/sync-health';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
@@ -259,6 +260,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('workbench-rename-stack', id, name, account),
   workbenchMutePrs: (request: MutePrRequest): Promise<WorkbenchQueue> =>
     ipcRenderer.invoke('workbench-mute-prs', request),
+  workbenchSnoozePrs: (request: SnoozeRequest): Promise<SnoozeResult<WorkbenchQueue>> =>
+    ipcRenderer.invoke('workbench-snooze-prs', request),
   workbenchStarPrs: (request: StarPrRequest): Promise<WorkbenchQueue> =>
     ipcRenderer.invoke('workbench-star-prs', request),
   workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> =>

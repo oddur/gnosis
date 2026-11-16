@@ -2598,6 +2598,46 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .muted-pr-list strong { font-size: 14px; font-weight: 500; }
 .muted-pr-list button { flex-shrink: 0; }
 .muted-prs-error { color: var(--destructive); font-size: 13px; margin-bottom: 16px; }
+/* Tools › Snoozed shares the Muted PRs page; each row adds when it wakes and three actions. */
+.snoozed-prs-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.snoozed-pr-list strong { display: inline-flex; align-items: baseline; gap: 6px; }
+.snoozed-pr-icon { position: relative; top: 2px; flex-shrink: 0; }
+.snoozed-pr-list .snoozed-pr-wakes { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--foreground); font-size: var(--type-caption); }
+.snoozed-pr-wakes svg { flex-shrink: 0; color: var(--muted-foreground); }
+.snoozed-pr-list li > .snoozed-pr-actions { display: flex; flex: none; gap: 4px; }
+@media (max-width: 640px) {
+  .snoozed-pr-list li { flex-wrap: wrap; }
+  .snoozed-pr-actions { width: 100%; justify-content: flex-end; }
+}
+
+/* A PR back from a snooze says why, until it is read. */
+.queue-snooze-back { display: inline-flex; align-items: center; gap: 5px; color: var(--foreground); font-size: var(--type-caption); font-weight: 500; line-height: 1.4; }
+.queue-snooze-back svg { flex-shrink: 0; color: var(--muted-foreground); }
+/* A snoozed PR inside a stack that stays in the queue. */
+.queue-member.is-snoozed .queue-member-title, .queue-member.is-snoozed .queue-pr-icon, .queue-member.is-snoozed .queue-metadata { opacity: .55; }
+.queue-member-snoozed { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: var(--type-caption); }
+
+/* The Snooze picker: a short list of choices, read top to bottom like a menu. */
+.snooze-picker { gap: 0; padding: 0; max-width: 360px; top: 16vh; overflow: hidden; border-radius: 12px; }
+.snooze-picker-header { padding: 16px 16px 10px; }
+.snooze-picker-header h2 { font-size: var(--type-section-title); padding-right: 0; }
+.snooze-picker-subject { margin-top: 2px; font-size: var(--type-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snooze-options { display: flex; flex-direction: column; padding: 0 6px 6px; }
+.snooze-option { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 6px 10px; border-radius: 6px; font-size: var(--type-control); text-align: left; color: var(--foreground); outline: none; }
+.snooze-option:hover, .snooze-option:focus-visible { background: var(--accent); color: var(--accent-foreground); }
+.snooze-option-icon { display: inline-flex; color: var(--muted-foreground); }
+.snooze-option:hover .snooze-option-icon, .snooze-option:focus-visible .snooze-option-icon { color: inherit; }
+.snooze-option-label { flex: 1; }
+.snooze-option-detail { color: var(--muted-foreground); font-size: var(--type-caption); font-variant-numeric: tabular-nums; }
+.snooze-option:hover .snooze-option-detail, .snooze-option:focus-visible .snooze-option-detail { color: inherit; }
+.snooze-separator { height: 1px; margin: 4px 10px; background: var(--border); }
+.snooze-custom { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 4px 16px 12px; }
+.snooze-custom label { display: flex; flex-direction: column; gap: 4px; font-size: var(--type-caption); color: var(--muted-foreground); }
+.snooze-custom input { height: 30px; padding: 0 8px; border: 1px solid var(--input); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: var(--type-control); font-variant-numeric: tabular-nums; color-scheme: light dark; }
+.snooze-custom button { margin-left: auto; }
+.snooze-custom-error { width: 100%; color: var(--destructive); font-size: var(--type-caption); }
+.snooze-picker-note { display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--secondary); color: var(--muted-foreground); font-size: var(--type-caption); }
+.snooze-picker-note svg { flex-shrink: 0; }
 
 .pr-inactivity-setting { width: 170px; max-width: 100%; }
 .pr-inactivity-setting input[type="number"] { width: 80px; min-height: 32px; padding: 4px 8px; border: 1px solid var(--input); border-radius: var(--radius-sm); background: var(--background); font-size: 14px; }

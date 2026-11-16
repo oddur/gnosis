@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { Toast } from '@base-ui/react/toast';
-import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Sparkles, Inbox, BellRing, type LucideIcon } from 'lucide-react';
+import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Sparkles, Inbox, BellRing, AlarmClock, type LucideIcon } from 'lucide-react';
 import type { NotificationKind } from '../../lib/notification-routing';
 import { PrStateIcon } from '../PrStateIcon';
 
@@ -52,6 +52,7 @@ const KIND_ICONS: Partial<Record<NotificationKind, LucideIcon>> = {
   approved: CheckCircle2,
   'explanation-ready': Sparkles,
   'update-ready': Info,
+  'snooze-ended': AlarmClock,
   summary: Inbox,
   test: BellRing,
 };

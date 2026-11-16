@@ -40,6 +40,8 @@ export interface MenubarRow {
   stackId?: string;
   isNew: boolean;
   checkedAt?: number;
+  /** The PR came back from a snooze and is unread: the panel shows "Back ·" before its status. */
+  back?: boolean;
 }
 export interface MenubarGroup {
   group: AttentionGroup;
@@ -78,6 +80,8 @@ export interface MenubarState {
   refreshing: boolean;
   /** The first-open tip in the footer (lib/menubar-hint.ts). Only with rows to move through and open. */
   hint: boolean;
+  /** Snoozed PRs, for the footer: they are hidden from the rows and the count until they wake. */
+  snoozed?: number;
 }
 
 export const MENUBAR_GROUP_LIMIT = 5;
@@ -89,7 +93,7 @@ export interface MenubarInput {
   signedIn: boolean;
   online: boolean;
   /** Undefined until the first snapshot of this session is built. */
-  queue?: Pick<WorkbenchQueue, 'items' | 'sync'>;
+  queue?: Pick<WorkbenchQueue, 'items' | 'sync'> & Partial<Pick<WorkbenchQueue, 'snoozedPrs'>>;
   signals: (member: ReviewMember) => QueueSignals | undefined;
   enabled?: (kind: AttentionKind, repo: string) => boolean;
   teamRequests?: boolean;
@@ -144,10 +148,11 @@ export function buildMenubarState(input: MenubarInput): { state: MenubarState; i
         teamRequests: input.teamRequests,
       })
     : [];
+  const backs = new Set((queue?.items ?? []).flatMap((item) => Object.keys(item.back ?? {})));
   const groups = ATTENTION_GROUPS.flatMap((group): MenubarGroup[] => {
     const rows = clusterStacks(items.filter((item) => item.group === group));
     return rows.length
-      ? [{ group, label: MENUBAR_GROUP_LABEL[group], count: rows.length, rows: rows.slice(0, MENUBAR_GROUP_LIMIT).map((item) => menubarRow(item, login)) }]
+      ? [{ group, label: MENUBAR_GROUP_LABEL[group], count: rows.length, rows: rows.slice(0, MENUBAR_GROUP_LIMIT).map((item) => ({ ...menubarRow(item, login), ...(backs.has(item.url) && item.isNew ? { back: true } : {}) })) }]
       : [];
   });
   const open = (queue?.items ?? []).flatMap((item) => item.subject.members).filter((member) => member.state === 'open' && !member.merged);
@@ -171,6 +176,7 @@ export function buildMenubarState(input: MenubarInput): { state: MenubarState; i
       unchecked,
       refreshing: !!input.refreshing,
       hint: !!input.hint && groups.length > 0,
+      ...(queue?.snoozedPrs?.length ? { snoozed: queue.snoozedPrs.length } : {}),
     },
   };
 }

@@ -12,6 +12,8 @@ import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../
 import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { withoutMutedMembers, isMutedReview } from '../../lib/muted-prs';
+import { applySnoozes } from '../../lib/snooze';
+import { createFixtureSnoozes } from './snooze';
 import { searchHit, queueDocuments, queueSubjects, hydrateDestination, reviewDocuments, searchDocuments, threadDocuments } from '../../lib/command-search';
 import { normalizeViews, editViewFilters, applyViewAction, activeViewFilters, type QueueViewAction } from '../../lib/saved-views';
 import { matchesQueueFilters } from '../../lib/queue-filters';
@@ -30,6 +32,7 @@ import { review as example, slide, explainer } from './explainer';
 // Saved like the main process: full PRs, with summary rows in each snapshot.
 let fixtureMutes: { member: import('../../lib/workbench').ReviewMember; mutedAt: string }[] = JSON.parse(sessionStorage.getItem('fixture-mutes') ?? '[]');
 const fixtureMutedUrls = () => new Set(fixtureMutes.map(entry => entry.member.url));
+const fixtureSnoozes = createFixtureSnoozes(() => items.flatMap(item => item.subject.members));
 let fixtureStars: import('../../lib/starred-prs').StarredPr[] = JSON.parse(sessionStorage.getItem('fixture-stars') ?? '[]');
 const filterStorageKey = 'fixture-queue-filters' + location.search;
 let queueFilters = normalizeQueueFilters(JSON.parse(sessionStorage.getItem(filterStorageKey) ?? 'null'));
@@ -761,6 +764,7 @@ const mocks = {
       else current.unread = current.unread.filter(reason => current.versions[reason] > receipt.versions[reason] || ((reason === 'commits' || reason === 'new') && current.headSha !== receipt.headSha));
     }
     sessionStorage.setItem('fixture-read-state', JSON.stringify(fixtureReads));
+    if (request.read) fixtureSnoozes.read(request.receipts.map(receipt => receipt.url));
     updateFixtureUnread();
     // Like main: marking PRs read closes their notification toasts.
     if (request.read) window.dispatchEvent(new CustomEvent('fixture-notification', { detail: { type: 'close', urls: request.receipts.map(receipt => receipt.url) } }));
@@ -772,6 +776,11 @@ const mocks = {
     else for (const url of request.urls) entries.delete(url);
     fixtureMutes = [...entries.values()]; sessionStorage.setItem('fixture-mutes', JSON.stringify(fixtureMutes));
     return mocks.workbenchQueue();
+  },
+  workbenchSnoozePrs: async (request: import('../../lib/snooze').SnoozeRequest) => {
+    const result = fixtureSnoozes.request(request);
+    if (request.action === 'unsnooze' && request.mute) await mocks.workbenchMutePrs({ muted: true, members: items.flatMap(item => item.subject.members).filter(member => result.urls.includes(member.url)) });
+    return { ...result, queue: stampQueue(await mocks.workbenchQueue(), await fixtureHistory().catch(() => undefined)) };
   },
   workbenchStarPrs: (request: import('../../lib/starred-prs').StarPrRequest) => {
     const entries = new Map(fixtureStars.map(entry => [entry.member.url, entry]));
@@ -786,6 +795,7 @@ const mocks = {
   workbenchQueue: () =>
     Promise.resolve({
       readStates: unreadScenario ? structuredClone(fixtureReads) : undefined,
+      snoozedPrs: fixtureSnoozes.rows(),
       mutedPrs: fixtureMutes.map(({ member: { url, repo, number, title, author, state, merged, isDraft }, mutedAt }) => ({ member: { url, repo, number, title, author, state, merged, isDraft }, mutedAt })),
       starredPrs: fixtureStars.filter(entry => !fixtureMutedUrls().has(entry.member.url)),
       starredItems: visibleFixtureItems().filter(item=>item.starred),
@@ -1074,5 +1084,13 @@ function visibleFixtureItems() {
     if (!subject || !matchesPrInactivity(subject, normalizePrInactivityDays(prefs.prInactivityDays), Date.now(), new Set(fixtureStars.map(entry => entry.member.url)))) return [];
     if (subject === item.subject) return [item];
     return [{ ...item, subject, briefing: undefined, review: item.review && !isMutedReview(item.review, fixtureMutedUrls()) ? item.review : undefined, starred: subject.members.some(m => fixtureStars.some(e => e.member.url === m.url)) }];
-  });
+  }).flatMap(item => { const next = applySnoozes(item, fixtureSnoozes.urls(), fixtureSnoozes.backs()); return next ? [next] : []; });
 }
+/** Browser checks wake a snoozed PR as an observation would: it comes back unread, with its reason. */
+(window as unknown as { fixtureSnoozeWake: (url: string, reason: import('../../lib/snooze').WakeReason, minutesAgo?: number) => string[] }).fixtureSnoozeWake = (url, reason, minutesAgo) => {
+  const urls = fixtureSnoozes.wake(url, reason, minutesAgo);
+  for (const item of items) if (item.subject.members.some(member => urls.includes(member.url)))
+    item.unreadUrls = [...new Set([...(item.unreadUrls ?? []), ...item.subject.members.filter(member => urls.includes(member.url)).map(member => member.url)])];
+  window.dispatchEvent(new CustomEvent('fixture-workbench-change'));
+  return urls;
+};

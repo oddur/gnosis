@@ -91,6 +91,7 @@ export function stampQueue(
     stacks: hash(queue.stacks ?? null),
     readStates: hash(queue.readStates ?? null),
     mutedPrs: hash(queue.mutedPrs ?? null),
+    snoozedPrs: hash(queue.snoozedPrs ?? null),
     starredPrs: hash(queue.starredPrs ?? null),
     savedViews: hash(queue.savedViews ?? null),
     filters: hash(queue.filters ?? null),

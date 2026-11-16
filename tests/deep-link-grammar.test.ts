@@ -193,6 +193,8 @@ void test('Copy Gnosis link formats PR links, and a tab location becomes its tar
   assert.equal(formatDeepLink(checks), 'gnosis://pr/oddur/gnosis/160/checks');
   assert.deepEqual(targetFromLocation({ page: 'review', reviewId: 'r1' }), { kind: 'review', reviewId: 'r1' });
   assert.deepEqual(targetFromLocation({ page: 'home', home: home({ muted: true }) }), { kind: 'queue', section: 'muted' });
+  assert.deepEqual(targetFromLocation({ page: 'home', home: home({ snoozed: true }) }), { kind: 'queue', section: 'snoozed' });
+  assert.deepEqual(parseDeepLink('gnosis://queue?section=snoozed', ['gnosis']), { target: { kind: 'queue', section: 'snoozed' } });
   assert.deepEqual(targetFromLocation({ page: 'home', home: home({ filters: { ...DEFAULT_QUEUE_FILTERS, attention: 'requested', repo: 'oddur/gnosis', readStatus: 'unread' } }) }), {
     kind: 'queue', section: 'requested', filters: { repo: 'oddur/gnosis', read: 'unread' },
   });

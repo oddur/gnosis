@@ -17,6 +17,8 @@ export function homeVisit(home: HomeLocation): RecentVisit {
   // Muted PRs replaces whichever list was open, so it names the visit and its workspace tab.
   const section = home.muted
     ? 'Muted PRs'
+    : home.snoozed
+      ? 'Snoozed'
     : home.savedView
       ? 'Saved reviews'
       : home.filters.involvement === 'response' ? 'Needs my response'
@@ -29,14 +31,15 @@ export function homeVisit(home: HomeLocation): RecentVisit {
             : home.filters.attention === 'updated'
               ? 'Updated PRs'
               : 'Review queue';
-  const view = home.muted ? null : home.viewId;
+  const tool = home.muted || !!home.snoozed;
+  const view = tool ? null : home.viewId;
   return {
     id: subject
       ? `subject:${subject.id}`
       : view
         ? `view:${view}`
         : `queue:${section}:${home.filters.repo}`,
-    title: subject?.title ?? (home.muted ? section : (home.viewName ?? section)),
+    title: subject?.title ?? (tool ? section : (home.viewName ?? section)),
     label: subject?.kind === 'stack' ? 'Stack' : member ? `#${member.number}` : view ? 'View' : 'Queue',
     detail: subject
       ? [...new Set(subject.members.map((m) => m.repo))].join(', ')

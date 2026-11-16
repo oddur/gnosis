@@ -14,6 +14,26 @@ import type { NotificationEvent, ObservedMember, PrObservation } from '../lib/no
 import { planSweep, sweepCostFactor } from '../lib/notification-cadence';
 import { normalizePrInactivityDays, isPrRecentlyUpdated } from '../lib/pr-inactivity';
 import { createMutedPrStore, type MutedPrStore } from './muted-pr-store';
+import { createSnoozedPrStore } from './snoozed-pr-store';
+import {
+  applySnoozes,
+  BACK_RETENTION_MS,
+  dueWakes,
+  observeSnoozes as observeSnoozeChanges,
+  reasonText,
+  snoozeBasis,
+  snoozeDeadline,
+  summaryOf,
+  SNOOZE_LIMIT,
+  type GroupWake,
+  type SnoozeBack,
+  type SnoozedPrSummary,
+  type SnoozeEntry,
+  type SnoozeRequest,
+  type SnoozeResult,
+} from '../lib/snooze';
+import { prTarget } from '../lib/deep-link';
+import { randomUUID } from 'node:crypto';
 import { isMutedReview, withoutMutedMembers, type MutePrRequest } from '../lib/muted-prs';
 import { createSavedViewStore } from './saved-view-store';
 import { createStarredPrStore } from './starred-pr-store';
@@ -191,6 +211,18 @@ export function createWorkbenchService(deps: Deps) {
   const stars = createStarredPrStore(storage, now);
   const mutes = deps.mutes ?? createMutedPrStore(storage, now);
   const mutedUrls = () => mutes.index(deps.auth().login ?? 'guest').urls;
+  const snoozes = createSnoozedPrStore(storage);
+  /** Snoozed PRs: hidden from the queue, still read from GitHub. */
+  const snoozedUrls = () => snoozes.index(deps.auth().login ?? 'guest').urls;
+  /** Muted and snoozed PRs, for the places where both hide a PR. `mutedUrls` keeps its own meaning. */
+  const hiddenUrls = (): ReadonlySet<string> => {
+    const snoozed = snoozedUrls();
+    return snoozed.size ? new Set([...mutedUrls(), ...snoozed]) : mutedUrls();
+  };
+  /** Previous snooze state of the PRs a change touched, so its toast can undo it. In memory only. */
+  const snoozeUndos = new Map<string, { account: string; entries: Map<string, SnoozeEntry | undefined>; backs: Map<string, SnoozeBack | undefined> }>();
+  const caughtUp = new Set<string>();
+  let snoozeTimer: ReturnType<typeof setTimeout> | undefined;
   const visibleMemo = new WeakMap<readonly ReviewHistoryEntry[], { urls: ReadonlySet<string>; value: VisibleHistory }>();
   /**
    * Saved reviews without muted PRs, indexed for queue lookups. In both maps the first entry wins.
@@ -359,12 +391,99 @@ export function createWorkbenchService(deps: Deps) {
     const entry = visibleHistory().byUrl.get(url)?.entry;
     return !!entry && (entry.status ?? 'completed') === 'completed';
   }
+  /** Woken groups with the PR that woke each, captured before their snoozes are removed. */
+  type Woken = { wake: GroupWake; member: SnoozedPrSummary };
+  /**
+   * Saves what a batch of snooze changes does: woken PRs leave the store, gain a "Back" reason and become
+   * unread; closed PRs leave silently; newer check states are kept.
+   */
+  function applySnoozeChanges(account: string, wakes: GroupWake[], ended: string[], updated: SnoozeEntry[], expired: string[] = []): Woken[] {
+    if (!wakes.length && !ended.length && !updated.length && !expired.length) return [];
+    const index = snoozes.index(account);
+    const at = now();
+    const backs: Record<string, SnoozeBack | undefined> = Object.fromEntries(expired.map(url => [url, undefined]));
+    const woken = wakes.flatMap(wake => {
+      const trigger = index.entries.get(wake.trigger);
+      if (!trigger) return [];
+      for (const url of wake.urls)
+        backs[url] = { reason: wake.reason, at, snoozedAt: wake.snoozedAt, ...(url !== wake.trigger ? { via: trigger.member.number } : {}) };
+      return [{ wake, member: trigger.member }];
+    });
+    snoozes.change(account, { put: updated, remove: [...ended, ...wakes.flatMap(wake => wake.urls)], backs });
+    // A PR that comes back is unread.
+    const read = reads.snapshot(account);
+    const receipts = wakes.flatMap(wake => wake.urls).flatMap(url => (Object.hasOwn(read, url) ? [read[url]] : []));
+    if (receipts.length) reads.mark(account, { account, read: false, receipts });
+    scheduleSnoozes();
+    return woken;
+  }
+  function observeSnoozes(account: string, observations: readonly PrObservation[], own = false): Woken[] {
+    const login = deps.auth().login;
+    if (!observations.length || !login || login.toLowerCase() !== account.toLowerCase()) return [];
+    const entries = snoozes.index(account).entries;
+    if (!entries.size) return [];
+    const changes = observeSnoozeChanges(entries, observations, { login, own });
+    return applySnoozeChanges(account, changes.wakes, changes.ended, changes.updated);
+  }
+  /** One notification per woken group, unless an existing event for one of its PRs already says why. */
+  function wakeEvents(woken: readonly Woken[], delivered: readonly NotificationEvent[]): NotificationEvent[] {
+    return woken.flatMap(({ wake, member }): NotificationEvent[] => {
+      if (delivered.some(event => event.url && wake.urls.includes(event.url))) return [];
+      const target = prTarget(member.url, 'summary');
+      return [{
+        type: 'snooze-ended',
+        key: `snooze|${member.url}|${wake.snoozedAt}`,
+        title: member.title,
+        url: member.url,
+        repo: member.repo,
+        number: member.number,
+        at: now(),
+        detail: reasonText(wake.reason),
+        ...(target ? { target } : {}),
+        ...('actor' in wake.reason && wake.reason.actor ? { actor: wake.reason.actor } : {}),
+      }];
+    });
+  }
+  /**
+   * Ends snoozes whose time or ceiling has passed, and drops "Back" reasons past their retention. The first
+   * check for an account after launch is silent: a snooze that ended while the app was closed comes back
+   * unread with its reason, without a notification.
+   */
+  function checkSnoozes(options: { silent?: boolean; changed?: boolean } = {}): boolean {
+    const { login, token } = deps.auth();
+    if (!login || !token) return false;
+    const key = login.toLowerCase();
+    const silent = options.silent || !caughtUp.has(key);
+    caughtUp.add(key);
+    const index = snoozes.index(login);
+    const expired = Object.entries(index.backs).flatMap(([url, back]) => (back && now() - back.at > BACK_RETENTION_MS ? [url] : []));
+    const woken = applySnoozeChanges(login, dueWakes(index.entries, now()), [], [], expired);
+    if (!woken.length && !expired.length) { scheduleSnoozes(); return false; }
+    const events = silent ? [] : wakeEvents(woken, []);
+    if (events.length) deps.notifications?.deliver(events);
+    if (options.changed !== false) deps.changed?.();
+    return true;
+  }
+  /** The next due snooze, checked at least every minute, so sleep and clock changes are caught up. */
+  function scheduleSnoozes() {
+    clearTimeout(snoozeTimer);
+    snoozeTimer = undefined;
+    const login = deps.auth().login;
+    if (!login) return;
+    const entries = [...snoozes.index(login).entries.values()];
+    if (!entries.length) return;
+    const due = Math.min(...entries.map(snoozeDeadline));
+    snoozeTimer = setTimeout(() => checkSnoozes(), Math.max(1000, Math.min(due - now(), 60_000)));
+    snoozeTimer.unref();
+  }
   function notify(account: string, observations: PrObservation[], options: { finishBaseline?: boolean; own?: boolean } = {}) {
+    const woken = observeSnoozes(account, observations, options.own);
     if (!notificationStore || !deps.notifications) return;
     if (!observations.length && (!options.finishBaseline || notificationStore.initialized(account))) return;
     const login = deps.auth().login;
     if (!login || login.toLowerCase() !== account.toLowerCase()) return;
     const muted = mutedUrls();
+    const snoozed = snoozedUrls();
     const archived = new Set(load().archivedRepos ?? []);
     const byUrl = new Map(observations.map(observation => [observation.member.url, observation.member]));
     const events = notificationStore.observe(account, observations, {
@@ -375,15 +494,17 @@ export function createWorkbenchService(deps: Deps) {
       suppress: event => {
         if (!event.url) return undefined;
         if (muted.has(event.url)) return 'muted';
+        if (snoozed.has(event.url)) return 'snoozed';
         const member = byUrl.get(event.url);
         if (member && (('repoArchived' in member && member.repoArchived === true) || archived.has(member.repo.toLowerCase()))) return 'archived';
         return undefined;
       },
     });
+    events.push(...wakeEvents(woken, events));
     if (events.length) deps.notifications.deliver(events);
   }
   function notifyMembers(account: string, members: readonly (PrMetadata & Partial<Pick<ReviewMember, 'number' | 'repo' | 'role'>>)[], options: { finishBaseline?: boolean; own?: boolean } = {}) {
-    if (!notificationStore) return;
+    if (!notificationStore && !snoozes.index(account).entries.size) return;
     const fresh = options.own ? members : members.filter(member => notifiedMembers.get(member) !== account);
     notify(account, fresh.map(member => ({ member: observedMember(member), explanation: hasExplanation(member.url) })), options);
     for (const member of fresh) notifiedMembers.set(member, account);
@@ -410,7 +531,7 @@ export function createWorkbenchService(deps: Deps) {
     return new Map([...stars.load(s.account).map(entry => entry.member), ...s.subjects.flatMap(subject => subject.members)].map(member => [member.url, member] as const));
   }
   function notifySignals(account: string, signals: readonly QueueSignals[]) {
-    if (!notificationStore || !signals.length) return;
+    if (!signals.length || (!notificationStore && !snoozes.index(account).entries.size)) return;
     const known = knownMembers();
     notify(account, signals.flatMap(signal => {
       const member = known.get(signal.url);
@@ -431,7 +552,12 @@ export function createWorkbenchService(deps: Deps) {
     reads.observe(s.account, allMembers, baseline);
     notifyMembers(s.account, allMembers, { finishBaseline: baseline });
     readBaselines.add(s.account);
+    if (!caughtUp.has(s.account.toLowerCase())) checkSnoozes({ silent: true, changed: false });
     const readStates: WorkbenchQueue['readStates'] = reads.snapshot(s.account);
+    // A "Back" reason lasts until its PR is read.
+    const seen = Object.keys(snoozes.index(s.account).backs).filter(url => readStates[url] && !readStates[url].unread.length);
+    if (seen.length) snoozes.change(s.account, { backs: Object.fromEntries(seen.map(url => [url, undefined])) });
+    const snoozed = snoozes.index(s.account);
     const mutedIndex = mutes.index(s.account);
     const muted = mutedIndex.urls;
     const sets = queueSets(s);
@@ -504,17 +630,19 @@ export function createWorkbenchService(deps: Deps) {
       return item;
     });
     const order = { updated: 0, requested: 1, other: 2 };
-    allItems.sort(
+    // Snoozed rows leave every section, saved view and count; a stack with some snoozed PRs stays.
+    const shownItems = allItems.flatMap(item => { const next = applySnoozes(item, snoozed.urls, snoozed.backs); return next ? [next] : []; });
+    shownItems.sort(
       (a, b) =>
         order[a.attention] - order[b.attention] ||
         Math.max(...b.subject.members.map((m) => Date.parse(m.updatedAt))) -
           Math.max(...a.subject.members.map((m) => Date.parse(m.updatedAt)))
     );
     const items = starredFirst(
-      allItems.filter((item) => includeHidden || activeSubjects.has(item.subject)),
-      (item) => item.starred
+      shownItems.filter((item) => includeHidden || activeSubjects.has(item.subject)),
+      (item) => !!item.starred
     );
-    const starredItems = allItems.filter((item) => item.starred);
+    const starredItems = shownItems.filter((item) => item.starred);
     const views = savedViews.load(s.account, filters);
     const counts = Object.fromEntries(
       views.views.map((view) => [
@@ -531,6 +659,7 @@ export function createWorkbenchService(deps: Deps) {
       starredPrs,
       starredItems,
       mutedPrs: mutedIndex.rows,
+      snoozedPrs: snoozed.rows,
       warnings,
       sync: sync ?? { status: 'idle', checkedAt: s.discoveredAt },
       remaining: Math.max(0, limit(preferences) - s.used),
@@ -940,6 +1069,7 @@ export function createWorkbenchService(deps: Deps) {
       finished = true;
       reads.observe(s.account, latestMembers, true);
       notifyMembers(s.account, latestMembers, { finishBaseline: true });
+      checkSnoozes({ changed: false });
       save();
       void pump();
       return view();
@@ -1484,6 +1614,96 @@ export function createWorkbenchService(deps: Deps) {
         if (!subject || subject.members.some(member => mutedUrls().has(member.url))) running?.abort(new BriefingPaused());
       }
       return view();
+    },
+    snoozedUrls,
+    hiddenUrls,
+    /** Ends due snoozes. Main calls it on resume from sleep; a timer and each discovery call it too. */
+    checkSnoozes: () => checkSnoozes(),
+    /** Snooze, unsnooze and undo, through one channel. IPC input is untrusted. */
+    snoozePrs(request: SnoozeRequest): SnoozeResult<WorkbenchQueue> {
+      const { login, token } = deps.auth();
+      if (!login || !token) throw new Error('Connect GitHub to snooze PRs.');
+      const account = load().account;
+      const index = snoozes.index(account);
+      const urlList = (value: unknown): value is string[] =>
+        Array.isArray(value) && value.length > 0 && value.length <= SNOOZE_LIMIT && value.every(url => typeof url === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url));
+      /** Remembers how these PRs were, so the change's toast can undo it. */
+      const remember = (urls: readonly string[]) => {
+        const token = randomUUID();
+        snoozeUndos.set(token, {
+          account,
+          entries: new Map(urls.map(url => [url, index.entries.get(url) && structuredClone(index.entries.get(url))])),
+          backs: new Map(urls.map(url => [url, index.backs[url] && structuredClone(index.backs[url])])),
+        });
+        while (snoozeUndos.size > 20) snoozeUndos.delete(snoozeUndos.keys().next().value as string);
+        return token;
+      };
+      const finish = (urls: string[], undo?: string): SnoozeResult<WorkbenchQueue> => {
+        scheduleSnoozes();
+        // Other windows, the menu bar and the badge follow.
+        deps.changed?.();
+        return { queue: view(), urls, ...(undo ? { undo } : {}) };
+      };
+      /* eslint-disable @typescript-eslint/no-unnecessary-condition -- IPC is an untrusted runtime boundary */
+      if (request?.action === 'undo') {
+        const saved = typeof request.token === 'string' ? snoozeUndos.get(request.token) : undefined;
+        if (!saved || saved.account !== account) throw new Error('This change can no longer be undone.');
+        snoozeUndos.delete(request.token);
+        const urls = [...saved.entries.keys()];
+        snoozes.change(account, {
+          put: [...saved.entries.values()].filter((entry): entry is SnoozeEntry => !!entry),
+          remove: urls.filter(url => !saved.entries.get(url)),
+          backs: Object.fromEntries(saved.backs),
+        });
+        return finish(urls);
+      }
+      if (request?.action === 'unsnooze') {
+        if (!urlList(request.urls)) throw new Error('Choose valid GitHub PRs to unsnooze.');
+        const urls = request.urls.filter(url => index.urls.has(url));
+        if (request.mute === true) {
+          const known = knownMembers();
+          const members = urls.flatMap(url => { const member = known.get(url); return member ? [structuredClone(member)] : []; });
+          snoozes.change(account, { remove: urls });
+          if (members.length) mutes.set(account, { muted: true, members });
+          return finish(urls);
+        }
+        const undo = remember(urls);
+        snoozes.change(account, { remove: urls });
+        return finish(urls, undo);
+      }
+      if (request?.action !== 'snooze' || !Array.isArray(request.groups) || !request.groups.length || !request.groups.every(urlList))
+        throw new Error('Choose valid GitHub PRs to snooze.');
+      const on = Array.isArray(request.on) ? [...new Set(request.on)] : [];
+      const until = request.until;
+      if (!on.every(value => value === 'activity' || value === 'checks') || (until !== undefined && (typeof until !== 'number' || !Number.isFinite(until) || until <= now())) || (until === undefined && !on.length))
+        throw new Error('Choose a time in the future or what to wait for.');
+      /* eslint-enable @typescript-eslint/no-unnecessary-condition */
+      const known = knownMembers();
+      const at = now();
+      const groups = request.groups.map(urls => [...new Set(urls)].flatMap(url => {
+        const member = known.get(url);
+        return member && member.state === 'open' && !member.merged ? [member] : [];
+      })).filter(members => members.length);
+      const members = groups.flat();
+      if (!members.length) throw new Error('These PRs are closed or no longer in your queue.');
+      const signals = new Map((deps.cachedSignals?.(members) ?? []).map(value => [value.url, value]));
+      const put = groups.flatMap(group => {
+        const id = randomUUID();
+        return group.map((member): SnoozeEntry => ({
+          member: summaryOf(member),
+          group: id,
+          snoozedAt: at,
+          ...(until !== undefined ? { until } : {}),
+          on,
+          own: member.author.toLowerCase() === login.toLowerCase(),
+          basis: snoozeBasis(member, signals.get(member.url), login),
+        }));
+      });
+      const urls = put.map(entry => entry.member.url);
+      const undo = remember(urls);
+      // A new snooze replaces the old one and clears the PR's last "Back" reason.
+      snoozes.change(account, { put, backs: Object.fromEntries(urls.map(url => [url, undefined])) });
+      return finish(urls, undo);
     },
     starPrs(request: StarPrRequest) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to star PRs.');

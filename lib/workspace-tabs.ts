@@ -268,6 +268,7 @@ export function restoreWorkspaceTabs(value: unknown, account: string): Workspace
         typeof h.savedQuery !== 'string' ||
         typeof h.savedView !== 'boolean' ||
         typeof h.muted !== 'boolean' ||
+        (h.snoozed !== undefined && typeof h.snoozed !== 'boolean') ||
         !(h.viewId === null || typeof h.viewId === 'string') ||
         !(h.selected === null || typeof h.selected === 'string')
       )
@@ -304,7 +305,7 @@ export function restoreWorkspaceTabs(value: unknown, account: string): Workspace
         return [];
       if (
         d.section !== undefined &&
-        !['response', 'all', 'requested', 'updated', 'stacks', 'saved', 'starred', 'muted'].includes(d.section)
+        !['response', 'all', 'requested', 'updated', 'stacks', 'saved', 'starred', 'snoozed', 'muted'].includes(d.section)
       )
         return [];
       if (

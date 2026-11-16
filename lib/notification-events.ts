@@ -21,6 +21,8 @@ export interface NotificationEvent {
   at: number;
   /** Where a click lands. Without one, a click only shows Gnosis. */
   target?: DeepLinkTarget;
+  /** The reason a snoozed PR came back: "new comment from lena". */
+  detail?: string;
 }
 /** Row order of the design's event table: picks the headline when events coalesce. */
 export const EVENT_RANK: readonly NotificationEventType[] = [
@@ -30,6 +32,7 @@ export const EVENT_RANK: readonly NotificationEventType[] = [
   'checks-failed',
   'ready-to-merge',
   'approved',
+  'snooze-ended',
   'explanation-ready',
   'update-ready',
 ];
