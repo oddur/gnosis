@@ -7,9 +7,13 @@ import type { PrChangeFile, PrFileContents } from '../../lib/pr-changes';
  * new side runs one line ahead of the old side. Its patch has two hunks, which leave three gaps: new lines 1–46,
  * 55–147 (old 54–146) and 155–201 (old 154–200).
  *
+ * Old line 152, in the second hunk's context, is longer than the diff is wide.
+ *
  * `zz/huge.ts` is a 3,000-line added file.
  */
 const before = Array.from({ length: 200 }, (_, i) => `export const g${i + 1} = ${i + 1};`);
+// Line 152 is long enough to scroll sideways, so only the second hunk overflows.
+before[151] = `export const g152 = '${'overflow '.repeat(40)}';`;
 const after = [
   ...before.slice(0, 49),
   'export const g50 = 500;',

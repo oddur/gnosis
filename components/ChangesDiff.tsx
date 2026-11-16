@@ -20,6 +20,18 @@ export type GapStatus =
   | { kind: 'stale' };
 
 const parse = (patch: string) => processFile(patch, { throwOnError: true });
+/**
+ * Pierre keeps a classic scrollbar's gutter under every diff, so each hunk of a file showed an empty scrollbar track.
+ * A hunk scrolls sideways only when its lines overflow, with the app's thin scrollbar, and otherwise ends with the
+ * same padding it starts with. Wrapped lines never overflow.
+ */
+const CHANGES_CSS = `[data-code] {
+  overflow-x: auto;
+  scrollbar-gutter: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 60%, var(--background)) transparent;
+  padding-bottom: var(--diffs-gap-block, var(--diffs-gap-fallback));
+}`;
 const NO_ANNOTATIONS: never[] = [];
 const diffStyle = {
   '--diffs-font-family': 'var(--font-mono)',
@@ -216,7 +228,11 @@ export function ChangesDiff<A>({
   /** The highest line number in the file, so every slice's gutter has the same width. */
   lineCount: number;
 }) {
-  const stableOptions = useStableOptions({ ...options, hunkSeparators: 'simple' });
+  const stableOptions = useStableOptions({
+    ...options,
+    hunkSeparators: 'simple',
+    unsafeCSS: options.unsafeCSS ? `${options.unsafeCSS}\n${CHANGES_CSS}` : CHANGES_CSS,
+  });
   const latestRender = useRef(renderAnnotation);
   latestRender.current = renderAnnotation;
   const [stableRender] = useState(() => (annotation: DiffLineAnnotation<A>) => latestRender.current(annotation));

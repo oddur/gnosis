@@ -241,6 +241,38 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await bars(), ['0: 46 lines hidden', '1: 93 lines hidden', '2: More lines may follow']);
     await js(`${gapsRow}.scrollIntoView({block:'start'})`);
     await shot('gaps-initial', '.commit-stream-row[data-file="src/gaps.ts"]');
+    // Only a hunk whose lines overflow scrolls sideways and shows a scrollbar; the others end flush (no gutter).
+    const scrollers = () =>
+      js<{ overflows: boolean; bar: number; bottom: number }[]>(`[...${gapsRow}.querySelectorAll('.changes-diff > diffs-container')].map(h=>{
+        const c=h.shadowRoot.querySelector('[data-code]');return {overflows:c.scrollWidth>c.clientWidth,bar:c.offsetHeight-c.clientHeight,bottom:parseFloat(getComputedStyle(c).paddingBottom)}})`);
+    const nowrap = await scrollers();
+    assert.deepEqual(nowrap.map((s) => s.overflows), [false, true], JSON.stringify(nowrap));
+    assert.equal(nowrap[0].bar, 0, 'A hunk that fits has no scrollbar track');
+    assert.ok(nowrap[1].bar > 0 && nowrap[1].bar <= 12, `The long hunk has a thin scrollbar: ${nowrap[1].bar}px`);
+    assert.equal(nowrap[0].bottom, 8);
+    // It scrolls sideways, and the page still scrolls from the keyboard.
+    assert.ok(await js<boolean>(`(()=>{const c=${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1].shadowRoot.querySelector('[data-code]');c.scrollLeft=200;const moved=c.scrollLeft>0;c.scrollLeft=0;return moved})()`));
+    await js(`${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1].scrollIntoView({block:'start'})`);
+    await shot('gaps-overflow', '.commit-stream-row[data-file="src/gaps.ts"] .changes-diff > diffs-container:nth-of-type(2)');
+    const before = await js<number>("document.querySelector('.commit-diff-stream').scrollTop");
+    await js("document.querySelector('.commit-diff-stream').focus()");
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'PageDown' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'PageDown' });
+    await wait(`document.querySelector('.commit-diff-stream').scrollTop>${before}`);
+    await js(`${gapsRow}.scrollIntoView({block:'start'})`);
+    // Wrapped lines never overflow, so no hunk has a scrollbar.
+    const setWrap = async (on: boolean) => {
+      await click('Diff appearance');
+      await wait("!!document.querySelector('[aria-label=\"Show surrounding lines\"]')");
+      await js(`(()=>{const box=[...document.querySelectorAll('label')].find(l=>l.textContent.trim().startsWith('Wrap long lines'))?.querySelector('input');if(!box)throw Error('No wrap option');if(box.checked!==${on})box.click()})()`);
+      await js("document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    };
+    await setWrap(true);
+    await wait(`(()=>{const h=${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1];const c=h?.shadowRoot.querySelector('[data-code]');return !!c&&c.scrollWidth<=c.clientWidth&&c.offsetHeight===c.clientHeight})()`);
+    await js(`${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1].scrollIntoView({block:'start'})`);
+    await shot('gaps-wrapped', '.commit-stream-row[data-file="src/gaps.ts"] .changes-diff > diffs-container:nth-of-type(2)');
+    await setWrap(false);
+    await wait(`(()=>{const c=${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1]?.shadowRoot.querySelector('[data-code]');return !!c&&c.scrollWidth>c.clientWidth})()`);
     const press = (gap: number, label: string) =>
       js(`(()=>{const b=[...${gapsRow}.querySelectorAll('.diff-gap[data-gap="${gap}"] button')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)}||b.textContent.trim()===${JSON.stringify(label)});if(!b)throw Error('Missing ${label}');b.click()})()`);
     // A line's numbers on each side it shows on: the new number in Unified, both in Split.

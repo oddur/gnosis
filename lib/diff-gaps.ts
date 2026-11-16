@@ -293,8 +293,9 @@ export function hunkSlices(
   });
 }
 
-/** Pierre adds this much to each diff's rows in Changes: its padding and the gutter kept for a horizontal scrollbar. */
-export const SLICE_CHROME = 23;
+/** Pierre adds this much to each diff's rows in Changes: 8px of padding above and below. A slice whose lines
+ * overflow also shows a thin scrollbar; its real height replaces the estimate once it is laid out. */
+export const SLICE_CHROME = 16;
 /** Placeholder height for a slice that has not been laid out yet. */
 export const estimateSliceHeight = (rows: number, lineHeight = CODE_LINE_HEIGHT) => Math.max(1, rows) * lineHeight + SLICE_CHROME;
 
