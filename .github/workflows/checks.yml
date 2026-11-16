@@ -159,9 +159,10 @@ jobs:
       - run: npm ci
       - run: npm run prepare:mergiraf
       - name: Browser suites
-        # Shared runners are about twice as slow as a quiet machine; see tests/perf-budget.ts.
+        # Shared runners are about twice as slow as a quiet machine; see tests/perf-budget.ts. Hosted macOS runners
+        # vary much more from run to run, so they get more room; the Linux shards on every PR guard the exact budgets.
         env:
-          GNOSIS_PERF_BUDGET_SCALE: '2'
+          GNOSIS_PERF_BUDGET_SCALE: ${{ matrix.os == 'macos-latest' && '3' || '2' }}
         run: node scripts/run-browser-suites.mjs --shard ${{ matrix.shard }}/3
 
   extension:
