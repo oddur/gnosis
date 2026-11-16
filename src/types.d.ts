@@ -143,7 +143,8 @@ declare global {
       clearSyncHealth?: () => Promise<import('../lib/sync-health').SyncHealthSnapshot>;
       onSyncHealthChanged?: (callback: () => void) => () => void;
       diagnosticsReport?: () => Promise<unknown>;
-      exportDiagnostics?: () => Promise<string | null>;
+      /** Saves one diagnostics file: app, system and startup details, sync health, and the renderer's slow interactions. Resolves to the path, or null if cancelled. */
+      exportDiagnostics?: (renderer?: import('../lib/diagnostics').RendererDiagnostics) => Promise<string | null>;
       /** The reader switched to these PRs or returned to Gnosis. Main reads them again, at most every 30 s each. */
       refreshOpenPr?: (urls: string[]) => void;
       /** The reader switched to a queue view: main reads its first screenful of rows, skipping any read within 30 s. */

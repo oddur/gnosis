@@ -230,6 +230,12 @@ void app.whenReady().then(async () => {
         document.dispatchEvent(new Event('visibilitychange'));
         await new Promise(r=>setTimeout(r,100));
       })()`);
+      // Queue updates render as a transition. Open the PR once the queue shows the new revision, or the predictor
+      // first warms the revision it replaced.
+      await wait(
+        `import('/lib/workbench-store.ts').then(m=>m.workbenchStore.getQueue().items.some(i=>i.subject.members.some(p=>p.headSha==='${'7'.repeat(40)}')))`
+      );
+      await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(r,50))))');
       await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Reduce allocations')).click()");
       await click('Open PR overview');
       await wait("!!document.querySelector('.pr-description')");

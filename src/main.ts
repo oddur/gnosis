@@ -1,6 +1,7 @@
 // First: the single-instance lock and the macOS `open-url` buffer must exist before anything else runs (#309).
 import { instance as singleInstance } from './single-instance-start';
 import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
+import { diagnosticsSections } from '../lib/diagnostics';
 import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
@@ -4298,6 +4299,12 @@ const syncHealth = createSyncHealthService({
   refreshRows: urls => { if (githubSync.refreshRows(urls, ['signals']).length) void githubSync.tick(); },
   notify: () => notifyLocalChange('sync-health-changed'),
   appInfo: () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron }),
+  // The same file carries system and startup details and the exporting window's slow interactions (#345).
+  extendReport: renderer => ({ ...diagnosticsSections(renderer, {
+    system: { platform: process.platform, arch: process.arch, release: os.release(), cpus: os.cpus().length, memoryBytes: os.totalmem(), packaged: app.isPackaged },
+    versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
+    startup: startupSummary(),
+  }) }),
 });
 syncHealth.register();
 void app.whenReady().then(() => {

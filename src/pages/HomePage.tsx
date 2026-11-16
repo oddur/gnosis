@@ -1,3 +1,4 @@
+import { useRenderSpan } from '../../lib/perf-spans';
 import { useWorkspaceNavigation, activeWorkspaceRoot } from '../../lib/workspace-navigation';
 import { ExplanationSetupDialog } from '../../components/ExplanationSetupDialog';
 import type { GenerateReviewRequest } from '../../lib/types';
@@ -84,7 +85,7 @@ import {
   type QueueFilters,
 } from '../../lib/queue-filters';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
-import { Activity, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Activity, Suspense, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
@@ -150,6 +151,8 @@ function withOwnView(queue: WorkbenchQueue, own: string | null | undefined): Wor
   return id === (queue.savedViews.activeId ?? null) ? queue : { ...queue, savedViews: { ...queue.savedViews, activeId: id } };
 }
 const NO_READ_STATES: NonNullable<WorkbenchQueue['readStates']> = {};
+/** Scrolling the queue records its position this long after the last scroll event. */
+const SCROLL_RECORD_MS = 150;
 const labels = {
   starred: 'Starred',
   updated: 'Changed since AI explanation',
@@ -168,6 +171,7 @@ function markQueuePainted() {
   }));
 }
 export function HomePage({ onAccount, navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+  useRenderSpan('queue page render');
   const tabs = useWorkspaceNavigation();
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
   const [responseUnavailable, setResponseUnavailable] = useState(0);
@@ -1071,8 +1075,16 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   // Active and visible PRs, unread work, current view, then the remaining queue. Revision identity
   // prevents routine metadata/CI updates from repeating content downloads.
   const orderedBacklog = useMemo(() => sortQueueItems(queue.items, filters.sort, sortSignals), [queue.items, filters.sort, sortSignals]);
+  // Background preparation follows selection and scrolling in a deferred render, so j/k and scrolling do not
+  // serialize the whole queue before they paint (#346).
+  // Only moving the selection is deferred. The open PR, and a new revision of the subject already chosen, are prepared
+  // at once: a deferred copy can lag behind them for as long as other renders keep interrupting it.
+  const deferredSubject = useDeferredValue(statusSubject);
+  const preloadSubject = statusSubject && (summaryItem || statusSubject.id === deferredSubject?.id) ? statusSubject : deferredSubject;
+  const preloadVisibleIds = useDeferredValue(visibleQueueIds);
   const inspectionKey = useMemo(() => {
-    const visible = new Set(visibleQueueIds);
+    const statusSubject = preloadSubject;
+    const visible = new Set(preloadVisibleIds);
     const targets = [...(statusSubject?.members ?? []),
       ...orderedItems.flatMap(item => item.subject.members), ...orderedBacklog.flatMap(item => item.subject.members)];
     return JSON.stringify({
@@ -1086,7 +1098,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       rows: [...new Map([...(statusSubject ? [statusSubject] : []), ...[...orderedItems, ...orderedBacklog].map(item => item.subject)]
         .map(subject => [subject.id, { id: subject.id, members: subject.members.map(({ url, headSha, baseSha, updatedAt }) => ({ url, headSha, baseSha, updatedAt })) }])).values()],
     });
-  }, [statusSubject, orderedItems, orderedBacklog, visibleQueueIds]);
+  }, [preloadSubject, orderedItems, orderedBacklog, preloadVisibleIds]);
   // Status, checks and discussions are saved ahead of opening. Hover and focus intent lives in a ref, so it never re-renders.
   const openIntent = useRef<{ rows: Map<string, { url: string; headSha: string; baseSha: string; updatedAt: string }[]>; intent: RowIntent } | null>(null);
   // Stable, so the memoized queue list does not re-render for hover wiring.
@@ -1134,6 +1146,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const summaryNavigation = useRef(0);
   const restoredNavigation = useRef(0);
   const historyLocation = useRef<HomeLocation | undefined>(undefined);
+  const scrollRecord = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(scrollRecord.current), []);
   useLayoutEffect(() => {
     if (initializing || loading || !prefs || viewBusy) return;
     if (navigationRestoration && restoredNavigation.current !== navigationRestoration.nonce) {
@@ -2204,7 +2218,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   queueScrollOffset.current = event.currentTarget.scrollTop;
                   if (historyLocation.current) {
                     historyLocation.current = { ...historyLocation.current, scroll: event.currentTarget.scrollTop };
-                    onNavigationChange?.(historyLocation.current);
+                    // Record the position once scrolling pauses, not for every scroll event: each record renders the
+                    // workspace tabs and saves recent visits. Any other record meanwhile carries the latest offset.
+                    clearTimeout(scrollRecord.current);
+                    scrollRecord.current = setTimeout(() => {
+                      if (historyLocation.current) onNavigationChange?.(historyLocation.current);
+                    }, SCROLL_RECORD_MS);
                   }
                 }}
               >

@@ -277,3 +277,30 @@ void test('reset requests them again', async () => {
   assert.equal(accounts.length, 2);
   stop();
 });
+
+void test('the user’s own changes notify urgently; changes pushed from main do not', async () => {
+  const server = backend();
+  const store = createWorkbenchStore(() => server.api, { delay: 5 });
+  const heard: boolean[] = [];
+  const stop = store.subscribe(() => heard.push(store.isUrgent()));
+  await sleep();
+  heard.length = 0;
+  // Pushed from main: a background change renders as a transition.
+  server.state.queue = { ...server.state.queue, items: [item(1), item(2), item(3)] };
+  server.push();
+  await sleep();
+  assert.deepEqual(heard, [false]);
+  assert.equal(store.isUrgent(), false, 'urgency lasts only while listeners run');
+  heard.length = 0;
+  // A write's result and an optimistic edit render with the input that caused them.
+  store.apply(stampQueue({ ...server.state.queue, items: [item(1)] }, server.state.history));
+  store.patch((queue) => ({ ...queue, items: [item(2)] }));
+  assert.deepEqual(heard, [true, true]);
+  heard.length = 0;
+  // A refresh the user asked for, and the saved reviews it reads, render urgently too.
+  server.state.history = [entry('a'), entry('b')];
+  await store.refresh({ history: true });
+  await sleep();
+  assert.ok(heard.length > 0 && heard.every(Boolean), JSON.stringify(heard));
+  stop();
+});

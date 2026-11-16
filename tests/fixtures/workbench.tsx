@@ -1020,7 +1020,10 @@ if (updateScenario) {
     clearSyncHealth: () => Promise.resolve(fixtureWindow.fixtureSyncHealth = { ...health(), drifts: [], stale: [], runs: [], unconfirmed: 0 }),
     onSyncHealthChanged: () => () => {},
     diagnosticsReport: () => Promise.resolve({ kind: 'gnosis-diagnostics', version: 1, syncHealth: health() }),
-    exportDiagnostics: () => Promise.resolve('/tmp/gnosis-diagnostics.json'),
+    exportDiagnostics: (renderer?: unknown) => {
+      (window as unknown as { exportedDiagnostics: unknown }).exportedDiagnostics = renderer;
+      return Promise.resolve('/tmp/gnosis-diagnostics.json');
+    },
     refreshOpenPr: (urls: string[]) => { fixtureWindow.fixtureFocusRefreshes.push(urls); },
   });
 }

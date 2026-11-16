@@ -363,14 +363,15 @@ body:has([role='dialog'][aria-modal='true'], [role='alertdialog']) .app-titlebar
   overflow-wrap: anywhere;
 }
 
-.workspace-content:has(> .workspace-open-error) {
+/* An attribute, not :has(): a :has() rule on this ancestor restyled the whole workspace on every keystroke (#346). */
+.workspace-content[data-open-error] {
   display: flex;
   flex-direction: column;
 }
 .workspace-content > .workspace-open-error {
   flex-shrink: 0;
 }
-.workspace-content:has(> .workspace-open-error) > .workbench-home {
+.workspace-content[data-open-error] > .workbench-home {
   flex: 1;
   min-height: 0;
   height: auto;

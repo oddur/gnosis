@@ -157,6 +157,28 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     await capture('diagnostics-dark');
     await js("document.documentElement.classList.remove('dark')");
+    // One Diagnostics tab (#345, #340): one export, sync health and slow interactions together.
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('[role=dialog] button')].filter(b=>b.textContent.trim()==='Export diagnostics…').length"
+      ),
+      1,
+      'Settings has one Export diagnostics button'
+    );
+    assert.match(
+      await js<string>("document.querySelector('[data-testid=slow-interaction-count]').textContent"),
+      /^\d+ recorded in this window\.$/
+    );
+    assert.equal(
+      await js("document.querySelector('[role=switch][aria-label=\"Log slow interactions\"]').getAttribute('aria-checked')"),
+      'false'
+    );
+    await js("document.querySelector('#slow-interactions-title').closest('section').scrollIntoView({block:'end'})");
+    await capture('diagnostics-slow-interactions-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('diagnostics-slow-interactions-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await js("document.querySelector('#diagnostics-export-title').scrollIntoView({block:'start'})");
 
     // Check now, the toggle and the export.
     await click('Check now');
@@ -173,7 +195,12 @@ void app.whenReady().then(async () => {
       /Next background check/
     );
     await click('Export diagnostics…');
-    await wait("document.querySelector('.sync-health')?.textContent.includes('Saved to /tmp/gnosis-diagnostics.json')");
+    await wait("document.querySelector('.diagnostics-settings')?.textContent.includes('Saved to /tmp/gnosis-diagnostics.json')");
+    assert.equal(
+      await js('Array.isArray(window.exportedDiagnostics?.interactions)&&typeof window.exportedDiagnostics.monitor.threshold'),
+      'number',
+      'The export carries the slow-interaction buffer'
+    );
     win.setSize(720, 700);
     await new Promise((r) => setTimeout(r, 200));
     await capture('diagnostics-narrow');

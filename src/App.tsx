@@ -41,7 +41,11 @@ import { linkErrorNotice, linkSupport, prLinkBlock, prMetadataItem, queueItemFor
 import { formatDeepLink, githubUrl, parseDeepLinkError, parseDeepLinkTarget, prUrl, targetFromLocation, type DeepLinkTarget } from '../lib/deep-link';
 import type { DeepLinkDelivery } from './deep-link-service';
 import type { QueueItem } from '../lib/workbench';
+import { startInteractionMonitor } from '../lib/interaction-latency';
 import { useNotificationToasts } from '../lib/use-notification-toasts';
+
+// Record slow clicks and key presses for the diagnostics export (#345). It only observes; it adds no work to input.
+startInteractionMonitor();
 
 const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID(), target);
 /** A PR link that arrived signed out is kept this long and opens once GitHub is connected. */

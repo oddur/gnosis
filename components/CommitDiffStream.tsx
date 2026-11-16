@@ -172,10 +172,12 @@ export function CommitDiffStream({
       current.current.onPosition(target.key, target.offset);
       return;
     }
+    // The virtualizer's offset follows scroll events. Reading scrollTop here would force a layout in the middle of a
+    // commit, which costs about 150 ms when a 3,000-line file has just expanded (#346).
+    const top = virtual.scrollOffset ?? el.scrollTop;
     const rows = virtual.getVirtualItems();
-    const active = rows.find((row) => row.end > el.scrollTop + 2) ?? rows.at(-1);
-    if (active)
-      current.current.onPosition(current.current.files[active.index].key, el.scrollTop - active.start);
+    const active = rows.find((row) => row.end > top + 2) ?? rows.at(-1);
+    if (active) current.current.onPosition(current.current.files[active.index].key, top - active.start);
   }
   useLayoutEffect(() => {
     remember();

@@ -83,7 +83,13 @@ Object.assign(window, {
   selectOption: async (selector: string, value: string) => {
     if (selector === '[aria-label="Review model"]' && !document.querySelector(`.model-picker-trigger${selector}`))
       return chooseInModelMenu(`[data-model="${value}"]`);
-    const control = document.querySelector(selector);
+    // A control can appear a moment after the input that shows it, as the explanation reader does once its review
+    // has loaded over IPC: about 80 ms after the click, and 500 ms on a CPU four times slower.
+    let control = document.querySelector(selector);
+    for (let i = 0; i < 160 && !control; i++) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      control = document.querySelector(selector);
+    }
     if (control instanceof HTMLButtonElement && control.classList.contains('model-picker-trigger')) {
       if (control.getAttribute('aria-expanded') !== 'true') control.click();
       const root = control.closest('.model-effort-select');
