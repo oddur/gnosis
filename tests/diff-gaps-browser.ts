@@ -1,4 +1,5 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { perfBudget } from './perf-budget';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 
@@ -11,7 +12,8 @@ import { app, BrowserWindow } from 'electron';
  *
  * Gaps: each gap between hunks reveals 20 lines, or all of it, from the after side only, in one request per file.
  */
-const LONG_TASK_BUDGET = Number(process.env.GNOSIS_LONG_TASK_BUDGET ?? 200);
+// Scaled outside strict runs; see tests/perf-budget.ts.
+const LONG_TASK_BUDGET = Number(process.env.GNOSIS_LONG_TASK_BUDGET ?? perfBudget(200));
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
