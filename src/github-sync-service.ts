@@ -1,3 +1,4 @@
+import { noteWork } from '../lib/perf-trace';
 import type {
   GitHubSyncInterest,
   GitHubSyncKind,
@@ -187,6 +188,7 @@ export function createGitHubSyncService(deps: Deps) {
             refresh
           );
           if (generation !== epoch || deps.account() !== account) return;
+          const acceptStarted = performance.now();
           const accepted: GitHubSyncUpdate[] = [];
           for (const [index, task] of batch.entries()) {
             if (!task.observed || tasks.get(`${kind}:${task.target.url}`) !== task || task.version !== versions[index])
@@ -217,6 +219,7 @@ export function createGitHubSyncService(deps: Deps) {
             if (changed || recovered || kind === 'signals' || kind === 'checks' || kind === 'discussion') accepted.push(update);
           }
           if (accepted.length) deps.publish(accepted);
+          noteWork(`github-sync accept ${kind}`, acceptStarted);
         } catch (error) {
           if (generation !== epoch || deps.account() !== account) return;
           const failures: GitHubSyncFailure[] = [];

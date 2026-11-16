@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { noteWork } from './perf-trace';
 import { SQLITE_CACHE_WORKER } from './sqlite-cache-worker';
 export interface CacheWrite {
   id: string;
@@ -40,12 +41,16 @@ export function createCacheStorage() {
       const id = ++nextId;
       pending.set(id, { resolve, reject });
       worker.ref();
+      const started = performance.now();
       try {
+        // Cloning a large write for the worker runs on main.
         worker.postMessage({ id, method, args });
       } catch (error) {
         pending.delete(id);
         reject(error as Error);
         if (!pending.size) worker.unref();
+      } finally {
+        noteWork(`github cache ${method}`, started);
       }
     });
   }

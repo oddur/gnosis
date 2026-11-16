@@ -104,12 +104,16 @@ export function createAppDataStore() {
       const id = ++sequence;
       pending.set(id, { resolve: (value) => resolve(value as T), reject });
       active.ref();
+      const started = performance.now();
       try {
+        // Cloning a large state for the worker runs on main.
         active.postMessage({ id, method, args });
       } catch (error) {
         pending.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
         if (!pending.size) active.unref();
+      } finally {
+        noteWork(`saved data ${method}`, started);
       }
     });
   }

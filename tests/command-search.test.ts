@@ -215,6 +215,35 @@ void test('applies only changed feeds and removes dropped feeds', async () => {
   }
 });
 
+void test('a stream of queue changes builds the queue once per interval, and a search indexes a pending change first', async () => {
+  // Each pass builds the whole queue with hidden PRs. Main changes the queue every few seconds while sync runs (#345).
+  const state = { queue: { items: [item('one', [member(1)])], warnings: [], remaining: 0 } as WorkbenchQueue };
+  const db = new DatabaseSync(':memory:');
+  let reads = 0;
+  const indexer = createSearchIndexer({
+    backend: localSearchBackend(db), account: () => 'maya', directory: () => os.tmpdir(),
+    queue: () => { reads++; return state.queue; },
+    history: () => [], threads: () => undefined, mutedUrls: () => new Set(), ignoreBots: () => true,
+    timing: { queue: 60_000, quiet: 1, max: 5 },
+  });
+  try {
+    await indexer.start();
+    reads = 0;
+    for (let i = 0; i < 5; i++) {
+      indexer.queueChanged();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(reads, 0, 'Changes wait for the interval instead of building the queue each time');
+    state.queue = { ...state.queue, items: [...state.queue.items, item('two', [member(2, { title: 'Arrived meanwhile' })])] };
+    assert.equal((await indexer.search('Arrived meanwhile')).hits[0]?.document.id, 'subject:two', 'A search sees the latest queue');
+    assert.equal(reads, 1, 'One pass covered all five changes');
+    await indexer.search('Arrived meanwhile');
+    assert.equal(reads, 1, 'A search with no change pending builds nothing');
+  } finally {
+    db.close();
+  }
+});
+
 void test('does not resend an evicted unchanged feed', async () => {
   const state = { queue: { items: [], warnings: [], remaining: 0 } as WorkbenchQueue };
   const { db, backend, indexer } = harness(state);
