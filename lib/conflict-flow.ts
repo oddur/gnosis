@@ -1,4 +1,4 @@
-import type { ConflictFileStage } from './conflict-resolution';
+import type { BaseMove, ConflictFileStage } from './conflict-resolution';
 
 /**
  * The one next action for the selected file. Each state has exactly one primary action, so the
@@ -46,19 +46,27 @@ export function describeConflictError(
   const base = context.baseBranch ?? 'the base branch';
   const git = /^Git could not complete this operation\./.test(raw);
   const details = raw;
-  if (/\(stale info\)|\bstale info\b|\(fetch first\)|non-fast-forward|failed to push some refs.*lease/i.test(raw))
+  const reload =
+    'Nothing was pushed. Your resolutions are saved. Select Load latest changes to merge the new commits; resolutions that still apply are reused.';
+  if (
+    /\(stale info\)|\bstale info\b|\(fetch first\)|non-fast-forward|failed to push some refs.*lease/i.test(raw) ||
+    /^The PR branch has new commits/.test(raw) ||
+    // Before Gnosis told a moved PR branch apart from a moved base branch.
+    /PR or (?:its )?base branch changed/i.test(raw)
+  )
+    return { title: `Someone pushed to ${head} after you started.`, body: reload, recovery: 'load-latest', details };
+  if (/^The PR now targets a different base branch/.test(raw))
     return {
-      title: `Someone pushed to ${head} after you started.`,
-      body: 'Nothing was pushed. Your resolutions are saved. Load the latest changes to continue; resolutions that still match are reused.',
+      title: 'This PR now targets a different base branch.',
+      body: 'Nothing was pushed. Your resolutions are saved. Select Load latest changes to merge the new base branch; resolutions that still apply are reused.',
       recovery: 'load-latest',
-      details,
     };
-  if (/PR or (?:its )?base branch changed/i.test(raw))
+  if (/^The base branch kept moving/.test(raw))
     return {
-      title: `${head} or ${base} changed after you started.`,
-      body: 'Nothing was pushed. Your resolutions are saved. Load the latest changes to continue; resolutions that still match are reused.',
-      recovery: 'load-latest',
-      details,
+      title: `${base} kept changing while Gnosis updated the merge.`,
+      body: `Nothing was pushed. Your resolutions are saved. Select ${
+        context.stage === 'push' ? 'Push merge commit' : 'Review and push…'
+      } again in a moment.`,
     };
   if (
     /protected branch|GH006|pre-receive hook declined|required status check|Changes must be made through a pull request/i.test(
@@ -118,4 +126,19 @@ export function describeConflictError(
   return git
     ? { title: 'Git couldn’t finish this step.', body: 'Your resolutions are saved. Nothing was pushed.', details }
     : { title: raw, body: '' };
+}
+
+/**
+ * One line after Gnosis merged new base commits again. With no new conflicts the preview or push went ahead; with new
+ * conflicts the user resolves only those, and nothing was pushed.
+ */
+export function describeBaseMove(move: BaseMove, context: { baseBranch: string; stage: 'preview' | 'push' }) {
+  const base = context.baseBranch;
+  if (!move.conflicts)
+    return context.stage === 'push'
+      ? `${base} moved while you worked, so the merge commit includes its latest changes. Your resolutions still applied.`
+      : `${base} moved while you worked. Gnosis updated the merge; your resolutions still apply.`;
+  const conflicts = move.conflicts === 1 ? 'a new conflict' : `${move.conflicts} new conflicts`;
+  const where = move.files.length === 1 ? move.files[0] : `${move.files.length} files`;
+  return `${base} moved and brought ${conflicts} in ${where}. Nothing was pushed. Your other resolutions are kept.`;
 }

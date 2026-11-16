@@ -9,7 +9,19 @@ import {
   type ConflictSession,
   type ConflictRequest,
   type ConflictReply,
+  type BaseMove,
 } from '../lib/conflict-resolution';
+import {
+  BASE_KEEPS_MOVING,
+  BASE_MOVE_ROUNDS,
+  HEAD_MOVED,
+  RETARGETED,
+  carryFile,
+  relabelMarkers,
+  revisionChange,
+  withResult,
+} from '../lib/conflict-carry';
+import { conflictCount } from '../lib/conflict-blocks';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
 import { runConflictProcess } from './conflict-process';
@@ -163,18 +175,11 @@ export function createConflictResolutionService(deps: Deps) {
     assertAccount(ctx);
     if (state.account !== ctx.account || state.state !== 'OPEN' || state.archived || !state.canUpdateBranch)
       throw new Error('You cannot update this PR branch with the connected account.');
-    if (
-      state.headSha !== session.headSha ||
-      state.baseSha !== session.baseSha ||
-      state.headRepo !== session.headRepo ||
-      state.headBranch !== session.headBranch ||
-      state.baseBranch !== session.baseBranch ||
-      state.repository !== session.baseRepo
-    )
-      throw new Error(
-        'The PR or its base branch changed. Reopen the workspace and start a new resolution before publishing.'
-      );
-    return state;
+    // New commits on the PR are someone else's work: block. New base commits alone are merged again at publish.
+    const change = revisionChange(session, state);
+    if (change === 'head-moved') throw new Error(HEAD_MOVED);
+    if (change === 'retargeted') throw new Error(RETARGETED);
+    return { state, change };
   }
   async function blob(ctx: Context, id: string, sha: string, signal: AbortSignal) {
     if (!oid(sha)) throw new Error('Invalid Git object.');
@@ -476,87 +481,9 @@ export function createConflictResolutionService(deps: Deps) {
     }
     return prepareFull(ctx, id, spec, signal, report);
   }
-  async function open(
-    ctx: Context,
-    url: string,
-    restart: boolean,
-    signal: AbortSignal,
-    report: (text: string) => void
-  ) {
-    const state = await deps.read(url);
-    signal.throwIfAborted();
-    assertAccount(ctx);
-    if (
-      state.account !== ctx.account ||
-      !state.headRepo ||
-      !state.canUpdateBranch ||
-      state.archived ||
-      state.state !== 'OPEN'
-    )
-      throw new Error('You need permission to update this open PR branch.');
-    if (!oid(state.headSha) || !oid(state.baseSha))
-      throw new Error('GitHub has not returned the branch revisions yet.');
-    const id = hash(url);
-    const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
-    if (
-      !restart &&
-      saved?.status === 'published' &&
-      saved.restack &&
-      saved.restack.status !== 'published' &&
-      (saved.commitSha !== state.headSha || saved.headBranch !== state.headBranch || saved.headRepo !== state.headRepo)
-    ) {
-      return { ...saved, stale: true };
-    }
-    if (!restart && saved?.commitSha === state.headSha) {
-      saved.status = 'published';
-      saved.dependents = deps.dependents?.(url) ?? [];
-      const restack = saved.restack;
-      if (restack?.status === 'prepared') {
-        // Recover a successful atomic push whose response or local persistence was interrupted.
-        const states = await Promise.all(restack.branches.map((branch) => deps.read(branch.url)));
-        assertAccount(ctx);
-        if (
-          states.length &&
-          states.every(
-            (value, index) =>
-              value.account === ctx.account &&
-              value.headRepo === restack.branches[index].repo &&
-              value.headBranch === restack.branches[index].branch &&
-              value.headSha === restack.branches[index].newSha
-          )
-        )
-          restack.status = 'published';
-      }
-      await persist(saved);
-      return saved;
-    }
-    if (saved?.status === 'editing' && !restart && saved.files.length > 0)
-      return {
-        ...saved,
-        stale:
-          saved.headSha !== state.headSha ||
-          saved.baseSha !== state.baseSha ||
-          saved.baseBranch !== state.baseBranch ||
-          saved.headBranch !== state.headBranch ||
-          saved.headRepo !== state.headRepo ||
-          saved.baseRepo !== state.repository,
-      };
-    const prepared = await prepare(
-      ctx,
-      id,
-      {
-        headRepo: state.headRepo,
-        baseRepo: state.repository,
-        headSha: state.headSha,
-        baseSha: state.baseSha,
-        headBranch: state.headBranch,
-        baseBranch: state.baseBranch,
-      },
-      signal,
-      report
-    );
-    const { merge, tree } = prepared;
-    const parts = prepared.parts;
+  /** The conflicted files of a prepared merge, with their three versions and Git's conflict text. */
+  async function conflictFiles(ctx: Context, id: string, prepared: Prepared, signal: AbortSignal) {
+    const { merge, tree, parts } = prepared;
     const stages = new Map<string, Partial<Record<string, { mode: string; sha: string }>>>();
     for (const entry of parts) {
       if (!entry) break;
@@ -637,11 +564,11 @@ export function createConflictResolutionService(deps: Deps) {
     }
     if (merge.code === 1 && !files.length)
       throw new Error('Git reported a repository-level conflict. Resolve it with a local merge tool.');
-    const remembered = await memory.apply(
-      memoryScope({ account: ctx.account, headRepo: state.headRepo }),
-      files,
-      signal
-    );
+    return files;
+  }
+  /** Applies resolutions remembered from earlier publications in this repository. They still need review. */
+  async function remember(ctx: Context, headRepo: string, files: ConflictFile[], signal: AbortSignal) {
+    const remembered = await memory.apply(memoryScope({ account: ctx.account, headRepo }), files, signal);
     for (const file of files) {
       const contents = remembered.get(file.path);
       if (contents !== undefined) {
@@ -651,11 +578,236 @@ export function createConflictResolutionService(deps: Deps) {
           'Git reused a resolution you previously reviewed in this repository. Check it in this PR context before marking the file reviewed.';
       }
     }
+    return files;
+  }
+  async function preparation(
+    ctx: Context,
+    id: string,
+    prepared: Prepared,
+    files: ConflictFile[],
+    revisions: { headSha: string; baseSha: string },
+    signal: AbortSignal
+  ): Promise<ConflictSession['preparation']> {
+    if (files.length) return 'conflicts';
     // A shallow cache has no history to walk, but the merge base answers the same question.
     const containsBase = prepared.mergeBase
-      ? prepared.mergeBase === state.baseSha
-      : (await git(ctx, id, ['merge-base', '--is-ancestor', state.baseSha, state.headSha], signal, undefined, [0, 1]))
-          .code === 0;
+      ? prepared.mergeBase === revisions.baseSha
+      : (
+          await git(
+            ctx,
+            id,
+            ['merge-base', '--is-ancestor', revisions.baseSha, revisions.headSha],
+            signal,
+            undefined,
+            [0, 1]
+          )
+        ).code === 0;
+    return containsBase ? 'up-to-date' : 'clean-merge';
+  }
+  /** A three-way merge of plain text. Undefined when the two edits overlap. */
+  async function mergeText(dir: string, ours: string, base: string, theirs: string, signal: AbortSignal) {
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    const temp = await fs.mkdtemp(path.join(dir, 'carry-'));
+    try {
+      const names = ['ours', 'base', 'theirs'];
+      await Promise.all(
+        names.map((name, i) => fs.writeFile(path.join(temp, name), [ours, base, theirs][i], { mode: 0o600 }))
+      );
+      const result = await runGit(temp, ['merge-file', '-p', ...names], signal, {
+        allowed: Array.from({ length: 256 }, (_, i) => i),
+      });
+      if (result.code !== 0) return undefined;
+      return new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn('[conflicts] Could not carry a resolution as text.', error);
+      return undefined;
+    } finally {
+      await fs.rm(temp, { recursive: true, force: true });
+    }
+  }
+  /**
+   * Moves the user's resolutions onto a fresh merge. Blocks whose conflict text is unchanged reuse the user's result.
+   * When the user also edited lines around the blocks, a text merge keeps those edits. Files that no longer conflict
+   * drop out: Git merged them cleanly.
+   */
+  async function carryFiles(
+    dir: string,
+    previous: ConflictFile[],
+    files: ConflictFile[],
+    keepReview: boolean,
+    signal: AbortSignal
+  ) {
+    const byPath = new Map(previous.map((file) => [file.path, file]));
+    const carried: ConflictFile[] = [];
+    const reopened: string[] = [];
+    let conflicts = 0;
+    for (const next of files) {
+      signal.throwIfAborted();
+      const old = byPath.get(next.path);
+      let result = carryFile(old, next, keepReview);
+      if (!result.mapped && old && !old.unsupported && !next.unsupported && !hasConflictMarkers(old.result)) {
+        const merged = await mergeText(
+          dir,
+          old.result,
+          relabelMarkers(old.original, next.original),
+          next.original,
+          signal
+        );
+        if (merged !== undefined) {
+          const open = conflictCount(merged);
+          result = {
+            file: withResult(old, next, merged, keepReview && open === 0 && old.resolved),
+            reused: conflictCount(next.original) - open,
+            open,
+            mapped: true,
+          };
+        }
+      }
+      // Nothing carried over: keep the fresh merge, with any remembered resolution.
+      const file = result.reused ? result.file : { ...next, resolved: false };
+      carried.push(file);
+      if (!file.resolved) {
+        reopened.push(file.path);
+        conflicts += file.unsupported ? 1 : Math.max(result.reused ? result.open : conflictCount(next.original), 1);
+      }
+    }
+    return { files: carried, reopened, conflicts };
+  }
+  /**
+   * The base branch moved but the PR did not. Merge the new base commit again, reuse the user's resolutions, and stop
+   * once a fresh read of the PR shows the same base. A base that keeps moving fails after a few rounds.
+   */
+  async function followBase(
+    ctx: Context,
+    session: ConflictSession,
+    state: PrActionState,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ): Promise<BaseMove> {
+    const from = session.baseSha;
+    const previous = session.files;
+    let live = state;
+    for (let round = 0; round < BASE_MOVE_ROUNDS; round++) {
+      if (!oid(live.baseSha)) throw new Error('GitHub has not returned the branch revisions yet.');
+      report(`${session.baseBranch} moved. Merging its latest commit and reusing your resolutions.`);
+      const spec: MergeSpec = {
+        headRepo: session.headRepo,
+        baseRepo: session.baseRepo,
+        headSha: session.headSha,
+        baseSha: live.baseSha,
+        headBranch: session.headBranch,
+        baseBranch: session.baseBranch,
+      };
+      const prepared = await prepare(ctx, session.id, spec, signal, report);
+      const fresh = await conflictFiles(ctx, session.id, prepared, signal);
+      const known = new Set(previous.map((file) => file.path));
+      await remember(
+        ctx,
+        session.headRepo,
+        fresh.filter((file) => !known.has(file.path)),
+        signal
+      );
+      const carried = await carryFiles(await directory(ctx.account, session.id), previous, fresh, true, signal);
+      session.baseSha = live.baseSha;
+      session.tree = prepared.tree;
+      session.files = carried.files;
+      session.preparation = await preparation(ctx, session.id, prepared, carried.files, session, signal);
+      live = (await current(session, ctx)).state;
+      if (live.baseSha === session.baseSha)
+        return { from, to: session.baseSha, conflicts: carried.conflicts, files: carried.reopened };
+    }
+    throw new Error(BASE_KEEPS_MOVING);
+  }
+  async function open(
+    ctx: Context,
+    url: string,
+    restart: boolean,
+    keep: boolean,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ) {
+    const state = await deps.read(url);
+    signal.throwIfAborted();
+    assertAccount(ctx);
+    if (
+      state.account !== ctx.account ||
+      !state.headRepo ||
+      !state.canUpdateBranch ||
+      state.archived ||
+      state.state !== 'OPEN'
+    )
+      throw new Error('You need permission to update this open PR branch.');
+    if (!oid(state.headSha) || !oid(state.baseSha))
+      throw new Error('GitHub has not returned the branch revisions yet.');
+    const id = hash(url);
+    const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    if (
+      !restart &&
+      saved?.status === 'published' &&
+      saved.restack &&
+      saved.restack.status !== 'published' &&
+      (saved.commitSha !== state.headSha || saved.headBranch !== state.headBranch || saved.headRepo !== state.headRepo)
+    ) {
+      return { ...saved, stale: true };
+    }
+    if (!restart && saved?.commitSha === state.headSha) {
+      saved.status = 'published';
+      saved.dependents = deps.dependents?.(url) ?? [];
+      const restack = saved.restack;
+      if (restack?.status === 'prepared') {
+        // Recover a successful atomic push whose response or local persistence was interrupted.
+        const states = await Promise.all(restack.branches.map((branch) => deps.read(branch.url)));
+        assertAccount(ctx);
+        if (
+          states.length &&
+          states.every(
+            (value, index) =>
+              value.account === ctx.account &&
+              value.headRepo === restack.branches[index].repo &&
+              value.headBranch === restack.branches[index].branch &&
+              value.headSha === restack.branches[index].newSha
+          )
+        )
+          restack.status = 'published';
+      }
+      await persist(saved);
+      return saved;
+    }
+    // New base commits alone leave the draft usable: preview and publish merge them again.
+    if (saved?.status === 'editing' && !restart && saved.files.length > 0) {
+      const change = revisionChange(saved, state);
+      return change === 'head-moved' || change === 'retargeted'
+        ? { ...saved, stale: true, staleReason: change }
+        : { ...saved, stale: false };
+    }
+    const prepared = await prepare(
+      ctx,
+      id,
+      {
+        headRepo: state.headRepo,
+        baseRepo: state.repository,
+        headSha: state.headSha,
+        baseSha: state.baseSha,
+        headBranch: state.headBranch,
+        baseBranch: state.baseBranch,
+      },
+      signal,
+      report
+    );
+    let files = await remember(ctx, state.headRepo, await conflictFiles(ctx, id, prepared, signal), signal);
+    const { tree } = prepared;
+    // Load latest changes keeps the resolutions whose conflicts did not change. New PR commits need a fresh review.
+    if (keep && saved?.status === 'editing' && saved.files.length)
+      files = (
+        await carryFiles(
+          await directory(ctx.account, id),
+          saved.files,
+          files,
+          ['none', 'base-moved'].includes(revisionChange(saved, state)),
+          signal
+        )
+      ).files;
     const session: ConflictSession = {
       id,
       account: ctx.account,
@@ -672,7 +824,7 @@ export function createConflictResolutionService(deps: Deps) {
       version: (saved?.version ?? 0) + 1,
       status: 'editing',
       dependents: deps.dependents?.(url) ?? [],
-      preparation: files.length ? 'conflicts' : containsBase ? 'up-to-date' : 'clean-merge',
+      preparation: await preparation(ctx, id, prepared, files, state, signal),
     };
     signal.throwIfAborted();
     assertAccount(ctx);
@@ -764,16 +916,19 @@ export function createConflictResolutionService(deps: Deps) {
       signal
     );
   }
+  function assertReviewed(session: ConflictSession) {
+    if (session.preparation === 'up-to-date')
+      throw new Error('The PR already contains the base branch. No update is needed.');
+    if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
+      throw new Error('Resolve and mark every file reviewed before publishing.');
+  }
   async function resultTree(
     ctx: Context,
     session: ConflictSession,
     signal: AbortSignal,
     report: (text: string) => void
   ) {
-    if (session.preparation === 'up-to-date')
-      throw new Error('The PR already contains the base branch. No update is needed.');
-    if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
-      throw new Error('Resolve and mark every file reviewed before publishing.');
+    assertReviewed(session);
     await restoreMerge(ctx, session, signal, report);
     await git(ctx, session.id, ['read-tree', session.tree], signal);
     for (const file of session.files) {
@@ -884,7 +1039,7 @@ export function createConflictResolutionService(deps: Deps) {
         // Cleanup checks `busy` before each removal; a request that starts later waits for it to finish.
         await maintenance;
         if (request.kind === 'open')
-          return { session: await open(ctx, request.url, !!request.restart, signal, report) };
+          return { session: await open(ctx, request.url, !!request.restart, !!request.keep, signal, report) };
         const session = sessionFor(ctx, id);
         if (request.version !== session.version)
           throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
@@ -964,6 +1119,7 @@ export function createConflictResolutionService(deps: Deps) {
         }
         if (session.status !== 'editing')
           throw new Error('This resolution has already been published. Refresh the PR.');
+        let baseMoved: BaseMove | undefined;
         if (request.kind === 'discard') {
           deps.storage.write(key, null);
           await deps.storage.flush();
@@ -1048,10 +1204,21 @@ export function createConflictResolutionService(deps: Deps) {
             file.resolved = false;
           }
         } else {
-          await current(session, ctx);
-          const tree = await resultTree(ctx, session, signal, report);
-          const digest = hash(`${session.id}:${session.version}:${tree}:${session.headSha}:${session.baseSha}`);
+          const digestOf = (tree: string) =>
+            hash(`${session.id}:${session.version}:${tree}:${session.headSha}:${session.baseSha}`);
+          /** Merges new base commits again. With new conflicts, the user resolves them before anything is pushed. */
+          const follow = async (state: PrActionState) => {
+            const moved = await followBase(ctx, session, state, signal, report);
+            session.version++;
+            await persist(session);
+            return moved;
+          };
           if (request.kind === 'preview') {
+            assertReviewed(session);
+            const { state, change } = await current(session, ctx);
+            const baseMoved = change === 'base-moved' ? await follow(state) : undefined;
+            if (baseMoved?.conflicts) return { session, baseMoved };
+            const tree = await resultTree(ctx, session, signal, report);
             const patch = (
               await git(ctx, id, ['diff', '--no-ext-diff', '--no-textconv', '--binary', session.headSha, tree], signal)
             ).stdout.toString('utf8');
@@ -1066,23 +1233,32 @@ export function createConflictResolutionService(deps: Deps) {
             const { parsePatchFiles } = await import('@pierre/diffs');
             return {
               session,
+              ...(baseMoved ? { baseMoved } : {}),
               preview: {
                 patch,
-                token: digest,
+                token: digestOf(tree),
                 validation: validation.stdout.toString('utf8'),
                 files: parsePatchFiles(patch).flatMap((p) => p.files),
               },
             };
           }
+          // The token proves the user reviewed this draft, so it is checked against the draft as previewed.
+          let tree = await resultTree(ctx, session, signal, report);
           if (
-            request.previewToken !== digest ||
+            request.previewToken !== digestOf(tree) ||
             typeof request.message !== 'string' ||
             !request.message.trim() ||
             request.message.length > 2000
           )
             throw new Error('Review the complete resolution and enter a commit message before publishing.');
           report('Checking revisions before updating the PR branch.');
-          await current(session, ctx);
+          const { state, change } = await current(session, ctx);
+          if (change === 'base-moved') {
+            // The user's resolutions are unchanged; only commits from the base branch are added to the merge.
+            baseMoved = await follow(state);
+            if (baseMoved.conflicts) return { session, baseMoved };
+            tree = await resultTree(ctx, session, signal, report);
+          }
           await memory.record(memoryScope(session), session.files, signal);
           const sha = (
             await git(
@@ -1132,7 +1308,7 @@ export function createConflictResolutionService(deps: Deps) {
         }
         session.version++;
         await persist(session);
-        return { session };
+        return { session, ...(baseMoved ? { baseMoved } : {}) };
       } finally {
         busy.delete(key);
       }

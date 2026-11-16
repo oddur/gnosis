@@ -564,17 +564,25 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.restack-blocked')");
     await click('Close');
 
-    // A stale draft cannot be published; starting over reads the latest code.
+    // A draft whose PR branch moved cannot be published; Load latest changes keeps what still applies.
     await js(
-      "window.conflictFixture.status='editing';window.conflictFixture.stale=true;window.conflictFixture.files[0].resolved=false;window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}));"
+      "window.conflictFixture.status='editing';window.conflictFixture.stale=true;window.conflictFixture.staleReason='head-moved';window.conflictFixture.files[0].resolved=false;window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}));"
     );
-    await wait("document.querySelector('.conflict-footer')?.textContent.includes('changed since you started')");
+    await wait(
+      "document.querySelector('.conflict-footer')?.textContent.includes('Someone pushed to feature/retry after you started.')"
+    );
     assert.equal(
       await js("!!document.querySelector('[data-conflict-primary]')"),
       false,
-      'Only starting over continues'
+      'Only loading the latest changes continues'
     );
-    assert.ok(await exists('Start over with latest code…'));
+    assert.match(
+      await js<string>("document.querySelector('.conflict-footer').textContent"),
+      /Load latest changes reuses the ones that still apply/,
+      'The copy names the button it offers'
+    );
+    assert.ok(await exists('Load latest changes'));
+    assert.equal(await exists('Start over with latest code…'), false);
     await captureAll('stale');
     await resize(760, 800);
     await capture('narrow');
@@ -584,6 +592,9 @@ void app.whenReady().then(async () => {
     assert.ok(await footerFits(), 'The guide does not clip the footer');
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     await click('Hide guide');
+    await js('window.conflictFixture.stale=false;window.conflictFixture.staleReason=undefined');
+    await click('Load latest changes');
+    await wait("window.conflictCalls.at(-1).kind==='open' && window.conflictCalls.at(-1).keep===true");
     await click('Start over with latest code…');
     await wait("document.querySelector('.conflict-footer')?.textContent.includes('Cancel')");
     await capture('start-over-narrow');
@@ -633,11 +644,11 @@ void app.whenReady().then(async () => {
     await js(
       "window.conflictFixture.preparation='clean-merge';window.conflictFixture.stale=true;window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))"
     );
-    await wait("document.querySelector('.conflict-state h2')?.textContent==='The branches changed'");
+    await wait("document.querySelector('.conflict-state h2')?.textContent==='The PR changed'");
     await noResolveChrome();
     await captureAll('empty-stale');
     await click('Load latest changes');
-    await wait('window.conflictCalls.at(-1).restart===true');
+    await wait('window.conflictCalls.at(-1).restart===true && window.conflictCalls.at(-1).keep===true');
     await click('Close');
 
     // Preparation shows inline progress; Activity is mentioned only when it takes a while.
@@ -770,6 +781,97 @@ void app.whenReady().then(async () => {
     await key('Escape');
     await wait("!document.querySelector('.conflict-workspace')");
     assert.equal(await publishes(), 2);
+
+    // main moves while the user resolves: Gnosis merges it again with the saved resolutions.
+    await js(`(()=>{
+      // A single PR: no dependents to restack after the push.
+      window.conflictFixture.dependents=[];delete window.conflictFixture.restack;
+      const original=window.electronAPI.conflictResolution;
+      window.electronAPI.conflictResolution=async req=>{
+        const s=window.conflictFixture;const move=window.baseMove;
+        if(!move||(req.kind!=='publish'&&req.kind!=='preview')||req.kind!==move.on)return original(req);
+        window.conflictCalls.push(req);window.baseMove=undefined;
+        if(move.kind==='head')throw Error("Error invoking remote method 'conflict-resolution': Error: The PR branch has new commits since you started. Nothing was pushed.");
+        const from=s.baseSha;s.baseSha='f'.repeat(40);
+        if(move.kind==='conflict'){
+          // The new main commit conflicts once more in package.json; its earlier resolution stays.
+          const f=s.files[0];const added='<<<<<<< '+'a'.repeat(40)+'\\n  "version": "1.1.0",\\n=======\\n  "version": "2.0.0",\\n>>>>>>> '+'f'.repeat(40)+'\\n';
+          f.original=added+f.original;f.result=added+f.result;f.resolved=false;
+          s.version++;return {session:structuredClone(s),baseMoved:{from,to:s.baseSha,conflicts:1,files:[f.path]}};
+        }
+        s.status='published';s.commitSha='d'.repeat(40);s.version++;
+        return {session:structuredClone(s),baseMoved:{from,to:s.baseSha,conflicts:0,files:[]}};
+      };
+    })()`);
+    const reviewAndPush = async () => {
+      await open();
+      await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='confirm'");
+      await click('Review and push…');
+      await wait("document.querySelector('.conflict-confirm .step-card')");
+    };
+
+    // 1. A new conflict from main: only that conflict reopens, nothing is pushed, the other file stays reviewed.
+    await js("window.baseMove={on:'publish',kind:'conflict'}");
+    await reviewAndPush();
+    await click('Push merge commit');
+    await wait("!document.querySelector('.conflict-confirm') && document.querySelector('.conflict-files')");
+    assert.equal(await publishes(), 3);
+    assert.equal(await js("document.querySelector('.conflict-file-title strong').textContent"), 'package.json');
+    await wait("document.querySelectorAll('.conflict-block[data-state=open]').length===1");
+    assert.equal(
+      await js<string>("document.querySelector('.conflict-footer-status').textContent"),
+      'main moved and brought a new conflict in package.json. Nothing was pushed. Your other resolutions are kept.'
+    );
+    assert.equal(await stage(), 'conflicted');
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-files [data-stage]')].map(e=>e.dataset.stage)"),
+      ['conflicted', 'reviewed'],
+      'Only the file with the new conflict needs work'
+    );
+    assert.doesNotMatch(await js<string>("document.querySelector('.conflict-view').innerText"), /<{7}|>{7}/);
+    await captureAll('base-moved-new-conflict');
+    await js("document.querySelector('.conflict-block[data-state=open] [data-choice=theirs]').click()");
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='review-result'");
+    await click('Review result');
+    await click('Mark reviewed');
+    await wait("document.querySelector('.conflict-confirm .step-card')");
+    assert.match(await js<string>('window.conflictFixture.files[0].result'), /"version": "2.0.0"/);
+    await click('Close');
+
+    // 2. main moved again with no new conflict: the push goes ahead and says so in one line.
+    await js("window.baseMove={on:'publish',kind:'clean'}");
+    await reviewAndPush();
+    await click('Push merge commit');
+    await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
+    assert.equal(await publishes(), 4);
+    assert.equal(
+      await js<string>("document.querySelector('.conflict-outcome [data-base-moved]').textContent"),
+      'main moved while you worked, so the merge commit includes its latest changes. Your resolutions still applied.'
+    );
+    await captureAll('base-moved-pushed');
+    await click('Done');
+
+    // 3. Someone pushed to the PR: blocked, and the recovery is the button the copy names.
+    await js(
+      "Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined});window.conflictFixture.files.forEach(f=>f.resolved=true);window.baseMove={on:'preview',kind:'head'}"
+    );
+    await open();
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='confirm'");
+    await click('Review and push…');
+    await wait("document.querySelector('.conflict-footer-status[data-error]')");
+    assert.equal(
+      await js<string>("document.querySelector('.conflict-footer-status[data-error]').textContent"),
+      'Someone pushed to feature/retry after you started. Nothing was pushed. Your resolutions are saved. Select Load latest changes to merge the new commits; resolutions that still apply are reused.'
+    );
+    assert.equal(await exists('Review and push…'), false, 'Publishing stays blocked');
+    assert.ok(await footerFits());
+    await captureAll('head-moved');
+    await click('Load latest changes');
+    await wait(
+      "window.conflictCalls.at(-1).kind==='open' && window.conflictCalls.at(-1).restart===true && window.conflictCalls.at(-1).keep===true"
+    );
+    assert.equal(await publishes(), 4, 'A blocked publish never pushes');
+    await click('Close');
     console.log(
       'Conflict workspace passed: labelled versions, per-block undo, shortcuts, review before mark, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'
     );

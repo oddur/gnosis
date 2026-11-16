@@ -31,7 +31,12 @@ import {
 } from './ConflictBlocks';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine, type SuggestScope } from './ConflictSuggestMenu';
 import { conflictCount, conflictLabels } from '../lib/conflict-blocks';
-import { conflictFileAction, describeConflictError, type ConflictErrorCopy } from '../lib/conflict-flow';
+import {
+  conflictFileAction,
+  describeBaseMove,
+  describeConflictError,
+  type ConflictErrorCopy,
+} from '../lib/conflict-flow';
 import { workbenchStore } from '../lib/workbench-store';
 import type { ActivityTask } from '../lib/activity';
 import {
@@ -242,6 +247,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [message, setMessage] = useState('');
   const [resetPrompt, setResetPrompt] = useState(false);
   const [outcome, setOutcome] = useState('');
+  // One line after Gnosis merged new commits from the base branch again.
+  const [baseNote, setBaseNote] = useState('');
   const [hint, setHint] = useState('');
   const [guideOpen, setGuideOpen] = useState(() => !guideDismissed());
   // The draft each file had when its result was last shown next to the PR. Mark reviewed needs it.
@@ -387,7 +394,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       setBusy(false);
     }
   }
-  async function load(restart = false) {
+  /** `keep` carries over resolutions whose conflicts did not change; Start over drops them. */
+  async function load(restart = false, keep = false) {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
@@ -395,13 +403,19 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     setFailedKind(undefined);
     try {
       await saveChain.current;
-      const reply = await window.electronAPI.conflictResolution({ kind: 'open', url, restart });
+      const reply = await window.electronAPI.conflictResolution({
+        kind: 'open',
+        url,
+        restart,
+        ...(keep ? { keep } : {}),
+      });
       setPreview(undefined);
       setConfirming(false);
       setShown({});
       apply(reply, selectedRef.current);
       setResetPrompt(false);
       setOutcome('');
+      setBaseNote('');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setFailedKind('open');
@@ -414,10 +428,27 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     void load();
   }, []);
 
+  /** New base commits brought new conflicts: back to the files, on the first one that needs work. */
+  function showNewConflicts(reply: ConflictReply) {
+    setPreview(undefined);
+    setConfirming(false);
+    setShown({});
+    const first = reply.session.files.find((f) => !f.resolved && !f.unsupported) ?? reply.session.files.at(0);
+    apply(reply, first?.path ?? selectedRef.current, 'conflicts');
+  }
   function confirm() {
     void run(
       (s) => ({ kind: 'preview', id: s.id, version: s.version }),
       (reply) => {
+        setBaseNote(
+          reply.baseMoved
+            ? describeBaseMove(reply.baseMoved, { baseBranch: reply.session.baseBranch, stage: 'preview' })
+            : ''
+        );
+        if (!reply.preview) {
+          showNewConflicts(reply);
+          return;
+        }
         setSession(reply.session);
         setPreview(reply.preview);
         setConfirming(true);
@@ -439,6 +470,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         const states = reply.session.files.map((f) => ({ file: f, stage: conflictFileStage(f) }));
         const next = nextPending(path, states);
         apply(reply, next?.path ?? path);
+        setBaseNote('');
         finished = !next;
       }
     ).then((ok) => {
@@ -588,7 +620,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     : undefined;
   const recover = (copy: ConflictErrorCopy) =>
     copy.recovery === 'load-latest' ? (
-      <Button size="sm" disabled={busy} onClick={() => void load(true)}>
+      <Button size="sm" disabled={busy} onClick={() => void load(true, true)}>
         Load latest changes
       </Button>
     ) : copy.recovery === 'check-again' ? (
@@ -601,6 +633,10 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       </Button>
     ) : undefined;
   const upToDate = session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date';
+  const staleSummary =
+    session?.staleReason === 'retargeted'
+      ? 'This PR now targets a different base branch.'
+      : `Someone pushed to ${session?.headBranch ?? 'the PR branch'} after you started.`;
   const showRail = !!steps && !!session && !upToDate && !(session.stale && !session.files.length);
 
   const primaryButton = (() => {
@@ -673,6 +709,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     ? activity?.detail || 'Working…'
     : hint ||
       outcome ||
+      baseNote ||
       (session
         ? markersRemain && fileStates.find((s) => s.file.path === selected)?.conflicts
           ? `${fileStates.find((s) => s.file.path === selected)?.conflicts} ${
@@ -825,7 +862,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                         ? `${session.files.length} ${session.files.length === 1 ? 'file' : 'files'} resolved by you`
                         : 'No conflicts to resolve'}
                     </li>
-                    <li>{session.baseBranch}’s changes included</li>
+                    <li data-base-moved={baseNote ? '' : undefined}>
+                      {baseNote || `${session.baseBranch}’s changes included`}
+                    </li>
                     <li>Checks restarting on GitHub</li>
                   </ul>
                   <p className="conflict-outcome-undo">
@@ -938,6 +977,14 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 void run(
                   (s) => ({ kind: 'publish', id: s.id, version: s.version, previewToken: preview.token, message }),
                   (reply) => {
+                    if (reply.baseMoved)
+                      setBaseNote(
+                        describeBaseMove(reply.baseMoved, { baseBranch: reply.session.baseBranch, stage: 'push' })
+                      );
+                    if (reply.session.status !== 'published') {
+                      showNewConflicts(reply);
+                      return;
+                    }
                     setSession(reply.session);
                     setConfirming(false);
                   }
@@ -946,6 +993,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             >
               {pushError && errorCopy && <ErrorPanel copy={errorCopy} actions={recover(errorCopy)} focus />}
               <ul className="conflict-confirm-facts">
+                {baseNote && <li data-base-moved="">{baseNote}</li>}
                 <li>
                   {ownBranch ? (
                     <>
@@ -976,11 +1024,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           <div className="conflict-state" role="status">
             {session.stale ? (
               <>
-                <h2>The branches changed</h2>
-                <p>
-                  {session.headBranch} or {session.baseBranch} changed since this was prepared. Nothing was pushed.
-                </p>
-                <Button size="sm" disabled={busy} onClick={() => void load(true)}>
+                <h2>The PR changed</h2>
+                <p>{staleSummary} Nothing was pushed.</p>
+                <Button size="sm" disabled={busy} onClick={() => void load(true, true)}>
                   Load latest changes
                 </Button>
               </>
@@ -1194,22 +1240,11 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
               {session.stale ? (
                 <>
                   <span className="conflict-footer-status" role="status">
-                    {session.baseBranch} or {session.headBranch} changed since you started. Your resolutions are saved.
+                    {staleSummary} Your resolutions are saved; Load latest changes reuses the ones that still apply.
                   </span>
-                  {resetPrompt ? (
-                    <>
-                      <Button size="sm" variant="ghost" onClick={() => setResetPrompt(false)}>
-                        Cancel
-                      </Button>
-                      <Button size="sm" disabled={busy} onClick={() => void load(true)}>
-                        Start over
-                      </Button>
-                    </>
-                  ) : (
-                    <Button size="sm" disabled={busy} onClick={() => setResetPrompt(true)}>
-                      Start over with latest code…
-                    </Button>
-                  )}
+                  <Button size="sm" disabled={busy} onClick={() => void load(true, true)}>
+                    Load latest changes
+                  </Button>
                 </>
               ) : resetPrompt ? (
                 <>
@@ -1238,7 +1273,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                       {!busy && footerStatus}
                     </span>
                   )}
-                  {primaryButton}
+                  {/* The error names Load latest changes, so the footer offers it in place of the file action. */}
+                  {error && errorCopy?.recovery === 'load-latest' ? recover(errorCopy) : primaryButton}
                 </>
               )}
             </footer>
