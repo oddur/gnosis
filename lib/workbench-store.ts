@@ -63,8 +63,12 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
   let dropped = false;
   const inFlight = new Map<string, Promise<void>>();
   const again = new Set<string>();
+  /** Kinds an urgent caller is waiting on; their result renders urgently. */
+  const urgentLoads = new Set<string>();
   let historyLoad: Promise<void> | undefined;
   let historyAgain = false;
+  /** A history read joined by an urgent one renders urgently too. */
+  let historyUrgent = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: { revisions?: WorkbenchRevisions; read: boolean } | undefined;
   let snapshotMarked = false;
@@ -73,7 +77,17 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
   /** The account main named with the first snapshot's saved status. */
   let signalsAccount: string | undefined;
 
-  const notify = () => { for (const listener of [...listeners]) listener(); };
+  // A change the user made, or asked for, renders with the input that caused it; one pushed from main renders as a
+  // transition. Otherwise a form that closes at once would show the old value until the transition commits.
+  let urgentNotify = false;
+  const notify = (urgent = false) => {
+    urgentNotify = urgent;
+    try {
+      for (const listener of [...listeners]) listener();
+    } finally {
+      urgentNotify = false;
+    }
+  };
   const setStatus = (next: WorkbenchStoreStatus) => {
     if (next.loaded === status.loaded && next.error === status.error) return;
     status = next;
@@ -106,22 +120,23 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
     if (next.parts && queue.parts && PARTS.every((part) => next.parts?.[part] === queue.parts?.[part])) result.parts = queue.parts;
     return result;
   }
-  function commit(next: WorkbenchQueue) {
-    span('queue store update', () => commitNow(next));
+  function commit(next: WorkbenchQueue, urgent = false) {
+    span('queue store update', () => commitNow(next, urgent));
   }
-  function commitNow(next: WorkbenchQueue) {
+  function commitNow(next: WorkbenchQueue, urgent: boolean) {
     const shared = share(next);
     const keys = new Set([...Object.keys(shared), ...Object.keys(queue)]) as Set<keyof WorkbenchQueue>;
     const changed = [...keys].some((key) => shared[key] !== queue[key]);
     if (changed) queue = Object.freeze(shared);
     const statusChanged = !status.loaded || status.error !== undefined || !!status.saved;
     if (statusChanged) status = { loaded: true };
-    if (changed || statusChanged) notify();
-    if (next.historyRevision === undefined || next.historyRevision !== held) void loadHistory();
+    if (changed || statusChanged) notify(urgent);
+    if (next.historyRevision === undefined || next.historyRevision !== held) void loadHistory(false, urgent);
   }
-  function loadHistory(force = false): Promise<void> {
+  function loadHistory(force = false, urgent = false): Promise<void> {
     if (historyLoad) {
       if (force) historyAgain = true;
+      if (urgent) historyUrgent = true;
       return historyLoad;
     }
     const started = generation;
@@ -137,25 +152,27 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
         held = historyRevision(entries);
         if (!sameArray(shared, history)) {
           history = Object.freeze(shared) as ReviewHistoryEntry[];
-          notify();
+          notify(urgent || historyUrgent);
         }
       } catch {
         /* Keep the saved reviews already shown; the next change or refresh reads them again. */
       }
     })().finally(() => {
       historyLoad = undefined;
-      if (historyAgain) {
-        historyAgain = false;
-        void loadHistory();
-      }
+      const again = historyAgain;
+      const urgentAgain = historyUrgent;
+      historyAgain = false;
+      historyUrgent = false;
+      if (again) void loadHistory(false, urgentAgain);
     });
     historyLoad = request;
     return request;
   }
   /** One request per kind. A snapshot read requested during another runs once more afterwards. */
-  function load(kind: 'snapshot' | 'discover' | 'force'): Promise<void> {
+  function load(kind: 'snapshot' | 'discover' | 'force', urgent = false): Promise<void> {
     const current = inFlight.get(kind);
     if (current) {
+      if (urgent) urgentLoads.add(kind);
       if (kind !== 'snapshot') return current;
       // A read requested now must observe changes made before the request, so wait for the follow-up read.
       again.add(kind);
@@ -190,14 +207,15 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
           signalsAccount = savedSignals.account;
           options.onSavedSignals?.(savedSignals.account, savedSignals.values);
         }
-        commit(queued.revision ? queued : stampQueue(queued));
+        commit(queued.revision ? queued : stampQueue(queued), urgent || urgentLoads.has(kind));
       } catch (error) {
         if (started.generation === generation) setStatus({ loaded: status.loaded, error: error instanceof Error ? error.message : String(error) });
         throw error;
       }
     })().finally(() => {
       inFlight.delete(kind);
-      if (again.delete(kind)) void load(kind).catch(() => {});
+      const urgentAgain = urgentLoads.delete(kind);
+      if (again.delete(kind)) void load(kind, urgentAgain).catch(() => {});
     });
     inFlight.set(kind, request);
     return request;
@@ -268,19 +286,21 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
       queue = Object.freeze(share(rest));
       seededAccount = owner;
       status = { loaded: true, saved: true };
-      notify();
+      notify(true);
       return true;
     },
     getHistory: () => history,
     getStatus: () => status,
+    /** True while listeners hear about a change that should render with the input that caused it. */
+    isUrgent: () => urgentNotify,
     async refresh(request: WorkbenchRefresh = {}) {
-      const reviews = request.history ? loadHistory(true) : undefined;
-      await load(request.discover ? (request.force ? 'force' : 'discover') : 'snapshot');
+      const reviews = request.history ? loadHistory(true, true) : undefined;
+      await load(request.discover ? (request.force ? 'force' : 'discover') : 'snapshot', true);
       await reviews;
     },
     /** Show the result of a write. It applies even while a write holds the store. */
     apply(next: WorkbenchQueue) {
-      commit(next.revision ? next : stampQueue(next));
+      commit(next.revision ? next : stampQueue(next), true);
     },
     /** Optimistic local edit. Edited entries lose their revisions, so the next snapshot replaces them. */
     patch(edit: (current: WorkbenchQueue) => WorkbenchQueue) {
@@ -294,7 +314,7 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
         items: next.items.map(unstamp),
         starredItems: next.starredItems?.map(unstamp),
       });
-      notify();
+      notify(true);
     },
     /** Discard reads that start before the returned release, then read once if any were discarded. */
     hold() {
@@ -352,11 +372,11 @@ export const workbenchStore = createWorkbenchStore(() => window.electronAPI, {
 
 // Queue updates re-render hundreds of rows and every open tab's listings, so they render as transitions (#345).
 export function useWorkbenchQueue(enabled = true, store: WorkbenchStore = workbenchStore) {
-  return useTransitionStore(enabled ? store.subscribe : null, store.getQueue);
+  return useTransitionStore(enabled ? store.subscribe : null, store.getQueue, store.isUrgent);
 }
 export function useReviewHistory(enabled = true, store: WorkbenchStore = workbenchStore) {
-  return useTransitionStore(enabled ? store.subscribe : null, store.getHistory);
+  return useTransitionStore(enabled ? store.subscribe : null, store.getHistory, store.isUrgent);
 }
 export function useWorkbenchStatus(enabled = true, store: WorkbenchStore = workbenchStore) {
-  return useTransitionStore(enabled ? store.subscribe : null, store.getStatus);
+  return useTransitionStore(enabled ? store.subscribe : null, store.getStatus, store.isUrgent);
 }
