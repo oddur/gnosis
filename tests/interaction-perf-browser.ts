@@ -337,7 +337,10 @@ void app.whenReady().then(async () => {
     // Five PR tabs, each visited once so it mounts, then back to the queue.
     const tabs = "document.querySelectorAll('.workspace-tab-select')";
     const openTabs = async (offset = 0) => {
-      for (let i = offset; i < offset + 5; i++) {
+      // The queue mounts only the rows near the viewport: about 13 in the 681 px a Windows runner gives this window.
+      const mounted = await js<number>("document.querySelector('[data-workspace-active=true] .queue-list').querySelectorAll('.queue-row-main').length");
+      const start = Math.max(0, Math.min(offset, mounted - 5));
+      for (let i = start; i < start + 5; i++) {
         const before = await js<number>(`${tabs}.length`);
         await js(
           `document.querySelector('[data-workspace-active=true] .queue-list').querySelectorAll('.queue-row-main')[${i}].dispatchEvent(new MouseEvent('click',{bubbles:true,metaKey:true}))`
@@ -646,9 +649,11 @@ void app.whenReady().then(async () => {
     // ── The monitor records a slow click with its target, split and the script that caused it ──
     await js(`(()=>{const b=document.createElement('button');b.className='perf-probe';b.dataset.perfProbe='';b.textContent='Probe';
       b.style.cssText='position:fixed;right:8px;bottom:8px;z-index:9999';
-      b.addEventListener('click',function busyProbe(){const end=performance.now()+180;while(performance.now()<end);});
+      b.addEventListener('click',function busyProbe(){const end=performance.now()+180;while(performance.now()<end);window.__probeClicks=(window.__probeClicks??0)+1});
       document.body.append(b)})()`);
-    const probe = await measure('probe', () => mouse("document.querySelector('.perf-probe')"), 'true');
+    // Measured once the handler has run: on a slow runner the input can arrive after the measure's settling time.
+    await js('window.__probeClicks=0');
+    const probe = await measure('probe', () => mouse("document.querySelector('.perf-probe')"), 'window.__probeClicks===1');
     console.log('Probe interaction:', JSON.stringify(probe));
     assert.ok(probe.duration >= 180, `A 180 ms handler is a slow interaction: ${probe.duration}`);
     assert.ok(probe.processing >= 170, `Its time is in the handlers: ${JSON.stringify(probe)}`);
@@ -668,7 +673,8 @@ void app.whenReady().then(async () => {
 
     // ── A click that waits behind work already running names that work (input-delay attribution) ──
     await js(`(()=>{const b=document.createElement('button');b.className='perf-probe';b.textContent='Probe';
-      b.style.cssText='position:fixed;right:8px;bottom:8px;z-index:9999';document.body.append(b)})()`);
+      b.style.cssText='position:fixed;right:8px;bottom:8px;z-index:9999';window.__probeClicks=0;
+      b.addEventListener('click',()=>{window.__probeClicks++});document.body.append(b)})()`);
     const probePoint = await point("document.querySelector('.perf-probe')");
     const waited = await measure(
       'probe',
@@ -678,7 +684,7 @@ void app.whenReady().then(async () => {
         win.webContents.sendInputEvent({ type: 'mouseDown', ...probePoint, button: 'left', clickCount: 1 });
         win.webContents.sendInputEvent({ type: 'mouseUp', ...probePoint, button: 'left', clickCount: 1 });
       },
-      'true'
+      'window.__probeClicks===1'
     );
     console.log('Input-delay probe:', JSON.stringify(waited));
     assert.ok(waited.inputDelay >= 100, `The click waited behind the busy timer: ${JSON.stringify(waited)}`);

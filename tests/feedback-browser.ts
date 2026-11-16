@@ -143,8 +143,10 @@ void app.whenReady().then(async () => {
       'The guard is restored in the latest commit.'
     );
     // The notice scrolls itself into view again once the restored draft has laid out, a frame after it appears.
+    // Within a pixel: at a device pixel ratio of 1 scroll offsets are whole pixels, so a notice at a fractional position
+    // scrolled flush with the bottom can end half a pixel past it (Windows: 632.52 against 632).
     const visible =
-      "(()=>{const a=document.querySelector('.feedback-message [role=alert]').getBoundingClientRect(),b=document.querySelector('.feedback-conversation-body').getBoundingClientRect();return a.top>=b.top-0.5 && a.bottom<=b.bottom+0.5})()";
+      "(()=>{const a=document.querySelector('.feedback-message [role=alert]').getBoundingClientRect(),b=document.querySelector('.feedback-conversation-body').getBoundingClientRect();return a.top>=b.top-1 && a.bottom<=b.bottom+1})()";
     await wait(visible).catch(() => {});
     assert.ok(
       await js(visible),
