@@ -84,7 +84,7 @@ void app.whenReady().then(async () => {
     );
     await click('Show code');
     await wait("!document.querySelector('[role=dialog]')");
-    assert.equal(await js("document.querySelector('[data-source-line=\"3\"]')?.getAttribute('data-selected')"), 'true');
+    await wait("document.querySelector('[data-source-line=\"3\"]')?.getAttribute('data-selected')==='true'");
     await click('Explore diagram');
     await wait("document.querySelectorAll('.diagram-entity-target').length===3");
     win.focus();
