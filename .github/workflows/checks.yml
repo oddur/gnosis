@@ -111,6 +111,9 @@ jobs:
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - name: Browser suites
+        # Shared runners are about twice as slow as a quiet machine; see tests/perf-budget.ts.
+        env:
+          GNOSIS_PERF_BUDGET_SCALE: '2'
         run: xvfb-run -a node scripts/run-browser-suites.mjs --shard ${{ matrix.shard }}/6 --durations browser-suite-durations-${{ matrix.shard }}.json
       - name: Upload suite durations
         if: always()
@@ -156,6 +159,9 @@ jobs:
       - run: npm ci
       - run: npm run prepare:mergiraf
       - name: Browser suites
+        # Shared runners are about twice as slow as a quiet machine; see tests/perf-budget.ts.
+        env:
+          GNOSIS_PERF_BUDGET_SCALE: '2'
         run: node scripts/run-browser-suites.mjs --shard ${{ matrix.shard }}/3
 
   extension:
