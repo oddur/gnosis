@@ -2,7 +2,19 @@
 
 export type TargetBrowser = 'chrome' | 'firefox';
 
-export const EXTENSION_VERSION = '0.1.0';
+/**
+ * The extension version is the app version from package.json, so a release tag `vX.Y.Z` ships extension
+ * X.Y.Z (the release workflow sets package.json from the tag). Stores accept only one to four dot-separated
+ * integers, so a pre-release suffix (`0.41.0-beta.1`) is dropped from `version` and kept in `version_name`.
+ */
+export function extensionVersion(packageVersion: string): { version: string; versionName?: string } {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(packageVersion);
+  if (!match) throw new Error(`Unsupported package.json version for the extension: ${packageVersion}`);
+  const parts = match.slice(1, 4).map(Number);
+  if (parts.some((part) => part > 65535)) throw new Error(`Version part above 65535: ${packageVersion}`);
+  const version = parts.join('.');
+  return version === packageVersion ? { version } : { version, versionName: packageVersion };
+}
 
 /**
  * Placeholder Firefox add-on id. AMO ties signing and updates to this id, so choose the final one before
@@ -17,14 +29,17 @@ const ICONS = {
   '16': 'icons/icon-16.png',
   '32': 'icons/icon-32.png',
   '48': 'icons/icon-48.png',
+  '96': 'icons/icon-96.png',
   '128': 'icons/icon-128.png',
 };
 
-export function buildManifest(browser: TargetBrowser): Record<string, unknown> {
+export function buildManifest(browser: TargetBrowser, packageVersion: string): Record<string, unknown> {
+  const { version, versionName } = extensionVersion(packageVersion);
   const manifest: Record<string, unknown> = {
     manifest_version: 3,
     name: 'Open in Gnosis',
-    version: EXTENSION_VERSION,
+    version,
+    ...(versionName && browser === 'chrome' ? { version_name: versionName } : {}),
     description: 'Adds an "Open in Gnosis" button to GitHub pull request, commit and compare pages.',
     homepage_url: 'https://github.com/oddur/gnosis',
     icons: ICONS,
