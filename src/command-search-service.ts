@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isCacheRecord, type CacheChange } from '../lib/github-cache';
 import { isDependabot } from '../lib/workbench';
+import { noteWork } from '../lib/perf-trace';
 import {
   boundDocument,
   hydrateDestination,
@@ -141,7 +142,8 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
  */
 export function createSearchIndexer(deps: IndexerDeps) {
   const now = deps.now ?? Date.now;
-  const timing = { queue: 1000, quiet: 500, max: 2000, ...deps.timing };
+  // A queue pass builds the whole queue with hidden PRs (#345): at most one every 10 s, and at once before a search.
+  const timing = { queue: 10_000, quiet: 500, max: 2000, ...deps.timing };
   /** What the worker holds for `account`: feed to hash. */
   const sent = new Map<string, string>();
   const pending = new Map<string, Pending>();
@@ -161,6 +163,11 @@ export function createSearchIndexer(deps: IndexerDeps) {
   let queueAgain = false;
   let sending: Promise<void> = Promise.resolve();
   let mainMs = 0;
+  /** Main-thread time, for the search's own timing and as named work for the main-process monitor. */
+  const spent = (label: string, begun: number) => {
+    mainMs += performance.now() - begun;
+    noteWork(label, begun);
+  };
   const unref = (timer: ReturnType<typeof setTimeout>) => {
     (timer as { unref?: () => void }).unref?.();
     return timer;
@@ -231,7 +238,7 @@ export function createSearchIndexer(deps: IndexerDeps) {
     let count = 0;
     for (const item of items.values()) {
       if (++count % ITEMS_PER_TURN === 0) {
-        mainMs += performance.now() - begun;
+        spent('search index queue', begun);
         await new Promise((resolve) => setImmediate(resolve));
         if (run !== generation) return;
         begun = performance.now();
@@ -248,7 +255,7 @@ export function createSearchIndexer(deps: IndexerDeps) {
       count = 0;
       for (const [url, title] of urls) {
         if (++count % ITEMS_PER_TURN === 0) {
-          mainMs += performance.now() - begun;
+          spent('search index queue', begun);
           await new Promise((resolve) => setImmediate(resolve));
           if (run !== generation) return;
           begun = performance.now();
@@ -257,7 +264,7 @@ export function createSearchIndexer(deps: IndexerDeps) {
         if (threads) stage(`threads:${url}`, commentDocuments(url, threads, title), false);
       }
     }
-    mainMs += performance.now() - begun;
+    spent('search index queue', begun);
   }
   /** Saved reviews: the worker stats each file and rebuilds only the ones that changed. */
   function reviewPass(force = false) {
@@ -346,7 +353,7 @@ export function createSearchIndexer(deps: IndexerDeps) {
       batch.push(op);
       docs += size;
     }
-    mainMs += performance.now() - begun;
+    spent('search index send', begun);
     for (const ops of batches) {
       if (!ops.length) continue;
       const applying = performance.now();
@@ -364,6 +371,14 @@ export function createSearchIndexer(deps: IndexerDeps) {
         console.warn('Could not update the search index:', errorText(error));
       }
     }
+  }
+  /** Runs the queue pass a change scheduled, now. */
+  function indexQueueNow(): Promise<void> {
+    if (!queueTimer) return Promise.resolve();
+    clearTimeout(queueTimer);
+    queueTimer = undefined;
+    currentAccount();
+    return runQueuePass().then(scheduleFlush, (error: unknown) => console.warn('Could not index the queue:', errorText(error)));
   }
   /** Send everything pending now. Resolves once the worker has applied it. */
   function flush(): Promise<void> {
@@ -415,19 +430,13 @@ export function createSearchIndexer(deps: IndexerDeps) {
       }
       scheduleFlush();
     },
-    /** After every queue change. Debounced; only changed entries are sent. */
+    /**
+     * After every queue change. The first change starts a timer and later ones join it, so a steady stream of changes
+     * indexes at most once per interval instead of never. Only changed entries are sent.
+     */
     queueChanged() {
-      if (!started) return;
-      if (queueTimer) clearTimeout(queueTimer);
-      queueTimer = unref(
-        setTimeout(() => {
-          queueTimer = undefined;
-          currentAccount();
-          void runQueuePass().then(scheduleFlush, (error: unknown) =>
-            console.warn('Could not index the queue:', errorText(error))
-          );
-        }, timing.queue)
-      );
+      if (!started || queueTimer) return;
+      queueTimer = unref(setTimeout(() => void indexQueueNow(), timing.queue));
     },
     flush,
     async search(query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> {
@@ -436,8 +445,9 @@ export function createSearchIndexer(deps: IndexerDeps) {
       const owner = currentAccount();
       const first = !built;
       mainMs = 0;
-      // A search before the first build waits for it, once.
+      // A search before the first build waits for it, once. A queue change not yet indexed is indexed first.
       await start().catch(() => {});
+      await indexQueueNow();
       await flush();
       const before = performance.now();
       const request: SearchRequest = {

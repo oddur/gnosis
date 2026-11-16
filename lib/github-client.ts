@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
+import { noteWork } from './perf-trace';
 import { normalizePreloadBudgetPercent } from './preload-settings';
 import {
   automaticDeadline,
@@ -565,6 +566,20 @@ export function createGitHubClientPool(options: Options = {}) {
           try {
             // Hooks share the original options object, including auth and request logging.
             if (binary) requestOptions.request.parseSuccessResponseBody = false;
+            // Octokit parses the body on main once it arrives. Note when it did, so the parse and the saving below
+            // are named work: a large response blocks main with no other name (#345).
+            let bodyAt: number | undefined;
+            const fetchBody = (requestOptions.request.fetch as typeof fetch | undefined) ?? options.fetch ?? globalThis.fetch;
+            requestOptions.request.fetch = async (...args: Parameters<typeof fetch>) => {
+              const raw = await fetchBody(...args);
+              const text = raw.text.bind(raw);
+              raw.text = async () => {
+                const body = await text();
+                bodyAt = performance.now();
+                return body;
+              };
+              return raw;
+            };
             const response = await request(requestOptions);
             if (graph && isCacheRecord(response.data) && isCacheRecord(response.data.data) &&
               isCacheRecord(response.data.data.rateLimit)) {
@@ -602,6 +617,7 @@ export function createGitHubClientPool(options: Options = {}) {
                 }, true);
               } else cache.delete(requestKey);
             }
+            if (bodyAt !== undefined) noteWork(graph ? 'github graphql response' : 'github response', bodyAt);
             return response;
           } catch (error) {
             // Abort is not a server failure and must not poison the endpoint cooldown.

@@ -13,6 +13,7 @@ import {
   type QueueSignalOptions,
 } from '../lib/queue-signals';
 import { mergeConflictState } from '../lib/merge-conflicts';
+import { noteWork } from '../lib/perf-trace';
 import { isAutomationActor, type GitHubActor } from '../lib/github-actors';
 import { readPrChecksBatch } from './pr-checks-service';
 
@@ -195,6 +196,7 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
             throw error;
           data = partial.data;
         }
+        const parseStarted = performance.now();
         const cost = (data.rateLimit as { cost?: unknown } | null | undefined)?.cost;
         if (typeof cost === 'number') options.cost?.(cost);
         const fresh: QueueSignals[] = [];
@@ -282,6 +284,7 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
           )
             superseded.push(value);
         }
+        noteWork('queue signals parse', parseStarted);
         if (superseded.length) {
           try {
             const snapshots = await readPrChecksBatch(client, superseded.map(({ url, headSha }) => ({ url, headSha })));
