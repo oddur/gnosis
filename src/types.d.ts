@@ -104,6 +104,9 @@ declare global {
       onPrReadStateChanged: (callback: () => void) => () => void;
       workbenchStarPrs: (request: StarPrRequest) => Promise<WorkbenchQueue>;
       workbenchViewAction: (action: QueueViewAction) => Promise<WorkbenchQueue>;
+      workbenchSnapshotDelta?: (
+        base: string
+      ) => Promise<{ queue: WorkbenchQueue } | { delta: import('../lib/workbench-delta').WorkbenchQueueDelta } | { same: true }>;
       workbenchSetFilters: (filters: QueueFilters) => Promise<WorkbenchQueue>;
       workbenchQueue: (force?: boolean) => Promise<WorkbenchQueue>;
       workbenchGroup: (correction: GroupingOverride) => Promise<WorkbenchQueue>;

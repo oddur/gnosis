@@ -364,6 +364,8 @@ export function createPrInspectionCache(deps: Dependencies) {
       detail, status, progress, updatedAt: activityUpdatedAt, canCancel: false, canRetry: false };
   }
   return {
+    /** Entries and estimated bytes, for the diagnostics export. */
+    stats: () => ({ entries: values.size, bytes: values.bytes }),
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getVersion: () => version,
     activity,

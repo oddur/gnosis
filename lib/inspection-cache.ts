@@ -131,6 +131,13 @@ let comparisonPriorities = new Map<string, number>();
 const comparisons = createByteCache<string, PrChanges>(INVENTORY_MEMORY_BYTES, 100);
 const pending = new Map<string, { promise: Promise<PrChanges>; background: InspectionMode }>();
 export const peekComparison = (selection: CommitSelection) => comparisons.get(commitSelectionKey(selection));
+/** What the renderer's inspection caches hold, for the diagnostics export (#345). */
+export const inspectionCacheStats = () => ({
+  inventories: inspectionData.stats(),
+  comparisons: { entries: comparisons.size, bytes: comparisons.bytes },
+  files: inspectionFiles.stats(),
+  previews: previews.size,
+});
 function preferredFile(snapshot: PrChanges, subjectId: string) {
   let path: string | undefined;
   try {

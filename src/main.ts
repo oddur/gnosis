@@ -2,7 +2,9 @@
 import { instance as singleInstance } from './single-instance-start';
 import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
 import { diagnosticsSections } from '../lib/diagnostics';
-import { mark, markRenderer, note, noteRenderer, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
+import { queueDelta } from '../lib/workbench-delta';
+import { correlateInteractions, instrumentIpc, instrumentSends, mainLoopReport, noteMainPhase, recordMainSpan, startMainLoopMonitor } from './main-blocking';
+import { mark, markRenderer, note, noteRenderer, onMark, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
 import { attachWindowChrome, registerWindowChromeIpc, windowChromeOptions } from './window-chrome';
@@ -95,7 +97,7 @@ import { createReviewComment, submitPrReview } from './review-write-service';
 import type { ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
 import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
-import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
+import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride, type WorkbenchQueue } from '../lib/workbench';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell, session, net, powerMonitor, webContents } from 'electron';
 import path from 'path';
@@ -124,7 +126,7 @@ import { isLocalUrl } from '../lib/local-url';
 import type { PrMetadata, PrSearchResult, PrStatus, PrStatusOptions } from '../lib/types';
 import { createPrStatusService, PR_STATUS_MAX_STALE_MS } from './pr-status-service';
 import { createStatCache } from './stat-cache';
-import { timed } from '../lib/perf-trace';
+import { setTimedSink, timed } from '../lib/perf-trace';
 import { deepFreeze } from '../lib/deep-freeze';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -193,6 +195,14 @@ const predictionsOff = process.env.GNOSIS_PREDICT === 'off';
 // The window opens before saved data and the GitHub cache load. Every handler registered below waits
 // for both unless listed here. Wrap before the first registration.
 const startup = createStartup();
+// Name main-process blocking for the diagnostics export (#345): IPC handlers and sends by channel, `timed` work, and a
+// lag detector for the event loop. Before the first handler registration.
+instrumentIpc(ipcMain as unknown as Parameters<typeof instrumentIpc>[0]);
+setTimedSink(recordMainSpan);
+onMark(noteMainPhase);
+startMainLoopMonitor();
+noteMainPhase('main-eval');
+app.on('web-contents-created', (_event, contents) => instrumentSends(contents));
 gateHandlers(ipcMain, startup, {
   ungated: ['load-preferences', 'get-config', 'open-external', 'open-logs-directory', 'get-update-status', 'install-update', 'dismiss-update'],
   dataOnly: ['load-review-state', 'save-review-state', 'save-file-progress', 'load-file-filters', 'load-onboarding', 'get-auth-state', 'deep-link-take'],
@@ -272,7 +282,8 @@ function deleteStoredToken() {
 
 function getResolvedToken(): string | null {
   if (cachedToken) return cachedToken;
-  const token = loadStoredToken();
+  // Decrypting reads the macOS Keychain synchronously on main; the first read can wait on the Keychain for seconds.
+  const token = timed('keychain token', loadStoredToken);
   if (token) cachedToken = token; // cache so keychain is only unlocked once per session
   return token;
 }
@@ -880,7 +891,8 @@ void app.whenReady().then(async () => {
       return;
     }
   }
-  createWindow();
+  timed('startup window', createWindow);
+  mark('window');
   // Links that arrived before the window (macOS cold launch, argv, another launch) go through the service now.
   singleInstance.attach({ receive: (raw, source) => deepLinks.receive(raw, source), show: showOrCreateWindow });
 
@@ -917,12 +929,15 @@ void app.whenReady().then(async () => {
 
   if (prefs.analytics) void trackEvent('app_started');
   menubarStartupDone = true;
-  initTrayIfEnabled();
+  timed('startup tray', initTrayIfEnabled);
+  mark('tray');
   // macOS: the panel replaced the recent-reviews menu and its status poll (#308). Windows and Linux keep both.
   if (process.platform !== 'darwin') setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
   rebuildTrayMenu();
   rebuildMenubarNow();
-  setupAutoUpdater();
+  mark('menubar');
+  timed('startup updater', setupAutoUpdater);
+  mark('updater');
 
   // GitHub release polling only needed on Linux (no native auto-update)
   if (process.platform === 'linux') {
@@ -1234,9 +1249,37 @@ function notifyLocalChange(channel: string) {
 
 /** Every queue change carries its revisions, so renderers skip snapshots they already show. */
 function broadcastWorkbenchChanged(): void {
+  timed('workbench-changed', broadcastWorkbenchChangedNow);
+}
+/**
+ * Snapshots main sent recently, by revision, so a window's next read can be a delta from the one it holds (#345).
+ * The broadcast's snapshot also answers the reads it causes, within a moment and with no change pending since.
+ */
+const recentQueues = new Map<string, WorkbenchQueue>();
+let broadcastQueue: { queue: WorkbenchQueue; at: number } | undefined;
+function rememberQueue(queue: WorkbenchQueue) {
+  if (!queue.revision) return;
+  recentQueues.delete(queue.revision);
+  recentQueues.set(queue.revision, queue);
+  while (recentQueues.size > 4) {
+    const oldest = recentQueues.keys().next().value;
+    if (oldest === undefined) break;
+    recentQueues.delete(oldest);
+  }
+}
+function currentQueue(): WorkbenchQueue {
+  const fresh = broadcastQueue && Date.now() - broadcastQueue.at < 500 && !localChangeTimers.has('workbench-changed');
+  const queue = fresh && broadcastQueue ? broadcastQueue.queue : workbench.snapshot();
+  rememberQueue(queue);
+  return queue;
+}
+function broadcastWorkbenchChangedNow(): void {
   let revisions: WorkbenchRevisions | undefined;
+  broadcastQueue = undefined;
   try {
     const queue = workbench.snapshot();
+    rememberQueue(queue);
+    broadcastQueue = { queue, at: Date.now() };
     // The menu bar reuses this snapshot instead of building another.
     menubarQueue = { account: cachedLogin, queue };
     scheduleMenubar();
@@ -3166,7 +3209,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
 const SAVED_SIGNAL_LIMIT = 300;
 ipcMain.handle('workbench-snapshot', (_event, withSignals?: unknown) => {
   if (withSignals !== undefined && typeof withSignals !== 'boolean') throw new Error('Invalid snapshot request.');
-  const queue = workbench.snapshot();
+  const queue = currentQueue();
   const token = getResolvedToken();
   const account = cachedLogin;
   if (!withSignals || !token || !account) return queue;
@@ -3181,6 +3224,15 @@ ipcMain.handle('workbench-snapshot', (_event, withSignals?: unknown) => {
   const values = cachedQueueSignals(getGitHubClient(token), [...members.values()]);
   note('snapshot-signals', { members: members.size, values: values.length, ms: Math.round((performance.now() - started) * 10) / 10 });
   return { ...queue, savedSignals: { account, values } };
+});
+// The queue as the change from a snapshot this window holds: rows it has are named by revision (#345).
+ipcMain.handle('workbench-snapshot-delta', (_event, base: unknown) => {
+  if (typeof base !== 'string') throw new Error('Invalid snapshot request.');
+  const queue = currentQueue();
+  if (queue.revision === base) return { same: true };
+  const previous = recentQueues.get(base);
+  const delta = previous && timed('workbench-delta', () => queueDelta(previous, queue));
+  return delta ? { delta } : { queue };
 });
 ipcMain.handle('workbench-rename-stack', (_event, id: string, name: string, account?: string) => workbench.renameStack(id, name, account));
 ipcMain.handle('pr-badge-preview', (_event, url: string) => {
@@ -3800,6 +3852,9 @@ const syncSubscriptions = new Map<string, { owner: Electron.WebContents; id: str
 const syncSignals = new Map<string, QueueSignals>();
 const syncMetadata = new Map<string, PrMetadata>();
 function sendSyncUpdates(fresh: GitHubSyncUpdate[], failures: GitHubSyncFailure[] = []) {
+  timed('github-sync send', () => sendSyncUpdatesNow(fresh, failures));
+}
+function sendSyncUpdatesNow(fresh: GitHubSyncUpdate[], failures: GitHubSyncFailure[]) {
   const token = cachedToken;
   // Windows see the reader's writes GitHub has not shown yet.
   const updates = fresh.map((update): GitHubSyncUpdate =>
@@ -4001,6 +4056,9 @@ ipcMain.on('pr-open-view-hover', afterStartup(startup, (event: Electron.IpcMainE
   if (targets.length && cachedToken && syncEnabled()) void prOpenPreload.tick();
 }));
 function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
+  timed('github-sync publish', () => publishGitHubUpdatesNow(updates));
+}
+function publishGitHubUpdatesNow(updates: GitHubSyncUpdate[]) {
   if (!cachedLogin) return;
   for (const update of updates) {
     // A copy read from GitHub: the optimistic patches it shows are done for its kind.
@@ -4300,11 +4358,24 @@ const syncHealth = createSyncHealthService({
   notify: () => notifyLocalChange('sync-health-changed'),
   appInfo: () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron }),
   // The same file carries system and startup details and the exporting window's slow interactions (#345).
-  extendReport: renderer => ({ ...diagnosticsSections(renderer, {
-    system: { platform: process.platform, arch: process.arch, release: os.release(), cpus: os.cpus().length, memoryBytes: os.totalmem(), packaged: app.isPackaged },
-    versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
-    startup: startupSummary(),
-  }) }),
+  extendReport: renderer => {
+    const sections = diagnosticsSections(renderer, {
+      system: { platform: process.platform, arch: process.arch, release: os.release(), cpus: os.cpus().length, memoryBytes: os.totalmem(), packaged: app.isPackaged },
+      versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
+      startup: startupSummary(),
+    });
+    // Input waits in the main process too: each slow input lists the main-process long tasks during its delay.
+    const main = mainLoopReport();
+    return {
+      ...sections,
+      main: { ...main, memory: process.memoryUsage() },
+      renderer: {
+        ...sections.renderer,
+        interactions: correlateInteractions(sections.renderer.interactions, main.longTasks),
+        slowest: correlateInteractions(sections.renderer.slowest, main.longTasks),
+      },
+    };
+  },
 });
 syncHealth.register();
 void app.whenReady().then(() => {

@@ -1,3 +1,4 @@
+import { noteWork } from './perf-trace';
 import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from './github-cache-settings';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -124,6 +125,7 @@ export function createGitHubCache(now = Date.now) {
     if (entry.raw === undefined) return true;
     const raw = entry.raw;
     delete entry.raw;
+    const started = performance.now();
     try {
       const saved: unknown = JSON.parse(raw);
       if (!isCacheRecord(saved) || !('value' in saved)) throw new Error('Invalid cache entry');
@@ -133,6 +135,9 @@ export function createGitHubCache(now = Date.now) {
     } catch {
       remove(key);
       return false;
+    } finally {
+      // Values parse and freeze on first read, on main: many at once, such as the first queue view, add up.
+      noteWork('github cache parse', started);
     }
   }
   function markStale(key: string, entry: Entry) {
@@ -192,6 +197,7 @@ export function createGitHubCache(now = Date.now) {
           retention: RETENTION_MS,
           preparedBytes: cacheSizeMB * 1024 * 1024 - MAX_BYTES,
         });
+        const loadStarted = performance.now();
         const opened = isCacheRecord(saved) ? saved : undefined;
         if (!opened || !Array.isArray(opened.entries)) throw new Error('Invalid cache storage response');
         timings = isCacheRecord(opened.ms) ? opened.ms : undefined;
@@ -224,6 +230,7 @@ export function createGitHubCache(now = Date.now) {
         }
         storage = next;
         trim();
+        noteWork('github cache open', loadStarted);
       } catch (error) {
         await next.close().catch(() => {});
         console.warn(

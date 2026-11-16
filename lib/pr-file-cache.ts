@@ -11,6 +11,8 @@ export function createPrFileCache(
   const pending = new Map<string, { promise: Promise<PrFileContents>; background: InspectionMode }>();
   let bytes = 0,
     epoch = 0;
+  /** Entries and estimated bytes, for the diagnostics export. */
+  const stats = () => ({ entries: saved.size, bytes });
   const keyFor = (r: PrFileRequest) =>
     `${r.stackComparison ? `stack:${r.stackComparison}:` : r.comparison ? 'commit:' : ''}${fileRevisionKey(r.url, r.path, r.baseSha, r.headSha)}`;
   const peek = (r: PrFileRequest) => {
@@ -112,6 +114,7 @@ export function createPrFileCache(
     return promise;
   }
   return {
+    stats,
     peek,
     read,
     peekAfter,

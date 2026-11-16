@@ -1,3 +1,4 @@
+import { noteWork } from '../lib/perf-trace';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { MaintainResult } from './sqlite-maintain';
 import type { SearchRequest, LocalSearchResponse, SearchOp } from './command-search-service';
@@ -218,7 +219,12 @@ export function createAppDataStore() {
       values = await call<Record<string, unknown>>('open', { directory });
     },
     read(name: string): unknown {
-      return structuredClone(assertReady()[name]);
+      const started = performance.now();
+      try {
+        return structuredClone(assertReady()[name]);
+      } finally {
+        noteWork(`saved data read ${name.split(':')[0]}`, started);
+      }
     },
     /** Names of the saved states that are loaded and not taken. */
     names(): string[] {

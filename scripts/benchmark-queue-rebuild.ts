@@ -16,18 +16,23 @@ import { groupSubjects, snapshot, type ReviewMember } from '../lib/workbench';
 import type { ReviewHistoryEntry } from '../lib/types';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 import { createStatCache } from '../src/stat-cache';
+import v8 from 'node:v8';
+import { stampQueue } from '../lib/workbench-revision';
+import { queueDelta } from '../lib/workbench-delta';
+import type { WorkbenchQueue } from '../lib/workbench';
 import { deepFreeze } from '../lib/deep-freeze';
 import { createMemoryStorage } from '../src/app-data-store';
 import { mutedPrsName } from '../src/muted-pr-store';
 
-const SUBJECTS = 400,
+const SUBJECTS = Number(process.env.SUBJECTS ?? 400),
   MUTED = 649,
   HISTORY = 512,
   RUNS = 30;
 const uncached = process.argv.includes('--uncached');
 const now = Date.now();
 const text = (n: number, size: number) => `PR ${n} description. `.repeat(Math.ceil(size / 20)).slice(0, size);
-const member = (n: number, description = 600): ReviewMember => ({
+const DESCRIPTION = Number(process.env.DESCRIPTION ?? 600);
+const member = (n: number, description = DESCRIPTION): ReviewMember => ({
   number: n,
   repo: `owner/repo${n % 20}`,
   headRepo: `owner/repo${n % 20}`,
@@ -152,6 +157,52 @@ function main() {
       tray.push(performance.now() - start);
     }
     console.log(`tray filter over 3 runs: min ${ms(Math.min(...tray))}`);
+
+    // One background change, as main handles it (#345). Before: the broadcast builds the queue, the window's read
+    // builds it again, and the reply serializes all of it. After: the read reuses the broadcast's queue and the reply
+    // is a delta from the revision the window holds. v8.serialize stands in for IPC's structured clone.
+    const changeOf = (base: WorkbenchQueue, round: number): WorkbenchQueue => {
+      const at = new Date(now + round * 1000).toISOString();
+      const items = base.items.map((item, i) =>
+        i % 90 === round % 90
+          ? { ...item, revision: undefined, subject: { ...item.subject, members: item.subject.members.map((m) => ({ ...m, updatedAt: at })) } }
+          : item
+      );
+      return stampQueue({ ...base, items, revision: undefined }, deps.history(), { reuseMembers: true });
+    };
+    const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+    const full: number[] = [], fullRead: number[] = [], delta: number[] = [], deltaRead: number[] = [];
+    let fullBytes = 0, deltaBytes = 0;
+    let base = service.snapshot();
+    for (let round = 0; round < RUNS; round++) {
+      const next = changeOf(base, round);
+      let start = performance.now();
+      service.snapshot();
+      service.snapshot();
+      const fullPayload = v8.serialize(next);
+      full.push(performance.now() - start);
+      fullBytes = fullPayload.length;
+      start = performance.now();
+      v8.deserialize(fullPayload);
+      fullRead.push(performance.now() - start);
+      start = performance.now();
+      service.snapshot();
+      const change = queueDelta(base, next);
+      if (!change) throw new Error('No delta');
+      const deltaPayload = v8.serialize(change);
+      delta.push(performance.now() - start);
+      deltaBytes = deltaPayload.length;
+      start = performance.now();
+      v8.deserialize(deltaPayload);
+      deltaRead.push(performance.now() - start);
+      base = next;
+    }
+    console.log(
+      `main per change, full snapshot: median ${ms(median(full))}, max ${ms(Math.max(...full))}, ${(fullBytes / 1024 / 1024).toFixed(2)} MB; window deserialize ${ms(median(fullRead))}`
+    );
+    console.log(
+      `main per change, delta: median ${ms(median(delta))}, max ${ms(Math.max(...delta))}, ${(deltaBytes / 1024).toFixed(0)} KB; window deserialize ${ms(median(deltaRead))}`
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
