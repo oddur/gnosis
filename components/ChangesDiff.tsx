@@ -1,5 +1,4 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { FileDiff } from '@pierre/diffs/react';
 import { processFile, type DiffLineAnnotation, type FileDiffOptions } from '@pierre/diffs';
 import {
   GAP_STEP,
@@ -10,6 +9,8 @@ import {
   type GapPart,
 } from '../lib/diff-gaps';
 import { LoadingIndicator } from './LoadingState';
+import { KeptFileDiff } from './KeptFileDiff';
+import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
 export type GapStatus =
@@ -31,7 +32,8 @@ const CHANGES_CSS = `[data-code] {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--muted-foreground) 60%, var(--background)) transparent;
   padding-bottom: var(--diffs-gap-block, var(--diffs-gap-fallback));
-}`;
+}
+${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
 const diffStyle = {
   '--diffs-font-family': 'var(--font-mono)',
@@ -72,7 +74,7 @@ const SliceDiff = memo(function SliceDiff<A>({
   style: CSSProperties;
 }) {
   return (
-    <FileDiff
+    <KeptFileDiff
       fileDiff={slice.diff}
       options={options}
       lineAnnotations={annotations}
@@ -276,6 +278,8 @@ export function ChangesDiff<A>({
 }) {
   const stableOptions = useStableOptions({
     ...options,
+    // One text node per line (lib/diff-token-flatten.ts).
+    ...({ [FLAT_TOKENS]: true } as object),
     hunkSeparators: 'simple',
     unsafeCSS: options.unsafeCSS ? `${options.unsafeCSS}\n${CHANGES_CSS}` : CHANGES_CSS,
   });

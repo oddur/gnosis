@@ -104,7 +104,11 @@ export function ChangesFileTree({
     const row = event.composedPath().find(node => node instanceof Element && node.hasAttribute('data-item-path'));
     return row instanceof Element ? row.getAttribute('data-item-path') : null;
   };
+  // Showing the Changes tab again runs effects again; the tree is reset only when its paths or files changed (#352).
+  const synced = useRef<unknown[]>([]);
   useEffect(() => {
+    if (synced.current[0] === model && synced.current[1] === prepared && synced.current[2] === entries) return;
+    synced.current = [model, prepared, entries];
     // Resetting with the prepared input also refreshes Pierre's row decorations.
     model.resetPaths({ preparedInput: prepared });
     model.setGitStatus(
