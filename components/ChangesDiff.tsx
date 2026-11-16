@@ -88,6 +88,51 @@ const SliceDiff = memo(function SliceDiff<A>({
   style: CSSProperties;
 }) => ReactNode;
 
+/** Mounting waits this long after the last key typed in a field. */
+const TYPING_PAUSE_MS = 500;
+let lastTyped = -Infinity;
+let typingWatched = false;
+/** Inserting a diff restyles the page: rules such as `.commit-stream-file:has(…)` and `body:has(…)` make each
+ * insertion invalidate those ancestors' whole subtrees. While someone types a comment, that cost would land on
+ * their keys, so background mounting waits for a pause in typing. */
+function watchTyping() {
+  if (typingWatched) return;
+  typingWatched = true;
+  const typed = (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    if (target && (target.isContentEditable || target.matches('input, textarea'))) lastTyped = performance.now();
+  };
+  for (const type of ['keydown', 'beforeinput', 'compositionupdate']) document.addEventListener(type, typed, true);
+}
+/** Runs `run` in an idle period at least `TYPING_PAUSE_MS` after the last key typed in a field. Returns a cancel. */
+function whenIdle(run: () => void): () => void {
+  watchTyping();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let idle: number | undefined;
+  const attempt = () => {
+    const wait = lastTyped + TYPING_PAUSE_MS - performance.now();
+    if (wait > 0) {
+      timer = setTimeout(attempt, wait);
+      return;
+    }
+    if (typeof requestIdleCallback === 'function')
+      idle = requestIdleCallback(
+        () => {
+          // A key may have arrived while waiting for idle time.
+          if (lastTyped + TYPING_PAUSE_MS > performance.now()) attempt();
+          else run();
+        },
+        { timeout: 1000 }
+      );
+    else timer = setTimeout(run, 0);
+  };
+  attempt();
+  return () => {
+    if (timer !== undefined) clearTimeout(timer);
+    if (idle !== undefined) cancelIdleCallback(idle);
+  };
+}
+
 /** Diffs from `from` up to about `ROWS_PER_TASK` rows, at least one. */
 function batch(slices: DiffSlice[], from: number): DiffSlice[] {
   const result: DiffSlice[] = [];
@@ -317,9 +362,8 @@ export function ChangesDiff<A>({
     if (!pending.length) return;
     const nearest = pending.filter((slice) => near.current.has(slice.key));
     const next = batch(nearest.length ? nearest : pending, 0);
-    // One slice per task: the reader can scroll and type between them.
-    const timer = setTimeout(() => setMounted((current) => new Set([...current, ...next.map((slice) => slice.key)])), 0);
-    return () => clearTimeout(timer);
+    // One batch per idle task, and none while the reader types: the reader can scroll and type between them.
+    return whenIdle(() => setMounted((current) => new Set([...current, ...next.map((slice) => slice.key)])));
   }, [progressive, slices, mounted, nearVersion]);
 
   const content: ReactNode[] = [];
