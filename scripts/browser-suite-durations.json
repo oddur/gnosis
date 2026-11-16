@@ -18,6 +18,7 @@
   "default": 75,
   "diagram-exploration": 25,
   "diff-context": 9,
+  "diff-gaps": 40,
   "diff-speed": 14,
   "entity-badges": 10,
   "explainer": 80,

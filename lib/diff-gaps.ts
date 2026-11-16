@@ -156,11 +156,21 @@ export type GapPart =
     }
   | { kind: 'hunk'; key: string; hunk: GapHunk };
 
+/** Gaps between two hunks this short show their lines once the after text is known: a bar would be taller. */
+export const SMALL_GAP = 3;
+
 /**
  * The hunks and remaining gaps after revealing lines from the after text. Without the after text, reveals wait and
- * every gap shows as it is in the patch. A gap that is revealed in full joins the hunks on either side of it.
+ * every gap shows as it is in the patch. A gap that is revealed in full joins the hunks on either side of it, and so
+ * does a gap between hunks of at most `joinUpTo` lines.
  */
-export function revealedParts(hunks: GapHunk[], gaps: DiffGap[], reveals: GapReveals, lines?: string[]): GapPart[] {
+export function revealedParts(
+  hunks: GapHunk[],
+  gaps: DiffGap[],
+  reveals: GapReveals,
+  lines?: string[],
+  joinUpTo = SMALL_GAP
+): GapPart[] {
   const parts: GapPart[] = [];
   const context = (from: number, count: number): DiffRow[] =>
     Array.from({ length: count }, (_, i) => ({ type: ' ' as const, text: lines?.[from - 1 + i] ?? '' }));
@@ -169,7 +179,13 @@ export function revealedParts(hunks: GapHunk[], gaps: DiffGap[], reveals: GapRev
     const above = gap.index > 0,
       below = gap.index < hunks.length;
     const size = gapSize(gap);
-    const reveal = lines && size !== undefined ? (reveals[gap.index] ?? { down: 0, up: 0 }) : { down: 0, up: 0 };
+    const small = above && below && size !== undefined && size <= joinUpTo;
+    const reveal =
+      lines && size !== undefined
+        ? small
+          ? { down: size, up: 0 }
+          : (reveals[gap.index] ?? { down: 0, up: 0 })
+        : { down: 0, up: 0 };
     const down = above && size !== undefined ? Math.min(reveal.down, size) : 0;
     const up = below && size !== undefined ? Math.min(reveal.up, size - down) : 0;
     if (current && down) current.hunk = { ...current.hunk, rows: [...current.hunk.rows, ...context(gap.newStart, down)] };

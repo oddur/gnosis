@@ -61,7 +61,14 @@ void app.whenReady().then(async () => {
     const r = await js<{ x: number; y: number; width: number; height: number }>(
       `(()=>{const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.max(0,Math.round(b.left)),y:Math.max(0,Math.round(b.top)),width:Math.round(Math.min(b.width,innerWidth-b.left)),height:Math.round(Math.min(b.height,innerHeight-Math.max(0,b.top)))}})()`
     );
-    console.log(`SHOT ${name} ${(await win.webContents.capturePage(r)).toPNG().toString('base64')}`);
+    const dark = await js<boolean>("document.documentElement.classList.contains('dark')");
+    for (const theme of [dark, !dark]) {
+      await js(`document.documentElement.classList.toggle('dark',${theme})`);
+      await js(frames);
+      await sleep(200);
+      console.log(`SHOT ${name}-${theme ? 'dark' : 'light'} ${(await win.webContents.capturePage(r)).toPNG().toString('base64')}`);
+    }
+    await js(`document.documentElement.classList.toggle('dark',${dark})`);
   };
   type Sample = { firstPaint: number; settled: number; longest: number; total: number; tasks: number[]; event: number; shift: number };
   const results: Record<string, Sample[]> = {};

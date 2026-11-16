@@ -76,6 +76,17 @@ const SliceDiff = memo(function SliceDiff<A>({
   style: CSSProperties;
 }) => ReactNode;
 
+/** Diffs from `from` up to about `ROWS_PER_TASK` rows, at least one. */
+function batch(slices: DiffSlice[], from: number): DiffSlice[] {
+  const result: DiffSlice[] = [];
+  let rows = 0;
+  for (let i = from; i < slices.length && (!result.length || rows + slices[i].unifiedRows <= ROWS_PER_TASK); i++) {
+    result.push(slices[i]);
+    rows += slices[i].unifiedRows;
+  }
+  return result;
+}
+
 function GapBar({
   part,
   status,
@@ -166,8 +177,10 @@ function GapBar({
   );
 }
 
-/** Slices mounted with the first render; the rest mount one per task, nearest the viewport first. */
-const INITIAL_SLICES = 1;
+/** Rows mounted with the first render, and in each task after it, nearest the viewport first. */
+const ROWS_PER_TASK = 200;
+/** A file with more diffs than this mounts them progressively even when no hunk is sliced. */
+const MANY_DIFFS = 8;
 
 /**
  * A changed file as hunks and the gaps between them. Each hunk is its own Pierre diff, so a gap bar can sit between
@@ -223,7 +236,7 @@ export function ChangesDiff<A>({
     return result;
   }, [parts, file.name, file.prevName, file.status]);
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
-  const progressive = slices.length > 1 && slices.some((slice) => slice.key.includes(':'));
+  const progressive = slices.length > MANY_DIFFS || (slices.length > 1 && slices.some((slice) => slice.key.includes(':')));
   const split = layout === 'split' && file.status !== 'added' && file.status !== 'deleted';
   const style = useMemo(
     () =>
@@ -252,7 +265,7 @@ export function ChangesDiff<A>({
     })?.key;
   }, [slices, target?.side, target?.line]);
   const [mounted, setMounted] = useState<ReadonlySet<string>>(
-    () => new Set([...slices.slice(0, INITIAL_SLICES).map((slice) => slice.key), ...(targetKey ? [targetKey] : [])])
+    () => new Set([...batch(slices, 0).map((slice) => slice.key), ...(targetKey ? [targetKey] : [])])
   );
   // Slices that hold a comment or the jump target mount at once, so they can be read and scrolled to.
   const wanted = useMemo(
@@ -286,9 +299,10 @@ export function ChangesDiff<A>({
     if (!progressive) return;
     const pending = slices.filter((slice) => !mounted.has(slice.key));
     if (!pending.length) return;
-    const next = pending.find((slice) => near.current.has(slice.key)) ?? pending[0];
+    const nearest = pending.filter((slice) => near.current.has(slice.key));
+    const next = batch(nearest.length ? nearest : pending, 0);
     // One slice per task: the reader can scroll and type between them.
-    const timer = setTimeout(() => setMounted((current) => new Set([...current, next.key])), 0);
+    const timer = setTimeout(() => setMounted((current) => new Set([...current, ...next.map((slice) => slice.key)])), 0);
     return () => clearTimeout(timer);
   }, [progressive, slices, mounted, nearVersion]);
 

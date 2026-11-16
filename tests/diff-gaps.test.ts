@@ -160,6 +160,32 @@ void test('revealing a whole gap joins the hunks around it', () => {
   assert.deepEqual(revealedParts(hunks, gaps, steps, lines).map(range).slice(1, 2), ['hunk +47-154 -47']);
 });
 
+void test('gaps of up to 3 lines between hunks show their lines once the after text is known', () => {
+  const many = hunksFromDiff(parse('@@ -2,1 +2,1 @@\n-a\n+A\n@@ -6,1 +6,1 @@\n-b\n+B\n@@ -20,1 +20,1 @@\n-c\n+C'));
+  const text = Array.from({ length: 30 }, (_, i) => String(i + 1));
+  text[1] = 'A';
+  text[5] = 'B';
+  text[19] = 'C';
+  const gaps = must(diffGaps(many, text.length));
+  assert.deepEqual(revealedParts(many, gaps, {}).map(range), [
+    'gap 1-1 (1)',
+    'hunk +2-2 -2',
+    'gap 3-5 (3)',
+    'hunk +6-6 -6',
+    'gap 7-19 (13)',
+    'hunk +20-20 -20',
+    'gap 21-30 (10)',
+  ]);
+  // The 3-line gap joins its hunks; the edges of the file and longer gaps keep their bars.
+  assert.deepEqual(revealedParts(many, gaps, {}, text).map(range), [
+    'gap 1-1 (1)',
+    'hunk +2-6 -2',
+    'gap 7-19 (13)',
+    'hunk +20-20 -20',
+    'gap 21-30 (10)',
+  ]);
+});
+
 void test('a jump finds the gap that hides its line on either side', () => {
   const gaps = must(diffGaps(hunks, lines.length));
   assert.equal(gapContaining(gaps, 'after', 100)?.index, 1);

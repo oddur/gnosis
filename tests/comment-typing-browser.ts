@@ -138,7 +138,7 @@ void app.whenReady().then(async () => {
     );
     // Comment on a changed line inside the large file.
     await js(`(()=>{const row=document.querySelector('.commit-stream-row[data-file="src/core/engine.ts"]');
-      const line=[...row.querySelector('diffs-container').shadowRoot.querySelectorAll('[data-column-number][data-line-type=change-addition]')][6];
+      const line=[...row.querySelectorAll('diffs-container')].flatMap(host=>[...host.shadowRoot.querySelectorAll('[data-column-number][data-line-type=change-addition]')])[6];
       line.scrollIntoView({block:'center'});line.click()})()`);
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("document.querySelector('.changes-comment-composer textarea').focus()");

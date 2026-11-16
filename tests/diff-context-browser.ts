@@ -55,7 +55,7 @@ void app.whenReady().then(async () => {
     await wait('window.contextCount()===2');
     // Changes shows at most the 3 lines of context GitHub's patch carries, and reads no file for more: gaps reveal
     // more lines on request (#299). The Explanation still uses the full setting.
-    await js('window.fileReads=[];{const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=(r,...rest)=>{if(!rest[0])window.fileReads.push(r.path);return read(r,...rest)}}');
+    await js('window.fileReads=[];{const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=(r,...rest)=>{if(!rest[0])window.fileReads.push(r.path);return read(r,...rest)}};void 0');
     await setContext(10);
     await wait('window.contextCount()===6');
     await setContext(5);
