@@ -21,19 +21,27 @@ import { app, BrowserWindow } from 'electron';
 const LONG_TASK_BUDGET = Number(process.env.GNOSIS_LONG_TASK_BUDGET ?? perfBudget(200));
 /**
  * Accessibility work from one input until the large file settles. In Docker, opening the file took 150-200 ms of it
- * while each slice mounted restyled the page, and 50-60 ms after; showing it again takes 40-50 ms. Macs spend
- * several times more on the same work (#366), so this is set for them; the restyle count below is exact everywhere.
+ * while each slice mounted restyled the page, and 50-60 ms after; showing it again took 40-50 ms, and 12-30 ms once
+ * each line was one text node. Macs spend several times more on the same work (#366), so this is set for them; the
+ * restyle count and the text nodes per line below are exact everywhere.
  */
-const ACCESSIBILITY_BUDGET = perfBudget(300);
+const ACCESSIBILITY_BUDGET = perfBudget(200);
 /**
- * Style recalculations of more elements than a 200-row slice has (about 4,400) while the large file opens. Each slice
+ * Accessibility work in one scroll pass through the large file, as each 200-row slice comes into view. In Docker it
+ * was 620-720 ms while each token of a line was its own text node, about 9,000 accessibility nodes a slice, and
+ * 200-450 ms with one text node a line (#366). Set for Macs like the budget above.
+ */
+const SCROLL_ACCESSIBILITY_BUDGET = perfBudget(400);
+/**
+ * Style recalculations of more elements than a 200-row slice has (SLICE_ELEMENTS) while the large file opens. Each slice
  * that mounted used to restyle all 6,600 elements of the page and the slice in view, 15 times (#366): Tailwind's
  * `group-has-*` variants compile to `:is(:where(.group):has(…) *)`, and Chromium answers any insertion under such
  * a rule by restyling the document. tests/tailwind-has.test.ts keeps those variants out.
  */
 const PAGE_RESTYLE_LIMIT = 2;
-/** A little more than the elements of one 200-row slice of the large file. */
-const SLICE_ELEMENTS = 4500;
+/** More than one 200-row slice of the large file and its file header restyle (about 1,200 elements, 4,400 before each
+ * line was one text node), and less than the page with a slice in view (about 2,500). */
+const SLICE_ELEMENTS = 1800;
 
 void app.whenReady().then(async () => {
   // GNOSIS_DIFF_GAPS_ACCESSIBILITY=0 leaves accessibility to the machine, to measure without it.
@@ -101,6 +109,7 @@ void app.whenReady().then(async () => {
     withoutAccessibility?: number; accessibility?: number; accessibilityTotal?: number;
     /** Style recalculations of more elements than one slice has. */
     pageRestyles?: number;
+    largestRestyle?: number;
   };
   const results: Record<string, Sample[]> = {};
   /** Runs one input; returns the time to the first painted lines, the time until every line is in the DOM, and the
@@ -216,7 +225,8 @@ void app.whenReady().then(async () => {
         if (!node.ignored && line) lines.add(Number(line));
       }
       const regions = nodes.filter((n) => !n.ignored && n.role?.value === 'region').map((n) => n.name?.value ?? '');
-      return { lines, regions, nodes: nodes.length };
+      const text = nodes.filter((n) => n.role?.value === 'StaticText' || n.role?.value === 'InlineTextBox').length;
+      return { lines, regions, nodes: nodes.length, text };
     } finally {
       await debug.sendCommand('Accessibility.disable');
     }
@@ -253,7 +263,7 @@ void app.whenReady().then(async () => {
       event,
       shift,
       ...cost,
-      ...(traced() ? { pageRestyles: restyles().filter((count) => count > SLICE_ELEMENTS).length } : {}),
+      ...(traced() ? { pageRestyles: restyles().filter((count) => count > SLICE_ELEMENTS).length, largestRestyle: Math.max(0, ...restyles()) } : {}),
     };
     (results[name] ??= []).push(sample);
     console.log(`${name}: ${JSON.stringify(sample)}`);
@@ -306,8 +316,18 @@ void app.whenReady().then(async () => {
     );
     await sleep(500);
     // The lines in view are in the accessibility tree, in the file's labeled region (#366).
+    // Each highlighted line is one text node, colored by a gradient instead of a span per token (#366).
+    const lineText = `(()=>{const lines=[...${huge}.querySelector('diffs-container').shadowRoot.querySelectorAll('[data-code] [data-line]')];
+      const texts=l=>{let n=0;const w=document.createTreeWalker(l,NodeFilter.SHOW_TEXT);while(w.nextNode())n++;return n};
+      return {lines:lines.length,single:lines.filter(l=>texts(l)===1).length,colored:lines.filter(l=>l.querySelector('[data-tokens]')).length}})()`;
+    await wait(`${lineText}.colored>=200`);
+    const flat = await js<{ lines: number; single: number; colored: number }>(lineText);
+    assert.ok(flat.lines >= 200 && flat.single === flat.lines && flat.colored === flat.lines, `Each line of the large file is one colored text node: ${JSON.stringify(flat)}`);
+    // The text itself is transparent, so selected text needs a color of its own.
+    const selected = await js<string>(`getComputedStyle(${huge}.querySelector('diffs-container').shadowRoot.querySelector('[data-tokens]'),'::selection').color`);
+    assert.ok(!/rgba\(0, 0, 0, 0\)|transparent/.test(selected), `Selected text in a colored line is visible: ${selected}`);
     const opened = await accessibleTree();
-    console.log(`Accessibility tree after opening: ${opened.nodes} nodes, ${opened.lines.size} lines of the large file`);
+    console.log(`Accessibility tree after opening: ${opened.nodes} nodes, ${opened.text} of them text, ${opened.lines.size} lines of the large file`);
     assert.ok(opened.regions.includes('zz/huge.ts'), `The file is a labeled region: ${JSON.stringify(opened.regions)}`);
     assert.ok(opened.lines.has(0) && opened.lines.has(20), 'The lines in view are in the accessibility tree');
     const viewed = `${huge}.querySelector('.changes-file-header input[type=checkbox]')`;
@@ -390,6 +410,10 @@ void app.whenReady().then(async () => {
       const most = Math.max(...samples.map((s) => s.accessibilityTotal ?? 0));
       assert.ok(most <= ACCESSIBILITY_BUDGET, `${name}: ${most} ms of accessibility work (budget ${ACCESSIBILITY_BUDGET} ms, #366)`);
     }
+    if (accessibility) {
+      const most = Math.max(...scrolls.map((s) => s.accessibilityTotal ?? 0));
+      assert.ok(most <= SCROLL_ACCESSIBILITY_BUDGET, `A scroll pass took ${most} ms of accessibility work (budget ${SCROLL_ACCESSIBILITY_BUDGET} ms, #366)`);
+    }
     // A slice's placeholder height is its laid-out height, so mounting it moves nothing.
     const heights = await js<{ estimate: number; actual: number }[]>(`(()=>{
       return [...${huge}.querySelectorAll('.changes-slice')].slice(0,3).map(e=>{const host=e.querySelector('diffs-container');
@@ -409,6 +433,15 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await bars(), ['0: 46 lines hidden', '1: 93 lines hidden', '2: More lines may follow']);
     await js(`${gapsRow}.scrollIntoView({block:'start'})`);
     await shot('gaps-initial', '.commit-stream-row[data-file="src/gaps.ts"]');
+    // Selected text in a line colored by a gradient stays readable.
+    if (process.env.GNOSIS_DIFF_GAPS_SHOT) {
+      await js(`(()=>{const lines=[...${gapsRow}.querySelector('.changes-diff > diffs-container').shadowRoot.querySelectorAll('[data-code] [data-line]')];
+        const text=l=>{const w=document.createTreeWalker(l,NodeFilter.SHOW_TEXT);return w.nextNode()};
+        const range=document.createRange();range.setStart(text(lines[0]),7);range.setEnd(text(lines[2]),12);
+        getSelection().removeAllRanges();getSelection().addRange(range)})()`);
+      await shot('gaps-selected', '.commit-stream-row[data-file="src/gaps.ts"]');
+      await js('getSelection().removeAllRanges()');
+    }
     // Only a hunk whose lines overflow scrolls sideways and shows a scrollbar; the others end flush (no gutter).
     const scrollers = () =>
       js<{ overflows: boolean; bar: number; bottom: number }[]>(`[...${gapsRow}.querySelectorAll('.changes-diff > diffs-container')].map(h=>{

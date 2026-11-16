@@ -31,7 +31,7 @@ const budgets: Record<string, number> = {
   'open PR': 300,
   'tab Summary': 200,
   'tab Changes (first)': 650,
-  // Showing kept Changes again re-runs the diffs' effects, which rebuild the large file; see the report in #346.
+  // Showing kept Changes again re-runs its effects. The diffs keep their rendered lines (#352).
   'tab Changes': 600,
   'tab Checks (first)': 350,
   'tab Checks': 300,
@@ -39,9 +39,11 @@ const budgets: Record<string, number> = {
   'tab Feedback': 150,
   // Leaving Changes while the 3,000-line file shows, for Checks or Summary, and coming back. Before #352 leaving took
   // 104-144 ms: cached check reads rendered the whole PR page five or six more times, and the hidden diff view rendered
-  // again. Coming back took 96-192 ms; most of it is the diffs' effects rebuilding the large file.
+  // again. Coming back took 96-192 ms while the diffs' effects rendered the large file again. The diffs now keep
+  // their lines while hidden (components/KeptFileDiff.tsx), and coming back takes 104-136 ms: React showing the tab
+  // again and running its effects.
   'tab away from large diff': 130,
-  'tab back to large diff': 200,
+  'tab back to large diff': 160,
   'queue j/k': 200,
   'queue filter keystroke': 200,
   'tree: open large file': 250,
