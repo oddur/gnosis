@@ -53,6 +53,9 @@ const budgets: Record<string, number> = {
  * sync runs: 540 rows with PR descriptions, five PR tabs, and sync, queue and change-signal events every 2 s. Calibrated in Docker.
  * It is checked above the same inputs' delay without sync, so a slower machine raises both. */
 const BACKGROUND_INPUT_DELAY_P90 = 50;
+/** One-off interactions measured three times and checked at the median: a single sample swung by about 1.7x between
+ * otherwise equal CI runs (open PR 496 ms against a 480 ms budget in run 43859276687). */
+const MEDIAN_OF_3 = new Set(['open PR']);
 
 const cpuSlowdown = Math.max(1, Number(process.env.GNOSIS_INTERACTION_CPU_SLOWDOWN) || 1);
 /** A budget for this run: scaled outside strict runs (shared CI runners ran these interactions up to about 1.25x slower
@@ -206,7 +209,8 @@ void app.whenReady().then(async () => {
         max: durations[durations.length - 1],
         // Repeated inputs (j/k, typing) are checked at the 90th percentile: one sample can meet unrelated background
         // work, such as the fixture hashing the whole queue when it saves filters. Single inputs are checked as they are.
-        checked: durations.length >= 10 ? durations[Math.ceil(durations.length * 0.9) - 1] : durations[durations.length - 1],
+        // Interactions repeated only to steady a one-off measure are checked at the median (see MEDIAN_OF_3).
+        checked: durations.length >= 10 ? durations[Math.ceil(durations.length * 0.9) - 1] : MEDIAN_OF_3.has(name) ? durations[Math.floor((durations.length - 1) / 2)] : durations[durations.length - 1],
         budget: name in budgets ? scaledBudget(budgets[name]) : undefined,
         worst,
       };
@@ -787,14 +791,21 @@ void app.whenReady().then(async () => {
     // The PR sorts somewhere in the 1,000 rows; find it with the search box, as a reviewer would.
     await js(`(()=>{const e=document.querySelector('[aria-label="Search PRs and stacks"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'Fix reconnect');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await wait("document.querySelectorAll('.queue-item').length===1");
-    await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()");
-    await sleep(300);
-    await measure(
-      'open PR',
-      () => mouse("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Open PR overview')"),
-      "!!document.querySelector('.pr-summary-page')&&!!document.querySelector('.pr-description')"
-    );
-    await sleep(800);
+    for (let i = 0; i < 3; i++) {
+      if (i) {
+        key('Escape');
+        await wait("!document.querySelector('.pr-summary-page')&&document.querySelectorAll('.queue-item').length===1");
+        await sleep(500);
+      }
+      await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()");
+      await sleep(300);
+      await measure(
+        'open PR',
+        () => mouse("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Open PR overview')"),
+        "!!document.querySelector('.pr-summary-page')&&!!document.querySelector('.pr-description')"
+      );
+      await sleep(800);
+    }
 
     // ── Tabs ──────────────────────────────────────────────────────
     const selected = (label: string) => `${tab(label)}?.getAttribute('aria-selected')==='true'`;

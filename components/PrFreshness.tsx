@@ -27,8 +27,9 @@ export function PrFreshness({
         <LoadingIndicator announce={false}>Refreshing…</LoadingIndicator>
       </span>
     );
-  // The PR header reserves the slot so its row never moves; the queue toolbar's actions are right-aligned anyway.
-  if (checkedAt === undefined) return queue ? null : <span className={className} aria-hidden="true" />;
+  // The empty slot keeps its width, so the label arriving never moves the row around it. In the queue toolbar a
+  // narrower title column would wrap the description and shift the actions down (#341).
+  if (checkedAt === undefined) return <span className={className} aria-hidden="true" />;
   const label = freshnessLabel(checkedAt, now);
   const at = new Date(checkedAt);
   const title = queue

@@ -24,6 +24,11 @@ void app.whenReady().then(async () => {
   try {
     if (process.platform === 'darwin') app.show();
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    // Intent predictions (neighbours, hovered rows) wait for a focused window, and a CI runner's window may never get
+    // focus, as on macOS runners. The page is told it has focus: this suite is about what is prepared. Attached after
+    // the first load, since a window that has never navigated does not answer CDP commands.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(win.webContents);
     // Let discovery prepare the queue before opening either inspection tab.
     await js(`(async()=>{window.inspection=(await import('/lib/inspection-cache.ts')).inspectionData;await window.inspection.flush();window.inspectionReads=[];

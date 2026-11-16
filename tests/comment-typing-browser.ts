@@ -140,13 +140,21 @@ void app.whenReady().then(async () => {
     await wait(
       "!!document.querySelector('.commit-stream-row[data-file=\"src/core/engine.ts\"] diffs-container')?.shadowRoot?.querySelector('[data-line-type=change-addition]')"
     );
-    // Comment on a changed line inside the large file.
-    await js(`(()=>{const row=document.querySelector('.commit-stream-row[data-file="src/core/engine.ts"]');
+    // Comment on a changed line inside the large file. The click is a real pointer click, as a reader's would be: a
+    // scripted click() sends no pointerdown, so the stream would still hold the position restored by "Update changes"
+    // and scroll back to the top of the file, leaving the composer out of view.
+    const point = await js<{ x: number; y: number }>(`(()=>{const row=document.querySelector('.commit-stream-row[data-file="src/core/engine.ts"]');
       const line=[...row.querySelectorAll('diffs-container')].flatMap(host=>[...host.shadowRoot.querySelectorAll('[data-column-number][data-line-type=change-addition]')])[6];
-      line.scrollIntoView({block:'center'});line.click()})()`);
+      line.scrollIntoView({block:'center'});const r=line.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'] as const)
+      await cdp.sendCommand('Input.dispatchMouseEvent', { type, x: point.x, y: point.y, button: type === 'mouseMoved' ? 'none' : 'left', clickCount: 1 });
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("document.querySelector('.changes-comment-composer textarea').focus()");
     await wait("document.activeElement===document.querySelector('.changes-comment-composer textarea')");
+    // Key event durations end at the next presented frame. Typing into a field out of view presents nothing, so each
+    // key would wait for the next unrelated paint and the measure would not be the reader's latency.
+    const inView = `(()=>{const r=document.querySelector('.changes-comment-composer textarea').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()`;
+    await wait(inView);
     const size = await js<{ light: number; shadow: number; files: number }>(
       `({light:document.querySelectorAll('*').length,shadow:window.deepAll('*').length,files:document.querySelectorAll('.changes-file-tree').length})`
     );
@@ -188,6 +196,7 @@ void app.whenReady().then(async () => {
       for (const [key, count] of [...counts].sort((a, b) => b[1] - a[1]).slice(0, 30)) console.log(`  ${count}x ${key.slice(0, 400)}`);
     }
     await wait(`document.querySelector('.changes-comment-composer textarea').value===${JSON.stringify('K' + text)}`);
+    assert.ok(await js<boolean>(inView), 'The comment field stays in view while the reader types');
     console.log('Slices still to mount after typing:', await js<number>(pending));
     // Mounting resumes once typing pauses.
     await wait(`${pending}===0`);
