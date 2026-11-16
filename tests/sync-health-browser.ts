@@ -55,7 +55,8 @@ void app.whenReady().then(async () => {
     // ── Queue freshness: quiet, beside Refresh queue, and the button does not move. ──
     const refreshBefore = await rect('[aria-label="Refresh queue"]');
     await js(
-      `{const queue=window.electronAPI.workbenchQueue;window.electronAPI.workbenchQueue=async(...args)=>({...await queue(...args),revision:undefined,sync:{status:'idle',checkedAt:Date.now()-120_000}});document.dispatchEvent(new Event('visibilitychange'))}`
+      // Snapshot reads too: a pushed change read as a snapshot after the queue read would replace its sync state.
+      `{window.realReads={};for(const name of ['workbenchQueue','workbenchSnapshot']){const read=window.realReads[name]=window.electronAPI[name];window.electronAPI[name]=async(...args)=>({...await read(...args),revision:undefined,sync:{status:'idle',checkedAt:Date.now()-120_000}})}document.dispatchEvent(new Event('visibilitychange'))}`
     );
     await wait("document.querySelector('.queue-freshness')?.textContent==='Checked 2m ago'");
     assert.deepEqual(
@@ -68,6 +69,7 @@ void app.whenReady().then(async () => {
       /last checked GitHub for queue changes/
     );
     await capture('queue-freshness');
+    await js('Object.assign(window.electronAPI,window.realReads);void 0');
 
     // ── Open a PR: one refresh request for it. ──
     await js("document.querySelector('.queue-row-main').click()");

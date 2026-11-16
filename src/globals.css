@@ -1429,6 +1429,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .queue-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:22px 24px 18px; flex-shrink:0; }
 .queue-toolbar h1 { font-size:var(--type-page-title); font-weight:650; letter-spacing:-.025em; line-height:1.35; text-wrap:balance; }
 .queue-toolbar p { margin-top:5px; font-size:var(--type-control); color:var(--muted-foreground); }
+/* The description stays on one line at every width, so the header is the same height in every section, with or
+   without the freshness label beside the actions (#341). */
+.queue-toolbar > div:first-child { min-width:0; flex:1 1 auto; }
+.queue-toolbar > div:first-child > p { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.queue-toolbar > div:last-child { flex-shrink:0; }
 .workbench-icon { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; color:var(--muted-foreground); flex-shrink:0; }
 .workbench-icon:hover { background:var(--muted); color:var(--foreground); }
 .workbench-select { background:var(--background); color:var(--foreground); border:1px solid var(--border); border-radius:5px; padding:6px 9px; font-size:var(--type-control); max-width:220px; }

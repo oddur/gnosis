@@ -142,11 +142,13 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('.feedback-message textarea').value"),
       'The guard is restored in the latest commit.'
     );
+    // The notice scrolls itself into view again once the restored draft has laid out, a frame after it appears.
+    const visible =
+      "(()=>{const a=document.querySelector('.feedback-message [role=alert]').getBoundingClientRect(),b=document.querySelector('.feedback-conversation-body').getBoundingClientRect();return a.top>=b.top-0.5 && a.bottom<=b.bottom+0.5})()";
+    await wait(visible).catch(() => {});
     assert.ok(
-      await js(
-        "(()=>{const a=document.querySelector('.feedback-message [role=alert]').getBoundingClientRect(),b=document.querySelector('.feedback-conversation-body').getBoundingClientRect();return a.top>=b.top && a.bottom<=b.bottom})()"
-      ),
-      'The reply failure must be visible beside retry controls'
+      await js(visible),
+      `The reply failure must be visible beside retry controls: ${JSON.stringify(await js("(()=>{const a=document.querySelector('.feedback-message [role=alert]').getBoundingClientRect(),b=document.querySelector('.feedback-conversation-body');const r=b.getBoundingClientRect();return {alert:[a.top,a.bottom,a.width],body:[r.top,r.bottom,b.scrollTop,b.scrollHeight],viewport:[innerWidth,innerHeight]}})()"))}`
     );
     await capture('reply-error');
     await js('window.failFeedbackWrite=false');

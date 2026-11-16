@@ -63,6 +63,11 @@ void app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.show();
     // 1. A first launch saves the queue. Nothing is slow yet.
     await loadWorkbenchPage(win, base);
+    // Intent predictions (neighbours, hovered rows) wait for a focused window, and a CI runner's window may never get
+    // focus, as on macOS runners. The page is told it has focus: this suite is about what is prepared. Attached after
+    // the first load, since a window that has never navigated does not answer CDP commands.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(win.webContents);
     // The copy is saved two seconds after the queue or its rows' status last changed.
     await new Promise((resolve) => setTimeout(resolve, 3000));
