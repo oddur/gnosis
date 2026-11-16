@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Every font ships with the app (src/fonts.css, src/code-fonts.css); none may load from the network. -->
+    <meta http-equiv="Content-Security-Policy" content="font-src 'self' data:" />
     <title>Gnosis</title>
   </head>
   <body>

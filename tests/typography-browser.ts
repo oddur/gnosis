@@ -84,6 +84,25 @@ void app.whenReady().then(async () => {
       await capture(`${surface.replaceAll(' ', '-').toLowerCase()}-zoom`);
     }
     win.webContents.setZoomFactor(1);
+    // Every code font ships with the app: choosing one loads its faces from the app's own files, never a CDN.
+    const fonts = await js<{ family: string; loaded: number }[]>(`(async()=>{
+      const {applyCodeFont}=await import('/lib/code-font.ts');
+      const {CODE_FONTS}=await import('/lib/constants.ts');
+      const out=[];
+      for(const font of CODE_FONTS){
+        applyCodeFont(font.id);
+        const family=font.family.replaceAll("'",'');
+        const faces=[...await document.fonts.load('400 13px "'+family+'"','const x = 1;'),...await document.fonts.load('700 13px "'+family+'"','const x = 1;'),
+          ...await document.fonts.load('italic 400 13px "'+family+'"','const x = 1;')];
+        out.push({family,loaded:faces.filter(f=>f.status==='loaded').length});
+      }
+      applyCodeFont('jetbrains-mono');
+      return out})()`);
+    for (const font of fonts) assert.ok(font.loaded >= 2, `${font.family} loads its bundled regular and bold faces: ${JSON.stringify(fonts)}`);
+    const remote = await js<string[]>(
+      "[...performance.getEntriesByType('resource').map(e=>e.name),...[...document.querySelectorAll('link[href]')].map(l=>l.href)].filter(u=>/^https?:/.test(u)&&new URL(u).origin!==location.origin)"
+    );
+    assert.deepEqual(remote, [], 'No font, stylesheet or other asset loads from another origin');
     console.log(
       'Typography passed: six distinct heading levels, scoped semantics, reading size, light/dark and 200% zoom without page overflow.'
     );

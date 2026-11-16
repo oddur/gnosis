@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './fonts.css';
+@import './code-fonts.css';
 /* Colours, type and radius tokens, shared with the menu bar panel. */
 @import './tokens.css';
 

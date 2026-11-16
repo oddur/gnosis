@@ -8,6 +8,7 @@ const values = createByteCache<string, PrChanges>(INVENTORY_MEMORY_BYTES, 50);
 let epoch = 0;
 const key = (account: string, subject: ReviewSubject) => `${account}:${stackRevisionKey(subject)}`;
 export const peekStackChanges = (account: string, subject: ReviewSubject) => values.get(key(account, subject));
+export const stackCacheStats = () => ({ entries: values.size, bytes: values.bytes });
 export function clearStackChanges() {
   epoch++;
   values.clear();

@@ -1,3 +1,4 @@
+import type { WorkbenchQueueDelta } from '../lib/workbench-delta';
 import type { AppUpdateStatus } from './update-state';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
@@ -266,6 +267,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('workbench-star-prs', request),
   workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> =>
     ipcRenderer.invoke('workbench-view-action', action),
+  workbenchSnapshotDelta: (base: string): Promise<{ queue: WorkbenchQueue } | { delta: WorkbenchQueueDelta } | { same: true }> =>
+    ipcRenderer.invoke('workbench-snapshot-delta', base),
   workbenchSetFilters: (filters: QueueFilters): Promise<WorkbenchQueue> =>
     ipcRenderer.invoke('workbench-set-filters', filters),
   workbenchQueue: (force = false): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-queue', force),

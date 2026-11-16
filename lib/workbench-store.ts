@@ -1,5 +1,6 @@
 import { useTransitionStore } from './use-transition-store';
 import { span } from './perf-spans';
+import { applyQueueDelta, type WorkbenchQueueDelta } from './workbench-delta';
 import type { QueueItem, WorkbenchQueue, WorkbenchQueueParts } from './workbench';
 import type { ReviewHistoryEntry } from './types';
 import { historyRevision, stampQueue, type WorkbenchRevisions } from './workbench-revision';
@@ -10,6 +11,8 @@ export interface WorkbenchStoreApi {
   /** With `withSignals`, the saved PR status for the queue's rows comes with the snapshot. */
   workbenchSnapshot: (withSignals?: boolean) => Promise<WorkbenchQueue>;
   workbenchQueue: (force?: boolean) => Promise<WorkbenchQueue>;
+  /** The snapshot as the change from `base`, a revision this window holds: much smaller than a full snapshot. */
+  workbenchSnapshotDelta?: (base: string) => Promise<{ queue: WorkbenchQueue } | { delta: WorkbenchQueueDelta } | { same: true }>;
   listReviews: () => Promise<ReviewHistoryEntry[]>;
   onWorkbenchChanged?: (callback: (revisions?: WorkbenchRevisions) => void) => () => void;
   onPrReadStateChanged?: (callback: () => void) => () => void;
@@ -178,11 +181,30 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
       again.add(kind);
       return current.catch(() => {}).then(() => inFlight.get(kind));
     }
+    /**
+     * A snapshot read. Once a queue main sent is shown, main sends only what changed since it: rows named by revision
+     * and the parts that changed. A delta that does not fit the queue shown falls back to a full snapshot.
+     */
+    const readSnapshot = async (): Promise<WorkbenchQueue> => {
+      const withSignals = !status.loaded || !!status.saved;
+      const base = queue.revision;
+      const read = api().workbenchSnapshotDelta;
+      if (!withSignals && base && read) {
+        const answer = (await read(base)) as Awaited<ReturnType<typeof read>> | undefined;
+        // Hosts without deltas, such as browser fixtures, answer with nothing.
+        if (!answer || typeof answer !== 'object') return api().workbenchSnapshot(withSignals);
+        if ('queue' in answer) return answer.queue;
+        if ('same' in answer) return queue;
+        const applied = queue.revision === base ? applyQueueDelta(queue, answer.delta) : undefined;
+        if (applied) return applied;
+      }
+      return api().workbenchSnapshot(withSignals);
+    };
     const request = (async () => {
       let started = { epoch, generation };
       try {
         // Until a queue is shown, ask for saved status too, so the first rows show their badges.
-        let next = kind === 'snapshot' ? await api().workbenchSnapshot(!status.loaded || !!status.saved) : await api().workbenchQueue(kind === 'force');
+        let next = kind === 'snapshot' ? await readSnapshot() : await api().workbenchQueue(kind === 'force');
         if (!snapshotMarked && kind === 'snapshot') {
           snapshotMarked = true;
           api().perfMark?.('snapshot-ipc');
@@ -190,7 +212,7 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
         // A write that started and finished during this read may be missing from it, so read once more.
         if (started.generation === generation && !holds && started.epoch !== epoch) {
           started = { epoch, generation };
-          next = await api().workbenchSnapshot(!status.loaded || !!status.saved);
+          next = await readSnapshot();
         }
         if (started.generation !== generation) return;
         if (holds > 0) {
