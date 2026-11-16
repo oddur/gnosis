@@ -346,6 +346,10 @@ if (polishScenario) {
     'Adapt batches without changing order or allowing a busy producer to monopolize the worker during cancellation';
 }
 const briefingChipsScenario = new URLSearchParams(location.search).has('briefing-chips');
+const repositoryBudgetScenario = new URLSearchParams(location.search).has('repository-budget');
+const repositoryBudget = (resetsAt: string): import('../../lib/repository-settings').BriefingBudget => ({
+  limit: 10, used: 3, remaining: 7, resetsAt, repositories: { 'klang/engine': { limit: 10, used: 2, remaining: 8, automatic: true } },
+});
 if (briefingChipsScenario) {
   // One entry per briefing state, so every chip has a count and the generating row shimmers.
   const limit = 'Overall daily automatic briefing limit reached. Resets at midnight. You can generate a briefing manually.';
@@ -805,6 +809,8 @@ const mocks = {
       warnings: [],
       remaining: polishScenario || briefingChipsScenario ? 0 : 7,
       ...(briefingChipsScenario ? { briefingBudget: { limit: 10, used: 10, remaining: 0, resetsAt: date, repositories: {} } } : {}),
+      // ?repository-budget: Settings › Repositories shows what is left of today's automatic briefings.
+      ...(repositoryBudgetScenario ? { briefingBudget: repositoryBudget(date) } : {}),
     }),
   onHistoryNavigate: (callback: (direction: -1 | 1) => void) => {
     const handler = (event: Event) => callback((event as CustomEvent<-1 | 1>).detail);
