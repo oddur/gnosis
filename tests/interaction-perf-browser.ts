@@ -676,18 +676,49 @@ void app.whenReady().then(async () => {
       b.style.cssText='position:fixed;right:8px;bottom:8px;z-index:9999';window.__probeClicks=0;
       b.addEventListener('click',()=>{window.__probeClicks++});document.body.append(b)})()`);
     const probePoint = await point("document.querySelector('.perf-probe')");
+    // The click must reach the page while the timer runs. A fixed head start raced on macOS runners: the click arrived
+    // after the timer had finished and waited behind nothing. Instead the timer says when it starts (console messages
+    // leave the renderer while its main thread is busy), the click is sent 30 ms later, and the timer runs until the click
+    // has been queued for 150 ms (isInputPending), and at least 250 ms. Without isInputPending it runs to the 3 s cap.
+    const busyStart = () => new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        win.webContents.off('console-message', started);
+        reject(new Error('The busy timer never started'));
+      }, 10_000);
+      function started({ message }: { message: string }) {
+        if (message !== 'gnosis-busy-start') return;
+        clearTimeout(timeout);
+        win.webContents.off('console-message', started);
+        resolve();
+      }
+      win.webContents.on('console-message', started);
+    });
     const waited = await measure(
       'probe',
       async () => {
-        await js('setTimeout(function busyBeforeInput(){const end=performance.now()+300;while(performance.now()<end);},20),void 0');
-        await sleep(90);
+        const busyStarted = busyStart();
+        // Awaited below; a failed script call must not also leave this rejection unhandled.
+        busyStarted.catch(() => {});
+        await js(`window.__busy=undefined;setTimeout(function busyBeforeInput(){console.log('gnosis-busy-start');
+          const start=performance.now();let pending=null,now=start;
+          while((now=performance.now())-start<3000){
+            if(pending===null&&navigator.scheduling?.isInputPending?.())pending=now;
+            if(now-start>=250&&pending!==null&&now-pending>=150)break;
+          }
+          window.__busy={ran:Math.round(now-start),pendingAt:pending===null?null:Math.round(pending-start),inputPendingApi:typeof navigator.scheduling?.isInputPending==='function'};
+        },0),void 0`);
+        await busyStarted;
+        // Well after the work began, so the record can say how long before the input it started.
+        await sleep(30);
         win.webContents.sendInputEvent({ type: 'mouseDown', ...probePoint, button: 'left', clickCount: 1 });
         win.webContents.sendInputEvent({ type: 'mouseUp', ...probePoint, button: 'left', clickCount: 1 });
       },
       'window.__probeClicks===1'
     );
-    console.log('Input-delay probe:', JSON.stringify(waited));
-    assert.ok(waited.inputDelay >= 100, `The click waited behind the busy timer: ${JSON.stringify(waited)}`);
+    const busy = await js<{ ran: number; pendingAt: number | null; inputPendingApi: boolean }>('window.__busy');
+    console.log('Input-delay probe:', JSON.stringify(waited), 'busy timer:', JSON.stringify(busy));
+    assert.ok(!busy.inputPendingApi || busy.pendingAt !== null, `The click was queued while the busy timer ran: ${JSON.stringify(busy)}`);
+    assert.ok(waited.inputDelay >= 100, `The click waited behind the busy timer: ${JSON.stringify({ waited, busy })}`);
     assert.ok(waited.delay && waited.delay.startedBefore > 0, `The record says what it waited behind: ${JSON.stringify(waited)}`);
     if (monitor.frameTiming)
       assert.ok(
