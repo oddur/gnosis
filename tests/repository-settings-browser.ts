@@ -49,7 +49,8 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('[aria-label=\"Repository icon\"]').value==='lucide:telescope'");
     await click('[aria-label="purple repository color"]');
     await js("document.querySelector('.repository-editor').scrollIntoView({block:'start'})");
-    assert.equal(await js("document.querySelector('.repository-editor').textContent.includes('3 of 3 left here · 7 left overall')"), true);
+    // The budget arrives with the next queue snapshot, which the store may commit as a transition after the edits.
+    await wait("document.querySelector('.repository-editor').textContent.includes('3 of 3 left here · 7 left overall')");
     await capture('add-light');
     await click('.repository-explanation-settings .repository-inherit input');
     await click('.repository-explanation-settings input[value="educational"]');

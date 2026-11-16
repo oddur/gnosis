@@ -37,6 +37,9 @@ export function WriteFailureNotice({ failureKey, className }: { failureKey: stri
     if (!failure) return;
     element.current?.scrollIntoView({ block: 'nearest' });
     element.current?.focus({ preventScroll: true });
+    // The text put back in the composer can resize it after this commit, which would push the notice out of view.
+    const frame = requestAnimationFrame(() => element.current?.scrollIntoView({ block: 'nearest' }));
+    return () => cancelAnimationFrame(frame);
   }, [failure]);
   if (!failure) return null;
   const retry = failure.retry;
