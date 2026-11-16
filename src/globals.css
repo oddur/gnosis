@@ -3810,23 +3810,65 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 /* Stack summary: one dependency list, with independent review/check/branch evidence. */
 .stack-verdict-reasons { font-size:var(--type-caption);color:var(--muted-foreground); }
-.stack-status-table { container-type:inline-size; }
-.stack-status-table .stack-overview-member { display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;row-gap:0;padding-block:8px; }
-.stack-status-table .stack-member-main { display:block; }
+/*
+ * The full stack list is a table: every row shares the same column tracks, so Review, Checks and Branch line up
+ * down the page. Column names appear once above the rows. Defaults are quiet; only states that need action carry color.
+ */
+.pr-summary-page.is-stack .stack-summary-main { max-width:80rem; }
+.stack-status-table { container-type:inline-size;--stack-columns:20px minmax(0,1fr) 10.5rem 10rem 8.5rem; }
+.stack-columns-header { display:grid;grid-template-columns:var(--stack-columns);column-gap:16px;padding-bottom:6px;font-size:var(--type-caption);color:var(--muted-foreground); }
+.stack-status-table .stack-overview-member { display:grid;grid-template-columns:var(--stack-columns);column-gap:16px;row-gap:0;align-items:start;padding-block:8px; }
+.stack-status-table .stack-chain-node { grid-column:1;grid-row:1; }
+.stack-status-table .stack-member-main { display:block;grid-column:2;grid-row:1; }
 .stack-status-table .stack-member-title { align-items:flex-start;flex-wrap:nowrap;gap:8px;margin-bottom:2px; }
 .stack-status-table .stack-member-title > button:not(.entity-badge) { min-width:0;font-weight:550; }
+.stack-status-table .stack-member-branches { gap:4px 12px; }
 .stack-status-table .stack-member-progress { margin-top:0;font-variant-numeric:tabular-nums; }
-.stack-status-table .stack-member-signals { grid-column:2;display:flex;flex-wrap:wrap;gap:6px 24px;align-items:baseline; }
-.stack-status-cell { display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;min-width:0;font-size:var(--type-control);line-height:1.5;overflow-wrap:anywhere; }
-.stack-status-cell small::before { content:"· "; }
-.stack-status-cell small { font-size:var(--type-caption);color:var(--muted-foreground); }
-.stack-status-cell .pr-review-status { background:none;padding:0;font-size:var(--type-control);font-weight:500; }
+.stack-status-table .stack-member-signals { display:contents; }
+.stack-status-table .stack-member-signals > .stack-status-cell { grid-row:1; }
+.stack-status-table .stack-member-signals > .stack-status-cell:nth-child(1) { grid-column:3; }
+.stack-status-table .stack-member-signals > .stack-status-cell:nth-child(2) { grid-column:4; }
+.stack-status-table .stack-member-signals > .stack-status-cell:nth-child(3) { grid-column:5; }
+.stack-status-table .stack-member-signals > .stack-status-finished { grid-column:3 / -1; }
+.stack-status-cell { display:flex;flex-direction:column;align-items:flex-start;min-width:0;min-height:24px;font-size:var(--type-control);line-height:24px;overflow-wrap:anywhere; }
+.stack-status-cell small { font-size:var(--type-caption);line-height:1.4;color:var(--muted-foreground); }
+.stack-status-cell .pr-review-status { background:none;padding:0;font-size:var(--type-control);font-weight:500;line-height:24px; }
 .stack-status-cell.stack-member-status { max-width:none; }
-.stack-cell-label { color:var(--muted-foreground);font-size:var(--type-caption); }
-.stack-check-result { text-align:left;text-decoration:underline;text-underline-offset:3px; }
+/* Wide tables name their columns once; the per-cell label is for assistive technology and narrow layouts. */
+.stack-cell-label { position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap; }
+.stack-status-quiet::before,.pr-review-status.is-quiet::before { content:"–" / "";color:var(--muted-foreground); }
+.stack-check-result { display:inline-flex;align-items:center;gap:6px;max-width:100%;text-align:left;text-underline-offset:3px; }
+.stack-check-result svg { flex-shrink:0; }
+.stack-check-result:hover { text-decoration:underline; }
+.stack-check-result.is-quiet svg { color:var(--color-success); }
+.stack-check-result:focus-visible,.stack-status-table .stack-parent-link:focus-visible { outline:2px solid var(--ring);outline-offset:2px;border-radius:var(--radius-sm); }
+.stack-status-table .stack-parent-link { color:var(--primary);text-decoration:none; }
+.stack-status-table .stack-parent-link:hover { text-decoration:underline; }
 .stack-status-table .is-danger { color:var(--color-danger); }
 .stack-status-table .is-warning { color:var(--color-warning); }
 .stack-status-table .is-muted { color:var(--muted-foreground); }
+/* Merged and closed PRs recede: progress, not work. */
+.stack-status-table .stack-overview-member.is-finished .stack-member-title > button:not(.entity-badge) { color:var(--muted-foreground);font-weight:450; }
+.stack-status-finished .pr-review-status > span { color:var(--muted-foreground); }
+.stack-progress-summary { flex-basis:100%;display:flex;flex-wrap:wrap;gap:2px 0;font-size:var(--type-caption);color:var(--muted-foreground);font-variant-numeric:tabular-nums; }
+.stack-progress-summary > span + span::before { content:"·" / "";margin-inline:8px; }
+.stack-progress-summary .is-attention { color:var(--foreground);font-weight:600; }
+.stack-personal-progress { display:inline-flex;align-items:center;gap:6px; }
+.stack-progress-bar { display:block;flex:none;width:40px;height:4px;border-radius:2px;background:var(--border);overflow:hidden; }
+.stack-progress-bar > span { display:block;height:100%;background:var(--ring); }
+.stack-personal-progress.is-complete .stack-progress-bar > span { background:var(--color-success); }
+@container (max-width:760px) {
+  .stack-columns-header { display:none; }
+  .stack-status-table .stack-overview-member { grid-template-columns:20px minmax(0,1fr);column-gap:12px; }
+  /* Narrower lists keep the strip under the title, still in shared tracks so values line up between rows. */
+  .stack-status-table .stack-member-signals { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 16px;grid-column:2;grid-row:2; }
+  .stack-status-table .stack-member-signals > .stack-status-cell:nth-child(n) { grid-column:auto; }
+  .stack-status-table .stack-member-signals > .stack-status-finished { grid-column:1 / -1; }
+  .stack-status-table .stack-member-signals > .stack-status-cell { grid-row:auto; }
+  .stack-status-cell { flex-direction:row;flex-wrap:wrap;align-items:center;gap:0 6px; }
+  .stack-status-cell small::before { content:"· " / ""; }
+  .stack-cell-label { position:static;width:auto;height:auto;overflow:visible;clip-path:none;white-space:normal;color:var(--muted-foreground);font-size:var(--type-caption); }
+}
 .stack-member-details:empty { display:none; }
 .stack-member-details { grid-column:2 / -1;min-width:0; }
 .stack-member-disclosure > summary { cursor:pointer;width:fit-content;max-width:100%;font-size:var(--type-caption);color:var(--muted-foreground);padding-block:3px; }
@@ -3851,7 +3893,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-check-evidence li span { color:var(--muted-foreground);font-size:var(--type-caption); }
 .stack-member-evidence :is(button,a,summary):focus-visible,.stack-member-disclosure > summary:focus-visible { outline:2px solid var(--ring);outline-offset:3px;border-radius:var(--radius-sm); }
 @container (max-width:620px) {
-  .stack-status-table .stack-member-signals { display:grid;gap:4px; }
+  .stack-status-table .stack-member-signals { display:grid;grid-template-columns:minmax(0,1fr);gap:4px; }
   .stack-status-cell { display:grid;grid-template-columns:52px minmax(0,1fr);gap:2px 8px; }
   .stack-status-cell small { grid-column:2; }
 }
@@ -3867,7 +3909,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-plan-entry > a { display:inline-flex;align-items:baseline;gap:6px;max-width:100%;overflow-wrap:anywhere; }
 .stack-plan-prs .subject-icon { margin-right:0; }
 .stack-plan-pr-number { flex-shrink:0;white-space:nowrap; }
-.stack-plan-prs :is(button,a),.stack-inline-actions :is(button,a),.stack-inline-wait :is(button,a) { color:var(--primary);text-align:left;text-decoration:underline;text-underline-offset:3px;font-size:inherit; }
+.stack-plan-prs :is(button,a),.stack-inline-actions :is(button,a),.stack-inline-wait :is(button,a) { color:var(--primary);text-align:left;text-decoration:none;text-underline-offset:3px;font-size:inherit; }
+/* Remedies read as links by their color; the underline marks hover, keeping dense rows calm. */
+.stack-plan-prs :is(button,a):hover,.stack-inline-actions :is(button,a):hover:not(:disabled),.stack-inline-wait :is(button,a):hover:not(:disabled) { text-decoration:underline; }
 .stack-visible-blockers { list-style:none;margin:4px 0 0;padding:0;display:grid;gap:6px; }
 .stack-visible-blockers > li { display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 16px;font-size:var(--type-control); }
 .stack-blocker-reason { color:var(--color-danger); }

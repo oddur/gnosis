@@ -53,7 +53,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.stack-member-disclosure[open]').length"), 0);
     assert.ok(await js("document.querySelector('[aria-label=\"Merge steps\"]').textContent.includes('Mark drafts ready for review')"));
     assert.ok(await js("document.querySelector('[aria-label=\"Merge steps\"]').textContent.includes('Resolve merge conflicts')"));
-    assert.ok(await js("document.querySelector('.stack-checks-freshness').textContent.includes('Check results checked')"));
+    // Requirements and check results read together share one freshness note; its tooltip keeps both times.
+    assert.ok(await js("(e=>/^Merge status checked/.test(e.textContent) && e.title.includes('Check results checked') && e.title.includes('Merge requirements checked') || e.textContent.includes('Check results checked'))(document.querySelector('.stack-checks-freshness'))"));
     assert.ok(await js(`${row(122)}.querySelector('[data-blocker-key="draft"] button').checkVisibility()`), 'Draft action is visible without expanding details');
     assert.ok(await js(`${row(120)}.querySelector('[data-blocker-key="conflicts"] button').checkVisibility()`), 'Conflict action is visible without expanding details');
     assert.ok(await js(`${row(120)}.querySelector('.stack-required-check-names').checkVisibility()`), 'Required failing checks are named in the row');
