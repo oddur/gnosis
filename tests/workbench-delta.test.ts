@@ -38,6 +38,27 @@ void test('a delta names unchanged rows by revision and rebuilds the same snapsh
   assert.equal(queueDelta({ ...before, revision: undefined }, after), undefined);
 });
 
+void test('a change to a field outside the rows, such as the briefing budget, changes the revision and travels in the delta', () => {
+  const rows = Array.from({ length: 20 }, (_, i) => item(i + 1));
+  const budget = { limit: 10, used: 3, remaining: 7, resetsAt: '2026-11-16T23:00:00Z', repositories: {} };
+  const before = queueOf(rows);
+  const changes: [string, (queue: WorkbenchQueue) => WorkbenchQueue][] = [
+    ['briefingBudget', (queue) => ({ ...queue, briefingBudget: budget })],
+    ['remaining', (queue) => ({ ...queue, remaining: 4 })],
+    ['warnings', (queue) => ({ ...queue, warnings: ['GitHub rate limit reached.'] })],
+    ['savedViews', (queue) => ({ ...queue, savedViews: { views: [], counts: {} } as unknown as WorkbenchQueue['savedViews'] })],
+    ['snoozedPrs', (queue) => ({ ...queue, snoozedPrs: [{ url: 'https://github.com/owner/repo/pull/1' }] as unknown as WorkbenchQueue['snoozedPrs'] })],
+  ];
+  for (const [field, change] of changes) {
+    const after = stampQueue(change({ ...before, revision: undefined, parts: undefined }), []);
+    assert.notEqual(after.revision, before.revision, `${field} changes the revision, so main never answers “same”`);
+    const delta = queueDelta(before, after);
+    assert.ok(delta);
+    const rebuilt = applyQueueDelta(structuredClone(before), structuredClone(delta));
+    assert.deepEqual(rebuilt?.[field as keyof WorkbenchQueue], after[field as keyof WorkbenchQueue], `${field} reaches the window`);
+  }
+});
+
 void test('main long tasks are detected, named by the spans inside them, and matched to delayed inputs', async () => {
   const stop = startMainLoopMonitor();
   resetMainLoopReport();
