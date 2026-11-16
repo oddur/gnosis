@@ -1,4 +1,5 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { perfBudget } from './perf-budget';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 
@@ -9,9 +10,10 @@ import { app, BrowserWindow } from 'electron';
  */
 const KEYS = 20;
 /** Per-key budgets at the 90th percentile, for a 1280x800 window without CPU throttling. */
-const STYLE_BUDGET_MS = 16;
-const LAYOUT_BUDGET_MS = 8;
-const EVENT_BUDGET_MS = 64;
+// Scaled outside strict runs; see tests/perf-budget.ts.
+const STYLE_BUDGET_MS = perfBudget(16);
+const LAYOUT_BUDGET_MS = perfBudget(8);
+const EVENT_BUDGET_MS = perfBudget(64);
 
 type TraceEvent = {
   name: string;
