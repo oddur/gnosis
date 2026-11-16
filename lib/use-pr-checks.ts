@@ -4,6 +4,31 @@ import type { ReviewSubject } from './workbench';
 import type { PrStatus } from './types';
 import type { PrChecks } from './pr-checks';
 
+interface ChecksState {
+  scope: string;
+  values: Partial<Record<string, PrChecks>>;
+  errors: Partial<Record<string, string>>;
+  busy: boolean;
+}
+
+function sameEntries<T>(a: Partial<Record<string, T>>, b: Partial<Record<string, T>>, same: (x: T, y: T) => boolean) {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((key) => key in b && (a[key] === b[key] || (a[key] !== undefined && b[key] !== undefined && same(a[key], b[key]))));
+}
+
+/** Whether two check states show the same thing. A check read again from the cache is a new object with the same
+ * content. */
+export function sameChecksState(a: ChecksState, b: ChecksState) {
+  return (
+    a === b ||
+    (a.scope === b.scope &&
+      a.busy === b.busy &&
+      sameEntries(a.errors, b.errors, () => false) &&
+      sameEntries(a.values, b.values, (x, y) => x.checkedAt === y.checkedAt && JSON.stringify(x) === JSON.stringify(y)))
+  );
+}
+
 /** Native views share a backend subscription; local cache reads never trigger network requests. */
 export function usePrChecks(
   subject: ReviewSubject,
@@ -14,12 +39,7 @@ export function usePrChecks(
 ) {
   const signature = subject.members.map((m) => `${m.url}@${m.headSha}`).join('|');
   const scope = `${account}:${subject.id}`;
-  const [state, setState] = useState<{
-    scope: string;
-    values: Partial<Record<string, PrChecks>>;
-    errors: Partial<Record<string, string>>;
-    busy: boolean;
-  }>({ scope, values: {}, errors: {}, busy: false });
+  const [state, setState] = useState<ChecksState>({ scope, values: {}, errors: {}, busy: false });
   const [attempt, setAttempt] = useState<{ nonce: number; url?: string }>({ nonce: 0 });
   const previousAttempt = useRef(0);
   const latestStatuses = useRef(statuses);
@@ -40,7 +60,12 @@ export function usePrChecks(
     previousAttempt.current = attempt.nonce;
     const update = (fn: (current: typeof state) => typeof state) => {
       if (live)
-        setState((current) => fn(current.scope === scope ? current : { scope, values: {}, errors: {}, busy: false }));
+        setState((current) => {
+          const next = fn(current.scope === scope ? current : { scope, values: {}, errors: {}, busy: false });
+          // An update that changes nothing keeps the state, so the page does not render again. Switching a PR tab
+          // restarts this effect, and its cached reads re-rendered the whole PR page five or six times (#352).
+          return sameChecksState(current, next) ? current : next;
+        });
     };
     const shown = new Set<string>();
     const load = async (cachedOnly: boolean, force = false, members = subject.members, opened = false) => {

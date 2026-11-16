@@ -34,7 +34,7 @@ import { useAgentBrief, type AgentBriefComment } from '../lib/agent-brief';
 import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AlarmClock, ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
 import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
 import { Markdown } from './Markdown';
@@ -158,6 +158,13 @@ function KeptTab({ value, tab, visited, className, children, ref, onScroll, arri
     </Tabs.Content>
   );
 }
+
+/**
+ * The Changes view skips renders whose props did not change. Activity re-renders a hidden tab whenever the page
+ * renders, and the page renders on every tab switch: on a large PR, rendering the hidden Changes view again after each
+ * switch kept the main thread busy around the next tab's paint, and again when Changes showed (#352).
+ */
+const KeptChangesView = memo(PrChangesView);
 
 export interface PrReviewRequest {
   id: string;
@@ -287,6 +294,15 @@ function PrSummaryContent({
   useEffect(() => {
     if (tab !== 'changes') setInitialFile(undefined);
   }, [tab]);
+  // Stable, so the memoized Changes view does not render again while hidden (see KeptChangesView).
+  const openFeedback = useCallback((url?: string, threadId?: string) => {
+    setFeedbackPr(url);
+    setFeedbackThread(threadId);
+    setFeedbackIntent('address');
+    setFeedbackJump(n => n + 1);
+    onTabChange('feedback');
+  }, [onTabChange]);
+  const openBrief = useCallback(() => onTabChange('brief'), [onTabChange]);
   const brief = useAgentBrief(item.subject.id);
   const openBriefComment = (comment: AgentBriefComment) => {
     setInitialFile({
@@ -608,15 +624,15 @@ function PrSummaryContent({
         {/* The header's Drafts and Review PR open here on every other section; Summary shows them in its body. */}
         {!stacked && tab !== 'summary' && tab !== 'changes' && <div className="pr-header-review-panel">{summaryReview.panel}</div>}
         <KeptTab value="changes" tab={tab} visited={visited} arrival={arrival('changes')} className="pr-changes-tab">
-          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
-            <PrChangesView
+          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={openFeedback} onOpenPr={changeScope} onOpenBrief={openBrief} /> :
+            <KeptChangesView
               key={item.subject.id}
               subject={item.subject}
               preferences={preferences}
               account={account ?? ''}
-              onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }}
+              onOpenFeedback={openFeedback}
               initialFile={initialFile}
-              onOpenBrief={() => onTabChange('brief')}
+              onOpenBrief={openBrief}
             />
           )}
         </KeptTab>

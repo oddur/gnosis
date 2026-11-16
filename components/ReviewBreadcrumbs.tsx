@@ -57,17 +57,21 @@ export function ReviewBreadcrumbs({ base, scope }: { base: ReviewCrumb[]; scope:
   const measure = useRef<HTMLOListElement>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const signature = JSON.stringify(crumbs.map((c) => [c.id, c.label]));
+  const count = useRef(crumbs.length);
+  useLayoutEffect(() => {
+    count.current = crumbs.length;
+  });
   useLayoutEffect(() => {
     const root = container.current,
       natural = measure.current;
     if (!root || !natural) return;
-    // Widths come from the observer entries (the measuring list is max-content wide), and the decision waits for the
-    // next frame, so a window resize reads no layout here.
+    // Widths are read once, so the first paint is right. Later widths come from the observer entries (the measuring
+    // list is max-content wide) and the decision waits for the next frame, so neither a window resize nor a change of
+    // crumbs reads layout here. Reading it as the PR tab changed forced a layout of the whole page in the click (#352).
     let available = root.clientWidth;
     let needed = natural.scrollWidth;
     let frame = 0;
-    const check = () => setCollapsed(crumbs.length > 2 && needed > available);
+    const check = () => setCollapsed(count.current > 2 && needed > available);
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         if (entry.target === root) available = Math.round(entry.contentBoxSize[0].inlineSize);
@@ -83,7 +87,7 @@ export function ReviewBreadcrumbs({ base, scope }: { base: ReviewCrumb[]; scope:
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [signature]);
+  }, []);
   const visible = collapsed ? [crumbs[0], crumbs[crumbs.length - 1]] : crumbs;
   return (
     <Breadcrumb ref={container} aria-label="Review location" className="review-breadcrumbs">
