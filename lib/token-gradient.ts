@@ -10,7 +10,9 @@
  *
  * Columns are only exact for unwrapped lines of printable ASCII in a monospace font, so wrapped diffs, lines with
  * tabs or other characters, and tokens styled with anything but a color (inline change marks, italic, bold) keep
- * Pierre's spans. lib/diff-token-flatten.ts makes the change to the lines Pierre is about to write, so it adds no DOM
+ * Pierre's spans. So do lines longer than MAX_COLUMNS: Chromium places each span's text on its own subpixel grid,
+ * so glyphs in one text node drift from where Pierre's spans put them, by up to 0.3 px at column 160 and 0.5 px
+ * from column 274 at the app's code fonts and 90-110% zoom. lib/diff-token-flatten.ts makes the change to the lines Pierre is about to write, so it adds no DOM
  * work.
  */
 
@@ -29,6 +31,8 @@ export type Hast = { type: string; tagName?: string; properties?: Record<string,
 
 const COLOR = /^color:\s*(#[0-9a-f]{3,8}|[a-z-]+\([^;()]*\)|[a-z]+)\s*;?$/i;
 const PRINTABLE = /^[\x20-\x7e]*$/;
+/** Longer lines keep their spans; see above. */
+export const MAX_COLUMNS = 200;
 /** Pierre's token styles, most of them repeated on every line. */
 const colors = new Map<string, string | null>();
 function colorOf(style: string) {
@@ -67,7 +71,7 @@ export function flattenLine(line: Hast) {
     else if (columns) stops.push([color, text.length, text.length + columns.length]);
     text += value;
   }
-  if (stops.length < 2) return;
+  if (stops.length < 2 || stops[stops.length - 1][2] > MAX_COLUMNS) return;
   const gradient = stops.map(([color, from, to]) => `${color} ${from}ch ${to}ch`).join(',');
   line.children = [
     {

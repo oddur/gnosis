@@ -28,6 +28,12 @@ test('a line of colored tokens becomes one text node with the colors as columns'
   ]);
 });
 
+test('a line of exactly 200 columns is still flattened', () => {
+  const node = line(token('x'.repeat(150), 'color:#111111'), token('y'.repeat(50), 'color:#222222'));
+  flattenLine(node);
+  assert.equal(node.children?.length, 1);
+});
+
 test('a final newline takes no column', () => {
   const node = line(token('a', 'color:#111111'), token('b\n', 'color:#222222'));
   flattenLine(node);
@@ -42,6 +48,7 @@ test('lines whose columns or styles a gradient cannot follow keep their tokens',
     ['italic', line(token('x', 'color:#111111;font-style:italic'), token('y', 'color:#222222'))],
     ['an inline change mark', line(token('x', 'color:#111111', { 'data-diff-span': '' }), token('y', 'color:#222222'))],
     ['one color', line(token('x', 'color:#111111'), token('y', 'color:#111111'))],
+    ['more than 200 columns', line(token('x'.repeat(150), 'color:#111111'), token('y'.repeat(51), 'color:#222222'))],
   ];
   for (const [name, node] of cases) {
     const before = structuredClone(node.children);
