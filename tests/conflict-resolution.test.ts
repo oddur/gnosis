@@ -10,6 +10,7 @@ import { createConflictResolutionService, conflictSessionDirectory } from '../sr
 import { restackWorktreePath } from '../src/conflict-restack';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
+import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import type { PrActionState } from '../lib/pr-actions';
 const exec = promisify(execFile);
 async function fixture(
@@ -20,7 +21,8 @@ async function fixture(
     base: 'export const answer = 0;\n',
     ours: 'export const answer = 1;\n',
     theirs: 'export const answer = 2;\n',
-  }
+  },
+  others: { name: string; base: string; ours: string; theirs: string }[] = []
 ) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-conflicts-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -32,15 +34,18 @@ async function fixture(
   await git('config', 'user.name', 'Test');
   await git('config', 'user.email', 'test@example.com');
   await fs.writeFile(path.join(remote, sample.name), sample.base);
+  for (const other of others) await fs.writeFile(path.join(remote, other.name), other.base);
   await git('add', '.');
   await git('commit', '-m', 'ancestor');
   await git('checkout', '-b', 'feature');
   await fs.writeFile(path.join(remote, sample.name), sample.ours);
+  for (const other of others) await fs.writeFile(path.join(remote, other.name), other.ours);
   await git('commit', '-am', 'PR changes');
   const head = await git('rev-parse', 'HEAD');
   await git('checkout', 'main');
   if (deletion) await git('rm', sample.name);
   else await fs.writeFile(path.join(remote, sample.name), sample.theirs);
+  for (const other of others) await fs.writeFile(path.join(remote, other.name), other.theirs);
   await fs.writeFile(path.join(remote, 'from-main.txt'), 'Retain this clean base change.\n');
   await git('add', '.');
   await git('commit', '-m', 'base changes');
@@ -84,7 +89,7 @@ async function fixture(
   const service = createConflictResolutionService(deps);
   const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
   const { session } = await run({ kind: 'open', url: state.url });
-  return { service, run, session, git, state, deps, context };
+  return { service, run, session, git, state, deps, context, remote };
 }
 void test('real Git conflicts: draft, proposal, preview and guarded publication preserve clean base changes', async (t) => {
   const f = await fixture(t);
@@ -153,9 +158,15 @@ void test('drafts survive service restart; stale revisions and accounts cannot p
     run({ kind: 'save', id: saved.id, version: f.session.version, path: 'sample.ts', contents: '', resolved: true }),
     /saved resolution changed/
   );
+  // New base commits alone keep the draft usable; preview and publish merge them again.
   f.state.baseSha = 'f'.repeat(40);
-  assert.equal((await run({ kind: 'open', url: f.state.url })).session.stale, true);
-  await assert.rejects(run({ kind: 'preview', id: saved.id, version: saved.version }), /base branch changed/);
+  assert.equal((await run({ kind: 'open', url: f.state.url })).session.stale, false);
+  f.state.baseSha = saved.baseSha;
+  f.state.headSha = 'f'.repeat(40);
+  const stale = (await run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(stale.stale, true);
+  assert.equal(stale.staleReason, 'head-moved');
+  await assert.rejects(run({ kind: 'preview', id: saved.id, version: saved.version }), /PR branch has new commits/);
   f.context.account = 'different';
   await assert.rejects(run({ kind: 'preview', id: saved.id, version: saved.version }), /Open this PR/);
 });
@@ -719,4 +730,235 @@ void test('conflict session directories reserve room for Git metadata and retain
   const legacy = path.join(root, crypto.createHash('sha256').update('tester').digest('hex'), id);
   await fs.mkdir(legacy, { recursive: true });
   assert.equal(await conflictSessionDirectory(root, 'tester', id), legacy);
+});
+
+/** Two conflicts in one file, separated by lines a later base commit can change cleanly, and a third PR-only change. */
+const movingSample = (a: number, b: number, c: number, filler = 'filler') =>
+  [
+    `export const a = ${a};`,
+    'const f1 = 1;',
+    'const f2 = 2;',
+    `const f3 = '${filler}';`,
+    'const f4 = 4;',
+    'const f5 = 5;',
+    `export const b = ${b};`,
+    'const g1 = 1;',
+    'const g2 = 2;',
+    'const g3 = 3;',
+    'const g4 = 4;',
+    `export const c = ${c};`,
+    '',
+  ].join('\n');
+async function movingFixture(t: TestContext, edit = (text: string) => text) {
+  const f = await fixture(
+    t,
+    false,
+    { name: 'sample.ts', base: movingSample(0, 0, 0), ours: movingSample(1, 1, 1), theirs: movingSample(2, 2, 0) },
+    [
+      {
+        name: 'other.ts',
+        base: 'export const x = 0;\n',
+        ours: 'export const x = 1;\n',
+        theirs: 'export const x = 2;\n',
+      },
+    ]
+  );
+  assert.deepEqual(f.session.files.map((file) => file.path).sort(), ['other.ts', 'sample.ts']);
+  const sample = f.session.files.find((file) => file.path === 'sample.ts') as ConflictFile;
+  assert.equal(conflictCount(sample.original), 2);
+  // Block a is edited by hand, block b keeps the PR side: both kinds of result carry over.
+  let index = 0;
+  const resolved = parseConflicts(sample.original)
+    .map((segment) =>
+      segment.kind === 'text' ? segment.text : index++ === 0 ? 'export const a = 3;\n' : segment.block.ours
+    )
+    .join('');
+  let session = f.session;
+  for (const [file, contents] of [
+    ['sample.ts', edit(resolved)],
+    ['other.ts', 'export const x = 3;\n'],
+  ])
+    session = (
+      await f.run({ kind: 'save', id: session.id, version: session.version, path: file, contents, resolved: true })
+    ).session;
+  const reply = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.ok(reply.preview);
+  assert.equal(reply.baseMoved, undefined);
+  /** A new commit on main, as when someone merges another PR. */
+  const advanceBase = async (files: Record<string, string>) => {
+    await f.git('checkout', 'main');
+    for (const [name, text] of Object.entries(files)) await fs.writeFile(path.join(f.remote, name), text);
+    await f.git('add', '.');
+    await f.git('commit', '-m', 'Another PR merged');
+    f.state.baseSha = await f.git('rev-parse', 'HEAD');
+    return f.state.baseSha;
+  };
+  return { ...f, session, preview: reply.preview, advanceBase };
+}
+
+void test('base moved before the push, no new conflicts: the merge is redone and pushed with the user’s resolutions', async (t) => {
+  const f = await movingFixture(t);
+  const from = f.state.baseSha;
+  const to = await f.advanceBase({
+    'sample.ts': movingSample(2, 2, 0, 'moved'),
+    'later.txt': 'A later base commit.\n',
+    // The base now agrees with the PR, so this file no longer conflicts.
+    'other.ts': 'export const x = 1;\n',
+  });
+  const published = await f.run({
+    kind: 'publish',
+    id: f.session.id,
+    version: f.session.version,
+    previewToken: f.preview.token,
+    message: 'Merge main',
+  });
+  assert.equal(published.session.status, 'published');
+  assert.deepEqual(published.baseMoved, { from, to, conflicts: 0, files: [] });
+  assert.equal(published.session.baseSha, to);
+  assert.equal(await f.git('rev-parse', 'feature^1'), f.state.headSha);
+  assert.equal(await f.git('rev-parse', 'feature^2'), to, 'The merge commit has the new base as its second parent');
+  const merged = await f.git('show', 'feature:sample.ts');
+  assert.match(merged, /export const a = 3;/, 'The hand-edited block carried over');
+  assert.match(merged, /export const b = 1;/, 'The chosen side carried over');
+  assert.match(merged, /f3 = 'moved'/, 'The new base change is included');
+  assert.match(merged, /export const c = 1;/);
+  assert.equal(
+    await f.git('show', 'feature:other.ts'),
+    'export const x = 1;',
+    'A file that merges cleanly now is fine'
+  );
+  assert.equal(await f.git('show', 'feature:later.txt'), 'A later base commit.');
+});
+
+void test('base moved with a new conflict: only that conflict reopens, other resolutions are kept, nothing is pushed', async (t) => {
+  const f = await movingFixture(t);
+  const from = f.state.baseSha;
+  const to = await f.advanceBase({ 'sample.ts': movingSample(2, 2, 2, 'moved') });
+  const reply = await f.run({
+    kind: 'publish',
+    id: f.session.id,
+    version: f.session.version,
+    previewToken: f.preview.token,
+    message: 'Merge main',
+  });
+  assert.equal(reply.session.status, 'editing');
+  assert.deepEqual(reply.baseMoved, { from, to, conflicts: 1, files: ['sample.ts'] });
+  assert.equal(await f.git('rev-parse', 'feature'), f.state.headSha, 'Nothing was pushed');
+  const sample = reply.session.files.find((file) => file.path === 'sample.ts') as ConflictFile;
+  const other = reply.session.files.find((file) => file.path === 'other.ts') as ConflictFile;
+  assert.equal(sample.resolved, false);
+  assert.equal(conflictCount(sample.result), 1, 'Only the new conflict is open');
+  assert.match(sample.result, /export const a = 3;/);
+  assert.match(sample.result, /export const b = 1;/);
+  assert.match(sample.result, /f3 = 'moved'/);
+  const open = parseConflicts(sample.result).find((segment) => segment.kind === 'conflict');
+  assert.ok(open?.kind === 'conflict');
+  assert.equal(open.block.ours, 'export const c = 1;\n');
+  assert.equal(open.block.theirs, 'export const c = 2;\n');
+  assert.equal(other.resolved, true, 'An unchanged file stays reviewed');
+  assert.equal(other.result, 'export const x = 3;\n');
+  // Resolving the new conflict publishes against the new base.
+  let session = (
+    await f.run({
+      kind: 'save',
+      id: reply.session.id,
+      version: reply.session.version,
+      path: 'sample.ts',
+      contents: sample.result.replace(/<{7}[\s\S]*?>{7}[^\n]*\n/, 'export const c = 3;\n'),
+      resolved: true,
+    })
+  ).session;
+  const preview = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(preview.baseMoved, undefined);
+  assert.ok(preview.preview);
+  session = (
+    await f.run({
+      kind: 'publish',
+      id: session.id,
+      version: session.version,
+      previewToken: preview.preview.token,
+      message: 'Merge main',
+    })
+  ).session;
+  assert.equal(session.status, 'published');
+  assert.equal(await f.git('rev-parse', 'feature^2'), to);
+  assert.match(await f.git('show', 'feature:sample.ts'), /a = 3;[\s\S]*b = 1;[\s\S]*c = 3;/);
+});
+
+void test('edits around the conflicts survive a moved base through a text merge', async (t) => {
+  const f = await movingFixture(t, (text) => text.replace('const g3 = 3;', 'const g3 = 30;'));
+  await f.advanceBase({ 'sample.ts': movingSample(2, 2, 0, 'moved') });
+  const published = await f.run({
+    kind: 'publish',
+    id: f.session.id,
+    version: f.session.version,
+    previewToken: f.preview.token,
+    message: 'Merge main',
+  });
+  assert.equal(published.session.status, 'published');
+  assert.equal(published.baseMoved?.conflicts, 0);
+  const merged = await f.git('show', 'feature:sample.ts');
+  assert.match(merged, /a = 3;[\s\S]*f3 = 'moved'[\s\S]*b = 1;[\s\S]*g3 = 30;/);
+});
+
+void test('the PR head moved: publishing is blocked and Load latest changes reuses resolutions for review', async (t) => {
+  const f = await movingFixture(t);
+  await f.git('checkout', 'feature');
+  await fs.writeFile(path.join(f.remote, 'readme.md'), 'A teammate’s commit.\n');
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'Teammate change');
+  const teammate = await f.git('rev-parse', 'HEAD');
+  await f.git('checkout', 'main');
+  f.state.headSha = teammate;
+  await assert.rejects(
+    f.run({
+      kind: 'publish',
+      id: f.session.id,
+      version: f.session.version,
+      previewToken: f.preview.token,
+      message: 'Merge main',
+    }),
+    /PR branch has new commits/
+  );
+  assert.equal(await f.git('rev-parse', 'feature'), teammate, 'The teammate’s commit is never overwritten');
+  const reloaded = (await f.run({ kind: 'open', url: f.state.url, restart: true, keep: true })).session;
+  assert.equal(reloaded.headSha, teammate);
+  const sample = reloaded.files.find((file) => file.path === 'sample.ts') as ConflictFile;
+  assert.equal(conflictCount(sample.result), 0, 'Unchanged conflicts reuse the earlier resolutions');
+  assert.match(sample.result, /export const a = 3;/);
+  assert.ok(
+    reloaded.files.every((file) => !file.resolved),
+    'New PR commits mean every file is reviewed again'
+  );
+  // Start over drops the draft.
+  const fresh = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(conflictCount((fresh.files.find((file) => file.path === 'sample.ts') as ConflictFile).result), 2);
+});
+
+void test('a base branch that keeps moving stops after a few merges and pushes nothing', async (t) => {
+  const f = await movingFixture(t);
+  let reads = 0;
+  const read = f.deps.read;
+  f.deps.read = async () => {
+    reads++;
+    await f.advanceBase({ [`later-${reads}.txt`]: `${reads}\n` });
+    return read();
+  };
+  await assert.rejects(
+    f.run({
+      kind: 'publish',
+      id: f.session.id,
+      version: f.session.version,
+      previewToken: f.preview.token,
+      message: 'Merge main',
+    }),
+    /kept moving/
+  );
+  assert.equal(reads, 4, 'One check, then one check after each of three merges');
+  assert.equal(await f.git('rev-parse', 'feature'), f.state.headSha);
+  // The draft is unchanged, so the same review can continue once the base settles.
+  f.deps.read = read;
+  const reply = await f.run({ kind: 'preview', id: f.session.id, version: f.session.version });
+  assert.equal(reply.baseMoved?.conflicts, 0);
+  assert.ok(reply.preview);
 });

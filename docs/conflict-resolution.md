@@ -36,13 +36,24 @@ The confirmation is the only place that pushes. It shows the final update in two
 
 After the push, the outcome names the updated branch, the merge commit, the files you resolved, and that checks restart. It also says how to undo: reset the branch to its previous commit. **Done** closes the workspace.
 
-If someone pushed to the branch after you started, the push is rejected and nothing is pushed. **Load latest changes** prepares the merge again on the new head. Resolutions recorded before the push attempt are reused, and you review each file again. Other Git errors show plain copy, with the raw output under **Details**. A failed push is never resent; **Check again** only reads the branch.
+If someone pushed to the branch after you started, the push is rejected and nothing is pushed. **Load latest changes** prepares the merge again on the new head. Conflicts whose text did not change keep your resolutions, and you review each file again. Other Git errors show plain copy, with the raw output under **Details**. A failed push is never resent; **Check again** only reads the branch.
+
+### When the base branch moves
+
+On a busy base branch, new commits land while you resolve. That alone does not block the push. When **Review and push…** or **Push merge commit** finds a newer base commit, Gnosis merges the PR head with it again, using the same fast preparation as opening the workspace, and moves your resolutions over:
+
+- A conflict whose PR, base and ancestor text are unchanged keeps your result, whether you chose a side, edited it or accepted a suggestion. Edits you made around the conflicts are kept with a text merge.
+- A file that conflicted before but now merges cleanly takes Git's clean result.
+- **No new conflicts:** the preview or push goes ahead. The confirmation or the outcome says in one line that the base branch moved and the merge includes its latest changes.
+- **New conflicts:** nothing is pushed. The workspace returns to the files, opens the first file with a new conflict, and says how many conflicts are new. Only those conflicts are open; files without new conflicts stay **Reviewed**.
+
+If the base branch keeps moving, Gnosis tries three times and then asks you to try again. The push lease still checks the exact PR head, so a commit someone pushed to the PR in the meantime is never overwritten.
 
 ## Other states
 
 - **Already up to date:** the PR branch already contains the base branch. There is nothing to merge.
 - **No conflicts to resolve:** Git merges cleanly. **Review and push…** opens the confirmation.
-- **The branches changed:** the draft is stale and cannot be pushed. **Start over with latest code…** or **Load latest changes** prepares the merge again.
+- **The PR changed:** someone pushed to the PR branch, or the PR now targets another base branch. The draft cannot be pushed. **Load latest changes** prepares the merge again and keeps resolutions that still apply. New base commits alone do not make a draft stale.
 - **Preparing:** progress shows inline. After about five seconds the workspace says that preparation continues in Activity, where it can also be cancelled.
 
 ## Restack dependent PRs
@@ -69,6 +80,6 @@ On startup, Gnosis removes cache directories that no saved session needs: discar
 
 Mergiraf receives temporary files that Gnosis deletes after the operation. Upstream Mergiraf also retains a local attempt cache, capped at 128 attempts, in its platform application-data directory. This cache is shared with standalone Mergiraf; Gnosis does not delete it. The bundled executable, matching upstream source archive, license and build directions are under the app's `Resources/mergiraf` directory.
 
-Preview and publish recheck account, permissions, repository, branch names, and both pinned revisions. The merge commit has the original PR head as its first parent and the pinned base as its second. An exact-head Git push lease rejects concurrent PR updates. Protected-branch rules still apply. Publication cannot be cancelled once confirmed; reopening reconciles a successful push if its response or local status write was interrupted.
+Preview and publish recheck account, permissions, repository, branch names, and both revisions. A new PR head or base branch blocks publication; a new base commit is merged again as described above. The merge commit has the original PR head as its first parent and the base commit it was merged with as its second. An exact-head Git push lease rejects concurrent PR updates. Protected-branch rules still apply. Publication cannot be cancelled once confirmed; reopening reconciles a successful push if its response or local status write was interrupted.
 
 The preparation reads the live target branch tip (`baseRef.target.oid`), not the PR's historical `baseRefOid` snapshot. If Git can merge it cleanly, Gnosis says **No conflicts to resolve** and offers **Review and push…**. If the PR already contains that tip, Gnosis says that the branch already includes the base and prevents an unnecessary merge commit. Neither state means that Gnosis pushed anything.

@@ -30,6 +30,8 @@ export interface ConflictSession {
   preparation?: 'conflicts' | 'clean-merge' | 'up-to-date';
   commitSha?: string;
   stale?: boolean;
+  /** Why a draft is stale: someone pushed to the PR, or the PR targets another base branch. */
+  staleReason?: 'head-moved' | 'retargeted';
   dependents?: string[];
   restack?: RestackPlan;
 }
@@ -56,7 +58,8 @@ export interface RestackPlan {
   blocked?: { url: string; title: string; reason: string; paths: string[]; files: ConflictFile[]; reused: number };
 }
 export type ConflictRequest =
-  | { kind: 'open'; url: string; restart?: boolean }
+  /** `restart` prepares a fresh merge. With `keep`, resolutions whose conflicts are unchanged carry over. */
+  | { kind: 'open'; url: string; restart?: boolean; keep?: boolean }
   | { kind: 'save'; id: string; version: number; path: string; contents: string; resolved: boolean }
   | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path?: string; instructions?: string }
   | { kind: 'preview'; id: string; version: number }
@@ -66,9 +69,21 @@ export type ConflictRequest =
   | { kind: 'restack-continue'; id: string; version: number }
   | { kind: 'restack-save'; id: string; version: number; path: string; contents: string; resolved: boolean }
   | { kind: 'restack-publish'; id: string; version: number; previewToken: string; reviewed: string[] };
+/**
+ * The base branch moved while the user resolved conflicts, and Gnosis merged its latest commit again. `conflicts`
+ * counts the new conflicts the user must resolve; with none, the preview or push went ahead.
+ */
+export interface BaseMove {
+  from: string;
+  to: string;
+  conflicts: number;
+  /** Files with new conflicts. */
+  files: string[];
+}
 export interface ConflictReply {
   session: ConflictSession;
   preview?: { patch: string; token: string; validation: string; files: import('@pierre/diffs').FileDiffMetadata[] };
+  baseMoved?: BaseMove;
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 export function hasConflictMarkers(text: string) {
@@ -92,7 +107,8 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     if (
       !text('url', 2048) ||
       !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*$/.test(r.url as string) ||
-      (r.restart !== undefined && typeof r.restart !== 'boolean')
+      (r.restart !== undefined && typeof r.restart !== 'boolean') ||
+      (r.keep !== undefined && typeof r.keep !== 'boolean')
     )
       throw new Error('Choose a valid GitHub PR.');
     return;
