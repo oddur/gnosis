@@ -63,9 +63,12 @@ export function SavedViewsNav({
   active,
   busy,
   onAction,
+  onIntent,
   heading = true,
 }: {
   heading?: boolean;
+  /** The pointer rests on a view (`view:<id>`) or leaves it (null). Callers debounce. */
+  onIntent?: (id: string | null) => void;
   state: QueueViewsSnapshot;
   active: boolean;
   busy: boolean;
@@ -160,6 +163,8 @@ export function SavedViewsNav({
                     aria-current={active && state.activeId === view.id ? 'page' : undefined}
                     title={`${state.counts[view.id] ?? 0} PRs and stacks match these filters`}
                     disabled={busy}
+                    onPointerEnter={() => onIntent?.(`view:${view.id}`)}
+                    onPointerLeave={() => onIntent?.(null)}
                     onClick={() => act({ type: 'activate', id: view.id })}
                   >
                     <WorkbenchIcon name="savedView" />

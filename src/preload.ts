@@ -321,6 +321,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   diagnosticsReport: (): Promise<unknown> => ipcRenderer.invoke('diagnostics-report'),
   exportDiagnostics: (): Promise<string | null> => ipcRenderer.invoke('export-diagnostics'),
   refreshOpenPr: (urls: string[]) => ipcRenderer.send('refresh-open-pr', urls),
+  refreshQueueRows: (urls: string[]) => ipcRenderer.send('refresh-queue-rows', urls),
+  prOpenViewHover: (targets: OpenTarget[]) => ipcRenderer.send('pr-open-view-hover', targets),
   onReviewProgress: (callback: (reviewId: string, chunk: string, isThinking: boolean) => void): void => {
     ipcRenderer.on(
       'review-progress',

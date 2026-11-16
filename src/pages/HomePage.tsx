@@ -37,6 +37,8 @@ import { PrFreshness } from '../../components/PrFreshness';
 import { useFocusRefresh } from '../../lib/use-focus-refresh';
 import { inspectionData } from '../../lib/inspection-cache';
 import { createRowIntent, type RowIntent } from '../../lib/row-intent';
+import { useViewSync } from '../../lib/use-view-sync';
+import { sectionPatch, type SidebarSection } from '../../lib/saved-view-sync';
 import { setPredictionAccount, currentPreloadSettings, onPreloadSettings, predictor } from '../../lib/predictions';
 import { openIntent as openPrediction, predictableMembers } from '../../lib/navigation-graph';
 import { usePredictions } from '../../lib/use-predictions';
@@ -1042,6 +1044,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const sortedItems = useMemo(() => sortQueueItems(items, filters.sort, sortSignals), [items, filters.sort, sortSignals]);
   const orderedItems = useListOrder(sortedItems, item => item.subject.id);
   const orderedIds = useMemo(() => orderedItems.map(item => item.subject.id), [orderedItems]);
+  // Switching to a view reads its first screenful again; resting on one in the sidebar prepares it (#saved-view-sync).
+  const shownUrls = useMemo(() => orderedItems.flatMap(item => item.subject.members.map(member => member.url)).slice(0, 15), [orderedItems]);
+  const onViewIntent = useViewSync({ login: auth?.authenticated ? auth.login : null, queue, filters, shownUrls, ready: !loading && !initializing && !viewBusy,
+    shownKey: savedView ? 'saved' : tool ?? (activeQueueView ? `view:${activeQueueView.id}` : `section:${section}`) });
   const selectionScope = useMemo(() => JSON.stringify([auth?.login, section, tool, openedId, filters, queue.savedViews?.activeId]),
     [auth?.login, section, tool, openedId, filters, queue.savedViews?.activeId]);
   const selection = useEntrySelection(orderedIds, selectionScope, selected);
@@ -1842,20 +1848,13 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                       aria-current={!tool && section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
                       className={!tool && section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
                       disabled={viewBusy}
+                      onPointerEnter={id === 'saved' ? undefined : () => onViewIntent(`section:${id as string}`)}
+                      onPointerLeave={id === 'saved' ? undefined : () => onViewIntent(null)}
                       onClick={() => {
                         setMutedOpen(false);
                         setSavedView(id === 'saved');
                         if (id !== 'saved') {
-                          const patch: Partial<QueueFilters> = {
-                            starredOnly: id === 'starred',
-                            attention:
-                              id === 'stacks' || id === 'starred' || id === 'response'
-                                ? 'all'
-                                : (id as QueueFilters['attention']),
-                            involvement:
-                              id === 'response' ? 'response' : filters.involvement === 'response' ? 'all' : filters.involvement,
-                            kind: id === 'stacks' ? 'stack' : 'all',
-                          };
+                          const patch = sectionPatch(id as SidebarSection, filters);
                           if (activeQueueView) void viewAction({ type: 'activate', id: null, filters: patch }).catch(() => {});
                           else updateFilters(patch);
                         }
@@ -1892,6 +1891,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   active={!savedView && !tool}
                   busy={viewBusy}
                   onAction={viewAction}
+                  onIntent={onViewIntent}
                 />
               </div>
             ) : undefined

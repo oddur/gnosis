@@ -35,6 +35,8 @@ export interface SyncHealthDeps {
   threads: (client: Octokit, url: string) => GitHubReviewThreads | undefined;
   /** Read these PRs' watched metadata and signals now, unless they were read within 30 s. */
   refreshOpen: (urls: string[]) => void;
+  /** The reader switched to a queue view: its first screenful of rows. Main skips rows read within 30 s. */
+  refreshRows?: (urls: string[]) => void;
   notify: () => void;
   appInfo: () => Record<string, unknown>;
   now?: () => number;
@@ -206,6 +208,11 @@ export function createSyncHealthService(deps: SyncHealthDeps) {
       for (const url of urls) detector.noteSeen(url);
       const due = focusThrottle.take(urls);
       if (due.length) deps.refreshOpen(due);
+    });
+    // The reader switched to a saved view or sidebar section: its first screenful of rows, at most 15 PRs.
+    ipcMain.on('refresh-queue-rows', (_event, raw: unknown) => {
+      const urls = prUrls(raw, 15);
+      if (urls?.length && deps.token()) deps.refreshRows?.(urls);
     });
   }
   return {

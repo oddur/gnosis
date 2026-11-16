@@ -23,7 +23,7 @@ import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
 import { workflowGrouping, type WorkflowGraphInput, type WorkflowRunInfo } from '../lib/workflow-graph';
 import { createCheckDetailsPreloader } from './check-details-preloader';
 import { createPrOpenPreloader, needsRefresh, queuePriority, intentPriority, predictedPriority } from './pr-open-preloader';
-import { parseOpenTargets, type OpenTarget } from '../lib/pr-open-targets';
+import { parseOpenTargets, type OpenTarget, type OpenTier } from '../lib/pr-open-targets';
 import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
 import { openReviewCheckpoint, reviewFingerprint, collectReviewTopics } from './review-checkpoint';
@@ -3990,6 +3990,15 @@ ipcMain.on('pr-open-intent', afterStartup(startup, (event: Electron.IpcMainEvent
   const targets = parseOpenTargets(raw, 5);
   if (targets) prOpenPreload.setIntent(owner, targets);
 }));
+// Resting on a saved view or sidebar section: its top rows join queue preparation, after visible and unread rows. Queue
+// preparation is paced, automatic and skips fresh saved copies; leaving the view sends an empty list.
+ipcMain.on('pr-open-view-hover', afterStartup(startup, (event: Electron.IpcMainEvent, raw: unknown) => {
+  const owner = prOpenOwner(event), targets = parseOpenTargets(raw, 15);
+  if (!owner || !targets) return;
+  const slot = `${owner}:view-hover`;
+  prOpenPreload.setTargets(slot, predictionsEnabled() ? targets.map(target => ({ ...target, tier: Math.max(2, target.tier) as OpenTier })) : []);
+  if (targets.length && cachedToken && syncEnabled()) void prOpenPreload.tick();
+}));
 function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
   if (!cachedLogin) return;
   for (const update of updates) {
@@ -4189,16 +4198,18 @@ const githubSync = createGitHubSyncService({
     const blocked = githubClients.backoff(token, background, resources);
     if (blocked) return { retryAt: blocked.retryAt, message: blocked.reason };
   },
-  read: async (kind, targets, priority, requestedFollowUp) => {
+  read: async (kind, targets, priority, requestedFollowUp, refresh) => {
     const token = cachedToken;
     const client = getGitHubClient(token);
-    const values = await withGitHubPriority(priority === 'active' ? 'foreground' : 'background', async (): Promise<GitHubSyncUpdate[]> => {
+    // Rows the reader just switched to read like the open PR: foreground, automatic, with the 25 s signals cache.
+    const urgent = priority === 'active' || !!refresh;
+    const values = await withGitHubPriority(urgent ? 'foreground' : 'background', async (): Promise<GitHubSyncUpdate[]> => {
       if (kind === 'signals') {
         const requests = targets.flatMap(target => {
           const headSha = target.headSha ?? syncMetadata.get(target.url)?.headSha;
           return headSha ? [{ url: target.url, headSha }] : [];
         });
-        const values = await getQueueSignals(client, requests, { active: priority === 'active' });
+        const values = await getQueueSignals(client, requests, { active: urgent });
         // A changed head intentionally produces no signals for the old SHA. Refresh just that PR.
         for (const request of requests) if (signalRevisions.get(client)?.has(request.url)) {
           signalRevisions.get(client)?.delete(request.url);
@@ -4283,6 +4294,8 @@ const syncHealth = createSyncHealthService({
   threads: (client, url) => reviewThreads.cached(client, url),
   // Switching to a PR or returning to Gnosis: its metadata and signals, unless read within 30 s.
   refreshOpen: urls => { if (githubSync.refresh(urls, ['metadata', 'signals']).length) void githubSync.tick(); },
+  // Switching to a queue view or section: its first screenful of rows' signals, unless read within 30 s.
+  refreshRows: urls => { if (githubSync.refreshRows(urls, ['signals']).length) void githubSync.tick(); },
   notify: () => notifyLocalChange('sync-health-changed'),
   appInfo: () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron }),
 });

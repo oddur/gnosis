@@ -1770,8 +1770,11 @@ export function createWorkbenchService(deps: Deps) {
     viewAction(action: QueueViewAction) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to manage saved views.');
       const s = load();
-      savedViews.act(s.account, action);
+      const before = JSON.stringify(activeViewFilters(savedViews.load(s.account, s.filters)));
+      const next = savedViews.act(s.account, action);
       save();
+      // Switching, resetting or deleting the active view changes which PRs come first, as editing filters does.
+      if (JSON.stringify(activeViewFilters(next)) !== before) void pump();
       return view();
     },
     setFilters(value: unknown) {

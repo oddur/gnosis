@@ -399,3 +399,27 @@ void test('a neighbour reads checks and threads, and status and signals only whe
   assert.deepEqual(kinds(previous.url), ['checks', 'full', 'signals', 'status']);
   assert.ok(h.calls.every((call) => call.predicted === 'pr-neighbour'));
 });
+
+void test('a hovered saved view joins queue preparation after visible rows; leaving or closing the window drops it', async () => {
+  const h = harness();
+  h.setTargets('window', [target(1, 1), target(2, 3)]);
+  h.setTargets('window:view-hover', [target(5, 2), target(6, 2)]);
+  await h.preloader.tick();
+  const statuses = h.calls.filter((call) => call.kind === 'status');
+  assert.deepEqual(statuses[0].urls, [target(1).url, target(5).url, target(6).url, target(2).url], 'Visible, hovered view, current view');
+  assert.ok(h.calls.every((call) => !call.intent), 'Queue priority: paced and automatic, not hover intent');
+  // Fresh saved copies: hovering again sends nothing.
+  h.calls.length = 0;
+  h.setTargets('window:view-hover', [target(5, 2)]);
+  await h.preloader.tick();
+  assert.deepEqual(h.calls, []);
+  // Closing the window drops its hovered view: a changed PR in it is not read.
+  const changed = { ...target(5, 2), updatedAt: new Date(h.now() + 60_000).toISOString() };
+  h.setTargets('window:view-hover', [changed]);
+  h.preloader.removeOwner('window');
+  h.setTargets('other', [target(7, 3)]);
+  h.advance(2 * 60_000);
+  await h.preloader.tick();
+  const after: { urls: string[] }[] = h.calls;
+  assert.ok(after.length > 0 && after.every((call) => !call.urls.includes(target(5).url)));
+});

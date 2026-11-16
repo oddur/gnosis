@@ -27,7 +27,13 @@ interface Task {
   blockedUntil?: number;
   followUpUntil?: number;
   followUpRemaining?: number;
+  /** Asked for by `refreshRows`: read once at foreground automatic priority, ahead of other visible rows. */
+  boosted?: boolean;
 }
+/** At most this many PRs per `refreshRows` call: about one screenful of queue rows, one signals request. */
+export const ROW_REFRESH_LIMIT = 15;
+/** A row refresh asked for before the row subscribed waits this long for its subscription. */
+const ROW_REFRESH_WAIT_MS = 10_000;
 interface Deps {
   account: () => string | null;
   enabled: () => boolean;
@@ -36,7 +42,9 @@ interface Deps {
     kind: GitHubSyncKind,
     targets: GitHubSyncTarget[],
     priority: 'active' | 'visible',
-    requestedFollowUp: boolean
+    requestedFollowUp: boolean,
+    /** Rows the reader just switched to (`refreshRows`): foreground, automatic, and fresher than a visible row. */
+    refresh?: boolean
   ) => Promise<GitHubSyncUpdate[]>;
   publish: (updates: GitHubSyncUpdate[]) => void;
   failed?: (failures: GitHubSyncFailure[]) => void;
@@ -54,6 +62,8 @@ export function createGitHubSyncService(deps: Deps) {
   let account: string | null = null;
   let epoch = 0;
   const pendingKinds = new Set<string>();
+  /** Row refreshes asked for before the row's task existed, by `kind:url`, until they expire. */
+  const rowRefreshes = new Map<string, number>();
   function reconcile() {
     const nextAccount = deps.account();
     if (account !== nextAccount) {
@@ -61,6 +71,7 @@ export function createGitHubSyncService(deps: Deps) {
       epoch++;
       tasks.clear();
       pendingKinds.clear();
+      rowRefreshes.clear();
     }
     const wanted = new Map<
       string,
@@ -90,7 +101,9 @@ export function createGitHubSyncService(deps: Deps) {
           pending: false,
           failures: 0,
           version: 0,
+          boosted: (rowRefreshes.get(key) ?? -Infinity) > now(),
         });
+        rowRefreshes.delete(key);
       } else {
         task.observed = true;
         task.lastObserved = now();
@@ -105,6 +118,7 @@ export function createGitHubSyncService(deps: Deps) {
     }
     for (const [key, task] of tasks)
       if (!task.observed && !task.pending && now() - task.lastObserved > 300_000) tasks.delete(key);
+    for (const [key, until] of rowRefreshes) if (until <= now()) rowRefreshes.delete(key);
   }
   const followingUp = (task: Task) => (task.followUpUntil ?? 0) > now() && (task.followUpRemaining ?? 0) > 0;
   const pause = (task: Task) => deps.backoff(task.kind, !followingUp(task));
@@ -140,6 +154,7 @@ export function createGitHubSyncService(deps: Deps) {
         (a, b) =>
           Number(followingUp(b)) - Number(followingUp(a)) ||
           Number(b.priority === 'active') - Number(a.priority === 'active') ||
+          Number(!!b.boosted) - Number(!!a.boosted) ||
           a.due - b.due
       );
     await Promise.all(
@@ -149,14 +164,17 @@ export function createGitHubSyncService(deps: Deps) {
         if (!candidates.length) return;
         const followUp = followingUp(candidates[0]);
         const priority = followUp ? 'active' : candidates[0].priority;
+        // Rows the reader just switched to are read together, apart from routine visible rows.
+        const refresh = !followUp && priority === 'visible' && !!candidates[0].boosted;
         // Batch light signals and bounded check pages; leave capacity for newly active PRs.
         const batch = candidates
-          .filter((task) => followingUp(task) === followUp && (followUp || task.priority === priority))
+          .filter((task) => followingUp(task) === followUp && (followUp || task.priority === priority) && (!refresh || !!task.boosted))
           .slice(0, kind === 'signals' ? 25 : kind === 'checks' ? 5 : 1);
         const versions = batch.map((task) => task.version);
         pendingKinds.add(kind);
         batch.forEach((task) => {
           task.pending = true;
+          task.boosted = false;
           task.lastAttempt = now();
           if (followUp) task.followUpRemaining = (task.followUpRemaining ?? 1) - 1;
         });
@@ -165,7 +183,8 @@ export function createGitHubSyncService(deps: Deps) {
             kind,
             batch.map((task) => task.target),
             priority,
-            followUp
+            followUp,
+            refresh
           );
           if (generation !== epoch || deps.account() !== account) return;
           const accepted: GitHubSyncUpdate[] = [];
@@ -270,6 +289,32 @@ export function createGitHubSyncService(deps: Deps) {
         task.due = Math.min(task.due, now());
         refreshed.add(task.target.url);
       }
+      return [...refreshed];
+    },
+    /**
+     * The reader switched to a queue view: read its first screenful of rows now, at foreground automatic priority,
+     * unless a read started within `floor`. At most `limit` PRs. Rows whose subscription has not arrived yet are read
+     * when it does, within a few seconds. Returns the URLs that will be read; an empty list means everything is fresh.
+     */
+    refreshRows(urls: string[], kinds: GitHubSyncKind[], floor = 30_000, limit = ROW_REFRESH_LIMIT) {
+      reconcile(); // An account change first, so it cannot drop this request.
+      const wanted = [...new Set(urls)].slice(0, limit);
+      const refreshed = new Set<string>();
+      for (const url of wanted)
+        for (const kind of kinds) {
+          const key = `${kind}:${url}`;
+          const task = tasks.get(key);
+          if (!task) {
+            rowRefreshes.set(key, now() + ROW_REFRESH_WAIT_MS);
+            refreshed.add(url);
+            continue;
+          }
+          if (task.pending || now() - task.lastAttempt < floor) continue;
+          task.due = Math.min(task.due, now());
+          task.boosted = true;
+          refreshed.add(url);
+        }
+      while (rowRefreshes.size > 200) rowRefreshes.delete(rowRefreshes.keys().next().value as string);
       return [...refreshed];
     },
     tick,

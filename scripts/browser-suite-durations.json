@@ -69,6 +69,7 @@
   "response-filter": 8,
   "review-entry-points": 15,
   "review-evidence": 12,
+  "saved-view-sync": 10,
   "selections": 14,
   "setup-hardening": 10,
   "shell-hardening": 13,

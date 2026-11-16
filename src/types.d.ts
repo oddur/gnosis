@@ -146,6 +146,10 @@ declare global {
       exportDiagnostics?: () => Promise<string | null>;
       /** The reader switched to these PRs or returned to Gnosis. Main reads them again, at most every 30 s each. */
       refreshOpenPr?: (urls: string[]) => void;
+      /** The reader switched to a queue view: main reads its first screenful of rows, skipping any read within 30 s. */
+      refreshQueueRows?: (urls: string[]) => void;
+      /** Resting on a saved view or sidebar section: prepare its top rows at queue priority. An empty list cancels. */
+      prOpenViewHover?: (targets: OpenTarget[]) => void;
       onReviewProgress: (callback: (reviewId: string, chunk: string, isThinking: boolean) => void) => void;
       offReviewProgress: () => void;
       onReviewToolUse: (callback: (reviewId: string, toolName: string) => void) => void;
