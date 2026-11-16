@@ -128,7 +128,9 @@ void app.whenReady().then(async () => {
   const profiles = new Map<string, Map<string, number>>();
   const work = new Map<string, Record<string, number>>();
   const mutations = new Map<string, [string, number][]>();
-  const measure = async (name: string, act: () => Promise<void> | void, done: string) => {
+  /** `slow`: the input is known to take 100 ms or more. The monitor records such an interaction once its frames are
+   * attributed, up to a second later when the input waited, so wait for the entry instead of the usual settling time. */
+  const measure = async (name: string, act: () => Promise<void> | void, done: string, { slow = false } = {}) => {
     const debug = win.webContents.debugger;
     if (profiling) {
       await debug.sendCommand('Profiler.enable');
@@ -155,6 +157,8 @@ void app.whenReady().then(async () => {
     await js(frames);
     // Event entries arrive after the frame that painted them; the monitor then waits for frame attribution.
     await sleep(160);
+    if (slow)
+      await wait(`window.__perf.slowInteractions().some(e=>e.at>=${Math.floor(since) - 1}&&e.duration>=100)`, 75).catch(() => {});
     if (profiling) {
       const { profile } = (await debug.sendCommand('Profiler.stop')) as {
         profile: { nodes: { id: number; callFrame: { functionName: string; url: string; lineNumber: number } }[]; samples: number[]; timeDeltas: number[] };
@@ -653,7 +657,7 @@ void app.whenReady().then(async () => {
       document.body.append(b)})()`);
     // Measured once the handler has run: on a slow runner the input can arrive after the measure's settling time.
     await js('window.__probeClicks=0');
-    const probe = await measure('probe', () => mouse("document.querySelector('.perf-probe')"), 'window.__probeClicks===1');
+    const probe = await measure('probe', () => mouse("document.querySelector('.perf-probe')"), 'window.__probeClicks===1', { slow: true });
     console.log('Probe interaction:', JSON.stringify(probe));
     assert.ok(probe.duration >= 180, `A 180 ms handler is a slow interaction: ${probe.duration}`);
     assert.ok(probe.processing >= 170, `Its time is in the handlers: ${JSON.stringify(probe)}`);
@@ -713,7 +717,8 @@ void app.whenReady().then(async () => {
         win.webContents.sendInputEvent({ type: 'mouseDown', ...probePoint, button: 'left', clickCount: 1 });
         win.webContents.sendInputEvent({ type: 'mouseUp', ...probePoint, button: 'left', clickCount: 1 });
       },
-      'window.__probeClicks===1'
+      'window.__probeClicks===1',
+      { slow: true }
     );
     const busy = await js<{ ran: number; pendingAt: number | null; inputPendingApi: boolean }>('window.__busy');
     console.log('Input-delay probe:', JSON.stringify(waited), 'busy timer:', JSON.stringify(busy));
