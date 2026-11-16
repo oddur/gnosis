@@ -107,6 +107,8 @@ void app.whenReady().then(async () => {
     cdp.attach('1.3');
     await cdp.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    if (process.env.GNOSIS_TYPING_CPU_SLOWDOWN)
+      await cdp.sendCommand('Emulation.setCPUThrottlingRate', { rate: Number(process.env.GNOSIS_TYPING_CPU_SLOWDOWN) });
     await waitForWorkbenchQueue(win.webContents);
     // A synthetic 600-file PR. The first file is large: 4,000 lines with a change every 8 lines.
     await js(String.raw`(()=>{
@@ -138,7 +140,7 @@ void app.whenReady().then(async () => {
     );
     // Comment on a changed line inside the large file.
     await js(`(()=>{const row=document.querySelector('.commit-stream-row[data-file="src/core/engine.ts"]');
-      const line=[...row.querySelector('diffs-container').shadowRoot.querySelectorAll('[data-column-number][data-line-type=change-addition]')][6];
+      const line=[...row.querySelectorAll('diffs-container')].flatMap(host=>[...host.shadowRoot.querySelectorAll('[data-column-number][data-line-type=change-addition]')])[6];
       line.scrollIntoView({block:'center'});line.click()})()`);
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("document.querySelector('.changes-comment-composer textarea').focus()");
@@ -147,14 +149,46 @@ void app.whenReady().then(async () => {
       `({light:document.querySelectorAll('*').length,shadow:window.deepAll('*').length,files:document.querySelectorAll('.changes-file-tree').length})`
     );
     console.log('Fixture DOM:', JSON.stringify(size));
-    assert.ok(size.shadow > 10_000, 'The fixture is a large Changes view');
+    // The large file renders as 200-row slices that mount in the background, so count its slices rather than the
+    // elements mounted so far.
+    const slices = await js<number>(`document.querySelectorAll('.commit-stream-row[data-file="src/core/engine.ts"] .changes-slice').length`);
+    assert.ok(slices >= 15 && size.light > 1_000, `The fixture is a large Changes view: ${slices} slices, ${JSON.stringify(size)}`);
+    // The large file is still filling in when typing starts: its remaining slices mount in the background, and must
+    // wait while the reader types (#360). Typing here is measured against that pending work.
+    const pending = `document.querySelectorAll('.commit-stream-row[data-file="src/core/engine.ts"] .changes-slice:not([data-mounted])').length`;
+    const pendingAtStart = await js<number>(pending);
+    console.log('Slices still to mount when typing starts:', pendingAtStart);
+    assert.ok(pendingAtStart > 0, 'Typing starts while the large file is still mounting');
     // Settle: the first key enables the buttons, so it is typed before measuring.
     await typeKeys('K');
     await new Promise((r) => setTimeout(r, 300));
     await js(`window.keyEvents=[];new PerformanceObserver(list=>{for(const e of list.getEntries())if(['keydown','keypress','input','keyup','beforeinput'].includes(e.name))window.keyEvents.push({name:e.name,id:e.interactionId,duration:e.duration})}).observe({type:'event',durationThreshold:16});void 0`);
     const text = 'eep the retry bounda'.slice(0, KEYS);
-    const events = await trace(['devtools.timeline', 'disabled-by-default-devtools.timeline'], () => typeKeys(text));
+    // GNOSIS_TYPING_INVALIDATIONS=1 records invalidations during the measured keys and prints them. With
+    // GNOSIS_TYPING_CPU_SLOWDOWN=4 the renderer runs as on a slow CI runner.
+    const inspect = !!process.env.GNOSIS_TYPING_INVALIDATIONS;
+    const events = await trace(
+      ['devtools.timeline', 'disabled-by-default-devtools.timeline', ...(inspect ? ['disabled-by-default-devtools.timeline.invalidationTracking'] : [])],
+      () => typeKeys(text)
+    );
+    if (inspect) {
+      const counts = new Map<string, number>();
+      for (const e of events) {
+        if (!/InvalidationTracking/.test(e.name)) continue;
+        const d = e.args?.data ?? {};
+        const stack = (d.stackTrace as { functionName?: string; url?: string }[] | undefined)?.slice(0, 3).map((f) => `${f.functionName ?? ''}@${(f.url ?? '').split('/').pop()}`).join('<') ?? '';
+        const subtree = (d.invalidationList as { allDescendantsMightBeInvalid?: boolean }[] | undefined)?.some((i) => i.allDescendantsMightBeInvalid);
+        const changed = d.changedPseudo ?? d.changedAttribute ?? d.changedClass ?? d.changedId ?? '';
+        const key = [e.name, d.reason, d.nodeName, changed, subtree ? 'whole subtree' : '', stack].join(' | ');
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      console.log('Invalidations while typing:');
+      for (const [key, count] of [...counts].sort((a, b) => b[1] - a[1]).slice(0, 30)) console.log(`  ${count}x ${key.slice(0, 400)}`);
+    }
     await wait(`document.querySelector('.changes-comment-composer textarea').value===${JSON.stringify('K' + text)}`);
+    console.log('Slices still to mount after typing:', await js<number>(pending));
+    // Mounting resumes once typing pauses.
+    await wait(`${pending}===0`);
     await new Promise((r) => setTimeout(r, 200));
     const keys = perKey(events);
     const durations = await js<{ name: string; id: number; duration: number }[]>('window.keyEvents');

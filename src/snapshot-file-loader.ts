@@ -50,6 +50,7 @@ export function createSnapshotFileLoader(lfs = lfsResources, clones = localClone
       headSha: req.headSha,
       ...(req.comparison ? { scope: 'commit' } : {}),
       ...(req.stackComparison ? { scope: 'stack', stackComparison: req.stackComparison } : {}),
+      ...(req.afterOnly ? { afterOnly: true } : {}),
     };
     const key = hash(identity);
     let work = pending.get(client);
@@ -124,6 +125,9 @@ export function createSnapshotFileLoader(lfs = lfsResources, clones = localClone
             throw new Error('This file is not UTF-8 text. Open it on GitHub.');
           }
         }
+        // Context gaps need only the after side: one read, none when its blob is cached (#299, #297). Both sides stay
+        // the prepared entry's job, so this result is not saved under its key.
+        if (req.afterOnly) return { before: { kind: 'absent' as const }, after: await side(false) };
         const before = await side(true),
           after = await side(false);
         const result = { before, after, ...(lfsSides.size ? { lfs: true } : {}) };
