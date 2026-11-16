@@ -16,11 +16,12 @@ void app.whenReady().then(async () => {
   try {
     const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
     assert.ok(fixtureUrl);
-    await loadWorkbenchPage(win, fixtureUrl + '?filters');
+    // Every queue the fixture returns carries today's briefing budget, as main's do. A page-level override of one read
+    // could be lost before Settings read the queue, so the budget line never appeared (#363, main ccdb11f).
+    await loadWorkbenchPage(win, fixtureUrl + '?filters&repository-budget');
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(win.webContents);
-    await js("(()=>{const snapshot=window.electronAPI.workbenchSnapshot;window.electronAPI.workbenchSnapshot=async()=>({...await snapshot(),briefingBudget:{limit:10,used:3,remaining:7,resetsAt:new Date().toISOString(),repositories:{'klang/engine':{limit:10,used:2,remaining:8,automatic:true}}}})})()");
     await js("document.body.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}))");
     await wait("!!document.querySelector('[role=tab]:not(.workspace-tab-select)[data-state=active]')");
     await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
@@ -49,7 +50,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('[aria-label=\"Repository icon\"]').value==='lucide:telescope'");
     await click('[aria-label="purple repository color"]');
     await js("document.querySelector('.repository-editor').scrollIntoView({block:'start'})");
-    // The budget arrives with the next queue snapshot, which the store may commit as a transition after the edits.
+    // The line follows the new daily limit; edits may render as a transition.
     await wait("document.querySelector('.repository-editor').textContent.includes('3 of 3 left here · 7 left overall')");
     await capture('add-light');
     await click('.repository-explanation-settings .repository-inherit input');
