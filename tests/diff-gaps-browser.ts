@@ -10,12 +10,34 @@ import { app, BrowserWindow } from 'electron';
  * the rest without one long task. A long-task observer records every main-thread task over 50 ms from the input
  * until the file has settled; this suite prints them as the before and after numbers.
  *
+ * Accessibility (#366): the suite turns renderer accessibility on, as an accessibility client on a Mac does, and
+ * also measures scrolling through the file. Chromium rebuilds the accessibility nodes of every element it restyles,
+ * so mounting the rest of the file must restyle only what it adds, not the page and the slice in view. Lines that
+ * scroll into view, or that find in page shows, are in the accessibility tree.
+ *
  * Gaps: each gap between hunks reveals 20 lines, or all of it, from the after side only, in one request per file.
  */
 // Scaled outside strict runs; see tests/perf-budget.ts.
 const LONG_TASK_BUDGET = Number(process.env.GNOSIS_LONG_TASK_BUDGET ?? perfBudget(200));
+/**
+ * Accessibility work from one input until the large file settles. In Docker, opening the file took 150-200 ms of it
+ * while each slice mounted restyled the page, and 50-60 ms after; showing it again takes 40-50 ms. Macs spend
+ * several times more on the same work (#366), so this is set for them; the restyle count below is exact everywhere.
+ */
+const ACCESSIBILITY_BUDGET = perfBudget(300);
+/**
+ * Style recalculations of more elements than a 200-row slice has (about 4,400) while the large file opens. Each slice
+ * that mounted used to restyle all 6,600 elements of the page and the slice in view, 15 times (#366): Tailwind's
+ * `group-has-*` variants compile to `:is(:where(.group):has(…) *)`, and Chromium answers any insertion under such
+ * a rule by restyling the document. tests/tailwind-has.test.ts keeps those variants out.
+ */
+const PAGE_RESTYLE_LIMIT = 2;
+/** A little more than the elements of one 200-row slice of the large file. */
+const SLICE_ELEMENTS = 4500;
 
 void app.whenReady().then(async () => {
+  // GNOSIS_DIFF_GAPS_ACCESSIBILITY=0 leaves accessibility to the machine, to measure without it.
+  if (process.env.GNOSIS_DIFF_GAPS_ACCESSIBILITY !== '0') app.setAccessibilitySupportEnabled(true);
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -74,8 +96,11 @@ void app.whenReady().then(async () => {
   };
   type Sample = {
     firstPaint: number; settled: number; longest: number; total: number; tasks: number[]; event: number; shift: number;
-    /** With accessibility on: the longest renderer task less its accessibility work, and that work at most. */
-    withoutAccessibility?: number; accessibility?: number;
+    /** With accessibility on: the longest renderer task less its accessibility work, that work at most in one task,
+     * and in all tasks. */
+    withoutAccessibility?: number; accessibility?: number; accessibilityTotal?: number;
+    /** Style recalculations of more elements than one slice has. */
+    pageRestyles?: number;
   };
   const results: Record<string, Sample[]> = {};
   /** Runs one input; returns the time to the first painted lines, the time until every line is in the DOM, and the
@@ -84,12 +109,12 @@ void app.whenReady().then(async () => {
   const tracing = !!process.env.GNOSIS_DIFF_GAPS_TRACE;
   /**
    * Chromium builds an accessibility tree once an assistive client asks for one. macOS runners and many Macs have
-   * such a client, and Chromium then updates the tree for every mounted slice in the same task, 250-350 ms of the
-   * longest task (#366). That cost is real for those readers, but it is not what this budget is about, and Linux CI
-   * never has it. With accessibility on, each input is traced: the budget applies to the longest task less its
-   * accessibility work, and the accessibility time is printed beside it.
+   * such a client, and this suite turns it on everywhere. Its work grows with the lines in the tree and Macs spend
+   * several times more on it than Linux (#366), so it has its own budget, ACCESSIBILITY_BUDGET. With accessibility
+   * on, each input is traced: the long-task budget applies to the longest task less its accessibility work.
    */
-  let accessibility = false;
+  // Set by checkAccessibility, so the type is widened for the checks after it.
+  let accessibility = false as boolean;
   type TraceEvent = { name: string; ph: string; ts: number; dur?: number; tid: number; pid: number; args?: { name?: string; data?: { functionName?: string; url?: string } } };
   let traceEvents: TraceEvent[] = [];
   const debug = win.webContents.debugger;
@@ -105,18 +130,28 @@ void app.whenReady().then(async () => {
     if (!traced()) return;
     traceEvents = [];
     await debug.sendCommand('Tracing.start', {
-      categories: tracing ? 'toplevel,devtools.timeline,blink,v8.execute,__metadata' : 'toplevel,blink,__metadata',
+      categories: tracing ? 'toplevel,devtools.timeline,blink,v8.execute,accessibility,__metadata' : 'toplevel,blink,devtools.timeline,__metadata',
       transferMode: 'ReportEvents',
     });
   };
+  const rendererMain = () =>
+    new Set(traceEvents.filter((e) => e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain').map((e) => `${e.pid}:${e.tid}`));
+  /** The element counts of the renderer's style recalculations in the last trace. */
+  const restyles = () => {
+    const main = rendererMain();
+    return traceEvents
+      .filter((e) => e.ph === 'X' && e.name === 'UpdateLayoutTree' && main.has(`${e.pid}:${e.tid}`))
+      .map((e) => (e.args as { elementCount?: number } | undefined)?.elementCount ?? 0);
+  };
   /** The renderer's longest task over 50 ms, with and without the accessibility work inside it. */
   const accessibilityCost = () => {
-    const main = new Set(
-      traceEvents.filter((e) => e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain').map((e) => `${e.pid}:${e.tid}`)
-    );
+    const main = rendererMain();
     let withoutAccessibility = 0;
     let most = 0;
     let found = false;
+    const accessibilityTotal = traceEvents
+      .filter((e) => e.ph === 'X' && e.name === 'LocalFrameView::RunAccessibilitySteps' && main.has(`${e.pid}:${e.tid}`))
+      .reduce((total, e) => total + (e.dur ?? 0), 0);
     for (const task of traceEvents) {
       if (task.ph !== 'X' || !/RunTask/.test(task.name) || (task.dur ?? 0) <= 50_000 || !main.has(`${task.pid}:${task.tid}`)) continue;
       found = true;
@@ -128,7 +163,9 @@ void app.whenReady().then(async () => {
       most = Math.max(most, steps / 1000);
     }
     // A trace that names no renderer task leaves the long-task observer's number to be checked.
-    return found ? { withoutAccessibility: Math.round(withoutAccessibility), accessibility: Math.round(most) } : {};
+    return found
+      ? { withoutAccessibility: Math.round(withoutAccessibility), accessibility: Math.round(most), accessibilityTotal: Math.round(accessibilityTotal / 1000) }
+      : { accessibilityTotal: Math.round(accessibilityTotal / 1000) };
   };
   const stopTrace = async (name: string) => {
     if (!traced()) return;
@@ -154,16 +191,38 @@ void app.whenReady().then(async () => {
       console.log(`${name} trace: task ${Math.round((task.dur ?? 0) / 1000)} ms:`, JSON.stringify([...sums].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, v]) => [k, Math.round(v / 100) / 10])));
     }
   };
-  const measure = async (name: string, act: () => Promise<void>, painted: string, settled: string) => {
+  const checkAccessibility = () => {
     // Chromium turns accessibility on shortly after launch when a client asks, so this is checked before each input.
     if (!accessibility && app.isAccessibilitySupportEnabled()) {
       accessibility = true;
       console.log('Accessibility support is on: long tasks are traced and its work is reported apart');
       if (!tracing) {
-        debug.attach('1.3');
+        if (!debug.isAttached()) debug.attach('1.3');
         debug.on('message', collect);
       }
     }
+  };
+  /** The large file's line numbers, from 0, that are in the accessibility tree, and the names of its regions. */
+  const accessibleTree = async () => {
+    if (!debug.isAttached()) debug.attach('1.3');
+    await debug.sendCommand('Accessibility.enable');
+    try {
+      const { nodes } = (await debug.sendCommand('Accessibility.getFullAXTree')) as {
+        nodes: { ignored: boolean; role?: { value: string }; name?: { value: string } }[];
+      };
+      const lines = new Set<number>();
+      for (const node of nodes) {
+        const line = /\bgenerated(\d+)\b/.exec(node.name?.value ?? '')?.[1];
+        if (!node.ignored && line) lines.add(Number(line));
+      }
+      const regions = nodes.filter((n) => !n.ignored && n.role?.value === 'region').map((n) => n.name?.value ?? '');
+      return { lines, regions, nodes: nodes.length };
+    } finally {
+      await debug.sendCommand('Accessibility.disable');
+    }
+  };
+  const measure = async (name: string, act: () => Promise<void>, painted: string, settled: string) => {
+    checkAccessibility();
     await js('window.__longTasks=[];window.__events=[];window.__t0=performance.now();void 0');
     await startTrace();
     await act();
@@ -194,6 +253,7 @@ void app.whenReady().then(async () => {
       event,
       shift,
       ...cost,
+      ...(traced() ? { pageRestyles: restyles().filter((count) => count > SLICE_ELEMENTS).length } : {}),
     };
     (results[name] ??= []).push(sample);
     console.log(`${name}: ${JSON.stringify(sample)}`);
@@ -245,6 +305,11 @@ void app.whenReady().then(async () => {
       allLines
     );
     await sleep(500);
+    // The lines in view are in the accessibility tree, in the file's labeled region (#366).
+    const opened = await accessibleTree();
+    console.log(`Accessibility tree after opening: ${opened.nodes} nodes, ${opened.lines.size} lines of the large file`);
+    assert.ok(opened.regions.includes('zz/huge.ts'), `The file is a labeled region: ${JSON.stringify(opened.regions)}`);
+    assert.ok(opened.lines.has(0) && opened.lines.has(20), 'The lines in view are in the accessibility tree');
     const viewed = `${huge}.querySelector('.changes-file-header input[type=checkbox]')`;
     for (let i = 0; i < 3; i++) {
       await mouse(viewed);
@@ -258,6 +323,48 @@ void app.whenReady().then(async () => {
       );
       await sleep(400);
     }
+    // Find in page reaches a line that is out of the tree, and brings it in.
+    assert.ok(!(await accessibleTree()).lines.has(2999), 'The last line is not in the accessibility tree yet');
+    const found = await new Promise<number>((resolve) => {
+      const listener = (_event: unknown, result: Electron.Result) => {
+        if (!result.finalUpdate) return;
+        win.webContents.off('found-in-page', listener);
+        resolve(result.matches);
+      };
+      win.webContents.on('found-in-page', listener);
+      win.webContents.findInPage('generated2999(');
+    });
+    assert.equal(found, 1, 'Find in page finds the last line');
+    await js(frames);
+    await sleep(300);
+    win.webContents.stopFindInPage('clearSelection');
+    assert.ok((await accessibleTree()).lines.has(2999), 'The line find in page shows is in the accessibility tree');
+    // Scrolling through the whole file brings every line into view once.
+    checkAccessibility();
+    const scrolls: { duration: number; longest: number; total: number; accessibility?: number; accessibilityTotal?: number }[] = [];
+    for (let i = 0; i < 2; i++) {
+      await js(`${huge}.scrollIntoView({block:'start'})`);
+      await js(frames);
+      await sleep(500);
+      await js('window.__longTasks=[];window.__t0=performance.now();void 0');
+      await startTrace();
+      await js(`(async()=>{const s=document.querySelector('.commit-diff-stream');
+        const end=()=>${huge}.getBoundingClientRect().bottom-s.getBoundingClientRect().top+s.scrollTop-s.clientHeight;
+        while(s.scrollTop<end()-1){const before=s.scrollTop;s.scrollTop=Math.min(end(),s.scrollTop+600);await ${frames};if(s.scrollTop===before)break}})()`);
+      const duration = await js<number>('performance.now()-window.__t0');
+      await sleep(300);
+      await stopTrace('scroll large file');
+      const cost = traced() && accessibility ? accessibilityCost() : {};
+      const tasks = await js<number[]>('window.__longTasks.filter(t=>t.start>=window.__t0-5).map(t=>Math.round(t.duration))');
+      const sample = { duration: Math.round(duration), longest: Math.max(0, ...tasks), total: tasks.reduce((a, b) => a + b, 0), ...cost };
+      scrolls.push(sample);
+      console.log(`scroll large file: ${JSON.stringify(sample)}`);
+    }
+    // Lines join the accessibility tree as they scroll into view.
+    const scrolled = await accessibleTree();
+    const range = (lines: Set<number>) => (lines.size ? `${lines.size} lines, ${Math.min(...lines)}-${Math.max(...lines)}` : 'no lines');
+    console.log(`Accessibility tree at the end of the file: ${range(scrolled.lines)}`);
+    assert.ok(scrolled.lines.has(2999), `At the end of the file, the last line is in the accessibility tree: ${range(scrolled.lines)}`);
     // Every line stays in the DOM, so find in page reaches all of them, and the last line is numbered 3,000.
     assert.equal(
       await js<number>(`window.deepAll('[data-line]',${huge}).filter(e=>e.textContent.includes('generated2999(')).length`),
@@ -266,8 +373,10 @@ void app.whenReady().then(async () => {
     );
     console.log('Large file summary:', JSON.stringify(Object.fromEntries(Object.entries(results).map(([k, v]) => [k, {
       firstPaint: v.map((s) => s.firstPaint), settled: v.map((s) => s.settled), longest: v.map((s) => s.longest), total: v.map((s) => s.total), event: v.map((s) => s.event), shift: v.map((s) => s.shift),
-      ...(accessibility ? { withoutAccessibility: v.map((s) => s.withoutAccessibility), accessibility: v.map((s) => s.accessibility) } : {}),
+      ...(accessibility ? { withoutAccessibility: v.map((s) => s.withoutAccessibility), accessibility: v.map((s) => s.accessibility), accessibilityTotal: v.map((s) => s.accessibilityTotal) } : {}),
+      ...(traced() ? { pageRestyles: v.map((s) => s.pageRestyles) } : {}),
     }]))));
+    console.log('Scroll summary:', JSON.stringify({ duration: scrolls.map((s) => s.duration), longest: scrolls.map((s) => s.longest), total: scrolls.map((s) => s.total), accessibility: scrolls.map((s) => s.accessibility), accessibilityTotal: scrolls.map((s) => s.accessibilityTotal) }));
     // GNOSIS_DIFF_GAPS_MEASURE_ONLY=1 prints the numbers above on a build without slices, for a before measurement.
     if (process.env.GNOSIS_DIFF_GAPS_MEASURE_ONLY) return;
     for (const [name, samples] of Object.entries(results)) {
@@ -275,6 +384,11 @@ void app.whenReady().then(async () => {
       const spent = accessibility ? `, ${Math.max(...samples.map((s) => s.accessibility ?? 0))} ms more of accessibility work (#366)` : '';
       assert.ok(worst <= LONG_TASK_BUDGET, `${name}: the longest task was ${worst} ms${spent} (budget ${LONG_TASK_BUDGET} ms)`);
       assert.ok(samples.every((s) => s.shift === 0), `${name}: the first line in view moved: ${samples.map((s) => s.shift).join(', ')}`);
+      const restyled = Math.max(...samples.map((s) => s.pageRestyles ?? 0));
+      assert.ok(restyled <= PAGE_RESTYLE_LIMIT, `${name}: ${restyled} style recalculations of more than one slice (at most ${PAGE_RESTYLE_LIMIT}, #366)`);
+      if (!accessibility) continue;
+      const most = Math.max(...samples.map((s) => s.accessibilityTotal ?? 0));
+      assert.ok(most <= ACCESSIBILITY_BUDGET, `${name}: ${most} ms of accessibility work (budget ${ACCESSIBILITY_BUDGET} ms, #366)`);
     }
     // A slice's placeholder height is its laid-out height, so mounting it moves nothing.
     const heights = await js<{ estimate: number; actual: number }[]>(`(()=>{

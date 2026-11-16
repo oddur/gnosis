@@ -92,9 +92,10 @@ const SliceDiff = memo(function SliceDiff<A>({
 const TYPING_PAUSE_MS = 500;
 let lastTyped = -Infinity;
 let typingWatched = false;
-/** Inserting a diff restyles the page: rules such as `.commit-stream-file:has(…)` and `body:has(…)` make each
- * insertion invalidate those ancestors' whole subtrees. While someone types a comment, that cost would land on
- * their keys, so background mounting waits for a pause in typing. */
+/** Inserting a diff costs style, layout and, with an accessibility client running, accessibility work. A `:has()`
+ * rule in the page can make each insertion restyle far more than the diff: Tailwind's group `has` variants made
+ * it restyle the whole document (#366; tests/tailwind-has.test.ts). While someone types a comment, that cost would
+ * land on their keys, so background mounting waits for a pause in typing. */
 function watchTyping() {
   if (typingWatched) return;
   typingWatched = true;
