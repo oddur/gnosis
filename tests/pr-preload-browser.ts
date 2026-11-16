@@ -171,19 +171,33 @@ void app.whenReady().then(async () => {
       document.dispatchEvent(new Event('visibilitychange'));
     })()`);
     await wait(`window.openPreloads.some(targets=>targets.some(t=>t.url===${JSON.stringify(pr)}&&/^[0-9a-f]{40}$/.test(t.headSha)))`);
+    // A pointer can only rest on a row the list shows, and rows that pass under a still pointer while the list scrolls
+    // are not hovers (lib/row-intent.ts ignores them for 250 ms). The queue re-renders for the new revisions and puts
+    // its scroll position back after this preload is sent; in the 1024 px window macOS runners give, that scroll
+    // landed between the hovers below and dropped them. Bring the row into view, then hover once the list has been
+    // still for longer than the settle time.
+    await js(`(()=>{const list=document.querySelector('.queue-list');window.queueScrolledAt=performance.now();
+      list.addEventListener('scroll',()=>{window.queueScrolledAt=performance.now()});
+      ${row}.querySelector('.queue-row-main').scrollIntoView({block:'center'})})()`);
+    await wait('performance.now()-window.queueScrolledAt>500');
+    // Intents wait for a focused window. Focus is emulated above; say so if it is not what stopped the intent.
+    assert.equal(await js('document.hasFocus()'), true, 'The window is not focused, so no hover intent can be sent');
     // Moving over a row and its children, then resting, sends one intent; leaving the list clears it.
     await js(`(async()=>{
-      window.openIntents=[];
+      window.openIntents=[];window.hoverScrolls=[];const start=performance.now();
+      const list=document.querySelector('.queue-list'),scrolled=()=>window.hoverScrolls.push(Math.round(performance.now()-start));
+      list.addEventListener('scroll',scrolled);
       const row=${row};
       for(const target of [row.querySelector('.queue-row-main'),row,row.querySelector('.queue-row-main')]){
         target.dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));await new Promise(r=>setTimeout(r,40));
       }
       await new Promise(r=>setTimeout(r,300));
+      list.removeEventListener('scroll',scrolled);
     })()`);
     assert.deepEqual(
       await js('window.openIntents.map(targets=>targets&&targets.map(t=>t.url))'),
       [[pr]],
-      'Resting on a row sends one intent'
+      `Resting on a row sends one intent. Focused: ${String(await js('document.hasFocus()'))}, list scrolled during the hover at ms: ${JSON.stringify(await js('window.hoverScrolls'))}`
     );
     await js(`${row}.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,relatedTarget:document.body}))`);
     await wait('window.openIntents.length===2&&window.openIntents[1]===null');
