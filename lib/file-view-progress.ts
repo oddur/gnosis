@@ -1,6 +1,7 @@
 import { readReviewState, patchFileProgress } from './renderer-review-state';
 import { FILE_PROGRESS_KEY, type FileProgressPatch } from './review-state';
 import { useSyncExternalStore } from 'react';
+import { span } from './perf-spans';
 import { fileRevisionKey, type PrChanges } from './pr-changes';
 import { commitViewedKey } from './pr-commits';
 interface Progress {
@@ -25,7 +26,7 @@ function load(): Progress {
 }
 function changed(patch: FileProgressPatch) {
   version++;
-  listeners.forEach((fn) => fn());
+  span('viewed marks', () => listeners.forEach((fn) => fn()));
   return patchFileProgress(patch)
     .then(() => true)
     .catch((error: unknown) => {

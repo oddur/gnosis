@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { useTransitionStore } from './use-transition-store';
 import { isResizing } from './resize-activity';
 
 export interface StatusClockHost {
@@ -75,9 +76,12 @@ export function createStatusClock(host: () => StatusClockHost = browserHost, int
 
 export const statusClock = createStatusClock();
 
-/** The shared status time. The component renders again when it ticks. */
+/**
+ * The shared status time. The component renders again when it ticks, as a transition: a tick on window focus lands
+ * just before the click that focused the window, and "2m ago" can wait for that click (#345).
+ */
 export function useStatusNow() {
-  return useSyncExternalStore(statusClock.subscribe, statusClock.getSnapshot);
+  return useTransitionStore(statusClock.subscribe, statusClock.getSnapshot);
 }
 
 /**

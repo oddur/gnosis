@@ -47,6 +47,8 @@ export function installSyncFixture(mocks: Record<string, unknown>, items: QueueI
   Object.assign(window, {
     syncFixture: {
       subscriptions,
+      /** Renderer listeners on `github-sync`: preload adds one `ipcRenderer` listener for each. */
+      receivers,
       counts,
       emit,
       pauseChecks: () => {

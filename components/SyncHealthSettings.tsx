@@ -21,14 +21,13 @@ function PrLink({ url }: { url: string }) {
 
 /**
  * Settings › Diagnostics › Sync health. The drift detector compares a few PRs with a fresh GitHub read: mismatches are
- * listed here and in the diagnostics export. Plain and dense: this is a tool for reporting problems.
+ * listed here and in the diagnostics export (DiagnosticsSettings). Plain and dense: this is a tool for reporting problems.
  */
 export function SyncHealthSettings() {
   const api = window.electronAPI;
   const supported = !!api.syncHealth;
   const [health, setHealth] = useState<SyncHealthSnapshot | null>(null);
   const [error, setError] = useState('');
-  const [exported, setExported] = useState('');
   // Ages render again on the shared status clock.
   useStatusNow();
   const now = Date.now();
@@ -106,21 +105,6 @@ export function SyncHealthSettings() {
         <Button
           size="sm"
           variant="ghost"
-          disabled={!api.exportDiagnostics}
-          onClick={() => {
-            setError('');
-            setExported('');
-            void api
-              .exportDiagnostics?.()
-              .then((path) => setExported(path ? `Saved to ${path}` : ''))
-              .catch(() => setError('Could not save the diagnostics file. Choose another folder and try again.'));
-          }}
-        >
-          Export diagnostics…
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
           disabled={!health || checking || (!health.drifts.length && !health.stale.length && !health.runs.length)}
           onClick={() => act(() => api.clearSyncHealth?.(), 'Could not clear sync health. Try again.')}
         >
@@ -131,7 +115,6 @@ export function SyncHealthSettings() {
         {summary}
         {next}
       </p>
-      {exported && <p className="settings-description">{exported}</p>}
       {error && (
         <p role="alert" className="text-sm text-[var(--color-danger)]">
           {error}

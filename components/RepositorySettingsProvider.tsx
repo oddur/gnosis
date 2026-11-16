@@ -1,5 +1,6 @@
 import { RepositoryContext, preferencesUpdated } from '../lib/use-repository-settings';
 import { useEffect, useState, type ReactNode } from 'react';
+import { useWorkbenchQueue } from '../lib/workbench-store';
 import type { Preferences } from '../lib/types';
 import {
   repositoryKey,
@@ -12,25 +13,8 @@ import { RepositorySettingsEditor } from './RepositorySettingsEditor';
 export function RepositorySettingsProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefs] = useState<Preferences>();
   const [repo, setRepo] = useState('');
-  const [budget, setBudget] = useState<BriefingBudget>();
-  useEffect(() => {
-    if (!repo) return;
-    let live = true;
-    const update = () => {
-      void window.electronAPI
-        .workbenchSnapshot()
-        .then((q) => {
-          if (live) setBudget(q.briefingBudget);
-        })
-        .catch(() => {});
-    };
-    update();
-    const unsubscribe = window.electronAPI.onWorkbenchChanged?.(update);
-    return () => {
-      live = false;
-      unsubscribe?.();
-    };
-  }, [repo]);
+  // The budget comes with the shared queue snapshot; a snapshot read of its own would copy the whole queue again (#345).
+  const budget: BriefingBudget | undefined = useWorkbenchQueue(!!repo).briefingBudget;
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   useEffect(() => {

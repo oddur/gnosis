@@ -61,17 +61,6 @@ import { PrFreshness, subjectCheckedAt } from './PrFreshness';
  * Restores scroll positions inside a kept tab. Hidden content has no layout, so Chromium can reset
  * its scroll offsets; positions are recorded as the reader scrolls and reapplied on reveal.
  */
-/** Elements under `root` that are scrolled, including inside open shadow roots. */
-function scrolledWithin(root: Element | ShadowRoot): Element[] {
-  const found: Element[] = [];
-  for (const element of root.querySelectorAll('*')) {
-    if (element.scrollTop > 0 || element.scrollLeft > 0) found.push(element);
-    if (element.shadowRoot) found.push(...scrolledWithin(element.shadowRoot));
-  }
-  if (root instanceof Element && (root.scrollTop > 0 || root.scrollLeft > 0)) found.push(root);
-  return found;
-}
-
 function ScrollKeeper() {
   const marker = useRef<HTMLSpanElement>(null);
   const positions = useRef(new Map<Element, [number, number]>());
@@ -106,14 +95,24 @@ function ScrollKeeper() {
       const element = event.target;
       if (!restoring && element instanceof Element) positions.current.set(element, [element.scrollTop, element.scrollLeft]);
     };
+    // Scroll events inside shadow roots, such as a diff's sideways code scroll, do not reach the panel. Listen in each
+    // shadow root the reader's input reaches. Reading every offset as the tab hides would force a layout of both tabs
+    // inside the switch and walk every element: about 300 ms on a PR with a 3,000-line file (#346).
+    const shadows = new Set<ShadowRoot>();
+    const watch = (event: Event) => {
+      for (const node of event.composedPath())
+        if (node instanceof ShadowRoot && !shadows.has(node) && panel.contains(node.host)) {
+          shadows.add(node);
+          node.addEventListener('scroll', record, { capture: true, passive: true });
+        }
+    };
     panel.addEventListener('scroll', record, { capture: true, passive: true });
     panel.addEventListener('wheel', stop, { capture: true, passive: true });
     panel.addEventListener('pointerdown', stop, { capture: true });
     panel.addEventListener('keydown', stop, { capture: true });
+    for (const type of ['wheel', 'pointerdown', 'keydown', 'focusin'])
+      panel.addEventListener(type, watch, { capture: true, passive: true });
     return () => {
-      // Scroll events inside shadow roots do not reach the panel, so also read offsets as the tab hides.
-      // React runs this cleanup before Activity applies display:none, while offsets are still readable.
-      if (!restoring) for (const element of scrolledWithin(panel)) positions.current.set(element, [element.scrollTop, element.scrollLeft]);
       restoring = false;
       cancelAnimationFrame(frame);
       clearTimeout(timer);
@@ -121,6 +120,10 @@ function ScrollKeeper() {
       panel.removeEventListener('wheel', stop, { capture: true });
       panel.removeEventListener('pointerdown', stop, { capture: true });
       panel.removeEventListener('keydown', stop, { capture: true });
+      for (const type of ['wheel', 'pointerdown', 'keydown', 'focusin']) panel.removeEventListener(type, watch, { capture: true });
+      for (const shadow of shadows) shadow.removeEventListener('scroll', record, { capture: true });
+      // Forget rows the virtualized lists have unmounted.
+      for (const element of positions.current.keys()) if (!element.isConnected) positions.current.delete(element);
     };
   }, []);
   return <span ref={marker} hidden />;
@@ -267,7 +270,7 @@ function PrSummaryContent({
   const evict = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     clearTimeout(evict.current);
-    return () => { evict.current = setTimeout(() => setVisited(new Set([currentTab.current])), 60_000); };
+    return () => { evict.current = scheduleEviction(setVisited, currentTab); };
   }, []);
   // Programmatic jumps remount Feedback, which reads its initial thread and intent once.
   const [feedbackJump, setFeedbackJump] = useState(0);
@@ -765,6 +768,15 @@ function StackMergeActions({ subject, signals, checks, onChanged }: {
   const now = useStatusNow();
   const ready = stackMergeStatus(subject, signals, checks, now).summary.ready;
   return <PrActions member={subject.members[subject.members.length - 1]} stackMembers={subject.members} mergeReady={ready} onChanged={onChanged} />;
+}
+
+/**
+ * Drops a hidden PR's other tabs after a minute. Built outside the component on purpose: a closure made inside it
+ * would share its scope, and a pending timer would then keep the whole page alive, the queue's DOM included, for a
+ * minute after its workspace tab closed (found from a heap snapshot, #345).
+ */
+function scheduleEviction(setVisited: (value: Set<WorkspaceTab>) => void, tab: { current: WorkspaceTab }) {
+  return setTimeout(() => setVisited(new Set([tab.current])), 60_000);
 }
 
 export function PrSummary(props: ComponentProps<typeof PrSummaryContent>) {

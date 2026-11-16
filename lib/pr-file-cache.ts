@@ -54,7 +54,9 @@ export function createPrFileCache(
           bytes -= saved.get(key)?.bytes ?? 0;
           saved.set(key, { value, bytes: size, url: r.url });
           bytes += size;
-          // Evict low-priority PRs first; preserve LRU order within each PR.
+          // Evict low-priority PRs first; preserve LRU order within each PR. Sort only when over budget: background
+          // preparation stores hundreds of files, and sorting on each one kept the main thread busy (#346).
+          if (bytes <= maxBytes && saved.size <= 128) return value;
           const eviction = [...saved].sort(
             (a, b) => (priorities.get(b[1].url) ?? Infinity) - (priorities.get(a[1].url) ?? Infinity)
           );

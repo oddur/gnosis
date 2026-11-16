@@ -1,3 +1,4 @@
+import { useRenderSpan } from '../lib/perf-spans';
 import { prMetadataItem } from '../lib/deep-link-routing';
 import type { GitHubSyncStatusProps } from '../components/GitHubSyncStatus';
 import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interface-icons';
@@ -64,6 +65,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   setActivityOpen,
   onSyncStatus,
 }: Props) {
+  useRenderSpan('workspace render');
   const [navigationHistory] = useState(() => createNavigationHistory<AppLocation>(locationKey));
   const [homeRestoration, setHomeRestoration] = useState<{ location: HomeLocation; nonce: number }>();
   const lastHome = useRef<HomeLocation | undefined>(undefined);
@@ -501,7 +503,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
       {/* Update banner shows on the review page. On the home page,
           the newspaper "Extra" notice handles it instead. */}
       {page !== 'home' && <UpdateBanner />}
-      <div className="workspace-content">
+      <div className="workspace-content" data-open-error={initialError ? '' : undefined}>
         {initialError && (
           <div className="workspace-open-error" role="alert">
             <p>Could not open this review.</p>
