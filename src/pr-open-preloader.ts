@@ -271,7 +271,8 @@ export function createPrOpenPreloader(deps: PrOpenPreloaderDependencies) {
       dirty = true;
     },
     removeOwner(owner: string) {
-      owners.delete(owner);
+      // A window's own sets too, such as the saved view it rests on (`<window>:view-hover`).
+      for (const key of [...owners.keys()]) if (key === owner || key.startsWith(`${owner}:`)) owners.delete(key);
       if (queued?.owner === owner) queued = undefined;
       for (const key of [...committed.keys()]) {
         if (key !== `${owner}:committed` && !key.startsWith(`${owner}:neighbour:`)) continue;
