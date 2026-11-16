@@ -4719,6 +4719,12 @@ ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, raw: unknown =
   if (mode.predicted && request.downloadLfs) throw new Error('Predictions do not download LFS objects.');
   return inspectionPriority(mode, () => (request.stackComparison ? stackChanges : request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(mode)));
 });
+// Context gaps reveal lines from the after side only: one read, none when its blob is cached (#299).
+ipcMain.handle('pr-change-file-after', (_event, request: PrFileRequest, raw: unknown = false) => {
+  const mode = inspectionMode(raw);
+  const afterOnly = { ...request, downloadLfs: false, afterOnly: true };
+  return inspectionPriority(mode, async () => (await (request.stackComparison ? stackChanges : request.comparison ? prCommits : prChanges).content(changesClient(), afterOnly, inspectionPrefetchGuard(mode))).after);
+});
 ipcMain.handle('prepare-pr-review', (_event, url: string, revision: { baseSha: string; headSha: string }) => withGitHubPriority('background', () => prChanges.prepareReview(changesClient(), url, revision)));
 ipcMain.handle('pr-changes-revision', (_event, url: string) => prChanges.revision(changesClient(), url));
 handleInteractive('ask-pr-file', async (_event, request: FileChatRequest) => {

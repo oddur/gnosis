@@ -1,9 +1,10 @@
-import { fileRevisionKey, inspectionRank, type InspectionMode, type PrFileContents, type PrFileRequest } from './pr-changes';
+import { fileRevisionKey, inspectionRank, type InspectionMode, type PrFileContents, type PrFileRequest, type PrFileSide } from './pr-changes';
 
 /** Keep opened immutable revisions in the renderer: revisits need no IPC or network round trip. */
 export function createPrFileCache(
   load: (request: PrFileRequest, background?: InspectionMode) => Promise<PrFileContents>,
-  maxBytes = 32_000_000
+  maxBytes = 32_000_000,
+  loadAfter?: (request: PrFileRequest, background?: InspectionMode) => Promise<PrFileSide>
 ) {
   const saved = new Map<string, { value: PrFileContents; bytes: number; url: string }>();
   let priorities = new Map<string, number>();
@@ -73,9 +74,48 @@ export function createPrFileCache(
     pending.set(pendingKey, { promise, background });
     return promise;
   }
+  // After sides read alone, to reveal context gaps (#299). A file whose both sides are cached answers from them.
+  const afters = new Map<string, { value: PrFileSide; bytes: number }>();
+  const afterPending = new Map<string, Promise<PrFileSide>>();
+  let afterBytes = 0;
+  const peekAfter = (r: PrFileRequest) => peek(r)?.after ?? afters.get(keyFor(r))?.value;
+  function readAfter(r: PrFileRequest, background: InspectionMode = false): Promise<PrFileSide> {
+    const known = peekAfter(r);
+    if (known) return Promise.resolve(known);
+    const key = keyFor(r);
+    const full = pending.get(`${key}:false`);
+    if (full) return full.promise.then((value) => value.after);
+    if (!loadAfter) return read(r, background).then((value) => value.after);
+    const existing = afterPending.get(key);
+    if (existing) return existing;
+    const generation = epoch;
+    const promise = loadAfter(r, background)
+      .then((value) => {
+        const size = value.kind === 'text' ? value.content.length * 2 : 0;
+        if (generation === epoch && size <= maxBytes / 2) {
+          afterBytes -= afters.get(key)?.bytes ?? 0;
+          afters.delete(key);
+          afters.set(key, { value, bytes: size });
+          afterBytes += size;
+          for (const [oldKey, old] of afters) {
+            if (afterBytes <= maxBytes / 2 && afters.size <= 32) break;
+            afters.delete(oldKey);
+            afterBytes -= old.bytes;
+          }
+        }
+        return value;
+      })
+      .finally(() => {
+        if (afterPending.get(key) === promise) afterPending.delete(key);
+      });
+    afterPending.set(key, promise);
+    return promise;
+  }
   return {
     peek,
     read,
+    peekAfter,
+    readAfter,
     prioritize(urls: string[]) {
       priorities = new Map(urls.map((url, index) => [url, index]));
     },
@@ -83,6 +123,9 @@ export function createPrFileCache(
       epoch++;
       saved.clear();
       pending.clear();
+      afters.clear();
+      afterPending.clear();
+      afterBytes = 0;
       priorities.clear();
       bytes = 0;
     },

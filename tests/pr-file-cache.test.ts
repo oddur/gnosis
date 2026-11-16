@@ -78,3 +78,33 @@ void test('background queue preparation cannot evict the selected PR to keep a l
   assert.equal(cache.peek(other), value);
   assert.equal(cache.peek(request), undefined);
 });
+
+void test('context gaps read the after side alone, once, or take it from both sides already cached (#299)', async () => {
+  let full = 0,
+    after = 0;
+  const cache = createPrFileCache(
+    () => {
+      full++;
+      return Promise.resolve(value);
+    },
+    undefined,
+    () => {
+      after++;
+      return Promise.resolve(value.after);
+    }
+  );
+  const first = cache.readAfter(request),
+    second = cache.readAfter(request);
+  assert.equal(first, second, 'Concurrent reveals share one read');
+  assert.deepEqual(await first, value.after);
+  assert.deepEqual(cache.peekAfter(request), value.after);
+  await cache.readAfter(request);
+  assert.deepEqual([full, after], [0, 1]);
+  assert.equal(cache.peek(request), undefined, 'An after side alone is not a cached file');
+  const other = { ...request, path: 'other.ts' };
+  await cache.read(other);
+  assert.deepEqual(await cache.readAfter(other), value.after);
+  assert.deepEqual([full, after], [1, 1], 'Both sides in the cache answer an after read');
+  cache.clear();
+  assert.equal(cache.peekAfter(request), undefined);
+});

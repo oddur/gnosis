@@ -390,7 +390,8 @@ void app.whenReady().then(async () => {
     await click('Done');
     await wait("!document.querySelector('.changes-pending-comment')");
     const lineCount = await js<number>("window.deepAll('[data-line]').length");
-    await js("window.deepAll('[data-expand-button]')[0].click()");
+    // A gap reveals lines from the after side (#299).
+    await js("document.querySelector('.commit-stream-row[data-active=true] .diff-gap[data-gap] button').click()");
     await wait(`window.deepAll('[data-line]').length>${lineCount}`);
     await capture('desktop');
     await js(

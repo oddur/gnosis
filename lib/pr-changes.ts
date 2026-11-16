@@ -33,6 +33,9 @@ export interface PrChanges {
 export interface PrFileRequest {
   stackComparison?: string;
   downloadLfs?: boolean;
+  /** Read only the after side, to reveal context gaps between hunks (#299). Main answers with `after` and leaves
+   * `before` absent. */
+  afterOnly?: boolean;
   comparison?: CommitSelection;
   url: string;
   baseSha: string;

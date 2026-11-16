@@ -70,8 +70,10 @@ export const inspectionData = createPrInspectionCache({
 document.addEventListener('visibilitychange', () => inspectionData.resume());
 window.addEventListener('online', () => inspectionData.resume());
 
-export const inspectionFiles = createPrFileCache((request, background) =>
-  window.electronAPI.getPrChangeFile(request, background)
+export const inspectionFiles = createPrFileCache(
+  (request, background) => window.electronAPI.getPrChangeFile(request, background),
+  undefined,
+  (request, background) => window.electronAPI.getPrChangeFileAfter(request, background)
 );
 export const inspectionFileRequest = (snapshot: PrChanges, file: PrChangeFile) => ({
   url: snapshot.url,

@@ -17,7 +17,6 @@ import { DiffWorkerPool, diffThemeName } from '../lib/diff-worker-pool';
 import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  inspectionFiles as fileCache,
   fileIsReady,
   prepareFile,
   prefetchInspection,
@@ -32,7 +31,6 @@ import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { useChangesComments } from './useChangesComments';
 import { PrFileChat } from './PrFileChat';
 import { Button } from './ui/button';
-import { diffContextLines } from '../lib/review-diff';
 import { changesRevision, type PrChanges } from '../lib/pr-changes';
 import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
 import type { AgentBriefView } from '../lib/agent-brief';
@@ -177,7 +175,6 @@ export function PrChangesView({
     [preferenceError, setPreferenceError] = useState('');
   const appearance = useDiffAppearance(prefs.diffAppearance);
   const layout = useDiffLayout(prefs.diffLayout);
-  const contextLines = diffContextLines(appearance);
   const writes = useRef(Promise.resolve());
   useEffect(
     () =>
@@ -413,32 +410,6 @@ export function PrChangesView({
   function warmFile(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return () => {};
-    if (
-      contextLines > 3 &&
-      target.file.status === 'modified' &&
-      !fileCache.peek({
-        url: target.snapshot.url,
-        path: target.file.path,
-        baseSha: target.snapshot.metadata.baseSha,
-        headSha: target.snapshot.metadata.headSha,
-        comparison: target.snapshot.comparison,
-        stackComparison: target.snapshot.stackComparison?.key,
-      })
-    ) {
-      return prefetchInspection(viewKey(target), () =>
-        fileCache.read(
-          {
-            url: target.snapshot.url,
-            path: target.file.path,
-            baseSha: target.snapshot.metadata.baseSha,
-            headSha: target.snapshot.metadata.headSha,
-            comparison: target.snapshot.comparison,
-        stackComparison: target.snapshot.stackComparison?.key,
-          },
-          true
-        )
-      );
-    }
     if (fileIsReady(target.snapshot, target.file)) return () => {};
     return prefetchInspection(viewKey(target), () => prepareFile(target.snapshot, target.file, true));
   }
@@ -447,7 +418,7 @@ export function PrChangesView({
     const index = visible.indexOf(entry);
     const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (visible[i] ? [warmFile(visible[i].key)] : []));
     return () => cancel.forEach((stop) => stop());
-  }, [activeKey, entries, visibleSignature, contextLines]);
+  }, [activeKey, entries, visibleSignature]);
   async function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
