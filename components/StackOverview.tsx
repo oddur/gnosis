@@ -4,7 +4,7 @@ import { LoadingIndicator } from './LoadingState';
 import { stackDependencyOrder } from '../lib/stack-overview';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, CircleAlert, CircleCheck, CircleHelp, CircleMinus, Clock3 } from 'lucide-react';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
 import { type QueueSignals } from '../lib/queue-signals';
 import type { PrChecks } from '../lib/pr-checks';
@@ -99,6 +99,20 @@ export function StackOverview({
       checks[member.url],
       now
     );
+  const mergedCount = subject.members.filter((m) => m.merged).length;
+  const attentionCount = openMembers.filter((m) => {
+    const facts = factsFor(m);
+    return facts.blockers.length > 0 || facts.checksTone !== 'muted' || facts.branch.tone === 'danger';
+  }).length;
+  const fileTotals = openMembers.reduce(
+    (sum, m) => {
+      const snapshot = manifest(m);
+      return snapshot
+        ? { viewed: sum.viewed + viewedCount(m), total: sum.total + (snapshot.metadata.changedFileCount ?? snapshot.files.length) }
+        : sum;
+    },
+    { viewed: 0, total: 0 }
+  );
   return (
     <section className="stack-overview" aria-label="Stack overview">
       <StackMergePlan key={subject.id} plan={plan} onOpen={onOpen} account={account} onChanged={onRefresh} refreshing={checking || refreshBusy} />
@@ -112,6 +126,17 @@ export function StackOverview({
             </span>
           )}
           {!openMembers.length && <span className="stack-filter-context">All PRs complete.</span>}
+          {openMembers.length > 0 && (
+            <p className="stack-progress-summary">
+              {mergedCount > 0 && <span>{mergedCount} of {subject.members.length} merged</span>}
+              <span className={attentionCount ? 'is-attention' : undefined}>
+                {attentionCount
+                  ? `${attentionCount} ${attentionCount === 1 ? 'PR needs' : 'PRs need'} attention`
+                  : 'No open PR needs attention'}
+              </span>
+              {fileTotals.total > 0 && <span>{fileTotals.viewed}/{fileTotals.total} files viewed in open PRs</span>}
+            </p>
+          )}
         </div>
         <div className="stack-overview-actions">
         <BulkCheckRerun key={subject.id} members={subject.members} values={checks} onChanged={onRefresh} />
@@ -133,28 +158,53 @@ export function StackOverview({
         onOpen={onOpen}
         renderProgress={(member) => {
           const snapshot = manifest(member);
+          if (!snapshot) return <span className="stack-personal-progress">File progress unavailable</span>;
+          const viewed = viewedCount(member);
+          const total = snapshot.metadata.changedFileCount ?? snapshot.files.length;
           return (
-            <>
-              <span className="stack-personal-progress">
-                {snapshot
-                  ? `${viewedCount(member)}/${snapshot.metadata.changedFileCount ?? snapshot.files.length} files viewed${snapshot.filesTruncated ? ' · Partial file list' : ''}`
-                  : 'File progress unavailable'}
+            <span className={`stack-personal-progress ${total && viewed >= total ? 'is-complete' : ''}`}>
+              <span className="stack-progress-bar" aria-hidden="true">
+                <span style={{ width: `${total ? Math.min(100, (viewed / total) * 100) : 0}%` }} />
               </span>
-            </>
+              {`${viewed}/${total} files viewed${snapshot.filesTruncated ? ' · Partial file list' : ''}`}
+            </span>
           );
         }}
         renderColumns={(member) => {
           const facts = factsFor(member);
+          const signal = signals.find((s) => s.url === member.url && s.headSha === member.headSha);
+          if (facts.finished)
+            // A merged or closed PR needs nothing more; one quiet label spans its status columns.
+            return (
+              <div className="stack-status-cell stack-status-finished" role="group" aria-label="Status">
+                <MemberReviewStatus member={member} signals={signal} now={now} checking={checking} />
+              </div>
+            );
+          const checksError = checkErrors[member.url];
+          const checksLoading = !checksError && checksBusy && !checks[member.url];
+          // Healthy results stay quiet: passing counts without the skipped tally, which remains in the tooltip.
+          const healthyChecks = !checksError && !!facts.checkList && facts.checksTone === 'muted' && !facts.attention.length && /passed/.test(facts.checkLabel) && !/running/.test(facts.checkLabel);
+          const checkText = checksError
+            ? checks[member.url]
+              ? `${facts.checkLabel} · Updates delayed`
+              : 'Checks unavailable'
+            : healthyChecks
+              ? facts.checkLabel.split(' · ').filter((part) => !/skipped|neutral/.test(part)).join(' · ') || facts.checkLabel
+              : facts.checkLabel;
+          const CheckIcon = checksError ? CircleHelp : healthyChecks ? CircleCheck : /running/.test(facts.checkLabel) && !facts.attention.length ? Clock3 : facts.checksTone === 'muted' ? (facts.checkLabel === 'No checks reported' ? CircleMinus : CircleHelp) : CircleAlert;
+          const quietBranch = facts.branch.tone === 'muted' && ['Up to date', 'No conflicts'].includes(facts.branch.label);
+          const optionalUpdate = facts.branch.detail === 'Update optional';
           return (
             <>
               <div className="stack-status-cell" role="group" aria-label="Review status">
                 <span className="stack-cell-label">Review</span>
                 <MemberReviewStatus
                   member={member}
-                  signals={signals.find((s) => s.url === member.url && s.headSha === member.headSha)}
+                  signals={signal}
                   now={now}
                   checking={checking}
                   staleLabel="Status needs refresh"
+                  quietUnknown
                 />
                 {facts.policy?.isDraft &&
                   ['REVIEW_REQUIRED', 'CHANGES_REQUESTED'].includes(facts.policy.reviewDecision ?? '') && (
@@ -166,17 +216,18 @@ export function StackOverview({
               <div className="stack-status-cell" role="group" aria-label="Checks">
                 <span className="stack-cell-label">Checks</span>
                 <button
-                  className={`stack-check-result is-${facts.checksTone}`}
+                  className={`stack-check-result is-${facts.checksTone} ${healthyChecks ? 'is-quiet' : ''}`}
                   onClick={() => onChecks(member)}
-                  title={checkErrors[member.url] || 'View check results'}
+                  title={checksError || `${facts.checkLabel}. View check results`}
                 >
-                  {checkErrors[member.url]
-                    ? checks[member.url]
-                      ? `${facts.checkLabel} · Updates delayed`
-                      : 'Checks unavailable'
-                    : checksBusy && !checks[member.url]
-                      ? <LoadingIndicator>Checking…</LoadingIndicator>
-                      : facts.checkLabel}
+                  {checksLoading ? (
+                    <LoadingIndicator>Checking…</LoadingIndicator>
+                  ) : (
+                    <>
+                      <CheckIcon size={14} aria-hidden="true" />
+                      <span>{checkText}</span>
+                    </>
+                  )}
                 </button>
                 {facts.attention.length > 0 && (
                   <small>
@@ -196,8 +247,21 @@ export function StackOverview({
                 aria-label="Branch status"
               >
                 <span className="stack-cell-label">Branch</span>
-                <span>{facts.branch.label}</span>
-                {facts.branch.detail && <small>{facts.branch.detail}</small>}
+                {quietBranch ? (
+                  <span className="stack-status-quiet" title={facts.branch.label}>
+                    <span className="sr-only">{facts.branch.label}</span>
+                  </span>
+                ) : (
+                  <span title={facts.branch.detail ? `${facts.branch.label} · ${facts.branch.detail}` : undefined}>
+                    {facts.branch.label}
+                  </span>
+                )}
+                {facts.branch.detail &&
+                  (optionalUpdate ? (
+                    <span className="sr-only">{facts.branch.detail}</span>
+                  ) : (
+                    <small>{facts.branch.detail}</small>
+                  ))}
               </div>
             </>
           );

@@ -51,7 +51,12 @@ export function StackMemberDetails({
       )}
     </li>
   );
-  if (facts.readiness.ready && !facts.attention.length && !facts.branch.detail) return null;
+  // Finished PRs, and ready PRs whose only note is an optional update, have nothing to inspect or fix.
+  if (
+    facts.finished ||
+    (facts.readiness.ready && !facts.attention.length && (!facts.branch.detail || facts.branch.detail === 'Update optional'))
+  )
+    return null;
   return (
     <div className="stack-member-resolution">
       {facts.blockers.length > 0 && (

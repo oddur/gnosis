@@ -28,12 +28,21 @@ export function StatusBadge({
   count,
   details = status.details,
   staleLabel = 'Out of date',
+  quietUnknown = false,
 }: {
   status: PrReviewStatus;
   count?: number;
   details?: string;
   staleLabel?: string;
+  /** In a status column, a current "No review decision" is the default and shows as an empty cell. */
+  quietUnknown?: boolean;
 }) {
+  if (quietUnknown && status.kind === 'unknown' && !status.stale && count === undefined)
+    return (
+      <span className="pr-review-status is-quiet" data-review-status={status.kind} title={details}>
+        <span className="sr-only">{status.label}</span>
+      </span>
+    );
   const Icon = icons[status.kind];
   const label = count === undefined ? status.label : `${count} ${count === 1 ? 'PR' : 'PRs'} · ${status.label}`;
   return (
@@ -53,14 +62,16 @@ export function MemberReviewStatus({
   checking,
   now,
   staleLabel,
+  quietUnknown,
 }: {
   member: ReviewMember;
   signals?: QueueSignals;
   checking?: boolean;
   now?: number;
   staleLabel?: string;
+  quietUnknown?: boolean;
 }) {
-  return <StatusBadge status={prReviewStatus(member, signals, checking, now)} staleLabel={staleLabel} />;
+  return <StatusBadge status={prReviewStatus(member, signals, checking, now)} staleLabel={staleLabel} quietUnknown={quietUnknown} />;
 }
 
 export function SubjectReviewStatus({

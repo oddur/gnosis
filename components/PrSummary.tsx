@@ -40,7 +40,7 @@ import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem, type ReviewSubject } from '../lib/workbench';
-import type { QueueSignals } from '../lib/queue-signals';
+import { QUEUE_SIGNALS_TTL, type QueueSignals } from '../lib/queue-signals';
 import { statusClock, useStatusNow } from '../lib/status-clock';
 import { countRender } from '../lib/render-count';
 import type { PrStatus } from '../lib/types';
@@ -750,11 +750,26 @@ function PrStatusLine({ subject, signals, checking, checks, checkErrors, showRea
   const stackStatus = stacked ? stackMergeStatus(subject, signals, checks, now) : undefined;
   const mergePlan = stacked ? stackMergePlan(subject, signals, checks, now) : undefined;
   const readiness = stackStatus?.summary ?? subjectReadiness(subject, signals, now);
+  const delayed = Object.values(checkErrors).some(Boolean);
+  const iso = (time: number) => new Date(time).toISOString();
+  // When merge requirements and check results were read at the same time, one freshness note says so.
+  const together =
+    showReadiness && mergePlan && readiness.checkedAt !== undefined && mergePlan.checksCheckedAt !== undefined &&
+    !updating && !delayed && now - mergePlan.checksCheckedAt < QUEUE_SIGNALS_TTL &&
+    timeAgo(iso(readiness.checkedAt)) === timeAgo(iso(mergePlan.checksCheckedAt))
+      ? { requirements: readiness.checkedAt, checks: mergePlan.checksCheckedAt }
+      : undefined;
   return <>
     {!stacked && <SubjectReviewStatus subject={subject} signals={signals} checking={checking} now={now} />}
     {showReadiness && <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />}
-    {showReadiness && (stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} updating={updating} />)}
-    {mergePlan && <StackChecksFreshness plan={mergePlan} now={now} delayed={Object.values(checkErrors).some(Boolean)} />}
+    {together ? (
+      <span className="merge-readiness-checked stack-checks-freshness" title={`Merge requirements checked ${new Date(together.requirements).toLocaleString()}. Check results checked ${new Date(together.checks).toLocaleString()}.`}>
+        Merge status checked <time dateTime={iso(together.requirements)}>{timeAgo(iso(together.requirements))}</time>
+      </span>
+    ) : <>
+      {showReadiness && (stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} updating={updating} />)}
+      {mergePlan && <StackChecksFreshness plan={mergePlan} now={now} delayed={delayed} />}
+    </>}
   </>;
 }
 

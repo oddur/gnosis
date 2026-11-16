@@ -48,25 +48,40 @@ export function StackDependencyChain({
   // Resting on a member prepares that PR like a queue row.
   const intent = useIntent(`stack:${subject.id}`);
   const memberIntent = (member: ReviewMember) => intent.handlers(member.url === currentUrl ? null : openIntent(member.url, [member]));
+  const table = !!renderColumns;
   return (
     <div className={`stack-dependency-chain ${renderColumns ? 'stack-status-table' : ''}`} data-linear={order.linear}>
       {!order.linear && (
         <p className="stack-chain-note">This group is not a single linear chain. Dependencies are listed per PR.</p>
       )}
+      {table && (
+        // Column names appear once; each status cell also carries its own accessible group label.
+        <div className="stack-columns-header" aria-hidden="true">
+          <span />
+          <span>Pull request</span>
+          <span>Review</span>
+          <span>Checks</span>
+          <span>Branch</span>
+        </div>
+      )}
       <ol className="stack-overview-members" aria-label={order.linear ? 'Stack from tip to base' : 'PR dependencies'}>
-        {members.map((member) => {
+        {members.map((member, index) => {
           const signal = signals.find((value) => value.url === member.url && value.headSha === member.headSha);
           const state = stackMergeLabel(member, signal, now, checking);
           const target = stackMergeTarget(subject, member, signal, now);
           const parents = subject.edges
             .filter((edge) => edge.child === member.url)
-            .flatMap((edge) => subject.members.filter((parent) => parent.url === edge.parent));
+            .flatMap((edge) => subject.members.filter((parent) => parent.url === edge.parent))
+            .filter((parent) => parent.url !== target.parent?.url);
+          // In the full list the spine already shows a linear parent directly below; name only other bases.
+          const spineParent = table && order.linear && !!target.parent && members[index + 1]?.url === target.parent.url;
+          const finished = member.merged || member.state === 'closed';
           return (
             <li
               key={member.url}
               data-pr-url={member.url}
               aria-current={currentUrl === member.url ? 'page' : undefined}
-              className={`stack-overview-member ${unreadUrls?.includes(member.url) ? 'is-unread' : ''}`}
+              className={`stack-overview-member ${unreadUrls?.includes(member.url) ? 'is-unread' : ''} ${table && finished ? 'is-finished' : ''}`}
             >
               {/* The node shows the PR's GitHub state, like GitHub's stack list; readiness is written beside it. */}
               <span className="stack-chain-node">
@@ -81,8 +96,8 @@ export function StackDependencyChain({
                 <div className="stack-member-branches">
                   {mixedRepos && <RepositoryBadge repo={member.repo} />}
                   <BranchBadge branch={member.headBranch} repo={member.headRepo} />
-                  <span>into</span>
-                  {target.parent ? (
+                  {!spineParent && <span>into</span>}
+                  {spineParent ? null : target.parent ? (
                     <button className="stack-parent-link" onClick={() => target.parent && onOpen(target.parent)} {...memberIntent(target.parent)}>
                       #{target.parent.number}
                     </button>
@@ -90,7 +105,7 @@ export function StackDependencyChain({
                     <BranchBadge branch={target.branch} repo={member.baseRepo} />
                   )}
                   {!order.linear && parents.length > 0 && (
-                    <span>Builds on {parents.map((parent) => `#${parent.number}`).join(', ')}</span>
+                    <span>{target.parent ? 'Also builds on' : 'Builds on'} {parents.map((parent) => `#${parent.number}`).join(', ')}</span>
                   )}
                   {matchingUrls && !matchingUrls.includes(member.url) && <span>Outside filters</span>}
                   {renderProgress && <span className="stack-member-progress">{renderProgress(member)}</span>}
