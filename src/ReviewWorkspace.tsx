@@ -410,6 +410,13 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
       perform: () => navigate({ kind: 'home', section: 'starred' }),
     },
     {
+      id: 'nav:snoozed',
+      icon: workbenchIcons.snoozed,
+      label: 'Show snoozed PRs',
+      keywords: 'snooze later hidden unsnooze wake',
+      perform: () => navigate({ kind: 'home', section: 'snoozed' }),
+    },
+    {
       id: 'nav:muted',
       icon: workbenchIcons.muted,
       label: 'Manage muted PRs',

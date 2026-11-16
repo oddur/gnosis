@@ -59,6 +59,10 @@ export interface QueueItem {
   unreadUrls?: string[];
   starred?: boolean;
   starredUrls?: string[];
+  /** Snoozed PRs of a stack row that stays in the queue. They are dimmed and leave its unread state. */
+  snoozedUrls?: string[];
+  /** Why each of these PRs came back from a snooze, until it is read. */
+  back?: Partial<Record<string, import('./snooze').SnoozeBack>>;
   subject: ReviewSubject;
   briefing?: Briefing;
   review?: ReviewHistoryEntry;
@@ -71,6 +75,7 @@ export interface WorkbenchQueueParts {
   stacks: string;
   readStates: string;
   mutedPrs: string;
+  snoozedPrs: string;
   starredPrs: string;
   savedViews: string;
   filters: string;
@@ -89,6 +94,8 @@ export interface WorkbenchQueue {
   sync?: { status: 'idle' | 'checking' | 'paused' | 'error'; checkedAt?: number; retryAt?: number };
   /** Frozen in the main process and shared between snapshots. */
   mutedPrs?: readonly import('./muted-prs').MutedPr[];
+  /** Tools › Snoozed. Hidden from every queue section, saved view and count until they wake. */
+  snoozedPrs?: readonly import('./snooze').SnoozedPr[];
   starredPrs?: import('./starred-prs').StarredPr[];
   starredItems?: QueueItem[];
   savedViews?: QueueViewsSnapshot;

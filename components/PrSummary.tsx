@@ -35,7 +35,8 @@ import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
+import { AlarmClock, ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
+import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem, type ReviewSubject } from '../lib/workbench';
@@ -537,6 +538,7 @@ function PrSummaryContent({
             </h1>
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
             {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
+            {account && canSnooze(item.subject.members) && <button className="workbench-icon pr-snooze-button" aria-label={stacked ? 'Snooze stack' : 'Snooze PR'} title={stacked ? 'Snooze stack' : 'Snooze PR'} onClick={() => openSnoozePicker({ groups: [item.subject.members] })}><AlarmClock size={15} /></button>}
             {actions}
             {stacked && <StackMergeActions subject={item.subject} signals={signals} checks={checks.values} onChanged={onRetryStatus} />}
           </div>

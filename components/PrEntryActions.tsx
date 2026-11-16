@@ -4,7 +4,8 @@ import { WorkbenchIcon } from './WorkbenchIcon';
 import { useContext } from 'react';
 import { PrReadContext } from '../lib/pr-read-context';
 import { Mail, MailOpen } from 'lucide-react';
-import { Copy, ExternalLink, Link, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { AlarmClock, Copy, ExternalLink, Link, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
 import { prDeepLinks } from '../lib/deep-link';
 import type { ReviewMember } from '../lib/workbench';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
@@ -28,6 +29,7 @@ export function prEntryActionGroups({
   busy,
   onStarChange,
   onMute,
+  onSnooze,
   onRefresh,
   onGenerateExplanation,
   onGenerateBriefing,
@@ -45,6 +47,8 @@ export function prEntryActionGroups({
   busy?: boolean;
   onStarChange: (members: ReviewMember[], starred: boolean) => unknown;
   onMute?: (members: ReviewMember[]) => unknown;
+  /** Opens the Snooze picker. Wherever Mute is offered, Snooze is too, directly above it. */
+  onSnooze?: (members: ReviewMember[]) => unknown;
   onRefresh?: () => unknown;
   onReview?: (member: ReviewMember) => unknown;
   reviewDisabled?: boolean;
@@ -131,6 +135,17 @@ export function prEntryActionGroups({
     ],
     onMute
       ? [
+          ...(canSnooze(members) && !members.some((member) => isLocalUrl(member.url))
+            ? [
+                {
+                  label: stack ? 'Snooze stack…' : 'Snooze PR…',
+                  icon: <AlarmClock size={15} />,
+                  disabled: busy,
+                  dismissBeforeRun: true,
+                  run: () => (onSnooze ? onSnooze(members) : openSnoozePicker({ groups: [members] })),
+                },
+              ]
+            : []),
           {
             label: stack ? 'Mute stack' : 'Mute PR',
             icon: <VolumeX size={15} />,

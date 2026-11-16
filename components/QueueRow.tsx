@@ -1,5 +1,6 @@
 import { memo, useReducer, type ReactNode } from 'react';
-import { ArrowRight, Check, ChevronDown, ChevronRight, Layers, Loader2, MessageSquare, Square, SquareCheck } from 'lucide-react';
+import { AlarmClock, ArrowRight, Check, ChevronDown, ChevronRight, Layers, Loader2, MessageSquare, Square, SquareCheck } from 'lucide-react';
+import { backLine } from '../lib/snooze';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrEntryActions, PrStarMarker } from './PrEntryActions';
 import { PrLabels } from './PrLabels';
@@ -76,6 +77,8 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
   // Only stack rows under the merge filter subscribe, and they render only when one of their own states changes.
   const merge = useMergeStates(account, s.members, s.kind === 'stack' && filters.merge === 'conflicts');
   const matching = s.kind === 'stack' || filters.involvement === 'response' ? matchingStackMembers(item, filters, account, undefined, merge) : [];
+  const snoozed = item.snoozedUrls ?? [];
+  const back = Object.values(item.back ?? {}).find((value) => !!value);
   const selectionCheck = active ? <SquareCheck size={16} className="queue-selection-check" aria-hidden="true" /> : <Square size={16} className="queue-selection-check" aria-hidden="true" />;
   return (
     <div className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''} ${item.briefing?.status === 'generating' ? 'is-briefing-generating' : ''}`}>
@@ -160,12 +163,14 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
           </span>
         )}
         {/* The actions menu ends every row, whether or not the entry shows a status. */}
-        <UnreadPrMarker urls={s.members.map(member => member.url)} />
+        <UnreadPrMarker urls={s.members.filter(member => !snoozed.includes(member.url)).map(member => member.url)} />
         <PrStarMarker members={s.members} starredUrls={starredUrls} />
         {menu}
         </div>
           <QueueMetadata onChecks={() => actions.openChecks(item)} subject={s} account={account} />
           {s.kind === 'stack' && matching.length < s.members.length && <span className="queue-stack-matches">{matching.length} of {s.members.length} PRs match</span>}
+          {s.kind === 'stack' && snoozed.length > 0 && <span className="queue-stack-matches">{snoozed.length} of {s.members.length} PRs snoozed</span>}
+          {back && <span className="queue-snooze-back"><AlarmClock size={13} aria-hidden="true" />{backLine(back)}</span>}
           {filters.involvement === 'response' && <div className="queue-response-reasons">{s.members.flatMap(member => {
             const response = item.responses?.[member.url];
             if (!response || !needsResponse(response) || !matching.includes(member.url)) return [];
@@ -181,7 +186,7 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
       {expanded && (
         <div id={`members-${s.id}`}>
           {s.members.map((m) => (
-            <PrEntryActions key={m.url} {...actions.memberMenu(m)}>{menu => <div className={`queue-member ${readStates[m.url]?.unread.length ? 'is-unread' : ''}`}>
+            <PrEntryActions key={m.url} {...actions.memberMenu(m)}>{menu => <div className={`queue-member ${readStates[m.url]?.unread.length && !snoozed.includes(m.url) ? 'is-unread' : ''} ${snoozed.includes(m.url) ? 'is-snoozed' : ''}`}>
               <PrStateIcon pr={m} size={17} className="queue-pr-icon" />
               <div className="queue-member-content">
                 <button className="queue-member-title" onClick={event => actions.openMember(item, m, event)}>
@@ -189,8 +194,9 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
                   <PrLabels members={[m]} />
                 </button>
                 <QueueMetadata onChecks={() => actions.openChecks(focusStackPr(item, m))} subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={account} />
+                {snoozed.includes(m.url) && <span className="queue-member-snoozed"><AlarmClock size={12} aria-hidden="true" />Snoozed</span>}
               </div>
-              <UnreadPrMarker urls={[m.url]} />
+              {!snoozed.includes(m.url) && <UnreadPrMarker urls={[m.url]} />}
               <PrStarMarker members={[m]} starredUrls={starredUrls} />{menu}
             </div>}</PrEntryActions>
           ))}

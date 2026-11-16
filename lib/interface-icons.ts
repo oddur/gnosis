@@ -2,7 +2,7 @@ import {
   Activity, BookMarked, BookOpen, Bookmark, CircleAlert, CircleCheck, CircleHelp, CircleMinus,
   Clock3, Copy, FileDiff, FileText, FolderGit2, GitBranch, GitCommitHorizontal, GitPullRequest,
   History, Inbox, Layers, LayoutList, Lightbulb, ListChecks, MessageSquare,
-  MessageSquarePlus, MessagesSquare, Network, NotebookPen, RefreshCw, RotateCcw, Settings, Star, UserRound, VolumeX,
+  MessageSquarePlus, MessagesSquare, Network, NotebookPen, RefreshCw, RotateCcw, Settings, Star, UserRound, VolumeX, AlarmClock,
   type LucideIcon,
 } from 'lucide-react';
 import type { WorkspaceTab } from './navigation-history';
@@ -37,6 +37,7 @@ export const workbenchIcons = {
   queue: Inbox,
   starred: Star,
   muted: VolumeX,
+  snoozed: AlarmClock,
   refresh: RefreshCw,
   activity: Activity,
   localChanges: FolderGit2,

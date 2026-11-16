@@ -150,6 +150,10 @@ export function NotificationSettings({
         {event('checks-failed', 'Checks failed')}
         {event('ready-to-merge', 'Ready to merge')}
       </section>
+      <section className="settings-group" aria-labelledby="notifications-snooze-title">
+        <h2 id="notifications-snooze-title">Snoozed PRs</h2>
+        {event('snooze-ended', 'A snoozed PR is back', 'Only when no other notification says why.')}
+      </section>
       <section className="settings-group" aria-labelledby="notifications-gnosis-title">
         <h2 id="notifications-gnosis-title">Gnosis</h2>
         {event('explanation-ready', 'Explanation ready')}

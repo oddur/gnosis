@@ -95,7 +95,9 @@ const repoName = (repo: string) => repo.slice(repo.lastIndexOf('/') + 1);
  */
 export function rowDetail(row: MenubarRow, group: MenubarGroup['group'], now: number, inStack = false): { reason: string; rest: string } {
   const named = GROUP_KIND[group];
-  const reason = row.labels.filter((label) => !named || label !== ATTENTION_LABEL[named]).join(' · ');
+  const labels = row.labels.filter((label) => !named || label !== ATTENTION_LABEL[named]);
+  // A PR back from a snooze says so before its status.
+  const reason = (row.back ? ['Back', ...labels] : labels).join(' · ');
   const where = inStack ? `#${row.number}` : `${repoName(row.repo)} #${row.number}${row.stackSize ? ` · stack of ${row.stackSize}` : ''}`;
   const author = group === 'review' && !row.own && !inStack ? row.author : '';
   const checked = row.kinds[0] === 'ready-to-merge' && row.checkedAt ? `checked ${ago(row.checkedAt, now)}` : '';
@@ -507,6 +509,7 @@ export function MenubarView({ state, api, now: fixedNow }: { state: MenubarState
         {(hint || hintHeld) && <Hint hidden={!hint || hintDismissed} onDismiss={dismissHint} />}
         <button type="button" className="menubar-footer-button" onClick={() => api.openApp()}>
           <span>Open Gnosis</span>
+          {!!state?.snoozed && <small className="menubar-footer-snoozed">{state.snoozed} snoozed</small>}
           <kbd aria-hidden="true">⌘O</kbd>
         </button>
       </footer>

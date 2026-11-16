@@ -435,6 +435,12 @@ li + .menubar-stack {
   background: var(--accent);
   color: var(--accent-foreground);
 }
+.menubar-footer-snoozed {
+  margin: 0 10px 0 auto;
+  font-size: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
 .menubar-footer-button kbd {
   font-family: inherit;
   font-size: var(--type-caption);

@@ -68,6 +68,7 @@ const LABEL: Record<NotificationEventType, string> = {
   'ready-to-merge': 'Ready to merge',
   'explanation-ready': 'Explanation ready',
   'update-ready': 'A Gnosis update is ready',
+  'snooze-ended': 'A snoozed PR is back',
 };
 const COUNT_LABEL: Record<NotificationEventType, [string, string]> = {
   'review-requested': ['review request', 'review requests'],
@@ -78,6 +79,7 @@ const COUNT_LABEL: Record<NotificationEventType, [string, string]> = {
   'ready-to-merge': ['PR ready to merge', 'PRs ready to merge'],
   'explanation-ready': ['explanation ready', 'explanations ready'],
   'update-ready': ['update', 'updates'],
+  'snooze-ended': ['snoozed PR back', 'snoozed PRs back'],
 };
 export const TITLE_LIMIT = 60;
 export const BODY_LIMIT = 140;
@@ -89,6 +91,7 @@ export const plainText = (text: string) => text.replace(/[<>&]/g, '');
 export function eventLine(event: NotificationEvent): string {
   if (event.type === 'changes-requested' && event.actor) return `${event.actor} requested changes`;
   if (event.type === 'approved' && event.actor) return `${event.actor} approved`;
+  if (event.type === 'snooze-ended' && event.detail) return `Back: ${event.detail}`;
   return LABEL[event.type];
 }
 const subtitleOf = (event: NotificationEvent) => (event.repo && event.number ? `${event.repo} #${event.number}` : undefined);

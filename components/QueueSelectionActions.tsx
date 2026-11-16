@@ -1,4 +1,4 @@
-import { Copy, Link, Mail, MailOpen, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { AlarmClock, Copy, Link, Mail, MailOpen, RefreshCw, Star, VolumeX } from 'lucide-react';
 import { prDeepLinks } from '../lib/deep-link';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { WorkbenchIcon } from './WorkbenchIcon';
@@ -16,6 +16,7 @@ export function queueSelectionGroups({
   onRead,
   onStar,
   onMute,
+  onSnooze,
   onRefresh,
   onExplain,
   onBrief,
@@ -30,6 +31,8 @@ export function queueSelectionGroups({
   onRead: (urls: string[], read: boolean) => unknown;
   onStar: (members: ReviewMember[], starred: boolean) => unknown;
   onMute: (members: ReviewMember[]) => unknown;
+  /** Opens the Snooze picker for the selected entries; each stays its own group. */
+  onSnooze?: () => unknown;
   onRefresh: (members: ReviewMember[]) => unknown;
   onExplain: (items: QueueItem[]) => unknown;
   onBrief: (items: QueueItem[]) => unknown;
@@ -122,6 +125,19 @@ export function queueSelectionGroups({
       },
     ],
     [
+      ...(onSnooze
+        ? [
+            {
+              label: `Snooze ${count(members.length, 'PR')}…`,
+              displayLabel: 'Snooze…',
+              detail: count(members.length, 'PR'),
+              icon: <AlarmClock size={15} />,
+              disabled: busy || !authenticated,
+              dismissBeforeRun: true,
+              run: onSnooze,
+            },
+          ]
+        : []),
       {
         label: `Mute ${count(members.length, 'PR')}`,
         displayLabel: 'Mute',

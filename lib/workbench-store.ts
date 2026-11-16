@@ -38,7 +38,7 @@ interface Options {
 
 const EMPTY_QUEUE: WorkbenchQueue = Object.freeze({ items: Object.freeze([]) as unknown as QueueItem[], warnings: Object.freeze([]) as unknown as string[], remaining: 0 });
 const EMPTY_HISTORY = Object.freeze([]) as unknown as ReviewHistoryEntry[];
-const PARTS: (keyof WorkbenchQueueParts)[] = ['stacks', 'readStates', 'mutedPrs', 'starredPrs', 'savedViews', 'filters', 'sync'];
+const PARTS: (keyof WorkbenchQueueParts)[] = ['stacks', 'readStates', 'mutedPrs', 'snoozedPrs', 'starredPrs', 'savedViews', 'filters', 'sync'];
 const sameArray = <T,>(a: readonly T[] | undefined, b: readonly T[] | undefined) =>
   a === b || (!!a && !!b && a.length === b.length && a.every((value, index) => value === b[index]));
 

@@ -45,6 +45,9 @@ import { openRows } from '../../lib/pr-open-targets';
 import { EntryActions } from '../../components/EntryActions';
 import { prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
 import { MutedPrs } from '../../components/MutedPrs';
+import { SnoozedPrs } from '../../components/SnoozedPrs';
+import { runSnooze } from '../../components/SnoozePicker';
+import { openSnoozePicker, setSnoozeAccount } from '../../lib/snooze-picker';
 import { isMutedReview, type MutePrRequest } from '../../lib/muted-prs';
 import { setDiscussionAccount } from '../../lib/review-discussion-cache';
 import { explanationItem, matchesExplanation, type ExplanationDestination } from '../../lib/explanation-workspace';
@@ -99,6 +102,7 @@ import {
   SlidersHorizontal,
   Star,
   VolumeX,
+  AlarmClock,
 } from 'lucide-react';
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
 import { GettingStarted } from '../../components/GettingStarted';
@@ -171,6 +175,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const handledCommand = useRef<number>(0);
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
   useEffect(() => { if (auth) setDiscussionAccount(auth.authenticated ? auth.login ?? '' : ''); }, [auth]);
+  useEffect(() => { if (auth) setSnoozeAccount(auth.authenticated ? auth.login ?? null : null); }, [auth]);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const storeQueue = useWorkbenchQueue();
   const history = useReviewHistory();
@@ -222,7 +227,11 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setFilters(normalizeQueueFilters(storeQueue.filters));
     filtersLoaded.current = true;
   }, [storeStatus.loaded, storeQueue.filters]);
-  const [mutedOpen, setMutedOpen] = useState(false);
+  // Tools › Snoozed and Tools › Muted PRs replace the list. `setMutedOpen(false)` closes either.
+  const [tool, setTool] = useState<'muted' | 'snoozed' | null>(null);
+  const mutedOpen = tool === 'muted', snoozedOpen = tool === 'snoozed';
+  const setMutedOpen = (open: boolean) => setTool(open ? 'muted' : null);
+  const [snoozeBusy, setSnoozeBusy] = useState(false);
   const [muteBusy, setMuteBusy] = useState(false);
   const [muteError, setMuteError] = useState('');
   const muteBusyRef = useRef(false);
@@ -269,11 +278,24 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       if (muted) {
         setOpenedItem(null); setSelected(null);
         requestAnimationFrame(() => activeWorkspaceRoot().querySelector<HTMLButtonElement>('[title="Muted PRs"]')?.focus());
+        const urls = request.members.map(member => member.url);
+        const id = toast.add({ type: 'success', title: urls.length === 1 ? `Muted #${request.members[0].number}` : `Muted ${urls.length} PRs`,
+          actionProps: { children: 'Undo', onClick: () => { toast.close(id); void changeMutes({ muted: false, urls }); } } });
       }
     } catch (error) {
       const message = `Could not ${muted ? 'mute' : 'unmute'} PRs: ${error instanceof Error ? error.message : String(error)}. Nothing changed. Try again.`;
       setMuteError(message); setError(message);
     } finally { release(); muteBusyRef.current = false; setMuteBusy(false); }
+  };
+  // Tools › Snoozed: Unsnooze returns PRs to the queue; Mute instead turns "not now" into "not mine".
+  const changeSnoozes = async (urls: string[], mute = false) => {
+    if (snoozeBusy || !urls.length) return;
+    setSnoozeBusy(true);
+    const number = queue.snoozedPrs?.find(entry => entry.member.url === urls[0])?.member.number;
+    const name = urls.length === 1 && number ? `#${number}` : `${urls.length} PRs`;
+    try {
+      await runSnooze({ action: 'unsnooze', urls, ...(mute ? { mute: true } : {}) }, { title: mute ? `Muted ${name} instead` : `Unsnoozed ${name}` });
+    } finally { setSnoozeBusy(false); }
   };
   const section = savedView
     ? 'saved'
@@ -1020,8 +1042,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const sortedItems = useMemo(() => sortQueueItems(items, filters.sort, sortSignals), [items, filters.sort, sortSignals]);
   const orderedItems = useListOrder(sortedItems, item => item.subject.id);
   const orderedIds = useMemo(() => orderedItems.map(item => item.subject.id), [orderedItems]);
-  const selectionScope = useMemo(() => JSON.stringify([auth?.login, section, mutedOpen, openedId, filters, queue.savedViews?.activeId]),
-    [auth?.login, section, mutedOpen, openedId, filters, queue.savedViews?.activeId]);
+  const selectionScope = useMemo(() => JSON.stringify([auth?.login, section, tool, openedId, filters, queue.savedViews?.activeId]),
+    [auth?.login, section, tool, openedId, filters, queue.savedViews?.activeId]);
   const selection = useEntrySelection(orderedIds, selectionScope, selected);
   const selectionSignature = [...selection.keys].join('\n');
   const selectedItems = useMemo(() => orderedItems.filter(item => selection.keys.has(item.subject.id)),
@@ -1128,7 +1150,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       const version = filterVersion.current;
       setSavedView(next.savedView);
       setSavedQuery(next.savedQuery);
-      setMutedOpen(next.muted);
+      setTool(next.muted ? 'muted' : next.snoozed ? 'snoozed' : null);
       setOpenedItem(next.item);
       setSelected(next.selected);
       setOverviewTab(next.tab);
@@ -1143,7 +1165,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     }
     const location: HomeLocation = {
       account: auth?.login ?? 'local', filters, savedView, savedQuery,
-      viewId: queue.savedViews?.activeId ?? null, viewName: originName, muted: mutedOpen, item: openedItem,
+      viewId: queue.savedViews?.activeId ?? null, viewName: originName, muted: mutedOpen, snoozed: snoozedOpen, item: openedItem,
       tab: overviewTab, selected, scroll: queueScrollOffset.current,
     };
     historyLocation.current = location;
@@ -1272,7 +1294,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     if (commandDestination.destination.onboarding === 'setup' && !onboarding.ready) return;
     handledCommand.current = commandDestination.nonce;
     const target = commandDestination.destination;
-    setMutedOpen(target.section === 'muted');
+    setTool(target.section === 'muted' || target.section === 'snoozed' ? target.section : null);
     setError('');
     if (target.subject) {
       setOpenedItem(target.subject);
@@ -1309,9 +1331,9 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       return;
     }
     if (target.section) {
-      setMutedOpen(target.section === 'muted');
+      setTool(target.section === 'muted' || target.section === 'snoozed' ? target.section : null);
       setSavedView(target.section === 'saved');
-      if (target.section !== 'saved' && target.section !== 'muted')
+      if (target.section !== 'saved' && target.section !== 'muted' && target.section !== 'snoozed')
         updateFilters({
           involvement: target.section === 'response' ? 'response' : filters.involvement === 'response' ? 'all' : filters.involvement,
           starredOnly: target.section === 'starred',
@@ -1335,6 +1357,17 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               await window.electronAPI.workbenchBriefing(commandItem.subject.id);
               await refresh();
             },
+          },
+        ]
+      : []),
+    ...(commandItem && auth?.authenticated && commandItem.subject.members.some(member => member.state === 'open' && !member.merged)
+      ? [
+          {
+            id: 'context:snooze',
+            icon: workbenchIcons.snoozed,
+            label: `Snooze… · ${commandItem.subject.title}`,
+            keywords: 'later remind hide until tomorrow next week activity',
+            perform: () => { snoozeMembers(commandItem.subject.members); },
           },
         ]
       : []),
@@ -1379,9 +1412,37 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     selectQueueEntry(next.subject.id, modifiers);
     rowButtons.current.get(next.subject.id)?.focus({ preventScroll: true });
   };
+  /** Opens the Snooze picker for queue entries. Once they are snoozed, focus moves to the next row. */
+  const snoozeEntries = (targets: QueueItem[]) => {
+    const ids = new Set(targets.map(item => item.subject.id));
+    const index = orderedItems.findIndex(item => ids.has(item.subject.id));
+    const next = index < 0 ? undefined : orderedItems.slice(index + 1).find(item => !ids.has(item.subject.id)) ??
+      orderedItems.slice(0, index).reverse().find(item => !ids.has(item.subject.id));
+    return openSnoozePicker({
+      groups: targets.map(item => item.subject.members),
+      onSnoozed: () => {
+        if (index < 0) return;
+        selection.clear();
+        setSelected(next?.subject.id ?? null);
+        if (!next) return;
+        pendingRowFocus.current = next.subject.id;
+        requestAnimationFrame(() => rowButtons.current.get(next.subject.id)?.focus({ preventScroll: true }));
+      },
+    });
+  };
+  const snoozeMembers = (members: QueueItem['subject']['members']) => {
+    const item = orderedItems.find(entry => entry.subject.members.length === members.length && entry.subject.members.every(member => members.some(m => m.url === member.url)));
+    return item ? snoozeEntries([item]) : openSnoozePicker({ groups: [members] });
+  };
   useKeyboardShortcuts(
     {
       '/': () => searchInput.current?.focus(),
+      // Z snoozes the selected entries. Unused in the queue, review, diff and menu bar maps.
+      z: (e) => {
+        if (e.repeat || !auth?.authenticated) return false;
+        const targets = multiple ? selectedItems : selectedItem ? [selectedItem] : [];
+        return targets.length ? snoozeEntries(targets) : false;
+      },
       j: (e) => {
         if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-drawer, .activity-capsule')) moveSelection(1);
       },
@@ -1389,7 +1450,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-drawer, .activity-capsule')) moveSelection(-1);
       },
     },
-    { enabled: !mutedOpen && !onboarding.open && !onboarding.tourOpen && !settings && !localOpen && !openedItem && !authOpen && !connectionRequired && section !== 'saved' }
+    { enabled: !tool && !onboarding.open && !onboarding.tourOpen && !settings && !localOpen && !openedItem && !authOpen && !connectionRequired && section !== 'saved' }
   );
   const correct = async (action: 'link' | 'unlink', parent = parentUrl, child = childUrl) => {
     setGrouping(true);
@@ -1447,6 +1508,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     reviewDisabled: !auth?.authenticated,
     onStarChange: changeStars,
     onMute: (members: QueueItem['subject']['members']) => changeMutes({ muted: true, members }),
+    onSnooze: snoozeMembers,
     onRefresh: async () => {
       const results = await Promise.allSettled(members.map(async member => {
         const status = await window.electronAPI.getPrStatus(member.url, true);
@@ -1492,6 +1554,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     briefings: selectedItems.filter(item => !generationActions(item.subject.members).briefingDisabled),
     busy: batchBusy || readBusy || starBusy || muteBusy, authenticated: !!auth?.authenticated,
     onRead: changeRead, onStar: changeStars, onMute: members => changeMutes({ muted: true, members }),
+    onSnooze: () => snoozeEntries(selectedItems),
     onRefresh: members => runBatch(members, member => entryActions([member]).onRefresh(), member => `#${member.number}`, 'PR statuses refreshed'),
     onExplain: targets => configureExplanations(
       targets.map(item => explanationRequest(item.subject.members[0].url, item.subject, undefined, item.subject.scope === 'single', false))
@@ -1550,7 +1613,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     },
   }), []);
   // Inputs to menu content that are not row props. Changing them re-renders rows with open menus correct.
-  const menuKey = JSON.stringify([starBusy, muteBusy, readBusy, batchBusy, auth?.authenticated, auth?.login, !!prefs, pendingStarts.size]);
+  const menuKey = JSON.stringify([starBusy, muteBusy, snoozeBusy, readBusy, batchBusy, auth?.authenticated, auth?.login, !!prefs, pendingStarts.size]);
   const readStates = queue.readStates ?? NO_READ_STATES;
   const fallbackTabStop = selected && itemIds.has(selected) ? undefined : orderedItems[0]?.subject.id;
   const bulkMenu = multiple ? { groups: selectionGroups, description: selectionDescription } : undefined;
@@ -1734,7 +1797,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         <div className="workbench-body">
         <QueueSidebar
           currentReview={
-            !mutedOpen && (savedView || !activeQueueView)
+            !tool && (savedView || !activeQueueView)
               ? section === 'saved'
                 ? 'Saved reviews'
                 : section === 'all'
@@ -1746,8 +1809,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                       : labels[section]
               : undefined
           }
-          currentView={!savedView && !mutedOpen ? activeQueueView?.name : undefined}
-          currentTool={mutedOpen ? 'Muted PRs' : undefined}
+          currentView={!savedView && !tool ? activeQueueView?.name : undefined}
+          currentTool={mutedOpen ? 'Muted PRs' : snoozedOpen ? 'Snoozed' : undefined}
           reviews={
             <>
               {[
@@ -1776,8 +1839,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                               ? 'PR content or stack changes since a saved AI explanation'
                               : (label as string)
                       }
-                      aria-current={!mutedOpen && section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
-                      className={!mutedOpen && section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
+                      aria-current={!tool && section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
+                      className={!tool && section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
                       disabled={viewBusy}
                       onClick={() => {
                         setMutedOpen(false);
@@ -1826,7 +1889,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 <SavedViewsNav
                   heading={false}
                   state={queue.savedViews}
-                  active={!savedView && !mutedOpen}
+                  active={!savedView && !tool}
                   busy={viewBusy}
                   onAction={viewAction}
                 />
@@ -1835,6 +1898,25 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           }
           tools={
             <>
+              <SidebarDestination>
+                <button
+                  data-sidebar-destination
+                  aria-label="Snoozed"
+                  title="Snoozed"
+                  className={snoozedOpen ? 'active' : ''}
+                  aria-current={snoozedOpen ? 'page' : undefined}
+                  onClick={() => {
+                    setTool('snoozed');
+                    setSelected(null);
+                    setOpenedItem(null);
+                    setError('');
+                  }}
+                >
+                  <AlarmClock size={16} />
+                  <span className="sidebar-label">Snoozed</span>
+                  <span className="nav-count">{queue.snoozedPrs?.length ?? 0}</span>
+                </button>
+              </SidebarDestination>
               <SidebarDestination>
                 <button
                   data-sidebar-destination
@@ -1889,7 +1971,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           }
         />
         <main className="workbench-main">
-          {mutedOpen ? <MutedPrs entries={queue.mutedPrs ?? []} busy={muteBusy} error={muteError} onUnmute={members => void changeMutes({ muted: false, urls: members.map(member => member.url) })} /> : <>
+          {mutedOpen ? <MutedPrs entries={queue.mutedPrs ?? []} busy={muteBusy} error={muteError} onUnmute={members => void changeMutes({ muted: false, urls: members.map(member => member.url) })} />
+            : snoozedOpen ? <SnoozedPrs entries={queue.snoozedPrs ?? []} busy={snoozeBusy} onUnsnooze={urls => void changeSnoozes(urls)} onMute={urls => void changeSnoozes(urls, true)} /> : <>
           <div className="queue-toolbar">
             <div>
               <h1>

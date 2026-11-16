@@ -74,6 +74,7 @@ import { normalizePreloadPreferences, preloadSettings, amountPlan } from '../lib
 import { changesRevision, type InspectionRevision, type InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import type { MutePrRequest } from '../lib/muted-prs';
+import type { SnoozeRequest } from '../lib/snooze';
 import type { StarPrRequest } from '../lib/starred-prs';
 import { createPrCommitsService } from './pr-commits-service';
 import type { CommitSelection } from '../lib/pr-commits';
@@ -635,7 +636,7 @@ async function runProactiveCheck() {
     let newCount = 0;
     for (const pr of allPrs.values()) {
       if (newCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
-      if (pr.isDraft || workbench.mutedUrls().has(pr.url)) continue;
+      if (pr.isDraft || workbench.hiddenUrls().has(pr.url)) continue;
       if (!proactiveSeen.has(pr.url)) {
         proactiveSeen.add(pr.url);
 
@@ -3189,6 +3190,7 @@ ipcMain.handle('pr-badge-preview', (_event, url: string) => {
   return preview ? { ...preview, signals: cachedQueueSignals(getGitHubClient(token), [preview.member])[0] } : null;
 });
 ipcMain.handle('workbench-mute-prs', (_event, request: MutePrRequest) => { const queue = workbench.mutePrs(request); rebuildTrayMenu(); return queue; });
+ipcMain.handle('workbench-snooze-prs', (_event, request: SnoozeRequest) => { const result = workbench.snoozePrs(request); rebuildTrayMenu(); return result; });
 ipcMain.handle('workbench-mark-pr-read', async (_event, request: MarkPrReadRequest) => {
   const result = workbench.markPrRead(request);
   await appData.flush();
@@ -3219,7 +3221,7 @@ ipcMain.on('notification-context', (event, raw: unknown) => {
   notificationContexts.set(event.sender.id, { activeUrl: ref ? deepLinkPrUrl(ref) : undefined });
 });
 const TOAST_ACTIONS: readonly ToastAction[] = ['clicked', 'dismissed', 'timedOut'];
-const NOTIFICATION_KINDS: readonly NotificationKind[] = ['review-requested', 'team-review-requested', 'changes-requested', 'approved', 'checks-failed', 'ready-to-merge', 'explanation-ready', 'update-ready', 'summary', 'test'];
+const NOTIFICATION_KINDS: readonly NotificationKind[] = ['review-requested', 'team-review-requested', 'changes-requested', 'approved', 'checks-failed', 'ready-to-merge', 'explanation-ready', 'update-ready', 'snooze-ended', 'summary', 'test'];
 ipcMain.on('notification-action', (_event, kind: unknown, action: unknown) => {
   if (NOTIFICATION_KINDS.includes(kind as NotificationKind) && TOAST_ACTIONS.includes(action as ToastAction))
     notifications.toastAction(kind as NotificationKind, action as ToastAction);
@@ -4407,7 +4409,7 @@ void app.whenReady().then(() => {
   timer.unref();
   const wake = () => { suspended = false; githubSync.wake(); changeSignals.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); void tickGitHubSync(); };
   powerMonitor.on('suspend', () => { suspended = true; });
-  powerMonitor.on('resume', () => { resumedSinceSync = true; watchDue = Math.min(watchDue, Date.now() + 10_000); wake(); });
+  powerMonitor.on('resume', () => { workbench.checkSnoozes(); resumedSinceSync = true; watchDue = Math.min(watchDue, Date.now() + 10_000); wake(); });
   // On battery, predictions keep running but read one file body instead of three.
   onBattery = powerMonitor.isOnBatteryPower();
   powerMonitor.on('on-battery', () => { onBattery = true; publishPredictionState(); });
