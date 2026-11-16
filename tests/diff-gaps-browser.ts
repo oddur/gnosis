@@ -72,28 +72,66 @@ void app.whenReady().then(async () => {
     }
     await js(`document.documentElement.classList.toggle('dark',${dark})`);
   };
-  type Sample = { firstPaint: number; settled: number; longest: number; total: number; tasks: number[]; event: number; shift: number };
+  type Sample = {
+    firstPaint: number; settled: number; longest: number; total: number; tasks: number[]; event: number; shift: number;
+    /** With accessibility on: the longest renderer task less its accessibility work, and that work at most. */
+    withoutAccessibility?: number; accessibility?: number;
+  };
   const results: Record<string, Sample[]> = {};
   /** Runs one input; returns the time to the first painted lines, the time until every line is in the DOM, and the
    * long tasks in between. */
   // GNOSIS_DIFF_GAPS_TRACE=1 records a Chromium trace of each measured input and prints what the longest task did.
   const tracing = !!process.env.GNOSIS_DIFF_GAPS_TRACE;
-  type TraceEvent = { name: string; ph: string; ts: number; dur?: number; tid: number; pid: number; args?: { data?: { functionName?: string; url?: string } } };
+  /**
+   * Chromium builds an accessibility tree once an assistive client asks for one. macOS runners and many Macs have
+   * such a client, and Chromium then updates the tree for every mounted slice in the same task, 250-350 ms of the
+   * longest task (#366). That cost is real for those readers, but it is not what this budget is about, and Linux CI
+   * never has it. With accessibility on, each input is traced: the budget applies to the longest task less its
+   * accessibility work, and the accessibility time is printed beside it.
+   */
+  let accessibility = false;
+  type TraceEvent = { name: string; ph: string; ts: number; dur?: number; tid: number; pid: number; args?: { name?: string; data?: { functionName?: string; url?: string } } };
   let traceEvents: TraceEvent[] = [];
   const debug = win.webContents.debugger;
+  const collect = (_event: unknown, method: string, params: { value?: TraceEvent[] }) => {
+    if (method === 'Tracing.dataCollected' && params.value) traceEvents.push(...params.value);
+  };
   if (tracing) {
     debug.attach('1.3');
-    debug.on('message', (_event, method, params: { value?: TraceEvent[] }) => {
-      if (method === 'Tracing.dataCollected' && params.value) traceEvents.push(...params.value);
-    });
+    debug.on('message', collect);
   }
+  const traced = () => tracing || accessibility;
   const startTrace = async () => {
-    if (!tracing) return;
+    if (!traced()) return;
     traceEvents = [];
-    await debug.sendCommand('Tracing.start', { categories: 'toplevel,devtools.timeline,blink,v8.execute', transferMode: 'ReportEvents' });
+    await debug.sendCommand('Tracing.start', {
+      categories: tracing ? 'toplevel,devtools.timeline,blink,v8.execute,__metadata' : 'toplevel,blink,__metadata',
+      transferMode: 'ReportEvents',
+    });
+  };
+  /** The renderer's longest task over 50 ms, with and without the accessibility work inside it. */
+  const accessibilityCost = () => {
+    const main = new Set(
+      traceEvents.filter((e) => e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain').map((e) => `${e.pid}:${e.tid}`)
+    );
+    let withoutAccessibility = 0;
+    let most = 0;
+    let found = false;
+    for (const task of traceEvents) {
+      if (task.ph !== 'X' || !/RunTask/.test(task.name) || (task.dur ?? 0) <= 50_000 || !main.has(`${task.pid}:${task.tid}`)) continue;
+      found = true;
+      const end = task.ts + (task.dur ?? 0);
+      const steps = traceEvents
+        .filter((e) => e.ph === 'X' && e.name === 'LocalFrameView::RunAccessibilitySteps' && e.pid === task.pid && e.tid === task.tid && e.ts >= task.ts && e.ts + (e.dur ?? 0) <= end)
+        .reduce((total, e) => total + (e.dur ?? 0), 0);
+      withoutAccessibility = Math.max(withoutAccessibility, ((task.dur ?? 0) - steps) / 1000);
+      most = Math.max(most, steps / 1000);
+    }
+    // A trace that names no renderer task leaves the long-task observer's number to be checked.
+    return found ? { withoutAccessibility: Math.round(withoutAccessibility), accessibility: Math.round(most) } : {};
   };
   const stopTrace = async (name: string) => {
-    if (!tracing) return;
+    if (!traced()) return;
     const done = new Promise<void>((resolve) => {
       const listener = (_event: unknown, method: string) => {
         if (method !== 'Tracing.tracingComplete') return;
@@ -104,6 +142,7 @@ void app.whenReady().then(async () => {
     });
     await debug.sendCommand('Tracing.end');
     await done;
+    if (!tracing) return;
     const tasks = traceEvents.filter((e) => e.ph === 'X' && /RunTask/.test(e.name) && (e.dur ?? 0) > 50_000);
     for (const task of tasks.sort((a, b) => (b.dur ?? 0) - (a.dur ?? 0)).slice(0, 2)) {
       const inside = traceEvents.filter((e) => e.ph === 'X' && e.tid === task.tid && e.pid === task.pid && e.ts >= task.ts && e.ts + (e.dur ?? 0) <= task.ts + (task.dur ?? 0) && e !== task);
@@ -116,6 +155,15 @@ void app.whenReady().then(async () => {
     }
   };
   const measure = async (name: string, act: () => Promise<void>, painted: string, settled: string) => {
+    // Chromium turns accessibility on shortly after launch when a client asks, so this is checked before each input.
+    if (!accessibility && app.isAccessibilitySupportEnabled()) {
+      accessibility = true;
+      console.log('Accessibility support is on: long tasks are traced and its work is reported apart');
+      if (!tracing) {
+        debug.attach('1.3');
+        debug.on('message', collect);
+      }
+    }
     await js('window.__longTasks=[];window.__events=[];window.__t0=performance.now();void 0');
     await startTrace();
     await act();
@@ -132,6 +180,7 @@ void app.whenReady().then(async () => {
     const shift = await js<number>('window.__anchor?.isConnected?Math.round(window.__anchor.getBoundingClientRect().top-window.__anchorTop):-1');
     await sleep(300);
     await stopTrace(name);
+    const cost = traced() && accessibility ? accessibilityCost() : {};
     const tasks = await js<number[]>('window.__longTasks.filter(t=>t.start>=window.__t0-5).map(t=>Math.round(t.duration))');
     const event = await js<number>(
       "Math.max(0,...window.__events.filter(e=>e.start>=window.__t0-5&&/pointer|mouse|click/.test(e.name)).map(e=>e.duration))"
@@ -144,6 +193,7 @@ void app.whenReady().then(async () => {
       tasks,
       event,
       shift,
+      ...cost,
     };
     (results[name] ??= []).push(sample);
     console.log(`${name}: ${JSON.stringify(sample)}`);
@@ -216,12 +266,14 @@ void app.whenReady().then(async () => {
     );
     console.log('Large file summary:', JSON.stringify(Object.fromEntries(Object.entries(results).map(([k, v]) => [k, {
       firstPaint: v.map((s) => s.firstPaint), settled: v.map((s) => s.settled), longest: v.map((s) => s.longest), total: v.map((s) => s.total), event: v.map((s) => s.event), shift: v.map((s) => s.shift),
+      ...(accessibility ? { withoutAccessibility: v.map((s) => s.withoutAccessibility), accessibility: v.map((s) => s.accessibility) } : {}),
     }]))));
     // GNOSIS_DIFF_GAPS_MEASURE_ONLY=1 prints the numbers above on a build without slices, for a before measurement.
     if (process.env.GNOSIS_DIFF_GAPS_MEASURE_ONLY) return;
     for (const [name, samples] of Object.entries(results)) {
-      const worst = Math.max(...samples.map((s) => s.longest));
-      assert.ok(worst <= LONG_TASK_BUDGET, `${name}: the longest task was ${worst} ms (budget ${LONG_TASK_BUDGET} ms)`);
+      const worst = Math.max(...samples.map((s) => (accessibility ? (s.withoutAccessibility ?? s.longest) : s.longest)));
+      const spent = accessibility ? `, ${Math.max(...samples.map((s) => s.accessibility ?? 0))} ms more of accessibility work (#366)` : '';
+      assert.ok(worst <= LONG_TASK_BUDGET, `${name}: the longest task was ${worst} ms${spent} (budget ${LONG_TASK_BUDGET} ms)`);
       assert.ok(samples.every((s) => s.shift === 0), `${name}: the first line in view moved: ${samples.map((s) => s.shift).join(', ')}`);
     }
     // A slice's placeholder height is its laid-out height, so mounting it moves nothing.
