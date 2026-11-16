@@ -61,8 +61,9 @@ void test('main long tasks are detected, named by the spans inside them, and mat
   assert.ok(task, `The 150 ms block is a long task: ${JSON.stringify(longTasks)}`);
   assert.equal(task.spans[0]?.name, 'busy work');
   const parses = task.work?.find((w) => w.name === 'cache parse');
-  assert.equal(parses?.count, 20, `Short work is summed by name: ${JSON.stringify(task.work)}`);
-  assert.ok((parses?.ms ?? 0) >= 55);
+  assert.ok(parses, `Short work is summed by name: ${JSON.stringify(task.work)}`);
+  assert.equal(parses.count, 20, `Short work is summed by name: ${JSON.stringify(task.work)}`);
+  assert.ok(parses.ms >= 55);
   assert.equal(task.phase?.after, 'cache-open', 'The task names the startup phase it ran in');
   assert.ok(eventLoopDelay.max >= 100);
   const [delayed, quick] = correlateInteractions(
