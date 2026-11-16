@@ -9,8 +9,8 @@ import { peekMarkdownReview, prepareMarkdownReview } from '../lib/markdown-revie
 import { MarkdownReviewPreview } from './MarkdownReviewPreview';
 import { RepositoryBadge, PrBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
-import { File, FileDiff, MultiFileDiff } from '@pierre/diffs/react';
-import type { DiffFileInput, FileDiffOptions, SelectedLineRange } from '@pierre/diffs';
+import { File } from '@pierre/diffs/react';
+import { parseDiffFromFile, type DiffFileInput, type FileDiffMetadata, type FileDiffOptions, type SelectedLineRange } from '@pierre/diffs';
 import { MessageSquare, ExternalLink } from 'lucide-react';
 import { inspectionFiles as fileCache, previewFor } from '../lib/inspection-cache';
 import {
@@ -25,7 +25,21 @@ import { useFileProgress } from '../lib/file-view-progress';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { useDiffLayout } from '../lib/use-diff-layout';
 import { diffContextLines } from '../lib/review-diff';
-import { prPreviewSelection } from '../lib/pr-change-preview';
+import {
+  afterLines,
+  diffGaps,
+  gapContaining,
+  hunksFromDiff,
+  matchesAfter,
+  revealGap,
+  revealedParts,
+  shownLines,
+  shownSelection,
+  type GapDirection,
+  type GapPart,
+  type GapReveals,
+} from '../lib/diff-gaps';
+import { ChangesDiff, type GapStatus } from './ChangesDiff';
 import { CODE_THEMES } from '../lib/constants';
 import type { Preferences } from '../lib/types';
 import type { usePrDiscussions } from '../lib/use-pr-discussions';
@@ -51,6 +65,8 @@ export const changeFileKey = (entry: ChangeFileEntry) =>
 // Electron preserves messages across IPC, but not custom Error types.
 const isUnsupportedPreview = (message: string) =>
   /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
+
+const NO_REVEALS: GapReveals = {};
 
 function isBeforeDiffLine(line: HTMLElement) {
   if (line.dataset.lineType === 'change-addition') return false;
@@ -119,7 +135,9 @@ export function PrFileInspection({
   const [markdownError, setMarkdownError] = useState<{ key: string; message: string }>();
   const [markdownAttempt, setMarkdownAttempt] = useState(0);
   const [revealedMove, setRevealedMove] = useState<string>();
-  const contextLines = sourceLocation ? Number.MAX_SAFE_INTEGER : diffContextLines(appearance);
+  const contextLines = diffContextLines(appearance);
+  // GitHub's patches carry 3 lines of context. More comes from revealing a gap, from the after side only (#299).
+  const previewContext = Math.min(3, contextLines);
   const parseDiffOptions = useMemo(() => ({ context: contextLines }), [contextLines]);
   const [loadedFile, setLoadedFile] = useState<{ key: string; data: PrFileContents }>();
   const [fileError, setFileError] = useState('');
@@ -163,10 +181,90 @@ export function PrFileInspection({
     comparison: entry.snapshot.comparison,
     stackComparison: combined?.key,
   };
-  const preview = useMemo(() => previewFor(activeKey, entry.file, contextLines), [activeKey, entry.file, contextLines]);
+  const preview = useMemo(() => previewFor(activeKey, entry.file, previewContext), [activeKey, entry.file, previewContext]);
   const contents = fileCache.peek(request) ?? (loadedFile?.key === activeKey ? loadedFile.data : undefined);
   const unchangedMove = useMemo(() => isUnchangedMove(entry.file, contents), [entry.file, contents]);
   const compactMove = unchangedMove && revealedMove !== activeKey;
+  // Context gaps (#299): gaps come from the patch, and revealed lines from the after side alone. Files without a
+  // patch diff both sides here instead, which they have already loaded.
+  const wholeDiff = useMemo((): FileDiffMetadata | undefined => {
+    if (preview || !contents || unchangedMove) return;
+    const { before, after } = contents;
+    if (before.kind !== 'text' && after.kind !== 'text') return;
+    if ([before.kind, after.kind].some((kind) => kind !== 'text' && kind !== 'absent')) return;
+    try {
+      return parseDiffFromFile(
+        before.kind === 'text' ? { name: entry.file.previousPath ?? entry.file.path, contents: before.content } : null,
+        after.kind === 'text' ? { name: entry.file.path, contents: after.content } : null,
+        parseDiffOptions,
+        true
+      );
+    } catch {
+      return;
+    }
+  }, [preview, contents, unchangedMove, entry.file.path, entry.file.previousPath, parseDiffOptions]);
+  const diffBase = preview ?? wholeDiff;
+  const gapHunks = useMemo(() => (diffBase ? hunksFromDiff(diffBase) : undefined), [diffBase]);
+  const [afterRead, setAfterRead] = useState<{ key: string; side?: PrFileSide; error?: string }>();
+  const currentAfter = afterRead?.key === activeKey ? afterRead : undefined;
+  const afterSide = contents?.after ?? fileCache.peekAfter(request) ?? currentAfter?.side;
+  function readAfter(retry = false) {
+    if (afterSide || (currentAfter && !currentAfter.error && !retry)) return;
+    const key = activeKey;
+    setAfterRead({ key });
+    fileCache.readAfter(request).then(
+      (side) => {
+        if (alive.current && currentFile.current === key) setAfterRead({ key, side });
+      },
+      (error: unknown) => {
+        if (alive.current && currentFile.current === key)
+          setAfterRead({ key, error: error instanceof Error ? error.message : String(error) });
+      }
+    );
+  }
+  const afterText = afterSide?.kind === 'text' ? afterSide.content : undefined;
+  const after = useMemo(() => (afterText === undefined ? undefined : afterLines(afterText)), [afterText]);
+  const afterMatches = useMemo(() => (after && gapHunks ? matchesAfter(gapHunks, after) : undefined), [after, gapHunks]);
+  const expandable = entry.file.status !== 'added' && entry.file.status !== 'deleted' && !contents?.lfs;
+  const gaps = useMemo(
+    () => (expandable && gapHunks ? diffGaps(gapHunks, afterMatches && after ? after.length : undefined) : undefined),
+    [expandable, gapHunks, afterMatches, after]
+  );
+  const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
+  const reveals = gapReveals?.key === activeKey ? gapReveals.value : NO_REVEALS;
+  const parts = useMemo(
+    (): GapPart[] | undefined =>
+      gapHunks &&
+      (gaps
+        ? revealedParts(gapHunks, gaps, reveals, afterMatches ? after : undefined)
+        : gapHunks.map((hunk, index) => ({ kind: 'hunk' as const, key: `h${index}`, hunk }))),
+    [gapHunks, gaps, reveals, afterMatches, after]
+  );
+  const shown = useMemo(() => (parts ? shownLines(parts) : undefined), [parts]);
+  const lineCount = useMemo(
+    () => Math.max(after?.length ?? 0, ...(gapHunks ?? []).map((hunk) => Math.max(hunk.oldStart, hunk.newStart) + hunk.rows.length)),
+    [after, gapHunks]
+  );
+  const gapStatus: GapStatus =
+    after && afterMatches === false
+      ? { kind: 'stale' }
+      : currentAfter?.error
+        ? { kind: 'error', message: `Could not load more lines. ${currentAfter.error}` }
+        : afterSide && afterSide.kind !== 'text'
+          ? { kind: 'error', message: 'More lines are not available for this file.' }
+          : currentAfter && !afterSide
+            ? { kind: 'loading' }
+            : { kind: 'idle' };
+  const revealLines = (gap: NonNullable<typeof gaps>[number], direction: GapDirection) => {
+    if (!gapHunks) return;
+    const key = activeKey,
+      count = gapHunks.length;
+    setGapReveals((previous) => ({
+      key,
+      value: revealGap(previous?.key === key ? previous.value : NO_REVEALS, gap, count, direction),
+    }));
+    readAfter();
+  };
   const wantsPreview = !compactMove && markdown && markdownView.mode === 'preview' && sourceOverride !== activeKey;
   const markdownKey = activeKey + (contents?.lfs ? ':lfs' : '');
   const renderedMarkdown =
@@ -197,11 +295,8 @@ export function PrFileInspection({
     setLoadedFile((previous) => (previous?.key === activeKey ? previous : undefined));
     setRange(null);
     setFileError('');
-    if (
-      contents ||
-      (!markdown && preview && (contextLines <= 3 || entry.file.status === 'added' || entry.file.status === 'deleted'))
-    )
-      return;
+    // A patch preview shows the change at once; gaps load the after side when the reader reveals one (#299).
+    if (contents || (!markdown && preview)) return;
     const unsupported = unsupportedFiles.current.get(activeKey);
     if (unsupported) {
       setFileError(unsupported);
@@ -229,7 +324,7 @@ export function PrFileInspection({
     return () => {
       cancelled = true;
     };
-  }, [activeKey, fileAttempt, contextLines, collapsed]);
+  }, [activeKey, fileAttempt, collapsed]);
   useEffect(() => {
     if (
       !markdown ||
@@ -274,6 +369,12 @@ export function PrFileInspection({
     sourceJump.current = undefined;
     previewJump.current = undefined;
   }, [activeKey]);
+  // A jump into a gap reveals the gap, so the line can be shown.
+  useEffect(() => {
+    if (!sourceLocation || !gaps) return;
+    const gap = gapContaining(gaps, sourceLocation.side, sourceLocation.start);
+    if (gap) revealLines(gap, 'all');
+  }, [sourceLocation, gaps]);
   useEffect(() => {
     if (!showingPreview || !previewJump.current) return;
     const location = previewJump.current;
@@ -330,9 +431,7 @@ export function PrFileInspection({
   const sideLine = (text: PrFileSide | undefined, previewSide: 'deletions' | 'additions', line: number) =>
     text?.kind === 'text'
       ? (text.content.split('\n')[line - 1] ?? '')
-      : preview
-        ? prPreviewSelection(preview, { start: line, end: line, side: previewSide }).replace(/^\d+: /, '')
-        : '';
+      : ((previewSide === 'deletions' ? shown?.before : shown?.after)?.get(line)?.replace(/\r$/, '') ?? '');
   const briefLineCode = ({ line, startLine, side, startSide }: AgentBriefLocation) => {
     const start = startLine ?? line;
     // Only the ends of a two-sided region are known here. The agent has the diff for what lies between.
@@ -342,10 +441,9 @@ export function PrFileInspection({
       );
     const text = contents && (side === 'LEFT' ? contents.before : contents.after);
     if (text?.kind === 'text') return briefCode(text.content.split('\n').slice(start - 1, line).join('\n'));
-    if (!preview) return {};
-    const selected = prPreviewSelection(preview, { start, end: line, side: side === 'LEFT' ? 'deletions' : 'additions' });
-    // A partial patch prefixes each line with its number. The comment already says which lines these are.
-    return briefCode(preview.isPartial ? selected.replace(/^\d+: /gm, '') : selected);
+    if (!shown) return {};
+    // The comment already says which lines these are, so shown lines are not numbered.
+    return briefCode(shownSelection(side === 'LEFT' ? shown.before : shown.after, start, line, false));
   };
   const comments = useChangesComments({
     brief: briefSubject && {
@@ -404,9 +502,7 @@ export function PrFileInspection({
     themeType: 'dark',
     diffStyle: entry.file.status === 'added' || entry.file.status === 'deleted' ? 'unified' : layout,
     disableFileHeader: true,
-    collapsedContextThreshold: 0,
-    parseDiffOptions,
-    hunkSeparators: 'line-info',
+    hunkSeparators: 'simple',
     diffIndicators: appearance.indicators,
     lineDiffType: appearance.inline,
     disableBackground: !appearance.backgrounds,
@@ -415,22 +511,6 @@ export function PrFileInspection({
     enableLineSelection: true,
     onLineSelected: setRange,
     onPostRender: revealSource,
-    loadDiffFiles: async () => {
-      try {
-        if (alive.current && currentFile.current === activeKey) setFileError('');
-        const value = await fileCache.read(request);
-        if (value.before.kind !== 'text' || value.after.kind !== 'text')
-          throw new Error('Full text context is unavailable for this file.');
-        return {
-          oldFile: { name: entry.file.previousPath ?? request.path, contents: value.before.content },
-          newFile: { name: request.path, contents: value.after.content },
-        };
-      } catch (error) {
-        if (alive.current && currentFile.current === activeKey)
-          setFileError(error instanceof Error ? error.message : String(error));
-        throw error;
-      }
-    },
   };
   const files: DiffFileInput | undefined = useMemo(
     () =>
@@ -467,8 +547,8 @@ export function PrFileInspection({
   const ask = (text = '') => onAsk(text);
   const selectedCode = () => {
     if (!range) return '';
-    if (preview)
-      return `${range.side === 'deletions' ? 'Before' : 'After'} lines ${range.start}–${range.end}:\n${prPreviewSelection(preview, range)}`;
+    if (preview && shown)
+      return `${range.side === 'deletions' ? 'Before' : 'After'} lines ${range.start}–${range.end}:\n${shownSelection(range.side === 'deletions' ? shown.before : shown.after, range.start, range.end)}`;
     if (!contents) return '';
     const side = range.side === 'deletions' ? contents.before : contents.after;
     return side.kind === 'text'
@@ -744,36 +824,20 @@ export function PrFileInspection({
           {!showingPreview && (
             <div ref={code} className="changes-code">
               <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
-              {preview && !unchangedMove && !(contextLines > 3 && files) && (
-                <FileDiff
+              {parts && !unchangedMove && (
+                <ChangesDiff
                   key={activeKey}
-                  fileDiff={preview}
+                  parts={parts}
+                  file={{ name: entry.file.path, prevName: entry.file.previousPath, status: entry.file.status }}
+                  layout={layout}
                   options={options}
-                  lineAnnotations={annotations}
+                  annotations={annotations}
                   renderAnnotation={comments.renderAnnotation}
-                  style={
-                    {
-                      '--diffs-font-family': 'var(--font-mono)',
-                      '--diffs-font-size': 'var(--type-code)',
-                      '--diffs-line-height': 'var(--leading-code)',
-                    } as CSSProperties
-                  }
-                />
-              )}
-              {files && !unchangedMove && (!preview || contextLines > 3) && (
-                <MultiFileDiff
-                  key={activeKey}
-                  {...files}
-                  options={options}
-                  lineAnnotations={annotations}
-                  renderAnnotation={comments.renderAnnotation}
-                  style={
-                    {
-                      '--diffs-font-family': 'var(--font-mono)',
-                      '--diffs-font-size': 'var(--type-code)',
-                      '--diffs-line-height': 'var(--leading-code)',
-                    } as CSSProperties
-                  }
+                  status={gapStatus}
+                  onReveal={gaps ? (part, direction) => revealLines(part.gap, direction) : undefined}
+                  onRetry={() => readAfter(true)}
+                  target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
+                  lineCount={lineCount}
                 />
               )}
               {unchangedMove && contents?.after.kind === 'text' && (
