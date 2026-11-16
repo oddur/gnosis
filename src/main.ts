@@ -3,7 +3,7 @@ import { instance as singleInstance } from './single-instance-start';
 import { assertReviewId, isReviewId, safeExternalUrl } from './safe-input';
 import { diagnosticsSections } from '../lib/diagnostics';
 import { queueDelta } from '../lib/workbench-delta';
-import { correlateInteractions, instrumentIpc, instrumentSends, mainLoopReport, noteMainPhase, recordMainSpan, startMainLoopMonitor } from './main-blocking';
+import { correlateInteractions, instrumentIpc, instrumentSends, mainLoopReport, noteMainPhase, recordMainSpan, startMainLoopMonitor, watchSystemSleep } from './main-blocking';
 import { mark, markRenderer, note, noteRenderer, onMark, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
@@ -200,7 +200,10 @@ const startup = createStartup();
 instrumentIpc(ipcMain as unknown as Parameters<typeof instrumentIpc>[0]);
 setTimedSink(recordMainSpan);
 onMark(noteMainPhase);
-startMainLoopMonitor();
+// The sampler names the functions inside long tasks that no span covers. GNOSIS_MAIN_SAMPLER=0 turns it off.
+startMainLoopMonitor({ sampler: process.env.GNOSIS_MAIN_SAMPLER !== '0' });
+// Sleep and a locked screen are not blocking. powerMonitor is available once the app is ready.
+void app.whenReady().then(() => watchSystemSleep(powerMonitor));
 noteMainPhase('main-eval');
 app.on('web-contents-created', (_event, contents) => instrumentSends(contents));
 gateHandlers(ipcMain, startup, {
@@ -3164,7 +3167,8 @@ ipcMain.handle('list-activity', () => {
   prMergeMonitor.tick();
   const visibleReviews = new Set(workbench.visibleHistory().map(entry => entry.id));
   const hiddenReviews = new Set(readReviewsIndex().flatMap(entry => visibleReviews.has(entry.id) ? [] : [entry.id]));
-  return [...activities.list().filter(task => (!task.account || task.account === cachedLogin) && (!task.reviewId || !hiddenReviews.has(task.reviewId))), ...workbench.activity()];
+  // A broadcast makes every window list activity: reuse the queue the broadcast just built (#345).
+  return [...activities.list().filter(task => (!task.account || task.account === cachedLogin) && (!task.reviewId || !hiddenReviews.has(task.reviewId))), ...workbench.activity(currentQueue())];
 });
 handleInteractive('activity-action', async (_event, id:string, action:ActivityAction) => {
   if (!['cancel','retry','dismiss'].includes(action)) throw new Error('Invalid task action.');
@@ -4379,7 +4383,7 @@ const syncHealth = createSyncHealthService({
 });
 syncHealth.register();
 void app.whenReady().then(() => {
-  const timer = setInterval(() => { if (startup.ready('all')) syncHealth.tick(); }, 15_000);
+  const timer = setInterval(() => { if (startup.ready('all')) timed('sync health tick', () => syncHealth.tick()); }, 15_000);
   timer.unref();
   app.once('will-quit', () => clearInterval(timer));
 });
@@ -4462,13 +4466,16 @@ async function tickGitHubSync() {
   watching = false;
   if (!syncWasAvailable) { githubSync.wake(); changeSignals.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); }
   syncWasAvailable = true;
-  void githubSync.tick();
-  changeSignals.tick();
-  void workflowGraphPreload.tick();
-  void checkDetailsPreload.tick();
-  void prOpenPreload.tick();
-  prMergeMonitor.tick();
-  if (!discoveryPending && cachedLogin) void sweepOwnPrs();
+  // Every second: name each loop's synchronous part, so a slow one shows in the diagnostics export (#345).
+  timed('sync tick', () => void githubSync.tick());
+  timed('change signals tick', () => changeSignals.tick());
+  timed('preload tick', () => {
+    void workflowGraphPreload.tick();
+    void checkDetailsPreload.tick();
+    void prOpenPreload.tick();
+  });
+  timed('merge monitor tick', () => prMergeMonitor.tick());
+  if (!discoveryPending && cachedLogin) timed('own-PR sweep', () => void sweepOwnPrs());
   if (discoveryPending || Date.now() < discoveryDue) return;
   discoveryPending = true;
   // While the change signals answer, they name changed PRs within a minute or two: discovery can wait longer.

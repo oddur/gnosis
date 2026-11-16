@@ -4,7 +4,7 @@ import { serialize } from 'node:v8';
 import { groupSubjects, type QueueItem, type ReviewMember, type WorkbenchQueue } from '../lib/workbench';
 import { stampQueue } from '../lib/workbench-revision';
 import { applyQueueDelta, queueDelta } from '../lib/workbench-delta';
-import { correlateInteractions, mainLoopReport, mainSpan, noteMainPhase, recordMainSpan, resetMainLoopReport, startMainLoopMonitor } from '../src/main-blocking';
+import { correlateInteractions, mainLoopReport, mainSpan, noteMainPhase, noteSystemSleep, noteSystemWake, recordMainSpan, resetMainLoopReport, startMainLoopMonitor } from '../src/main-blocking';
 
 const member = (n: number, updatedAt = '2026-11-15T09:00:00Z'): ReviewMember => ({
   number: n, repo: 'owner/repo', baseRepo: 'owner/repo', headRepo: 'owner/repo', url: `https://github.com/owner/repo/pull/${n}`,
@@ -96,4 +96,82 @@ void test('main long tasks are detected, named by the spans inside them, and mat
   );
   assert.equal(delayed.mainBlocked?.[0].at, task.at);
   assert.equal(quick.mainBlocked, undefined);
+});
+
+const block = (ms: number) => {
+  const end = performance.now() + ms;
+  while (performance.now() < end);
+};
+
+void test('sleep and a locked screen are never long tasks or the maximum event-loop delay', async () => {
+  const stop = startMainLoopMonitor();
+  try {
+    resetMainLoopReport();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // A suspended process does not turn its event loop: blocking stands in for the time asleep.
+    noteSystemSleep('suspend');
+    block(400);
+    noteSystemWake('suspend');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    // Locked, then asleep, then awake but still locked: nothing is measured until the screen unlocks.
+    noteSystemSleep('lock-screen');
+    noteSystemSleep('suspend');
+    block(200);
+    noteSystemWake('suspend');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    block(200);
+    noteSystemWake('lock-screen');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const { longTasks, eventLoopDelay } = mainLoopReport();
+    assert.deepEqual(longTasks, [], 'No long task while asleep or locked');
+    assert.ok(eventLoopDelay.max < 150, `The delay histogram skips the sleep: max ${eventLoopDelay.max} ms`);
+    assert.equal(eventLoopDelay.sleeps, 2, 'Each wake starts the histogram again');
+    // Awake again, real blocking is measured as before.
+    block(160);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const after = mainLoopReport();
+    assert.ok(after.longTasks.some((task) => task.duration >= 100), `Blocking after waking is a long task: ${JSON.stringify(after.longTasks)}`);
+    assert.ok(after.eventLoopDelay.max >= 100);
+  } finally {
+    stop();
+  }
+});
+
+void test('without a suspend event, a wall-clock jump is treated as sleep, not as a long task', async () => {
+  const stop = startMainLoopMonitor();
+  const realNow = Date.now;
+  try {
+    resetMainLoopReport();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // The monotonic clock may stop while a Mac sleeps; the wall clock does not.
+    const slept = realNow() + 10 * 60_000;
+    Date.now = () => slept + performance.now();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const { longTasks, eventLoopDelay } = mainLoopReport();
+    assert.deepEqual(longTasks, []);
+    assert.equal(eventLoopDelay.sleeps, 1, 'The jump counts as one sleep');
+  } finally {
+    Date.now = realNow;
+    stop();
+  }
+});
+
+void test('the sampler names the functions inside a long task that no span covers', async () => {
+  const stop = startMainLoopMonitor({ sampler: true });
+  try {
+    resetMainLoopReport();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    function unnamedPeriodicWork() {
+      block(180);
+    }
+    unnamedPeriodicWork();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const task = mainLoopReport().longTasks.find((t) => t.duration >= 150);
+    assert.ok(task, 'The block is a long task');
+    assert.deepEqual(task.spans, [], 'No span names it');
+    assert.ok(task.profile && task.profile.samples > 5, `The sampler took samples inside it: ${JSON.stringify(task.profile)}`);
+    assert.ok(task.profile.total.some((fn) => /^unnamedPeriodicWork\d* /.test(fn.name)), `The work is named: ${JSON.stringify(task.profile)}`);
+  } finally {
+    stop();
+  }
 });

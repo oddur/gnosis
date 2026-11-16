@@ -152,6 +152,11 @@ export function fingerprintIdentity(subject: ReviewSubject): string {
 export function snapshot(subject: ReviewSubject): ReviewSnapshot {
   return { version: 1, subject, fingerprint: fingerprint(subject), capturedAt: new Date().toISOString() };
 }
+/**
+ * Groups PRs into stacks: a PR whose base branch is another PR's head branch is its child. Linear in the members and
+ * edges: main regroups the whole queue after every discovery batch, and the earlier quadratic version took about
+ * 350 ms on a queue of 3,000 PRs, every 12 to 30 seconds while discovery ran (#345).
+ */
 export function groupSubjects(
   members: ReviewMember[],
   overrides: GroupingOverride[] = [],
@@ -161,18 +166,29 @@ export function groupSubjects(
   const edges: StackEdge[] = [];
   const warnings = new Map<string, string[]>();
   const warn = (url: string, text: string) => warnings.set(url, [...(warnings.get(url) ?? []), text]);
+  // Every member by the branch it pushes, so a child finds its candidate parents without a scan.
+  const branchKey = (repo: unknown, branch: unknown) => `${typeof repo}:${String(repo)}\u0000${typeof branch}:${String(branch)}`;
+  const byHead = new Map<string, ReviewMember[]>();
+  for (const member of members) {
+    const key = branchKey(member.headRepo, member.headBranch);
+    const list = byHead.get(key);
+    if (list) list.push(member);
+    else byHead.set(key, [member]);
+  }
   for (const child of members) {
-    const candidates = members.filter(
-      (p) => p.url !== child.url && p.headRepo === child.baseRepo && p.headBranch === child.baseBranch
-    );
+    const candidates = (byHead.get(branchKey(child.baseRepo, child.baseBranch)) ?? []).filter((p) => p.url !== child.url);
     if (candidates.length === 1) edges.push({ parent: candidates[0].url, child: child.url, evidence: 'branch' });
     else if (candidates.length > 1) warn(child.url, 'Multiple possible parents. Confirm the stack relationship.');
   }
   // Retain observed lineage when GitHub retargets a child after its parent merges.
+  const children = new Set(edges.map((edge) => edge.child));
   for (const old of previous)
     for (const edge of old.edges) {
       const parent = byUrl.get(edge.parent);
-      if (parent?.merged && byUrl.has(edge.child) && !edges.some((e) => e.child === edge.child)) edges.push(edge);
+      if (parent?.merged && byUrl.has(edge.child) && !children.has(edge.child)) {
+        edges.push(edge);
+        children.add(edge.child);
+      }
     }
   for (const override of overrides) {
     for (let i = edges.length - 1; i >= 0; i--) {
@@ -187,41 +203,74 @@ export function groupSubjects(
     )
       edges.push({ parent: override.parent, child: override.child, evidence: 'manual' });
   }
+  // Connected components over the edges, in both directions. Every edge joins two members.
+  const parents = new Map<string, string>(members.map((m) => [m.url, m.url]));
+  const root = (url: string): string => {
+    let top = url;
+    for (let next = parents.get(top) ?? top; next !== top; next = parents.get(top) ?? top) top = next;
+    for (let at = url; at !== top; ) {
+      const next = parents.get(at) ?? top;
+      parents.set(at, top);
+      at = next;
+    }
+    return top;
+  };
+  for (const edge of edges) {
+    const a = root(edge.parent), b = root(edge.child);
+    if (a !== b) parents.set(b, a);
+  }
+  const group = <T>(map: Map<string, T[]>, key: string, value: T) => {
+    const list = map.get(key);
+    if (list) list.push(value);
+    else map.set(key, [value]);
+  };
+  // Each component's edges in edge order, and its members.
+  const componentEdges = new Map<string, StackEdge[]>();
+  for (const edge of edges) group(componentEdges, root(edge.child), edge);
+  const componentUrls = new Map<string, string[]>();
+  for (const url of byUrl.keys()) group(componentUrls, root(url), url);
+  // Earlier stacks by member, in their saved order, so a group keeps its identity and name.
+  const stacksByUrl = new Map<string, number[]>();
+  for (const [index, subject] of previous.entries())
+    if (subject.kind === 'stack') for (const m of subject.members) group(stacksByUrl, m.url, index);
   const result: ReviewSubject[] = [];
+  const ids = new Set<string>();
+  const add = (subject: ReviewSubject) => {
+    result.push(subject);
+    ids.add(subject.id);
+  };
   const seen = new Set<string>();
   for (const member of members) {
     if (seen.has(member.url)) continue;
-    const component = new Set([member.url]);
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const edge of edges)
-        if (component.has(edge.parent) || component.has(edge.child)) {
-          for (const url of [edge.parent, edge.child])
-            if (!component.has(url)) {
-              component.add(url);
-              changed = true;
-            }
-        }
-    }
-    const relevant = edges.filter((e) => component.has(e.parent) && component.has(e.child));
+    const key = root(member.url);
+    const component = new Set(componentUrls.get(key) ?? [member.url]);
+    const relevant = componentEdges.get(key) ?? [];
+    // By dependency, one level at a time, each level sorted by URL.
     const ordered: ReviewMember[] = [];
     const pending = new Set(component);
+    const waiting = new Map<string, number>();
+    const dependents = new Map<string, string[]>();
+    for (const edge of relevant) {
+      waiting.set(edge.child, (waiting.get(edge.child) ?? 0) + 1);
+      group(dependents, edge.parent, edge.child);
+    }
     while (pending.size) {
-      const ready = [...pending]
-        .filter((url) => !relevant.some((e) => e.child === url && pending.has(e.parent)))
-        .sort();
+      const ready = [...pending].filter((url) => !waiting.get(url)).sort();
       if (!ready.length) break;
       for (const url of ready) {
         const item = byUrl.get(url);
         if (item) ordered.push(item);
         pending.delete(url);
       }
+      for (const url of ready)
+        for (const child of dependents.get(url) ?? []) waiting.set(child, (waiting.get(child) ?? 0) - 1);
     }
     if (pending.size) {
-      for (const url of component) {
+      // A cycle: each member stands alone, in the order a walk from this member reaches it.
+      for (const url of reachOrder(member.url, relevant)) {
         const m = byUrl.get(url);
         if (!m) continue;
-        result.push({
+        add({
           id: m.url,
           kind: 'pr',
           title: m.title,
@@ -233,18 +282,24 @@ export function groupSubjects(
       }
       continue;
     }
-    const old = previous
-      .filter((p) => p.kind === 'stack' && !result.some(s => s.id === p.id) && p.members.some((m) => component.has(m.url)))
-      .sort(
-        (a, b) =>
-          b.members.filter((m) => component.has(m.url)).length - a.members.filter((m) => component.has(m.url)).length
-      )
-      .at(0);
+    // The earlier stack that shares the most members, the first saved on a tie, unless a group already took its id.
+    let old: ReviewSubject | undefined;
+    let shared = 0;
+    const indexes = [...new Set([...component].flatMap((url) => stacksByUrl.get(url) ?? []))].sort((a, b) => a - b);
+    for (const index of indexes) {
+      const candidate = previous[index];
+      if (ids.has(candidate.id)) continue;
+      const count = candidate.members.filter((m) => component.has(m.url)).length;
+      if (count > shared) {
+        shared = count;
+        old = candidate;
+      }
+    }
     const stack = ordered.length > 1 || !!old && old.members.filter(m => byUrl.has(m.url)).length === 1;
     const id = stack ? (old?.id ?? `stack:${ordered[0].url}`) : ordered[0].url;
     // A split group cannot retain the same identity as another resulting group.
-    const uniqueId = result.some((s) => s.id === id) ? `stack:${ordered[0].url}` : id;
-    result.push({
+    const uniqueId = ids.has(id) ? `stack:${ordered[0].url}` : id;
+    add({
       id: uniqueId,
       kind: stack ? 'stack' : 'pr',
       title: stack && old?.name ? old.name : ordered[0].title,
@@ -256,6 +311,22 @@ export function groupSubjects(
     for (const url of component) seen.add(url);
   }
   return result;
+}
+/** The members a walk over `edges` from `start` reaches, in the order it reaches them, pass after pass. */
+function reachOrder(start: string, edges: readonly StackEdge[]): Set<string> {
+  const component = new Set([start]);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const edge of edges)
+      if (component.has(edge.parent) || component.has(edge.child)) {
+        for (const url of [edge.parent, edge.child])
+          if (!component.has(url)) {
+            component.add(url);
+            changed = true;
+          }
+      }
+  }
+  return component;
 }
 export function subjectForReview(review: ReviewGuide): string {
   return review.snapshot?.subject.id ?? review.prUrl;

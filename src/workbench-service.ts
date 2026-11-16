@@ -1,6 +1,6 @@
 import { responseNeeded } from '../lib/response-needed';
 import { stampQueue } from '../lib/workbench-revision';
-import { timed } from '../lib/perf-trace';
+import { noteWork, timed } from '../lib/perf-trace';
 import type { GitHubReviewThreads } from '../lib/review-threads';
 import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock, automaticBriefingBlockReason } from '../lib/repository-settings';
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
@@ -330,8 +330,9 @@ export function createWorkbenchService(deps: Deps) {
     }
     return state;
   }
-  function save() {
-    deps.changed?.();
+  /** Saves the queue state. `notify` tells windows; a save of discovery progress alone changes nothing they show. */
+  function save(notify = true) {
+    if (notify) deps.changed?.();
     if (deps.storage) { deps.storage.write(`workbench:${load().account.toLowerCase()}`, load()); return; }
     fs.mkdirSync(deps.directory(), { recursive: true });
     const temp = cachePath() + '.tmp';
@@ -731,24 +732,33 @@ export function createWorkbenchService(deps: Deps) {
       !force && s.discoveryKey === discoverySettings ? s.listings : undefined, now());
     let finished = false;
     let dirty = false;
+    /** The queue windows show changed since the last checkpoint. */
+    let shown = false;
     const publish = () => {
       if (!dirty) return;
       if (deps.auth().login !== login || discoveryKey() !== discoverySettings) return;
-      // Keep unseen members until reconciliation completes; partial results must not erase stacks.
-      const merged = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
-      for (const [url, member] of members) merged.set(url, member);
-      s.subjects = groupSubjects([...merged.values()].map(withLatestMetadata).filter(member => !isArchived(member)), s.overrides, s.subjects);
+      timed('discovery regroup', () => {
+        // Keep unseen members until reconciliation completes; partial results must not erase stacks.
+        const merged = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
+        for (const [url, member] of members) merged.set(url, member);
+        s.subjects = groupSubjects([...merged.values()].map(withLatestMetadata).filter(member => !isArchived(member)), s.overrides, s.subjects);
+      });
       dirty = false;
+      shown = true;
     };
     const checkpoint = () => {
       if (finished || discoveryKey() !== discoverySettings || deps.auth().login !== login) return;
-      s.discoveryProgress = {
-        key: discoverySettings,
-        listings: listingState,
-        members: [...completed.values()],
-        checkedAt: Object.fromEntries([...completed.keys()].map((url) => [url, checkedAt[url]])),
-      };
-      save();
+      timed('discovery checkpoint', () => {
+        s.discoveryProgress = {
+          key: discoverySettings,
+          listings: listingState,
+          members: [...completed.values()],
+          checkedAt: Object.fromEntries([...completed.keys()].map((url) => [url, checkedAt[url]])),
+        };
+        // A listing page alone changes nothing a window shows: save it without a queue broadcast.
+        save(shown);
+        shown = false;
+      });
     };
     const listings = createDiscoveryListings(octokit, listingState, {
       login,
@@ -767,6 +777,7 @@ export function createWorkbenchService(deps: Deps) {
       // Update saved metadata too: archive changes do not update PR timestamps.
       const update = (member: ReviewMember) => member.repo.toLowerCase() === repo ? { ...member, repoArchived: archived } : member;
       s.subjects = s.subjects.map(subject => ({ ...subject, members: subject.members.map(update) }));
+      shown = true;
       for (const [url, member] of previousMembers) previousMembers.set(url, update(member));
       stars.update(s.account, stars.load(s.account).map(entry => update(entry.member)));
     };
@@ -1104,6 +1115,7 @@ export function createWorkbenchService(deps: Deps) {
       let measured: number | undefined;
       const signals = await withGitHubPriority('background', () => read(octokit, batch, { cost: value => { measured = value; } }), { automatic: true });
       if (deps.auth().login !== login) break;
+      const batchStarted = performance.now();
       if (measured !== undefined) {
         requests++;
         if (measured !== sweepCost) {
@@ -1116,6 +1128,7 @@ export function createWorkbenchService(deps: Deps) {
       reads.signals(login, signals);
       notifySignals(login, signals);
       deps.changed?.();
+      noteWork('own-PR sweep batch', batchStarted);
     }
     return { requests, prs };
   }
@@ -1785,10 +1798,15 @@ export function createWorkbenchService(deps: Deps) {
       void pump();
       return view();
     },
-    activity(): ActivityTask[] {
+    /**
+     * Briefing tasks for the activity drawer. `current` is a snapshot main built moments ago with no change since, such
+     * as the one each queue broadcast sends: every broadcast makes each window list activity, and building the queue
+     * again for it doubled main's work per change (#345).
+     */
+    activity(current?: WorkbenchQueue): ActivityTask[] {
       // The drawer mounts before GitHub authentication finishes restoring.
       if (!deps.auth().login || !deps.auth().token) return [];
-      const queue = view();
+      const queue = current ?? view();
       void pump(queue);
       const preferences = deps.preferences();
       const p = modelSettings(preferences);

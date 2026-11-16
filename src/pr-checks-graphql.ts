@@ -1,6 +1,7 @@
 import type { Octokit } from '@octokit/rest';
 import { currentChecks, type CheckTarget, type PrCheck, type PrChecks } from '../lib/pr-checks';
 import { prActionTarget } from './pr-actions-service';
+import { noteWork } from '../lib/perf-trace';
 
 interface Context {
   __typename: 'CheckRun' | 'StatusContext';
@@ -124,6 +125,7 @@ export async function readChecksGraphQL(client: Octokit, targets: CheckTarget[])
         throw error;
       data = partial.data;
     }
+    const parseStarted = performance.now();
     for (const [i, state] of active.entries()) {
       const pr = data[`p${i}`]?.pullRequest;
       const commit = pr?.commits.nodes[0]?.commit;
@@ -143,6 +145,7 @@ export async function readChecksGraphQL(client: Octokit, targets: CheckTarget[])
         state.cursor = cursor;
       }
     }
+    noteWork('checks parse', parseStarted);
   }
   return states.map(({ target, checks: all }) => {
     // Jobs of superseded workflow runs stay in GitHub's rollup but no longer count, so every view drops them here.
