@@ -943,6 +943,10 @@ if (new URLSearchParams(location.search).has('github-sync')) {
   const { installSyncFixture } = await import('./github-sync');
   installSyncFixture(mocks, items);
 }
+if (new URLSearchParams(location.search).has('saved-view-sync')) {
+  const { installSavedViewSync } = await import('./saved-view-sync');
+  installSavedViewSync(mocks as unknown as Record<string, unknown>, items);
+}
 if (new URLSearchParams(location.search).has('github-writes')) {
   const { installGitHubWritesFixture } = await import('./github-writes');
   installGitHubWritesFixture(mocks, items);

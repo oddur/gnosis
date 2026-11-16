@@ -2584,3 +2584,44 @@ void test('watch mode ends a review request that the complete personal searches 
     assert.ok(service.snapshot().items.every(item => item.attention !== 'requested'));
   } finally { s.cleanup(); }
 });
+
+void test('switching saved views re-prioritises automatic briefings for the new view', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const child = { ...structuredClone(s.pr), html_url: 'https://github.com/owner/repo/pull/2', title: 'Bob change' };
+  child.head.ref = 'bob-change';
+  child.user.login = 'bob';
+  const generated: string[] = [];
+  Object.assign(s.deps.client().pulls, {
+    get: (args: { pull_number: number }) => Promise.resolve({ data: args.pull_number === 2 ? child : s.pr }),
+    list: (args: { head?: string }) => Promise.resolve({ data: args.head ? [] : [s.pr, child] }),
+  });
+  s.prefs.watchedRepos = ['owner/repo'];
+  s.prefs.briefingDailyLimit = 3;
+  s.deps.provider = (() => ({
+    generate: (req: { content: string }) => {
+      generated.push((JSON.parse(req.content) as { members: { pr: string }[] }).members[0].pr);
+      return Promise.resolve('{"summary":"Ready"}');
+    },
+  })) as unknown as typeof getProvider;
+  const service = createWorkbenchService(s.deps);
+  try {
+    await service.queue();
+    service.setFilters({ author: 'bob' });
+    const bob = service.viewAction({ type: 'create', name: 'Bob' }).savedViews?.activeId;
+    assert.ok(bob);
+    service.viewAction({ type: 'activate', id: null });
+    service.setFilters({ author: 'nobody' });
+    s.prefs.autoBriefings = true;
+    // Nothing else asks for a briefing here: no queue read, activity poll or filter edit.
+    await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual(generated, [], 'No PR matches the queue filters');
+    service.viewAction({ type: 'rename', id: bob, name: 'Bob only' });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual(generated, [], 'A view change that keeps the filters starts nothing');
+    service.viewAction({ type: 'activate', id: bob });
+    for (let i = 0; i < 100 && !generated.length; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(generated, [child.html_url], 'Activating the view briefs its first PR');
+  } finally {
+    s.cleanup();
+  }
+});

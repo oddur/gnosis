@@ -481,3 +481,76 @@ void test('returning to the app or switching to a PR reads it at most every 30 s
   assert.deepEqual(f.sync.refresh([target(9).url], ['signals']), []);
   assert.deepEqual(f.sync.refresh([target().url], ['metadata']), []);
 });
+function rowFixture(backoff?: (background: boolean) => boolean) {
+  const reads: { urls: string[]; refresh: boolean }[] = [];
+  const clock = { now: 1_000_000 };
+  const sync = createGitHubSyncService({
+    now: () => clock.now,
+    account: () => 'alice',
+    enabled: () => true,
+    backoff: (_kind, background) => (backoff?.(background) ? { retryAt: clock.now + 60_000, message: 'paused' } : undefined),
+    read: (_kind, targets, _priority, _followUp, refresh) => {
+      reads.push({ urls: targets.map((t) => t.url), refresh: !!refresh });
+      return Promise.resolve([]);
+    },
+    publish: () => {},
+  });
+  return { sync, reads, clock };
+}
+void test('switching to a view reads its stale top rows once, as a switch, and nothing when all are fresh', async () => {
+  const { sync, reads, clock } = rowFixture();
+  sync.observe('1:rows', { kind: 'signals', priority: 'visible', targets: [target(1), target(2), target(3)] });
+  await sync.tick();
+  assert.deepEqual(reads, [{ urls: [target(1).url, target(2).url, target(3).url], refresh: false }]);
+  // Read within 30 s: nothing to do.
+  clock.now += 10_000;
+  assert.deepEqual(sync.refreshRows([target(1).url, target(2).url], ['signals']), []);
+  await sync.tick();
+  assert.equal(reads.length, 1);
+  // One row was read again since; the other is stale. One read, of the stale row, marked as a switch.
+  clock.now += 25_000;
+  sync.refresh([target(1).url], ['signals']);
+  await sync.tick();
+  assert.deepEqual(reads[1], { urls: [target(1).url], refresh: false });
+  clock.now += 5_000;
+  assert.deepEqual(sync.refreshRows([target(1).url, target(2).url], ['signals']), [target(2).url]);
+  await sync.tick();
+  assert.deepEqual(reads.slice(2), [{ urls: [target(2).url], refresh: true }]);
+  // Asking again at once reads nothing more, and the boost does not carry over to the row's routine reads.
+  assert.deepEqual(sync.refreshRows([target(2).url], ['signals']), []);
+  clock.now += 300_000;
+  await sync.tick();
+  const routine = reads.slice(3);
+  assert.ok(routine.length > 0 && routine.every((read) => !read.refresh));
+});
+void test('a view refresh is capped at 15 PRs and waits briefly for rows that subscribe after it', async () => {
+  const { sync, reads, clock } = rowFixture();
+  const urls = Array.from({ length: 30 }, (_, i) => target(i + 1).url);
+  assert.equal(sync.refreshRows(urls, ['signals']).length, 15, 'At most 15 PRs per switch');
+  sync.observe('1:rows', { kind: 'signals', priority: 'visible', targets: Array.from({ length: 20 }, (_, i) => target(i + 1)) });
+  await sync.tick();
+  assert.deepEqual(reads[0], { urls: urls.slice(0, 15), refresh: true }, 'One request for the switched-to rows');
+  await sync.tick();
+  assert.deepEqual(reads[1], { urls: urls.slice(15, 20), refresh: false });
+  // A request for a row that never subscribes expires.
+  sync.refreshRows([target(40).url], ['signals']);
+  clock.now += 11_000;
+  sync.observe('1:late', { kind: 'signals', priority: 'visible', targets: [target(40)] });
+  await sync.tick();
+  assert.deepEqual(reads[2], { urls: [target(40).url], refresh: false });
+});
+void test('a view refresh waits out an automatic rate-limit pause', async () => {
+  let blocked = false;
+  const { sync, reads, clock } = rowFixture((background) => blocked && background);
+  sync.observe('1:rows', watch('visible'));
+  await sync.tick();
+  clock.now += 40_000;
+  blocked = true;
+  sync.refreshRows([target().url], ['signals']);
+  await sync.tick();
+  assert.deepEqual(reads.map((read) => read.refresh), [false], 'The automatic reserve is respected');
+  blocked = false;
+  clock.now += 1_000;
+  await sync.tick();
+  assert.deepEqual(reads.map((read) => read.refresh), [false, true]);
+});
