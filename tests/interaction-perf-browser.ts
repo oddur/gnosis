@@ -1,5 +1,6 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
+import { PERF_BUDGET_SCALE, perfBudget } from './perf-budget';
 import { app, BrowserWindow } from 'electron';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
 
@@ -15,9 +16,9 @@ import { chooseWorkspaceMenuItem } from './workspace-menu';
  * and prints where the time went. Run it through Docker with
  * `npm run test:browser:docker -- env GNOSIS_INTERACTION_PROFILE=1 node scripts/test-workbench.mjs --interaction-perf`.
  *
- * Timing budgets hold as written in Docker on a quiet machine; run with GNOSIS_PERF_STRICT=1 to enforce them so.
- * Without it, as on CI, each budget is multiplied by BUDGET_FACTOR. GNOSIS_INTERACTION_CPU_SLOWDOWN=N slows the
- * renderer's CPU N times, as a slow runner does, and multiplies the budgets by N as well. Structural checks do not
+ * Timing budgets hold as written in Docker on a quiet machine. They are scaled outside strict runs like every browser
+ * check's (tests/perf-budget.ts; GNOSIS_PERF_STRICT=1 enforces them as written). GNOSIS_INTERACTION_CPU_SLOWDOWN=N
+ * slows the renderer's CPU N times, as a slow runner does, and multiplies the budgets by N as well. Structural checks do not
  * scale: listener counts, closed tabs' heap and detached DOM, input-delay attribution, renderer errors, and input
  * delay under background sync relative to the same inputs without it.
  */
@@ -53,12 +54,10 @@ const budgets: Record<string, number> = {
  * It is checked above the same inputs' delay without sync, so a slower machine raises both. */
 const BACKGROUND_INPUT_DELAY_P90 = 50;
 
-const strict = process.env.GNOSIS_PERF_STRICT === '1';
 const cpuSlowdown = Math.max(1, Number(process.env.GNOSIS_INTERACTION_CPU_SLOWDOWN) || 1);
-/** Shared CI runners ran these interactions up to about 1.25x slower than Docker (run 43838385276: open PR 368 ms
- * against 300, Checks 368 against 300). 1.6 leaves headroom for that without hiding a regression of the size #346 fixed. */
-const CI_BUDGET_FACTOR = 1.6;
-const BUDGET_FACTOR = (strict ? 1 : CI_BUDGET_FACTOR) * cpuSlowdown;
+/** A budget for this run: scaled outside strict runs (shared CI runners ran these interactions up to about 1.25x slower
+ * than Docker, run 43838385276), and by the CPU slowdown. */
+const scaledBudget = (ms: number) => Math.round(perfBudget(ms) * cpuSlowdown);
 
 type Interaction = {
   type: string;
@@ -208,12 +207,12 @@ void app.whenReady().then(async () => {
         // Repeated inputs (j/k, typing) are checked at the 90th percentile: one sample can meet unrelated background
         // work, such as the fixture hashing the whole queue when it saves filters. Single inputs are checked as they are.
         checked: durations.length >= 10 ? durations[Math.ceil(durations.length * 0.9) - 1] : durations[durations.length - 1],
-        budget: name in budgets ? Math.round(budgets[name] * BUDGET_FACTOR) : undefined,
+        budget: name in budgets ? scaledBudget(budgets[name]) : undefined,
         worst,
       };
     });
     console.log(
-      `Interaction latency (ms, input to next paint). Budgets x${BUDGET_FACTOR}${strict ? ' (GNOSIS_PERF_STRICT=1)' : ''}${cpuSlowdown > 1 ? `, CPU slowed ${cpuSlowdown}x` : ''}:`
+      `Interaction latency (ms, input to next paint). Budgets x${PERF_BUDGET_SCALE}${PERF_BUDGET_SCALE === 1 ? ' (as written)' : ''}${cpuSlowdown > 1 ? `, x${cpuSlowdown} for the CPU slowdown` : ''}:`
     );
     for (const s of summary)
       console.log(
@@ -906,7 +905,7 @@ void app.whenReady().then(async () => {
       'Interactions stay within budget'
     );
     // Relative to the same inputs without sync, so a slower machine does not fail it; scaled like the budgets.
-    const allowed = Math.round(BACKGROUND_INPUT_DELAY_P90 * BUDGET_FACTOR);
+    const allowed = scaledBudget(BACKGROUND_INPUT_DELAY_P90);
     assert.ok(
       background.p90 - background.idleP90 <= allowed,
       `Input delay under background sync stays within ${allowed} ms of the same inputs without it at p90: ${background.p90} ms against ${background.idleP90} ms`
