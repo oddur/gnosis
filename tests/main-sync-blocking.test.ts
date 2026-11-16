@@ -81,7 +81,7 @@ void test('background changes on a large queue never block the main event loop f
     const { longTasks, eventLoopDelay } = mainLoopReport();
     const worst = Math.max(0, ...longTasks.map((t) => t.duration));
     console.log(`main event loop during 15 changes: longest block ${worst} ms, p99 ${eventLoopDelay.p99} ms; delta ${Math.max(...sizes)} bytes`);
-    assert.ok(worst < 100, `The main event loop blocked for ${worst} ms: ${JSON.stringify(longTasks)}`);
+    assert.ok(worst < perfBudget(100), `The main event loop blocked for ${worst} ms: ${JSON.stringify(longTasks)}`);
     assert.ok(Math.max(...sizes) < 200_000, 'Each change sends a small delta, not the whole queue');
     assert.ok(v8.serialize(held).length > 2_000_000, 'The full queue is the large payload the delta replaces');
   } finally {
