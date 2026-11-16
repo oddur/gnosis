@@ -37,6 +37,11 @@ const budgets: Record<string, number> = {
   'tab Checks': 300,
   'tab Feedback (first)': 200,
   'tab Feedback': 150,
+  // Leaving Changes while the 3,000-line file shows, for Checks or Summary, and coming back. Before #352 leaving took
+  // 104-144 ms: cached check reads rendered the whole PR page five or six more times, and the hidden diff view rendered
+  // again. Coming back took 96-192 ms; most of it is the diffs' effects rebuilding the large file.
+  'tab away from large diff': 130,
+  'tab back to large diff': 200,
   'queue j/k': 200,
   'queue filter keystroke': 200,
   'tree: open large file': 250,
@@ -905,6 +910,16 @@ void app.whenReady().then(async () => {
       await sleep(400);
       await measure('expand large file', () => mouse(viewedBox), `${hugeRow}.querySelector('.commit-stream-file-body')?.hidden===false`);
       await sleep(400);
+    }
+
+    // ── Tabs: leave Changes while the 3,000-line file shows, and come back (#352) ──
+    const hugeLines = `(${hugeRow}?.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]').length??0)>50`;
+    for (let i = 0; i < 6; i++) {
+      const label = i % 2 ? 'Summary' : 'Checks';
+      await measure('tab away from large diff', () => mouse(tab(label)), `${selected(label)}&&!${hugeRow}.checkVisibility()`);
+      await sleep(400);
+      await measure('tab back to large diff', () => mouse(tab('Changes')), `${selected('Changes')}&&${hugeLines}&&${hugeRow}.checkVisibility()`);
+      await sleep(600);
     }
 
     // ── Changes: type a comment on a line ─────────────────────────

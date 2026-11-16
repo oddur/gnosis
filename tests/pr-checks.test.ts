@@ -761,3 +761,15 @@ void test('completed preloads do not redownload endlessly when a large stack evi
   await loader.tick();
   assert.equal(reads, 2, 'A changed attempt still loads');
 });
+
+void test('a check state read again from the cache counts as unchanged, so a tab switch does not re-render the PR page (#352)', async () => {
+  const { sameChecksState } = await import('../lib/use-pr-checks');
+  const read = (checkedAt: number) => ({ url: 'u', headSha: 'h', checkedAt, checks: [] });
+  const state = { scope: 's', values: { u: read(1) }, errors: {}, busy: false };
+  assert.equal(sameChecksState(state, { ...state, values: { u: read(1) } }), true);
+  assert.equal(sameChecksState(state, { ...state, values: { u: read(2) } }), false);
+  assert.equal(sameChecksState(state, { ...state, busy: true }), false);
+  assert.equal(sameChecksState(state, { ...state, errors: { u: 'failed' } }), false);
+  assert.equal(sameChecksState(state, { ...state, values: {} }), false);
+  assert.equal(sameChecksState(state, { ...state, scope: 't' }), false);
+});
