@@ -235,3 +235,41 @@ export function useMergeFilter(scope: string | null, requests: readonly QueueSig
   }, [scope, key]);
   return { states, phase: enabled ? phase : ('done' as const) };
 }
+
+/**
+ * Status for the Overview's PRs (#390). Saved status shows first, always, without a GitHub read. While `live`, the
+ * same shared backend watch as visible queue rows keeps it current; preview builds without one read through the
+ * coalesced 25-PR batches every `QUEUE_SIGNALS_TTL`. Hidden windows pause, as rows do.
+ */
+export function useLiveQueueSignals(scope: string | null, requests: readonly QueueSignalRequest[], live: boolean) {
+  const key = JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha })));
+  const values = useSignalValues(scope, key);
+  useEffect(() => {
+    if (!scope) return;
+    const members = JSON.parse(key) as QueueSignalRequest[];
+    if (!members.length) return;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    const load = () => {
+      if (cancelled || !live || document.visibilityState === 'hidden') return;
+      void Promise.all(members.map((request) => read(scope, request)));
+    };
+    void restoreSaved(scope, members, () => cancelled).then((current) => {
+      if (!current || !live) return;
+      stop ??= watchGitHub({ kind: 'signals', priority: 'visible', targets: members }, (update) => {
+        if (update.kind === 'signals') publishQueueSignals(scope, [update.value]);
+      });
+      if (!stop) load();
+    });
+    const timer = live && window.electronAPI.githubSyncVersion !== 1 ? setInterval(load, QUEUE_SIGNALS_TTL) : undefined;
+    const onVisibility = () => { if (window.electronAPI.githubSyncVersion !== 1) load(); };
+    if (live) document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelled = true;
+      stop?.();
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [scope, key, live]);
+  return values;
+}

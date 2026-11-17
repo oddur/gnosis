@@ -11,40 +11,24 @@ import {
   CircleCheck,
   CirclePause,
   CircleX,
-  Eye,
-  GitCompareArrows,
-  GitMerge,
   Layers,
   LoaderCircle,
-  MessageSquareWarning,
-  MessagesSquare,
   RefreshCw,
   Settings,
-  Sparkles,
-  TriangleAlert,
   WifiOff,
   X,
   type LucideIcon,
 } from 'lucide-react';
 import { ATTENTION_LABEL, type AttentionKind } from '../lib/attention';
 import { PrStateIcon } from './PrStateIcon';
+import { attentionIcons } from '../lib/interface-icons';
 import type { MenubarApi, MenubarGroup, MenubarRow, MenubarState, MenubarTask } from '../lib/menubar-state';
 import { useStatusNow } from '../lib/status-clock';
 
 /** ↻ stays disabled for 10 seconds after a refresh. */
 export const REFRESH_COOLDOWN_MS = 10_000;
 
-const KIND_ICON: Record<AttentionKind, { icon: LucideIcon; tone: string }> = {
-  'review-requested': { icon: Eye, tone: 'review' },
-  'updated-since-review': { icon: GitCompareArrows, tone: 'review' },
-  'changes-requested': { icon: MessageSquareWarning, tone: 'danger' },
-  'checks-failed': { icon: CircleX, tone: 'danger' },
-  conflicts: { icon: TriangleAlert, tone: 'warning' },
-  replies: { icon: MessagesSquare, tone: 'warning' },
-  restack: { icon: Layers, tone: 'warning' },
-  'ready-to-merge': { icon: GitMerge, tone: 'success' },
-  'explanation-ready': { icon: Sparkles, tone: 'info' },
-};
+const KIND_ICON = attentionIcons;
 
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 /** "just now", "3 min ago", "2 h ago", "yesterday". */

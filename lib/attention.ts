@@ -150,6 +150,30 @@ export interface AttentionItem {
 }
 const STATUS_KINDS: readonly AttentionKind[] = ['changes-requested', 'checks-failed', 'conflicts', 'ready-to-merge'];
 
+/** Signals young enough for status kinds (`ATTENTION_SIGNALS_MAX_AGE`). */
+export const freshSignals = (signals: QueueSignals | undefined, now: number) =>
+  signals && now - signals.checkedAt <= ATTENTION_SIGNALS_MAX_AGE ? signals : undefined;
+
+/**
+ * Every kind one open PR of a queue entry has, before notification switches apply: the level kinds of
+ * `memberAttention`, updates since your review, replies to you, and an unread explanation. `fresh` must already be
+ * young enough (`freshSignals`). Shared by `attentionItems` and the Overview lanes (`lib/overview.ts`).
+ */
+export function memberKinds(
+  item: QueueItem,
+  member: ReviewMember,
+  fresh: QueueSignals | undefined,
+  login: string,
+  options: { teamRequests?: boolean } = {}
+): Set<AttentionKind> {
+  const kinds = new Set(Object.keys(memberAttention(member, fresh, login, options)) as AttentionKind[]);
+  if (item.attention === 'updated' && !isOwnPr(member, login)) kinds.add('updated-since-review');
+  if ((item.responses?.[member.url]?.awaitingReply ?? 0) > 0) kinds.add('replies');
+  // A finished, current, unread explanation. It folds into a review request on the same row.
+  if (explanationFor(item, member.url)?.unread) kinds.add('explanation-ready');
+  return kinds;
+}
+
 /** The current set, one row per PR, ordered by group and rank. Queue filters do not apply. */
 export function attentionItems(input: {
   items: readonly QueueItem[];
@@ -169,14 +193,9 @@ export function attentionItems(input: {
       // A snoozed PR in a stack that stays in the queue needs nobody until it wakes.
       if (!isOpen(member) || item.snoozedUrls?.includes(member.url)) continue;
       const signals = input.signals(member);
-      const fresh = signals && input.now - signals.checkedAt <= ATTENTION_SIGNALS_MAX_AGE ? signals : undefined;
-      const level = memberAttention(member, fresh, input.login, { teamRequests: input.teamRequests });
-      const kinds = new Set(Object.keys(level) as AttentionKind[]);
-      if (item.attention === 'updated' && !isOwnPr(member, input.login)) kinds.add('updated-since-review');
-      if ((item.responses?.[member.url]?.awaitingReply ?? 0) > 0) kinds.add('replies');
-      // A finished, current, unread explanation. It folds into a review request on the same row.
+      const fresh = freshSignals(signals, input.now);
+      const kinds = memberKinds(item, member, fresh, input.login, { teamRequests: input.teamRequests });
       const explanation = explanationFor(item, member.url);
-      if (explanation?.unread) kinds.add('explanation-ready');
       for (const kind of kinds) if (!input.enabled(kind, member.repo)) kinds.delete(kind);
       // A fix comes before merging.
       if ([...kinds].some((kind) => ATTENTION_GROUP[kind] === 'fix')) kinds.delete('ready-to-merge');
@@ -218,7 +237,7 @@ export function attentionItems(input: {
  * The saved explanation that makes a row "Explanation ready": completed, current for the subject (an outdated one
  * makes the item `updated` instead), on this PR or, for a stack, on the stack as a whole.
  */
-function explanationFor(item: QueueItem, url: string): { id: string; unread: boolean } | undefined {
+export function explanationFor(item: QueueItem, url: string): { id: string; unread: boolean } | undefined {
   const review = item.review;
   if (!review || (review.status ?? 'completed') !== 'completed' || item.attention === 'updated') return undefined;
   const members = item.subject.members;

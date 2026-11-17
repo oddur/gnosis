@@ -15,7 +15,9 @@ export function homeVisit(home: HomeLocation): RecentVisit {
   const subject = home.item?.subject;
   const member = subject?.members[0];
   // Muted PRs replaces whichever list was open, so it names the visit and its workspace tab.
-  const section = home.muted
+  const section = home.overview
+    ? 'Overview'
+    : home.muted
     ? 'Muted PRs'
     : home.snoozed
       ? 'Snoozed'
@@ -31,7 +33,7 @@ export function homeVisit(home: HomeLocation): RecentVisit {
             : home.filters.attention === 'updated'
               ? 'Updated PRs'
               : 'Review queue';
-  const tool = home.muted || !!home.snoozed;
+  const tool = home.muted || !!home.snoozed || !!home.overview;
   const view = tool ? null : home.viewId;
   return {
     id: subject

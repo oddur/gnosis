@@ -4,6 +4,7 @@ import { DEFAULT_PR_SORT, normalizePrListSort, sortQueueItems, type PrListSort }
 import type { QueueSignals } from './queue-signals';
 import { memberMergeState, type MergeStates } from './merge-conflicts';
 import { fingerprint, type Briefing, type QueueItem, type ReviewMember } from './workbench';
+import { isOverviewLane, OVERVIEW_LANE_LABEL, type OverviewLane } from './overview';
 
 export interface QueueFilters {
   sort: PrListSort;
@@ -29,6 +30,13 @@ export interface QueueFilters {
   briefingScope: 'matches' | 'all';
   /** Merge conflicts reported by GitHub. Needs status for every candidate PR, so the queue loads it only while this is on. */
   merge: 'all' | 'conflicts';
+  /**
+   * Only PRs in this Overview lane (#390): "Show all" and the lane counts open the queue this way. Absent in filters
+   * saved before the Overview existed. The lane needs PR status, so only the renderer resolves it, into `laneUrls`.
+   */
+  lane?: OverviewLane;
+  /** The lane's PRs, resolved by the window that shows the queue. Never saved; without it, `lane` matches every PR. */
+  laneUrls?: readonly string[];
 }
 export const BRIEFING_STATES = ['generating', 'queued', 'ready', 'paused', 'failed'] as const;
 export type BriefingState = (typeof BRIEFING_STATES)[number];
@@ -121,7 +129,13 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     briefing: choice('briefing', ['all', ...BRIEFING_STATES], 'all'),
     briefingScope: choice('briefingScope', ['matches', 'all'], 'matches'),
     merge: choice('merge', ['all', 'conflicts'], 'all'),
+    ...(isOverviewLane(raw.lane) ? { lane: raw.lane } : {}),
   };
+}
+/** The filters with their Overview lane resolved to its PRs, for matching in the window. */
+export function withLaneUrls(filters: QueueFilters, urls: Readonly<Partial<Record<OverviewLane, readonly string[]>>> | undefined): QueueFilters {
+  if (!filters.lane) return filters.laneUrls ? { ...filters, laneUrls: undefined } : filters;
+  return { ...filters, laneUrls: urls?.[filters.lane] ?? [] };
 }
 /** Case-sensitive, whole-branch glob. * includes slashes; ? matches one character.
  * No regular expressions: branch punctuation stays literal and patterns cannot cause regex backtracking.
@@ -204,6 +218,7 @@ export function matchesQueueFilters(
       (filters.involvement !== 'response' || (m.state === 'open' && !m.merged && needsResponse(item.responses?.[m.url]))) &&
       matchesRepositories(m.repo, filters) &&
       (!filters.urls?.length || filters.urls.includes(m.url)) &&
+      (!filters.lane || !filters.laneUrls || filters.laneUrls.includes(m.url)) &&
       (filters.author === 'all' || m.author.toLowerCase() === filters.author.toLowerCase()) &&
       matchesTargetBranch(m.baseBranch, filters.targetBranch) &&
       (filters.status === 'all' ||
@@ -220,7 +235,7 @@ export function matchesQueueFilters(
 export function activeQueueFilterCount(filters: QueueFilters) {
   return (Object.keys(DEFAULT_QUEUE_FILTERS) as (keyof QueueFilters)[]).filter(
     (key) => key === 'labels' ? labelFilterActive(filters.labels) : key !== 'briefingScope' && key !== 'sort' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
-  ).length + (filters.repos?.length ? 1 : 0) + (filters.urls?.length ? 1 : 0);
+  ).length + (filters.repos?.length ? 1 : 0) + (filters.urls?.length ? 1 : 0) + (filters.lane ? 1 : 0);
 }
 /** Stable partition preserves the queue's review priority within each group. */
 export function prioritizeBriefings(
@@ -247,6 +262,7 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
     involvement: { all: 'All PRs', mine: 'Involving me', review: 'Needs my review', authored: 'Authored by me', response: 'Needs my response' }[filters.involvement],
     ...(filters.repos?.length ? { repos: `Repositories: ${filters.repos.join(', ')}` } : {}),
     ...(filters.urls?.length ? { urls: `From a notification: ${filters.urls.length} ${filters.urls.length === 1 ? 'PR' : 'PRs'}` } : {}),
+    ...(filters.lane ? { lane: `Overview: ${OVERVIEW_LANE_LABEL[filters.lane]}` } : {}),
     query: `Search: ${filters.query}`,
     repo: filters.repo,
     author: `Author: ${filters.author}`,

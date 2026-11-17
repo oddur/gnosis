@@ -83,8 +83,13 @@ import {
   countBriefings,
   tallyBriefings,
   mergeFilterCandidates,
+  withLaneUrls,
   type QueueFilters,
 } from '../../lib/queue-filters';
+import { OverviewPage } from '../../components/OverviewPage';
+import type { OverviewLane, OverviewModel } from '../../lib/overview';
+import { homeTabPreference, rememberHomeTab, restoredTool } from '../../lib/home-tab';
+import { notificationSettings } from '../../lib/notification-settings';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
 import { Activity, Suspense, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
@@ -218,6 +223,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const initialized = useRef(false);
   const [error, setError] = useState('');
   const [filters, setFilters] = useState<QueueFilters>(DEFAULT_QUEUE_FILTERS);
+  // The Overview lane filter (#390) needs PR status, so the Overview resolves each lane's PRs for matching here.
+  const [laneUrls, setLaneUrls] = useState<Readonly<Record<OverviewLane, string[]>>>();
+  const matchFilters = useMemo(() => withLaneUrls(filters, laneUrls), [filters, laneUrls]);
+  const onOverviewModel = useCallback((model: OverviewModel) => {
+    setLaneUrls(previous => previous && JSON.stringify(previous) === JSON.stringify(model.urls) ? previous : model.urls);
+  }, []);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [savedSortOverride, setSavedSortOverride] = useState<PrListSort>();
   const [savedQuery, setSavedQuery] = useSessionDraft('queue-saved-query', '');
@@ -242,9 +253,35 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setFilters(normalizeQueueFilters(storeQueue.filters));
     filtersLoaded.current = true;
   }, [storeStatus.loaded, storeQueue.filters]);
-  // Tools › Snoozed and Tools › Muted PRs replace the list. `setMutedOpen(false)` closes either.
-  const [tool, setTool] = useState<'muted' | 'snoozed' | null>(null);
-  const mutedOpen = tool === 'muted', snoozedOpen = tool === 'snoozed';
+  // Tools › Snoozed and Tools › Muted PRs replace the list, and so does the Overview (#390), the default home tab.
+  // `setMutedOpen(false)` closes any of them. A link, saved view or restored list opens that list instead.
+  const [tool, setTool] = useState<'muted' | 'snoozed' | 'overview' | null>(() => {
+    if (navigationRestoration) return restoredTool(navigationRestoration.location);
+    const destination = commandDestination?.destination;
+    if (destination?.section === 'overview') return 'overview';
+    if (destination && (destination.section || destination.viewId || destination.repo || destination.filters || destination.settings)) return null;
+    return homeTabPreference() === 'overview' ? 'overview' : null;
+  });
+  const mutedOpen = tool === 'muted', snoozedOpen = tool === 'snoozed', overviewOpen = tool === 'overview';
+  // Mounted once shown, then kept behind the queue, so switching home tabs is instant. A lane filter needs its lanes.
+  const overviewMounted = useRef(false);
+  if (overviewOpen || filters.lane) overviewMounted.current = true;
+  // "Show all" and a lane's count open the queue filtered to that lane, with no other filters.
+  const showLane = (lane: OverviewLane) => {
+    setTool(null);
+    setSavedView(false);
+    setSelected(null);
+    const patch = { ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope, lane };
+    if (activeQueueView) void viewAction({ type: 'activate', id: null, filters: patch }).catch(() => {});
+    else updateFilters(patch);
+  };
+  const openOverview = () => {
+    rememberHomeTab('overview');
+    setTool('overview');
+    setSelected(null);
+    setOpenedItem(null);
+    setError('');
+  };
   const setMutedOpen = (open: boolean) => setTool(open ? 'muted' : null);
   const [snoozeBusy, setSnoozeBusy] = useState(false);
   const [muteBusy, setMuteBusy] = useState(false);
@@ -504,8 +541,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const selectedItem = useMemo(() => {
     const item = selected ? itemsById.get(selected) : undefined;
     // A briefing that finishes or pauses, or a conflict that is resolved, moves its row out of the filter; its open panel stays.
-    return item && matchesQueueFilters(item, { ...filters, briefing: 'all', merge: 'all' }, clock, login) ? item : undefined;
-  }, [itemsById, selected, filters, login, clock]);
+    return item && matchesQueueFilters(item, { ...matchFilters, briefing: 'all', merge: 'all' }, clock, login) ? item : undefined;
+  }, [itemsById, selected, matchFilters, login, clock]);
   const workspaceItems = useMemo(() => {
     const result = [...allItems];
     const ids = new Set(result.map(item => item.subject.id));
@@ -1012,24 +1049,24 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   };
   const queueItems = useMemo(() => filters.starredOnly ? (queue.starredItems ?? []) : queue.items, [filters.starredOnly, queue.items, queue.starredItems]);
   // The merge filter needs status for every candidate PR. Off, candidates are empty and nothing loads or subscribes.
-  const mergeCandidates = useMemo(() => mergeFilterCandidates(queueItems, filters, clock, login), [queueItems, filters, clock, login]);
+  const mergeCandidates = useMemo(() => mergeFilterCandidates(queueItems, matchFilters, clock, login), [queueItems, matchFilters, clock, login]);
   const { states: mergeStates, phase: mergePhase } = useMergeFilter(auth?.login ?? null, mergeCandidates, filters.merge === 'conflicts');
   const mergeUnsettled = useMemo(() => countUnsettled(mergeCandidates, mergeStates), [mergeCandidates, mergeStates]);
   const { responseMembers, responseIncomplete } = useMemo(() => {
     const candidates = filters.involvement === 'response' ? queueItems.flatMap(item => item.subject.members
-      .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, clock, login, mergeStates))
+      .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...matchFilters, involvement: 'authored' }, clock, login, mergeStates))
       .map(member => ({ member, response: item.responses?.[member.url] }))) : [];
     return { responseMembers: candidates.map(candidate => candidate.member), responseIncomplete: candidates.filter(candidate => !candidate.response?.complete).length };
-  }, [queueItems, filters, clock, login, mergeStates]);
+  }, [queueItems, filters.involvement, matchFilters, clock, login, mergeStates]);
   const refreshResponseQueue = useCallback(() => { void refresh(false, true); }, [refresh]);
   const openedId = openedItem?.subject.id;
   const items = useMemo(() => queueItems.filter((item) => matchesQueueFilters(item,
-    filters.readStatus !== 'all' && openedId === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
-    clock, login, mergeStates)), [queueItems, filters, openedId, login, clock, mergeStates]);
+    matchFilters.readStatus !== 'all' && openedId === item.subject.id ? { ...matchFilters, readStatus: 'all' } : matchFilters,
+    clock, login, mergeStates)), [queueItems, matchFilters, openedId, login, clock, mergeStates]);
   const itemIds = useMemo(() => new Set(items.map(item => item.subject.id)), [items]);
   // Counts use the loaded snapshot only. Without a briefing filter, the visible entries are the scope.
-  const briefingCounts = useMemo(() => filters.briefing === 'all' ? tallyBriefings(items) : countBriefings(queueItems, filters, clock, login, mergeStates),
-    [items, queueItems, filters, clock, login, mergeStates]);
+  const briefingCounts = useMemo(() => matchFilters.briefing === 'all' ? tallyBriefings(items) : countBriefings(queueItems, matchFilters, clock, login, mergeStates),
+    [items, queueItems, matchFilters, clock, login, mergeStates]);
   const latestFilterUpdate = useRef(updateFilters);
   latestFilterUpdate.current = updateFilters;
   const chooseBriefing = useCallback((briefing: QueueFilters['briefing']) => latestFilterUpdate.current({ briefing }), []);
@@ -1143,7 +1180,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     return () => document.removeEventListener('visibilitychange', preload);
   }, [auth?.authenticated, auth?.login, inspectionKey, prepareQueue]);
 
-  const originName = savedView ? 'Saved reviews' : activeQueueView?.name ??
+  const originName = overviewOpen ? 'Overview' : savedView ? 'Saved reviews' : activeQueueView?.name ??
     ({ saved: 'Saved reviews', all: 'Review queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes', response: 'Needs my response' }[section]);
   const originSignature = useMemo(() => JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] }), [originName, savedView, saved]);
   useEffect(() => { onReviewOriginChange?.(JSON.parse(originSignature) as { name: string; reviews: { id: string; title: string }[] }); }, [originSignature, onReviewOriginChange]);
@@ -1179,7 +1216,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       const version = filterVersion.current;
       setSavedView(next.savedView);
       setSavedQuery(next.savedQuery);
-      setTool(next.muted ? 'muted' : next.snoozed ? 'snoozed' : null);
+      setTool(restoredTool(next));
       setOpenedItem(next.item);
       setSelected(next.selected);
       setOverviewTab(next.tab);
@@ -1194,7 +1231,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     }
     const location: HomeLocation = {
       account: auth?.login ?? 'local', filters, savedView, savedQuery,
-      viewId: queue.savedViews?.activeId ?? null, viewName: originName, muted: mutedOpen, snoozed: snoozedOpen, item: openedItem,
+      viewId: queue.savedViews?.activeId ?? null, viewName: originName, muted: mutedOpen, snoozed: snoozedOpen, overview: overviewOpen, item: openedItem,
       tab: overviewTab, selected, scroll: queueScrollOffset.current,
     };
     historyLocation.current = location;
@@ -1271,7 +1308,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setError(''); setFeedbackRequest({ id: crypto.randomUUID(), subjectId: item.subject.id, intent });
     setOverviewTab('feedback'); setOpenedItem(item);
   };
-  const activate = (item: QueueItem) => { if (filters.involvement === 'response') { const member = item.subject.members.find(member => matchingStackMembers(item, filters, auth?.login).includes(member.url) && needsResponse(item.responses?.[member.url])); openResponse(member ? focusStackPr(item, member) : item); } else { setError(''); setFeedbackRequest(undefined); setOpenedItem(item); } };
+  const activate = (item: QueueItem) => { if (filters.involvement === 'response') { const member = item.subject.members.find(member => matchingStackMembers(item, matchFilters, auth?.login).includes(member.url) && needsResponse(item.responses?.[member.url])); openResponse(member ? focusStackPr(item, member) : item); } else { setError(''); setFeedbackRequest(undefined); setOpenedItem(item); } };
   const openPrUrl = async () => {
     setError('');
     setOpeningPr(true);
@@ -1323,7 +1360,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     if (commandDestination.destination.onboarding === 'setup' && !onboarding.ready) return;
     handledCommand.current = commandDestination.nonce;
     const target = commandDestination.destination;
-    setTool(target.section === 'muted' || target.section === 'snoozed' ? target.section : null);
+    // A PR opens over the Overview when it is showing; a list, view or tool replaces it.
+    const opensPr = !!(target.subject || target.url);
+    setTool(current => opensPr ? (current === 'overview' ? current : null)
+      : target.section === 'muted' || target.section === 'snoozed' || target.section === 'overview' ? target.section : null);
     setError('');
     if (target.subject) {
       setOpenedItem(target.subject);
@@ -1363,9 +1403,9 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       return;
     }
     if (target.section) {
-      setTool(target.section === 'muted' || target.section === 'snoozed' ? target.section : null);
+      setTool(target.section === 'muted' || target.section === 'snoozed' || target.section === 'overview' ? target.section : null);
       setSavedView(target.section === 'saved');
-      if (target.section !== 'saved' && target.section !== 'muted' && target.section !== 'snoozed')
+      if (target.section !== 'saved' && target.section !== 'muted' && target.section !== 'snoozed' && target.section !== 'overview')
         updateFilters({
           involvement: target.section === 'response' ? 'response' : filters.involvement === 'response' ? 'all' : filters.involvement,
           starredOnly: target.section === 'starred',
@@ -1375,6 +1415,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           ...(target.filters?.read ? { readStatus: target.filters.read } : {}),
           // A notification digest opens the queue filtered to its PRs.
           urls: target.filters?.prs,
+          // An Overview lane link (#390) opens the queue filtered to that lane.
+          lane: target.filters?.lane,
         });
     }
   }, [commandDestination, prefs, loading, onboarding.ready]);
@@ -1658,7 +1700,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     const bulk = multiple && active;
     return <QueueRow key={id} item={item} focused={focused} active={active} multiple={multiple} bulk={bulk}
       tabStop={focused || fallbackTabStop === id} expanded={expanded.has(id)} selectedCount={selectedItems.length}
-      account={statusAccount} filters={filters} starredUrls={starredUrls} readStates={readStates}
+      account={statusAccount} filters={matchFilters} starredUrls={starredUrls} readStates={readStates}
       menuKey={menuKey} bulkMenu={bulk ? bulkMenu : undefined} actions={rowActions} />;
   // Selection keys are compared by content.
   }, [selected, selectionSignature, multiple, fallbackTabStop, expanded, selectedItems.length, statusAccount, filters, starredUrls, readStates, menuKey, bulkMenu, rowActions]);
@@ -1757,7 +1799,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         item={summaryItem}
         feedbackRequest={feedbackRequest?.subjectId === summaryItem.subject.id ? feedbackRequest : undefined}
         landing={landing?.subjectId === summaryItem.subject.id ? landing : undefined}
-        matchingUrls={matchingStackMembers(summaryItem, filters, auth?.login, undefined, mergeStates)}
+        matchingUrls={matchingStackMembers(summaryItem, matchFilters, auth?.login, undefined, mergeStates)}
         onScopeChange={selectScope}
         onRenameStack={async name => {
           const next = await enqueueWrite(() => window.electronAPI.workbenchRenameStack(summaryItem.subject.id, name, auth?.login ?? undefined));
@@ -1833,7 +1875,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         <div className="workbench-body">
         <QueueSidebar
           currentReview={
-            !tool && (savedView || !activeQueueView)
+            overviewOpen ? 'Overview' : !tool && (savedView || !activeQueueView)
               ? section === 'saved'
                 ? 'Saved reviews'
                 : section === 'all'
@@ -1849,6 +1891,20 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           currentTool={mutedOpen ? 'Muted PRs' : snoozedOpen ? 'Snoozed' : undefined}
           reviews={
             <>
+              <SidebarDestination destination={{ kind: 'home', section: 'overview' }}>
+                <button
+                  data-sidebar-destination
+                  aria-label="Overview"
+                  title="Overview: what you can act on now"
+                  aria-current={overviewOpen ? 'page' : undefined}
+                  className={overviewOpen ? 'active' : ''}
+                  disabled={viewBusy}
+                  onClick={openOverview}
+                >
+                  <WorkbenchIcon name="overview" size={16} />
+                  <span className="sidebar-label">Overview</span>
+                </button>
+              </SidebarDestination>
               {[
                 ['all', 'Review queue', Inbox],
                 ['starred', 'Starred', Star],
@@ -1881,10 +1937,13 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                       onPointerEnter={id === 'saved' ? undefined : () => onViewIntent(`section:${id as string}`)}
                       onPointerLeave={id === 'saved' ? undefined : () => onViewIntent(null)}
                       onClick={() => {
+                        // Choosing a list makes the queue the home tab that opens next time (#390).
+                        rememberHomeTab('queue');
                         setMutedOpen(false);
                         setSavedView(id === 'saved');
                         if (id !== 'saved') {
-                          const patch = sectionPatch(id as SidebarSection, filters);
+                          // A list leaves the Overview lane the queue was showing.
+                          const patch = { ...sectionPatch(id as SidebarSection, filters), lane: undefined };
                           if (activeQueueView) void viewAction({ type: 'activate', id: null, filters: patch }).catch(() => {});
                           else updateFilters(patch);
                         }
@@ -2002,7 +2061,36 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         />
         <main className="workbench-main">
           {mutedOpen ? <MutedPrs entries={queue.mutedPrs ?? []} busy={muteBusy} error={muteError} onUnmute={members => void changeMutes({ muted: false, urls: members.map(member => member.url) })} />
-            : snoozedOpen ? <SnoozedPrs entries={queue.snoozedPrs ?? []} busy={snoozeBusy} onUnsnooze={urls => void changeSnoozes(urls)} onMute={urls => void changeSnoozes(urls, true)} /> : <>
+            : snoozedOpen ? <SnoozedPrs entries={queue.snoozedPrs ?? []} busy={snoozeBusy} onUnsnooze={urls => void changeSnoozes(urls)} onMute={urls => void changeSnoozes(urls, true)} /> : null}
+          {overviewMounted.current && (
+            <Activity mode={overviewOpen ? 'visible' : 'hidden'}>
+              <OverviewPage
+                queue={queue}
+                login={auth?.login ?? null}
+                scope={statusAccount}
+                authenticated={!!auth?.authenticated}
+                hasRepositories={!!prefs?.watchedRepos.length}
+                loading={loading || initializing}
+                refreshing={!!storeStatus.saved}
+                visible={overviewOpen && !summaryItem}
+                live={!summaryItem && (overviewOpen || !!filters.lane)}
+                keyboard={!onboarding.open && !onboarding.tourOpen && !settings && !localOpen && !openedItem && !authOpen && !connectionRequired}
+                teamRequests={!!prefs && notificationSettings(prefs).events['team-review-requested']}
+                excluded={mutedUrls}
+                error={error}
+                onDismissError={() => setError('')}
+                setup={gettingStartedVisible ? () => setTool(null) : undefined}
+                onRefresh={() => void refresh(true)}
+                onShowLane={showLane}
+                onMarkRead={urls => void changeRead(urls, true)}
+                onOpenItem={item => { setSelected(item.subject.id); setOpenedItem(item); }}
+                onRepositories={() => openSettings('repositories')}
+                onConnect={() => setAuthOpen(true)}
+                onModel={onOverviewModel}
+              />
+            </Activity>
+          )}
+          {!mutedOpen && !snoozedOpen && <Activity mode={overviewOpen ? 'hidden' : 'visible'}><>
           <div className="queue-toolbar">
             <div>
               <h1>
@@ -2169,7 +2257,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 label: 'Mark visible PRs as read',
                 disabled: readBusy || !items.some(item => item.unreadUrls?.length),
                 run: () => changeRead([...new Set(items.flatMap(item => item.subject.members
-                  .filter(member => matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, filters, Date.now(), auth.login, mergeStates))
+                  .filter(member => matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, matchFilters, Date.now(), auth.login, mergeStates))
                   .map(member => member.url)))], true),
               }]]} />
             )}
@@ -2594,7 +2682,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               </aside>
             )}
           </div>
-          </>}
+          </></Activity>}
         </main>
         </div>
       </Activity>

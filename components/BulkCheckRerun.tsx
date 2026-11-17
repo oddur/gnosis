@@ -1,5 +1,5 @@
 import { LoadingIndicator } from './LoadingState';
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrChecks } from '../lib/pr-checks';
 import { checkRerunPlan, type WorkflowRerun } from '../lib/check-rerun-plan';
@@ -8,13 +8,23 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 
 export function BulkCheckRerun({
   members,
-  values,
+  values: shown,
   onChanged,
+  load,
+  trigger,
 }: {
   members: ReviewMember[];
   values: Partial<Record<string, PrChecks>>;
   onChanged: () => void;
+  /** Reads the checks when the action is chosen, for a surface that shows none (the Overview's Rerun failed). */
+  load?: () => Promise<Partial<Record<string, PrChecks>>>;
+  /** Replaces the button. `open` reads the checks first when `load` is given. */
+  trigger?: (open: () => void, busy: boolean) => ReactNode;
 }) {
+  const [loaded, setLoaded] = useState<Partial<Record<string, PrChecks>>>();
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const values = loaded ?? shown;
   const [plan, setPlan] = useState<WorkflowRerun[]>();
   const [accepted, setAccepted] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -47,23 +57,38 @@ export function BulkCheckRerun({
       if (changed && window.electronAPI.githubSyncVersion !== 1) onChanged();
     }
   }
-  if (!eligible.length && !plan) return null;
+  const openPlan = async () => {
+    setErrors({});
+    setLoadError('');
+    if (!load) {
+      setPlan(eligible);
+      return;
+    }
+    setLoading(true);
+    try {
+      const next = await load();
+      setLoaded(next);
+      setPlan(checkRerunPlan(members, next).filter((run) => accepted[run.key] !== run.revision));
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+      setPlan([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+  if (!eligible.length && !plan && !trigger) return null;
   const missing = members.some(
     (member) => values[member.url]?.headSha !== member.headSha || values[member.url]?.warning
   );
   return (
     <>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={!eligible.length}
-        onClick={() => {
-          setPlan(eligible);
-          setErrors({});
-        }}
-      >
-        Re-run failed &amp; cancelled…
-      </Button>
+      {trigger ? (
+        trigger(() => void openPlan(), busy || loading)
+      ) : (
+        <Button size="sm" variant="outline" disabled={!eligible.length} onClick={() => void openPlan()}>
+          Re-run failed &amp; cancelled…
+        </Button>
+      )}
       <Dialog
         open={!!plan}
         onOpenChange={(open) => {
@@ -80,6 +105,13 @@ export function BulkCheckRerun({
             </DialogDescription>
           </DialogHeader>
           {missing && <p>Some check results are missing or incomplete. Only loaded results are included.</p>}
+          {plan && !plan.length && (
+            <p role={loadError ? 'alert' : 'status'}>
+              {loadError
+                ? `Could not read the checks: ${loadError}`
+                : 'No failed GitHub Actions workflows can be rerun from Gnosis. Open Checks for other providers and running workflows.'}
+            </p>
+          )}
           <ul className="bulk-check-rerun-list">
             {plan?.map((run) => (
               <li key={run.key}>
