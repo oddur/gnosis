@@ -43,6 +43,7 @@ import type { DeepLinkDelivery } from './deep-link-service';
 import type { QueueItem } from '../lib/workbench';
 import { startInteractionMonitor } from '../lib/interaction-latency';
 import { useNotificationToasts } from '../lib/use-notification-toasts';
+import { retainTabPrs } from '../lib/inspection-retention';
 
 // Record slow clicks and key presses for the diagnostics export (#345). It only observes; it adds no work to input.
 startInteractionMonitor();
@@ -218,6 +219,13 @@ export function App() {
   useEffect(() => {
     if (account) retainWorkspaceDrafts(account, retainedIds.split(','));
   }, [account, retainedIds]);
+  // A closed tab's PRs leave the renderer's inspection caches unless another open tab has shown them (#355).
+  const tabPrs = useRef<ReadonlyMap<string, ReadonlySet<string>>>(new Map());
+  useEffect(() => {
+    const { next, forget } = retainTabPrs(tabPrs.current, state.tabs);
+    tabPrs.current = next;
+    if (forget.length) void import('../lib/inspection-cache').then((module) => module.forgetInspection(forget)).catch(() => {});
+  }, [state.tabs]);
   useLayoutEffect(() => {
     setVisited((old) => new Set([...old].filter((id) => state.tabs.some((tab) => tab.id === id)).concat(state.active)));
     if (focusTab.current) {

@@ -1,3 +1,4 @@
+import { approximateBytes } from './byte-cache';
 import { slowestInteractions, type InteractionScript, type LongFrame, type SlowInteraction } from './interaction-latency';
 
 /** What the renderer adds to a diagnostics export. */
@@ -141,16 +142,46 @@ export async function collectRendererDiagnostics(): Promise<RendererDiagnostics>
 async function rendererCaches(): Promise<Record<string, unknown>> {
   const caches: Record<string, unknown> = {
     domNodes: document.getElementsByTagName('*').length,
+    // Diffs render in shadow roots, which domNodes does not count (#355).
+    shadowDomNodes: shadowDomNodes(),
     workspaceTabs: document.querySelectorAll('.workspace-tab').length,
+    // Visited tabs stay mounted while hidden; the rest mount when first shown.
+    mountedTabs: [...document.querySelectorAll('.workspace-panel')].filter((panel) => panel.childElementCount > 0).length,
   };
-  try {
-    caches.inspection = (await import('./inspection-cache')).inspectionCacheStats();
-    caches.stacks = (await import('./stack-inspection-cache')).stackCacheStats();
-    caches.discussions = (await import('./review-discussion-cache')).discussionCacheStats();
-  } catch {
-    /* A cache that cannot load reports nothing. */
+  const parts: [string, () => Promise<unknown>][] = [
+    ['inspection', async () => (await import('./inspection-cache')).inspectionCacheStats()],
+    ['stacks', async () => (await import('./stack-inspection-cache')).stackCacheStats()],
+    ['discussions', async () => (await import('./review-discussion-cache')).discussionCacheStats()],
+    ['explanations', async () => (await import('./explanation-workspace')).explanationCacheStats()],
+    ['markdownReviews', async () => (await import('./markdown-review-cache')).markdownReviewCacheStats()],
+    ['queue', async () => {
+      const { workbenchStore } = await import('./workbench-store');
+      const queue = workbenchStore.getQueue();
+      return { items: queue.items.length, bytes: approximateBytes(queue) };
+    }],
+  ];
+  for (const [name, read] of parts) {
+    try {
+      caches[name] = await read();
+    } catch {
+      /* A cache that cannot load reports nothing. */
+    }
   }
   return caches;
+}
+
+/** Elements inside open shadow roots, at any depth. */
+function shadowDomNodes(): number {
+  let count = 0;
+  const visit = (root: Document | ShadowRoot) => {
+    for (const element of root.querySelectorAll('*'))
+      if (element.shadowRoot) {
+        count += element.shadowRoot.querySelectorAll('*').length;
+        visit(element.shadowRoot);
+      }
+  };
+  visit(document);
+  return count;
 }
 
 /** Navigation and paint timings of this window, and how long it has been open. Main's own marks need GNOSIS_PERF_TRACE;

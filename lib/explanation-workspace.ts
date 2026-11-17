@@ -1,3 +1,4 @@
+import { approximateBytes } from './byte-cache';
 import type { ReviewGuide, ReviewHistoryEntry } from './types';
 import type { QueueItem, ReviewSubject } from './workbench';
 import type { SearchDestination } from './command-search';
@@ -68,6 +69,8 @@ export function rememberExplanation(review: ReviewGuide) {
   }
 }
 export const peekExplanation = (id?: string) => (id ? loaded.get(id) : undefined);
+/** Explanations held and their estimated size, for the diagnostics export (#355). */
+export const explanationCacheStats = () => ({ entries: loaded.size, bytes: approximateBytes([...loaded.values()]) });
 export function loadExplanation(id: string): Promise<ReviewGuide> {
   const cached = loaded.get(id);
   if (cached) return Promise.resolve(cached);

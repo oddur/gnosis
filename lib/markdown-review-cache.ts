@@ -1,3 +1,4 @@
+import { approximateBytes } from './byte-cache';
 import type { MarkdownReview, MarkdownReviewRequest } from './markdown-review';
 // Immutable revision keys, bounded by entry count and document length. Full ASTs live in the backend's byte-bounded cache.
 const cached = new Map<string, MarkdownReview>();
@@ -9,6 +10,8 @@ export function clearMarkdownReviews() {
   pending.clear();
 }
 export const peekMarkdownReview = (key: string) => cached.get(key);
+/** Rendered Markdown files held and their estimated size, for the diagnostics export (#355). */
+export const markdownReviewCacheStats = () => ({ entries: cached.size, bytes: approximateBytes([...cached.values()]) });
 export function prepareMarkdownReview(key: string, request: MarkdownReviewRequest): Promise<MarkdownReview> {
   const value = cached.get(key);
   if (value) return Promise.resolve(value);

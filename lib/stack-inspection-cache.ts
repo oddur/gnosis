@@ -1,14 +1,24 @@
 import { createByteCache } from './byte-cache';
-import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
+import { RENDERER_STACK_BYTES, RENDERER_STACK_ENTRIES } from './inspection-limits';
 import { stackRevisionKey } from './stack-changes';
 import type { ReviewSubject } from './workbench';
 import type { PrChanges } from './pr-changes';
 
-const values = createByteCache<string, PrChanges>(INVENTORY_MEMORY_BYTES, 50);
+const values = createByteCache<string, PrChanges>(RENDERER_STACK_BYTES, RENDERER_STACK_ENTRIES);
 let epoch = 0;
 const key = (account: string, subject: ReviewSubject) => `${account}:${stackRevisionKey(subject)}`;
 export const peekStackChanges = (account: string, subject: ReviewSubject) => values.get(key(account, subject));
 export const stackCacheStats = () => ({ entries: values.size, bytes: values.bytes });
+/** Drops stack comparisons that include any of these PRs. */
+export function forgetStackChanges(urls: ReadonlySet<string>) {
+  values.prune((snapshot) => !!snapshot.stackComparison?.members.some((member) => urls.has(member.metadata.url)));
+}
+/** The last use of each PR in a stack comparison, merged into `into` (the latest wins). */
+export function stackLastUses(into: Map<string, number>) {
+  for (const [snapshot, at] of values.uses())
+    for (const member of snapshot.stackComparison?.members ?? [])
+      if ((into.get(member.metadata.url) ?? -Infinity) < at) into.set(member.metadata.url, at);
+}
 export function clearStackChanges() {
   epoch++;
   values.clear();

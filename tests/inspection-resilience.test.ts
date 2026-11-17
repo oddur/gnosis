@@ -92,6 +92,33 @@ void test('byte budgets evict by recency and refuse a single oversized inventory
   assert.equal(cache.bytes, 0);
   assert.ok(approximateBytes({ description: 'x'.repeat(1000) }) >= 2000);
 });
+void test('byte caches take a known size, remember each entry’s last use and prune by it (#355)', () => {
+  let now = 1;
+  const cache = createByteCache<string, string>(100, 10, () => now);
+  cache.set('a', 'a', 40);
+  cache.set('b', 'b', 40);
+  now = 2;
+  assert.equal(cache.get('a'), 'a');
+  assert.deepEqual([...cache.uses()], [['b', 1], ['a', 2]]);
+  cache.set('c', 'c', 40);
+  assert.equal(cache.get('b'), undefined, 'The explicit sizes count against the budget');
+  cache.prune((_value, at) => at < 2);
+  assert.equal(cache.size, 2);
+  cache.prune((value) => value === 'a');
+  assert.deepEqual([...cache.keys()], ['c']);
+  assert.equal(cache.bytes, 40);
+});
+void test('byte caches make room by rank, then by recency within a rank (#355)', () => {
+  const cache = createByteCache<string, number>(100, 3);
+  cache.set('open', 0, 30);
+  cache.set('queue-old', 4, 30);
+  cache.set('queue-new', 4, 30);
+  cache.makeRoom(30, (rank) => rank);
+  cache.set('next', 1, 30);
+  assert.deepEqual([...cache.keys()], ['open', 'queue-new', 'next'], 'The older low-priority entry left');
+  cache.makeRoom(60, (rank) => rank);
+  assert.deepEqual([...cache.keys()], ['open'], 'Room for a large value takes as many as needed');
+});
 void test('large patches are deferred within a byte budget without losing paths or change identities', () => {
   const snapshot: PrChanges = {
     version: 1,

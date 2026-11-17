@@ -1,3 +1,4 @@
+import { approximateBytes } from './byte-cache';
 import type { GitHubReviewThread, GitHubReviewThreads } from './review-threads';
 const values = new Map<string, GitHubReviewThreads>();
 const pending = new Map<string, Promise<GitHubReviewThreads>>();
@@ -19,7 +20,7 @@ export const peekDiscussion = (url: string) => values.get(url);
 export function discussionCacheStats() {
   let threads = 0;
   for (const value of values.values()) threads += value.threads.length;
-  return { entries: values.size, threads, listeners: listeners.size };
+  return { entries: values.size, threads, listeners: listeners.size, bytes: approximateBytes([...values.values()]) };
 }
 let optimistic: (() => void) | undefined;
 /**

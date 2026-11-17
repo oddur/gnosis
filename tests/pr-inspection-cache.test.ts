@@ -601,3 +601,19 @@ void test('a user read during a pending prediction sends its own read for main t
   await Promise.all(reads);
   assert.deepEqual(calls, ['predicted', 'user']);
 });
+void test('the renderer keeps a few recent inventories, reports last use per PR and forgets PRs on request (#355)', async () => {
+  const { cache, advance } = fixture();
+  const urls = Array.from({ length: 14 }, (_, i) => `https://github.com/o/r/pull/${100 + i}`);
+  for (const url of urls) await cache.readChanges({ ...r, url });
+  assert.ok(cache.stats().entries <= 10, `At most ten inventories: ${JSON.stringify(cache.stats())}`);
+  assert.equal(cache.peekChanges({ ...r, url: urls[0] }), undefined, 'The oldest PR left first');
+  assert.ok(cache.peekChanges({ ...r, url: urls[13] }));
+  advance();
+  await cache.readChanges({ ...r, url: urls[12] });
+  const uses = new Map<string, number>();
+  cache.lastUses(uses);
+  assert.ok((uses.get(urls[12]) ?? 0) > (uses.get(urls[13]) ?? 0), 'A read refreshes its PR’s last use');
+  cache.forget(new Set([urls[12]]));
+  assert.equal(cache.peekChanges({ ...r, url: urls[12] }), undefined);
+  assert.ok(cache.peekChanges({ ...r, url: urls[13] }), 'Other PRs stay');
+});
