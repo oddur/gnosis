@@ -1,11 +1,27 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { StateStorage } from './app-data-store';
-import { deriveEvents, type NotificationEvent, type PrBasis, type PrObservation } from '../lib/notification-events';
+import { deriveEvents, type NotificationEvent, type PrBasis, type PrObservation, type ResolvedTypes } from '../lib/notification-events';
 import type { NotificationEventType } from '../lib/notification-settings';
 
 /** Why a derived event was not delivered. Counted locally only. */
-export type SuppressReason = 'own' | 'muted' | 'snoozed' | 'archived' | 'type-off' | 'active' | 'duplicate' | 'paused' | 'in-app-off' | 'banner';
+export type SuppressReason =
+  | 'own'
+  | 'muted'
+  | 'snoozed'
+  | 'archived'
+  | 'type-off'
+  | 'active'
+  | 'duplicate'
+  | 'paused'
+  | 'in-app-off'
+  | 'banner'
+  /** The repository's notification level (#385) leaves this event out. */
+  | 'repository'
+  /** A bot that is not on the "Also notify for these bots" list. */
+  | 'bot'
+  /** The PR was notified less than 15 minutes ago about something as urgent: it waits for the summary. */
+  | 'quiet';
 export type CounterField =
   | 'derived'
   | `suppressed:${SuppressReason}`
@@ -118,6 +134,8 @@ export function createNotificationStore(storage: StateStorage, now = Date.now) {
         suppress?: (event: NotificationEvent) => SuppressReason | undefined;
         /** Count events in the local counters (the analytics preference). */
         count?: boolean;
+        /** The PR's notifications about these types are handled: close them. Called for every observed PR. */
+        resolved?: (url: string, types: ResolvedTypes) => void;
       }
     ): NotificationEvent[] {
       const state = load(account);
@@ -129,12 +147,13 @@ export function createNotificationStore(storage: StateStorage, now = Date.now) {
         const url = observation.member.url;
         if (!validUrl(url)) continue;
         const saved = state.entries[url];
-        const { basis, events: derived } = deriveEvents(saved?.basis, observation, {
+        const { basis, events: derived, resolved } = deriveEvents(saved?.basis, observation, {
           login: options.login,
           now: at,
           initialized: state.initialized,
           own: options.own,
         });
+        if (resolved.length) options.resolved?.(url, resolved);
         const fired = { ...(saved?.fired ?? {}) };
         for (const event of derived) {
           if (options.count) { bump(state, event.type, 'derived'); headerChanged = true; }

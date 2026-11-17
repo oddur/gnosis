@@ -4,7 +4,16 @@
  * focus, an in-app toast when one does.
  */
 import { byEventRank, EVENT_RANK, subsume, type NotificationEvent } from './notification-events';
-import { isPaused, isPrEvent, type NotificationEventType, type NotificationSettings } from './notification-settings';
+import {
+  botAllowed,
+  isPaused,
+  isPrEvent,
+  levelAllows,
+  repositoryNotificationLevel,
+  type NotificationEventType,
+  type NotificationSettings,
+} from './notification-settings';
+import { isAutomationActor } from './github-actors';
 import type { DeepLinkTarget } from './deep-link';
 
 /** `failed`: the OS reported a failed delivery this session. `unsupported`: `Notification.isSupported()` is false. */
@@ -23,6 +32,23 @@ export type Route =
   | { surface: 'none'; reason: 'type-off' | 'active' | 'in-app-off' | 'banner' }
   /** Paused: hold, and summarise when the pause ends. */
   | { surface: 'hold'; reason: 'paused' };
+
+const repoOf = (url: string | undefined) => (url ? /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/\d+$/.exec(url)?.[1] : undefined);
+/**
+ * Whether an event may notify at all, before any surface is chosen. The global event switch is the ceiling, the
+ * repository's level can only narrow it, and bots never notify unless allowed by login.
+ */
+export function eventGate(
+  event: Pick<NotificationEvent, 'type' | 'url' | 'repo' | 'mine' | 'actor' | 'actorIsBot'>,
+  settings: Pick<NotificationSettings, 'events' | 'repositories' | 'watched' | 'otherRepositories' | 'allowedBots'>
+): 'type-off' | 'repository' | 'bot' | undefined {
+  if (!settings.events[event.type]) return 'type-off';
+  const repo = event.repo ?? repoOf(event.url);
+  if (repo && !levelAllows(repositoryNotificationLevel(settings, repo), event)) return 'repository';
+  const bot = event.actorIsBot ?? (!!event.actor && isAutomationActor({ login: event.actor }));
+  if (bot && event.actor && !botAllowed(settings, event.actor)) return 'bot';
+  return undefined;
+}
 
 export function routeEvent(event: Pick<NotificationEvent, 'type' | 'url'>, context: RouteContext): Route {
   const { settings } = context;
@@ -57,11 +83,15 @@ export interface NotificationDelivery {
   types: NotificationEventType[];
   /** Offer "Turn on" for desktop delivery on this toast. */
   introduce?: boolean;
+  /** The PR's title, for the summary that ends a quiet period. */
+  prTitle?: string;
 }
 
 const LABEL: Record<NotificationEventType, string> = {
   'review-requested': 'Review requested',
   'team-review-requested': 'Review requested from your team',
+  mention: 'You were mentioned',
+  reply: 'New reply',
   'changes-requested': 'Changes requested',
   approved: 'Approved',
   'checks-failed': 'Checks failed',
@@ -73,6 +103,8 @@ const LABEL: Record<NotificationEventType, string> = {
 const COUNT_LABEL: Record<NotificationEventType, [string, string]> = {
   'review-requested': ['review request', 'review requests'],
   'team-review-requested': ['team review request', 'team review requests'],
+  mention: ['mention', 'mentions'],
+  reply: ['new comment', 'new comments'],
   'changes-requested': ['change request', 'change requests'],
   approved: ['approval', 'approvals'],
   'checks-failed': ['failing check', 'failing checks'],
@@ -89,10 +121,20 @@ export const plainText = (text: string) => text.replace(/[<>&]/g, '');
 
 /** The line for one event, used as the body of a single notification and as a line of a coalesced one. */
 export function eventLine(event: NotificationEvent): string {
+  if (event.type === 'checks-failed' && event.checks) return checksLine(event.checks);
   if (event.type === 'changes-requested' && event.actor) return `${event.actor} requested changes`;
   if (event.type === 'approved' && event.actor) return `${event.actor} approved`;
   if (event.type === 'snooze-ended' && event.detail) return `Back: ${event.detail}`;
   return LABEL[event.type];
+}
+/** "2 of 14 checks failed: test-windows, lint". Names are left out when the check list could not be read. */
+export function checksLine(checks: NonNullable<NotificationEvent['checks']>): string {
+  const failed = Math.max(1, checks.failed);
+  const counts = checks.total > failed ? `${failed} of ${checks.total} checks failed` : failed === 1 ? '1 check failed' : `${failed} checks failed`;
+  const names = [...new Set(checks.names ?? [])];
+  if (!names.length) return counts;
+  const shown = names.slice(0, 3).join(', ');
+  return `${counts}: ${shown}${names.length > 3 ? ` +${names.length - 3}` : ''}`;
 }
 const subtitleOf = (event: NotificationEvent) => (event.repo && event.number ? `${event.repo} #${event.number}` : undefined);
 
@@ -109,6 +151,7 @@ export function coalesce(events: readonly NotificationEvent[], id: string): Noti
     target: head.target,
     keys: ranked.map((event) => event.key),
     types: ranked.map((event) => event.type),
+    prTitle: head.title,
   };
   if (ranked.length === 1) {
     if (head.type === 'update-ready') return { ...common, title: LABEL[head.type], body: truncate(head.title, BODY_LIMIT) };
@@ -162,6 +205,50 @@ export function batch(events: readonly NotificationEvent[], nextId: () => string
   const byPr = new Map<string, NotificationEvent[]>();
   for (const event of kept) byPr.set(event.url ?? event.key, [...(byPr.get(event.url ?? event.key) ?? []), event]);
   return [...byPr.values()].flatMap((group) => coalesce(group, nextId()) ?? []);
+}
+
+/**
+ * One notification per PR (#385). A newer one replaces the PR's notification. A more urgent event banners again;
+ * an equal or less urgent one waits out the quiet period, then one summary replaces the notification.
+ * 1 is the most urgent.
+ */
+export const URGENCY: Readonly<Record<NotificationKind, number>> = {
+  'review-requested': 1,
+  'changes-requested': 1,
+  mention: 1,
+  'checks-failed': 2,
+  reply: 2,
+  'ready-to-merge': 3,
+  'team-review-requested': 3,
+  'snooze-ended': 3,
+  approved: 4,
+  'explanation-ready': 4,
+  'update-ready': 4,
+  summary: 4,
+  test: 4,
+};
+export const urgencyOf = (delivery: Pick<NotificationDelivery, 'kind' | 'types'>) =>
+  Math.min(URGENCY[delivery.kind], ...delivery.types.map((type) => URGENCY[type]));
+export const QUIET_MS = 15 * 60_000;
+/**
+ * What waited out a PR's quiet period, as one replacement: "3 new comments · 1 approval since 10:42".
+ * One waiting notification is shown as it is.
+ */
+export function quietSummary(waiting: readonly NotificationDelivery[], id: string, since: string): NotificationDelivery {
+  if (waiting.length === 1) return { ...waiting[0], id };
+  const types = waiting.flatMap((delivery) => delivery.types);
+  const head = [...waiting].sort((a, b) => urgencyOf(a) - urgencyOf(b))[0];
+  const title = waiting.find((delivery) => delivery.prTitle)?.prTitle;
+  return {
+    ...head,
+    id,
+    kind: head.kind,
+    title: truncate(`${countLine(types)} since ${since}`, TITLE_LIMIT),
+    body: truncate(title ?? head.body, BODY_LIMIT),
+    keys: waiting.flatMap((delivery) => delivery.keys),
+    types: [...new Set(types)].sort((a, b) => EVENT_RANK.indexOf(a) - EVENT_RANK.indexOf(b)),
+    introduce: undefined,
+  };
 }
 
 /** At most three desktop notifications in any five minutes. */

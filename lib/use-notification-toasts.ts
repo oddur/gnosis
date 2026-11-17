@@ -17,7 +17,8 @@ const VISIBLE_LIMIT = 3;
 
 /**
  * Shows the notifications main routes to this window as toasts. A toast raised while the window is unfocused
- * waits (no timeout) and gets the normal 10 seconds once the user returns. Marking a PR read closes its toasts.
+ * waits (no timeout) and gets the normal 10 seconds once the user returns. Marking a PR read closes its toasts,
+ * and a newer notification for a PR replaces its toast.
  */
 export function useNotificationToasts(open: (target: DeepLinkTarget) => Promise<void>) {
   useEffect(() => {
@@ -36,6 +37,13 @@ export function useNotificationToasts(open: (target: DeepLinkTarget) => Promise<
     };
     function show(delivery: NotificationDelivery) {
       const focused = document.hasFocus();
+      // One notification per PR: main sends a newer one only when it should replace the PR's toast.
+      if (delivery.url)
+        for (const previous of byUrl.get(delivery.url) ?? []) {
+          visible.delete(previous);
+          waiting.delete(previous);
+          toast.close(previous);
+        }
       if (visible.size >= VISIBLE_LIMIT && delivery.kind !== 'test') {
         // The same digest rule as desktop: one toast for the rest.
         if (overflow && visible.has(overflow.id)) {
