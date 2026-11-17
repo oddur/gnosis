@@ -2,7 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { nextOverviewVisit, overviewModel, overviewStatusRequests, overviewVisitKey, parseOverviewVisit, type OverviewModel, type OverviewVisit } from './overview';
 import { useOverviewStatus } from './use-queue-signals';
 import { useStatusNow } from './status-clock';
-import type { QueueItem } from './workbench';
+import type { QueueItem, ReviewMember } from './workbench';
+import type { QueueSignals } from './queue-signals';
+
+/** The lanes, plus what the page reads beside them. */
+export interface OverviewView extends OverviewModel {
+  /** Status reads in flight. */
+  checking: number;
+  /** When the last visit started: "Since yesterday" counts from here. Undefined on a first visit. */
+  visitAt?: number;
+  /** The status the lanes were built from, by PR. */
+  statusOf: (member: Pick<ReviewMember, 'url'>) => QueueSignals | undefined;
+}
 
 /** At most this many PRs are read for status: twelve 25-PR batches. Your own PRs come first. */
 const SIGNAL_LIMIT = 300;
@@ -43,7 +54,7 @@ export function useOverview(input: {
   ready: boolean;
   teamRequests?: boolean;
   excluded?: ReadonlySet<string>;
-}): OverviewModel & { checking: number } {
+}): OverviewView {
   const { items, login, scope, live, visible, ready, teamRequests, excluded } = input;
   const requests = useMemo(
     () => (login ? overviewStatusRequests(items, login, { teamRequests, excluded }).slice(0, SIGNAL_LIMIT) : []),
@@ -53,8 +64,8 @@ export function useOverview(input: {
   const now = useStatusNow() || Date.now();
   const visitKey = login ? overviewVisitKey(login) : null;
   const [previous, setPrevious] = useState<{ key: string | null; visit?: OverviewVisit }>(() => ({ key: visitKey, visit: readVisit(visitKey) }));
+  const byUrl = useMemo(() => new Map(values.map((value) => [value.url, value])), [values]);
   const model = useMemo(() => {
-    const byUrl = new Map(values.map((value) => [value.url, value]));
     return overviewModel({
       items,
       signals: (member) => byUrl.get(member.url),
@@ -64,7 +75,7 @@ export function useOverview(input: {
       previous: previous.key === visitKey ? previous.visit : undefined,
       excluded,
     });
-  }, [items, values, login, now, teamRequests, previous, visitKey, excluded]);
+  }, [items, byUrl, login, now, teamRequests, previous, visitKey, excluded]);
   const latest = useRef({ model, ready });
   latest.current = { model, ready };
   useEffect(() => {
@@ -85,5 +96,9 @@ export function useOverview(input: {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [visible, visitKey]);
-  return useMemo(() => ({ ...model, checking }), [model, checking]);
+  const visitAt = previous.key === visitKey ? previous.visit?.at : undefined;
+  return useMemo(
+    () => ({ ...model, checking, visitAt, statusOf: (member: Pick<ReviewMember, 'url'>) => byUrl.get(member.url) }),
+    [model, checking, visitAt, byUrl]
+  );
 }

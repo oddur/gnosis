@@ -58,7 +58,9 @@ export interface PrFeedback {
 }
 export type FeedbackAction =
   | { prUrl: string; action: 'reply'; sourceId: string; body: string }
-  | { prUrl: string; action: 'request-review'; reviewer: string };
+  | { prUrl: string; action: 'request-review'; reviewer: string }
+  /** The Overview's Nudge (#390): request a requested or past reviewer's review again on your PR. */
+  | { prUrl: string; action: 'nudge'; reviewer: string };
 export interface GitHubReviewThreads {
   feedback?: PrFeedback;
   checkedAt?: number;

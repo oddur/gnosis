@@ -6,7 +6,9 @@ export type PrActionKind =
   | 'update-merge'
   | 'update-rebase'
   | 'mark-ready'
-  | 'convert-draft';
+  | 'convert-draft'
+  /** Close without merging (#390, Needs a decision). It can be reopened on GitHub. */
+  | 'close';
 export interface PrActionRevision {
   url: string;
   headSha: string;
@@ -65,6 +67,8 @@ export interface PrActionRequest {
   commitTitle?: string;
   commitBody?: string;
   createStack?: boolean;
+  /** Close only: a comment posted first, such as why. */
+  comment?: string;
 }
 export interface PrActionResult {
   status: 'completed' | 'pending' | 'merged' | 'enqueued';
@@ -128,4 +132,11 @@ export function branchUpdateBlockedReason(state: PrActionState): string | undefi
     return 'Resolve merge conflicts locally or on GitHub before updating this branch.';
   if (!state.canUpdateBranch)
     return 'This branch is up to date, cannot be updated automatically, or you do not have permission.';
+}
+
+/** Close: open, in an active repository, and you wrote it or can write to the repository. */
+export function closeBlockedReason(state: PrActionState): string | undefined {
+  if (state.archived) return 'This repository is archived.';
+  if (state.state !== 'OPEN') return state.state === 'MERGED' ? 'This PR is already merged.' : 'This PR is already closed.';
+  if (!state.canChangeDraft) return 'Only the PR author or someone with write permission can close this PR.';
 }

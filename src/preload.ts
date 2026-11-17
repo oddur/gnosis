@@ -437,6 +437,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   performPrAction: (
     request: import('../lib/pr-actions').PrActionRequest
   ): Promise<import('../lib/pr-actions').PrActionResult> => ipcRenderer.invoke('perform-pr-action', request),
+  getOverviewSince: (since: number): Promise<import('../lib/since-log').SinceEvent[]> => ipcRenderer.invoke('overview-since', since),
+  getRereviewLines: (targets: import('../lib/rereview-lines').RereviewTarget[]): Promise<import('../lib/rereview-lines').RereviewLines[]> =>
+    ipcRenderer.invoke('rereview-lines', targets),
   submitReview: (req: SubmitReviewRequest): Promise<{ reviewUrl: string; droppedCommentCount: number }> =>
     ipcRenderer.invoke('submit-review', req),
   checkPrFreshness: (prUrl: string, headSha: string | undefined): Promise<FreshnessResult> =>

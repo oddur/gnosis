@@ -164,6 +164,9 @@ import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
 import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
+import { createSinceLog } from './since-log-service';
+import { sinceEventsFromNotifications, type SinceEvent } from '../lib/since-log';
+import { isRereviewLines, parseRereviewTargets, rereviewCacheKey, rereviewCompare, rereviewSize, type RereviewLines } from '../lib/rereview-lines';
 import { createNotificationService, type DesktopNotification, type ToastAction } from './notification-service';
 import { createDeepLinks } from './deep-link-service';
 import { botAllowed, notificationSettings, normalizeNotificationPreferences, NOTIFICATION_EVENT_TYPES, parsePauseRequest, pauseUntil } from '../lib/notification-settings';
@@ -3093,6 +3096,52 @@ function formatMs(ms: number): string {
 // ── Notifications ──
 // One pipeline: the observer beside the unread store raises events, the service routes each to one surface.
 const notificationStore = createNotificationStore(appData);
+// "Since yesterday" on the Overview (#390): review requests, replies, merges and check changes main saw.
+const sinceLog = createSinceLog(appData);
+function recordSince(events: SinceEvent[]) {
+  if (cachedLogin && events.length) sinceLog.record(cachedLogin, events);
+}
+/** Your PR merged, or its checks turned red or green, as a sync update showed. Local only. */
+function noteSinceChange(url: string, before: { merged?: boolean; author?: string } | undefined, after: { merged?: boolean; title?: string; number?: number; repo?: string }) {
+  if (!cachedLogin || !before || before.merged || !after.merged || before.author?.toLowerCase() !== cachedLogin.toLowerCase()) return;
+  recordSince([{ type: 'merged', key: `merged|${url}`, url, at: Date.now(), ...(after.title ? { title: after.title } : {}), ...(after.number ? { number: after.number } : {}), ...(after.repo ? { repo: after.repo } : {}) }]);
+}
+function noteSinceChecks(url: string, previous: QueueSignals | undefined, next: QueueSignals) {
+  const member = workbench.knownMember(url);
+  if (!cachedLogin || !member || member.author.toLowerCase() !== cachedLogin.toLowerCase() || !previous || previous.headSha !== next.headSha) return;
+  const was = previous.checks.state, now = next.checks.state;
+  if (was === now || (now !== 'failure' && now !== 'success') || (now === 'success' && was !== 'failure')) return;
+  const type = now === 'failure' ? 'checks-red' : 'checks-green';
+  recordSince([{ type, key: `${type}|${now === 'failure' ? 'checks-failed' : 'checks-passed'}|${url}|${next.headSha}`, url, at: Date.now(), title: member.title, number: member.number, repo: member.repo }]);
+}
+// "+N lines since your review" (#390): one compare read per re-review PR, cached for good (both ends are commits),
+// at background priority within the automatic budget. A failed read leaves that PR out.
+ipcMain.handle('rereview-lines', async (_event, raw: unknown): Promise<RereviewLines[]> => {
+  const targets = parseRereviewTargets(raw);
+  const token = getResolvedToken();
+  if (!targets || !token) return [];
+  const client = getGitHubClient(token), cache = githubCacheFor(client);
+  const results: RereviewLines[] = [];
+  for (const target of targets) {
+    const saved = cache?.get(rereviewCacheKey(target), isRereviewLines)?.value;
+    if (saved) { results.push(saved); continue; }
+    if (githubClients.backoff(token, true, ['core'])) break;
+    try {
+      const { data } = await withGitHubPriority('background', () => client.request('GET /repos/{owner}/{repo}/compare/{basehead}', rereviewCompare(target)), { automatic: true });
+      const value = rereviewSize(target, (data as { files?: { additions?: number; deletions?: number }[] }).files);
+      if (token === getResolvedToken()) cache?.set(rereviewCacheKey(target), value);
+      results.push(value);
+    } catch (error) {
+      console.warn('[overview] Could not read the changes since your review:', error instanceof Error ? error.message : error);
+    }
+  }
+  return results;
+});
+ipcMain.handle('overview-since', (_event, since: unknown) => {
+  const account = cachedLogin;
+  if (!account || typeof since !== 'number' || !Number.isFinite(since)) return [];
+  return sinceLog.list(account, since);
+});
 const notificationContexts = new Map<number, { activeUrl?: string }>();
 const notificationAnalytics = () => loadPreferences().analytics;
 const deepLinks = createDeepLinks({
@@ -3387,6 +3436,7 @@ ipcMain.handle('workbench-star-prs', (_event, request: StarPrRequest) => workben
  * waits for its check names; it settles for 20 seconds in the service anyway.
  */
 function deliverNotificationEvents(events: NotificationEvent[]) {
+  recordSince(sinceEventsFromNotifications(events));
   const named = notifications.catchingUp() ? [] : events.filter(event => event.type === 'checks-failed' && event.checks);
   const now = events.filter(event => !named.includes(event));
   if (now.length) deliverPreparedEvents(now);
@@ -3824,12 +3874,12 @@ handleInteractive('feedback-action', (_event, req: import('../lib/review-threads
 async function runFeedbackAction(req: import('../lib/review-threads').FeedbackAction) {
   const account = cachedLogin;
   const source = req.action === 'reply' ? discussionSource(req.prUrl, req.sourceId) : undefined;
-  const change: OptimisticChange | undefined = req.action === 'request-review'
+  const change: OptimisticChange | undefined = req.action === 'request-review' || req.action === 'nudge'
     ? { action: 'request-review', reviewer: req.reviewer }
     : source && typeof req.body === 'string' ? { action: 'feedback-reply', body: feedbackReplyBody(source, req.body.trim()) } : undefined;
-  await gitHubWrite(req.action === 'request-review' ? 'request-review' : 'feedback-reply', [req.prUrl],
+  await gitHubWrite(req.action === 'request-review' || req.action === 'nudge' ? 'request-review' : 'feedback-reply', [req.prUrl],
     () => change ? optimistic.run(req.prUrl, change, () => reviewThreads.feedbackAction(discussionClient(), req)) : reviewThreads.feedbackAction(discussionClient(), req),
-    () => (req.action === 'request-review' ? { reviewer: req.reviewer } : {}));
+    () => (req.action === 'request-review' || req.action === 'nudge' ? { reviewer: req.reviewer } : {}));
   if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
 }
 ipcMain.handle('get-review-threads', async (_event, prUrl: string, refresh: boolean, options?: { revalidate?: boolean }) => {
@@ -3968,6 +4018,7 @@ function confirmedMetadata(urls: string[], patch: Partial<PrMetadata>) {
   for (const url of urls) {
     const known = syncMetadata.get(url) ?? workbench.knownMember(url);
     if (!known) continue;
+    noteSinceChange(url, known, { ...known, ...patch });
     const value = { ...known, ...patch, updatedAt: new Date(Date.parse(known.updatedAt) + 1).toISOString() };
     workbench.updatePrMetadata(value, true);
     publishGitHubUpdates([{ kind: 'metadata', url, value }]);
@@ -3986,7 +4037,7 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
   const token = getResolvedToken();
   if (!token) throw new Error('Connect GitHub before changing a PR.');
   const login = cachedLogin ?? await resolveGitHubLogin(token);
-  const title = request.kind === 'merge' ? 'Merging PRs' : request.kind.startsWith('update-') ? 'Updating PR branch' : request.kind === 'mark-ready' ? 'Marking PR ready for review' : request.kind === 'convert-draft' ? 'Converting PR to draft' : 'Updating auto-merge';
+  const title = request.kind === 'merge' ? 'Merging PRs' : request.kind.startsWith('update-') ? 'Updating PR branch' : request.kind === 'mark-ready' ? 'Marking PR ready for review' : request.kind === 'convert-draft' ? 'Converting PR to draft' : request.kind === 'close' ? 'Closing PR' : 'Updating auto-merge';
   const id = `pr-action:${crypto.randomUUID()}`;
   activities.start({ id, kind: 'pr-action', account: login, title, detail: 'Checking the confirmed revisions and GitHub permissions.' }, {});
   // IPC payloads are runtime inputs even when the preload types are narrow.
@@ -3996,7 +4047,7 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
   const write = (result?: PrActionResult): GitHubWriteAction =>
     request.kind === 'merge' ? (result?.operation ? 'merge-submitted' : result?.status === 'enqueued' ? 'merge-queue' : 'merge')
       : request.kind === 'enable-auto' ? 'enable-auto-merge' : request.kind === 'disable-auto' ? 'disable-auto-merge'
-        : request.kind === 'mark-ready' ? 'mark-ready' : request.kind === 'convert-draft' ? 'convert-draft' : 'update-branch';
+        : request.kind === 'mark-ready' ? 'mark-ready' : request.kind === 'convert-draft' ? 'convert-draft' : request.kind === 'close' ? 'close-pr' : 'update-branch';
   try {
     let result: PrActionResult;
     // Draft state and auto-merge show at once. Merges and branch updates wait for GitHub.
@@ -4007,6 +4058,7 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
       throw error;
     }
     if (result.status === 'merged') confirmedMetadata(urls, { merged: true, state: 'closed' });
+    if (request.kind === 'close') confirmedMetadata(urls, { state: 'closed' });
     const refreshed = githubWrites.after(write(result), urls, url => ({ before: before.get(url), viewer: login }));
     if (result.operation) {
       activities.finish(id, 'cancelled', 'Following the submitted merge in Activity.');
@@ -4268,6 +4320,7 @@ function publishGitHubUpdatesNow(updates: GitHubSyncUpdate[]) {
       update.value = withCachedCheckDetails(getGitHubClient(cachedToken), update.value);
     } else if (update.kind === 'metadata') {
       const previous = syncMetadata.get(update.url);
+      noteSinceChange(update.url, previous ?? workbench.knownMember(update.url), update.value);
       // A new head is handled in one place. A new base alone still changes signals, checks and threads.
       noteHeadSha(update.url, update.value.headSha, { updatedAt: update.value.updatedAt, source: 'metadata' });
       if (previous && previous.headSha === update.value.headSha && previous.baseSha !== update.value.baseSha) {
@@ -4279,6 +4332,7 @@ function publishGitHubUpdatesNow(updates: GitHubSyncUpdate[]) {
       workbench.updatePrMetadata(update.value);
     } else if (update.kind === 'signals') {
       const previous = syncSignals.get(update.url);
+      noteSinceChecks(update.url, previous, update.value);
       syncSignals.delete(update.url);
       syncSignals.set(update.url, update.value);
       while (syncSignals.size > 500) syncSignals.delete(syncSignals.keys().next().value as string);

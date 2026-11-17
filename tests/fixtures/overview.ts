@@ -72,6 +72,8 @@ type Status = {
   opinions?: { author: string; state: string; ago: number }[];
   comments?: { author: string; ago: number }[];
   behindBy?: number;
+  /** Your latest review was on this commit, not the head: the PR changed since. */
+  reviewedSha?: string;
 };
 function signalsFor(member: ReviewMember, status: Status): QueueSignals {
   const opinions = (status.opinions ?? []).map((opinion, i) => ({
@@ -81,6 +83,7 @@ function signalsFor(member: ReviewMember, status: Status): QueueSignals {
     submittedAt: at(opinion.ago),
     headSha: member.headSha,
   }));
+  if (status.reviewedSha) opinions.push({ url: `${member.url}#pullrequestreview-mine`, author: LOGIN, state: 'APPROVED', submittedAt: at(3 * DAY), headSha: status.reviewedSha });
   return {
     url: member.url,
     headSha: member.headSha,
@@ -183,9 +186,28 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
   const reads: Partial<Record<string, PrReadState>> = {
     [answer2.url]: { url: answer2.url, headSha: answer2.headSha, versions: { ...emptyReadVersions(), comments: 1 }, unread: ['comments'] },
   };
-  const writes: { kind: string; url: string }[] = [];
+  const writes: { kind: string; url: string; comment?: string }[] = [];
   const reruns: CheckSelection[] = [];
   const changed = () => window.dispatchEvent(new Event('fixture-workbench-change'));
+  // The next Nudge or Close fails, as GitHub may refuse it.
+  let failNext = false;
+  // Replies waiting on you, by PR: who wrote last and what.
+  const replies = new Map<string, { author: string; text: string }>([
+    [answer2.url, { author: 'owen', text: 'Could we keep the old loading order behind a flag until every plugin has **migrated** to the new hooks?' }],
+  ]);
+  // Main's "Since yesterday" log: three merges, two new requests, two replies, checks red on one and green on two.
+  const sinceEvents = [
+    { type: 'merged', key: 'merged|a', url: 'https://github.com/klang/cli/pull/290', at: now - 10 * HOUR },
+    { type: 'merged', key: 'merged|b', url: 'https://github.com/klang/engine/pull/291', at: now - 9 * HOUR },
+    { type: 'merged', key: 'merged|c', url: 'https://github.com/acme/web/pull/292', at: now - 8 * HOUR },
+    { type: 'review-requested', key: 'rr|a', url: reviews[5].url, at: now - 7 * HOUR },
+    { type: 'review-requested', key: 'rr|b', url: reviews[6].url, at: now - 6 * HOUR },
+    { type: 'reply', key: 'reply|a', url: answer2.url, actor: 'owen', at: now - 3 * HOUR },
+    { type: 'reply', key: 'reply|b', url: answer1.url, actor: 'lena', at: now - 4 * HOUR },
+    { type: 'checks-red', key: 'red|a', url: fixBase.url, at: now - 5 * HOUR },
+    { type: 'checks-green', key: 'green|a', url: merge2.url, at: now - 5 * HOUR },
+    { type: 'checks-green', key: 'green|b', url: merge1.url, at: now - 11 * HOUR },
+  ];
 
   // `?overview&overview-status=held`: GitHub has not answered yet. Saved status is empty, and status reads wait until
   // `answerStatus` answers them, one 25-PR batch at a time, as main does.
@@ -261,8 +283,14 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
       });
     },
     performPrAction: (request: PrActionRequest) => {
-      writes.push({ kind: request.kind, url: request.url });
+      writes.push({ kind: request.kind, url: request.url, ...(request.comment ? { comment: request.comment } : {}) });
       const member = find(request.url);
+      if (request.kind === 'close') {
+        if (failNext) { failNext = false; return Promise.reject(new Error('Error invoking remote method \'perform-pr-action\': Error: GitHub refused the request.')); }
+        if (member) member.state = 'closed';
+        setTimeout(changed, 50);
+        return Promise.resolve({ status: 'completed', message: `Closed #${member?.number ?? ''}. You can reopen it on GitHub.` });
+      }
       if (request.kind === 'merge' && member) {
         member.merged = true;
         member.state = 'closed';
@@ -284,6 +312,33 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
         ],
       } as PrChecks);
     },
+    // "Since yesterday": what main's log saw overnight.
+    getOverviewSince: (since: number) =>
+      Promise.resolve(sinceEvents.filter((event) => event.at > since)),
+    // "+N lines since your review": one compare per re-review PR.
+    getRereviewLines: (targets: { url: string; from: string; to: string }[]) => {
+      writes.push(...targets.map((target) => ({ kind: 'compare', url: target.url })));
+      return Promise.resolve(targets.map((target) => ({ ...target, lines: 42, files: 3 })));
+    },
+    // The thread waiting on your reply, from the saved discussion.
+    getCachedReviewThreads: (url: string) => {
+      const member = find(url);
+      const reply = replies.get(url);
+      if (!member || !reply) return Promise.resolve(undefined);
+      const comment = (id: string, author: string, body: string, ago: number) => ({ id, body, createdAt: at(ago), url: `${url}#discussion_r${id}`, author: { login: author, avatarUrl: '' } });
+      return Promise.resolve({
+        headSha: member.headSha,
+        baseSha: member.baseSha,
+        checkedAt: Date.now(),
+        threads: [{ id: `t-${member.number}`, path: 'src/loader.ts', line: 12, startLine: null, diffSide: 'RIGHT', isResolved: false, isOutdated: false, viewerCanResolve: true, viewerCanUnresolve: false,
+          comments: [comment(`${member.number}1`, LOGIN, 'Moved the loader up.', 5 * HOUR), comment(`${member.number}2`, reply.author, reply.text, 3 * HOUR)] }],
+      });
+    },
+    feedbackAction: (request: { prUrl: string; action: string; reviewer?: string }) => {
+      writes.push({ kind: `${request.action}:${request.reviewer ?? ''}`, url: request.prUrl });
+      if (failNext) { failNext = false; return Promise.reject(new Error('Error invoking remote method \'feedback-action\': Error: GitHub refused the request.')); }
+      return Promise.resolve();
+    },
     rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }) => {
       reruns.push(target);
       writes.push({ kind: `rerun-${target.mode}`, url: target.url });
@@ -303,6 +358,42 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
       answerStatus: (count?: number) => {
         for (const read of heldReads.splice(0, count ?? heldReads.length)) read.resolve();
         if (count === undefined) held = false;
+      },
+      /** The next Nudge or Close PR fails on GitHub. */
+      failNext: () => { failNext = true; },
+      /**
+       * The user's real shape (#390, morning page): Answer 0, Review 2 (a re-review and a small review with an
+       * explanation), Merge 16 (2 ready, 14 parked), Fix 18 and Waiting 5.
+       */
+      real: () => {
+        const repos = ['klang/engine', 'acme/web', 'klang/cli'];
+        add(reviews[3], { checks: 'success', reviewedSha: 'old-324' });
+        const parked = [
+          ...['Move the launcher text into translation keys', 'Only return to in-app paths after the consent page', 'Refuse script URLs as the mobile OAuth redirect',
+            'Save only schema-validated fields on profile update', 'Keep subscription ids inside one path segment', 'Read the player language from the launcher',
+            'Add the notifications read scope', 'Count a refused output swap as a failure', 'Keep the onboarding quest until chat is reached', 'Bump the CLI to 4.2.1']
+            .map((title, i) => single(add(pr({ number: 360 + i, repo: repos[i % 3], title, created: (9 + i) * DAY, updated: (5 + (i % 4)) * DAY, additions: 12 + i * 23, deletions: 2 + i * 5, files: 1 + (i % 5) }), noReview))),
+          // Mergeable, never approved, opened over a week ago.
+          ...['Retry the asset upload on a 502', 'Drop the legacy telemetry endpoint'].map((title, i) =>
+            single(add(pr({ number: 370 + i, repo: repos[i % 3], title, created: (10 + i) * DAY, updated: 4 * DAY, additions: 30, deletions: 8, files: 2 }), { checks: 'success', decision: '', mergeState: 'CLEAN' }))),
+        ];
+        const fixes = Array.from({ length: 16 }, (_, i) => {
+          const age = i === 15 ? 5 * HOUR : (10 + (i % 3)) * DAY;
+          const conflicts = i === 4 || i === 9;
+          return single(add(pr({ number: 380 + i, repo: repos[(i + 1) % 3], title: `Fix flaky step ${i + 1} in the release pipeline`, created: age + DAY, updated: age, additions: 10 + i * 7, deletions: 1 + i, files: 1 + (i % 4) }),
+            conflicts ? { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' } : { checks: 'failure' }));
+        });
+        const waits = [
+          single(add(pr({ number: 398, repo: 'klang/engine', title: 'Keep each sender’s failed command to itself', created: 10 * DAY, requested: ['plucked'], additions: 163, deletions: 10, files: 6 }), { checks: 'success' })),
+          single(add(pr({ number: 399, repo: 'acme/web', title: 'Build the translation prompt from the guidance', created: 4 * HOUR, requested: ['sam'], additions: 719, deletions: 340, files: 24 }), { checks: 'pending' })),
+          single(add(pr({ number: 400, repo: 'klang/cli', title: 'Explain the retry budget in the CLI help', created: 2 * DAY, requested: ['lena'], additions: 24, deletions: 3, files: 1 }), { checks: 'success' })),
+        ];
+        items.splice(0, items.length,
+          single(merge1), single(merge2), single(parked1), single(parked2), ...parked,
+          single(reviews[0], { review }), single(reviews[3], { attention: 'updated' }),
+          { subject: groupSubjects([fixBase, fixChild])[0], attention: 'other' }, single(fixLone), ...fixes,
+          single(waiting1), single(waiting2), ...waits);
+        changed();
       },
       /** The queue last synced `ms` ago; `checking` while a discovery runs. The next snapshot carries it. */
       setSync: (ms: number, value: 'idle' | 'checking' = 'idle') => {

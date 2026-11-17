@@ -1,13 +1,13 @@
 /**
- * Overview (#390), the front page: a briefing sentence and four lane tiles (Answer, Review / Merge, Fix) with each
- * lane's count, summary and three oldest items, then "Waiting on others · Parked". Covers the briefing text, the 2×2
- * grid at 1280×800 and one column at 760, the quick action and details revealed on hover and focus, keyboard movement
- * within and between tiles, a tile opening the queue grouped by Action at its group, Merge and Rerun through their
- * confirmations, the item menu, live updates that keep focus, "new since your last visit", long names, and empty and
- * quiet days. Synthetic data only (tests/fixtures/overview.ts).
+ * Overview (#390), the morning page: the briefing and "Since yesterday", Move forward now (quick wins by effort, one
+ * action each), Waiting on you and Waiting on others (people and blockers, Nudge), and Needs a decision (Close PR,
+ * Snooze). Covers the sections and their words, two columns wide and one narrow, keyboard movement (one tab stop per
+ * section, j/k, Enter, A, Z, Shift+F10), descriptions and the live region, Nudge and Close through confirmations with
+ * their failures, renders on sync ticks, the tab count, status that starts unknown and fills, a stale sync, the
+ * user's real shape, and a light day. Synthetic data only (tests/fixtures/overview.ts).
  *
- * Screenshots go to .impeccable/review/overview-frontpage/: the heavy load and a light day, light and dark, at
- * 1280×800 and 760 wide.
+ * Screenshots go to .impeccable/review/overview-morning/: the real shape and a light day, light and dark, at
+ * 1280×800, 1440×1000 and 760 wide.
  */
 import { loadWorkbenchPage } from './workbench-ready';
 import { menuAction } from './entry-menu-helpers';
@@ -17,9 +17,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const P = '.workspace-panel[data-workspace-active=true]';
-const row = (lane: string, repo: string, n: number) => `${P} [data-overview-row="${lane}|https://github.com/${repo}/pull/${n}"]`;
-const stackRow = (lane: string, repo: string, n: number) => `${P} [data-overview-row="${lane}|stack:https://github.com/${repo}/pull/${n}"]`;
+const url = (repo: string, n: number) => `https://github.com/${repo}/pull/${n}`;
+const row = (id: string) => `${P} [data-overview-row="${id}"]`;
 const BRIEFING = 'lena and owen are waiting on your reply, and 7 reviews are waiting on you. 4 PRs are ready to merge, and 1 has failed checks.';
+const SINCE = 'Since yesterday: 3 merged · 2 new review requests · owen and lena replied · checks failed on 1, passed on 2';
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -30,7 +31,7 @@ void app.whenReady().then(async () => {
   });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   let step = 'start';
-  const dir = path.resolve('.impeccable/review/overview-frontpage');
+  const dir = path.resolve('.impeccable/review/overview-morning');
   fs.mkdirSync(dir, { recursive: true });
   const capture = async (name: string) => {
     if (process.platform === 'darwin') app.show();
@@ -46,7 +47,7 @@ void app.whenReady().then(async () => {
       await new Promise((r) => setTimeout(r, 50));
     }
     await capture(`failure-${step}`).catch(() => undefined);
-    throw Error(`Timed out in "${step}": ${code}\n${await js<string>(`(document.querySelector('${P}')?.innerText ?? document.body.innerText).slice(0, 1500)`)}`);
+    throw Error(`Timed out in "${step}": ${code}\n${await js<string>(`(document.querySelector('${P}')?.innerText ?? document.body.innerText).slice(0, 2500)`)}`);
   };
   const both = async (name: string) => {
     await js("document.documentElement.classList.remove('dark')");
@@ -55,8 +56,8 @@ void app.whenReady().then(async () => {
     await capture(`${name}-dark`);
     await js("document.documentElement.classList.remove('dark')");
   };
-  const resize = async (width: number) => {
-    win.setSize(width, 800);
+  const resize = async (width: number, height = 800) => {
+    win.setSize(width, height);
     await new Promise((r) => setTimeout(r, 400));
   };
   const cdp = win.webContents.debugger;
@@ -74,17 +75,21 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 80));
   };
   const sidebar = (label: string) => `${P} [data-sidebar-destination][aria-label="${label}"]`;
-  const tile = (lane: string) => `${P} #overview-lane-${lane}`;
-  const tileCounts = () => js<string>(`[...document.querySelectorAll('${P} .overview-tile')].map(t=>t.dataset.lane+' '+t.querySelector('.overview-tile-count').textContent).join(' · ')`);
-  const tileItems = (lane: string) => js<string[]>(`[...document.querySelectorAll('${tile(lane)} [data-overview-row]')].map(b=>b.dataset.overviewRow)`);
+  const section = (name: string) => `${P} .morning-section[data-section="${name}"]`;
+  const count = (name: string) => js<string>(`document.querySelector('${section(name)} [data-section-count]').textContent`);
+  const ids = (name: string) => js<string[]>(`[...document.querySelectorAll('${section(name)} [data-overview-row]')].map(b=>b.dataset.overviewRow)`);
+  const texts = (name: string) => js<string[]>(`[...document.querySelectorAll('${section(name)} .morning-row')].map(r=>[r.querySelector('.morning-title-text')?.textContent, r.querySelector('.morning-detail')?.textContent, r.querySelector('.morning-meta')?.textContent].filter(Boolean).join(' | '))`);
   const focusedRow = () => js<string | null>("document.activeElement?.getAttribute('data-overview-row') ?? null");
   const briefing = () => js<string>(`document.querySelector('${P} [data-overview-briefing]')?.textContent ?? ''`);
-  const writes = () => js<{ kind: string; url: string }[]>('window.fixtureOverview.writes');
+  const writes = () => js<{ kind: string; url: string; comment?: string }[]>('window.fixtureOverview.writes');
   const tabCount = () => js<number>('document.querySelectorAll(".workspace-tab").length');
   const activeSection = `document.querySelector('${P} [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent ?? ''`;
   const noSideways = () => js<boolean>(`(()=>{const b=document.querySelector('${P} .overview-body');return b.scrollWidth <= b.clientWidth + 1})()`);
-  // Tile boxes, to check the grid: [lane, left, top].
-  const boxes = () => js<[string, number, number][]>(`[...document.querySelectorAll('${P} .overview-tile')].map(t=>{const r=t.getBoundingClientRect();return [t.dataset.lane, Math.round(r.left), Math.round(r.top)]})`);
+  const boxes = () => js<[string, number, number][]>(`[...document.querySelectorAll('${P} .morning-section')].map(s=>{const r=s.getBoundingClientRect();return [s.dataset.section, Math.round(r.left), Math.round(r.top)]})`);
+  const description = (selector: string) => js<string | null>(`(()=>{const b=document.querySelector(${JSON.stringify(selector)});const d=b&&document.getElementById(b.getAttribute('aria-describedby'));return d&&b.closest('li').contains(d)?d.textContent:null})()`);
+  const dismissToasts = () => js(`document.querySelectorAll('.app-toast [aria-label="Dismiss notification"]').forEach(b=>b.click())`);
+  const typeComment = (text: string) =>
+    js(`(()=>{const t=document.querySelector('[data-overview-dialog="close"] textarea');const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;set.call(t,${JSON.stringify(text)});t.dispatchEvent(new Event('input',{bubbles:true}))})()`);
   const firstTab = async () => {
     await js("document.querySelector('.workspace-tab-select').click()");
     await wait(`!!document.querySelector('${P} .overview') && getComputedStyle(document.querySelector('${P} .overview')).display !== 'none'`);
@@ -93,366 +98,279 @@ void app.whenReady().then(async () => {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?overview`);
 
     step = 'default';
-    // The Overview opens by default, as the current home destination.
-    await wait(`!!document.querySelector('${P} .overview-tile [data-overview-row]')`, 600);
+    // The Overview opens by default, as the home destination.
+    await wait(`!!document.querySelector('${P} .morning [data-overview-row]')`, 600);
     assert.equal(await js(`document.querySelector('${sidebar('Overview')}')?.getAttribute('aria-current')`), 'page');
     assert.equal(await js(`document.querySelector('${P} .overview h1')?.textContent`), 'Overview');
-    assert.equal(await js(`(()=>{const t=document.querySelector('${P} .queue-toolbar:not(.overview-toolbar)');return !t || t.getClientRects().length === 0})()`), true, 'the queue waits behind the Overview');
 
     step = 'briefing';
-    // One plain sentence about people blocked on you, one about your own PRs. Built from the lanes, no model call.
+    // The briefing sentence, then what changed since the last visit, from main's log.
     await wait(`document.querySelector('${P} [data-overview-briefing]')?.textContent === ${JSON.stringify(BRIEFING)}`);
-    assert.equal(await js(`document.querySelector('${P} [data-overview-briefing]').getAttribute('role')`), 'status');
-    assert.ok(await js(`document.querySelector('${P} .queue-freshness')?.textContent.startsWith('Checked')`), 'cached data says when it was checked');
+    await wait(`document.querySelector('${P} [data-overview-since]')?.textContent === ${JSON.stringify(SINCE)}`);
 
-    step = 'tiles';
-    // Four tiles in reading order: who is blocked on you, then your own PRs. Merge counts Ready rows only.
-    assert.equal(await tileCounts(), 'answer 2 · review 7 · merge 4 · fix 2');
-    const headings = await js<string[]>(`[...document.querySelectorAll('${P} section.overview-tile[aria-labelledby]')].map(s=>document.getElementById(s.getAttribute('aria-labelledby')).firstChild.textContent)`);
-    assert.deepEqual(headings, ['Answer', 'Review', 'Merge', 'Fix'], 'tiles are labelled regions with headings');
-    assert.equal(await js(`document.querySelector('${tile('fix')} h2').textContent`), 'Fix, 2, 2 merge conflicts');
-    // The tab title counts the four action lanes only: 2 + 7 + 4 + 2.
-    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(15)'");
-    // Summaries: the lane heading's words from the quieter pass.
-    assert.equal(await js(`document.querySelector('${tile('merge')} .overview-tile-summary').textContent`), '2 parked');
-    assert.equal(await js(`document.querySelector('${tile('fix')} .overview-tile-summary').textContent`), '2 merge conflicts');
-    assert.equal(await js(`document.querySelector('${tile('answer')} .overview-tile-summary')`), null, 'no summary when there is nothing to add');
-    // Top three, oldest first, each with its age.
-    assert.equal((await tileItems('review')).length, 3);
-    assert.deepEqual(await js(`[...document.querySelectorAll('${tile('review')} .overview-tile-title')].map(t=>t.textContent)`), ['Stream build logs to the dashboard', 'Add a dry-run flag to the release script', 'Batch telemetry writes per request']);
-    assert.deepEqual(await js(`[...document.querySelectorAll('${tile('review')} .overview-tile-age')].map(t=>t.textContent)`), ['5 d', '4 d', '3 d']);
-    assert.equal(await js(`document.querySelector('${tile('review')} .overview-tile-all').textContent`), 'All 7');
-    // Waiting on others and Parked are one slim line under the grid.
-    assert.equal(await js(`document.querySelector('${P} .overview-others').textContent`), 'Waiting on others 3·Parked 2');
-    // The inbox structure is gone: no count strip, no banded lanes, no "Show all" rows, no chips on items.
-    assert.equal(await js(`document.querySelectorAll('${P} .overview-counts, ${P} .overview-lane, ${P} .overview-show-all, ${P} .overview-row').length`), 0);
-    assert.equal(await js(`document.querySelectorAll('${P} .overview-tile .entity-badge, ${P} .overview-tile .github-author').length`), 0, 'metadata stays off the page');
-
-    step = 'grid-1280';
-    // 2×2 at 1280×800: Answer beside Review, Merge beside Fix, and nothing scrolls sideways.
+    step = 'sections';
+    // Four labelled sections in reading order: the lead, two columns side by side, then decisions.
+    assert.deepEqual(await js(`[...document.querySelectorAll('${P} section.morning-section')].map(s=>document.getElementById(s.getAttribute('aria-labelledby')).firstChild.textContent)`),
+      ['Move forward now', 'Waiting on you', 'Waiting on others', 'Needs a decision']);
     {
-      const b = Object.fromEntries((await boxes()).map(([lane, left, top]) => [lane, { left, top }]));
-      assert.equal(b.answer.top, b.review.top);
-      assert.equal(b.merge.top, b.fix.top);
-      assert.ok(b.review.left > b.answer.left && b.merge.left === b.answer.left && b.fix.left === b.review.left, JSON.stringify(b));
-      assert.ok(b.merge.top > b.answer.top);
+      const b = Object.fromEntries((await boxes()).map(([name, left, top]) => [name, { left, top }]));
+      assert.equal(b.you.top, b.others.top, 'Waiting on you beside Waiting on others');
+      assert.ok(b.others.left > b.you.left && b.you.top > b.move.top && b.decide.top > b.you.top, JSON.stringify(b));
       assert.ok(await noSideways());
     }
+    // Move forward now: merges approved and green first, then the explained small review and the reply, by effort.
+    assert.deepEqual(await texts('move'), [
+      'Cache resolved module paths between builds | approved by lena · green | 1 min',
+      'Drop the unused polyfill bundle | no review required · green | 1 min',
+      'Extract the billing form state | approved by ivar · green | 1 min',
+      'Retry flaky uploads with jitter | approved by sam and 1 other · green | 1 min',
+      'Stream build logs to the dashboard | 25 lines · explanation ready | 3 min',
+      'Document the plugin loading order | owen: “Could we keep the old loading order behind a flag until…” | 3 min',
+    ]);
+    assert.equal(await js(`document.querySelector('${section('move')} .morning-section-summary').textContent`), '~10 min');
+    assert.deepEqual(await js(`[...document.querySelectorAll('${section('move')} [data-quick-action]')].map(b=>b.textContent)`), ['Merge', 'Merge', 'Merge', 'Merge', 'Review', 'Reply']);
+    // Waiting on you: by person, oldest wait first; lena and owen also wait on your replies.
+    assert.deepEqual(await texts('you'), ['maya | 2 PRs · oldest 5 d', 'lena | 2 PRs · oldest 4 d', 'sam | 2 PRs · oldest 3 d', 'owen | 2 PRs · oldest 3 d', 'ivar | 1 PR · oldest 2 d']);
+    assert.equal(await count('you'), '9');
+    // Waiting on others: reviewers with Nudge, then CI, the open base and you.
+    assert.deepEqual(await texts('others'), ['lena | 2 PRs · 4 d', 'CI | 1 running', 'base #331 | 1 PR · 20 h', 'base #306 | 1 PR · 9 h', 'You | 1 failing check, 2 conflicts']);
+    assert.deepEqual(await js(`[...document.querySelectorAll('${section('others')} [data-quick-action]')].map(b=>b.textContent)`), ['Nudge', 'All 2']);
+    // Needs a decision: idle for over a week.
+    assert.deepEqual(await texts('decide'), ['Inline the hot path in the resolver | Idle 8 d', 'Rename the config loader flags | Idle 7 d']);
+    // The tab title counts Move forward now and Waiting on you, each PR once: 6 + 9 − 2.
+    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(13)'");
+    await js(`document.activeElement?.blur()`);
     await both('default-1280');
-
-    step = 'details';
-    // Repository, PR and reason are in each item's description, its tooltip, and on hover or focus at the tile's foot.
-    const description = (selector: string) => js<string | null>(`(()=>{const b=document.querySelector(${JSON.stringify(selector)});const d=b&&document.getElementById(b.getAttribute('aria-describedby'));return d&&b.closest('li').contains(d)?d.textContent:null})()`);
-    assert.equal(await description(row('answer', 'acme/web', 311)), 'Changes requested, web #311, from lena, waiting 4 days, stale');
-    assert.equal(await description(row('fix', 'acme/web', 333)), 'Merge conflicts, web #333, waiting 9 hours');
-    assert.equal(await js(`document.querySelector('${row('merge', 'klang/engine', 301)}').title`), 'Cache resolved module paths between builds\nengine #301 · Approved by lena · Stale');
-    const actionsOpacity = (selector: string) => js<string>(`getComputedStyle(document.querySelector(${JSON.stringify(selector)}).closest('li').querySelector('.overview-tile-actions')).opacity`);
-    assert.equal(await actionsOpacity(row('answer', 'acme/web', 311)), '0', 'no per-item buttons at rest');
-    assert.equal(await js(`document.querySelector('${tile('answer')} [data-overview-detail]').textContent`), '');
-    await js(`document.querySelector('${row('answer', 'acme/web', 311)}').focus()`);
-    await wait(`getComputedStyle(document.querySelector('${row('answer', 'acme/web', 311)}').closest('li').querySelector('.overview-tile-actions')).opacity === '1'`);
-    assert.equal(await js(`document.querySelector('${tile('answer')} [data-overview-detail]').textContent`), 'web #311 · Changes requested · from lena · Stale');
-    assert.equal(await js(`document.querySelector('${row('answer', 'acme/web', 311)}').closest('li').querySelector('[data-quick-action]').textContent`), 'Open thread');
-    assert.equal(await actionsOpacity(row('answer', 'klang/engine', 312)), '0', 'only the focused item shows its action');
-    assert.equal(await js(`getComputedStyle(document.querySelector('${row('answer', 'acme/web', 311)}').closest('li')).outlineStyle`), 'solid', 'focus is visible');
-    await both('focus-quick-action');
-    // Hover reveals the same, with the pointer.
-    if (!cdp.isAttached()) cdp.attach('1.3');
-    const point = await js<{ x: number; y: number }>(`(()=>{const r=document.querySelector('${stackRow('merge', 'acme/web', 306)}').getBoundingClientRect();return {x:r.left+20,y:r.top+r.height/2}})()`);
-    await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
-    await wait(`getComputedStyle(document.querySelector('${stackRow('merge', 'acme/web', 306)}').closest('li').querySelector('.overview-tile-actions')).opacity === '1'`);
-    assert.equal(await js(`document.querySelector('${stackRow('merge', 'acme/web', 306)}').closest('li').querySelector('[data-quick-action]').textContent`), 'Merge');
-    assert.match(await js<string>(`document.querySelector('${tile('merge')} [data-overview-detail]').textContent`), /^web #\d+( \+\d)? · \d+ of \d+ PRs · Approved by ivar/);
-    await capture('hover-quick-action-light');
-    await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 790 });
 
     step = 'harden';
     assert.deepEqual(await js(`[...document.querySelectorAll('${P} [aria-describedby="overview-keyboard-help"]')].map(e=>e.className)`), ['overview']);
-    assert.equal(await js(`document.querySelectorAll('${P} [data-overview-row][tabindex="0"]').length`), 4, 'one roving tab stop per tile');
-    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-tile-actions button')].every(b=>b.tabIndex===-1)`), true, 'actions and menus are out of the tab order');
-    assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').textContent`), '');
+    assert.equal(await js(`document.querySelectorAll('${P} [data-overview-row][tabindex="0"]').length`), 4, 'one roving tab stop per section');
+    assert.equal(await js(`[...document.querySelectorAll('${P} .morning-actions button')].every(b=>b.tabIndex===-1)`), true, 'actions and menus are out of the tab order');
+    assert.equal(await description(row(`move|merge|${url('klang/engine', 301)}`)), 'Merge, approved by lena · green, engine #301, about 1 minute');
+    assert.equal(await description(row('others|person:lena')), 'lena, 2 PRs · 4 days. Collapsed. A nudges');
     assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').getAttribute('aria-live')`), 'polite');
+    assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').textContent`), '');
+    assert.equal(await js(`getComputedStyle(document.querySelector('${section('decide')} .morning-actions')).opacity`), '0', 'decisions keep their actions until hover or focus');
 
     step = 'renders';
-    // A sync tick that changes nothing renders no item.
+    // A sync tick that changes nothing renders no row.
     await js('window.__countRenders = true; window.__overviewRowRenders = 0; window.dispatchEvent(new Event("fixture-workbench-change"))');
     await new Promise((r) => setTimeout(r, 1500));
-    assert.equal(await js('window.__overviewRowRenders'), 0, 'unchanged items do not render again');
+    assert.equal(await js('window.__overviewRowRenders'), 0, 'unchanged rows do not render again');
     await js('window.__countRenders = false');
 
     step = 'keyboard';
-    // j/k and the arrows move within a tile; Tab moves to the tile's "All N", then to the next tile.
+    // j/k move within a section; Tab moves to the next section; Enter expands a person.
     await js('document.activeElement?.blur()');
-    const answer = await tileItems('answer');
-    const review = await tileItems('review');
+    const move = await ids('move');
     await key('j');
-    assert.equal(await focusedRow(), answer[0]);
+    assert.equal(await focusedRow(), move[0]);
     await key('j');
-    assert.equal(await focusedRow(), answer[1]);
     await key('j');
-    assert.equal(await focusedRow(), answer[1], 'j stays within the tile');
-    await key('k');
-    assert.equal(await focusedRow(), answer[0]);
+    assert.equal(await focusedRow(), move[2]);
     await key('End');
-    assert.equal(await focusedRow(), answer[1]);
+    assert.equal(await focusedRow(), move.at(-1));
+    await key('j');
+    assert.equal(await focusedRow(), move.at(-1), 'j stays within the section');
     await key('Tab');
-    assert.equal(await js('document.activeElement?.className'), 'overview-tile-all');
+    assert.equal(await focusedRow(), 'you|person:maya', 'Tab reaches the next section');
+    await key('Enter');
+    await wait(`document.querySelector('${row('you|person:maya')}')?.getAttribute('aria-expanded') === 'true'`);
+    await key('j');
+    assert.equal(await focusedRow(), `you|person:maya|review|${url('klang/engine', 321)}`, 'the expanded person’s PRs follow it');
+    assert.deepEqual((await texts('you')).slice(0, 3), ['maya | 2 PRs · oldest 5 d', 'Stream build logs to the dashboard | 5 d', 'Tighten the retry budget for webhooks | 2 d']);
+    await key('Tab', 8);
+    assert.equal(await focusedRow(), move.at(-1), 'Shift+Tab returns to the section’s last focused row');
     await key('Tab');
-    assert.equal(await focusedRow(), review[0], 'Tab reaches the next tile');
-    await key('ArrowDown');
-    await key('ArrowDown');
-    assert.equal(await focusedRow(), review[2]);
-    await key('Tab', 8);
-    await key('Tab', 8);
-    assert.equal(await focusedRow(), answer[1], 'Shift+Tab returns to the tile’s last focused item');
+    await key('Tab');
+    assert.equal(await focusedRow(), 'others|person:lena');
     await both('keyboard-focus');
 
-    step = 'heavy';
-    // The real load from the critique: sixteen mergeable PRs (twelve parked) and eighteen to fix.
-    await js('window.fixtureOverview.heavy()');
-    await wait(`document.querySelector('${tile('fix')} .overview-tile-count')?.textContent === '18'`);
-    assert.equal(await tileCounts(), 'answer 2 · review 7 · merge 4 · fix 18', 'parked merges never reach a count');
-    assert.equal(await briefing(), 'lena and owen are waiting on your reply, and 7 reviews are waiting on you. 4 PRs are ready to merge, and 15 have failed checks.');
-    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(31)'");
-    assert.equal(await js(`document.querySelector('${tile('fix')} .overview-tile-summary').textContent`), '15 checks failed · 15 over a week');
-    assert.equal(await js(`document.querySelector('${tile('merge')} .overview-tile-summary').textContent`), '12 parked');
-    assert.equal(await js(`document.querySelector('${P} .overview-others').textContent`), 'Waiting on others 5·Parked 12');
-    assert.equal((await tileItems('fix')).length, 3);
-    await js(`document.activeElement?.blur(); document.querySelector('${P} .overview-body').scrollTop = 0`);
-    await both('heavy-1280');
-    await resize(760);
-    {
-      // One column when narrow, in reading order, with nothing scrolling sideways.
-      const b = await boxes();
-      assert.deepEqual(b.map(([lane]) => lane), ['answer', 'review', 'merge', 'fix']);
-      assert.ok(b.every(([, left]) => left === b[0][1]), `one column: ${JSON.stringify(b)}`);
-      assert.ok(b.every(([, , top], i) => i === 0 || top > b[i - 1][2]));
-      assert.ok(await noSideways(), 'no sideways scrolling at 760');
-    }
-    await both('heavy-760');
-    await js(`(()=>{const b=document.querySelector('${P} .overview-body');b.scrollTop=b.scrollHeight})()`);
-    await both('heavy-760-end');
-    await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
-    await resize(1280);
-    await js('window.fixtureOverview.restore()');
-    await wait(`document.querySelector('${tile('fix')} .overview-tile-count')?.textContent === '2'`);
-    // The burst settles into one announcement before the next change.
-    await wait(`document.querySelector('${P} [data-overview-announcement]').textContent.includes('Fix 2, was 18.')`);
-
-    step = 'live-update';
-    // Live updates change items in place: a renamed PR and a new failing PR, while focus stays on the item.
-    await js(`document.querySelector('${row('review', 'klang/cli', 322)}').focus()`);
-    const focused = await focusedRow();
-    const scroll = await js<number>(`document.querySelector('${P} .overview-body').scrollTop`);
-    await new Promise((r) => setTimeout(r, 200));
-    await js("window.__countRenders = true; window.__overviewRowRenders = 0; window.__overviewRenderedRows = []; window.fixtureOverview.rename(322, 'Add a dry-run flag to every release script'); window.fixtureOverview.addFailing()");
-    await wait(`document.querySelector('${row('review', 'klang/cli', 322)}')?.textContent.includes('every release script') && document.querySelector('${tile('fix')} .overview-tile-count').textContent === '3'`);
-    assert.equal(await focusedRow(), focused, 'focus stays on the item that changed');
-    assert.equal(await js<number>(`document.querySelector('${P} .overview-body').scrollTop`), scroll, 'nothing scrolls');
-    // The renamed item, the new one, and Fix items whose words changed with the lane's new majority reason. Nothing in
-    // the tiles that did not change.
-    const rendered = await js<string[]>('window.__overviewRenderedRows');
-    assert.ok(rendered.every((id) => id.startsWith('fix|') || id === `review|${focused?.split('|')[1]}`), `only changed items render: ${rendered.join(', ')}`);
-    await js('window.__countRenders = false');
-    await wait(`document.querySelector('${P} [data-overview-announcement]').textContent === 'Fix 3, was 2.'`);
-    assert.match(await briefing(), /and 2 have failed checks\.$/);
-
-    step = 'merge';
-    // Merge goes through the existing confirmation: nothing is written until it is confirmed.
-    await js(`document.querySelector('${row('merge', 'klang/engine', 301)}').focus()`);
+    step = 'nudge-failure';
+    // A refused nudge says why and leaves the reviewer to nudge again.
+    await js('window.fixtureOverview.failNext()');
     await key('a');
-    await wait("[...document.querySelectorAll('[role=dialog]')].some(d=>d.textContent.includes('Merge pull request') && d.textContent.includes('Merge method'))");
-    assert.deepEqual(await writes(), [], 'opening the confirmation writes nothing');
-    await both('merge-confirmation');
-    await js("(()=>{const d=[...document.querySelectorAll('[role=dialog]')].find(d=>d.textContent.includes('Merge pull request'));const b=[...d.querySelectorAll('button')].filter(b=>b.textContent==='Merge pull request').at(-1);b.click()})()");
-    await wait("window.fixtureOverview.writes.some(w=>w.kind==='merge')");
-    assert.deepEqual((await writes()).filter((w) => w.kind === 'merge'), [{ kind: 'merge', url: 'https://github.com/klang/engine/pull/301' }]);
-    await wait(`!document.querySelector('${row('merge', 'klang/engine', 301)}')`);
-    await wait(`[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('Merged #301 on GitHub.'))`);
-    await wait(`document.querySelector('${tile('merge')} .overview-tile-count').textContent === '3'`);
+    await wait(`!!document.querySelector('[data-overview-dialog="nudge"] [data-overview-confirm]')`);
+    await js(`document.querySelector('[data-overview-dialog="nudge"] [data-overview-confirm]').click()`);
+    await wait(`[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('Could not nudge lena') && t.textContent.includes('GitHub refused the request.'))`);
+    assert.equal(await js(`document.querySelector('${P} [data-overview-row-item="others|person:lena"] [data-quick-action]')?.textContent`), 'Nudge');
+    await dismissToasts();
 
-    step = 'rerun';
-    // Rerun failed goes through the existing rerun confirmation.
-    await js(`document.querySelector('${stackRow('fix', 'klang/engine', 331)}').closest('li').querySelector('[data-quick-action]').click()`);
-    await wait("[...document.querySelectorAll('[role=dialog]')].some(d=>d.textContent.includes('Re-run failed and cancelled checks') && d.textContent.includes('test (linux)'))");
-    await js("[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent==='Re-run workflows').click()");
-    await wait('window.fixtureOverview.reruns.length === 1');
-    assert.equal(await js('window.fixtureOverview.reruns[0].mode'), 'failed');
-    await js("[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent==='Done').click()");
-    await wait("!document.querySelector('[role=dialog]')");
+    step = 'nudge';
+    // A on a reviewer: the confirmation names the PRs; nothing is written until it is confirmed.
+    await js(`document.querySelector('${row('others|person:lena')}').focus()`);
+    const nudgesBefore = (await writes()).filter((w) => w.kind.startsWith('nudge')).length;
+    await key('a');
+    await wait(`!!document.querySelector('[data-overview-dialog="nudge"] [data-overview-confirm]')`);
+    assert.equal(await js(`document.querySelector('[data-overview-dialog="nudge"] h2')?.textContent`), 'Nudge lena?');
+    assert.match(await js<string>(`document.querySelector('[data-overview-dialog="nudge"]').textContent`), /request lena’s review again on PRs #(306, #341|341, #306)/);
+    assert.equal((await writes()).filter((w) => w.kind.startsWith('nudge')).length, nudgesBefore, 'opening the confirmation writes nothing');
+    await both('nudge-confirmation');
+    await js(`document.querySelector('[data-overview-dialog="nudge"] [data-overview-confirm]').click()`);
+    await wait(`!document.querySelector('[data-overview-dialog="nudge"]')`);
+    await wait(`document.querySelector('${P} [data-overview-row-item="others|person:lena"] .morning-done')?.textContent === 'Nudged'`);
+    assert.deepEqual((await writes()).filter((w) => w.kind === 'nudge:lena').map((w) => w.url).slice(-2).sort(), [url('acme/web', 306), url('klang/cli', 341)]);
+    await wait(`[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('Asked lena to review 2 PRs again'))`);
+    await dismissToasts();
+
+    step = 'close';
+    // Close PR: a confirmation that says it can be reopened, with an optional comment; the row leaves at once.
+    const decide305 = `decide|merge|${url('klang/engine', 305)}`;
+    await js(`document.querySelector('${row(decide305)}').focus()`);
+    await wait(`getComputedStyle(document.querySelector('${section('decide')} [data-overview-row-item="${decide305}"] .morning-actions')).opacity === '1'`);
+    await key('a');
+    await wait(`!!document.querySelector('[data-overview-dialog="close"] [data-overview-confirm]:not([disabled])')`);
+    assert.equal(await js(`document.querySelector('[data-overview-dialog="close"] h2').textContent`), 'Close #305?');
+    assert.match(await js<string>(`document.querySelector('[data-overview-dialog="close"]').textContent`), /You can reopen it on GitHub later/);
+    await typeComment('Superseded by the new resolver.');
+    await both('close-confirmation');
+    // GitHub refuses the first try: the row comes back, with the reason.
+    await js('window.fixtureOverview.failNext()');
+    await js(`document.querySelector('[data-overview-dialog="close"] [data-overview-confirm]').click()`);
+    await wait(`[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('Could not close #305') && t.textContent.includes('GitHub refused the request.'))`);
+    await wait(`!!document.querySelector('${row(decide305)}')`);
+    await dismissToasts();
+    await js(`document.querySelector('${section('decide')} [data-overview-row-item="${decide305}"] [data-quick-action]').click()`);
+    await wait(`!!document.querySelector('[data-overview-dialog="close"] [data-overview-confirm]:not([disabled])')`);
+    await typeComment('Superseded by the new resolver.');
+    await js(`document.querySelector('[data-overview-dialog="close"] [data-overview-confirm]').click()`);
+    await wait(`!document.querySelector('${row(decide305)}')`, 10);
+    await wait(`[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('Closed #305. You can reopen it on GitHub.'))`);
+    assert.deepEqual((await writes()).filter((w) => w.kind === 'close'), [
+      { kind: 'close', url: url('klang/engine', 305), comment: 'Superseded by the new resolver.' },
+      { kind: 'close', url: url('klang/engine', 305), comment: 'Superseded by the new resolver.' },
+    ]);
+    await dismissToasts();
+    await js('window.fixtureOverview.restore()');
+    await wait(`document.querySelectorAll('${section('move')} .morning-row').length === 6`);
 
     step = 'open-row';
-    // An item opens where the notification for its reason opens: a new tab, or the tab already showing the PR.
+    // A row opens where its notification would: the reply in Feedback.
     const tabs = await tabCount();
-    await js(`document.querySelector('${stackRow('fix', 'klang/engine', 331)}').click()`);
-    await wait(`${activeSection}.startsWith('Checks')`, 400);
-    assert.equal(await tabCount(), tabs + 1);
-    await firstTab();
-    await js(`document.querySelector('${stackRow('fix', 'klang/engine', 331)}').click()`);
-    await wait(`${activeSection}.startsWith('Checks')`, 400);
-    assert.equal(await tabCount(), tabs + 1, 'the tab that shows the PR is reused');
-    await firstTab();
-    // Enter opens the focused item: changes requested land in Feedback.
-    await js(`document.querySelector('${row('answer', 'acme/web', 311)}').focus()`);
-    await key('Enter');
+    await js(`document.querySelector('${row(`move|answer|${url('klang/engine', 312)}`)}').click()`);
     await wait(`${activeSection}.startsWith('Feedback')`, 400);
-    assert.equal(await tabCount(), tabs + 2);
+    assert.equal(await tabCount(), tabs + 1);
     await firstTab();
 
     step = 'menu';
-    // Mark as read, Snooze and copying live in the item menu; Shift+F10 opens it from the item.
+    // Mark as read, Snooze and copying live in the row menu; Shift+F10 opens it from the row.
     await menuAction(js, 'Actions for PR #312', 'Mark as read');
     await wait("window.fixtureOverview.writes.some(w=>w.kind==='mark-read' && w.url.endsWith('/312'))");
-    await js("Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (text) => { (window.__copied ??= []).push(text); } })");
-    await menuAction(js, 'Actions for PR #312', 'Copy link');
-    await wait('window.__copied?.length === 1');
-    assert.deepEqual(await js('window.__copied'), ['https://github.com/klang/engine/pull/312']);
-    await js(`document.querySelectorAll('.app-toast [aria-label="Dismiss notification"]').forEach(b=>b.click())`);
-    await js(`document.querySelector('${row('answer', 'klang/engine', 312)}').focus()`);
+    const m303 = row(`move|merge|${url('acme/web', 303)}`);
+    await js(`document.querySelector('${m303}').focus()`);
     await key('F10', 8);
     await wait("[...document.querySelectorAll('[role=menuitem]')].some(b=>b.textContent==='Snooze PR…')");
     await key('Escape');
     await wait("!document.querySelector('[role=menuitem]')");
-    // Z snoozes the focused item; focus moves to the next one in its tile.
-    await js(`document.querySelector('${row('merge', 'acme/web', 303)}').focus()`);
+    // Z snoozes the focused row.
+    await js(`document.querySelector('${m303}').focus()`);
     await key('z');
     await wait("!!document.querySelector('.snooze-picker .snooze-option')");
     await js("document.querySelector('.snooze-picker .snooze-option').click()");
-    await wait(`!document.querySelector('${row('merge', 'acme/web', 303)}')`);
-    await wait(`document.querySelector('${tile('merge')} .overview-tile-count').textContent === '2'`);
+    await wait(`!document.querySelector('${m303}')`);
 
     step = 'open-lane';
-    // A tile's "All N" opens the whole queue grouped by Action, scrolled to that group, with its heading focused.
-    let started = Date.now();
-    await js(`document.querySelector('${tile('review')} .overview-tile-all').click()`);
-    await wait(`getComputedStyle(document.querySelector('${P} .overview')).display === 'none' && document.activeElement?.closest('[data-queue-group]')?.dataset.queueGroup === 'action:review'`);
-    const toQueue = Date.now() - started;
-    assert.deepEqual(await js(`[...document.querySelectorAll('${P} .queue-group-label')].map(e=>e.textContent)`), ['Answer', 'Review', 'Merge', 'Fix', 'Waiting on others', 'Parked']);
-    assert.equal(await js(`document.querySelector('${P} [data-queue-group="action:review"] .queue-group-count').textContent`), '7');
+    // "You · All N" opens the queue grouped by Action at Fix; Group by Action stays as built.
+    await js(`document.querySelector('${P} [data-overview-row-item="others|you"] [data-quick-action]').click()`);
+    await wait(`getComputedStyle(document.querySelector('${P} .overview')).display === 'none' && document.activeElement?.closest('[data-queue-group]')?.dataset.queueGroup === 'action:fix'`);
     assert.equal(await js(`document.querySelector('${P} [data-queue-group-by]').dataset.queueGroupBy`), 'action');
-    assert.equal(await js(`document.querySelectorAll('${P} .queue-filter-chip').length`), 0, 'the whole queue, not a lane filter');
-    assert.ok(await js(`(()=>{const h=document.querySelector('${P} [data-queue-group="action:review"]').getBoundingClientRect();const l=document.querySelector('${P} .queue-list').getBoundingClientRect();return Math.abs(h.top-l.top)<4})()`), 'the group is at the top');
-    await capture('open-lane-review-light');
-    started = Date.now();
     await click(sidebar('Overview'));
     await wait(`getComputedStyle(document.querySelector('${P} .overview')).display !== 'none' && !!document.querySelector('${P} [data-overview-row]')`);
-    const toOverview = Date.now() - started;
-    console.log(`Home tab switch: queue ${toQueue} ms, Overview ${toOverview} ms`);
-    assert.ok(toQueue < 2000 && toOverview < 2000, `home tab switches stay quick (${toQueue} ms, ${toOverview} ms)`);
-    // Clicking the tile itself, on its count, opens it too; so does "Waiting on others" under the grid.
-    await js(`document.querySelector('${tile('fix')} .overview-tile-count').click()`);
-    await wait(`document.activeElement?.closest('[data-queue-group]')?.dataset.queueGroup === 'action:fix'`);
-    await click(sidebar('Overview'));
-    await js(`document.querySelector('${P} .overview-others-link[data-group="waiting"]').click()`);
-    await wait(`document.activeElement?.closest('[data-queue-group]')?.dataset.queueGroup === 'action:waiting'`);
-    // A lane link still opens the filtered queue.
-    await click(sidebar('Overview'));
-    await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:${JSON.stringify({ source: 'notification', target: { kind: 'queue', filters: { lane: 'answer' } } })}}))`);
-    await wait(`[...document.querySelectorAll('${P} .queue-filter-chip')].some(c=>c.textContent==='Overview: Answer') && document.querySelectorAll('${P} .queue-item').length === 2`);
-    assert.equal(await js("localStorage.getItem('gnosis-home-tab:v1')"), 'overview', 'following a link is not a choice of home tab');
 
-    step = 'new';
-    // Leaving the Overview saves the visit. A PR that appears meanwhile is new when you come back; the rest are not.
-    await click(sidebar('Review queue'));
-    assert.equal(await js("localStorage.getItem('gnosis-home-tab:v1')"), 'queue', 'the chosen home tab is remembered');
-    // A PR failing for two days, so it is among Fix's three oldest.
-    await js("window.fixtureOverview.addFailing(335, 'Sign release artifacts', 'klang/cli', 2 * 86400000)");
-    await click(sidebar('Overview'));
-    await wait(`!!document.querySelector('${row('fix', 'klang/cli', 335)}')?.closest('.overview-tile-item.is-new')`);
-    assert.equal(await js(`document.querySelectorAll('${P} .overview-tile-item.is-new').length`), 1, 'only the new PR is new');
-    assert.equal(await js(`document.querySelector('${P} .overview-tile-item.is-new .pr-unread-dot')?.getAttribute('aria-label')`), 'New since your last visit');
-    await both('new-marker');
+    step = 'live-update';
+    // Live updates change rows in place, focus stays put, and the count change is announced once.
+    await js(`document.querySelector('${row('you|person:maya')}').focus()`);
+    const focused = await focusedRow();
+    await js("window.fixtureOverview.rename(322, 'Add a dry-run flag to every release script'); window.fixtureOverview.addFailing()");
+    await wait(`(document.querySelector('${section('others')} [data-overview-row-item="others|you"] .morning-detail')?.textContent ?? '').startsWith('2 failing checks')`);
+    assert.equal(await focusedRow(), focused, 'focus stays on the row');
+    await wait(`document.querySelector('${P} [data-overview-announcement]').textContent.includes('Waiting on others')`);
 
-    step = 'long-names';
-    // A very long title truncates, with the full text on hover, and nothing scrolls sideways.
-    const longTitle = 'Rework the release pipeline so every artifact is signed, verified against the manifest, and uploaded once per platform with retries';
-    await js(`window.fixtureOverview.rename(321, ${JSON.stringify(longTitle)})`);
-    await wait(`document.querySelector('${row('review', 'klang/engine', 321)}')?.textContent === ${JSON.stringify(longTitle)}`);
-    assert.ok((await js<string>(`document.querySelector('${row('review', 'klang/engine', 321)}').title`)).startsWith(longTitle));
-    assert.equal(await js(`(()=>{const t=document.querySelector('${row('review', 'klang/engine', 321)}');return t.scrollWidth>t.clientWidth})()`), true, 'the title truncates');
-    assert.ok(await noSideways(), 'no sideways scrolling with long names');
+    step = 'real';
+    // The user's real shape: Answer 0, Review 2, Merge 16 (2 ready, 14 parked), Fix 18 and Waiting 5.
+    await js('window.fixtureOverview.real()');
+    await wait(`document.querySelectorAll('${section('move')} .morning-row').length === 4`);
+    assert.equal(await briefing(), '2 reviews are waiting on you. 2 PRs are ready to merge, and 15 have failed checks.');
+    await wait(`[...document.querySelectorAll('${section('move')} .morning-detail')].some(d=>d.textContent==='+42 lines since your review')`);
+    assert.deepEqual(await texts('move'), [
+      'Cache resolved module paths between builds | approved by lena · green | 1 min',
+      'Retry flaky uploads with jitter | approved by sam and 1 other · green | 1 min',
+      'Stream build logs to the dashboard | 25 lines · explanation ready | 3 min',
+      'Replace the legacy config parser | +42 lines since your review | 3 min',
+    ]);
+    assert.ok((await writes()).some((w) => w.kind === 'compare' && w.url === url('klang/engine', 324)), 'one compare for the re-review');
+    assert.deepEqual(await texts('others'), ['plucked | 1 PR · 10 d', 'lena | 2 PRs · 4 d', 'sam | 1 PR · 4 h', 'CI | 2 running', 'base #331 | 1 PR · 20 h', 'You | 15 failing checks, 4 conflicts']);
+    assert.ok(Number(await count('decide')) >= 14, 'idle, failing and never-approved PRs need a decision');
+    assert.equal(await js(`document.querySelector('${section('decide')} [data-overview-more]')?.textContent`), `Show all ${await count('decide')}`);
+    await js(`document.activeElement?.blur(); document.querySelector('${P} .overview-body').scrollTop = 0`);
+    await dismissToasts();
+    await both('real-1280');
+    await resize(1440, 1000);
+    await both('real-1440');
+    {
+      // The page fills the window: the sections reach into its lower part.
+      const fill = await js<number>(`(()=>{const b=document.querySelector('${P} .overview-body');const m=document.querySelector('${P} .morning');return (m.getBoundingClientRect().bottom - b.getBoundingClientRect().top) / b.clientHeight})()`);
+      assert.ok(fill > 0.7, `the sections fill the window (${fill.toFixed(2)})`);
+    }
     await resize(760);
-    assert.ok(await noSideways(), 'no sideways scrolling when narrow');
+    {
+      // One column when narrow, in reading order, with nothing scrolling sideways.
+      const b = await boxes();
+      assert.deepEqual(b.map(([name]) => name), ['move', 'you', 'others', 'decide']);
+      assert.ok(b.every(([, left]) => left === b[0][1]), `one column: ${JSON.stringify(b)}`);
+      assert.ok(b.every(([, , top], i) => i === 0 || top > b[i - 1][2]));
+      assert.ok(await noSideways(), 'no sideways scrolling at 760');
+    }
+    await both('real-760');
     await resize(1280);
 
     step = 'light-day';
     // A light day: one reply, two reviews, one merge.
-    await js("window.fixtureOverview.rename(321, 'Stream build logs to the dashboard'); window.fixtureOverview.only([311, 321, 323, 302])");
-    await wait(`document.querySelectorAll('${P} [data-overview-row]').length === 4`);
+    await js('document.activeElement?.blur(); window.fixtureOverview.restore(); window.fixtureOverview.only([311, 321, 323, 302])');
+    await wait(`document.querySelectorAll('${section('decide')} .morning-empty').length === 1 && document.querySelectorAll('${section('move')} .morning-row').length === 3`);
     assert.equal(await briefing(), 'lena is waiting on your reply, and 2 reviews are waiting on you. 1 PR is ready to merge.');
-    // An empty tile keeps its place: a 0 and one line.
-    assert.equal(await tileCounts(), 'answer 1 · review 2 · merge 1 · fix 0');
-    assert.equal(await js(`document.querySelector('${tile('fix')} .overview-tile-summary').textContent`), 'Nothing to fix');
-    assert.equal(await js(`document.querySelector('${tile('fix')} .overview-tile-all')`), null);
-    await js(`document.querySelectorAll('.app-toast [aria-label="Dismiss notification"]').forEach(b=>b.click())`);
+    assert.equal(await js(`document.querySelector('${section('decide')} .morning-empty')?.textContent`), 'Nothing to decide. None of your PRs has been stuck for over a week.');
+    await dismissToasts();
     await new Promise((r) => setTimeout(r, 400));
     await both('light-day-1280');
+    await resize(1440, 1000);
+    await both('light-day-1440');
     await resize(760);
     await both('light-day-760');
     await resize(1280);
 
-    step = 'all-clear';
-    await js('window.fixtureOverview.only([341])');
-    await wait(`document.querySelector('${P} [data-overview-briefing]')?.textContent.startsWith('Nothing needs you')`);
-    assert.equal(await briefing(), 'Nothing needs you right now. 1 of your PRs is waiting on others.');
-    assert.equal(await tileCounts(), 'answer 0 · review 0 · merge 0 · fix 0', 'the grid stays');
-    assert.deepEqual(await js(`[...document.querySelectorAll('${P} .overview-tile-summary')].map(e=>e.textContent)`), ['Nothing to answer', 'Nothing to review', 'Nothing to merge', 'Nothing to fix']);
-    // No work, no count: Waiting on others is not counted in the tab title.
-    await wait("!document.querySelector('.workspace-tab .workspace-tab-count')");
-    assert.equal(await js("document.querySelector('.workspace-tab-select').getAttribute('title').split('\\n')[0]"), 'Overview');
-    await both('all-clear-1280');
-    await resize(760);
-    await both('all-clear-760');
-    await resize(1280);
-
     step = 'status-arrives';
     // GitHub has not answered yet: no saved status, and status reads wait. The Overview asks for every lane candidate
-    // itself and says it is checking; lanes that need status fill as the answers arrive, and focus stays put.
-    // A fresh session: the snoozes and mutes made above are forgotten.
+    // itself and says it is checking; rows that need status arrive with the answers, and focus stays put.
     await js('sessionStorage.clear()');
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?overview&overview-status=held`);
     await wait(`!!document.querySelector('${P} [data-overview-checking]')`, 600);
-    const checkingIs = (minus = 0) => `document.querySelector('${P} [data-overview-checking]')?.textContent === 'Checking ' + (window.fixtureOverview.requested().length - ${minus}) + '…'`;
-    // Every lane candidate is requested: your own PRs and the review requests.
     const own = [301, 302, 303, 304, 305, 306, 307, 311, 312, 331, 332, 333, 341, 342];
     const expected = [...own, ...Array.from({ length: 7 }, (_, i) => 321 + i)].map((n) => `/pull/${n}`);
     await wait(`(()=>{const r=window.fixtureOverview.requested();return ${JSON.stringify(expected)}.every(n=>r.some(u=>u.endsWith(n)))})()`);
-    await wait(checkingIs());
+    await wait(`document.querySelector('${P} [data-overview-checking]')?.textContent === 'Checking ' + window.fixtureOverview.requested().length + '…'`);
     assert.equal(await js(`document.querySelector('${P} [data-overview-unchecked]')`), null, 'checking, not "not checked"');
-    // Review requests and replies need no status; your own PRs wait for it.
-    assert.equal(await tileCounts(), 'answer 1 · review 7 · merge 0 · fix 0');
-    {
-      const requested = new Set(await js<string[]>('window.fixtureOverview.requested()'));
-      const lanes = (await js<string[]>(`[...document.querySelectorAll('${P} [data-overview-row]')].map(b=>b.dataset.overviewRow.split('|').pop())`)).filter((url) => !url.startsWith('stack:'));
-      for (const url of lanes) assert.ok(requested.has(url), `${url} is requested`);
-    }
-    // The user's shape: many more of your PRs arrive before GitHub answers.
-    await js('window.fixtureOverview.heavy()');
-    // 21 + 28 PRs: the reads go out in 25-PR batches, one batch after another, so some are not sent yet.
+    // Review requests need no status; merges wait for it.
+    assert.equal(await js(`[...document.querySelectorAll('${section('move')} [data-quick-action]')].filter(b=>b.textContent==='Merge').length`), 0);
+    await js('window.fixtureOverview.real()');
     const checkingCount = `Number(document.querySelector('${P} [data-overview-checking]')?.textContent.match(/\\d+/)?.[0] ?? 0)`;
-    await wait(`${checkingCount} === 49`);
-    await js(`document.querySelector('${row('review', 'klang/engine', 321)}').focus()`);
-    assert.equal(await focusedRow(), 'review|https://github.com/klang/engine/pull/321');
-    await capture('status-checking-light');
-    // The first batch answers: the first PRs join their lanes, the rest are still checking.
-    await js('window.fixtureOverview.answerStatus(1)');
-    await wait(`${checkingCount} > 0 && ${checkingCount} < 49`);
-    await wait(`Number(document.querySelector('${tile('merge')} .overview-tile-count')?.textContent) > 0`);
-    assert.equal(await focusedRow(), 'review|https://github.com/klang/engine/pull/321', 'focus stays on the focused item');
-    // GitHub answers the rest: no checking, nothing unchecked, and Fix holds the failing PRs.
+    await wait(`${checkingCount} > 21`);
+    await js(`document.querySelector('${row('you|person:maya')}').focus()`);
+    await capture('real-checking-1280-light');
     await js('window.fixtureOverview.answerStatus()');
     await wait(`!document.querySelector('${P} [data-overview-checking]')`);
     assert.equal(await js(`document.querySelector('${P} [data-overview-unchecked]')`), null);
-    await wait(`Number(document.querySelector('${tile('fix')} .overview-tile-count')?.textContent) > 10`);
-    assert.equal(await focusedRow(), 'review|https://github.com/klang/engine/pull/321', 'focus stays on the focused item');
-    await capture('status-filled-light');
+    await wait(`document.querySelectorAll('${section('move')} .morning-row').length === 4`);
+    assert.equal(await focusedRow(), 'you|person:maya', 'focus stays while rows arrive');
+    await js('document.activeElement?.blur()');
+    await capture('real-filled-1280-light');
 
     step = 'stale-sync';
     // The last sync is two hours old: the Overview asks main for one, and says so while it runs.
     const before = (await js<boolean[]>('window.fixtureOverview.discoveries')).length;
     await js('window.fixtureOverview.setSync(2 * 3600000)');
     await wait(`window.fixtureOverview.discoveries.length > ${before}`);
-    assert.equal(await js(`window.fixtureOverview.discoveries.at(-1)`), false, 'a sync, not a forced refresh');
+    assert.equal(await js('window.fixtureOverview.discoveries.at(-1)'), false, 'a sync, not a forced refresh');
     await js("window.fixtureOverview.setSync(2 * 3600000, 'checking')");
     await wait(`document.querySelector('${P} [data-overview-syncing]')?.textContent === 'Updating…'`);
     await js('window.fixtureOverview.setSync(60000)');

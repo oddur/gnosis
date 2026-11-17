@@ -421,7 +421,9 @@ export function createReviewThreadService(now = Date.now) {
       const { owner, repo, number: pull_number } = parseUrl(req.prUrl);
       // IPC payloads are runtime inputs even when the preload types are narrow.
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (req.action !== 'reply' && req.action !== 'request-review') throw new Error('Unknown feedback action.');
+      if (req.action !== 'reply' && req.action !== 'request-review' && req.action !== 'nudge') throw new Error('Unknown feedback action.');
+      if (req.action !== 'reply' && (typeof req.reviewer !== 'string' || !/^[A-Za-z0-9][\w-]{0,38}$/.test(req.reviewer)))
+        throw new Error('Choose a GitHub user to request a review from.');
       // Refresh mutable permissions/review state before a write; never replay the write.
       const snapshot = await service.list(client, req.prUrl, true);
       const feedback = snapshot.feedback;
@@ -440,6 +442,16 @@ export function createReviewThreadService(now = Date.now) {
           issue_number: pull_number,
           body: feedbackReplyBody(source.url, body),
         });
+      } else if (req.action === 'nudge') {
+        if (!feedback.viewerCanUpdate || feedback.state !== 'OPEN')
+          throw new Error('Your account cannot request a review on this PR.');
+        const reviewer = req.reviewer.toLowerCase();
+        const known =
+          feedback.requestedReviewers.some((login) => login.toLowerCase() === reviewer) ||
+          feedback.reviews.some((review) => review.author?.login.toLowerCase() === reviewer);
+        if (!known) throw new Error(`${req.reviewer} is not a reviewer of this PR any more. Refresh the Overview.`);
+        // GitHub sends the reviewer a new request, also when one is pending.
+        await client.pulls.requestReviewers({ owner, repo, pull_number, reviewers: [req.reviewer] });
       } else {
         if (!feedback.viewerCanUpdate || feedback.state !== 'OPEN')
           throw new Error('Your account cannot request a review on this PR.');

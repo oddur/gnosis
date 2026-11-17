@@ -4999,54 +4999,65 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-freshness-group { display:flex; align-items:center; gap:8px; margin-top:1px; }
 .overview-unchecked { font-size:var(--type-caption); color:var(--muted-foreground); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .overview-unchecked::after { content:"·"; margin-left:8px; opacity:.6; }
-/* Two columns while each tile keeps about 340px; one column below, in reading order. Item titles start on the
-   count's left edge: the 12px pull-out of the list is its 4px inset and the 8px unread gutter. */
-.overview-tiles { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; max-width:1180px; padding:0 24px; }
-.overview-tile { display:flex; flex-direction:column; min-width:0; padding:14px 12px 10px 16px; border:1px solid var(--border); border-radius:var(--radius-xl); background:var(--card); }
-.overview-tile:not([data-empty]) { cursor:pointer; }
-.overview-tile-head { display:flex; align-items:center; gap:14px; min-height:44px; padding-right:4px; }
-.overview-tile-count { flex:none; min-width:1.25em; font-size:var(--type-overview-title); font-weight:650; line-height:1; letter-spacing:-.02em; font-variant-numeric:tabular-nums; color:var(--foreground); }
-.overview-tile[data-empty] .overview-tile-count { color:var(--muted-foreground); font-weight:500; }
-.overview-tile-titles { min-width:0; display:flex; flex-direction:column; gap:2px; }
-.overview-tile-titles h2 { font-size:var(--type-body); font-weight:650; line-height:1.35; color:var(--foreground); }
-.overview-tile-summary { font-size:var(--type-caption); line-height:1.4; color:var(--muted-foreground); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.overview-tile-items { display:flex; flex-direction:column; margin:10px -4px 0 -12px; }
-.overview-tile-item { position:relative; border-radius:5px; cursor:default; }
-.overview-tile-item:hover, .overview-tile-item:focus-within { background:var(--secondary); }
-.overview-tile-item-inner { display:flex; align-items:center; gap:0; min-height:32px; padding:0 8px 0 4px; }
-.overview-tile-item .overview-row-gutter { flex:none; width:8px; display:flex; justify-content:center; }
-.overview-tile-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; font-size:var(--type-body); font-weight:450; line-height:1.45; color:var(--foreground); user-select:none; }
-.overview-tile-title:hover { text-decoration:underline; text-decoration-color:color-mix(in srgb, var(--foreground) 35%, transparent); text-underline-offset:3px; }
-/* The ring goes around the whole item, so the revealed actions never cover it. */
-.overview-tile-title:focus-visible { outline:none; }
-.overview-tile-item:has(.overview-tile-title:focus-visible) { outline:2px solid var(--ring); outline-offset:-2px; }
-.overview-tile-item.is-new .overview-tile-title { font-weight:600; }
-.overview-tile-age { flex:none; min-width:3.5em; padding-left:8px; text-align:right; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
-/* Hover and focus reveal the quick action and the menu over the age, without moving the title. */
-.overview-tile-actions { position:absolute; inset-block:0; right:0; display:flex; align-items:center; gap:2px; padding:0 2px 0 28px; border-radius:0 5px 5px 0; background:linear-gradient(to right, transparent, var(--secondary) 24px); opacity:0; pointer-events:none; transition:opacity 120ms ease-out; }
-.overview-tile-item:hover .overview-tile-actions, .overview-tile-item:focus-within .overview-tile-actions { opacity:1; pointer-events:auto; }
-.overview-tile-actions .pr-actions { margin:0; }
-.overview-tile-actions .entry-menu-trigger { width:24px; height:24px; }
-.overview-tile-foot { display:flex; align-items:center; gap:12px; min-height:28px; margin-top:auto; padding-top:6px; }
-.overview-tile-detail { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-caption); color:var(--muted-foreground); }
-.overview-tile-all { flex:none; display:inline-flex; align-items:center; gap:2px; margin-left:auto; padding:2px 4px; border-radius:4px; font-size:var(--type-control); font-weight:500; color:var(--primary); font-variant-numeric:tabular-nums; }
+/* The morning page (#390): one lead section, two columns of people, and a quiet section of decisions. Sections are
+   headed lists, not cards: a hairline under each heading, rows that fill on hover, generous space between sections. */
+.overview-since { margin-top:4px; max-width:80ch; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.morning { display:flex; flex-direction:column; gap:28px; max-width:1180px; padding:4px 24px 0; }
+.morning-columns { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:28px 40px; align-items:start; }
+.morning-section { min-width:0; }
+.morning-section-head { display:flex; align-items:baseline; gap:8px; padding-bottom:6px; margin-bottom:4px; border-bottom:1px solid var(--border); }
+.morning-section-head h2 { font-size:var(--type-body); font-weight:650; line-height:1.4; color:var(--foreground); }
+.morning-section-count { font-size:var(--type-control); font-weight:600; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.morning-section-summary { margin-left:auto; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.morning-section.is-quiet .morning-section-head h2 { color:var(--muted-foreground); font-weight:600; }
+.morning-empty { padding:8px 0; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.morning-rows { display:flex; flex-direction:column; margin:0 -8px 0 -12px; }
+.morning-row { position:relative; border-radius:5px; }
+.morning-row:hover, .morning-row:focus-within { background:var(--secondary); }
+.morning-row-inner { display:flex; align-items:center; min-height:34px; padding:0 6px 0 4px; }
+.morning-row .overview-row-gutter { flex:none; width:8px; display:flex; justify-content:center; align-items:center; }
+.morning-row.is-nested .morning-row-inner { padding-left:26px; min-height:30px; }
+.morning-chevron { flex:none; margin-left:-3px; color:var(--muted-foreground); transition:transform 150ms ease-out; }
+.morning-row.is-expanded .morning-chevron { transform:rotate(90deg); }
+.morning-row:has(.morning-chevron) .overview-row-gutter { width:14px; margin-right:2px; }
+.morning-title { flex:1; min-width:0; display:flex; align-items:baseline; gap:10px; padding:6px 0 6px 4px; text-align:left; color:var(--foreground); user-select:none; }
+.morning-title-text { flex:0 1 auto; min-width:6ch; max-width:62%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-body); font-weight:450; line-height:1.45; }
+.morning-row.is-new .morning-title-text { font-weight:600; }
+.morning-detail { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-control); line-height:1.45; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.morning-row.is-nested .morning-title-text { max-width:none; font-size:var(--type-control); }
+.morning-title:hover .morning-title-text { text-decoration:underline; text-decoration-color:color-mix(in srgb, var(--foreground) 35%, transparent); text-underline-offset:3px; }
+.morning-title:focus-visible { outline:none; }
+/* The ring goes around the whole row, so its actions never cover it. */
+.morning-row:has(.morning-title:focus-visible) { outline:2px solid var(--ring); outline-offset:-2px; }
+.morning-meta { flex:none; min-width:3.5em; padding-left:10px; text-align:right; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.morning-actions { flex:none; display:flex; align-items:center; gap:4px; padding-left:10px; }
+.morning-actions .pr-actions { margin:0; }
+.morning-actions .entry-menu-trigger { width:24px; height:24px; opacity:0; transition:opacity 120ms ease-out; }
+.morning-row:hover .entry-menu-trigger, .morning-row:focus-within .entry-menu-trigger { opacity:1; }
+/* Decisions keep their two actions out of sight until the row is hovered or focused. */
+.morning-section[data-section=decide] .morning-actions { opacity:0; pointer-events:none; transition:opacity 120ms ease-out; }
+.morning-section[data-section=decide] .morning-row:hover .morning-actions, .morning-section[data-section=decide] .morning-row:focus-within .morning-actions { opacity:1; pointer-events:auto; }
+.morning-section[data-section=decide] .morning-title-text { color:var(--foreground); }
+.morning-done { font-size:var(--type-caption); color:var(--muted-foreground); padding:0 6px; }
+.morning-more { padding:6px 0 0 12px; }
+.overview-tile-all { flex:none; display:inline-flex; align-items:center; gap:2px; padding:2px 4px; border-radius:4px; font-size:var(--type-control); font-weight:500; color:var(--primary); font-variant-numeric:tabular-nums; }
 .overview-tile-all:hover { text-decoration:underline; text-underline-offset:3px; }
 .overview-tile-all:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
-.overview-others { display:flex; flex-wrap:wrap; align-items:center; gap:4px; max-width:1180px; padding:14px 24px 0 20px; font-size:var(--type-control); color:var(--muted-foreground); }
-.overview-others-separator { margin:0 4px; opacity:.6; }
-.overview-others-link { padding:2px 4px; border-radius:4px; color:var(--muted-foreground); }
-.overview-others-link:hover { color:var(--foreground); text-decoration:underline; text-underline-offset:3px; }
-.overview-others-link:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
-.overview-others-count { color:var(--foreground); font-weight:600; font-variant-numeric:tabular-nums; }
+.overview-close-comment { display:flex; flex-direction:column; gap:6px; font-size:var(--type-control); color:var(--muted-foreground); }
+.overview-close-comment textarea { width:100%; min-height:72px; resize:vertical; padding:8px 10px; border:1px solid var(--input); border-radius:var(--radius-md); background:transparent; color:var(--foreground); font-size:var(--type-control); line-height:1.5; }
+.overview-close-comment textarea:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
 .overview-state { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:28px 24px; font-size:var(--type-body); color:var(--muted-foreground); }
 .overview-state p { max-width:60ch; line-height:1.6; }
-@media (prefers-reduced-motion:reduce) { .overview-tile-actions { transition:none; } }
-@container overview (max-width:720px) {
-  .overview-tiles { grid-template-columns:minmax(0, 1fr); gap:12px; }
+@media (prefers-reduced-motion:reduce) { .morning-chevron, .morning-actions .entry-menu-trigger, .morning-section[data-section=decide] .morning-actions { transition:none; } }
+@container overview (max-width:760px) {
+  .morning-columns { grid-template-columns:minmax(0, 1fr); }
+  .morning-title-text { max-width:none; }
+  .morning-title { flex-direction:column; align-items:stretch; gap:0; }
+  .morning-detail { flex:none; }
+  .morning-row-inner { min-height:44px; }
 }
 @container overview (max-width:520px) {
-  .overview-tiles { padding:0 16px; }
-  .overview-others { padding-inline:12px 16px; }
+  .morning { padding-inline:16px; }
 }
 /* The narrow queue toolbar hides its description; the briefing is the Overview's content, so it stays. */
 @media (max-width:620px) { .queue-toolbar p.overview-briefing { display:block; } .overview-unchecked { display:none; } }

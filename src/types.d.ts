@@ -210,6 +210,10 @@ declare global {
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
       getStackMergePlan: (urls: string[]) => Promise<import('../lib/pr-actions').PrMergePlan>;
       performPrAction: (request: import('../lib/pr-actions').PrActionRequest) => Promise<import('../lib/pr-actions').PrActionResult>;
+      /** The Overview's "Since yesterday" events after `since` (#390). Local only. */
+      getOverviewSince?: (since: number) => Promise<import('../lib/since-log').SinceEvent[]>;
+      /** Lines changed since your review, one compare read per PR, cached (#390). */
+      getRereviewLines?: (targets: import('../lib/rereview-lines').RereviewTarget[]) => Promise<import('../lib/rereview-lines').RereviewLines[]>;
       submitReview: (req: SubmitReviewRequest) => Promise<{ reviewUrl: string; droppedCommentCount: number }>;
       checkPrFreshness: (prUrl: string, headSha: string | undefined) => Promise<FreshnessResult>;
       loadOnboarding: () => Promise<OnboardingState>;

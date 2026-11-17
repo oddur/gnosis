@@ -7,7 +7,7 @@ import type {
   PrActionState,
   PrMergePlan,
 } from '../lib/pr-actions';
-import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason } from '../lib/pr-actions';
+import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason, closeBlockedReason } from '../lib/pr-actions';
 
 const METHODS: MergeMethod[] = ['MERGE', 'SQUASH', 'REBASE'];
 const memberFields =
@@ -220,6 +220,7 @@ export function createPrActionsService(now = Date.now) {
         'update-rebase',
         'mark-ready',
         'convert-draft',
+        'close',
       ].includes(req.kind)
     )
       throw new Error('Unknown PR action.');
@@ -235,6 +236,8 @@ export function createPrActionsService(now = Date.now) {
         throw new Error('Use a commit title of at most 256 characters.');
       if (req.commitBody !== undefined && (typeof req.commitBody !== 'string' || req.commitBody.length > 65536))
         throw new Error('Use a commit message of at most 65,536 characters.');
+      if (req.comment !== undefined && (req.kind !== 'close' || typeof req.comment !== 'string' || req.comment.length > 65000))
+        throw new Error('Use a comment of at most 65,000 characters.');
       const state = await read(client, req.url, true);
       if (req.account !== state.account)
         throw new Error('The GitHub account changed. Reopen this action before continuing.');
@@ -340,6 +343,28 @@ export function createPrActionsService(now = Date.now) {
             'GitHub did not confirm that this PR merged. Check its status on GitHub before trying again.'
           );
         return { status: 'merged', message: 'Merged on GitHub.' };
+      }
+      if (req.kind === 'close') {
+        const reason = closeBlockedReason(state);
+        if (reason) throw new Error(reason);
+        const comment = req.comment?.trim();
+        if (comment) {
+          const target = prActionTarget(req.url);
+          await client.issues.createComment({ owner: target.owner, repo: target.repo, issue_number: target.pull_number, body: comment });
+        }
+        let closed: { closePullRequest: { pullRequest: { state: string } | null } | null };
+        try {
+          closed = await client.graphql<typeof closed>(
+            'mutation($input:ClosePullRequestInput!){closePullRequest(input:$input){pullRequest{state}}}',
+            { input: { pullRequestId: state.id } }
+          );
+        } catch (error) {
+          if (comment) throw new Error(`Your comment was posted, but GitHub did not close the PR: ${error instanceof Error ? error.message : String(error)}`);
+          throw error;
+        }
+        if (closed.closePullRequest?.pullRequest?.state !== 'CLOSED')
+          throw new Error('GitHub did not confirm that this PR closed. Check it on GitHub before trying again.');
+        return { status: 'completed', message: `Closed #${state.number}. You can reopen it on GitHub.` };
       }
       if (req.kind === 'mark-ready' || req.kind === 'convert-draft') {
         const reason = draftActionBlockedReason(state, req.kind);

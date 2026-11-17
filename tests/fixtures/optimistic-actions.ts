@@ -254,7 +254,7 @@ export function installOptimisticActionsFixture(mocks: Record<string, unknown>, 
     },
     feedbackAction: (req: FeedbackAction) => {
       const feedback = github.get(req.prUrl)?.feedback;
-      if (req.action === 'request-review')
+      if (req.action === 'request-review' || req.action === 'nudge')
         return write('request-review', req.prUrl, { action: 'request-review', reviewer: req.reviewer }, () => {
           feedback?.requestedReviewers.push(req.reviewer);
         });
