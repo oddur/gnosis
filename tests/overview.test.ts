@@ -18,6 +18,7 @@ import { DEFAULT_QUEUE_FILTERS, describeQueueFilters, matchesQueueFilters, norma
 import { formatDeepLink, parseDeepLink, targetFromLocation } from '../lib/deep-link';
 import { homeTabPreference, rememberHomeTab, restoredTool, HOME_TAB_KEY } from '../lib/home-tab';
 import type { HomeLocation } from '../lib/navigation-history';
+import { countWorkspaceListing, workspaceListingRequest, workspaceTabTitle } from '../lib/workspace-listings';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReviewHistoryEntry } from '../lib/types';
@@ -341,4 +342,24 @@ void test('the home tab: Overview by default, the last choice remembered, named 
   assert.equal(restoredTool({ ...home, filters: { ...DEFAULT_QUEUE_FILTERS, attention: 'requested' } }, 'overview'), null);
   assert.equal(restoredTool({ ...home, muted: true }, 'overview'), 'muted');
   assert.equal(homeTabPreference({ getItem: () => { throw new Error('no storage'); }, setItem: () => undefined }), 'overview');
+});
+
+void test('the Overview tab title counts only the four action lanes, and nothing when there is no work', () => {
+  const home: HomeLocation = { account: LOGIN, filters: DEFAULT_QUEUE_FILTERS, savedView: false, savedQuery: '', viewId: null, muted: false, overview: true, item: null, tab: 'summary', selected: null, scroll: 0 };
+  const queue = { items: [item([mine(1)])], warnings: [], remaining: 0 };
+  const tab = { id: 't', title: 'Overview', label: 'Queue', detail: '', section: 'queue', location: { page: 'home' as const, home } };
+  const request = workspaceListingRequest(tab);
+  assert.ok(request);
+  assert.deepEqual(countWorkspaceListing(request, queue, [], LOGIN, T0, undefined, 13), { count: 13, unread: false });
+  assert.equal(countWorkspaceListing(request, queue, [], LOGIN, T0, undefined, 0), undefined);
+  assert.equal(countWorkspaceListing(request, queue, [], LOGIN, T0), undefined, 'unknown until the lanes are built');
+  assert.equal(workspaceTabTitle(tab, countWorkspaceListing(request, queue, [], LOGIN, T0, undefined, 0)), 'Overview');
+  assert.equal(workspaceTabTitle(tab, countWorkspaceListing(request, queue, [], LOGIN, T0, undefined, 4)), 'Overview (4)');
+  // The queue tab keeps its own count.
+  const queueTab = { ...tab, location: { page: 'home' as const, home: { ...home, overview: false } } };
+  const queueRequest = workspaceListingRequest(queueTab);
+  assert.ok(queueRequest);
+  assert.equal(countWorkspaceListing(queueRequest, queue, [], LOGIN, T0, undefined, 4)?.count, 1);
+  // The actionable count leaves Waiting out.
+  assert.equal(model([item([mine(5, { requestedReviewers: ['lena'] })])]).actionable, 0);
 });

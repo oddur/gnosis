@@ -1,4 +1,5 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useSyncExternalStore } from 'react';
+import { overviewCount, overviewCountStore } from './overview-count';
 import { useReviewHistory, useWorkbenchQueue, useWorkbenchStatus } from './workbench-store';
 import {
   countWorkspaceListing,
@@ -25,6 +26,7 @@ export function useWorkspaceListings(tabs: WorkspaceTabEntry[], account?: string
     [mergeNeeded, queue.items, queue.starredItems]
   );
   const merge = useMergeStates(account ?? null, members, mergeNeeded);
+  const overviewVersion = useSyncExternalStore(overviewCountStore.subscribe, overviewCountStore.version);
   const previousCounts = useRef<Record<string, WorkspaceListingCount | undefined>>({});
   return useMemo(() => {
     const results: Record<string, WorkspaceListingCount | undefined> = {};
@@ -34,7 +36,7 @@ export function useWorkspaceListings(tabs: WorkspaceTabEntry[], account?: string
       if (!request) continue;
       const key = JSON.stringify(request);
       if (!cache.has(key))
-        cache.set(key, countWorkspaceListing(request, queue, history, account, undefined, merge));
+        cache.set(key, countWorkspaceListing(request, queue, history, account, undefined, merge, overviewCount(account)));
       results[id] = cache.get(key);
     }
     const previous = previousCounts.current;
@@ -48,5 +50,6 @@ export function useWorkspaceListings(tabs: WorkspaceTabEntry[], account?: string
       return previous;
     previousCounts.current = results;
     return results;
-  }, [requests, queue, history, account, enabled, loaded, merge]);
+    // overviewVersion: the Overview published a new count.
+  }, [requests, queue, history, account, enabled, loaded, merge, overviewVersion]);
 }

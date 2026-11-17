@@ -12,6 +12,7 @@ import { AlertCircle, ArrowRight, BookOpen, ChevronRight, CircleCheck, Clock3, G
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
+import { publishOverviewCount } from '../lib/overview-count';
 import {
   ACTION_LANES,
   OVERVIEW_COUNT_LABEL,
@@ -84,6 +85,11 @@ export function OverviewPage(props: OverviewPageProps) {
   const { queue, login, scope, authenticated, hasRepositories, loading, refreshing, visible, live, keyboard, teamRequests, excluded, error, onDismissError, setup, onRefresh, onShowLane, onRepositories, onConnect, onModel } = props;
   const model = useOverview({ items: queue.items, login: authenticated ? login : null, scope: authenticated ? scope : null, live, visible, ready: !loading, teamRequests, excluded });
   useEffect(() => { onModel?.(model); }, [model, onModel]);
+  // The tab title counts the four action lanes, as the strip does (lib/overview-count.ts).
+  const account = authenticated ? login : null;
+  useEffect(() => {
+    if (account && !loading) publishOverviewCount(account, model.actionable);
+  }, [account, loading, model.actionable]);
   const navigation = useWorkspaceNavigation();
   // The home screen passes new callbacks on every render. Rows read them through this ref, so a home screen render
   // never renders the rows again.

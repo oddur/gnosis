@@ -81,11 +81,16 @@ void app.whenReady().then(async () => {
     await wait(`!!document.querySelector('${P} .overview-row')`, 600);
     assert.equal(await js(`document.querySelector('${sidebar('Overview')}')?.getAttribute('aria-current')`), 'page');
     assert.equal(await js(`document.querySelector('${P} .overview h1')?.textContent`), 'Overview');
-    assert.equal(await js(`getComputedStyle(document.querySelector('${P} .queue-toolbar:not(.overview-toolbar)')).display`), 'none', 'the queue waits behind the Overview');
+    // Before the queue's first commit there is no toolbar yet; after it, the toolbar is hidden.
+    assert.equal(await js(`(()=>{const t=document.querySelector('${P} .queue-toolbar:not(.overview-toolbar)');return !t || t.getClientRects().length === 0})()`), true, 'the queue waits behind the Overview');
 
     step = 'counts';
     await wait(`[...document.querySelectorAll('${P} .overview-count')].map(b=>b.textContent).join(' · ') === 'Merge2 · Answer2 · Review7 · Fix2 · Waiting2'`);
     assert.equal(await counts(), 'Merge2 · Answer2 · Review7 · Fix2 · Waiting2');
+    // The tab title counts the four action lanes only: 2 + 2 + 7 + 2, without Waiting.
+    const actions = await js<number>(`['merge','answer','review','fix'].reduce((n,l)=>n+Number(document.querySelector('${P} .overview-count[data-lane='+l+'] .overview-count-value').textContent),0)`);
+    assert.equal(actions, 13);
+    await wait(`document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(${actions})'`);
     assert.ok(await js(`document.querySelector('${P} .overview-freshness, ${P} .queue-freshness time')?.textContent.startsWith('Checked')`), 'cached data says when it was checked');
     // Lane headings are landmarks, in a fixed order, and Waiting starts collapsed.
     const lanes = await js<string[]>(`[...document.querySelectorAll('${P} section.overview-lane[aria-labelledby]')].map(s=>document.getElementById(s.getAttribute('aria-labelledby')).textContent)`);
@@ -258,6 +263,9 @@ void app.whenReady().then(async () => {
     await wait(`!!document.querySelector('${P} .overview-clear')`);
     assert.equal(await js(`document.querySelector('${P} .overview-clear').textContent`), 'All clear. Nothing needs you right now.');
     assert.equal(await js(`document.querySelectorAll('${P} section.overview-lane').length`), 1, 'only Waiting remains');
+    // No work, no count: Waiting on others is not counted in the tab title.
+    await wait("!document.querySelector('.workspace-tab .workspace-tab-count')");
+    assert.equal(await js("document.querySelector('.workspace-tab-select').getAttribute('title').split('\\n')[0]"), 'Overview');
     await both('all-clear');
     win.setSize(760, 800);
     await new Promise((r) => setTimeout(r, 300));
