@@ -36,6 +36,7 @@ import { useSessionDraft, ReviewDraftBoundary } from '../lib/session-drafts';
 import type { ReviewSubject } from '../lib/workbench';
 import { timeAgo } from '../lib/utils';
 import { countRender } from '../lib/render-count';
+import { useKeptReplyDraft } from '../lib/notification-drafts';
 import { optimisticWrite } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
 
@@ -894,6 +895,12 @@ function FeedbackMessage({
 }) {
   const [draft, setDraft] = useSessionDraft(`feedback-reply:${feedbackKey(item)}`, '');
   const [replying, setReplying] = useSessionDraft(`feedback-replying:${feedbackKey(item)}`, false);
+  // A reply from a notification that GitHub refused comes back here as a draft.
+  useKeptReplyDraft(
+    `feedback:${feedbackKey(item)}`,
+    (text) => { setDraft((current) => (current.trim() ? current : text)); setReplying(true); },
+    (text) => { if (draft.trim() === text.trim()) { setDraft(''); setReplying(false); } }
+  );
   const [sending, setSending] = useState(false),
     [sent, setSent] = useState(false);
   const comment = item.comments[0];

@@ -13,6 +13,8 @@ export type NotificationEventType =
   | 'update-ready'
   /** A snoozed PR came back and no other event says why. */
   | 'snooze-ended'
+  /** New commits on someone else's PR since your review: a re-review is needed. */
+  | 'rereview'
   /** You were @mentioned in a comment or review. Produced by #385 part 2. */
   | 'mention'
   /** A reply to you: a new comment in a thread you are in, or someone else's comment on your PR. #385 part 2. */
@@ -20,6 +22,7 @@ export type NotificationEventType =
 export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
   'review-requested',
   'team-review-requested',
+  'rereview',
   'mention',
   'reply',
   'changes-requested',
@@ -34,6 +37,7 @@ export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
 export const DEFAULT_NOTIFICATION_EVENTS: Readonly<Record<NotificationEventType, boolean>> = {
   'review-requested': true,
   'team-review-requested': false,
+  rereview: true,
   mention: true,
   reply: true,
   'changes-requested': true,
@@ -48,6 +52,7 @@ export const DEFAULT_NOTIFICATION_EVENTS: Readonly<Record<NotificationEventType,
 export const PR_EVENT_TYPES: readonly NotificationEventType[] = [
   'review-requested',
   'team-review-requested',
+  'rereview',
   'mention',
   'reply',
   'changes-requested',
@@ -61,8 +66,10 @@ export const isPrEvent = (type: NotificationEventType) => PR_EVENT_TYPES.include
 export interface NotificationPreferences {
   inApp?: boolean;
   events?: Partial<Record<NotificationEventType, boolean>>;
-  /** Epoch milliseconds; "Pause for 1 hour". */
+  /** Epoch milliseconds: the end of a pause. */
   pausedUntil?: number;
+  /** "Allow replies from notifications". On unless saved as `false`. */
+  allowReplies?: boolean;
   /** True once the user answered the "Turn on" introduction. */
   introduced?: boolean;
   /** The level of repositories you do not watch and have not given a level. */
@@ -76,6 +83,7 @@ export interface NotificationSettings {
   events: Record<NotificationEventType, boolean>;
   pausedUntil: number;
   introduced: boolean;
+  allowReplies: boolean;
   otherRepositories: RepositoryNotificationLevel;
   /** Lower-case logins. */
   allowedBots: string[];
@@ -116,7 +124,7 @@ export function normalizeBotLogins(value: unknown): string[] {
  * merge. A snooze you set and an explanation you are waiting for are yours as well. Team review requests,
  * approvals on their own and events on other people's PRs are not.
  */
-const ON_ME: ReadonlySet<NotificationEventType> = new Set(['review-requested', 'mention', 'reply', 'snooze-ended', 'explanation-ready']);
+const ON_ME: ReadonlySet<NotificationEventType> = new Set(['review-requested', 'rereview', 'mention', 'reply', 'snooze-ended', 'explanation-ready']);
 const ON_ME_WHEN_MINE: ReadonlySet<NotificationEventType> = new Set(['changes-requested', 'checks-failed', 'ready-to-merge']);
 export function levelAllows(level: RepositoryNotificationLevel, event: { type: NotificationEventType; mine?: boolean }): boolean {
   if (level === 'all') return true;
@@ -152,6 +160,7 @@ export function notificationSettings(preferences: unknown): NotificationSettings
     events,
     pausedUntil: typeof raw.pausedUntil === 'number' && Number.isFinite(raw.pausedUntil) && raw.pausedUntil > 0 ? raw.pausedUntil : 0,
     introduced: raw.introduced === true,
+    allowReplies: raw.allowReplies !== false,
     otherRepositories: isRepositoryNotificationLevel(raw.otherRepositories) ? raw.otherRepositories : DEFAULT_OTHER_REPOSITORIES,
     allowedBots: normalizeBotLogins(raw.allowedBots),
     repositories: repositoryLevels(p.repositorySettings),
@@ -178,6 +187,37 @@ export function normalizeNotificationPreferences(preferences: unknown): SavedNot
     introduced: settings.introduced,
     otherRepositories: settings.otherRepositories,
     allowedBots: settings.allowedBots,
+    allowReplies: settings.allowReplies,
   };
 }
 export const isPaused = (settings: Pick<NotificationSettings, 'pausedUntil'>, now: number) => settings.pausedUntil > now;
+
+/** The pause choices in Settings › Notifications. Focus and Do Not Disturb cover quiet hours. */
+export type PauseChoice = 'hour' | 'morning' | 'monday';
+export const PAUSE_CHOICES: readonly PauseChoice[] = ['hour', 'morning', 'monday'];
+export const PAUSE_LABELS: Record<PauseChoice, string> = { hour: 'Pause for 1 hour', morning: 'Until tomorrow morning', monday: 'Until Monday' };
+/** A pause "until morning" ends at this local hour. */
+export const MORNING_HOUR = 8;
+/** Before this local hour, "tomorrow morning" still means the coming morning, not the one after it. */
+const NIGHT_ENDS_HOUR = 4;
+/**
+ * When a pause chosen at `now` ends, in local time. "Tomorrow morning" is the next 08:00 at least a night away;
+ * "Monday" is 08:00 on the next Monday, a week ahead once Monday's night is over.
+ */
+export function pauseUntil(choice: PauseChoice, now: number): number {
+  if (choice === 'hour') return now + PAUSE_DURATION;
+  const at = new Date(now);
+  const morning = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), MORNING_HOUR, 0, 0, 0);
+  if (choice === 'morning') {
+    const day = new Date(at.getFullYear(), at.getMonth(), at.getDate() + (at.getHours() < NIGHT_ENDS_HOUR ? 0 : 1));
+    return morning(day).getTime();
+  }
+  const ahead = at.getDay() === 1 && at.getHours() < NIGHT_ENDS_HOUR ? 0 : (8 - at.getDay()) % 7 || 7;
+  return morning(new Date(at.getFullYear(), at.getMonth(), at.getDate() + ahead)).getTime();
+}
+/** An IPC pause request: a choice, `true` for the hour (older renderers), or `false` to resume. */
+export function parsePauseRequest(value: unknown): PauseChoice | false | undefined {
+  if (value === false) return false;
+  if (value === true) return 'hour';
+  return PAUSE_CHOICES.includes(value as PauseChoice) ? (value as PauseChoice) : undefined;
+}

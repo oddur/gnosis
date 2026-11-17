@@ -44,7 +44,7 @@ void app.whenReady().then(async () => {
   const clickText = (selector: string, text: string) =>
     js(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(b=>b.textContent.trim()===${JSON.stringify(text)}).click()`);
   try {
-    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?notifications`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?notifications&threads`);
     await waitForWorkbenchQueue(win.webContents);
     win.focus();
 
@@ -144,6 +144,68 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Summary')");
     assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), tabs + 1);
 
+    // #385 part 2: a mention lands on its thread, in the tab that already shows the PR, and offers local actions.
+    const pr121 = { host: 'github.com', owner: 'klang', repo: 'engine', number: 121 };
+    const activeTab = "document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent";
+    const selectedThread = "document.querySelector('.workspace-panel[data-workspace-active=true] [data-feedback-id][aria-current=true]')?.getAttribute('data-feedback-id')";
+    await push({ type: 'show', delivery: delivery({
+      kind: 'mention', title: 'Mentioned · Route worker commands', body: "maya: 'Should cancellation release the queue slot?'",
+      subtitle: 'klang/engine #121', url: 'https://github.com/klang/engine/pull/121',
+      target: { kind: 'pr', pr: pr121, tab: 'feedback', threadId: 'thread-left' },
+      reply: { kind: 'thread', prUrl: 'https://github.com/klang/engine/pull/121', threadId: 'thread-left', to: 'maya' },
+      keys: ['comment|121|left'], types: ['mention'],
+    }) });
+    await wait("!!document.querySelector('.app-toast[data-kind=mention]')");
+    const mention = await js<{ title: string; icon: boolean; tone: string | null; actions: string[]; secondary: string[] }>(`(()=>{
+      const t=document.querySelector('.app-toast[data-kind=mention]');
+      return {title:t.querySelector('.app-toast-title').textContent,icon:!!t.querySelector('svg.app-toast-icon.lucide-at-sign'),tone:t.getAttribute('data-tone'),
+        actions:[...t.querySelectorAll('.app-toast-action')].map(b=>b.textContent.trim()),secondary:[...t.querySelectorAll('.app-toast-secondary')].map(b=>b.textContent.trim())};
+    })()`);
+    assert.equal(mention.title, 'Mentioned · Route worker commands', 'the event first, in words');
+    assert.equal(mention.icon, true, 'the mention icon');
+    assert.equal(mention.tone, 'attention');
+    assert.deepEqual(mention.actions, ['Open thread']);
+    assert.deepEqual(mention.secondary, ['Snooze 1 h', 'Mark read']);
+    await capture('mention-toast');
+    const before = await js<number>('document.querySelectorAll(".workspace-tab").length');
+    await clickText('.app-toast[data-kind=mention] .app-toast-action', 'Open thread');
+    await wait(`${activeTab}?.startsWith('Feedback')`);
+    await wait(`${selectedThread} === 'thread-left'`);
+    assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), before, 'the tab that shows the PR is reused');
+    await capture('mention-thread');
+
+    // A desktop click on a reply to a PR that is not open: a new tab, on that thread.
+    await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:${JSON.stringify({ kind: 'pr', pr: { ...pr121, number: 122 }, tab: 'feedback', threadId: 'thread-right' })}}))`);
+    await wait(`${activeTab}?.startsWith('Feedback') && ${selectedThread} === 'thread-right'`);
+    assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), before + 1);
+    await wait("window.fixtureNotificationContext === 'https://github.com/klang/engine/pull/122'");
+
+    // Mark read on the toast is local: main gets the PR URL only.
+    await push({ type: 'show', delivery: delivery({ kind: 'reply', title: 'Reply · Route worker commands', url: 'https://github.com/klang/engine/pull/120', keys: ['comment|120|x'], types: ['reply'] }) });
+    await wait("!!document.querySelector('.app-toast[data-kind=reply] .app-toast-secondary')");
+    await clickText('.app-toast[data-kind=reply] .app-toast-secondary', 'Mark read');
+    await wait("window.fixtureNotificationCalls.includes('quick:read:https://github.com/klang/engine/pull/120')");
+    await wait("!document.querySelector('.app-toast[data-kind=reply]')");
+
+    // A reply GitHub refused: an error toast with Retry, and the text kept as a draft on its thread.
+    const failure = { id: 'f1', kind: 'mention', reply: { kind: 'thread', prUrl: 'https://github.com/klang/engine/pull/121', threadId: 'thread-left', to: 'maya' }, text: 'Yes, in the finally block.', message: 'GitHub refused the reply.', target: { kind: 'pr', pr: pr121, tab: 'feedback', threadId: 'thread-left' } };
+    await push({ type: 'reply-failed', failure });
+    const failedToast = "[...document.querySelectorAll('.app-toast')].find(t=>t.textContent.includes('Could not send your reply to maya'))";
+    await wait(`!!${failedToast}`);
+    await clickText('.app-toast .app-toast-action', 'Retry');
+    await wait("window.fixtureNotificationCalls.includes('reply:thread-left:Yes, in the finally block.')");
+    await wait(`!!${failedToast}`, 300);
+    await js(`${failedToast}.querySelector('.app-toast-secondary').click()`);
+    await wait(`${selectedThread} === 'thread-left'`);
+    await wait("[...document.querySelectorAll('.workspace-panel[data-workspace-active=true] textarea')].some(t=>t.value==='Yes, in the finally block.')");
+    await capture('reply-draft');
+    await js('window.fixtureReplyOk = true');
+    await push({ type: 'reply-failed', failure });
+    await wait(`!!${failedToast}`);
+    await clickText('.app-toast .app-toast-action', 'Retry');
+    await wait("[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('Reply sent to maya'))");
+    await wait("![...document.querySelectorAll('.workspace-panel[data-workspace-active=true] textarea')].some(t=>t.value==='Yes, in the finally block.')");
+
     // Settings › Notifications.
     await wait("!!document.querySelector('.workspace-menu-trigger')");
     await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
@@ -161,12 +223,19 @@ void app.whenReady().then(async () => {
     await wait("window.electronAPI.loadPreferences().then(p=>p.notificationSettings?.events?.approved===false)");
     await clickText('.settings-panel button', 'Send test notification');
     await wait("[...document.querySelectorAll('.settings-panel [role=status]')].some(s=>s.textContent.includes('Sent a test notification'))");
+    assert.equal(switches['Allow replies from notifications'], 'true', 'Replies from notifications are on by default');
+    assert.equal(switches['New commits since your review'], 'true');
+    assert.deepEqual(await js("[...document.querySelectorAll('.notification-pause-choices button')].map(b=>b.textContent.trim())"), ['Pause for 1 hour', 'Until tomorrow morning', 'Until Monday']);
+    await clickText('.settings-panel button', 'Until Monday');
+    await wait("[...document.querySelectorAll('.settings-panel .settings-row')].some(r=>/Paused until Mon /.test(r.textContent))");
+    await clickText('.settings-panel button', 'Resume');
+    await wait("[...document.querySelectorAll('.settings-panel button')].some(b=>b.textContent.trim()==='Pause for 1 hour')");
     await clickText('.settings-panel button', 'Pause for 1 hour');
     await wait("[...document.querySelectorAll('.settings-panel .settings-row')].some(r=>r.textContent.includes('Paused until'))");
     await capture('settings-paused');
     await clickText('.settings-panel button', 'Resume');
     await wait("[...document.querySelectorAll('.settings-panel button')].some(b=>b.textContent.trim()==='Pause for 1 hour')");
-    assert.deepEqual(await js('window.fixtureNotificationCalls'), ['introduce:true', 'test', 'pause:true', 'pause:false']);
+    assert.deepEqual(await js("window.fixtureNotificationCalls.filter(c=>!/^(quick|reply):/.test(c))"), ['introduce:true', 'test', 'pause:monday', 'pause:false', 'pause:hour', 'pause:false']);
 
     // Repositories: the "Other repositories" default, and the exception set from the row menu.
     const setInput = (selector: string, value: string) =>

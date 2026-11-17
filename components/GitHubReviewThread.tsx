@@ -8,6 +8,7 @@ import { optimisticWrite, useWriteInFlight } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
 import { CommentMarkdown } from './CommentMarkdown';
+import { useKeptReplyDraft } from '../lib/notification-drafts';
 import { timeAgo } from '../lib/utils';
 import {
   isPendingComment,
@@ -53,6 +54,12 @@ export function GitHubReviewThread({
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
   const draftId = useSessionDraftId(`thread-reply:${thread.id}`);
   const replyingId = useSessionDraftId(`thread-replying:${thread.id}`);
+  // A reply from a notification that GitHub refused comes back here as a draft.
+  useKeptReplyDraft(
+    `thread:${thread.id}`,
+    (text) => { setDraft((current) => (current.trim() ? current : text)); setReplying(true); },
+    (text) => { if (draft.trim() === text.trim()) { setDraft(''); setReplying(false); } }
+  );
   // One reply per thread at a time: a second one waits until GitHub answers the first.
   const replySending = useWriteInFlight(`thread-reply:${thread.id}`);
   // Writes show at once: main applies them to the thread before GitHub answers, and rolls them back on failure.

@@ -241,7 +241,8 @@ void app.whenReady().then(async () => {
     if (BrowserWindow.getFocusedWindow()) window.hide();
     assert.equal(BrowserWindow.getFocusedWindow(), null, 'No Gnosis window has focus');
     notifications.local({ ...ready, key: 'explanation|smoke-1' });
-    assert.deepEqual(desktop.map((options) => options.title), ['Explanation ready'], 'Unfocused: a desktop notification');
+    // Titles lead with the event, then the subject (#385).
+    assert.deepEqual(desktop.map((options) => options.title), ['Explanation ready · Smoke PR'], 'Unfocused: a desktop notification');
     assert.deepEqual(toasts, []);
     window.show();
     window.focus();
@@ -251,7 +252,7 @@ void app.whenReady().then(async () => {
     notifications.local({ ...ready, key: 'explanation|smoke-2' });
     if (focused) {
       assert.equal(desktop.length, 1, 'Focused: no desktop notification');
-      assert.deepEqual(toasts, ['Explanation ready']);
+      assert.deepEqual(toasts, ['Explanation ready · Smoke PR']);
     }
     // A click before the renderer is ready waits for its handshake, then later targets arrive at once.
     deepLinks.open(prTarget('https://github.com/example/repository/pull/7', 'checks')!, 'notification');

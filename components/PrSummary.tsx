@@ -35,8 +35,10 @@ import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { PrFocus } from '../lib/deep-link';
 import { AlarmClock, ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
 import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
+import { backLine } from '../lib/snooze';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem, type ReviewSubject } from '../lib/workbench';
@@ -171,6 +173,16 @@ export interface PrReviewRequest {
   member: ReviewMember;
 }
 
+const handledLandings = new Set<number>();
+/** Where a deep link or notification lands inside the PR. A new `nonce` lands again. */
+export interface PrLanding {
+  nonce: number;
+  /** A Feedback item: a review thread, a review or a conversation comment. */
+  threadId?: string;
+  check?: string;
+  focus?: PrFocus;
+}
+
 export interface PrReadingPosition {
   memberUrl: string;
   scroll: Record<string, number>;
@@ -179,6 +191,7 @@ export interface PrReadingPosition {
 function PrSummaryContent({
   item,
   feedbackRequest,
+  landing,
   starredUrls,
   starBusy,
   starError,
@@ -217,6 +230,7 @@ function PrSummaryContent({
 }: {
   item: QueueItem;
   feedbackRequest?: FeedbackRequest;
+  landing?: PrLanding;
   starredUrls: ReadonlySet<string>;
   starBusy: boolean;
   muteBusy: boolean;
@@ -319,6 +333,40 @@ function PrSummaryContent({
   const [checkFocus, setCheckFocus] = useState<CheckFocus>();
   const checkTotals = checkCounts(item.subject.members.flatMap(m => checks.values[m.url]?.checks ?? []));
   const openChecks = (url: string, id?: string) => { setCheckFocus({ url, id, nonce: Date.now() }); onTabChange('checks'); };
+  // A PR back from snooze says why, as its queue row does, until it is read.
+  const snoozeBack = Object.values(item.back ?? {}).find((value) => !!value);
+  // A notification or link lands on its thread, check, first unviewed file or merge action, once per nonce.
+  const [unviewedLanding, setUnviewedLanding] = useState<number>();
+  const [mergeLanding, setMergeLanding] = useState<number>();
+  useEffect(() => {
+    // Once per landing, even when this PR is opened again later from the queue.
+    if (!landing || handledLandings.has(landing.nonce)) return;
+    handledLandings.add(landing.nonce);
+    if (landing.threadId) {
+      setFeedbackPr(undefined);
+      setFeedbackThread(landing.threadId);
+      setFeedbackIntent('address');
+      setFeedbackJump(n => n + 1);
+    }
+    if (landing.check) setCheckFocus({ url: item.subject.members[0].url, id: landing.check, nonce: landing.nonce });
+    if (landing.focus === 'unviewed-file') setUnviewedLanding(landing.nonce);
+    if (landing.focus === 'merge') setMergeLanding(landing.nonce);
+  }, [landing?.nonce]);
+  useEffect(() => {
+    if (mergeLanding === undefined || tab !== 'summary') return;
+    // The merge action renders once its state loads: wait for it, then bring it into view and focus it.
+    let tries = 0;
+    const timer = setInterval(() => {
+      const button = page.current?.querySelector<HTMLButtonElement>('[data-merge-action]');
+      if (button || ++tries > 50) {
+        clearInterval(timer);
+        setMergeLanding(undefined);
+        button?.scrollIntoView({ block: 'center' });
+        button?.focus({ preventScroll: true });
+      }
+    }, 100);
+    return () => clearInterval(timer);
+  }, [mergeLanding, tab]);
   const heading = useRef<HTMLHeadingElement>(null);
   const page = useRef<HTMLDivElement>(null);
   const restoring = useRef(false);
@@ -561,6 +609,7 @@ function PrSummaryContent({
             {actions}
             {stacked && <StackMergeActions subject={item.subject} signals={signals} checks={checks.values} onChanged={onRetryStatus} />}
           </div>
+          {snoozeBack && <p className="queue-snooze-back pr-snooze-back"><AlarmClock size={13} aria-hidden="true" />{backLine(snoozeBack)}</p>}
           {renaming && <form className="stack-name-form" onSubmit={event => {
             event.preventDefault(); if (!onRenameStack || nameBusy) return;
             setNameBusy(true); setNameError('');
@@ -632,6 +681,7 @@ function PrSummaryContent({
               account={account ?? ''}
               onOpenFeedback={openFeedback}
               initialFile={initialFile}
+              landOnUnviewed={unviewedLanding}
               onOpenBrief={openBrief}
             />
           )}

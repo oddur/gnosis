@@ -13,6 +13,7 @@
  * computer. Pure apart from the injected reads, so cadence, mapping and fallback are tested without timers.
  */
 import { WATCH_INTERVAL_MS, type SyncMode } from './notification-cadence';
+import { COMMENT_REASONS, COMMENT_READS_PER_POLL, type CommentCandidate } from './notification-comments';
 
 /** One thread of `GET /notifications`, as far as Gnosis reads it. */
 export interface NotificationThread {
@@ -95,6 +96,11 @@ export interface ChangePlan {
   cursor: number;
   /** Every thread of the page is newer than the cursor: some changes may be on the next page. */
   saturated: boolean;
+  /**
+   * Known PRs whose thread may hold a mention or a reply to the reader, newest first, at most
+   * `COMMENT_READS_PER_POLL`. Each costs one discussion read.
+   */
+  comments: CommentCandidate[];
 }
 
 /**
@@ -110,6 +116,7 @@ export function planNotifications(
   const threads = parseThreads(raw);
   const refresh = new Set<string>();
   const discover = new Set<string>();
+  const comments = new Map<string, CommentCandidate>();
   let newest = cursor ?? 0;
   for (const thread of threads) {
     const at = Date.parse(thread.updated_at);
@@ -118,12 +125,17 @@ export function planNotifications(
     if (cursor === undefined || at <= cursor) continue;
     const url = notificationPrUrl(thread);
     if (!url) continue;
-    if (known(url)) refresh.add(url);
-    else if (DISCOVERY_REASONS.has(thread.reason)) discover.add(url);
+    if (known(url)) {
+      refresh.add(url);
+      const previous = comments.get(url);
+      if (COMMENT_REASONS.has(thread.reason) && (!previous || at > previous.updatedAt))
+        comments.set(url, { url, reason: thread.reason, since: cursor, updatedAt: at });
+    } else if (DISCOVERY_REASONS.has(thread.reason)) discover.add(url);
   }
   const saturated =
     cursor !== undefined && threads.length >= CHANGE_PAGE && threads.every((thread) => Date.parse(thread.updated_at) > cursor);
-  return { refresh: [...refresh], discover: [...discover], cursor: newest, saturated };
+  const candidates = [...comments.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, COMMENT_READS_PER_POLL);
+  return { refresh: [...refresh], discover: [...discover], cursor: newest, saturated, comments: candidates };
 }
 
 /** GitHub search dates are whole seconds in UTC. */
@@ -217,6 +229,8 @@ export interface ChangeSignalsDeps {
   discover: (source: ChangeSource) => void;
   /** PRs the reader muted: never a reason for discovery. */
   ignored?: (url: string) => boolean;
+  /** Feed threads that may hold a mention or a reply: main reads their discussions once and notifies. */
+  comments?: (candidates: CommentCandidate[]) => void;
   log?: (line: string) => void;
 }
 interface SourceState {
@@ -327,6 +341,8 @@ export function createChangeSignals(deps: ChangeSignalsDeps) {
       `[change-signals] notifications: 200, ${plan.refresh.length} changed PR${plan.refresh.length === 1 ? '' : 's'}` +
         `${plan.discover.length ? `, ${plan.discover.length} new` : ''}${plan.saturated ? ', page full' : ''}, 1 core request in ${now() - started}ms; next in ${Math.round((feed.due - now()) / 1000)}s`
     );
+    const comments = plan.comments.filter((candidate) => !deps.ignored?.(candidate.url));
+    if (comments.length) deps.comments?.(comments);
     if (plan.refresh.length) await deps.refresh(plan.refresh, 'notifications');
   }
 

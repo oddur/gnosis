@@ -1593,6 +1593,39 @@ export function createWorkbenchService(deps: Deps) {
     mutedUrls,
     /** Saved reviews without muted PRs. Frozen and shared while the index and mutes are unchanged. */
     visibleHistory: () => visibleHistory().history,
+    /**
+     * Mentions and replies read from a PR's discussion (#385): each key is delivered once, and muted, snoozed and
+     * archived PRs stay quiet, as for every other event.
+     */
+    deliverEvents(events: readonly NotificationEvent[]) {
+      const login = deps.auth().login;
+      if (!login || !notificationStore || !deps.notifications) return;
+      const account = load().account;
+      if (account.toLowerCase() !== login.toLowerCase()) return;
+      const muted = mutedUrls();
+      const snoozed = snoozedUrls();
+      const archived = new Set(load().archivedRepos ?? []);
+      const count = deps.notifications.count?.() ?? false;
+      const fresh = events.filter(event => {
+        if (!event.url) return false;
+        const member = load().subjects.flatMap(subject => subject.members).find(m => m.url === event.url);
+        const suppress = muted.has(event.url) ? 'muted' as const
+          : snoozed.has(event.url) ? 'snoozed' as const
+            : member && (('repoArchived' in member && member.repoArchived === true) || archived.has(member.repo.toLowerCase())) ? 'archived' as const
+              : undefined;
+        return notificationStore.claim(account, event, { count, suppress });
+      });
+      if (fresh.length) deps.notifications.deliver(fresh);
+    },
+    /** "Mark read" from a notification: the PRs' current receipts, as the renderer would send them. */
+    markUrlsRead(urls: readonly string[]) {
+      const account = deps.auth().login;
+      if (!account || !deps.auth().token) throw new Error('Connect GitHub to save unread progress.');
+      const snapshot = reads.snapshot(account);
+      const receipts = urls.flatMap(url => (snapshot[url] ? [structuredClone(snapshot[url])] : []));
+      if (receipts.length) reads.mark(account, { account, read: true, receipts });
+      return receipts.map(receipt => receipt.url);
+    },
     markPrRead(request: MarkPrReadRequest) {
       const account = deps.auth().login;
       if (!account || !deps.auth().token) throw new Error('Connect GitHub to save unread progress.');

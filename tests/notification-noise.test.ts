@@ -28,7 +28,7 @@ import { LOGIN, T0, member, mine, signals } from './notification-fixtures';
 // ── Levels ──
 
 /** Events that "Only when it's on me" keeps on any PR, and those it keeps only on your own PRs. */
-const ON_ME_ANY: readonly NotificationEventType[] = ['review-requested', 'mention', 'reply', 'snooze-ended', 'explanation-ready'];
+const ON_ME_ANY: readonly NotificationEventType[] = ['review-requested', 'rereview', 'mention', 'reply', 'snooze-ended', 'explanation-ready'];
 const ON_ME_MINE: readonly NotificationEventType[] = ['changes-requested', 'checks-failed', 'ready-to-merge'];
 const prefs = (level: RepositoryNotificationLevel | undefined, events: Partial<Record<NotificationEventType, boolean>> = {}, extra: Record<string, unknown> = {}) =>
   notificationSettings({
@@ -223,7 +223,7 @@ function harness(options: { focused?: boolean; prefs?: NotificationPreferences; 
         const handle = { ...value, closed: false, emit: (event: string) => listeners.get(event)?.forEach((fn) => fn()) };
         desktop.push(handle);
         const notification: DesktopNotification = {
-          on: (event: string, fn: () => void) => listeners.set(event, [...(listeners.get(event) ?? []), fn]),
+          on: ((event: string, fn: () => void) => { listeners.set(event, [...(listeners.get(event) ?? []), fn]); }) as DesktopNotification['on'],
           show: () => {},
           close: () => {
             handle.closed = true;
@@ -304,7 +304,7 @@ test('a more urgent event closes the PR\'s notification and banners again', () =
   h.send(event('changes-requested', 1, { actor: 'lena' }));
   assert.equal(h.desktop.length, 3);
   assert.equal(h.desktop[1].closed, true);
-  assert.equal(h.desktop[2].title, 'lena requested changes');
+  assert.equal(h.desktop[2].title, 'Changes requested · PR 1');
 });
 
 test('an equal or less urgent event waits 15 minutes, then one summary replaces the notification', () => {
@@ -328,7 +328,7 @@ test('an equal or less urgent event waits 15 minutes, then one summary replaces 
   h.advance(QUIET_MS);
   h.send(event('approved'));
   assert.equal(h.desktop.length, 3);
-  assert.equal(h.desktop[2].title, 'Approved');
+  assert.equal(h.desktop[2].title, 'Approved · PR 1');
 });
 
 test('the quiet period is per PR', () => {
@@ -350,7 +350,7 @@ test('events that waited survive a more urgent banner and are summed up after it
   assert.equal(h.desktop.length, 2);
   h.advance(1);
   assert.equal(h.desktop.length, 3);
-  assert.equal(h.desktop[2].title, 'Approved');
+  assert.equal(h.desktop[2].title, 'Approved · PR 1');
 });
 
 test('in-app toasts follow the same rule', () => {
@@ -363,7 +363,7 @@ test('in-app toasts follow the same rule', () => {
   assert.equal(h.toasts[1].url, h.toasts[0].url);
   h.advance(QUIET_MS);
   assert.equal(h.toasts.length, 3);
-  assert.equal(h.toasts[2].title, 'Approved');
+  assert.equal(h.toasts[2].title, 'Approved · PR 1');
 });
 
 test('quietSummary shows one waiting notification as it is, and several as counts', () => {

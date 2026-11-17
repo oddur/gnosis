@@ -26,6 +26,7 @@ import { threadMocks } from './review-threads';
 import '../../src/globals.css';
 import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueItem, type WorkbenchQueue } from '../../lib/workbench';
 import { stampQueue } from '../../lib/workbench-revision';
+import { parsePauseRequest, pauseUntil } from '../../lib/notification-settings';
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
@@ -562,10 +563,20 @@ const mocks = {
     fixtureNotifications.fixtureNotificationCalls.push('test');
     return Promise.resolve(prefs.notifications ? 'desktop' as const : 'toast' as const);
   },
-  pauseNotifications: (paused: boolean) => {
+  pauseNotifications: (paused: import('../../lib/notification-settings').PauseChoice | boolean) => {
     fixtureNotifications.fixtureNotificationCalls.push(`pause:${paused}`);
-    prefs = { ...prefs, notificationSettings: { ...prefs.notificationSettings, pausedUntil: paused ? Date.now() + 3_600_000 : 0 } };
+    const choice = parsePauseRequest(paused);
+    prefs = { ...prefs, notificationSettings: { ...prefs.notificationSettings, pausedUntil: choice ? pauseUntil(choice, Date.now()) : 0 } };
     return Promise.resolve(prefs.notificationSettings ?? {});
+  },
+  notificationQuickAction: (action: string, delivery: { url?: string }) => {
+    fixtureNotifications.fixtureNotificationCalls.push(`quick:${action}:${delivery.url ?? ''}`);
+    return Promise.resolve();
+  },
+  // Replies fail until a test sets `fixtureReplyOk`, so the draft and Retry path is visible.
+  notificationReply: (reply: { kind: string; threadId?: string; sourceId?: string }, text: string) => {
+    fixtureNotifications.fixtureNotificationCalls.push(`reply:${reply.threadId ?? reply.sourceId ?? ''}:${text}`);
+    return (window as unknown as { fixtureReplyOk?: boolean }).fixtureReplyOk ? Promise.resolve() : Promise.reject(new Error('GitHub refused the reply.'));
   },
   notificationStatus: () => Promise.resolve({ supported: true, blocked: notificationScenario && new URLSearchParams(location.search).has('blocked') }),
   // Setup's notifications and menu bar steps, as on macOS 26: both System Settings panes exist.

@@ -354,6 +354,7 @@ export function PrActions({
         <Button
           size="sm"
           variant={mergeReady ? 'default' : 'outline'}
+          data-merge-action
           onClick={() => void open('merge')}
           disabled={busy || stackMembers.every((m) => m.merged || m.state === 'closed')}
         >
@@ -370,6 +371,7 @@ export function PrActions({
             )}
             <Button
               size="sm"
+              data-merge-action
               onClick={() => void open('merge')}
               disabled={loading || busy || !!blocked}
               title={blocked}

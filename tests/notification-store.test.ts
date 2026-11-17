@@ -88,3 +88,18 @@ test('counters hold no names and keep 30 days', () => {
   assert.equal(Object.keys(counters).length, 30);
   assert.doesNotMatch(JSON.stringify(counters), /github|o\/r/);
 });
+
+test('a mention or reply read from a discussion is claimed once, only for a PR with a basis, after the baseline', () => {
+  const saved = new Map<string, string>();
+  const store = createNotificationStore(createMemoryStorage(saved), () => T0);
+  const event = { type: 'mention' as const, key: 'comment|https://github.com/o/r/pull/1|C_1', title: 'PR 1', url: 'https://github.com/o/r/pull/1', at: T0 };
+  assert.equal(store.claim(LOGIN, event), false, 'before the baseline nothing is news');
+  observe(store, [{ member: member(1) }], { finishBaseline: true });
+  assert.equal(store.claim(LOGIN, { ...event, url: 'https://github.com/o/r/pull/9', key: 'other' }), false, 'a PR Gnosis has not seen');
+  assert.equal(store.claim(LOGIN, event), true);
+  assert.equal(store.claim(LOGIN, event), false, 'delivered once');
+  const restarted = createNotificationStore(createMemoryStorage(saved), () => T0 + 1000);
+  assert.equal(restarted.claim(LOGIN, event), false, 'the key survives a restart');
+  assert.equal(restarted.claim(LOGIN, { ...event, key: 'comment|https://github.com/o/r/pull/1|C_2' }, { suppress: 'muted' }), false, 'a muted PR stays quiet');
+  assert.equal(restarted.claim(LOGIN, { ...event, key: 'comment|https://github.com/o/r/pull/1|C_2' }), false, 'and never fires later');
+});

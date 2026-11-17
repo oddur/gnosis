@@ -55,11 +55,11 @@ test('paused, switched-off types, and the update banner', () => {
 
 test('several events on one PR coalesce, headline by rank, Approved folded into Ready', () => {
   const one = coalesce([event('checks-failed')], 'a');
-  assert.equal(one?.title, 'Checks failed');
+  assert.equal(one?.title, 'Checks failed · PR 1');
   assert.equal(one?.subtitle, 'o/r #1');
   const many = coalesce([event('approved', 1, { actor: 'maya' }), event('ready-to-merge'), event('changes-requested', 1, { actor: 'li' })], 'b');
-  assert.equal(many?.title, '2 updates on #1');
-  assert.match(many?.body ?? '', /^li requested changes · Ready to merge · PR 1$/);
+  assert.equal(many?.title, 'Changes requested · PR 1', 'titles start with the headline event in words');
+  assert.equal(many?.body, 'li requested changes · Ready to merge');
   assert.deepEqual(many?.types, ['changes-requested', 'ready-to-merge']);
 });
 
@@ -71,7 +71,7 @@ test('catch-up: one or two PRs as normal, three or more events become one summar
   assert.equal(summary.length, 1);
   assert.equal(summary[0].title, '5 updates while you were away');
   assert.equal(summary[0].body, '2 review requests · 2 failing checks · 1 approval');
-  assert.deepEqual(summary[0].target, { kind: 'queue', filters: { read: 'unread' } });
+  assert.deepEqual(summary[0].target, { kind: 'queue', filters: { prs: [1, 2, 3, 4, 5].map((n) => `https://github.com/o/r/pull/${n}`) } }, 'a summary opens the queue filtered to its PRs');
   assert.equal(countLine(['approved']), '1 approval');
 });
 

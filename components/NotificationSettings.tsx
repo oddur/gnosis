@@ -5,14 +5,24 @@ import {
   normalizeBotLogins,
   normalizeNotificationPreferences,
   isPaused,
+  PAUSE_CHOICES,
+  PAUSE_LABELS,
   REPOSITORY_NOTIFICATION_LABEL,
   REPOSITORY_NOTIFICATION_LEVELS,
+  type PauseChoice,
 } from '../lib/notification-settings';
 import { normalizeRepositorySettings, repositoryKey, type RepositorySettingsMap } from '../lib/repository-settings';
 import { SearchableSelect } from './SearchableSelect';
 import { RepositoryMark } from './RepositoryAppearance';
 import { notificationMissedHint, notificationSettingsLabel } from '../lib/desktop-setup';
 import { useSystemSettingsPanes } from './DesktopSetup';
+
+/** "09:00", or "Mon 08:00" when the pause ends on another day. */
+function pausedUntilText(until: number, now: number): string {
+  const end = new Date(until);
+  const time = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return end.toDateString() === new Date(now).toDateString() ? time : `${end.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+}
 
 /** Settings › Notifications. Every switch has a visible label; state is never shown by colour alone. */
 export function NotificationSettings({
@@ -99,7 +109,7 @@ export function NotificationSettings({
     setBotDraft('');
     onChange({ ...value, allowedBots: normalizeBotLogins([...value.allowedBots, login]) });
   };
-  const pause = async (next: boolean) => {
+  const pause = async (next: PauseChoice | false) => {
     try {
       const saved = await window.electronAPI.pauseNotifications(next);
       setNow(Date.now());
@@ -178,6 +188,7 @@ export function NotificationSettings({
         <h2 id="notifications-reviews-title">Reviews you owe</h2>
         {event('review-requested', 'Review requested from you')}
         {event('team-review-requested', 'Requested from your team', 'Teams such as CODEOWNERS can request you often.')}
+        {event('rereview', 'New commits since your review', 'On PRs you reviewed, once per new push.')}
         {event('mention', 'Mentions', 'Someone @mentioned you in a comment or review.')}
         {event('reply', 'Replies to you', 'A new comment in a thread you are in, or on your PR.')}
       </section>
@@ -187,6 +198,17 @@ export function NotificationSettings({
         {event('approved', 'Approved')}
         {event('checks-failed', 'Checks failed')}
         {event('ready-to-merge', 'Ready to merge')}
+      </section>
+      <section className="settings-group" aria-labelledby="notifications-conversation-title">
+        <h2 id="notifications-conversation-title">Replies</h2>
+        <Row
+          label="Allow replies from notifications"
+          description={platform === 'darwin'
+            ? 'Answer mentions, replies and change requests from the notification. The reply posts to that thread on GitHub.'
+            : 'On this system, the notification opens the thread so you can reply there.'}
+        >
+          <Toggle checked={value.allowReplies} ariaLabel="Allow replies from notifications" onChange={() => onChange({ ...value, allowReplies: !value.allowReplies })} />
+        </Row>
       </section>
       <section className="settings-group" aria-labelledby="notifications-snooze-title">
         <h2 id="notifications-snooze-title">Snoozed PRs</h2>
@@ -288,12 +310,22 @@ export function NotificationSettings({
       <section className="settings-group" aria-labelledby="notifications-quiet-title">
         <h2 id="notifications-quiet-title">Quiet</h2>
         <Row
-          label={paused ? `Paused until ${new Date(value.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Pause notifications'}
-          description="Gnosis also follows your system Focus and Do Not Disturb. Paused updates still mark PRs unread."
+          label={paused ? `Paused until ${pausedUntilText(value.pausedUntil, now)}` : 'Pause notifications'}
+          description="Gnosis also follows your system Focus and Do Not Disturb. Paused updates still mark PRs unread, and one summary follows the pause."
         >
-          <Button type="button" variant="outline" size="sm" onClick={() => void pause(!paused)}>
-            {paused ? 'Resume' : 'Pause for 1 hour'}
-          </Button>
+          {paused ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => void pause(false)}>
+              Resume
+            </Button>
+          ) : (
+            <div className="notification-pause-choices">
+              {PAUSE_CHOICES.map((choice) => (
+                <Button key={choice} type="button" variant="outline" size="sm" onClick={() => void pause(choice)}>
+                  {PAUSE_LABELS[choice]}
+                </Button>
+              ))}
+            </div>
+          )}
         </Row>
       </section>
     </>

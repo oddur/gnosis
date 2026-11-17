@@ -1,16 +1,11 @@
 import { useEffect } from 'react';
 import { toast } from '../components/ui/toast';
 import type { DeepLinkTarget } from './deep-link';
-import { UNREAD_TARGET, type NotificationDelivery, type NotificationKind } from './notification-routing';
+import { UNREAD_TARGET, type NotificationDelivery, type NotificationKind, type ReplyFailureNotice } from './notification-routing';
+import { notificationActionLabel, quickActions, QUICK_ACTION_LABELS } from './notification-actions';
+import { keepReplyDraft, replyDraftKey, replyDraftSent } from './notification-drafts';
 
-/** The one action a notification toast offers. It never writes to GitHub. */
-export function notificationActionLabel(delivery: Pick<NotificationDelivery, 'kind' | 'target'>): string {
-  if (delivery.kind === 'summary') return 'Show unread PRs';
-  if (delivery.target?.kind === 'review') return 'Open explanation';
-  if (delivery.target?.kind === 'pr' && delivery.target.tab === 'checks') return 'Open checks';
-  if (delivery.target?.kind === 'pr' && delivery.target.tab === 'feedback') return 'Open feedback';
-  return 'Open PR';
-}
+export { notificationActionLabel };
 const NORMAL_TIMEOUT = 10_000;
 /** More than this many notification toasts at once become one digest. */
 const VISIBLE_LIMIT = 3;
@@ -55,6 +50,20 @@ export function useNotificationToasts(open: (target: DeepLinkTarget) => Promise<
       const kind: NotificationKind = visible.size >= VISIBLE_LIMIT && delivery.kind !== 'test' ? 'summary' : delivery.kind;
       const target = kind === 'summary' && delivery.kind !== 'summary' ? UNREAD_TARGET : delivery.target;
       let handled = false;
+      // "Snooze 1 h" and "Mark read": local, through main, never a GitHub write.
+      const actions =
+        kind === delivery.kind && api.notificationQuickAction
+          ? quickActions(delivery).map((action) => ({
+              label: QUICK_ACTION_LABELS[action],
+              onClick: () => {
+                handled = true;
+                toast.close(id);
+                void api.notificationQuickAction?.(action, delivery).catch((error: unknown) =>
+                  toast.add({ type: 'error', title: `Could not ${action === 'snooze' ? 'snooze' : 'mark'} this PR`, description: error instanceof Error ? error.message : String(error) })
+                );
+              },
+            }))
+          : undefined;
       const id: string = toast.add({
         title: kind === 'summary' && delivery.kind !== 'summary' ? '1 more update' : delivery.title,
         description: kind === 'summary' && delivery.kind !== 'summary' ? undefined : delivery.body,
@@ -66,10 +75,11 @@ export function useNotificationToasts(open: (target: DeepLinkTarget) => Promise<
           introduce: delivery.introduce
             ? (accept) => {
                 void api.notificationIntroduce(accept).catch(() => {});
-                toast.update(id, { data: { kind, subtitle: delivery.subtitle, prUrl: delivery.url, onDismiss } });
+                toast.update(id, { data: { kind, subtitle: delivery.subtitle, prUrl: delivery.url, onDismiss, actions } });
               }
             : undefined,
           onDismiss,
+          actions,
         },
         actionProps: target
           ? { children: notificationActionLabel({ kind, target }), onClick: () => { handled = true; report(kind, 'clicked'); run(target, id); } }
@@ -91,8 +101,38 @@ export function useNotificationToasts(open: (target: DeepLinkTarget) => Promise<
       if (!focused) waiting.add(id);
       if (delivery.url) byUrl.set(delivery.url, new Set([...(byUrl.get(delivery.url) ?? []), id]));
     }
+    /** A reply from a notification that GitHub refused: the text waits as a draft on its thread, with Retry. */
+    function replyFailed(failure: ReplyFailureNotice) {
+      const key = replyDraftKey(failure.reply);
+      keepReplyDraft(key, failure.text);
+      const id: string = toast.add({
+        type: 'error',
+        title: `Could not send your reply to ${failure.reply.to}`,
+        description: `${failure.message} Your reply is kept as a draft on the thread.`,
+        timeout: 0,
+        data: {
+          actions: failure.target
+            ? [{ label: 'Open thread', onClick: () => { const target = failure.target; toast.close(id); if (target) void open(target).catch(() => {}); } }]
+            : undefined,
+        },
+        actionProps: {
+          children: 'Retry',
+          onClick: () => {
+            toast.close(id);
+            void (api.notificationReply?.(failure.reply, failure.text) ?? Promise.reject(new Error('Replies are not available.'))).then(
+              () => {
+                replyDraftSent(key, failure.text);
+                toast.add({ type: 'success', title: `Reply sent to ${failure.reply.to}` });
+              },
+              (error: unknown) => replyFailed({ ...failure, message: error instanceof Error ? error.message : String(error) })
+            );
+          },
+        },
+      });
+    }
     const stop = api.onNotification((message) => {
       if (message.type === 'show') show(message.delivery);
+      else if (message.type === 'reply-failed') replyFailed(message.failure);
       else for (const url of message.urls) for (const id of byUrl.get(url) ?? []) toast.close(id);
     });
     const focus = () => {

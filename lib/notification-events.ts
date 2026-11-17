@@ -25,14 +25,26 @@ export interface NotificationEvent {
   target?: DeepLinkTarget;
   /** The reason a snoozed PR came back: "new comment from lena". */
   detail?: string;
+  /** The comment a mention, reply or change request quotes, as plain text. */
+  quote?: string;
+  /** Where an inline reply from the notification goes. */
+  reply?: NotificationReplyTarget;
   /** The PR is the user's own. "On me" counts changes requested, checks failed and ready to merge only then. */
   mine?: boolean;
   /** Checks failed: the settled run's counts. `names` are added when the check list can be read. */
   checks?: { failed: number; total: number; headSha: string; names?: string[] };
 }
+/**
+ * The thread a reply from a notification answers: a review thread, or conversation feedback (a comment or a
+ * review), which GitHub answers with a new comment that links to it.
+ */
+export type NotificationReplyTarget =
+  | { kind: 'thread'; prUrl: string; threadId: string; to: string }
+  | { kind: 'feedback'; prUrl: string; sourceId: string; to: string };
 /** Row order of the design's event table: picks the headline when events coalesce. */
 export const EVENT_RANK: readonly NotificationEventType[] = [
   'review-requested',
+  'rereview',
   'team-review-requested',
   'mention',
   'changes-requested',
@@ -62,6 +74,8 @@ export interface PrBasis {
   signalsAt?: number;
   /** When checks were first seen failing for this head while others still ran. */
   checksFailingSince?: number;
+  /** A new head on a PR the reader reviewed, waiting for its signals to say whether a re-review is needed. */
+  rereviewHead?: string;
   observedAt: number;
 }
 export type ObservedMember = AttentionMember & { title: string; repo: string; number: number };
@@ -130,6 +144,12 @@ export function deriveEvents(
     if (now - checksFailingSince < CHECKS_SETTLE_CAP_MS) delete kinds['checks-failed'];
   }
 
+  // Re-review needed: commits pushed after the reader's last review of someone else's PR. Signals for a new head can
+  // come after the head itself, so the moved head waits in the basis until they do. Once per head.
+  const awaiting = prev && !sameHead ? member.headSha : sameHead ? prev.rereviewHead : undefined;
+  const reviewed = signals && eligible ? ownLatestReview(signals, login) : undefined;
+  const pushedByReader = !!signals?.activity?.head && [signals.activity.head.author, signals.activity.head.committer].some((name) => !!name && same(name, login));
+  const rereview = !!awaiting && !!reviewed?.headSha && reviewed.headSha !== member.headSha && !pushedByReader;
   const requestEntered = direct && !prev?.kinds['review-requested'];
   const teamEntered = team && !prev?.team;
   const latest = signals?.latestReview;
@@ -146,6 +166,7 @@ export function deriveEvents(
     ...(opinions ? { opinions } : {}),
     ...(signals ?{ signalsAt: signals.checkedAt } : prev?.signalsAt !== undefined && sameHead ? { signalsAt: prev.signalsAt } : {}),
     ...(checksFailingSince !== undefined && kinds['checks-failed'] === undefined ? { checksFailingSince } : {}),
+    ...(awaiting && !signals && open ? { rereviewHead: awaiting } : {}),
     observedAt: now,
   };
   const resolved: ResolvedTypes = !open
@@ -155,6 +176,8 @@ export function deriveEvents(
         ...(!team ? ['team-review-requested' as const] : []),
         ...(signals && signals.checks.state === 'success' ? ['checks-failed' as const] : []),
         ...(signals && !kinds['changes-requested'] ? ['changes-requested' as const] : []),
+        // The reader reviewed the new head.
+        ...(reviewed?.headSha === member.headSha ? ['rereview' as const] : []),
       ];
   if (silent) return { basis, events: [], resolved };
 
@@ -166,6 +189,7 @@ export function deriveEvents(
   };
   if (requestEntered) add('review-requested', `requested|${member.url}|${basis.requests}`, 'review-requested');
   if (teamEntered) add('team-review-requested', `team-requested|${member.url}|${basis.teamRequests}`, 'review-requested');
+  if (rereview && signals && now - signals.checkedAt <= STALE_SIGNALS_MS) add('rereview', `rereview|${member.url}|${member.headSha}`, 'updated-since-review');
 
   // A PR seen for the first time, or signals seen for the first time, only start a basis.
   const signalsKnown = prev?.review !== undefined;
@@ -197,6 +221,7 @@ export function deriveEvents(
 const NOTIFICATION_TYPES_RESOLVED_BY_CLOSE: readonly NotificationEventType[] = [
   'review-requested',
   'team-review-requested',
+  'rereview',
   'mention',
   'reply',
   'changes-requested',
@@ -207,8 +232,30 @@ const NOTIFICATION_TYPES_RESOLVED_BY_CLOSE: readonly NotificationEventType[] = [
   'explanation-ready',
 ];
 
+/** The reader's latest submitted review of this PR, with the commit it was made on, from the signals. */
+function ownLatestReview(signals: QueueSignals, login: string) {
+  const reviews = [...(signals.opinions ?? []), ...(signals.latestReview ? [signals.latestReview] : [])].filter(
+    (review) => same(review.author, login) && review.state !== 'PENDING' && review.state !== 'DISMISSED'
+  );
+  return reviews.sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt)).at(0);
+}
 /** "Ready to merge" absorbs "Approved" for the same PR. */
 export function subsume(events: readonly NotificationEvent[]): NotificationEvent[] {
   const ready = new Set(events.filter((event) => event.type === 'ready-to-merge').map((event) => event.url));
   return events.filter((event) => event.type !== 'approved' || !ready.has(event.url));
+}
+
+const REPLY_ID = /^[\w=-]{1,200}$/;
+const REPLY_PR = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*$/;
+const REPLY_LOGIN = /^[A-Za-z0-9][\w-]{0,99}(?:\[bot\])?$/;
+/** Re-validates a reply target that crossed IPC. Unknown fields are dropped. */
+export function parseReplyTarget(value: unknown): NotificationReplyTarget | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.prUrl !== 'string' || !REPLY_PR.test(raw.prUrl) || typeof raw.to !== 'string' || !REPLY_LOGIN.test(raw.to)) return undefined;
+  if (raw.kind === 'thread' && typeof raw.threadId === 'string' && REPLY_ID.test(raw.threadId))
+    return { kind: 'thread', prUrl: raw.prUrl, threadId: raw.threadId, to: raw.to };
+  if (raw.kind === 'feedback' && typeof raw.sourceId === 'string' && REPLY_ID.test(raw.sourceId))
+    return { kind: 'feedback', prUrl: raw.prUrl, sourceId: raw.sourceId, to: raw.to };
+  return undefined;
 }
