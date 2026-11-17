@@ -48,13 +48,13 @@ void test('routine background work never brings the capsule up on its own', () =
   ];
   assert.equal(activityCapsule(quiet, none).visible, false);
   // A GitHub update that fails is news.
-  assert.equal(activityCapsule([...quiet, task('github:x', { kind: 'github', status: 'failed' })], none).label, '1 failed');
+  assert.equal(activityCapsule([...quiet, task('github:x', { kind: 'github', status: 'failed' })], none).label, '1 task failed');
 });
 
 void test('unseen failures and results show until seen, then quiet', () => {
   const tasks = [task('f', { status: 'failed' }), task('r', { kind: 'exploration', status: 'completed' })];
   const unseen = activityCapsule(tasks, none);
-  assert.deepEqual([unseen.visible, unseen.tone, unseen.label], [true, 'failed', '1 failed · 1 ready']);
+  assert.deepEqual([unseen.visible, unseen.tone, unseen.label], [true, 'failed', '1 task failed · 1 ready']);
   const seen = new Set(seenKeys(tasks));
   assert.equal(activityCapsule(tasks, seen).visible, false);
   // A retried task that fails again is a new failure.

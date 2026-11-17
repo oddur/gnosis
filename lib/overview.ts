@@ -3,7 +3,9 @@
  * Node, Electron or React imports. Built from the same attention model as notifications and the menu bar
  * (`lib/attention.ts`), over the queue snapshot the window already holds, so it adds no GitHub reads.
  *
- * - **Merge:** your PRs that are ready to merge.
+ * - **Merge:** your PRs GitHub reports mergeable. Each row says why it can merge (`mergeNotes`). Ready rows are approved,
+ *   or need no review, and changed in the last three days; the rest are Parked, a collapsed group that the tab title
+ *   and the count strip leave out.
  * - **Answer:** replies to you, and changes requested on your PRs.
  * - **Review:** review requested of you, and updates since your review. Rows say when an explanation is ready.
  * - **Fix:** failed checks, conflicts and restacks on your PRs.
@@ -57,6 +59,26 @@ export const OVERVIEW_EMPTY: Readonly<Record<OverviewLane, string>> = {
 export const OVERVIEW_LANE_LIMIT = 5;
 /** An item waiting this long is flagged "Stale". */
 export const OVERVIEW_STALE_MS = 3 * 86_400_000;
+/** A mergeable PR untouched this long is Parked, not Ready. */
+export const OVERVIEW_IDLE_MS = 3 * 86_400_000;
+/** The Parked group under Merge, and why its rows are there. */
+export const OVERVIEW_PARKED_LABEL = 'Parked';
+export const OVERVIEW_PARKED_HINT = 'mergeable, not approved or idle over 3 days';
+/**
+ * The words on an item that has waited past `OVERVIEW_STALE_MS`, kept here so one pass can change them. Waiting on
+ * others asks whether to remind someone; in the other lanes the work is yours and has gone stale. Always a label,
+ * never colour alone.
+ */
+export const OVERVIEW_STALE_LABEL: Readonly<Record<OverviewLane, string>> = { merge: 'Stale', answer: 'Stale', review: 'Stale', fix: 'Stale', waiting: 'Nudge?' };
+export const OVERVIEW_STALE_TITLE: Readonly<Record<OverviewLane, string>> = {
+  merge: 'Waiting over 3 days',
+  answer: 'Waiting over 3 days',
+  review: 'Waiting over 3 days',
+  fix: 'Waiting over 3 days',
+  waiting: 'Waiting on others over 3 days. Consider a reminder.',
+};
+/** The stale label for a row, or undefined when it is not stale. */
+export const overviewStaleLabel = (row: Pick<OverviewRow, 'lane' | 'stale'>) => (row.stale ? OVERVIEW_STALE_LABEL[row.lane] : undefined);
 
 export type OverviewReason = Exclude<AttentionKind, 'explanation-ready'> | 'review-pending' | 'checks-pending';
 export const OVERVIEW_REASON_LABEL: Readonly<Record<OverviewReason, string>> = {
@@ -122,6 +144,28 @@ export interface OverviewEntry {
   since: number;
   source: OverviewSinceSource;
 }
+/**
+ * One fact about why a Merge row can merge, shown in the row's reason slot.
+ * - `approved`: "Approved by lena", "Approved by lena and 2 others", or "Approved" when GitHub gives no names.
+ * - `no-review`: "No review required": GitHub reports no review decision, so the branch rules ask for none.
+ * - `unapproved`: "Mergeable, not approved": GitHub allows the merge, but reports neither of the above.
+ * - `base-open`: "Base #12 not merged": a stack member whose base PR is still open.
+ * - `behind`: "Behind main by 3 commits": the base branch moved on; GitHub does not require an update.
+ */
+export type OverviewMergeNoteKind = 'approved' | 'no-review' | 'unapproved' | 'base-open' | 'behind';
+export interface OverviewMergeNote {
+  kind: OverviewMergeNoteKind;
+  text: string;
+}
+export interface OverviewMerge {
+  /** The PR the Merge button merges: in a stack, the lowest one in this lane (base first). */
+  member: ReviewMember;
+  /** The review fact first, then at most one more: the open base, else how far behind. */
+  notes: OverviewMergeNote[];
+  /** Approved or no review required, and changed within `OVERVIEW_IDLE_MS`. Otherwise Parked. */
+  ready: boolean;
+}
+
 export interface OverviewRow {
   /** `${lane}|${subjectId}`; stable while the entry stays in the lane, so live updates change the row in place. */
   id: string;
@@ -136,8 +180,13 @@ export interface OverviewRow {
   /** A stack's size; absent for a PR. */
   stackSize?: number;
   reasons: OverviewReason[];
-  /** Who the row is about: the author to review, or the reviewer you answer or wait on. */
-  person: string;
+  /**
+   * Who the row is about: the author to review, or the reviewer you answer or wait on. Never you: absent when you
+   * are the only candidate. Absent on Merge rows, whose notes name the approver.
+   */
+  person?: string;
+  /** Merge rows: why the PR can merge, and whether it is Ready or Parked. */
+  merge?: OverviewMerge;
   since: number;
   source: OverviewSinceSource;
   /** "2 d": how long it has waited, at the model's time. */
@@ -157,11 +206,17 @@ export interface OverviewRow {
 }
 export interface OverviewLaneState {
   lane: OverviewLane;
+  /** On Merge, only the Ready rows. */
   rows: OverviewRow[];
+  /** Merge only: mergeable rows that are not approved, or idle over three days. Not counted as work. */
+  parked: OverviewRow[];
 }
 export interface OverviewModel {
   lanes: OverviewLaneState[];
+  /** Rows per lane. Merge counts only its Ready rows. */
   counts: Readonly<Record<OverviewLane, number>>;
+  /** Parked Merge rows. */
+  parked: number;
   /** Rows in the four action lanes. */
   actionable: number;
   /** Rows marked new. */
@@ -280,9 +335,11 @@ export function reasonSince(
   return { at: updated, source: 'updated' };
 }
 
-/** Who a row is about, per lane. */
-function personFor(lane: OverviewLane, entry: OverviewEntry, fresh: QueueSignals | undefined, login: string): string {
+/** Who a row is about, per lane. Never the viewer: undefined when nobody else fits. Merge notes name the approver. */
+function personFor(lane: OverviewLane, entry: OverviewEntry, fresh: QueueSignals | undefined, login: string): string | undefined {
   const { member } = entry;
+  const other = (value: string | undefined) => (value && !same(value, login) ? value : undefined);
+  if (lane === 'merge') return undefined;
   if (lane === 'answer') {
     if (entry.reasons[0] === 'changes-requested') {
       const request = fresh ? changeRequests(fresh, login)?.[0] : undefined;
@@ -291,12 +348,53 @@ function personFor(lane: OverviewLane, entry: OverviewEntry, fresh: QueueSignals
     const reply = [...(fresh?.activity?.recent ?? [])].reverse().find((item) => item.kind === 'comment' && !same(item.author, login) && !item.automated);
     if (reply) return reply.author;
   }
-  if (lane === 'merge') {
-    const approval = [...(fresh?.opinions ?? [])].filter((review) => review.state === 'APPROVED').sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)).at(0);
-    if (approval) return approval.author;
-  }
-  if (lane === 'waiting') return member.requestedReviewers.at(0) ?? member.requestedTeams.at(0) ?? member.author;
-  return member.author;
+  if (lane === 'waiting') return other(member.requestedReviewers.find((reviewer) => !same(reviewer, login))) ?? other(member.requestedTeams.at(0)) ?? other(member.author);
+  return other(member.author);
+}
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * Why a Merge row can merge, from the status snapshot and the stack: the review fact, then the open base or how far
+ * behind. See `OverviewMergeNoteKind`. Says only what GitHub reported.
+ */
+export function mergeNotes(item: QueueItem, member: ReviewMember, fresh: QueueSignals | undefined, login: string): OverviewMergeNote[] {
+  const notes: OverviewMergeNote[] = [];
+  const approvers = [
+    ...new Set(
+      [...(fresh?.opinions ?? [])]
+        .filter((review) => review.state === 'APPROVED' && !same(review.author, login))
+        .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
+        .map((review) => review.author)
+    ),
+  ];
+  // Snapshots saved before opinions were read know only the newest review.
+  const latest = fresh?.latestReview;
+  if (!fresh?.opinions && latest?.state === 'APPROVED' && !same(latest.author, login)) approvers.push(latest.author);
+  const decision = fresh?.readiness?.reviewDecision;
+  if (approvers.length)
+    notes.push({ kind: 'approved', text: approvers.length === 1 ? `Approved by ${approvers[0]}` : `Approved by ${approvers[0]} and ${plural(approvers.length - 1, 'other', 'others')}` });
+  else if (decision === 'APPROVED') notes.push({ kind: 'approved', text: 'Approved' });
+  // GitHub reports no review decision when the branch rules require no review.
+  else if (fresh?.readiness && decision === null) notes.push({ kind: 'no-review', text: 'No review required' });
+  else notes.push({ kind: 'unapproved', text: 'Mergeable, not approved' });
+  const subject = item.subject;
+  const base = subject.edges
+    .filter((edge) => edge.child === member.url)
+    .map((edge) => subject.members.find((candidate) => candidate.url === edge.parent))
+    .find((parent) => parent && isOpen(parent));
+  const behind = fresh?.readiness?.behindBy ?? 0;
+  if (base) notes.push({ kind: 'base-open', text: `Base #${base.number} not merged` });
+  else if (behind > 0) notes.push({ kind: 'behind', text: `Behind ${fresh?.readiness?.baseBranch || member.baseBranch} by ${plural(behind, 'commit', 'commits')}` });
+  return notes;
+}
+
+/** Ready, or Parked: approved or no review required, and changed (pushed, reviewed, commented) within `OVERVIEW_IDLE_MS`. */
+export function mergeReady(notes: readonly OverviewMergeNote[], member: ReviewMember, fresh: QueueSignals | undefined, now: number): boolean {
+  if (!notes.some((note) => note.kind === 'approved' || note.kind === 'no-review')) return false;
+  const approvals = (fresh?.opinions ?? []).filter((review) => review.state === 'APPROVED').map((review) => time(review.submittedAt) ?? 0);
+  const touched = Math.max(time(member.updatedAt) ?? 0, ...approvals);
+  return now - touched < OVERVIEW_IDLE_MS;
 }
 
 const sum = (values: (number | undefined)[]) => (values.some((value) => value !== undefined) ? values.reduce<number>((total, value) => total + (value ?? 0), 0) : undefined);
@@ -308,7 +406,6 @@ export function overviewModel(input: OverviewInput): OverviewModel {
   const urls = new Map<OverviewLane, Set<string>>(OVERVIEW_LANES.map((lane) => [lane, new Set()]));
   const unchecked = new Set<string>();
   const previous = input.previous ? new Set(input.previous.keys) : undefined;
-  let fresh = 0;
   for (const item of input.items) {
     const subject = item.subject;
     const mergedUrls = new Set(subject.members.filter((member) => member.merged).map((member) => member.url));
@@ -341,7 +438,11 @@ export function overviewModel(input: OverviewInput): OverviewModel {
       const key = `${id}|${entries.map((entry) => `${entry.member.url}@${entry.member.headSha}`).join(',')}|${reasons.join(',')}`;
       const changedAt = Math.max(first.entry.since, ...entries.map((entry) => time(entry.member.updatedAt) ?? 0));
       const isNew = !!previous && !!input.previous && (!previous.has(key) || changedAt > input.previous.at);
-      if (isNew && lane !== 'waiting') fresh++;
+      // Base first: in a stack, the lowest PR in the lane is the one to merge.
+      const merging = lane === 'merge' ? (subject.members.map((member) => list.find(({ entry }) => entry.member.url === member.url)).find(Boolean) ?? first) : undefined;
+      const notes = merging ? mergeNotes(item, merging.entry.member, merging.fresh, login) : undefined;
+      const merge = merging && notes ? { member: merging.entry.member, notes, ready: mergeReady(notes, merging.entry.member, merging.fresh, now) } : undefined;
+      const person = personFor(lane, first.entry, first.fresh, login);
       const saved = lane === 'review' ? subject.members.map((member) => explanationFor(item, member.url)).find(Boolean) : undefined;
       const row: Omit<OverviewRow, 'signature'> = {
         id,
@@ -353,7 +454,8 @@ export function overviewModel(input: OverviewInput): OverviewModel {
         entries,
         ...(stack ? { stackSize: subject.members.length } : {}),
         reasons,
-        person: personFor(lane, first.entry, first.fresh, login),
+        ...(person ? { person } : {}),
+        ...(merge ? { merge } : {}),
         since: first.entry.since,
         source: first.entry.source,
         waiting: waitingLabel(first.entry.since, now),
@@ -370,26 +472,29 @@ export function overviewModel(input: OverviewInput): OverviewModel {
         key,
       };
       const signature = JSON.stringify([
-        row.key, row.title, row.person, row.since, row.waiting, row.stale, row.isNew, row.additions, row.deletions, row.files, row.explanation?.reviewId,
+        row.key, row.title, row.person, merge?.notes, merge?.ready, merge?.member.url, row.since, row.waiting, row.stale, row.isNew, row.additions, row.deletions, row.files, row.explanation?.reviewId,
         row.stackSize, entries.map((entry) => [entry.member.title, entry.member.isDraft, entry.member.state, entry.member.number, entry.member.repo]),
       ]);
       lanes.get(lane)?.push({ ...row, signature });
       for (const entry of entries) urls.get(lane)?.add(entry.member.url);
     }
   }
-  const states = OVERVIEW_LANES.map((lane): OverviewLaneState => ({
-    lane,
-    rows: (lanes.get(lane) ?? []).sort((a, b) => a.since - b.since || a.title.localeCompare(b.title)),
-  }));
+  const states = OVERVIEW_LANES.map((lane): OverviewLaneState => {
+    const all = (lanes.get(lane) ?? []).sort((a, b) => a.since - b.since || a.title.localeCompare(b.title));
+    return { lane, rows: all.filter((row) => !row.merge || row.merge.ready), parked: all.filter((row) => !!row.merge && !row.merge.ready) };
+  });
   const counts = Object.fromEntries(states.map((state) => [state.lane, state.rows.length])) as Record<OverviewLane, number>;
+  // New rows in the lanes that are work: not Waiting on others, and not Parked.
+  const fresh = states.reduce((total, state) => total + (state.lane === 'waiting' ? 0 : state.rows.filter((row) => row.isNew).length), 0);
   return {
     lanes: states,
     counts,
+    parked: states.reduce((total, state) => total + state.parked.length, 0),
     actionable: ACTION_LANES.reduce((total, lane) => total + counts[lane], 0),
     fresh,
     unchecked: unchecked.size,
     urls: Object.fromEntries(OVERVIEW_LANES.map((lane) => [lane, [...(urls.get(lane) ?? [])]])) as Record<OverviewLane, string[]>,
-    keys: states.flatMap((state) => state.rows.map((row) => row.key)),
+    keys: states.flatMap((state) => [...state.rows, ...state.parked].map((row) => row.key)),
   };
 }
 

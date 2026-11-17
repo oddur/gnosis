@@ -5011,6 +5011,14 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-lane-total:hover { background:color-mix(in srgb, var(--foreground) 7%, transparent); color:var(--foreground); }
 .overview-lane-total:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
 .overview-empty { color:var(--muted-foreground); font-size:var(--type-caption); }
+.overview-lane-parked { font-weight:400; }
+/* Parked merges: a collapsed group under the Ready rows, with the Waiting toggle, aligned with "Show all". */
+.overview-parked-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 8px; min-height:34px; padding:8px 20px 8px 44px; border-bottom:1px solid var(--border); font-size:var(--type-control); font-weight:500; color:var(--foreground); line-height:1.4; }
+.overview-parked-heading .overview-lane-toggle { align-self:center; }
+.overview-parked-heading .overview-lane-toggle:focus-visible { outline:2px solid var(--ring); outline-offset:3px; border-radius:2px; }
+.overview-parked-hint { font-size:var(--type-caption); font-weight:400; color:var(--muted-foreground); }
+.overview-merge-note { white-space:nowrap; font-weight:500; }
+.overview-merge-note[data-tone=warning] { color:var(--foreground); }
 .overview-rows { display:block; }
 .overview-row { border-bottom:1px solid var(--border); }
 .overview-row:hover, .overview-row:focus-within { background:var(--secondary); }
@@ -5057,4 +5065,5 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
   .overview-row-action { margin-left:auto; }
   .overview-lane-heading { padding-left:20px; }
   .overview-show-all { margin-left:20px; }
+  .overview-parked-heading { padding-left:38px; }
 }

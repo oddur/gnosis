@@ -100,7 +100,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('[role=dialog]')");
 
     // Activity is a capsule in the title bar, before Search; the workspace reaches the window's bottom edge.
-    await wait("document.querySelector('.activity-capsule')?.getAttribute('aria-label')?.includes('2 running · 1 queued · 1 failed · 2 ready')");
+    await wait("document.querySelector('.activity-capsule')?.getAttribute('aria-label')?.includes('2 running · 1 queued · 1 task failed · 2 ready')");
     assert.equal(
       await js(
         "(()=>{const c=document.querySelector('.app-titlebar .activity-capsule').getBoundingClientRect();const s=[...document.querySelectorAll('.workspace-menu-search')].find(b=>b.checkVisibility()).getBoundingClientRect();return c.right<=s.left&&c.top>=0&&c.bottom<=document.querySelector('.app-titlebar').getBoundingClientRect().bottom})()"

@@ -71,6 +71,7 @@ type Status = {
   mergeable?: string;
   opinions?: { author: string; state: string; ago: number }[];
   comments?: { author: string; ago: number }[];
+  behindBy?: number;
 };
 function signalsFor(member: ReviewMember, status: Status): QueueSignals {
   const opinions = (status.opinions ?? []).map((opinion, i) => ({
@@ -105,7 +106,7 @@ function signalsFor(member: ReviewMember, status: Status): QueueSignals {
       reviewDecision: status.decision === undefined ? 'REVIEW_REQUIRED' : status.decision,
       baseBranch: member.baseBranch,
       baseSha: member.baseSha,
-      behindBy: 0,
+      behindBy: status.behindBy ?? 0,
       mergeQueue: false,
       queueState: null,
     },
@@ -119,9 +120,17 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
     return member;
   };
   const ready = { checks: 'success' as const, decision: 'APPROVED', mergeState: 'CLEAN' };
-  // Merge: your PRs GitHub reports ready.
+  const noReview = { checks: 'success' as const, decision: null, mergeState: 'CLEAN' };
+  // Merge, Ready: approved recently, or no review required and recent.
   const merge1 = add(pr({ number: 301, repo: 'klang/engine', title: 'Cache resolved module paths between builds', created: 4 * DAY, updated: 2 * DAY, additions: 128, deletions: 34, files: 6 }), { ...ready, opinions: [{ author: 'lena', state: 'APPROVED', ago: 2 * DAY }] });
-  const merge2 = add(pr({ number: 302, repo: 'klang/cli', title: 'Retry flaky uploads with jitter', created: 2 * DAY, updated: 5 * HOUR, additions: 22, deletions: 4, files: 2 }), { ...ready, opinions: [{ author: 'sam', state: 'APPROVED', ago: 5 * HOUR }] });
+  const merge2 = add(pr({ number: 302, repo: 'klang/cli', title: 'Retry flaky uploads with jitter', created: 2 * DAY, updated: 5 * HOUR, additions: 22, deletions: 4, files: 2 }), { ...ready, opinions: [{ author: 'sam', state: 'APPROVED', ago: 5 * HOUR }, { author: 'owen', state: 'APPROVED', ago: 6 * HOUR }] });
+  const merge3 = add(pr({ number: 303, repo: 'acme/web', title: 'Drop the unused polyfill bundle', created: 1 * DAY, updated: 20 * HOUR, additions: 4, deletions: 61, files: 3 }), { ...noReview, behindBy: 2 });
+  // Merge, Parked: mergeable without review but idle for a week, and approved long ago.
+  const parked1 = add(pr({ number: 304, repo: 'klang/cli', title: 'Rename the config loader flags', created: 9 * DAY, updated: 7 * DAY, additions: 18, deletions: 18, files: 2 }), noReview);
+  const parked2 = add(pr({ number: 305, repo: 'klang/engine', title: 'Inline the hot path in the resolver', created: 12 * DAY, updated: 8 * DAY, additions: 66, deletions: 30, files: 3 }), { ...ready, opinions: [{ author: 'maya', state: 'APPROVED', ago: 8 * DAY }] });
+  // A stack whose base waits on review and whose approved child can merge into it.
+  const stackBase = add(pr({ number: 306, repo: 'acme/web', title: 'Extract the billing form state', created: 2 * DAY, updated: 10 * HOUR, headBranch: 'billing-1', requested: ['lena'], additions: 140, deletions: 52, files: 5 }), { checks: 'success' });
+  const stackChild = add(pr({ number: 307, repo: 'acme/web', title: 'Validate billing addresses on blur', created: 2 * DAY, updated: 9 * HOUR, baseBranch: 'billing-1', headBranch: 'billing-2', additions: 75, deletions: 9, files: 3 }), { ...ready, opinions: [{ author: 'ivar', state: 'APPROVED', ago: 9 * HOUR }] });
   // Answer: changes requested on your PR, and replies to you.
   const answer1 = add(pr({ number: 311, repo: 'acme/web', title: 'Move session refresh into the auth worker', created: 6 * DAY, updated: 4 * DAY, additions: 310, deletions: 96, files: 11 }), { checks: 'success', decision: 'CHANGES_REQUESTED', opinions: [{ author: 'lena', state: 'CHANGES_REQUESTED', ago: 4 * DAY }] });
   const answer2 = add(pr({ number: 312, repo: 'klang/engine', title: 'Document the plugin loading order', created: 1 * DAY, updated: 3 * HOUR, additions: 58, deletions: 3, files: 1 }), { checks: 'success', comments: [{ author: 'owen', ago: 3 * HOUR }] });
@@ -144,7 +153,8 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
   const fixChild = add(pr({ number: 332, repo: 'klang/engine', title: 'Run phases on a worker pool', created: 3 * DAY, updated: 18 * HOUR, baseBranch: 'phases-1', headBranch: 'phases-2', additions: 144, deletions: 20, files: 4 }), { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
   const fixLone = add(pr({ number: 333, repo: 'acme/web', title: 'Upgrade the router to v7', created: 1 * DAY, updated: 9 * HOUR, additions: 412, deletions: 380, files: 23 }), { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
   // Waiting on others.
-  const waiting1 = add(pr({ number: 341, repo: 'klang/cli', title: 'Print a summary after install', created: 2 * DAY, requested: ['lena'], additions: 33, deletions: 2, files: 2 }), { checks: 'success' });
+  // Waiting on lena's review for four days: past the stale threshold, so it asks whether to nudge.
+  const waiting1 = add(pr({ number: 341, repo: 'klang/cli', title: 'Print a summary after install', created: 4 * DAY, requested: ['lena'], additions: 33, deletions: 2, files: 2 }), { checks: 'success' });
   const waiting2 = add(pr({ number: 342, repo: 'klang/engine', title: 'Profile cold starts in CI', created: 6 * HOUR, additions: 18, deletions: 0, files: 1 }), { checks: 'pending', decision: 'APPROVED' });
   const explained = reviews[0];
   const review: ReviewHistoryEntry = { id: 'overview-explanation', prUrl: explained.url, prTitle: explained.title, status: 'completed', unread: false } as ReviewHistoryEntry;
@@ -153,6 +163,10 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
   const next: QueueItem[] = [
     single(merge1),
     single(merge2),
+    single(merge3),
+    single(parked1),
+    single(parked2),
+    { subject: groupSubjects([stackBase, stackChild])[0], attention: 'other' },
     single(answer1),
     single(answer2, { responses: { [answer2.url]: { changesRequested: false, unresolvedThreads: 2, awaitingReply: 2, complete: true } } }),
     ...reviews.map((member, i) => single(member, i === 0 ? { review } : i === 3 ? { attention: 'updated' } : {})),
@@ -285,6 +299,30 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
       },
       restore: () => {
         items.splice(0, items.length, ...next);
+        changed();
+      },
+      /**
+       * The user's real load (#390 critique): sixteen of your PRs GitHub lets you merge, most unapproved and idle for
+       * five to eight days. Adds ten parked PRs to the four Ready and two Parked rows. `restore()` takes them away.
+       */
+      heavy: () => {
+        const titles = [
+          'Move the launcher text into translation keys',
+          'Only return to in-app paths after the consent page',
+          'Refuse script URLs as the mobile OAuth redirect',
+          'Save only schema-validated fields on profile update',
+          'Keep subscription ids inside one path segment',
+          'Read the player language from the launcher',
+          'Add the notifications read scope',
+          'Count a refused output swap as a failure',
+          'Keep the onboarding quest until chat is reached',
+          'Bump the CLI to 4.2.1',
+        ];
+        const repos = ['klang/engine', 'acme/web', 'klang/cli'];
+        const extra = titles.map((title, i) =>
+          single(add(pr({ number: 360 + i, repo: repos[i % 3], title, created: (9 + i) * DAY, updated: (5 + (i % 4)) * DAY, additions: 12 + i * 23, deletions: 2 + i * 5, files: 1 + (i % 5) }), noReview))
+        );
+        items.splice(0, items.length, ...next, ...extra);
         changed();
       },
     },

@@ -4,6 +4,10 @@
  * menu, keyboard movement with visible focus, live updates that keep focus, "new since your last visit", and light
  * and dark at 1280×800 and a narrow window. Synthetic data only (tests/fixtures/overview.ts).
  * Screenshots go to .impeccable/review/overview/.
+ *
+ * Clarify pass: each Merge row says why it can merge (approved, no review required, open stack base, behind), the
+ * viewer is never a row's person, Parked merges are a collapsed group that the strip and tab title leave out, and a
+ * stale Waiting row asks "Nudge?". A heavy load (16 merges, 12 parked) is captured to .impeccable/review/overview-clarify/.
  */
 import { loadWorkbenchPage } from './workbench-ready';
 import { menuAction } from './entry-menu-helpers';
@@ -25,14 +29,16 @@ void app.whenReady().then(async () => {
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   let step = 'start';
   const dir = path.resolve('.impeccable/review/overview');
+  const clarifyDir = path.resolve('.impeccable/review/overview-clarify');
   fs.mkdirSync(dir, { recursive: true });
-  const capture = async (name: string) => {
+  fs.mkdirSync(clarifyDir, { recursive: true });
+  const capture = async (name: string, into = dir) => {
     if (process.platform === 'darwin') app.show();
     win.show();
     win.focus();
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 300));
-    fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG());
+    fs.writeFileSync(path.join(into, name + '.png'), (await win.webContents.capturePage()).toPNG());
   };
   const wait = async (code: string, tries = 200) => {
     for (let i = 0; i < tries; i++) {
@@ -42,11 +48,11 @@ void app.whenReady().then(async () => {
     await capture(`failure-${step}`).catch(() => undefined);
     throw Error(`Timed out in "${step}": ${code}\n${await js<string>(`(document.querySelector('${P}')?.innerText ?? document.body.innerText).slice(0, 1500)`)}`);
   };
-  const both = async (name: string) => {
+  const both = async (name: string, into = dir) => {
     await js("document.documentElement.classList.remove('dark')");
-    await capture(`${name}-light`);
+    await capture(`${name}-light`, into);
     await js("document.documentElement.classList.add('dark')");
-    await capture(`${name}-dark`);
+    await capture(`${name}-dark`, into);
     await js("document.documentElement.classList.remove('dark')");
   };
   const cdp = win.webContents.debugger;
@@ -85,11 +91,12 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`(()=>{const t=document.querySelector('${P} .queue-toolbar:not(.overview-toolbar)');return !t || t.getClientRects().length === 0})()`), true, 'the queue waits behind the Overview');
 
     step = 'counts';
-    await wait(`[...document.querySelectorAll('${P} .overview-count')].map(b=>b.textContent).join(' · ') === 'Merge2 · Answer2 · Review7 · Fix2 · Waiting2'`);
-    assert.equal(await counts(), 'Merge2 · Answer2 · Review7 · Fix2 · Waiting2');
-    // The tab title counts the four action lanes only: 2 + 2 + 7 + 2, without Waiting.
+    // Merge counts its four Ready rows; the two Parked ones are not work.
+    await wait(`[...document.querySelectorAll('${P} .overview-count')].map(b=>b.textContent).join(' · ') === 'Merge4 · Answer2 · Review7 · Fix2 · Waiting3'`);
+    assert.equal(await counts(), 'Merge4 · Answer2 · Review7 · Fix2 · Waiting3');
+    // The tab title counts the four action lanes only: 4 + 2 + 7 + 2, without Waiting or Parked.
     const actions = await js<number>(`['merge','answer','review','fix'].reduce((n,l)=>n+Number(document.querySelector('${P} .overview-count[data-lane='+l+'] .overview-count-value').textContent),0)`);
-    assert.equal(actions, 13);
+    assert.equal(actions, 15);
     await wait(`document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(${actions})'`);
     assert.ok(await js(`document.querySelector('${P} .overview-freshness, ${P} .queue-freshness time')?.textContent.startsWith('Checked')`), 'cached data says when it was checked');
     // Lane headings are landmarks, in a fixed order, and Waiting starts collapsed.
@@ -97,6 +104,44 @@ void app.whenReady().then(async () => {
     assert.deepEqual(lanes, ['Merge', 'Answer', 'Review', 'Fix', 'Waiting on others']);
     assert.equal(await js(`document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').getAttribute('aria-expanded')`), 'false');
     assert.equal(await laneRows('waiting'), 0);
+
+    step = 'merge-reasons';
+    // The lane heading keeps the whole lane honest: Ready, then Parked.
+    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-lane-total').textContent`), '4 · 2 parked');
+    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-lane-total').getAttribute('aria-label')`), 'Merge: 4 ready, 2 parked. Open all 6 in the review queue');
+    // Each Ready row says why it can merge, in the reason slot.
+    const notes = (selector: string) => js<string[]>(`[...(document.querySelector(${JSON.stringify(selector)})?.closest('.overview-row')?.querySelectorAll('[data-merge-note]') ?? [])].map(n=>n.textContent)`);
+    assert.deepEqual(await notes(row('merge', 'klang/engine', 301)), ['Approved by lena']);
+    assert.deepEqual(await notes(row('merge', 'klang/cli', 302)), ['Approved by sam and 1 other']);
+    assert.deepEqual(await notes(row('merge', 'acme/web', 303)), ['No review required', 'Behind main by 2 commits']);
+    const stackRow = await js<string>(`[...document.querySelectorAll('${P} #overview-lane-merge .overview-row')].find(r=>r.textContent.includes('#307'))?.querySelector('[data-overview-row]')?.getAttribute('data-overview-row') ?? ''`);
+    assert.ok(stackRow, 'the stack has a Merge row');
+    assert.deepEqual(await notes(`${P} [data-overview-row="${stackRow}"]`), ['Approved by ivar', 'Base #306 not merged']);
+    // You are never the person on a row: no author chip reads "oddur", in any lane.
+    await js(`document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
+    await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 3`);
+    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-row .github-author')].filter(a=>a.textContent.trim().toLowerCase()==='oddur').length`), 0);
+    assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-merge .overview-row .github-author').length`), 0, 'merge notes name the approver instead');
+    assert.ok(await js(`document.querySelector('${row('review', 'klang/engine', 321)}')?.closest('.overview-row')?.querySelector('.github-author')?.textContent.includes('maya')`), 'other people stay');
+    // A stale Waiting row asks whether to nudge, in words.
+    assert.equal(await js(`document.querySelector('${row('waiting', 'klang/cli', 341)}')?.closest('.overview-row')?.querySelector('.overview-stale')?.textContent`), 'Nudge?');
+    assert.ok(await js(`document.querySelector('${row('waiting', 'klang/cli', 341)}')?.closest('.overview-row')?.querySelector('.github-author')?.textContent.includes('lena')`), 'Waiting names the reviewer');
+    await js(`document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
+    await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 0`);
+    // Parked is collapsed by default, labelled with its reason.
+    const parkedToggle = `${P} #overview-lane-merge .overview-parked .overview-lane-toggle`;
+    assert.equal(await js(`document.querySelector('${parkedToggle}').getAttribute('aria-expanded')`), 'false');
+    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked-heading').textContent`), 'Parked · 2(mergeable, not approved or idle over 3 days)');
+    assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length`), 0);
+    assert.equal(await laneRows('merge'), 4);
+    await js(`document.querySelector('${parkedToggle}').click()`);
+    await wait(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 2`);
+    assert.deepEqual(await notes(row('merge', 'klang/cli', 304)), ['No review required']);
+    assert.deepEqual(await notes(row('merge', 'klang/engine', 305)), ['Approved by maya']);
+    // Opening Parked changes no count.
+    assert.equal(await counts(), 'Merge4 · Answer2 · Review7 · Fix2 · Waiting3');
+    await js(`document.querySelector('${parkedToggle}').click()`);
+    await wait(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 0`);
 
     step = 'top-five';
     assert.equal(await laneRows('review'), 5);
@@ -116,18 +161,40 @@ void app.whenReady().then(async () => {
     await js('window.__countRenders = true; window.__overviewRowRenders = 0; window.dispatchEvent(new Event("fixture-workbench-change"))');
     await new Promise((r) => setTimeout(r, 1500));
     assert.equal(await js('window.__overviewRowRenders'), 0, 'unchanged rows do not render again');
+    await js('window.__countRenders = false');
+
+    step = 'heavy';
+    // The real load from the critique: sixteen mergeable PRs, twelve of them unapproved and idle.
+    await js('window.fixtureOverview.heavy()');
+    await wait(`document.querySelector('${P} #overview-lane-merge .overview-lane-total')?.textContent === '4 · 12 parked'`);
+    assert.equal(await counts(), 'Merge4 · Answer2 · Review7 · Fix2 · Waiting3', 'parked merges never reach the strip');
+    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(15)'");
+    assert.equal(await laneRows('merge'), 4, 'Parked starts collapsed');
+    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').textContent`), 'Parked · 12');
+    await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
+    await both('heavy-parked-collapsed-1280', clarifyDir);
+    await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click()`);
+    await wait(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 5`);
+    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-show-all')?.textContent`), 'Show all 16 in Merge');
+    await js(`(()=>{const b=document.querySelector('${P} .overview-body');const h=document.querySelector('${P} #overview-lane-merge .overview-parked');b.scrollTop+=h.getBoundingClientRect().top-b.getBoundingClientRect().top-120})()`);
+    await both('heavy-parked-open-1280', clarifyDir);
+    await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click()`);
+    await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
+    await js('window.fixtureOverview.restore()');
+    await wait(`document.querySelector('${P} #overview-lane-merge .overview-lane-total')?.textContent === '4 · 2 parked'`);
 
     step = 'keyboard';
+    // Ready merges, oldest first: #301 (approved 2 d ago), then #303 (updated 20 h ago).
     await js('document.activeElement?.blur()');
     await key('j');
     assert.equal(await focusedRow(), 'merge|https://github.com/klang/engine/pull/301');
     assert.equal(await js("getComputedStyle(document.activeElement).outlineStyle"), 'solid', 'focus is visible');
     await key('j');
-    assert.equal(await focusedRow(), 'merge|https://github.com/klang/cli/pull/302');
+    assert.equal(await focusedRow(), 'merge|https://github.com/acme/web/pull/303');
     await key('k');
     assert.equal(await focusedRow(), 'merge|https://github.com/klang/engine/pull/301');
-    await key('ArrowDown');
-    await key('ArrowDown');
+    // Collapsed Parked rows are skipped: four Ready rows, then Answer.
+    for (let i = 0; i < 4; i++) await key('ArrowDown');
     assert.equal(await focusedRow(), 'answer|https://github.com/acme/web/pull/311');
     await both('keyboard-focus');
 
@@ -158,7 +225,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual((await writes()).filter((w) => w.kind === 'merge'), [{ kind: 'merge', url: 'https://github.com/klang/engine/pull/301' }]);
     await wait(`!document.querySelector('${row('merge', 'klang/engine', 301)}')`);
     await wait(`[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('Merged #301 on GitHub.'))`);
-    assert.match(await counts(), /^Merge1/);
+    assert.match(await counts(), /^Merge3 /);
 
     step = 'rerun';
     // Rerun failed goes through the existing rerun confirmation.
@@ -195,8 +262,9 @@ void app.whenReady().then(async () => {
     await menuAction(js, 'Actions for PR #302', 'Snooze PR…');
     await wait("!!document.querySelector('.snooze-picker .snooze-option')");
     await js("document.querySelector('.snooze-picker .snooze-option').click()");
-    await wait(`!document.querySelector('${row('merge', 'klang/cli', 302)}') && !!document.querySelector('${P} #overview-lane-merge .overview-empty')`);
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-empty')?.textContent`), 'Nothing to merge', 'an empty lane collapses to one line');
+    await wait(`!document.querySelector('${row('merge', 'klang/cli', 302)}')`);
+    await wait(`document.querySelector('${P} #overview-lane-merge .overview-lane-total')?.textContent === '2 · 2 parked'`);
+    assert.match(await counts(), /^Merge2 /);
 
     step = 'show-all';
     // "Show all" opens the queue filtered to the lane; the switch is quick.
@@ -240,7 +308,7 @@ void app.whenReady().then(async () => {
     await js(`document.querySelector('${P} .overview-count[data-lane=waiting]').click()`);
     await wait(`document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').getAttribute('aria-expanded') === 'true'`);
     await wait("document.activeElement?.classList.contains('overview-lane-toggle')");
-    assert.equal(await laneRows('waiting'), 2);
+    assert.equal(await laneRows('waiting'), 3);
     assert.equal(await js('document.scrollingElement.scrollTop + document.querySelector(".workbench-body")?.scrollTop'), 0, 'only the Overview list scrolls');
     await both('waiting-open');
 

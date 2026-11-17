@@ -19,9 +19,14 @@ import {
   OVERVIEW_EMPTY,
   OVERVIEW_LANE_LABEL,
   OVERVIEW_LANE_LIMIT,
+  OVERVIEW_PARKED_HINT,
+  OVERVIEW_PARKED_LABEL,
   OVERVIEW_REASON_LABEL,
   OVERVIEW_SINCE_LABEL,
+  OVERVIEW_STALE_TITLE,
+  overviewStaleLabel,
   rowReasons,
+  type OverviewMergeNoteKind,
   type OverviewLane,
   type OverviewModel,
   type OverviewReason,
@@ -79,6 +84,14 @@ export interface OverviewPageProps {
 
 const reasonIcon = (reason: OverviewReason) =>
   reason === 'review-pending' || reason === 'checks-pending' ? { icon: Clock3, tone: 'warning' as const } : attentionIcons[reason];
+/** Merge notes: the review fact carries the lane's merge icon; the rest are plain text. */
+const MERGE_NOTE_TONE: Readonly<Record<OverviewMergeNoteKind, 'success' | 'muted' | 'warning'>> = {
+  approved: 'success',
+  'no-review': 'success',
+  unapproved: 'muted',
+  'base-open': 'warning',
+  behind: 'muted',
+};
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 export function OverviewPage(props: OverviewPageProps) {
@@ -97,10 +110,16 @@ export function OverviewPage(props: OverviewPageProps) {
   callbacks.current = props;
   const root = useRef<HTMLDivElement>(null);
   const [waitingOpen, setWaitingOpen] = useState(false);
+  const [parkedOpen, setParkedOpen] = useState(false);
   const [current, setCurrent] = useState<string | null>(null);
   const rows = useMemo(
-    () => model.lanes.flatMap((state) => (state.lane === 'waiting' && !waitingOpen ? [] : state.rows.slice(0, OVERVIEW_LANE_LIMIT))),
-    [model, waitingOpen]
+    () =>
+      model.lanes.flatMap((state) =>
+        state.lane === 'waiting' && !waitingOpen
+          ? []
+          : [...state.rows.slice(0, OVERVIEW_LANE_LIMIT), ...(parkedOpen ? state.parked.slice(0, OVERVIEW_LANE_LIMIT) : [])]
+      ),
+    [model, waitingOpen, parkedOpen]
   );
   const tabStop = rows.some((row) => row.id === current) ? current : (rows[0]?.id ?? null);
   const latestRows = useRef(rows);
@@ -217,7 +236,8 @@ export function OverviewPage(props: OverviewPageProps) {
   };
 
   const sync = queue.sync;
-  const allClear = ACTION_LANES.every((lane) => !model.counts[lane]);
+  // Parked merges are not work, but they are listed: with any, the lanes stay.
+  const allClear = ACTION_LANES.every((lane) => !model.counts[lane]) && !model.parked;
   const readStates = queue.readStates ?? {};
   const unread = (row: OverviewRow) => row.entries.some((entry) => !!readStates[entry.member.url]?.unread.length);
   const body = !authenticated ? (
@@ -261,9 +281,13 @@ export function OverviewPage(props: OverviewPageProps) {
           All clear. Nothing needs you right now.
         </p>
       ) : (
-        ACTION_LANES.map((lane) => (
-          <Lane key={lane} lane={lane} rows={model.lanes.find((state) => state.lane === lane)?.rows ?? []} tabStop={tabStop} actions={actions} unread={unread} onShowLane={onShowLane} />
-        ))
+        ACTION_LANES.map((lane) => {
+          const state = model.lanes.find((entry) => entry.lane === lane);
+          return (
+            <Lane key={lane} lane={lane} rows={state?.rows ?? []} parked={state?.parked} tabStop={tabStop} actions={actions} unread={unread} onShowLane={onShowLane}
+              parkedOpen={parkedOpen} onToggleParked={() => setParkedOpen((value) => !value)} />
+          );
+        })
       )}
       <Lane lane="waiting" rows={model.lanes.find((state) => state.lane === 'waiting')?.rows ?? []} tabStop={tabStop} actions={actions} unread={unread}
         onShowLane={onShowLane} collapsed={!waitingOpen} onToggle={() => setWaitingOpen((value) => !value)} />
@@ -328,21 +352,27 @@ interface RowActions {
   keyDown: (event: ReactKeyboardEvent) => void;
 }
 
-function Lane({ lane, rows, tabStop, actions, unread, onShowLane, collapsed, onToggle }: {
+function Lane({ lane, rows, parked = [], tabStop, actions, unread, onShowLane, collapsed, onToggle, parkedOpen, onToggleParked }: {
   lane: OverviewLane;
   rows: OverviewRow[];
+  /** Merge: rows that can merge but are not approved, or idle. A collapsed group under the Ready rows. */
+  parked?: OverviewRow[];
   tabStop: string | null;
   actions: RowActions;
   unread: (row: OverviewRow) => boolean;
   onShowLane: (lane: OverviewLane) => void;
   collapsed?: boolean;
   onToggle?: () => void;
+  parkedOpen?: boolean;
+  onToggleParked?: () => void;
 }) {
   const id = useId();
   const listId = `${id}-rows`;
-  const empty = !rows.length;
+  const parkedId = `${id}-parked`;
+  const empty = !rows.length && !parked.length;
   const shown = rows.slice(0, OVERVIEW_LANE_LIMIT);
   const label = OVERVIEW_LANE_LABEL[lane];
+  const total = rows.length + parked.length;
   return (
     <section id={`overview-lane-${lane}`} className={`overview-lane${empty ? ' is-empty' : ''}`} aria-labelledby={`${id}-heading`} data-lane={lane}>
       <div className="overview-lane-heading">
@@ -360,24 +390,49 @@ function Lane({ lane, rows, tabStop, actions, unread, onShowLane, collapsed, onT
           <span className="overview-empty">{OVERVIEW_EMPTY[lane]}</span>
         ) : (
           <button type="button" className="overview-lane-total" onClick={() => onShowLane(lane)}
-            title={`Open the ${rows.length} ${rows.length === 1 ? 'item' : 'items'} in ${label} in the review queue`}
-            aria-label={`${label}: open all ${rows.length} in the review queue`}>
+            title={`Open the ${total} ${total === 1 ? 'item' : 'items'} in ${label} in the review queue`}
+            aria-label={parked.length ? `${label}: ${rows.length} ready, ${parked.length} parked. Open all ${total} in the review queue` : `${label}: open all ${rows.length} in the review queue`}>
             {rows.length}
+            {parked.length > 0 && <span className="overview-lane-parked"> · {parked.length} parked</span>}
           </button>
         )}
       </div>
-      {!empty && !collapsed && (
+      {rows.length > 0 && !collapsed && (
         <ul className="overview-rows" id={listId}>
           {shown.map((row) => (
             <OverviewRowView key={row.id} row={row} tabStop={row.id === tabStop} unread={unread(row)} actions={actions} />
           ))}
         </ul>
       )}
-      {!empty && !collapsed && rows.length > OVERVIEW_LANE_LIMIT && (
+      {rows.length > 0 && !collapsed && rows.length > OVERVIEW_LANE_LIMIT && (
         <button type="button" className="overview-show-all" onClick={() => onShowLane(lane)}>
           Show all {rows.length}
           <ArrowRight size={13} aria-hidden="true" />
         </button>
+      )}
+      {parked.length > 0 && (
+        <div className="overview-parked" data-parked>
+          <h3 className="overview-parked-heading">
+            <button type="button" className="overview-lane-toggle" aria-expanded={!!parkedOpen} aria-controls={parkedId} onClick={onToggleParked}>
+              <ChevronRight size={14} aria-hidden="true" />
+              {OVERVIEW_PARKED_LABEL} · {parked.length}
+            </button>
+            <span className="overview-parked-hint">({OVERVIEW_PARKED_HINT})</span>
+          </h3>
+          {parkedOpen && (
+            <ul className="overview-rows" id={parkedId}>
+              {parked.slice(0, OVERVIEW_LANE_LIMIT).map((row) => (
+                <OverviewRowView key={row.id} row={row} tabStop={row.id === tabStop} unread={unread(row)} actions={actions} />
+              ))}
+            </ul>
+          )}
+          {parkedOpen && parked.length > OVERVIEW_LANE_LIMIT && (
+            <button type="button" className="overview-show-all" onClick={() => onShowLane(lane)}>
+              Show all {total} in {label}
+              <ArrowRight size={13} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       )}
     </section>
   );
@@ -398,6 +453,7 @@ const OverviewRowView = memo(
       [{ label: 'Open on GitHub', run: () => void window.electronAPI.openExternal(member.url) }],
     ];
     const since = new Date(row.since);
+    const stale = overviewStaleLabel(row);
     return (
       <li className={`overview-row${row.isNew ? ' is-new' : ''}`} data-overview-row-item={row.id}>
         <EntryActions label={stack ? `Actions for stack ${row.title}` : `Actions for PR #${member.number}`} groups={groups}>
@@ -441,13 +497,22 @@ const OverviewRowView = memo(
                       </span>
                     );
                   })}
+                  {row.merge?.notes.map((note, index) => {
+                    const Icon = attentionIcons['ready-to-merge'].icon;
+                    return (
+                      <span key={note.kind} className={index ? 'overview-merge-note' : 'overview-reason'} data-tone={MERGE_NOTE_TONE[note.kind]} data-merge-note={note.kind}>
+                        {index === 0 && <Icon size={13} aria-hidden="true" />}
+                        {note.text}
+                      </span>
+                    );
+                  })}
                   <RepositoryBadge repo={member.repo} />
                   {stack ? (
                     <span className="overview-numbers">{row.entries.map((entry) => `#${entry.member.number}`).join(', ')}</span>
                   ) : (
                     <PrBadge url={member.url} number={member.number} title={member.title} />
                   )}
-                  <GitHubAuthor login={row.person} />
+                  {row.person && <GitHubAuthor login={row.person} />}
                   {row.additions !== undefined && row.deletions !== undefined && (
                     <span className="overview-size" title={`${row.additions} lines added, ${row.deletions} removed${row.files !== undefined ? `, ${row.files} files` : ''}`}>
                       <DiffStats additions={row.additions} deletions={row.deletions} />
@@ -466,7 +531,7 @@ const OverviewRowView = memo(
                 title={`Waiting ${OVERVIEW_SINCE_LABEL[row.source]}, ${since.toLocaleString()}`}>
                 <Clock3 size={13} aria-hidden="true" />
                 <time dateTime={since.toISOString()}>{row.waiting}</time>
-                {row.stale && <span className="overview-stale">Stale</span>}
+                {stale && <span className="overview-stale" title={OVERVIEW_STALE_TITLE[row.lane]}>{stale}</span>}
               </span>
               <span className="overview-row-action">
                 <QuickAction row={row} actions={actions} />
@@ -484,8 +549,8 @@ const OverviewRowView = memo(
 function QuickAction({ row, actions }: { row: OverviewRow; actions: RowActions }) {
   const shortcut = { 'data-quick-action': true, 'aria-keyshortcuts': 'A' };
   if (row.lane === 'merge') {
-    // Base first: in a stack, the lowest ready PR merges first.
-    const member = row.item.subject.members.find((candidate) => row.entries.some((entry) => entry.member.url === candidate.url)) ?? row.focus;
+    // Base first: in a stack, the lowest PR in the lane merges first (`OverviewMerge.member`).
+    const member = row.merge?.member ?? row.focus;
     return (
       <PrActions
         member={member}

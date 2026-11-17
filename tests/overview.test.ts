@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  OVERVIEW_IDLE_MS,
   OVERVIEW_LANES,
   OVERVIEW_STALE_MS,
   nextOverviewVisit,
   overviewCountLine,
   overviewModel,
+  overviewStaleLabel,
   overviewVisitKey,
   parseOverviewVisit,
   rowReasons,
@@ -214,7 +216,9 @@ void test('ready to merge waits since the approval; stale items are flagged afte
   const rows = lane(result, 'merge');
   assert.deepEqual(rows.map((row) => row.focus.number), [1, 2]);
   assert.equal(rows[0].source, 'approval');
-  assert.equal(rows[0].person, 'lena');
+  // The note names the approver, so the row shows no person chip.
+  assert.equal(rows[0].person, undefined);
+  assert.deepEqual(rows[0].merge?.notes.map((note) => note.text), ['Approved by lena']);
   assert.equal(rows[0].stale, true);
   assert.equal(rows[0].waiting, '3 d');
   assert.equal(rows[1].stale, false);
@@ -362,4 +366,150 @@ void test('the Overview tab title counts only the four action lanes, and nothing
   assert.equal(countWorkspaceListing(queueRequest, queue, [], LOGIN, T0, undefined, 4)?.count, 1);
   // The actionable count leaves Waiting out.
   assert.equal(model([item([mine(5, { requestedReviewers: ['lena'] })])]).actionable, 0);
+});
+
+const ago = (days: number) => new Date(T0 - days * 86_400_000).toISOString();
+const mergeRows = (result: OverviewModel) => [...lane(result, 'merge'), ...(result.lanes.find((state) => state.lane === 'merge')?.parked ?? [])];
+const notes = (result: OverviewModel, n: number) => mergeRows(result).find((row) => row.focus.number === n)?.merge?.notes.map((note) => note.text);
+const clean = (pr: ReviewMember, extra: Parameters<typeof signals>[1] = {}) => signals(pr, { checks: 'success', mergeState: 'CLEAN', ...extra });
+
+void test('each Merge row says why it can merge, from what GitHub reported', () => {
+  const one = mine(1);
+  const many = mine(2);
+  const unnamed = mine(3);
+  const older = mine(4);
+  const free = mine(5);
+  const unknown = mine(6);
+  const behind = mine(7);
+  const behindSignals = clean(behind, { decision: null });
+  const result = model([one, many, unnamed, older, free, unknown, behind].map((pr) => item([pr])), {
+    signals: {
+      [one.url]: clean(one, { decision: 'APPROVED', opinions: [{ id: '1', author: 'lena', state: 'APPROVED' }] }),
+      // Newest approver first; your own review does not count.
+      [many.url]: clean(many, {
+        decision: 'APPROVED',
+        opinions: [
+          { id: '1', author: 'sam', state: 'APPROVED', at: '2026-11-13T00:00:00Z' },
+          { id: '2', author: 'maya', state: 'APPROVED', at: '2026-11-14T08:00:00Z' },
+          { id: '3', author: 'owen', state: 'APPROVED', at: '2026-11-12T00:00:00Z' },
+          { id: '4', author: LOGIN, state: 'APPROVED' },
+        ],
+      }),
+      // GitHub says approved but names nobody: say only that.
+      [unnamed.url]: readySignals(unnamed),
+      // A snapshot from before opinions were read names the newest review.
+      [older.url]: clean(older, { decision: 'APPROVED', review: { id: '9', author: 'ivar', state: 'APPROVED' } }),
+      [free.url]: clean(free, { decision: null }),
+      // A review decision GitHub has not described: say what is known, no more.
+      [unknown.url]: clean(unknown, { decision: 'PENDING_SOMETHING' }),
+      [behind.url]: { ...behindSignals, readiness: { ...behindSignals.readiness!, behindBy: 3 } },
+    },
+  });
+  assert.deepEqual(notes(result, 1), ['Approved by lena']);
+  assert.deepEqual(notes(result, 2), ['Approved by maya and 2 others']);
+  assert.deepEqual(notes(result, 3), ['Approved']);
+  assert.deepEqual(notes(result, 4), ['Approved by ivar']);
+  assert.deepEqual(notes(result, 5), ['No review required']);
+  assert.deepEqual(notes(result, 6), ['Mergeable, not approved']);
+  assert.deepEqual(notes(result, 7), ['No review required', 'Behind main by 3 commits']);
+  assert.deepEqual(mergeRows(result).find((row) => row.focus.number === 7)?.merge?.notes.map((note) => note.kind), ['no-review', 'behind']);
+});
+
+void test('a stack member whose base is still open says so, and the stack merges base first', () => {
+  const base = mine(10);
+  const child = mine(11, { baseBranch: 'feature-10' });
+  const top = mine(12, { baseBranch: 'feature-11' });
+  const result = model([item([base, child, top])], {
+    signals: {
+      [base.url]: signals(base, { checks: 'failure' }),
+      [child.url]: clean(child, { decision: 'APPROVED', opinions: [{ id: '1', author: 'lena', state: 'APPROVED' }] }),
+      [top.url]: clean(top, { decision: null }),
+    },
+  });
+  const [row] = lane(result, 'merge');
+  assert.equal(row.merge?.member.number, 11, 'the lowest PR in the lane is the one to merge');
+  assert.deepEqual(row.merge?.notes.map((note) => note.text), ['Approved by lena', 'Base #10 not merged']);
+  // Once the base can merge too, it goes first and has no open base of its own.
+  const ready = model([item([base, child])], { signals: { [base.url]: clean(base, { decision: null }), [child.url]: clean(child, { decision: null }) } });
+  assert.equal(lane(ready, 'merge')[0].merge?.member.number, 10);
+  assert.deepEqual(lane(ready, 'merge')[0].merge?.notes.map((note) => note.text), ['No review required']);
+});
+
+void test('the viewer is never the person on a row, in any lane', () => {
+  const ready = mine(1);
+  const replied = mine(2);
+  const failing = mine(3);
+  const awaiting = mine(4);
+  const selfRequested = mine(5, { requestedReviewers: [LOGIN, 'sam'] });
+  const requested = member(6, { requestedReviewers: [LOGIN] });
+  const result = model(
+    [
+      item([ready]),
+      item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } }),
+      item([failing]),
+      item([awaiting]),
+      item([selfRequested]),
+      item([requested]),
+    ],
+    {
+      signals: {
+        [ready.url]: clean(ready, { decision: null }),
+        [replied.url]: passing(replied),
+        [failing.url]: signals(failing, { checks: 'failure' }),
+        [awaiting.url]: passing(awaiting),
+        [selfRequested.url]: passing(selfRequested),
+      },
+    }
+  );
+  const rows = result.lanes.flatMap((state) => [...state.rows, ...state.parked]);
+  assert.equal(rows.length, 6);
+  assert.ok(rows.every((row) => row.person?.toLowerCase() !== LOGIN), 'no row names you');
+  const person = (name: OverviewLane, n: number) => lane(result, name).find((row) => row.focus.number === n)?.person;
+  assert.equal(person('merge', 1), undefined);
+  assert.equal(person('answer', 2), undefined, 'no reply by anyone else: no person');
+  assert.equal(person('fix', 3), undefined, 'your own PR: no author chip');
+  assert.equal(person('waiting', 4), undefined, 'GitHub requires a review and nobody is requested');
+  assert.equal(person('waiting', 5), 'sam', 'the first requested reviewer who is not you');
+  assert.equal(person('review', 6), 'alice', 'other people stay');
+});
+
+void test('Merge splits into Ready and Parked; only Ready counts as work', () => {
+  const approved = mine(1);
+  const free = mine(2);
+  const idleFree = mine(3, { updatedAt: ago(5) });
+  const idleApproved = mine(4, { updatedAt: ago(6) });
+  const unapproved = mine(5);
+  const reapproved = mine(6, { updatedAt: ago(6) });
+  const result = model([approved, free, idleFree, idleApproved, unapproved, reapproved].map((pr) => item([pr])), {
+    signals: {
+      [approved.url]: clean(approved, { decision: 'APPROVED', opinions: [{ id: '1', author: 'lena', state: 'APPROVED' }] }),
+      [free.url]: clean(free, { decision: null }),
+      [idleFree.url]: clean(idleFree, { decision: null }),
+      [idleApproved.url]: clean(idleApproved, { decision: 'APPROVED', opinions: [{ id: '1', author: 'lena', state: 'APPROVED', at: ago(6) }] }),
+      [unapproved.url]: clean(unapproved, { decision: 'PENDING_SOMETHING' }),
+      // An approval yesterday on a PR untouched for a week is recent activity.
+      [reapproved.url]: clean(reapproved, { decision: 'APPROVED', opinions: [{ id: '1', author: 'sam', state: 'APPROVED', at: ago(1) }] }),
+    },
+  });
+  const merge = result.lanes.find((state) => state.lane === 'merge');
+  assert.deepEqual(merge?.rows.map((row) => row.focus.number).sort(), [1, 2, 6]);
+  assert.deepEqual(merge?.parked.map((row) => row.focus.number).sort(), [3, 4, 5]);
+  assert.ok(merge?.rows.every((row) => row.merge?.ready) && merge.parked.every((row) => row.merge?.ready === false));
+  // The strip and the tab title count Ready only; the queue's lane filter keeps every mergeable PR.
+  assert.equal(result.counts.merge, 3);
+  assert.equal(result.parked, 3);
+  assert.equal(result.actionable, 3);
+  assert.equal(overviewCountLine(result.counts), 'Merge 3 · Answer 0 · Review 0 · Fix 0 · Waiting 0');
+  assert.equal(result.urls.merge.length, 6);
+  assert.equal(result.keys.length, 6, 'parked rows are part of the visit');
+  // Only parked merges: nothing for the tab title.
+  const parkedOnly = model([item([idleFree])], { signals: { [idleFree.url]: clean(idleFree, { decision: null }) } });
+  assert.deepEqual([parkedOnly.counts.merge, parkedOnly.parked, parkedOnly.actionable], [0, 1, 0]);
+  assert.equal(OVERVIEW_IDLE_MS, 3 * 86_400_000);
+});
+
+void test('the stale label is a word, and Waiting on others asks whether to nudge', () => {
+  assert.equal(overviewStaleLabel({ lane: 'waiting', stale: true }), 'Nudge?');
+  for (const name of ['merge', 'answer', 'review', 'fix'] as const) assert.equal(overviewStaleLabel({ lane: name, stale: true }), 'Stale');
+  assert.equal(overviewStaleLabel({ lane: 'waiting', stale: false }), undefined);
 });

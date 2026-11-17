@@ -6,7 +6,7 @@ import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from '
 import { createPortal } from 'react-dom';
 import { X, Loader2 } from 'lucide-react';
 import { isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
-import { activityCapsule, seenKeys } from '../lib/activity-capsule';
+import { activityCapsule, failedTasksLabel, seenKeys } from '../lib/activity-capsule';
 import { TaskRows, TaskStatusGlyph, type TaskRowModel } from './TaskRows';
 import { explanationRows, taskRowStatus, useElapsed } from './ExplanationBuild';
 import { PROVIDERS } from '../lib/models';
@@ -463,7 +463,7 @@ export const ActivityDrawer = memo(function ActivityDrawer({
             {capsule.unseenFailed > 0 && (
               <span className="activity-capsule-part" data-tone="failed">
                 <TaskStatusGlyph status="failed" />
-                {capsule.running || capsule.queued ? capsule.unseenFailed : `${capsule.unseenFailed} failed`}
+                {capsule.running || capsule.queued ? capsule.unseenFailed : failedTasksLabel(capsule.unseenFailed)}
               </span>
             )}
             {capsule.unseenReady > 0 && (
@@ -474,7 +474,7 @@ export const ActivityDrawer = memo(function ActivityDrawer({
             )}
             {capsule.running > 0 && capsule.seenFailed > 0 && !capsule.unseenFailed && (
               <span className="activity-capsule-part" data-tone="muted">
-                {capsule.seenFailed} failed
+                {failedTasksLabel(capsule.seenFailed)}
               </span>
             )}
             {!capsule.visible && <span className="activity-capsule-part">Activity</span>}
