@@ -83,9 +83,17 @@ void app.whenReady().then(async () => {
     }
     await key('Escape');
     await wait("!document.querySelector('[role=dialog]')");
+    // Radix moves focus back in a timer task after the dialog leaves the DOM; until then focus is on <body>. A check
+    // in between failed on the macOS runner, so wait for the opener, up to the usual 7.5 s.
+    const opener = "document.activeElement===document.querySelector('.review-toolbar button')";
+    let restored = false;
+    for (let i = 0; i < 150 && !restored; i++) {
+      restored = await js<boolean>(opener);
+      if (!restored) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     assert.ok(
-      await js("document.activeElement===document.querySelector('.review-toolbar button')"),
-      'Closing restores the opener'
+      restored,
+      `Closing restores the opener: ${await js<string>("JSON.stringify({active:document.activeElement?.outerHTML.slice(0,200),hasFocus:document.hasFocus()})")}`
     );
     await openPalette();
     await fill('zzzzzzzzzzzzzzzz');

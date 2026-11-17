@@ -15,7 +15,8 @@ import { app, BrowserWindow } from 'electron';
  *
  * Heap checks, after garbage collection has settled (CI once kept 18 MB more after a single pass):
  * - with six large PRs open, the heap stays under a budget;
- * - once every tab closes, it returns near where it started;
+ * - once every tab closes, it returns near where it started (measured up to five times, 3 s apart, as the macOS
+ *   runner once held 60 MB more for a moment with the same structure and cache bytes);
  * - dropping every PR from the caches (as 15 idle minutes do) frees less than a budget.
  * Byte budgets do not depend on the machine's speed, so they are not scaled like timing budgets (tests/perf-budget.ts);
  * they leave room for V8's own variation between runs.
@@ -33,6 +34,8 @@ const FILES_PER_PR = 300;
 // Six hidden PR tabs stay mounted, with their Changes views; in this development build that is most of the peak.
 const PEAK_OVER_BASELINE_MB = 170;
 const CLOSED_OVER_BASELINE_MB = 30;
+// Measurements of the heap after the tabs close, 3 s apart, while it stays over the budget.
+const CLOSED_TRIES = 5;
 // The renderer's inspection caches hold at most about 24 MB of ASCII text by their bounds (lib/inspection-limits.ts);
 // here they keep about 17 MB. Before #355 they kept about 45 MB.
 const CACHED_AFTER_CLOSE_MB = 30;
@@ -127,17 +130,21 @@ void app.whenReady().then(async () => {
     const snapshot = async (name: string) => {
       const dir = process.env.GNOSIS_HEAP_SNAPSHOT_DIR;
       if (!dir) return;
-      const chunks: string[] = [];
+      // Chunks go straight to the file: the peak snapshot is longer than the longest string V8 allows.
+      fs.mkdirSync(dir, { recursive: true });
+      const file = fs.openSync(path.join(dir, `${name}.heapsnapshot`), 'w');
       const collect = (_event: unknown, method: string, params: { chunk?: string }) => {
-        if (method === 'HeapProfiler.addHeapSnapshotChunk' && params.chunk) chunks.push(params.chunk);
+        if (method === 'HeapProfiler.addHeapSnapshotChunk' && params.chunk) fs.writeSync(file, params.chunk);
       };
       debug.on('message', collect);
-      await debug.sendCommand('HeapProfiler.enable');
-      await debug.sendCommand('HeapProfiler.takeHeapSnapshot', { reportProgress: false });
-      debug.removeListener('message', collect);
+      try {
+        await debug.sendCommand('HeapProfiler.enable');
+        await debug.sendCommand('HeapProfiler.takeHeapSnapshot', { reportProgress: false });
+      } finally {
+        debug.removeListener('message', collect);
+        fs.closeSync(file);
+      }
       await debug.sendCommand('HeapProfiler.disable');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, `${name}.heapsnapshot`), chunks.join(''));
     };
 
     // ── Fixtures: 24 PRs with large diffs ─────────────────────────
@@ -255,8 +262,20 @@ void app.whenReady().then(async () => {
     for (let count = await js<number>(`${tabs}.length`); count > 1; count--) await closeTab(count - 1);
     await toQueue();
     await sleep(3000);
-    const closed = await measure();
+    // A heap over the budget is measured again a few times before it counts. On the macOS runner the same structure,
+    // with the same cache bytes to the byte, once measured 77.9 MB and once 137.3 MB, and the extra was gone a
+    // second later. Retained memory does not leave with time: a leaked tab or an unbounded cache still fails this and
+    // the structural checks below.
+    let closed = await measure();
+    const closedTries = [closed.heapMB];
+    while (closed.heapMB - baseline.heapMB >= CLOSED_OVER_BASELINE_MB && closedTries.length < CLOSED_TRIES) {
+      await sleep(3000);
+      const again = await measure();
+      closedTries.push(again.heapMB);
+      if (again.heapMB < closed.heapMB) closed = again;
+    }
     samples['tabs closed'] = closed.heapMB;
+    if (closedTries.length > 1) console.log('Heap after the tabs closed, each try (MB):', JSON.stringify(closedTries));
     await snapshot('closed');
     // What the caches still hold: the PRs the queue tab showed and the neighbours predicted for it. Fifteen idle
     // minutes drop them.
