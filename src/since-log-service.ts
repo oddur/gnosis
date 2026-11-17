@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { StateStorage } from './app-data-store';
-import { appendSinceEvents, parseSinceLog, type SinceEvent } from '../lib/since-log';
+import { appendSinceEvents, parseSinceLog, serializeSinceLog, type SinceEvent } from '../lib/since-log';
 
 export const sinceLogName = (account: string) => `overview-since-${createHash('sha256').update(account.toLowerCase()).digest('hex')}.json`;
 
@@ -30,7 +30,7 @@ export function createSinceLog(storage: StateStorage, now = Date.now) {
       const next = appendSinceEvents(before, events, now());
       if (next.length === before.length && next.every((event, index) => event === before[index])) return;
       accounts.set(account.toLowerCase(), next);
-      storage.write(sinceLogName(account), next);
+      storage.write(sinceLogName(account), serializeSinceLog(next));
     },
     /** Events after `since`, newest first. */
     list: (account: string, since: number) => load(account).filter((event) => event.at > since),

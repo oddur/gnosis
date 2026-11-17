@@ -612,3 +612,19 @@ void test('repositories are named by their short name, and owner/repo where two 
     ['Klang/Launcher', 'Launcher'],
   ]);
 });
+
+void test('the since log saves an object, which the state store accepts, and still reads the first builds\' bare array', async () => {
+  const { createSinceLog, sinceLogName } = await import('../src/since-log-service');
+  const { parseSinceLog, serializeSinceLog } = await import('../lib/since-log');
+  const writes = new Map<string, unknown>();
+  const storage = { read: (name: string) => writes.get(name), write: (name: string, value: unknown) => void writes.set(name, value) };
+  const event = { key: 'merged:https://github.com/o/r/pull/1', type: 'merged', at: 1_000, url: 'https://github.com/o/r/pull/1', title: 'One' };
+  const log = createSinceLog(storage as never, () => 2_000);
+  log.record('Me', [event as never]);
+  const saved = writes.get(sinceLogName('Me'));
+  // app-data-worker rejects any top-level value that is not a plain object ("Invalid saved state"), failing the batch.
+  assert.ok(saved && typeof saved === 'object' && !Array.isArray(saved), 'saved as a plain object');
+  assert.equal(parseSinceLog(saved).length, 1);
+  assert.equal(parseSinceLog([event]).length, 1, 'a bare array from an earlier build still reads');
+  assert.deepEqual(parseSinceLog(serializeSinceLog(parseSinceLog([event]))), parseSinceLog([event]));
+});

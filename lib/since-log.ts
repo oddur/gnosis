@@ -47,8 +47,19 @@ export function parseSinceEvent(value: unknown): SinceEvent | undefined {
     ...(typeof raw.actor === 'string' && /^[\w.[\]-]{1,100}$/.test(raw.actor) ? { actor: raw.actor } : {}),
   };
 }
-export const parseSinceLog = (value: unknown): SinceEvent[] =>
-  Array.isArray(value) ? value.flatMap((entry) => parseSinceEvent(entry) ?? []).slice(0, SINCE_LOG_LIMIT) : [];
+/**
+ * Saved as `{ version: 1, events }`: the app's state store accepts only objects at the top level, and a bare array
+ * there failed the whole save batch, read receipts included. A bare array from the first test builds still reads.
+ */
+export const serializeSinceLog = (events: readonly SinceEvent[]) => ({ version: 1, events: [...events] });
+export function parseSinceLog(value: unknown): SinceEvent[] {
+  const list = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object' && Array.isArray((value as { events?: unknown }).events)
+      ? (value as { events: unknown[] }).events
+      : [];
+  return list.flatMap((entry) => parseSinceEvent(entry) ?? []).slice(0, SINCE_LOG_LIMIT);
+}
 
 /** The log with `events` added: each key once, nothing older than `SINCE_LOG_MAX_AGE_MS`, newest first, bounded. */
 export function appendSinceEvents(log: readonly SinceEvent[], events: readonly SinceEvent[], now: number): SinceEvent[] {
