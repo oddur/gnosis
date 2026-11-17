@@ -92,6 +92,7 @@ export interface NotificationDelivery {
 const LABEL: Record<NotificationEventType, string> = {
   'review-requested': 'Review requested',
   'team-review-requested': 'Review requested from your team',
+  rereview: 'New commits since your review',
   mention: 'You were mentioned',
   reply: 'New reply',
   'changes-requested': 'Changes requested',
@@ -106,6 +107,7 @@ const LABEL: Record<NotificationEventType, string> = {
 export const EVENT_TITLE: Record<NotificationEventType, string> = {
   'review-requested': 'Review requested',
   'team-review-requested': 'Team review requested',
+  rereview: 'New commits',
   'changes-requested': 'Changes requested',
   approved: 'Approved',
   'checks-failed': 'Checks failed',
@@ -119,6 +121,7 @@ export const EVENT_TITLE: Record<NotificationEventType, string> = {
 const COUNT_LABEL: Record<NotificationEventType, [string, string]> = {
   'review-requested': ['review request', 'review requests'],
   'team-review-requested': ['team review request', 'team review requests'],
+  rereview: ['PR with new commits since your review', 'PRs with new commits since your review'],
   mention: ['mention', 'mentions'],
   reply: ['new comment', 'new comments'],
   'changes-requested': ['change request', 'change requests'],
@@ -250,6 +253,7 @@ export function batch(events: readonly NotificationEvent[], nextId: () => string
  */
 export const URGENCY: Readonly<Record<NotificationKind, number>> = {
   'review-requested': 1,
+  rereview: 1,
   'changes-requested': 1,
   mention: 1,
   'checks-failed': 2,

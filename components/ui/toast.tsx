@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { Toast } from '@base-ui/react/toast';
-import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Sparkles, Inbox, BellRing, AlarmClock, AtSign, MessageSquareReply, type LucideIcon } from 'lucide-react';
+import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Sparkles, Inbox, BellRing, AlarmClock, AtSign, MessageSquareReply, GitCompareArrows, type LucideIcon } from 'lucide-react';
 import type { NotificationKind } from '../../lib/notification-routing';
 import { NOTIFICATION_ICONS, type NotificationIconName } from '../../lib/notification-icons';
 import { PrStateIcon } from '../PrStateIcon';
@@ -49,6 +49,7 @@ export function ToastHost() {
 /** The same glyphs as the desktop icons on Windows and Linux (lib/notification-icons.ts). */
 const GLYPHS: Record<NotificationIconName, LucideIcon> = {
   'git-pull-request': GitPullRequest,
+  'git-compare-arrows': GitCompareArrows,
   'message-square-warning': MessageSquareWarning,
   'circle-check': CheckCircle2,
   'circle-x': CircleX,

@@ -44,6 +44,7 @@ export type NotificationReplyTarget =
 /** Row order of the design's event table: picks the headline when events coalesce. */
 export const EVENT_RANK: readonly NotificationEventType[] = [
   'review-requested',
+  'rereview',
   'team-review-requested',
   'mention',
   'changes-requested',
@@ -73,6 +74,8 @@ export interface PrBasis {
   signalsAt?: number;
   /** When checks were first seen failing for this head while others still ran. */
   checksFailingSince?: number;
+  /** A new head on a PR the reader reviewed, waiting for its signals to say whether a re-review is needed. */
+  rereviewHead?: string;
   observedAt: number;
 }
 export type ObservedMember = AttentionMember & { title: string; repo: string; number: number };
@@ -141,6 +144,12 @@ export function deriveEvents(
     if (now - checksFailingSince < CHECKS_SETTLE_CAP_MS) delete kinds['checks-failed'];
   }
 
+  // Re-review needed: commits pushed after the reader's last review of someone else's PR. Signals for a new head can
+  // come after the head itself, so the moved head waits in the basis until they do. Once per head.
+  const awaiting = prev && !sameHead ? member.headSha : sameHead ? prev.rereviewHead : undefined;
+  const reviewed = signals && eligible ? ownLatestReview(signals, login) : undefined;
+  const pushedByReader = !!signals?.activity?.head && [signals.activity.head.author, signals.activity.head.committer].some((name) => !!name && same(name, login));
+  const rereview = !!awaiting && !!reviewed?.headSha && reviewed.headSha !== member.headSha && !pushedByReader;
   const requestEntered = direct && !prev?.kinds['review-requested'];
   const teamEntered = team && !prev?.team;
   const latest = signals?.latestReview;
@@ -157,6 +166,7 @@ export function deriveEvents(
     ...(opinions ? { opinions } : {}),
     ...(signals ?{ signalsAt: signals.checkedAt } : prev?.signalsAt !== undefined && sameHead ? { signalsAt: prev.signalsAt } : {}),
     ...(checksFailingSince !== undefined && kinds['checks-failed'] === undefined ? { checksFailingSince } : {}),
+    ...(awaiting && !signals && open ? { rereviewHead: awaiting } : {}),
     observedAt: now,
   };
   const resolved: ResolvedTypes = !open
@@ -166,6 +176,8 @@ export function deriveEvents(
         ...(!team ? ['team-review-requested' as const] : []),
         ...(signals && signals.checks.state === 'success' ? ['checks-failed' as const] : []),
         ...(signals && !kinds['changes-requested'] ? ['changes-requested' as const] : []),
+        // The reader reviewed the new head.
+        ...(reviewed?.headSha === member.headSha ? ['rereview' as const] : []),
       ];
   if (silent) return { basis, events: [], resolved };
 
@@ -177,6 +189,7 @@ export function deriveEvents(
   };
   if (requestEntered) add('review-requested', `requested|${member.url}|${basis.requests}`, 'review-requested');
   if (teamEntered) add('team-review-requested', `team-requested|${member.url}|${basis.teamRequests}`, 'review-requested');
+  if (rereview && signals && now - signals.checkedAt <= STALE_SIGNALS_MS) add('rereview', `rereview|${member.url}|${member.headSha}`, 'updated-since-review');
 
   // A PR seen for the first time, or signals seen for the first time, only start a basis.
   const signalsKnown = prev?.review !== undefined;
@@ -208,6 +221,7 @@ export function deriveEvents(
 const NOTIFICATION_TYPES_RESOLVED_BY_CLOSE: readonly NotificationEventType[] = [
   'review-requested',
   'team-review-requested',
+  'rereview',
   'mention',
   'reply',
   'changes-requested',
@@ -218,6 +232,13 @@ const NOTIFICATION_TYPES_RESOLVED_BY_CLOSE: readonly NotificationEventType[] = [
   'explanation-ready',
 ];
 
+/** The reader's latest submitted review of this PR, with the commit it was made on, from the signals. */
+function ownLatestReview(signals: QueueSignals, login: string) {
+  const reviews = [...(signals.opinions ?? []), ...(signals.latestReview ? [signals.latestReview] : [])].filter(
+    (review) => same(review.author, login) && review.state !== 'PENDING' && review.state !== 'DISMISSED'
+  );
+  return reviews.sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt)).at(0);
+}
 /** "Ready to merge" absorbs "Approved" for the same PR. */
 export function subsume(events: readonly NotificationEvent[]): NotificationEvent[] {
   const ready = new Set(events.filter((event) => event.type === 'ready-to-merge').map((event) => event.url));

@@ -101,6 +101,7 @@ void test('on your own PR, any new comment from someone else is a reply, inline 
   const top = comment('lena', 'The **retry loop** never backs off. See [docs](https://example.com).');
   const event = commentEvent(input({ threads: [], feedback: feedback([top]) }, { pr: own }));
   assert.equal(event?.type, 'reply');
+  assert.equal(event?.mine, true, 'part 1 counts replies on your own PRs as "on me"');
   assert.equal(event?.quote, 'The retry loop never backs off. See docs.');
   assert.deepEqual(event?.reply, { kind: 'feedback', prUrl: URL, sourceId: top.id, to: 'lena' });
   assert.equal(event?.target?.kind === 'pr' && event.target.threadId, top.id);
@@ -125,7 +126,9 @@ void test('own comments, bots, hidden, pending and old comments never notify', (
   };
   assert.equal(commentEvent(input(discussion, { pr: own })), undefined);
   // Part 1's allow list can let a bot through.
-  assert.equal(commentEvent(input(discussion, { pr: own, allowBot: (login) => login === 'coderabbitai[bot]' }))?.actor, 'coderabbitai[bot]');
+  const allowed = commentEvent(input(discussion, { pr: own, allowBot: (login) => login === 'coderabbitai[bot]' }));
+  assert.equal(allowed?.actor, 'coderabbitai[bot]');
+  assert.equal(allowed?.actorIsBot, true);
 });
 
 void test('the newest mention wins over a newer reply; otherwise the newest reply', () => {

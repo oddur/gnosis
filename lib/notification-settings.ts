@@ -13,6 +13,8 @@ export type NotificationEventType =
   | 'update-ready'
   /** A snoozed PR came back and no other event says why. */
   | 'snooze-ended'
+  /** New commits on someone else's PR since your review: a re-review is needed. */
+  | 'rereview'
   /** You were @mentioned in a comment or review. Produced by #385 part 2. */
   | 'mention'
   /** A reply to you: a new comment in a thread you are in, or someone else's comment on your PR. #385 part 2. */
@@ -20,6 +22,7 @@ export type NotificationEventType =
 export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
   'review-requested',
   'team-review-requested',
+  'rereview',
   'mention',
   'reply',
   'changes-requested',
@@ -34,6 +37,7 @@ export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
 export const DEFAULT_NOTIFICATION_EVENTS: Readonly<Record<NotificationEventType, boolean>> = {
   'review-requested': true,
   'team-review-requested': false,
+  rereview: true,
   mention: true,
   reply: true,
   'changes-requested': true,
@@ -48,6 +52,7 @@ export const DEFAULT_NOTIFICATION_EVENTS: Readonly<Record<NotificationEventType,
 export const PR_EVENT_TYPES: readonly NotificationEventType[] = [
   'review-requested',
   'team-review-requested',
+  'rereview',
   'mention',
   'reply',
   'changes-requested',
@@ -119,7 +124,7 @@ export function normalizeBotLogins(value: unknown): string[] {
  * merge. A snooze you set and an explanation you are waiting for are yours as well. Team review requests,
  * approvals on their own and events on other people's PRs are not.
  */
-const ON_ME: ReadonlySet<NotificationEventType> = new Set(['review-requested', 'mention', 'reply', 'snooze-ended', 'explanation-ready']);
+const ON_ME: ReadonlySet<NotificationEventType> = new Set(['review-requested', 'rereview', 'mention', 'reply', 'snooze-ended', 'explanation-ready']);
 const ON_ME_WHEN_MINE: ReadonlySet<NotificationEventType> = new Set(['changes-requested', 'checks-failed', 'ready-to-merge']);
 export function levelAllows(level: RepositoryNotificationLevel, event: { type: NotificationEventType; mine?: boolean }): boolean {
   if (level === 'all') return true;

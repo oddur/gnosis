@@ -28,7 +28,7 @@ import { LOGIN, T0, member, mine, signals } from './notification-fixtures';
 // ── Levels ──
 
 /** Events that "Only when it's on me" keeps on any PR, and those it keeps only on your own PRs. */
-const ON_ME_ANY: readonly NotificationEventType[] = ['review-requested', 'mention', 'reply', 'snooze-ended', 'explanation-ready'];
+const ON_ME_ANY: readonly NotificationEventType[] = ['review-requested', 'rereview', 'mention', 'reply', 'snooze-ended', 'explanation-ready'];
 const ON_ME_MINE: readonly NotificationEventType[] = ['changes-requested', 'checks-failed', 'ready-to-merge'];
 const prefs = (level: RepositoryNotificationLevel | undefined, events: Partial<Record<NotificationEventType, boolean>> = {}, extra: Record<string, unknown> = {}) =>
   notificationSettings({

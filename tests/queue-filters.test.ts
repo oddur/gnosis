@@ -311,3 +311,14 @@ void test('the briefing filter is a saved, removable queue filter that never dec
   // Filtering the list to ready briefings must not skip the queued briefing that runs next.
   assert.deepEqual(prioritizeBriefings([queued, ready], filters, now).map((entry) => entry.subject.id), [queued.subject.id, ready.subject.id]);
 });
+
+void test('a notification digest filters the queue to its PRs, with a removable chip', () => {
+  const urls = ['https://github.com/owner/repo/pull/2'];
+  const filters = normalizeQueueFilters({ ...DEFAULT_QUEUE_FILTERS, urls: [...urls, 'not a url'] });
+  assert.deepEqual(filters.urls, urls);
+  assert.equal(matchesQueueFilters(item([member(1)]), filters, now), false);
+  assert.equal(matchesQueueFilters(item([member(2)]), filters, now), true);
+  assert.equal(activeQueueFilterCount(filters), 1);
+  assert.deepEqual(describeQueueFilters(filters), [{ key: 'urls', label: 'From a notification: 1 PR' }]);
+  assert.equal(normalizeQueueFilters({ ...filters, urls: undefined }).urls, undefined);
+});

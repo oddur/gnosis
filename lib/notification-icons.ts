@@ -10,6 +10,7 @@ import type { NotificationKind } from './notification-routing';
 
 export type NotificationIconName =
   | 'git-pull-request'
+  | 'git-compare-arrows'
   | 'message-square-warning'
   | 'circle-check'
   | 'circle-x'
@@ -25,6 +26,7 @@ export type IconTone = 'attention' | 'danger' | 'success' | 'done' | 'neutral';
 export const NOTIFICATION_ICONS: Record<NotificationKind, { icon: NotificationIconName; tone: IconTone }> = {
   'review-requested': { icon: 'git-pull-request', tone: 'attention' },
   'team-review-requested': { icon: 'git-pull-request', tone: 'attention' },
+  rereview: { icon: 'git-compare-arrows', tone: 'attention' },
   'changes-requested': { icon: 'message-square-warning', tone: 'danger' },
   approved: { icon: 'circle-check', tone: 'success' },
   'checks-failed': { icon: 'circle-x', tone: 'danger' },
@@ -55,6 +57,7 @@ type Shape =
 const SQUARE = 'M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z';
 export const ICON_SHAPES: Record<NotificationIconName, Shape[]> = {
   'git-pull-request': [['circle', 18, 18, 3], ['circle', 6, 6, 3], ['path', 'M13 6h3a2 2 0 0 1 2 2v7'], ['line', 6, 9, 6, 21]],
+  'git-compare-arrows': [['circle', 5, 6, 3], ['path', 'M12 6h5a2 2 0 0 1 2 2v7'], ['path', 'm15 9-3-3 3-3'], ['circle', 19, 18, 3], ['path', 'M12 18H7a2 2 0 0 1-2-2V9'], ['path', 'm9 15 3 3-3 3']],
   'message-square-warning': [['path', SQUARE], ['path', 'M12 15h.01'], ['path', 'M12 7v4']],
   'circle-check': [['circle', 12, 12, 10], ['path', 'm9 12 2 2 4-4']],
   'circle-x': [['circle', 12, 12, 10], ['path', 'm15 9-6 6'], ['path', 'm9 9 6 6']],

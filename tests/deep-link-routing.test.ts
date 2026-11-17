@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { linkErrorNotice, linkSupport, prLinkBlock, prMetadataItem, routeDeepLink } from '../lib/deep-link-routing';
-import { parseDeepLink, type DeepLinkTarget, type PrLinkTarget } from '../lib/deep-link';
+import { formatDeepLink, parseDeepLink, parseDeepLinkTarget, type DeepLinkTarget, type PrLinkTarget } from '../lib/deep-link';
 import { groupSubjects } from '../lib/workbench';
 import type { WorkspaceTabEntry } from '../lib/workspace-tabs';
 import type { PrMetadata } from '../lib/types';
@@ -130,4 +130,44 @@ void test('a PR outside the queue becomes a watched queue item from its metadata
   assert.equal(item.subject.id, 'https://github.com/oddur/gnosis/pull/160');
   assert.equal(item.subject.title, 'Add links');
   assert.deepEqual([item.subject.members[0].number, item.subject.members[0].repo, item.subject.members[0].role], [160, 'oddur/gnosis', 'watched']);
+});
+
+// ── Precise notification targets (#385 part 2) ──
+
+void test('a thread, a check and a focus are followed; the route carries them into the PR', () => {
+  const thread = linkSupport(link('gnosis://pr/oddur/gnosis/160/feedback?thread=PRRT_kwDOA1'), 'notification');
+  assert.ok(thread.supported);
+  assert.deepEqual(thread.target, { kind: 'pr', pr, tab: 'feedback', threadId: 'PRRT_kwDOA1' });
+  assert.equal(thread.note, undefined, 'no "not supported yet" note for a thread');
+  const check = linkSupport(link('gnosis://pr/oddur/gnosis/160/checks?check=42'), 'os');
+  assert.ok(check.supported);
+  assert.deepEqual(check.target, { kind: 'pr', pr, tab: 'checks', check: '42' });
+  const merge = link('gnosis://pr/oddur/gnosis/160?focus=merge');
+  assert.deepEqual(merge, { kind: 'pr', pr, focus: 'merge' });
+  assert.deepEqual(link('gnosis://pr/oddur/gnosis/160?focus=unviewed-file'), { kind: 'pr', pr, tab: 'changes', focus: 'unviewed-file' }, 'a focus implies its tab');
+  assert.deepEqual(link('gnosis://pr/oddur/gnosis/160/checks?focus=merge'), { kind: 'pr', pr, tab: 'checks' }, 'a focus on another tab is dropped');
+  const route = routeDeepLink({ kind: 'pr', pr, tab: 'feedback', threadId: 'PRRT_1' }, { tabs: [tab('t1')], active: 't1' }, { items: [] }, 9);
+  assert.deepEqual(route.destination, { kind: 'home', url: 'https://github.com/oddur/gnosis/pull/160', open: { tab: 'feedback', nonce: 9, threadId: 'PRRT_1' } });
+  assert.deepEqual(route.tab, { kind: 'new' }, 'current work is not replaced');
+  const focus = routeDeepLink({ kind: 'pr', pr, focus: 'merge' }, { tabs: [tab('t1')], active: 't1' }, { items: [] }, 9);
+  assert.deepEqual(focus.destination.kind === 'home' && focus.destination.open, { tab: undefined, nonce: 9, focus: 'merge' });
+});
+
+void test('a digest opens the queue filtered to its PRs, and the list is parsed safely', () => {
+  const urls = ['https://github.com/oddur/gnosis/pull/160', 'https://github.com/klang/engine/pull/2'];
+  const target: DeepLinkTarget = { kind: 'queue', filters: { prs: urls } };
+  const raw = formatDeepLink(target);
+  assert.equal(raw, 'gnosis://queue?prs=oddur/gnosis/160%2Cklang/engine/2');
+  assert.deepEqual(link(raw), target);
+  assert.deepEqual(parseDeepLinkTarget(target), target);
+  for (const bad of ['gnosis://queue?prs=', 'gnosis://queue?prs=oddur/gnosis', 'gnosis://queue?prs=../x/1', 'gnosis://queue?prs=a/b/1/2', `gnosis://queue?prs=${Array.from({ length: 21 }, (_, i) => `o/r/${i + 1}`).join(',')}`]) {
+    const result = parseDeepLink(bad, ['gnosis']);
+    assert.ok('error' in result, bad);
+  }
+  assert.equal(parseDeepLinkTarget({ kind: 'queue', filters: { prs: ['https://evil.example/o/r/pull/1'] } }), undefined);
+  assert.equal(parseDeepLinkTarget({ kind: 'pr', pr, focus: 'everything' }), undefined);
+  const route = routeDeepLink(target, { tabs: [tab('t1')], active: 't1' }, { items: [] });
+  assert.deepEqual(route.destination, { kind: 'home', section: 'all', filters: { prs: urls } });
+  // Older links still parse the same.
+  assert.deepEqual(link('gnosis://queue?read=unread'), { kind: 'queue', filters: { read: 'unread' } });
 });
