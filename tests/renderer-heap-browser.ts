@@ -36,6 +36,8 @@ const PEAK_OVER_BASELINE_MB = 170;
 const CLOSED_OVER_BASELINE_MB = 30;
 // Measurements of the heap after the tabs close, 3 s apart, while it stays over the budget.
 const CLOSED_TRIES = 5;
+// Readings taken even when the first is within budget.
+const CLOSED_MIN_TRIES = 3;
 // The renderer's inspection caches hold at most about 24 MB of ASCII text by their bounds (lib/inspection-limits.ts);
 // here they keep about 17 MB. Before #355 they kept about 45 MB.
 const CACHED_AFTER_CLOSE_MB = 30;
@@ -268,7 +270,12 @@ void app.whenReady().then(async () => {
     // the structural checks below.
     let closed = await measure();
     const closedTries = [closed.heapMB];
-    while (closed.heapMB - baseline.heapMB >= CLOSED_OVER_BASELINE_MB && closedTries.length < CLOSED_TRIES) {
+    // Always take the lowest of a few readings: garbage left in this one also inflates the cache check below, which
+    // compares it with the heap after the idle sweep (one Linux run: 32.4 MB by heap, 25 MB by the caches' estimates).
+    while (
+      (closedTries.length < CLOSED_MIN_TRIES || closed.heapMB - baseline.heapMB >= CLOSED_OVER_BASELINE_MB) &&
+      closedTries.length < CLOSED_TRIES
+    ) {
       await sleep(3000);
       const again = await measure();
       closedTries.push(again.heapMB);
