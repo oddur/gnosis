@@ -19,7 +19,8 @@ import path from 'node:path';
 const P = '.workspace-panel[data-workspace-active=true]';
 const url = (repo: string, n: number) => `https://github.com/${repo}/pull/${n}`;
 const row = (id: string) => `${P} [data-overview-row="${id}"]`;
-const BRIEFING = 'lena and owen are waiting on your reply, and 7 reviews are waiting on you. 4 PRs are ready to merge, and 1 has failed checks.';
+const BRIEFING = 'lena and owen are waiting on your reply, and 7 reviews are waiting on you. 3 PRs are approved and ready to merge, 1 more can merge without review, and 1 has failed checks.';
+const BRIEFING_3 = '2 reviews are waiting on you. 2 PRs are approved and ready to merge, 10 more can merge without review, and 5 have failed checks.';
 const SINCE = 'Since yesterday: 3 merged · 2 new review requests · owen and lena replied · checks failed on 1, passed on 2';
 
 void app.whenReady().then(async () => {
@@ -33,13 +34,15 @@ void app.whenReady().then(async () => {
   let step = 'start';
   const dir = path.resolve('.impeccable/review/overview-morning');
   fs.mkdirSync(dir, { recursive: true });
-  const capture = async (name: string) => {
+  const dir3 = path.resolve('.impeccable/review/overview-morning-3');
+  fs.mkdirSync(dir3, { recursive: true });
+  const capture = async (name: string, into = dir) => {
     if (process.platform === 'darwin') app.show();
     win.show();
     win.focus();
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 300));
-    fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG());
+    fs.writeFileSync(path.join(into, name + '.png'), (await win.webContents.capturePage()).toPNG());
   };
   const wait = async (code: string, tries = 200) => {
     for (let i = 0; i < tries; i++) {
@@ -49,11 +52,11 @@ void app.whenReady().then(async () => {
     await capture(`failure-${step}`).catch(() => undefined);
     throw Error(`Timed out in "${step}": ${code}\n${await js<string>(`(document.querySelector('${P}')?.innerText ?? document.body.innerText).slice(0, 2500)`)}`);
   };
-  const both = async (name: string) => {
+  const both = async (name: string, into = dir) => {
     await js("document.documentElement.classList.remove('dark')");
-    await capture(`${name}-light`);
+    await capture(`${name}-light`, into);
     await js("document.documentElement.classList.add('dark')");
-    await capture(`${name}-dark`);
+    await capture(`${name}-dark`, into);
     await js("document.documentElement.classList.remove('dark')");
   };
   const resize = async (width: number, height = 800) => {
@@ -78,7 +81,13 @@ void app.whenReady().then(async () => {
   const section = (name: string) => `${P} .morning-section[data-section="${name}"]`;
   const count = (name: string) => js<string>(`document.querySelector('${section(name)} [data-section-count]').textContent`);
   const ids = (name: string) => js<string[]>(`[...document.querySelectorAll('${section(name)} [data-overview-row]')].map(b=>b.dataset.overviewRow)`);
-  const texts = (name: string) => js<string[]>(`[...document.querySelectorAll('${section(name)} .morning-row')].map(r=>[r.querySelector('.morning-title-text')?.textContent, r.querySelector('.morning-detail')?.textContent, r.querySelector('.morning-meta')?.textContent].filter(Boolean).join(' | '))`);
+  // Title, repository, detail and meta, as each row shows them.
+  const texts = (name: string) => js<string[]>(`[...document.querySelectorAll('${section(name)} .morning-row')].map(r=>[r.querySelector('.morning-title-text')?.textContent, r.querySelector('.morning-repo')?.textContent, r.querySelector('.morning-detail')?.textContent, r.querySelector('.morning-meta')?.textContent].filter(Boolean).join(' | '))`);
+  const rowText = (id: string) => js<string>(`(()=>{const r=document.querySelector('${P} [data-overview-row-item="${id}"]');return r?[r.querySelector('.morning-title-text')?.textContent, r.querySelector('.morning-repo')?.textContent, r.querySelector('.morning-detail')?.textContent, r.querySelector('.morning-meta')?.textContent].filter(Boolean).join(' | '):''})()`);
+  // A section heading equals the sum of what its top rows say they hold: "2 PRs · …", "1 running", "17 PRs in 6 stacks", "5 failing checks".
+  const rowSum = (name: string) => js<number>(`[...document.querySelectorAll('${section(name)} .morning-row:not(.is-nested) .morning-detail')].reduce((t,d)=>{const x=d.textContent;const why=[...x.matchAll(/([0-9]+) (failing check|conflict|restack)/g)];return t+(why.length?why.reduce((n,m)=>n+Number(m[1]),0):Number(x.match(/^[0-9]+/)?.[0] ?? 1))},0)`);
+  // Every row names its repository in plain text.
+  const everyRowHasRepo = () => js<boolean>(`[...document.querySelectorAll('${P} .morning-row')].every(r=>{const e=r.querySelector('.morning-repo');return !!e && e.textContent.trim().length>0 && e.getBoundingClientRect().width>0})`);
   const focusedRow = () => js<string | null>("document.activeElement?.getAttribute('data-overview-row') ?? null");
   const briefing = () => js<string>(`document.querySelector('${P} [data-overview-briefing]')?.textContent ?? ''`);
   const writes = () => js<{ kind: string; url: string; comment?: string }[]>('window.fixtureOverview.writes');
@@ -118,27 +127,39 @@ void app.whenReady().then(async () => {
       assert.ok(b.others.left > b.you.left && b.you.top > b.move.top && b.decide.top > b.you.top, JSON.stringify(b));
       assert.ok(await noSideways());
     }
-    // Move forward now: merges approved and green first, then the explained small review and the reply, by effort.
+    // Move forward now: approved merges, the reply, and small reviews by effort. The merge nobody reviewed waits on the
+    // quiet line under the section; #307 waits for #306 to merge, so it is under its stack.
     assert.deepEqual(await texts('move'), [
-      'Cache resolved module paths between builds | approved by lena · green | 1 min',
-      'Drop the unused polyfill bundle | no review required · green | 1 min',
-      'Extract the billing form state | approved by ivar · green | 1 min',
-      'Retry flaky uploads with jitter | approved by sam and 1 other · green | 1 min',
-      'Stream build logs to the dashboard | 25 lines · explanation ready | 3 min',
-      'Document the plugin loading order | owen: “Could we keep the old loading order behind a flag until…” | 3 min',
+      'Cache resolved module paths between builds | engine | approved by lena · green | 1 min',
+      'Retry flaky uploads with jitter | cli | approved by sam and 1 other · green | 1 min',
+      'Stream build logs to the dashboard | engine | 25 lines · explanation ready | 3 min',
+      'Document the plugin loading order | engine | owen: “Could we keep the old loading order behind a flag until…” | 3 min',
+      'Add a dry-run flag to the release script | cli | 71 lines | 5 min',
+      'Replace the legacy config parser | engine | updated since your review | 5 min',
     ]);
-    assert.equal(await js(`document.querySelector('${section('move')} .morning-section-summary').textContent`), '~10 min');
-    assert.deepEqual(await js(`[...document.querySelectorAll('${section('move')} [data-quick-action]')].map(b=>b.textContent)`), ['Merge', 'Merge', 'Merge', 'Merge', 'Review', 'Reply']);
-    // Waiting on you: by person, oldest wait first; lena and owen also wait on your replies.
-    assert.deepEqual(await texts('you'), ['maya | 2 PRs · oldest 5 d', 'lena | 2 PRs · oldest 4 d', 'sam | 2 PRs · oldest 3 d', 'owen | 2 PRs · oldest 3 d', 'ivar | 1 PR · oldest 2 d']);
+    assert.equal(await js(`document.querySelector('${section('move')} .morning-section-summary').textContent`), '~18 min');
+    assert.deepEqual(await js(`[...document.querySelectorAll('${section('move')} [data-quick-action]')].map(b=>b.textContent)`), ['Merge', 'Merge', 'Review', 'Reply', 'Review', 'Re-review']);
+    assert.equal(await js(`document.querySelector('${section('move')} [data-overview-more-unreviewed]')?.textContent`), '1 more ready, not reviewed');
+    // Waiting on you: by person, oldest wait first; lena and owen also wait on your replies. A person whose PRs span
+    // repositories says how many.
+    assert.deepEqual(await texts('you'), ['maya | 2 repos | 2 PRs · oldest 5 d', 'lena | 2 repos | 2 PRs · oldest 4 d', 'sam | 2 repos | 2 PRs · oldest 3 d', 'owen | engine | 2 PRs · oldest 3 d', 'ivar | cli | 1 PR · oldest 2 d']);
     assert.equal(await count('you'), '9');
-    // Waiting on others: reviewers with Nudge, then CI, the open base and you.
-    assert.deepEqual(await texts('others'), ['lena | 2 PRs · 4 d', 'CI | 1 running', 'base #331 | 1 PR · 20 h', 'base #306 | 1 PR · 9 h', 'You | 1 failing check, 2 conflicts']);
-    assert.deepEqual(await js(`[...document.querySelectorAll('${section('others')} [data-quick-action]')].map(b=>b.textContent)`), ['Nudge', 'All 2']);
+    assert.equal(await rowSum('you'), 9, 'the heading is the sum of the rows');
+    // Waiting on others: reviewers with Nudge, then CI, the stack waiting for #306, and you. Each PR once.
+    assert.deepEqual(await texts('others'), [
+      'lena | 2 repos | 2 PRs · 4 d',
+      'CI | engine | 1 running',
+      'Extract the billing form state | web | 1 PR waits for #306 to merge · #306 waits on lena’s review',
+      'You | 2 repos | 1 failing check, 2 conflicts',
+    ]);
+    assert.equal(await count('others'), '7');
+    assert.equal(await rowSum('others'), 7, 'the heading is the sum of the rows');
+    assert.deepEqual(await js(`[...document.querySelectorAll('${section('others')} [data-quick-action]')].map(b=>b.textContent)`), ['Nudge', 'Open #306', 'All 3']);
     // Needs a decision: idle for over a week.
-    assert.deepEqual(await texts('decide'), ['Inline the hot path in the resolver | Idle 8 d', 'Rename the config loader flags | Idle 7 d']);
-    // The tab title counts Move forward now and Waiting on you, each PR once: 6 + 9 − 2.
-    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(13)'");
+    assert.deepEqual(await texts('decide'), ['Inline the hot path in the resolver | engine | Idle 8 d', 'Rename the config loader flags | cli | Idle 7 d']);
+    assert.ok(await everyRowHasRepo(), 'every row names its repository');
+    // The tab title counts Move forward now and Waiting on you, each PR once: 6 + 9 − 4.
+    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(11)'");
     await js(`document.activeElement?.blur()`);
     await both('default-1280');
 
@@ -147,7 +168,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`document.querySelectorAll('${P} [data-overview-row][tabindex="0"]').length`), 4, 'one roving tab stop per section');
     assert.equal(await js(`[...document.querySelectorAll('${P} .morning-actions button')].every(b=>b.tabIndex===-1)`), true, 'actions and menus are out of the tab order');
     assert.equal(await description(row(`move|merge|${url('klang/engine', 301)}`)), 'Merge, approved by lena · green, engine #301, about 1 minute');
-    assert.equal(await description(row('others|person:lena')), 'lena, 2 PRs · 4 days. Collapsed. A nudges');
+    assert.equal(await description(row('others|person:lena')), 'lena, 2 repositories, 2 PRs · 4 days. Collapsed. A nudges');
+    assert.equal(await description(row('decide|merge|' + url('klang/engine', 305))), 'Idle 8 d, engine #305. A closes, Z snoozes');
     assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').getAttribute('aria-live')`), 'polite');
     assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').textContent`), '');
     assert.equal(await js(`getComputedStyle(document.querySelector('${section('decide')} .morning-actions')).opacity`), '0', 'decisions keep their actions until hover or focus');
@@ -178,7 +200,8 @@ void app.whenReady().then(async () => {
     await wait(`document.querySelector('${row('you|person:maya')}')?.getAttribute('aria-expanded') === 'true'`);
     await key('j');
     assert.equal(await focusedRow(), `you|person:maya|review|${url('klang/engine', 321)}`, 'the expanded person’s PRs follow it');
-    assert.deepEqual((await texts('you')).slice(0, 3), ['maya | 2 PRs · oldest 5 d', 'Stream build logs to the dashboard | 5 d', 'Tighten the retry budget for webhooks | 2 d']);
+    // Expanded, each PR names its own repository.
+    assert.deepEqual((await texts('you')).slice(0, 3), ['maya | 2 repos | 2 PRs · oldest 5 d', 'Stream build logs to the dashboard | engine | 5 d', 'Tighten the retry budget for webhooks | web | 2 d']);
     await key('Tab', 8);
     assert.equal(await focusedRow(), move.at(-1), 'Shift+Tab returns to the section’s last focused row');
     await key('Tab');
@@ -256,7 +279,7 @@ void app.whenReady().then(async () => {
     // Mark as read, Snooze and copying live in the row menu; Shift+F10 opens it from the row.
     await menuAction(js, 'Actions for PR #312', 'Mark as read');
     await wait("window.fixtureOverview.writes.some(w=>w.kind==='mark-read' && w.url.endsWith('/312'))");
-    const m303 = row(`move|merge|${url('acme/web', 303)}`);
+    const m303 = row(`move|review|${url('klang/cli', 322)}`);
     await js(`document.querySelector('${m303}').focus()`);
     await key('F10', 8);
     await wait("[...document.querySelectorAll('[role=menuitem]')].some(b=>b.textContent==='Snooze PR…')");
@@ -290,16 +313,18 @@ void app.whenReady().then(async () => {
     // The user's real shape: Answer 0, Review 2, Merge 16 (2 ready, 14 parked), Fix 18 and Waiting 5.
     await js('window.fixtureOverview.real()');
     await wait(`document.querySelectorAll('${section('move')} .morning-row').length === 4`);
-    assert.equal(await briefing(), '2 reviews are waiting on you. 2 PRs are ready to merge, and 15 have failed checks.');
+    assert.equal(await briefing(), '2 reviews are waiting on you. 2 PRs are approved and ready to merge, and 15 have failed checks.');
     await wait(`[...document.querySelectorAll('${section('move')} .morning-detail')].some(d=>d.textContent==='+42 lines since your review')`);
     assert.deepEqual(await texts('move'), [
-      'Cache resolved module paths between builds | approved by lena · green | 1 min',
-      'Retry flaky uploads with jitter | approved by sam and 1 other · green | 1 min',
-      'Stream build logs to the dashboard | 25 lines · explanation ready | 3 min',
-      'Replace the legacy config parser | +42 lines since your review | 3 min',
+      'Cache resolved module paths between builds | engine | approved by lena · green | 1 min',
+      'Retry flaky uploads with jitter | cli | approved by sam and 1 other · green | 1 min',
+      'Stream build logs to the dashboard | engine | 25 lines · explanation ready | 3 min',
+      'Replace the legacy config parser | engine | +42 lines since your review | 3 min',
     ]);
     assert.ok((await writes()).some((w) => w.kind === 'compare' && w.url === url('klang/engine', 324)), 'one compare for the re-review');
-    assert.deepEqual(await texts('others'), ['plucked | 1 PR · 10 d', 'lena | 2 PRs · 4 d', 'sam | 1 PR · 4 h', 'CI | 2 running', 'base #331 | 1 PR · 20 h', 'You | 15 failing checks, 4 conflicts']);
+    // #399 waits on sam and on CI: it is listed once, under sam.
+    assert.deepEqual(await texts('others'), ['plucked | engine | 1 PR · 10 d', 'lena | cli | 2 PRs · 4 d', 'sam | web | 1 PR · 4 h', 'CI | engine | 1 running', 'You | 3 repos | 15 failing checks, 4 conflicts']);
+    assert.equal(await rowSum('others'), Number(await count('others')));
     assert.ok(Number(await count('decide')) >= 14, 'idle, failing and never-approved PRs need a decision');
     assert.equal(await js(`document.querySelector('${section('decide')} [data-overview-more]')?.textContent`), `Show all ${await count('decide')}`);
     await js(`document.activeElement?.blur(); document.querySelector('${P} .overview-body').scrollTop = 0`);
@@ -328,7 +353,7 @@ void app.whenReady().then(async () => {
     // A light day: one reply, two reviews, one merge.
     await js('document.activeElement?.blur(); window.fixtureOverview.restore(); window.fixtureOverview.only([311, 321, 323, 302])');
     await wait(`document.querySelectorAll('${section('decide')} .morning-empty').length === 1 && document.querySelectorAll('${section('move')} .morning-row').length === 3`);
-    assert.equal(await briefing(), 'lena is waiting on your reply, and 2 reviews are waiting on you. 1 PR is ready to merge.');
+    assert.equal(await briefing(), 'lena is waiting on your reply, and 2 reviews are waiting on you. 1 PR is approved and ready to merge.');
     assert.equal(await js(`document.querySelector('${section('decide')} .morning-empty')?.textContent`), 'Nothing to decide. None of your PRs has been stuck for over a week.');
     await dismissToasts();
     await new Promise((r) => setTimeout(r, 400));
@@ -337,6 +362,93 @@ void app.whenReady().then(async () => {
     await both('light-day-1440');
     await resize(760);
     await both('light-day-760');
+    await resize(1280);
+
+    step = 'real-3';
+    // The real shape, third pass: 17 stacked PRs in 6 stacks (#384 in two repositories), 10 merges that need no
+    // review (2 large), 2 approved, and 2 review requests. `seed` is a short name two owners share.
+    await resize(1440, 1000);
+    await js('document.activeElement?.blur(); window.fixtureOverview.real3()');
+    await wait(`document.querySelector('${P} [data-overview-briefing]')?.textContent === ${JSON.stringify(BRIEFING_3)}`);
+    // Approved first, then the small review request, then at most two merges nobody reviewed. Large PRs never.
+    await wait(`document.querySelectorAll('${section('move')} .morning-row').length === 5`);
+    assert.deepEqual(await texts('move'), [
+      'Language picker in the account menu | web-seed-portal | approved by lena · green | 1 min',
+      'Cache the store catalogue between page loads | web-seed-portal | approved by sam · green | 1 min',
+      'Throttle the chat presence updates | klang/seed | 117 lines | 6 min',
+      'chore: script the Saleor setup for the Epic store channel | seed-launcher | not reviewed · green | 1 min',
+      'fix(sync): stop the pull deleting file rows that wait for their blob | web-seed-portal | not reviewed · green | 1 min',
+    ]);
+    assert.equal(await count('move'), '5');
+    assert.equal(await js(`document.querySelector('${section('move')} [data-overview-more-unreviewed]')?.textContent`), '8 more ready, not reviewed');
+    assert.ok(!(await texts('move')).some((text) => text.startsWith('STACK: EPIC') || text.startsWith('feat(rust)')), 'large PRs are never quick wins');
+    // Waiting on you: both review requests, and the heading counts what the rows say.
+    assert.deepEqual(await texts('you'), ['zsolt-klang | klang/seed | 1 PR · oldest 14 d', 'ivaremilsson | seed-launcher | 1 PR · oldest 4 d']);
+    assert.equal(await count('you'), '2');
+    // Waiting on others: reviewers, CI, the stacks folded into one row, and you.
+    assert.deepEqual(await texts('others'), [
+      'plucked | klang/seed | 1 PR · 10 d',
+      'lena | web-seed-portal | 1 PR · 6 d',
+      'CI | acme/seed | 1 running',
+      'Waiting for earlier PRs in a stack to merge | 4 repos | 17 PRs in 6 stacks',
+      'You | 2 repos | 5 failing checks',
+    ]);
+    assert.equal(await count('others'), '25');
+    assert.equal(await rowSum('others'), 25, 'the heading is the sum of the rows');
+    assert.equal(await rowSum('you'), 2);
+    assert.ok(await everyRowHasRepo(), 'every row names its repository');
+    // The repository's icon and colour, where Settings › Repositories gives them; plain text, not a chip.
+    await wait(`!!document.querySelector('${section('you')} [data-overview-repo="seed-launcher"] .repository-icon')`);
+    assert.ok(await js(`!!document.querySelector('${section('move')} [data-overview-repo="web-seed-portal"] .morning-repo-dot')`));
+    assert.equal(await js(`getComputedStyle(document.querySelector('${P} .morning-repo')).borderTopWidth`), '0px');
+    await js(`document.activeElement?.blur(); document.querySelector('${P} .overview-body').scrollTop = 0`);
+    await dismissToasts();
+    await both('real-1440', dir3);
+    // The stacks row opens to a row per stack, keyed by repository and number: #384 in two repositories stays apart.
+    await click(row('others|stacks'));
+    await wait(`document.querySelector('${row('others|stacks')}')?.getAttribute('aria-expanded') === 'true'`);
+    const stackRows = await js<string[]>(`[...document.querySelectorAll('${section('others')} .morning-row.depth-1')].map(r=>r.dataset.overviewRowItem)`);
+    assert.deepEqual([...stackRows].sort(), [
+      'others|stacks|stack:acme/seed#15917',
+      'others|stacks|stack:klang/seed#36948',
+      'others|stacks|stack:klang/seed-launcher#376',
+      'others|stacks|stack:klang/seed-launcher#380',
+      'others|stacks|stack:klang/web-seed-portal#35392',
+      'others|stacks|stack:klang/web-seed-portal#384',
+    ]);
+    assert.equal(await rowText('others|stacks|stack:klang/seed-launcher#380'), 'Launcher i18n | seed-launcher | 4 PRs wait for #380 to merge · #380 has failing checks');
+    assert.equal(await rowText('others|stacks|stack:klang/web-seed-portal#384'), 'Language picker in the account menu | web-seed-portal | 3 PRs wait for #384 to merge · #384 is ready to merge');
+    assert.equal(await rowText('others|stacks|stack:klang/seed#36948'), 'Keep each sender’s failed command to itself | klang/seed | 3 PRs wait for #36948 to merge · #36948 waits on plucked’s review');
+    // Merging the base moves the stack: the ready base offers Merge, the others Open.
+    assert.equal(await js(`document.querySelector('${P} [data-overview-row-item="others|stacks|stack:klang/web-seed-portal#384"] [data-quick-action]')?.textContent`), 'Merge');
+    assert.equal(await js(`document.querySelector('${P} [data-overview-row-item="others|stacks|stack:klang/seed-launcher#380"] [data-quick-action]')?.textContent`), 'Open #380');
+    assert.match(await description(row('others|stacks|stack:klang/seed-launcher#380')) ?? '', /^Launcher i18n, seed-launcher, 4 PRs wait for #380 to merge · #380 has failing checks\. Move the launcher text into translation keys \(#380\) has to merge before the rest of this stack can\./);
+    // A stack opens to its base, then each PR "after" the one below it, with its repository.
+    const i18n = 'others|stacks|stack:klang/seed-launcher#380';
+    await click(row(i18n));
+    await wait(`document.querySelectorAll('${section('others')} .morning-row.depth-2').length === 5`);
+    const lines = await js<string[]>(`[...document.querySelectorAll('${section('others')} .morning-row.depth-2')].map(r=>[r.querySelector('.morning-title-text')?.textContent, r.querySelector('.morning-repo')?.textContent, r.querySelector('.morning-detail')?.textContent].join(' | '))`);
+    assert.deepEqual(lines, [
+      'Move the launcher text into translation keys | seed-launcher | #380 has failing checks',
+      'Translate the settings page | seed-launcher | after #380',
+      'Translate the store page | seed-launcher | after #381',
+      'Translate the error dialogs | seed-launcher | after #382',
+      'Pick the language from the system | seed-launcher | after #383',
+    ]);
+    const second = await js<string>(`[...document.querySelectorAll('${section('others')} .morning-row.depth-2')][1].dataset.overviewRowItem`);
+    assert.equal(await description(row(second)), 'seed-launcher #381, waiting 5 days. This PR is stacked on #380 and can merge only after #380 merges.');
+    assert.equal(await js(`document.querySelector('${row(second)}').title`), 'Translate the settings page\nThis PR is stacked on #380 and can merge only after #380 merges.');
+    assert.ok(await everyRowHasRepo(), 'every expanded PR names its repository');
+    assert.ok(await noSideways());
+    await js(`document.activeElement?.blur()`);
+    await both('real-1440-stacks', dir3);
+    // Narrow: the repository stays visible under the title, and nothing scrolls sideways.
+    await resize(760, 1000);
+    assert.ok(await everyRowHasRepo(), 'the repository stays at 760');
+    assert.ok(await noSideways(), 'no sideways scrolling at 760');
+    await both('real-760', dir3);
+    await click(row(i18n));
+    await click(row('others|stacks'));
     await resize(1280);
 
     step = 'status-arrives';

@@ -395,6 +395,60 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
           single(waiting1), single(waiting2), ...waits);
         changed();
       },
+      /**
+       * The user's real shape, third pass (#390, morning page 3): 17 stacked PRs in 6 stacks, #384 in two
+       * repositories, 10 merges that need no review (2 of them large), 2 approved, and 2 review requests (zsolt-klang
+       * 14 d, small; ivaremilsson 4 d, large). `seed` is a short name two owners share. Two repositories have an icon
+       * or a colour.
+       */
+      real3: () => {
+        const launcher = 'klang/seed-launcher';
+        const portal = 'klang/web-seed-portal';
+        const seed = 'klang/seed';
+        const acmeSeed = 'acme/seed';
+        // Stacked PRs above an open base: idle for five days, so they are Parked, and wait only for their base.
+        const above = (repo: string, base: number, numbers: number[], titles: string[]) =>
+          numbers.map((number, i) =>
+            add(pr({ number, repo, title: titles[i] ?? `Part ${i + 2} of #${base}`, created: 9 * DAY, updated: 5 * DAY, baseBranch: `stack-${i === 0 ? base : numbers[i - 1]}`, headBranch: `stack-${number}`, additions: 30 + i * 9, deletions: 4 }), noReview));
+        const stackOf = (base: ReviewMember, rest: ReviewMember[], name?: string): QueueItem => {
+          const subject = groupSubjects([base, ...rest])[0];
+          return { subject: { ...subject, ...(name ? { name } : {}) }, attention: 'other' };
+        };
+        const i18nBase = add(pr({ number: 380, repo: launcher, title: 'Move the launcher text into translation keys', created: 9 * DAY, updated: 8 * DAY, headBranch: 'stack-380', additions: 120, deletions: 30 }), { checks: 'failure' });
+        const i18n = above(launcher, 380, [381, 382, 383, 384], ['Translate the settings page', 'Translate the store page', 'Translate the error dialogs', 'Pick the language from the system']);
+        const portalBase = add(pr({ number: 384, repo: portal, title: 'Language picker in the account menu', created: 3 * DAY, updated: 9 * HOUR, headBranch: 'stack-384', additions: 40, deletions: 6 }), { ...ready, opinions: [{ author: 'lena', state: 'APPROVED', ago: 9 * HOUR }] });
+        const portalRest = [385, 386, 387].map((number, i) =>
+          add(pr({ number, repo: portal, title: ['Remember the chosen language', 'Translate the checkout', 'Right-to-left layout for Arabic'][i], created: 3 * DAY, updated: 8 * HOUR, baseBranch: `stack-${i === 0 ? 384 : 384 + i}`, headBranch: `stack-${number}`, additions: 22, deletions: 3 }), noReview));
+        const seedBase = add(pr({ number: 36948, repo: seed, title: 'Keep each sender’s failed command to itself', created: 10 * DAY, requested: ['plucked'], headBranch: 'stack-36948', additions: 163, deletions: 10 }), { checks: 'success' });
+        const seedRest = above(seed, 36948, [36949, 36950, 36951], ['Retry a failed command once', 'Report command failures to the sender', 'Drop the shared failure queue']);
+        const acmeBase = add(pr({ number: 15917, repo: acmeSeed, title: 'Seed the store catalogue from fixtures', created: 2 * DAY, updated: 3 * HOUR, headBranch: 'stack-15917', additions: 80, deletions: 12 }), { checks: 'pending', decision: 'APPROVED' });
+        const acmeRest = above(acmeSeed, 15917, [15918, 15919], ['Seed prices per region', 'Seed the gift cards']);
+        const engineBase = add(pr({ number: 376, repo: launcher, title: 'Integrate the patcher with the launcher shell', created: 12 * DAY, updated: 5 * DAY, headBranch: 'stack-376', additions: 90, deletions: 14 }), noReview);
+        const engineRest = above(launcher, 376, [377, 378, 379], ['Patch in the background', 'Show patch progress in the tray', 'Resume an interrupted patch']);
+        const portalTwo = add(pr({ number: 35392, repo: portal, title: 'Split the portal session store', created: 6 * DAY, requested: ['lena'], headBranch: 'stack-35392', additions: 70, deletions: 20 }), { checks: 'success' });
+        const portalTwoRest = above(portal, 35392, [35393, 35394], ['Move session refresh into the worker', 'Expire sessions on password change']);
+        // Ten merges that need no review, two of them large; two approved.
+        const quick = ['chore: script the Saleor setup for the Epic store channel', 'fix(sync): stop the pull deleting file rows that wait for their blob', 'fix(steam): find abandoned draft orders in the idempotency lookup',
+          'feat: build the realtime translation prompt from the translators’ guidance', 'chore: bump the CLI to 4.2.1', 'fix: keep the onboarding quest until chat is reached', 'fix: count a refused output swap as a failure', 'chore: add the notifications read scope']
+          .map((title, i) => single(add(pr({ number: 600 + i, repo: [launcher, portal, seed, acmeSeed][i % 4], title, created: (2 + i * 0.3) * DAY, updated: (40 - i * 3) * HOUR, additions: 12 + i * 9, deletions: 3 + i }), noReview)));
+        const large = [
+          single(add(pr({ number: 610, repo: launcher, title: 'STACK: EPIC', created: 3 * DAY, updated: 2 * DAY, additions: 2410, deletions: 380, files: 61 }), noReview)),
+          single(add(pr({ number: 611, repo: seed, title: 'feat(rust): integrate the Rust ECO/Nemo worker workspace into project/workers/rust', created: 2 * DAY, updated: 30 * HOUR, additions: 1630, deletions: 90, files: 48 }), noReview)),
+        ];
+        const approvedMerge = single(add(pr({ number: 620, repo: portal, title: 'Cache the store catalogue between page loads', created: 2 * DAY, updated: 6 * HOUR, additions: 64, deletions: 12 }), { ...ready, opinions: [{ author: 'sam', state: 'APPROVED', ago: 6 * HOUR }] }));
+        // Two review requests: one small and old, one large.
+        const zsolt = pr({ number: 36990, repo: seed, title: 'Throttle the chat presence updates', author: 'zsolt-klang', created: 14 * DAY, requested: [LOGIN], additions: 96, deletions: 21, files: 4 });
+        const ivar = pr({ number: 391, repo: launcher, title: 'Rewrite the launcher updater', author: 'ivaremilsson', created: 4 * DAY, requested: [LOGIN], additions: 840, deletions: 220, files: 31 });
+        const fixes = Array.from({ length: 4 }, (_, i) =>
+          single(add(pr({ number: 700 + i, repo: [portal, launcher][i % 2], title: `Fix flaky step ${i + 1} in the release pipeline`, created: 4 * DAY, updated: (2 + i) * DAY, additions: 20, deletions: 4 }), { checks: 'failure' })));
+        items.splice(0, items.length,
+          approvedMerge, ...quick, ...large,
+          stackOf(i18nBase, i18n, 'Launcher i18n'), stackOf(portalBase, portalRest), stackOf(seedBase, seedRest), stackOf(acmeBase, acmeRest), stackOf(engineBase, engineRest), stackOf(portalTwo, portalTwoRest),
+          single(zsolt), single(ivar), ...fixes);
+        void window.electronAPI.loadPreferences().then((prefs) =>
+          window.dispatchEvent(new CustomEvent('gnosis-preferences-changed', { detail: { ...prefs, repositorySettings: { ...prefs.repositorySettings, [launcher]: { icon: 'lucide:rocket', color: 'purple' }, [portal]: { color: 'teal' } } } })));
+        changed();
+      },
       /** The queue last synced `ms` ago; `checking` while a discovery runs. The next snapshot carries it. */
       setSync: (ms: number, value: 'idle' | 'checking' = 'idle') => {
         syncAge = ms;

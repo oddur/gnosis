@@ -5021,10 +5021,21 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-row.is-expanded .morning-chevron { transform:rotate(90deg); }
 .morning-row:has(.morning-chevron) .overview-row-gutter { width:14px; margin-right:2px; }
 .morning-title { flex:1; min-width:0; display:flex; align-items:baseline; gap:10px; padding:6px 0 6px 4px; text-align:left; color:var(--foreground); user-select:none; }
-.morning-title-text { flex:0 1 auto; min-width:6ch; max-width:62%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-body); font-weight:450; line-height:1.45; }
+/* The title gives way first, keeping at least a third of the line; then the detail. The repository stays. */
+.morning-title-text { flex:0 100 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-body); font-weight:450; line-height:1.45; }
 .morning-row.is-new .morning-title-text { font-weight:600; }
 .morning-detail { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-control); line-height:1.45; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .morning-row.is-nested .morning-title-text { max-width:none; font-size:var(--type-control); }
+.morning-row.depth-2 .morning-row-inner { padding-left:48px; }
+/* The repository, then the detail, after the title: plain muted text, with the repository's icon or colour when set. */
+.morning-sub { flex:0 1 auto; min-width:0; max-width:66%; display:flex; align-items:baseline; gap:6px; }
+.morning-sub .morning-detail { flex:0 1 auto; }
+/* Inline, so the name sets the baseline the detail shares; the icon and dot sit on it. */
+.morning-repo { flex:none; max-width:26ch; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-control); line-height:1.45; color:var(--muted-foreground); }
+.morning-repo .repository-icon { display:inline-flex; vertical-align:-2px; margin-right:4px; }
+.morning-repo .repository-icon svg { width:13px; height:13px; }
+.morning-repo-dot { display:inline-block; width:7px; height:7px; margin-right:5px; vertical-align:1px; border-radius:50%; background:var(--repository-color); }
+.morning-repo + .morning-detail::before { content:"·"; margin-right:6px; opacity:.7; }
 .morning-title:hover .morning-title-text { text-decoration:underline; text-decoration-color:color-mix(in srgb, var(--foreground) 35%, transparent); text-underline-offset:3px; }
 .morning-title:focus-visible { outline:none; }
 /* The ring goes around the whole row, so its actions never cover it. */
@@ -5038,8 +5049,14 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-section[data-section=decide] .morning-actions { opacity:0; pointer-events:none; transition:opacity 120ms ease-out; }
 .morning-section[data-section=decide] .morning-row:hover .morning-actions, .morning-section[data-section=decide] .morning-row:focus-within .morning-actions { opacity:1; pointer-events:auto; }
 .morning-section[data-section=decide] .morning-title-text { color:var(--foreground); }
+.morning-actions [data-reveal] { opacity:0; transition:opacity 120ms ease-out; }
+.morning-row:hover .morning-actions [data-reveal], .morning-row:focus-within .morning-actions [data-reveal] { opacity:1; }
 .morning-done { font-size:var(--type-caption); color:var(--muted-foreground); padding:0 6px; }
 .morning-more { padding:6px 0 0 12px; }
+.morning-footer { padding-top:4px; }
+.morning-more-quiet { display:inline-flex; align-items:center; gap:2px; margin-left:-4px; padding:2px 4px; border-radius:4px; font-size:var(--type-control); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.morning-more-quiet:hover { color:var(--foreground); text-decoration:underline; text-underline-offset:3px; }
+.morning-more-quiet:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
 .overview-tile-all { flex:none; display:inline-flex; align-items:center; gap:2px; padding:2px 4px; border-radius:4px; font-size:var(--type-control); font-weight:500; color:var(--primary); font-variant-numeric:tabular-nums; }
 .overview-tile-all:hover { text-decoration:underline; text-underline-offset:3px; }
 .overview-tile-all:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
@@ -5048,12 +5065,11 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-close-comment textarea:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
 .overview-state { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:28px 24px; font-size:var(--type-body); color:var(--muted-foreground); }
 .overview-state p { max-width:60ch; line-height:1.6; }
-@media (prefers-reduced-motion:reduce) { .morning-chevron, .morning-actions .entry-menu-trigger, .morning-section[data-section=decide] .morning-actions { transition:none; } }
+@media (prefers-reduced-motion:reduce) { .morning-chevron, .morning-actions .entry-menu-trigger, .morning-section[data-section=decide] .morning-actions, .morning-actions [data-reveal] { transition:none; } }
 @container overview (max-width:760px) {
   .morning-columns { grid-template-columns:minmax(0, 1fr); }
-  .morning-title-text { max-width:none; }
   .morning-title { flex-direction:column; align-items:stretch; gap:0; }
-  .morning-detail { flex:none; }
+  .morning-sub { flex:none; max-width:none; }
   .morning-row-inner { min-height:44px; }
 }
 @container overview (max-width:520px) {

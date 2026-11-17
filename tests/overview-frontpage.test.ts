@@ -52,16 +52,16 @@ function lanes(spec: Partial<Record<OverviewLane, { person?: string; reasons?: O
 void test('the briefing names who waits on your reply, counts reviews and merges, and mentions failed checks only when there are any', () => {
   assert.equal(
     overviewBriefing(lanes({ answer: [{ person: 'lena' }], review: [{}, {}], merge: [{}, {}, {}, {}] })),
-    'lena is waiting on your reply, and 2 reviews are waiting on you. 4 PRs are ready to merge.'
+    'lena is waiting on your reply, and 2 reviews are waiting on you. 4 PRs are approved and ready to merge.'
   );
   assert.equal(
     overviewBriefing(lanes({ merge: [{}], fix: [{ reasons: ['checks-failed'] }, { reasons: ['conflicts'] }, { reasons: ['checks-failed', 'conflicts'] }] })),
-    '1 PR is ready to merge, and 2 have failed checks.'
+    '1 PR is approved and ready to merge, and 2 have failed checks.'
   );
   assert.equal(overviewBriefing(lanes({ fix: [{ reasons: ['checks-failed'] }] })), '1 PR has failed checks.');
   // Fix work without failed checks is still named, without inventing failures.
   assert.equal(overviewBriefing(lanes({ fix: [{ reasons: ['conflicts'] }, { reasons: ['restack'] }] })), '2 PRs need a fix.');
-  assert.equal(overviewBriefing(lanes({ merge: [{}, {}], fix: [{ reasons: ['conflicts'] }] })), '2 PRs are ready to merge, and 1 needs a fix.');
+  assert.equal(overviewBriefing(lanes({ merge: [{}, {}], fix: [{ reasons: ['conflicts'] }] })), '2 PRs are approved and ready to merge, and 1 needs a fix.');
   assert.equal(overviewBriefing(lanes({ review: [{}] })), '1 review is waiting on you.');
 });
 
@@ -113,7 +113,7 @@ void test('the briefing reads the real lanes: approvals, replies and failures fr
     login: LOGIN,
     now: T0,
   });
-  assert.equal(overviewBriefing(result), 'lena is waiting on your reply, and 1 review is waiting on you. 1 PR is ready to merge, and 1 has failed checks.');
+  assert.equal(overviewBriefing(result), 'lena is waiting on your reply, and 1 review is waiting on you. 1 PR is approved and ready to merge, and 1 has failed checks.');
 });
 
 void test('tiles come in reading order with the three oldest rows, the lane count and its heading summary', () => {

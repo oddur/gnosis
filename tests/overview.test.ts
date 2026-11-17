@@ -437,7 +437,7 @@ void test('a stack member whose base is still open says so, and the stack merges
   });
   const [row] = lane(result, 'merge');
   assert.equal(row.merge?.member.number, 11, 'the lowest PR in the lane is the one to merge');
-  assert.deepEqual(row.merge?.notes.map((note) => note.text), ['Approved by lena', 'Base #10 not merged']);
+  assert.deepEqual(row.merge?.notes.map((note) => note.text), ['Approved by lena', 'Waits for #10 to merge']);
   // Once the base can merge too, it goes first and has no open base of its own.
   const ready = model([item([base, child])], { signals: { [base.url]: clean(base, { decision: null }), [child.url]: clean(child, { decision: null }) } });
   assert.equal(lane(ready, 'merge')[0].merge?.member.number, 10);

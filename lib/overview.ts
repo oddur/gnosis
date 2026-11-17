@@ -188,7 +188,7 @@ export interface OverviewEntry {
  * - `approved`: "Approved by lena", "Approved by lena and 2 others", or "Approved" when GitHub gives no names.
  * - `no-review`: "No review required": GitHub reports no review decision, so the branch rules ask for none.
  * - `unapproved`: "Mergeable, not approved": GitHub allows the merge, but reports neither of the above.
- * - `base-open`: "Base #12 not merged": a stack member whose base PR is still open.
+ * - `base-open`: "Waits for #12 to merge": a stack member whose base PR is still open.
  * - `behind`: "Behind main by 3 commits": the base branch moved on; GitHub does not require an update.
  */
 export type OverviewMergeNoteKind = 'approved' | 'no-review' | 'unapproved' | 'base-open' | 'behind';
@@ -432,7 +432,7 @@ export function mergeNotes(item: QueueItem, member: ReviewMember, fresh: QueueSi
     .map((edge) => subject.members.find((candidate) => candidate.url === edge.parent))
     .find((parent) => parent && isOpen(parent));
   const behind = fresh?.readiness?.behindBy ?? 0;
-  if (base) notes.push({ kind: 'base-open', text: `Base #${base.number} not merged` });
+  if (base) notes.push({ kind: 'base-open', text: `Waits for #${base.number} to merge` });
   else if (behind > 0) notes.push({ kind: 'behind', text: `Behind ${fresh?.readiness?.baseBranch || member.baseBranch} by ${plural(behind, 'commit', 'commits')}` });
   return notes;
 }
@@ -737,7 +737,8 @@ export function overviewRowDetail(row: Pick<OverviewRow, 'lane' | 'reasons' | 'm
  * first. People blocked on you come first, then your own PRs. Failed checks are named only when there are any; other
  * Fix work is "needs a fix".
  *
- * - "lena is waiting on your reply, and 7 reviews are waiting on you. 4 PRs are ready to merge, and 2 have failed checks."
+ * - "lena is waiting on your reply, and 7 reviews are waiting on you. 2 PRs are approved and ready to merge, 8 more can
+ *   merge without review, and 2 have failed checks."
  * - "lena and sam are waiting on your reply on 3 PRs."
  * - "Nothing needs you right now. 3 of your PRs are waiting on others."
  */
@@ -754,11 +755,18 @@ export function overviewBriefing(model: Pick<OverviewModel, 'lanes' | 'counts'>)
     else if (people.length === 2) blocked.push(`${people[0]} and ${people[1]} are waiting on your reply${on}`);
     else blocked.push(`${people[0]}, ${people[1]} and ${plural(people.length - 2, 'other', 'others')} are waiting on your reply${on}`);
   }
-  const reviews = model.counts.review;
+  // PRs, not rows: a stack of three PRs waiting on your review is three reviews, as Waiting on you counts it.
+  const reviews = lane('review').reduce((total, row) => total + (row.entries?.length || 1), 0);
   if (reviews) blocked.push(`${plural(reviews, 'review is', 'reviews are')} waiting on you`);
   const own: string[] = [];
-  const merges = model.counts.merge;
-  if (merges) own.push(`${plural(merges, 'PR is', 'PRs are')} ready to merge`);
+  // Only approved PRs are "ready": a PR the branch rules let merge without review is named apart.
+  const ready = lane('merge');
+  const unreviewed = ready.filter((row) => row.merge?.notes[0]?.kind === 'no-review').length;
+  const approved = ready.length - unreviewed;
+  const merges = ready.length;
+  if (approved && unreviewed) own.push(`${plural(approved, 'PR is', 'PRs are')} approved and ready to merge, ${unreviewed} more can merge without review`);
+  else if (approved) own.push(`${plural(approved, 'PR is', 'PRs are')} approved and ready to merge`);
+  else if (unreviewed) own.push(`${plural(unreviewed, 'PR', 'PRs')} can merge without review`);
   const fix = lane('fix');
   const failed = fix.filter((row) => row.reasons.includes('checks-failed')).length;
   // After "N PRs are ready to merge", the second clause says "2 have failed checks": the PRs are already named.
