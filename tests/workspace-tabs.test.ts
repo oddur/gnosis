@@ -13,6 +13,8 @@ import {
 } from '../lib/workspace-tabs';
 import { DEFAULT_QUEUE_FILTERS } from '../lib/queue-filters';
 import type { AppLocation } from '../lib/navigation-history';
+import type { QueueItem } from '../lib/workbench';
+import { retainTabPrs, tabPrUrls } from '../lib/inspection-retention';
 import { attachWorkspaceShortcuts } from '../src/window-workspace-navigation';
 import { isReviewStateKey } from '../lib/review-state';
 const home: AppLocation = {
@@ -192,4 +194,24 @@ void test('moving a tab across the strip preserves its workspace, selection and 
     reduce(moved, { type: 'move', id: 'a', offset: -3 }).tabs.map((tab) => tab.id),
     ['a', 'b', 'c', 'd']
   );
+});
+
+void test('a closed tab’s PRs leave the inspection caches unless another open tab has shown them (#355)', () => {
+  const at = (...urls: string[]): AppLocation => ({
+    page: 'home',
+    home: {
+      ...home.home,
+      item: { attention: 'other', subject: { members: urls.map((url) => ({ url })) } } as unknown as QueueItem,
+    },
+  });
+  const a = 'https://github.com/o/r/pull/1', b = 'https://github.com/o/r/pull/2', c = 'https://github.com/o/r/pull/3';
+  assert.deepEqual(tabPrUrls({ location: home }), []);
+  assert.deepEqual(tabPrUrls({ location: at(a, b) }), [a, b]);
+  let state = retainTabPrs(new Map(), [{ id: 'queue', location: home }, { id: 'one', location: at(a) }, { id: 'two', location: at(b) }]);
+  // Tab "one" moves on to c; it has shown a and c.
+  state = retainTabPrs(state.next, [{ id: 'queue', location: home }, { id: 'one', location: at(c) }, { id: 'two', location: at(b) }]);
+  assert.deepEqual(state.forget, []);
+  state = retainTabPrs(state.next, [{ id: 'queue', location: at(c) }, { id: 'two', location: at(b) }]);
+  assert.deepEqual(state.forget, [a], 'c stays: the queue tab shows it');
+  assert.deepEqual(retainTabPrs(state.next, [{ id: 'queue', location: home }]).forget, [b]);
 });

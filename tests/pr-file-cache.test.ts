@@ -108,3 +108,21 @@ void test('context gaps read the after side alone, once, or take it from both si
   cache.clear();
   assert.equal(cache.peekAfter(request), undefined);
 });
+void test('files remember their PR’s last use and leave with their PR (#355)', async () => {
+  let now = 1;
+  const cache = createPrFileCache(() => Promise.resolve(value), 1_000_000, () => Promise.resolve(value.after), () => now);
+  const other = { ...request, url: request.url + '0' };
+  await cache.read(request);
+  await cache.read(other);
+  now = 5;
+  await cache.readAfter({ ...other, path: 'src/other.ts' });
+  cache.peek(request);
+  const uses = new Map<string, number>();
+  cache.lastUses(uses);
+  assert.deepEqual([...uses].sort(), [[request.url, 5], [other.url, 5]]);
+  cache.forget(new Set([other.url]));
+  assert.equal(cache.peek(other), undefined);
+  assert.equal(cache.peekAfter({ ...other, path: 'src/other.ts' }), undefined);
+  assert.equal(cache.peek(request), value);
+  assert.equal(cache.stats().entries, 1);
+});

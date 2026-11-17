@@ -4,9 +4,11 @@ import { fileRevisionKey, inspectionRank, type InspectionMode, type PrFileConten
 export function createPrFileCache(
   load: (request: PrFileRequest, background?: InspectionMode) => Promise<PrFileContents>,
   maxBytes = 32_000_000,
-  loadAfter?: (request: PrFileRequest, background?: InspectionMode) => Promise<PrFileSide>
+  loadAfter?: (request: PrFileRequest, background?: InspectionMode) => Promise<PrFileSide>,
+  now: () => number = Date.now
 ) {
-  const saved = new Map<string, { value: PrFileContents; bytes: number; url: string }>();
+  // `at` is the entry's last use, so files of PRs no longer read can be dropped (#355).
+  const saved = new Map<string, { value: PrFileContents; bytes: number; url: string; at: number }>();
   let priorities = new Map<string, number>();
   const pending = new Map<string, { promise: Promise<PrFileContents>; background: InspectionMode }>();
   let bytes = 0,
@@ -21,6 +23,7 @@ export function createPrFileCache(
     if (entry) {
       saved.delete(key);
       saved.set(key, entry);
+      entry.at = now();
     }
     return entry?.value;
   };
@@ -54,7 +57,7 @@ export function createPrFileCache(
         );
         if (generation === epoch && size <= maxBytes) {
           bytes -= saved.get(key)?.bytes ?? 0;
-          saved.set(key, { value, bytes: size, url: r.url });
+          saved.set(key, { value, bytes: size, url: r.url, at: now() });
           bytes += size;
           // Evict low-priority PRs first; preserve LRU order within each PR. Sort only when over budget: background
           // preparation stores hundreds of files, and sorting on each one kept the main thread busy (#346).
@@ -77,10 +80,16 @@ export function createPrFileCache(
     return promise;
   }
   // After sides read alone, to reveal context gaps (#299). A file whose both sides are cached answers from them.
-  const afters = new Map<string, { value: PrFileSide; bytes: number }>();
+  const afters = new Map<string, { value: PrFileSide; bytes: number; url: string; at: number }>();
   const afterPending = new Map<string, Promise<PrFileSide>>();
   let afterBytes = 0;
-  const peekAfter = (r: PrFileRequest) => peek(r)?.after ?? afters.get(keyFor(r))?.value;
+  const peekAfter = (r: PrFileRequest) => {
+    const full = peek(r);
+    if (full) return full.after;
+    const entry = afters.get(keyFor(r));
+    if (entry) entry.at = now();
+    return entry?.value;
+  };
   function readAfter(r: PrFileRequest, background: InspectionMode = false): Promise<PrFileSide> {
     const known = peekAfter(r);
     if (known) return Promise.resolve(known);
@@ -97,7 +106,7 @@ export function createPrFileCache(
         if (generation === epoch && size <= maxBytes / 2) {
           afterBytes -= afters.get(key)?.bytes ?? 0;
           afters.delete(key);
-          afters.set(key, { value, bytes: size });
+          afters.set(key, { value, bytes: size, url: r.url, at: now() });
           afterBytes += size;
           for (const [oldKey, old] of afters) {
             if (afterBytes <= maxBytes / 2 && afters.size <= 32) break;
@@ -115,6 +124,24 @@ export function createPrFileCache(
   }
   return {
     stats,
+    /** The last use of each PR's files, merged into `into` (the latest wins). */
+    lastUses(into: Map<string, number>) {
+      for (const entry of [...saved.values(), ...afters.values()])
+        if ((into.get(entry.url) ?? -Infinity) < entry.at) into.set(entry.url, entry.at);
+    },
+    /** Drops every saved file of these PRs. Reads in flight still answer their callers. */
+    forget(urls: ReadonlySet<string>) {
+      for (const [key, entry] of saved)
+        if (urls.has(entry.url)) {
+          saved.delete(key);
+          bytes -= entry.bytes;
+        }
+      for (const [key, entry] of afters)
+        if (urls.has(entry.url)) {
+          afters.delete(key);
+          afterBytes -= entry.bytes;
+        }
+    },
     peek,
     read,
     peekAfter,

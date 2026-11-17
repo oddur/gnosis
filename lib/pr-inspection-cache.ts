@@ -3,8 +3,8 @@ import type { ActivityTask } from './activity';
 import { changesRevision, inspectionRank, type InspectionMode, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { PrCommits, PrCommit } from './pr-commits';
 import { createSharedRead, readError } from './shared-read';
-import { createByteCache } from './byte-cache';
-import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
+import { approximateBytes, createByteCache } from './byte-cache';
+import { RENDERER_INVENTORY_BYTES, RENDERER_INVENTORY_ENTRIES } from './inspection-limits';
 
 /** Background preparation runs in slices this long, then yields so input and rendering go first (#346). */
 const SLICE_MS = 8;
@@ -54,7 +54,9 @@ export interface InspectionPriorities {
 /** Revision-aware tab data and one background work step at a time. No React mount is required. */
 export function createPrInspectionCache(deps: Dependencies) {
   const now = deps.now ?? Date.now;
-  const values = createByteCache<string, Entry>(INVENTORY_MEMORY_BYTES, 1000);
+  // The open PR and a few recent ones (#355). Main keeps prepared inventories, so a dropped one reloads over IPC.
+  const values = createByteCache<string, Entry>(RENDERER_INVENTORY_BYTES, RENDERER_INVENTORY_ENTRIES, now);
+  const urlOf = (entry: Entry) => entry.changes?.url ?? entry.commits?.url ?? '';
   const listeners = new Set<() => void>();
   let version = 0;
   const changed = () => { version++; listeners.forEach(listener => listener()); };
@@ -93,13 +95,14 @@ export function createPrInspectionCache(deps: Dependencies) {
     if (!current || value.fetchedAt >= current.fetchedAt)
       latest.set(value.url, { ...latest.get(value.url), [kind]: id });
     values.delete(id);
-    values.set(id, entry);
-    while (values.size > 1000) {
-      const first = values.keys().next().value;
-      if (first === undefined) break;
-      values.delete(first);
-      completed.delete(first);
-    }
+    // Over the bounds, PRs outside the reader's intent and the queue's top tiers leave first. An evicted PR stays
+    // completed: preparing it again would only evict another, and opening it reads it over IPC.
+    const size = approximateBytes(entry);
+    values.makeRoom(size, (old) => {
+      const url = urlOf(old);
+      return intentUrls.has(url) ? -1 : (priorities.get(url) ?? 4);
+    });
+    values.set(id, entry, size);
     while (latest.size > 1000) {
       const first = latest.keys().next().value;
       if (first === undefined) break;
@@ -366,6 +369,19 @@ export function createPrInspectionCache(deps: Dependencies) {
   return {
     /** Entries and estimated bytes, for the diagnostics export. */
     stats: () => ({ entries: values.size, bytes: values.bytes }),
+    /** The last use of each PR's inventories, merged into `into` (the latest wins). */
+    lastUses(into: Map<string, number>) {
+      for (const [entry, at] of values.uses()) {
+        const url = urlOf(entry);
+        if ((into.get(url) ?? -Infinity) < at) into.set(url, at);
+      }
+    },
+    /** Drops these PRs' inventories, for a closed tab or a PR not viewed for a while. Reads in flight still answer. */
+    forget(urls: ReadonlySet<string>) {
+      // No change notice: views that show these PRs keep their copies, as after any eviction.
+      values.prune((entry) => urls.has(urlOf(entry)));
+      for (const url of urls) latest.delete(url);
+    },
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getVersion: () => version,
     activity,

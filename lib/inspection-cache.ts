@@ -1,4 +1,4 @@
-import { clearStackChanges } from './stack-inspection-cache';
+import { clearStackChanges, forgetStackChanges, stackLastUses } from './stack-inspection-cache';
 import { clearMarkdownReviews } from './markdown-review-cache';
 import { createPrFileCache } from './pr-file-cache';
 import { commitSelectionKey, type CommitSelection } from './pr-commits';
@@ -6,8 +6,15 @@ import { fileRevisionKey, inspectionRank, type InspectionMode, type PrChanges, t
 import type { FileDiffMetadata } from '@pierre/diffs';
 import { createPrInspectionCache } from './pr-inspection-cache';
 import type { PrCommits } from './pr-commits';
-import { createByteCache } from './byte-cache';
-import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
+import { approximateBytes, createByteCache } from './byte-cache';
+import {
+  RENDERER_COMPARISON_BYTES,
+  RENDERER_COMPARISON_ENTRIES,
+  RENDERER_FILE_BYTES,
+  RENDERER_IDLE_MS,
+  RENDERER_PREVIEW_BYTES,
+  RENDERER_PREVIEW_ENTRIES,
+} from './inspection-limits';
 import { inTreeOrder } from './tree-file-order';
 import { isMarkdownFile } from './markdown-review';
 import { imageMimeType } from './review-images';
@@ -72,7 +79,7 @@ window.addEventListener('online', () => inspectionData.resume());
 
 export const inspectionFiles = createPrFileCache(
   (request, background) => window.electronAPI.getPrChangeFile(request, background),
-  undefined,
+  RENDERER_FILE_BYTES,
   (request, background) => window.electronAPI.getPrChangeFileAfter(request, background)
 );
 export const inspectionFileRequest = (snapshot: PrChanges, file: PrChangeFile) => ({
@@ -95,22 +102,32 @@ export function loadChangePreview(): Promise<void> {
   );
   return changePreviewLoad;
 }
-const previews = new Map<string, FileDiffMetadata | null>();
+// Parsed patches, bounded by an estimate from the patch's length: walking the parsed lines to measure them would cost
+// as much as parsing them. Each preview keeps its PR's URL, so a closed or idle PR's previews leave with it.
+const previews = createByteCache<string, { url: string; value: FileDiffMetadata | null }>(RENDERER_PREVIEW_BYTES, RENDERER_PREVIEW_ENTRIES);
+/** The PR of a preview key that ends in a file revision key (`fileRevisionKey`); '' for other keys. */
+const previewUrl = (key: string) => {
+  const start = key.indexOf('["');
+  if (start < 0) return '';
+  try {
+    const url = (JSON.parse(key.slice(start)) as unknown[])[0];
+    return typeof url === 'string' ? url : '';
+  } catch {
+    return '';
+  }
+};
 export function previewFor(key: string, file: PrChangeFile, contextLines = 3) {
   if (!changePreview) {
     void loadChangePreview().catch(() => {});
     return;
   }
-  key = `${key}:context:${contextLines}`;
-  if (!previews.has(key)) {
-    previews.set(key, changePreview.prChangePreview(file, contextLines) ?? null);
-    while (previews.size > 64) {
-      const oldest = previews.keys().next().value;
-      if (oldest === undefined) break;
-      previews.delete(oldest);
-    }
+  const id = `${key}:context:${contextLines}`;
+  let saved = previews.get(id);
+  if (!saved) {
+    saved = { url: previewUrl(key), value: changePreview.prChangePreview(file, contextLines) ?? null };
+    previews.set(id, saved, 1024 + (file.patch?.length ?? 0) * 6);
   }
-  return previews.get(key) ?? undefined;
+  return saved.value ?? undefined;
 }
 export function fileIsReady(snapshot: PrChanges, file: PrChangeFile) {
   return (
@@ -128,16 +145,50 @@ export async function prepareFile(snapshot: PrChanges, file: PrChangeFile, backg
 }
 let inspectionEpoch = 0;
 let comparisonPriorities = new Map<string, number>();
-const comparisons = createByteCache<string, PrChanges>(INVENTORY_MEMORY_BYTES, 100);
+const comparisons = createByteCache<string, PrChanges>(RENDERER_COMPARISON_BYTES, RENDERER_COMPARISON_ENTRIES);
 const pending = new Map<string, { promise: Promise<PrChanges>; background: InspectionMode }>();
 export const peekComparison = (selection: CommitSelection) => comparisons.get(commitSelectionKey(selection));
-/** What the renderer's inspection caches hold, for the diagnostics export (#345). */
+/** What the renderer's inspection caches hold, for the diagnostics export (#345). Bytes are estimates. */
 export const inspectionCacheStats = () => ({
   inventories: inspectionData.stats(),
   comparisons: { entries: comparisons.size, bytes: comparisons.bytes },
   files: inspectionFiles.stats(),
-  previews: previews.size,
+  previews: { entries: previews.size, bytes: previews.bytes },
+  prs: inspectionLastUses().size,
 });
+
+/** When each PR in the inspection caches was last read. */
+function inspectionLastUses() {
+  const uses = new Map<string, number>();
+  inspectionData.lastUses(uses);
+  inspectionFiles.lastUses(uses);
+  stackLastUses(uses);
+  for (const [snapshot, at] of comparisons.uses()) if ((uses.get(snapshot.url) ?? -Infinity) < at) uses.set(snapshot.url, at);
+  for (const [preview, at] of previews.uses()) if ((uses.get(preview.url) ?? -Infinity) < at) uses.set(preview.url, at);
+  uses.delete('');
+  return uses;
+}
+/**
+ * Drops everything the renderer holds for these PRs: inventories, comparisons, files, previews and stack comparisons.
+ * For a closed tab's PRs and PRs not read for a while (#355). Main still has them, so a later visit reads them over
+ * IPC.
+ */
+export function forgetInspection(urls: Iterable<string>) {
+  const set = new Set(urls);
+  if (!set.size) return;
+  inspectionData.forget(set);
+  inspectionFiles.forget(set);
+  forgetStackChanges(set);
+  comparisons.prune((snapshot) => set.has(snapshot.url));
+  previews.prune((preview) => set.has(preview.url));
+}
+/** Drops the PRs nothing has read for `idleMs`. Use is per PR: reading one file keeps all of its PR's entries. */
+export function sweepIdleInspection(now = Date.now(), idleMs = RENDERER_IDLE_MS) {
+  const idle = [...inspectionLastUses()].filter(([, at]) => now - at > idleMs).map(([url]) => url);
+  forgetInspection(idle);
+  return idle;
+}
+if (typeof window !== 'undefined') setInterval(() => sweepIdleInspection(), 60_000);
 function preferredFile(snapshot: PrChanges, subjectId: string) {
   let path: string | undefined;
   try {
@@ -197,16 +248,11 @@ export async function readComparison(
     // A missing/binary first file must not prevent access to the rest of the comparison.
     if (first) await prepareFile(snapshot, first, background).catch(() => {});
     if (generation !== inspectionEpoch) return snapshot;
-    comparisons.set(key, snapshot);
-    while (comparisons.size > 100) {
-      const oldest = [...comparisons]
-        .sort(
-          (a, b) => (comparisonPriorities.get(b[1].url) ?? Infinity) - (comparisonPriorities.get(a[1].url) ?? Infinity)
-        )
-        .at(0)?.[0];
-      if (oldest === undefined) break;
-      comparisons.delete(oldest);
-    }
+    // Lower-priority PRs leave first, so preparing the queue's earlier commits never evicts the open PR's.
+    const size = approximateBytes(snapshot);
+    comparisons.delete(key);
+    comparisons.makeRoom(size, (old) => comparisonPriorities.get(old.url) ?? Infinity);
+    comparisons.set(key, snapshot, size);
     return snapshot;
   })().finally(() => {
     if (pending.get(key)?.promise === promise) pending.delete(key);

@@ -66,6 +66,7 @@
   "preload-activity": 9,
   "queue-metadata": 9,
   "readiness": 14,
+  "renderer-heap": 110,
   "repository-settings": 10,
   "response-filter": 8,
   "review-entry-points": 15,
