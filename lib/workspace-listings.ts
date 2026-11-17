@@ -7,14 +7,14 @@ import type { WorkbenchQueue } from './workbench';
 import type { WorkspaceTabEntry } from './workspace-tabs';
 import type { SearchDestination } from './command-search';
 
-type Listing = { kind: 'queue' | 'saved' | 'muted' | 'snoozed'; filters: QueueFilters; query: string };
+type Listing = { kind: 'queue' | 'saved' | 'muted' | 'snoozed' | 'overview'; filters: QueueFilters; query: string };
 export type WorkspaceListingRequest = Listing | { destination: Extract<SearchDestination, { kind: 'home' }> };
 export interface WorkspaceListingCount {
   count: number;
   unread: boolean;
 }
-const fromHome = (home: Pick<HomeLocation, 'savedView' | 'muted' | 'snoozed' | 'filters' | 'savedQuery'>): Listing => ({
-  kind: home.muted ? 'muted' : home.snoozed ? 'snoozed' : home.savedView ? 'saved' : 'queue',
+const fromHome = (home: Pick<HomeLocation, 'savedView' | 'muted' | 'snoozed' | 'overview' | 'filters' | 'savedQuery'>): Listing => ({
+  kind: home.overview ? 'overview' : home.muted ? 'muted' : home.snoozed ? 'snoozed' : home.savedView ? 'saved' : 'queue',
   filters: home.filters,
   query: home.savedQuery,
 });
@@ -57,7 +57,7 @@ function resolveListing(request: WorkspaceListingRequest, queue: WorkbenchQueue)
     };
   }
   return {
-    kind: target.section === 'saved' ? 'saved' : target.section === 'muted' ? 'muted' : target.section === 'snoozed' ? 'snoozed' : 'queue',
+    kind: target.section === 'overview' ? 'overview' : target.section === 'saved' ? 'saved' : target.section === 'muted' ? 'muted' : target.section === 'snoozed' ? 'snoozed' : 'queue',
     filters,
     query: '',
   };
@@ -69,10 +69,14 @@ export function countWorkspaceListing(
   login: string,
   now = Date.now(),
   /** Loaded merge states, for listings with the merge filter. */
-  merge?: MergeStates
+  merge?: MergeStates,
+  /** The Overview's actionable rows (lib/overview-count.ts): Merge, Answer, Review and Fix. Never Waiting. */
+  overviewActions?: number
 ): WorkspaceListingCount | undefined {
   const listing = resolveListing(request, queue);
   if (!listing) return;
+  // The Overview counts work for you. With none, or before its lanes are built, its title has no count.
+  if (listing.kind === 'overview') return overviewActions ? { count: overviewActions, unread: false } : undefined;
   const urls = new Set<string>();
   const unread = new Set<string>();
   const isUnread = (url: string, fallback = false) => {

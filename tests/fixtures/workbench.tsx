@@ -988,6 +988,11 @@ if (new URLSearchParams(location.search).has('instant-views')) {
   const { installInstantViews } = await import('./instant-views');
   installInstantViews(mocks as unknown as Record<string, unknown>);
 }
+// ?overview: the Overview suite's day of work (#390).
+if (new URLSearchParams(location.search).has('overview')) {
+  const { installOverviewFixture } = await import('./overview');
+  installOverviewFixture(mocks as unknown as Record<string, unknown>, items);
+}
 // Main stamps every snapshot it returns. Stamp here too, after any test override, so revisions
 // always describe what the override returned. Reading saved reviews for the stamp is not counted.
 const stampedReads = new Set(['workbenchQueue', 'workbenchSnapshot', 'workbenchStarPrs', 'workbenchMutePrs', 'workbenchSetFilters',
@@ -1059,6 +1064,9 @@ Object.defineProperty(window, 'electronAPI', {
   }),
 });
 if (!new URLSearchParams(location.search).has('keep-progress')) localStorage.clear();
+// The Overview is the default home tab (#390). Suites written for the queue open the queue, as a reader who last
+// chose it would; ?overview opens the default.
+if (!new URLSearchParams(location.search).has('overview') && localStorage.getItem('gnosis-home-tab:v1') === null) localStorage.setItem('gnosis-home-tab:v1', 'queue');
 const tabSession = sessionStorage.getItem('fixture-workspace-tabs');
 if (tabSession) {
   localStorage.setItem('gnosis-workspace-tabs:v1:oddur', tabSession);

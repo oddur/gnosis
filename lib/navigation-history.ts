@@ -13,6 +13,8 @@ export interface HomeLocation {
   muted: boolean;
   /** Tools › Snoozed is open. Absent in locations saved before snoozing existed. */
   snoozed?: boolean;
+  /** The Overview is open (#390). Absent in locations saved before it existed. */
+  overview?: boolean;
   item: QueueItem | null;
   tab: WorkspaceTab;
   selected: string | null;
@@ -31,6 +33,7 @@ export function locationKey(location: AppLocation): string {
     h.savedView,
     h.muted,
     !!h.snoozed,
+    !!h.overview,
     h.viewId,
     h.filters.attention,
     h.filters.kind,

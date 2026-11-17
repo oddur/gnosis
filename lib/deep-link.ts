@@ -41,7 +41,12 @@ export interface LinkFilters {
   kind?: 'pr' | 'stack';
   /** Only these PRs, as canonical github.com URLs: a notification digest. At most `DIGEST_PR_LIMIT`. */
   prs?: string[];
+  /** Only PRs in this Overview lane (#390), as `lane=fix`. */
+  lane?: LinkLane;
 }
+/** The Overview lanes a queue link can name; the same words as `OverviewLane` in lib/overview.ts. */
+export type LinkLane = 'merge' | 'answer' | 'review' | 'fix' | 'waiting';
+export const LINK_LANES: readonly LinkLane[] = ['merge', 'answer', 'review', 'fix', 'waiting'];
 /** The most PRs a queue link names. In a link they are `prs=owner/repo/123,owner/repo/456`. */
 export const DIGEST_PR_LIMIT = 20;
 /** Where to land inside a PR beyond its tab: the first unviewed file in Changes, or the merge action. */
@@ -49,8 +54,9 @@ export type PrFocus = 'unviewed-file' | 'merge';
 export const PR_FOCUSES: readonly PrFocus[] = ['unviewed-file', 'merge'];
 /** The tab each focus belongs to. */
 const FOCUS_TAB: Record<PrFocus, PrTab> = { 'unviewed-file': 'changes', merge: 'summary' };
-export type QueueSection = 'all' | 'response' | 'requested' | 'updated' | 'stacks' | 'saved' | 'starred' | 'snoozed' | 'muted';
-export const QUEUE_SECTIONS: readonly QueueSection[] = ['all', 'response', 'requested', 'updated', 'stacks', 'saved', 'starred', 'snoozed', 'muted'];
+/** `overview` is the Overview dashboard (#390); the others are queue lists and tools. */
+export type QueueSection = 'all' | 'response' | 'requested' | 'updated' | 'stacks' | 'saved' | 'starred' | 'snoozed' | 'muted' | 'overview';
+export const QUEUE_SECTIONS: readonly QueueSection[] = ['all', 'response', 'requested', 'updated', 'stacks', 'saved', 'starred', 'snoozed', 'muted', 'overview'];
 export type LinkSettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'notifications' | 'integrations';
 export const SETTINGS_SECTIONS: readonly LinkSettingsSection[] = ['queue', 'repositories', 'review', 'appearance', 'notifications', 'integrations'];
 
@@ -335,6 +341,11 @@ function linkFilters(parameters: Parameters): Result<LinkFilters | undefined> {
   }
   const query = parameters.get('q');
   if (query !== undefined) filters.query = query;
+  const lane = parameters.get('lane');
+  if (lane !== undefined) {
+    if (!LINK_LANES.includes(lane as LinkLane)) return fail('bad-parameter');
+    filters.lane = lane as LinkLane;
+  }
   const prs = parameters.get('prs');
   if (prs !== undefined) {
     const parts = prs.split(',');
@@ -651,6 +662,7 @@ export function formatDeepLink(target: DeepLinkTarget, scheme = 'gnosis'): strin
         ['kind', target.filters?.kind],
         ['q', target.filters?.query],
         ['prs', target.filters?.prs?.map(compactPr).join(',')],
+        ['lane', target.filters?.lane],
       ])}`;
     case 'review':
       return `${base}review/${segment(target.reviewId)}${query([['slide', target.slide], ...fileEntries(target.file), ['thread', target.threadId]])}`;
@@ -711,6 +723,7 @@ export function targetFromLocation(location: AppLocation): DeepLinkTarget | unde
     const tab = linkTab(home.tab);
     return { kind: 'pr', pr: ref, ...(item.subject.kind === 'stack' ? { scope: 'stack' as const } : {}), ...(tab !== 'summary' ? { tab } : {}) };
   }
+  if (home.overview) return { kind: 'queue', section: 'overview' };
   if (home.muted) return { kind: 'queue', section: 'muted' };
   if (home.snoozed) return { kind: 'queue', section: 'snoozed' };
   if (home.viewId) return { kind: 'queue', view: home.viewId };
@@ -725,6 +738,7 @@ export function targetFromLocation(location: AppLocation): DeepLinkTarget | unde
   const filters: LinkFilters = {};
   if (f.repo && f.repo !== 'all' && 'value' in linkFilters(new Map([['repo', f.repo]]))) filters.repo = f.repo;
   if (f.readStatus !== 'all') filters.read = f.readStatus;
+  if (f.lane) filters.lane = f.lane;
   return { kind: 'queue', ...(section ? { section } : {}), ...(Object.keys(filters).length ? { filters } : {}) };
 }
 
@@ -764,7 +778,7 @@ function validFilters(value: unknown): LinkFilters | undefined | false {
   if (value === undefined) return undefined;
   if (!record(value)) return false;
   const parameters: Parameters = new Map();
-  const names: [Exclude<keyof LinkFilters, 'prs'>, string][] = [['repo', 'repo'], ['author', 'author'], ['branch', 'branch'], ['status', 'status'], ['read', 'read'], ['kind', 'kind'], ['query', 'q']];
+  const names: [Exclude<keyof LinkFilters, 'prs'>, string][] = [['repo', 'repo'], ['author', 'author'], ['branch', 'branch'], ['status', 'status'], ['read', 'read'], ['kind', 'kind'], ['query', 'q'], ['lane', 'lane']];
   for (const [key, name] of names) {
     const field = value[key];
     if (field === undefined) continue;

@@ -43,6 +43,7 @@ export function PrActions({
   mergeReady = false,
   compact = false,
   hasConflicts = false,
+  onResult,
 }: {
   member: ReviewMember;
   stackMembers?: ReviewMember[];
@@ -52,6 +53,8 @@ export function PrActions({
   hasConflicts?: boolean;
   /** A contextual action loads permissions only when invoked. */
   trigger?: (open: (kind: PrActionKind) => void, busy: boolean) => ReactNode;
+  /** Receives GitHub's answer instead of the inline note, for a trigger inside a compact row (the Overview). */
+  onResult?: (message: string) => void;
 }) {
   const [loaded, setState] = useState<PrActionState>();
   // A draft or auto-merge change shows at once, while GitHub applies it. Main shows it everywhere else.
@@ -220,7 +223,8 @@ export function PrActions({
             onChanged?.();
             window.dispatchEvent(new CustomEvent('gnosis-pr-action-completed', { detail: members.map((m) => m.url) }));
             if (current.current === started) {
-              setResult(response.message);
+              if (onResult) onResult(response.message);
+              else setResult(response.message);
               await refresh();
             }
           } finally {
@@ -244,7 +248,8 @@ export function PrActions({
       window.dispatchEvent(new CustomEvent('gnosis-pr-action-completed', { detail: members.map((m) => m.url) }));
       if (current.current === started) {
         setDialog(undefined);
-        setResult(response.message);
+        if (onResult) onResult(response.message);
+        else setResult(response.message);
         void refresh();
       }
     } catch (e) {

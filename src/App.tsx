@@ -436,7 +436,7 @@ export function App() {
   useEffect(() => {
     window.electronAPI.notificationContext?.(activeUrl);
   }, [activeUrl]);
-  const navigation = useMemo(() => ({ open }), [open]);
+  const navigation = useMemo(() => ({ open, openTarget }), [open, openTarget]);
   const activityMenu = useMemo(() => ({ open: () => setActivityOpen(true), shortcut: ACTIVITY_SHORTCUT.keys() }), []);
   const recentNavigation = useMemo(
     () => ({
