@@ -15,7 +15,13 @@ export type CounterField =
   | 'clicked'
   | 'dismissed'
   | 'timedOut'
-  | 'desktopFailed';
+  | 'desktopFailed'
+  /** Answered from the notification's inline reply, and whether GitHub took it. */
+  | 'replied'
+  | 'replyFailed'
+  /** "Snooze 1 h" or "Mark read" on the notification. */
+  | 'snoozed'
+  | 'markedRead';
 type CounterType = NotificationEventType | 'summary' | 'test';
 export type NotificationCounters = Record<string, Partial<Record<CounterType, Partial<Record<CounterField, number>>>>>;
 interface Entry {
@@ -167,6 +173,29 @@ export function createNotificationStore(storage: StateStorage, now = Date.now) {
       }
       save(account, state, put, headerChanged);
       return events;
+    },
+    /**
+     * Claims the idempotency key of an event that did not come from a basis, such as a mention read from a PR's
+     * discussion. False when it was delivered before, when the PR has no basis yet, or before the first baseline:
+     * a PR Gnosis has not seen is not news.
+     */
+    claim(account: string, event: NotificationEvent, options: { count?: boolean; suppress?: SuppressReason } = {}): boolean {
+      const state = load(account);
+      const url = event.url;
+      const saved = url ? state.entries[url] : undefined;
+      if (!url || !saved || !state.initialized) return false;
+      if (options.count) bump(state, event.type, 'derived');
+      if (Object.hasOwn(saved.fired, event.key)) {
+        if (options.count) bump(state, event.type, 'suppressed:duplicate');
+        if (options.count) save(account, state, {}, true);
+        return false;
+      }
+      const fired = Object.fromEntries(Object.entries({ ...saved.fired, [event.key]: now() }).sort((a, b) => a[1] - b[1]).slice(-KEYS_PER_PR));
+      const next: Entry = { basis: saved.basis, fired };
+      state.entries[url] = next;
+      if (options.suppress && options.count) bump(state, event.type, `suppressed:${options.suppress}`);
+      save(account, state, { [url]: next }, !!options.count);
+      return !options.suppress;
     },
     count(account: string, type: CounterType, field: CounterField, n = 1) {
       const state = load(account);

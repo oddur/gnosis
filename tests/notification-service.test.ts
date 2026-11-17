@@ -12,7 +12,7 @@ function harness(options: { focused?: boolean; activeUrl?: string; desktop?: boo
   const timers: { at: number; fn: () => void; id: number }[] = [];
   let ids = 0;
   const state = { focused: options.focused ?? false, activeUrl: options.activeUrl, prefs: { introduced: true, ...options.prefs } as NotificationPreferences };
-  const desktop: (DesktopNotificationOptions & { emit: (event: string) => void })[] = [];
+  const desktop: (DesktopNotificationOptions & { emit: (event: string, value?: unknown) => void })[] = [];
   const toasts: NotificationDelivery[] = [];
   const opened: DeepLinkTarget[] = [];
   const counts: string[] = [];
@@ -22,11 +22,11 @@ function harness(options: { focused?: boolean; activeUrl?: string; desktop?: boo
     desktop: {
       supported: () => options.supported ?? true,
       create: (value) => {
-        const listeners = new Map<string, (() => void)[]>();
-        const handle = { ...value, emit: (event: string) => listeners.get(event)?.forEach((fn) => fn()) };
+        const listeners = new Map<string, ((value?: unknown) => void)[]>();
+        const handle = { ...value, emit: (event: string, arg?: unknown) => listeners.get(event)?.forEach((fn) => fn(arg)) };
         desktop.push(handle);
         const notification: DesktopNotification = {
-          on: (event: string, fn: () => void) => listeners.set(event, [...(listeners.get(event) ?? []), fn]),
+          on: ((event: string, fn: (value?: unknown) => void) => { listeners.set(event, [...(listeners.get(event) ?? []), fn]); }) as DesktopNotification['on'],
           show: () => {},
           close: () => {},
         };
@@ -77,7 +77,7 @@ test('events for one PR settle for 20 seconds and become one notification', () =
   assert.equal(h.desktop.length, 0);
   h.advance(20_000);
   assert.equal(h.desktop.length, 1);
-  assert.equal(h.desktop[0].title, '2 updates on #1');
+  assert.equal(h.desktop[0].title, 'Changes requested · PR 1');
   assert.equal(h.desktop[0].subtitle, 'o/r #1');
 });
 
@@ -120,7 +120,7 @@ test('a failed desktop delivery is shown in the app instead, and later events go
   assert.equal(h.service.status().blocked, true);
 });
 
-test('catch-up: three or more events become one summary that opens the Unread view', () => {
+test('catch-up: three or more events become one summary that opens the queue filtered to its PRs', () => {
   const h = harness();
   h.service.beginCatchUp();
   h.service.deliver([event('review-requested', 1), event('checks-failed', 2), event('approved', 3)]);
@@ -128,7 +128,7 @@ test('catch-up: three or more events become one summary that opens the Unread vi
   assert.equal(h.desktop.length, 1);
   assert.equal(h.desktop[0].title, '3 updates while you were away');
   h.desktop[0].emit('click');
-  assert.deepEqual(h.opened, [{ kind: 'queue', filters: { read: 'unread' } }]);
+  assert.deepEqual(h.opened, [{ kind: 'queue', filters: { prs: [1, 2, 3].map((n) => `https://github.com/o/r/pull/${n}`) } }]);
 });
 
 test('at most three desktop notifications in five minutes; the rest wait as one digest', () => {
@@ -174,7 +174,7 @@ test('a local result is announced once, immediately', () => {
   h.service.local(ready);
   h.service.local(ready);
   assert.equal(h.desktop.length, 1);
-  assert.equal(h.desktop[0].title, 'Explanation ready');
+  assert.equal(h.desktop[0].title, 'Explanation ready · PR 1');
 });
 
 test('the test notification uses the desktop when it can', () => {

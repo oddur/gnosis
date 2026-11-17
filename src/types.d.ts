@@ -174,7 +174,12 @@ declare global {
       notificationAction?: (kind: import('../lib/notification-routing').NotificationKind, action: 'clicked' | 'dismissed' | 'timedOut') => void;
       notificationIntroduce: (accept: boolean) => Promise<'desktop' | 'toast' | 'none'>;
       sendTestNotification: () => Promise<'desktop' | 'toast' | 'none'>;
-      pauseNotifications: (paused: boolean) => Promise<import('../lib/notification-settings').NotificationPreferences>;
+      /** A pause choice, or `false` to resume. `true` is the hour, for older callers. */
+      pauseNotifications: (paused: import('../lib/notification-settings').PauseChoice | boolean) => Promise<import('../lib/notification-settings').NotificationPreferences>;
+      /** "Snooze 1 h" or "Mark read" on a notification toast. Local only. */
+      notificationQuickAction?: (action: import('../lib/notification-actions').QuickAction, delivery: import('../lib/notification-routing').NotificationDelivery) => Promise<void>;
+      /** Sends a reply typed in a notification again, after GitHub refused it. */
+      notificationReply?: (reply: import('../lib/notification-events').NotificationReplyTarget, text: string) => Promise<void>;
       notificationStatus: () => Promise<{ supported: boolean; blocked: boolean }>;
       /** Which System Settings panes this system can open for notifications and the menu bar. */
       systemSettingsPanes: () => Promise<import('../lib/desktop-setup').SystemSettingsPanes>;

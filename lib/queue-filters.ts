@@ -13,6 +13,8 @@ export interface QueueFilters {
   query: string;
   repo: string;
   repos?: string[];
+  /** Only these PRs: a notification digest opens the queue this way. */
+  urls?: string[];
   author: string;
   targetBranch: string;
   status: 'all' | 'ready' | 'draft';
@@ -105,6 +107,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     query: text('query', ''),
     repo: text('repo', 'all'),
     ...(Array.isArray(raw.repos) && raw.repos.length ? { repos: [...new Set(raw.repos.filter((r): r is string => typeof r === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r)).map(r => r.toLowerCase()))].slice(0, 100) } : {}),
+    ...(Array.isArray(raw.urls) && raw.urls.length ? { urls: [...new Set(raw.urls.filter((u): u is string => typeof u === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*$/.test(u)))].slice(0, 100) } : {}),
     author: text('author', 'all'),
     targetBranch: text('targetBranch', '').trim(),
     labels: normalizeLabelFilter(raw.labels ?? raw.label),
@@ -200,6 +203,7 @@ export function matchesQueueFilters(
       matchesInvolvement(m, filters.involvement, login) &&
       (filters.involvement !== 'response' || (m.state === 'open' && !m.merged && needsResponse(item.responses?.[m.url]))) &&
       matchesRepositories(m.repo, filters) &&
+      (!filters.urls?.length || filters.urls.includes(m.url)) &&
       (filters.author === 'all' || m.author.toLowerCase() === filters.author.toLowerCase()) &&
       matchesTargetBranch(m.baseBranch, filters.targetBranch) &&
       (filters.status === 'all' ||
@@ -216,7 +220,7 @@ export function matchesQueueFilters(
 export function activeQueueFilterCount(filters: QueueFilters) {
   return (Object.keys(DEFAULT_QUEUE_FILTERS) as (keyof QueueFilters)[]).filter(
     (key) => key === 'labels' ? labelFilterActive(filters.labels) : key !== 'briefingScope' && key !== 'sort' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
-  ).length + (filters.repos?.length ? 1 : 0);
+  ).length + (filters.repos?.length ? 1 : 0) + (filters.urls?.length ? 1 : 0);
 }
 /** Stable partition preserves the queue's review priority within each group. */
 export function prioritizeBriefings(
@@ -242,6 +246,7 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
     readStatus: filters.readStatus === 'unread' ? 'Unread PRs' : 'Read PRs',
     involvement: { all: 'All PRs', mine: 'Involving me', review: 'Needs my review', authored: 'Authored by me', response: 'Needs my response' }[filters.involvement],
     ...(filters.repos?.length ? { repos: `Repositories: ${filters.repos.join(', ')}` } : {}),
+    ...(filters.urls?.length ? { urls: `From a notification: ${filters.urls.length} ${filters.urls.length === 1 ? 'PR' : 'PRs'}` } : {}),
     query: `Search: ${filters.query}`,
     repo: filters.repo,
     author: `Author: ${filters.author}`,

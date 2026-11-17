@@ -164,10 +164,15 @@ import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
 import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
-import { createNotificationService, type ToastAction } from './notification-service';
+import { createNotificationService, type DesktopNotification, type ToastAction } from './notification-service';
 import { createDeepLinks } from './deep-link-service';
-import { notificationSettings, normalizeNotificationPreferences, PAUSE_DURATION } from '../lib/notification-settings';
-import { isCatchUp, type NotificationKind } from '../lib/notification-routing';
+import { notificationSettings, normalizeNotificationPreferences, NOTIFICATION_EVENT_TYPES, parsePauseRequest, pauseUntil } from '../lib/notification-settings';
+import { commentEvent, withChangeRequest, type CommentCandidate } from '../lib/notification-comments';
+import { preciseTarget } from '../lib/notification-targets';
+import { QUICK_ACTIONS, QUICK_SNOOZE_MS, type QuickAction } from '../lib/notification-actions';
+import { parseReplyTarget, type NotificationEvent, type NotificationReplyTarget } from '../lib/notification-events';
+import { createNotificationIcons } from './notification-icon-files';
+import { isCatchUp, type NotificationKind, type ReplyFailureNotice } from '../lib/notification-routing';
 import { syncMode, watchInterval } from '../lib/notification-cadence';
 import { createChangeSignals, parseChangedPrs, CHANGED_PRS_QUERY, CHANGE_PAGE, type NotificationsResponse, type ChangeSource } from '../lib/github-change-signals';
 import { createHeadInvalidation, setPrHeadReporter, type HeadChange, type HeadObservation } from '../lib/pr-heads';
@@ -3093,6 +3098,8 @@ const notificationAnalytics = () => loadPreferences().analytics;
 const deepLinks = createDeepLinks({
   show: () => {
     showOrCreateWindow();
+    // A click on a notification may come while another app is in front.
+    if (process.platform === 'darwin') app.focus({ steal: true });
     // Windows may refuse focus to a background process; raising the window once brings it forward.
     const win = appWindows().at(0);
     if (process.platform === 'win32' && win && !win.isFocused()) {
@@ -3113,6 +3120,97 @@ const deepLinks = createDeepLinks({
     return focused !== undefined && ready.includes(focused) ? focused : ready[0];
   },
 });
+const notificationIcons = createNotificationIcons(path.join(app.getPath('userData'), 'notification-icons'));
+/** Replies GitHub refused while no window could show them: shown when a renderer is ready. */
+let waitingReplyFailures: ReplyFailureNotice[] = [];
+function sendReplyFailure(failure: ReplyFailureNotice) {
+  const contents = (windowSet.focused() ?? appWindows().at(0))?.webContents;
+  if (!contents || contents.isDestroyed() || contents.isLoading() || !notificationContexts.has(contents.id)) {
+    waitingReplyFailures = [...waitingReplyFailures.slice(-9), failure];
+    return;
+  }
+  contents.send('notification', { type: 'reply-failed', failure });
+}
+/** An inline reply: the same optimistic write as the thread's reply box. Throws when GitHub refuses it. */
+async function replyFromNotification(target: NotificationReplyTarget, text: string) {
+  const body = text.trim();
+  if (!body) throw new Error('Enter a reply.');
+  if (!notificationSettings(loadPreferences()).allowReplies) throw new Error('Replies from notifications are off in Settings.');
+  if (target.kind === 'thread') await replyToThread({ prUrl: target.prUrl, threadId: target.threadId, action: 'reply', body });
+  else await runFeedbackAction({ prUrl: target.prUrl, action: 'reply', sourceId: target.sourceId, body });
+}
+/** "Snooze 1 h" and "Mark read": local state only, never a GitHub write. */
+async function notificationQuickAction(action: QuickAction, url: string | undefined) {
+  if (!url || !prRef(url)) throw new Error('This notification is not about a PR.');
+  if (action === 'snooze') {
+    workbench.snoozePrs({ action: 'snooze', groups: [[url]], until: Date.now() + QUICK_SNOOZE_MS, on: [] });
+    rebuildTrayMenu();
+  } else {
+    workbench.markUrlsRead([url]);
+    await appData.flush();
+    broadcastToAllWindows('pr-read-state-changed');
+  }
+  notifications.read([url]);
+  broadcastToAllWindows('notification', { type: 'close', urls: [url] });
+  notifyLocalChange('workbench-changed');
+}
+/**
+ * Events from the observer, with the precise place each click lands. A change request quotes the review and
+ * replies on its thread: from the saved discussion, or one read of it when none is saved and no catch-up batch
+ * is open (a catch-up batch must be delivered before the pass ends).
+ */
+function deliverNotificationEvents(events: NotificationEvent[]) {
+  const token = getResolvedToken();
+  const client = token ? getGitHubClient(token) : undefined;
+  const saved = (url?: string) => (client && url ? reviewThreads.latest(client, url) ?? reviewThreads.stale(client, url) : undefined);
+  const prepare = (event: NotificationEvent): NotificationEvent => {
+    const enriched = event.type === 'changes-requested' ? withChangeRequest(event, saved(event.url)) : event;
+    const target = preciseTarget(enriched);
+    return target ? { ...enriched, target } : enriched;
+  };
+  const missing = events.filter(event => event.type === 'changes-requested' && event.url && !withChangeRequest(event, saved(event.url)).reply);
+  if (!missing.length || !client || notifications.catchingUp()) {
+    notifications.deliver(events.map(prepare));
+    return;
+  }
+  const reads = [...new Set(missing.map(event => event.url as string))].map(url =>
+    withGitHubPriority('background', () => reviewThreads.list(client, url)).then(value => { optimistic.observe(url, 'discussion', value); }, () => {}));
+  // A slow read never holds the notification back for long.
+  void Promise.race([Promise.all(reads), new Promise(resolve => setTimeout(resolve, 5_000))]).then(() => notifications.deliver(events.map(prepare)));
+}
+/**
+ * Feed threads that may hold a mention or a reply: one discussion read each, through the review-thread cache and
+ * the background slot, so the rate budget and backoff apply. The newest comment about the reader becomes an event.
+ */
+async function readCommentEvents(candidates: CommentCandidate[]) {
+  const token = getResolvedToken();
+  const login = cachedLogin;
+  if (!token || !login) return;
+  const client = getGitHubClient(token);
+  for (const candidate of candidates) {
+    if ((githubClients.backoff(token, true, ['graphql'])?.retryAt ?? 0) > Date.now()) return;
+    const member = workbench.knownMember(candidate.url);
+    if (!member) continue;
+    let discussion;
+    try {
+      discussion = await withGitHubPriority('background', () => reviewThreads.list(client, candidate.url, true));
+    } catch (error) {
+      console.warn('[notifications] Could not read the discussion for a mention or reply:', error instanceof Error ? error.message : error);
+      continue;
+    }
+    if (token !== getResolvedToken() || login !== cachedLogin) return;
+    optimistic.observe(candidate.url, 'discussion', discussion);
+    const event = commentEvent({
+      discussion,
+      pr: { url: member.url, title: member.title, repo: member.repo, number: member.number, author: member.author },
+      login,
+      reason: candidate.reason,
+      since: candidate.since,
+      now: Date.now(),
+    });
+    if (event) workbench.deliverEvents([event]);
+  }
+}
 const notifications = createNotificationService({
   settings: () => notificationSettings(loadPreferences()),
   focus: () => {
@@ -3126,12 +3224,28 @@ const notifications = createNotificationService({
     create: options => {
       const notification = new Notification(options);
       return {
-        on: (event, listener) => { notification.on(event as 'show', listener); },
+        on: ((event: string, listener: (value: never) => void) => {
+          // Electron passes details objects; the service takes the typed text and the button index.
+          if (event === 'reply') notification.on('reply', details => { (listener as unknown as (text: string) => void)(details.reply); });
+          else if (event === 'action') notification.on('action', details => { (listener as unknown as (index: number) => void)(details.actionIndex); });
+          else notification.on(event as 'show', listener as unknown as () => void);
+        }) as DesktopNotification['on'],
         show: () => notification.show(),
         close: () => notification.close(),
       };
     },
   },
+  icon: process.platform === 'darwin' ? undefined : notificationIcons,
+  reply: (target, text) => replyFromNotification(target, text),
+  replyFailed: failure => sendReplyFailure({
+    id: failure.delivery.id,
+    kind: failure.delivery.kind,
+    reply: failure.reply,
+    text: failure.text,
+    message: failure.message,
+    ...(failure.delivery.target ? { target: failure.delivery.target } : {}),
+  }),
+  act: (action, delivery) => { void notificationQuickAction(action, delivery.url).catch((error: unknown) => console.warn('[notifications] Action failed:', error instanceof Error ? error.message : error)); },
   toast: delivery => {
     const contents = (windowSet.focused() ?? appWindows().at(0))?.webContents;
     if (!contents || contents.isDestroyed() || contents.isLoading() || !notificationContexts.has(contents.id)) return false;
@@ -3147,7 +3261,7 @@ const workbench = createWorkbenchService({
   changed: () => { notifyLocalChange('workbench-changed'); notifyLocalChange('activity-changed'); },
   storage: appData,
   signals: (client, requests, options) => getQueueSignals(client, requests, options),
-  notifications: { store: notificationStore, deliver: events => notifications.deliver(events), count: notificationAnalytics },
+  notifications: { store: notificationStore, deliver: events => deliverNotificationEvents(events), count: notificationAnalytics },
   cachedDiscussion: url => { const token = getResolvedToken(); const value = token ? reviewThreads.latest(getGitHubClient(token), url) : undefined; return value && optimistic.discussion(url, value); },
   cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests).map(optimistic.signals) : []; },
   // The reader's writes GitHub has not shown yet: draft state, auto-merge, reviewers and comment counts.
@@ -3267,7 +3381,12 @@ ipcMain.handle('deep-link-take', (event) => {
   if (event.senderFrame !== event.sender.mainFrame) return [];
   if (!notificationContexts.has(event.sender.id)) notificationContexts.set(event.sender.id, {});
   const items = deepLinks.take(event.sender.id);
-  setTimeout(() => notifications.rendererReady(), 0);
+  setTimeout(() => {
+    notifications.rendererReady();
+    const failures = waitingReplyFailures;
+    waitingReplyFailures = [];
+    for (const failure of failures) sendReplyFailure(failure);
+  }, 0);
   return items;
 });
 /** The PR shown in a window's active workspace, so an event for it shows nothing while that window has focus. */
@@ -3278,7 +3397,7 @@ ipcMain.on('notification-context', (event, raw: unknown) => {
   notificationContexts.set(event.sender.id, { activeUrl: ref ? deepLinkPrUrl(ref) : undefined });
 });
 const TOAST_ACTIONS: readonly ToastAction[] = ['clicked', 'dismissed', 'timedOut'];
-const NOTIFICATION_KINDS: readonly NotificationKind[] = ['review-requested', 'team-review-requested', 'changes-requested', 'approved', 'checks-failed', 'ready-to-merge', 'explanation-ready', 'update-ready', 'snooze-ended', 'summary', 'test'];
+const NOTIFICATION_KINDS: readonly NotificationKind[] = [...NOTIFICATION_EVENT_TYPES, 'summary', 'test'];
 ipcMain.on('notification-action', (_event, kind: unknown, action: unknown) => {
   if (NOTIFICATION_KINDS.includes(kind as NotificationKind) && TOAST_ACTIONS.includes(action as ToastAction))
     notifications.toastAction(kind as NotificationKind, action as ToastAction);
@@ -3300,8 +3419,21 @@ handleInteractive('notification-introduce', (_event, accept: unknown) => {
 });
 handleInteractive('notification-test', () => notifications.test());
 handleInteractive('notification-pause', (_event, paused: unknown) => {
-  if (typeof paused !== 'boolean') throw new Error('Choose whether to pause notifications.');
-  return updateNotificationSettings(() => ({ pausedUntil: paused ? Date.now() + PAUSE_DURATION : 0 })).notificationSettings;
+  const choice = parsePauseRequest(paused);
+  if (choice === undefined) throw new Error('Choose how long to pause notifications.');
+  return updateNotificationSettings(() => ({ pausedUntil: choice ? pauseUntil(choice, Date.now()) : 0 })).notificationSettings;
+});
+/** "Snooze 1 h" and "Mark read" on a toast. Only the PR URL crosses IPC. */
+handleInteractive('notification-quick-action', async (_event, action: unknown, raw: unknown) => {
+  if (!QUICK_ACTIONS.includes(action as QuickAction)) throw new Error('Unknown notification action.');
+  const url = raw && typeof raw === 'object' && typeof (raw as { url?: unknown }).url === 'string' ? (raw as { url: string }).url : undefined;
+  await notificationQuickAction(action as QuickAction, url);
+});
+/** Retry of a reply GitHub refused. The target is re-validated: a PR URL and a thread or feedback id. */
+handleInteractive('notification-reply', async (_event, raw: unknown, text: unknown) => {
+  const target = parseReplyTarget(raw);
+  if (!target || typeof text !== 'string' || !text.trim() || text.length > 65_000) throw new Error('This reply cannot be sent.');
+  await replyFromNotification(target, text);
 });
 ipcMain.handle('notification-status', () => notifications.status());
 // ── Notifications and menu bar setup ──
@@ -3625,7 +3757,21 @@ ipcMain.handle('cached-review-threads', (_event, prUrl: string) => {
   const value = reviewThreads.stale(discussionClient(), prUrl);
   return value && optimistic.discussion(prUrl, value);
 });
-handleInteractive('feedback-action', async (_event, req: import('../lib/review-threads').FeedbackAction) => {
+/**
+ * A reply to a review thread through the optimistic comment path: it shows in the thread at once, rolls back if
+ * GitHub refuses it, and counts as the reader's own activity. Shared by the thread's reply box and notifications.
+ */
+async function replyToThread(req: ReviewThreadAction) {
+  const account = cachedLogin;
+  const change: OptimisticChange = { action: 'thread-reply', threadId: req.threadId, body: typeof req.body === 'string' ? req.body.trim() : '' };
+  const result = await gitHubWrite('thread-reply', [req.prUrl],
+    () => optimistic.run(req.prUrl, change, () => reviewThreads.act(discussionClient(), req), thread => ({ thread })));
+  if (account) workbench.noteOwnReview(account, req.prUrl, 1);
+  return optimistic.thread(req.prUrl, result);
+}
+handleInteractive('feedback-action', (_event, req: import('../lib/review-threads').FeedbackAction) => runFeedbackAction(req));
+/** A reply to conversation feedback, or a review request, through the optimistic path. Shared with notifications. */
+async function runFeedbackAction(req: import('../lib/review-threads').FeedbackAction) {
   const account = cachedLogin;
   const source = req.action === 'reply' ? discussionSource(req.prUrl, req.sourceId) : undefined;
   const change: OptimisticChange | undefined = req.action === 'request-review'
@@ -3635,7 +3781,7 @@ handleInteractive('feedback-action', async (_event, req: import('../lib/review-t
     () => change ? optimistic.run(req.prUrl, change, () => reviewThreads.feedbackAction(discussionClient(), req)) : reviewThreads.feedbackAction(discussionClient(), req),
     () => (req.action === 'request-review' ? { reviewer: req.reviewer } : {}));
   if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
-});
+}
 ipcMain.handle('get-review-threads', async (_event, prUrl: string, refresh: boolean, options?: { revalidate?: boolean }) => {
   // Refreshing a displayed saved copy runs ahead of background work but leaves the interactive slots free.
   const value = await (options?.revalidate
@@ -3645,14 +3791,11 @@ ipcMain.handle('get-review-threads', async (_event, prUrl: string, refresh: bool
   return optimistic.discussion(prUrl, value);
 });
 handleInteractive('review-thread-action', async (_event, req: ReviewThreadAction) => {
-  const account = cachedLogin;
-  const action = req.action === 'reply' ? 'thread-reply' : req.action === 'unresolve' ? 'thread-unresolve' : 'thread-resolve';
-  const change: OptimisticChange = req.action === 'reply'
-    ? { action: 'thread-reply', threadId: req.threadId, body: typeof req.body === 'string' ? req.body.trim() : '' }
-    : { action: req.action === 'unresolve' ? 'thread-unresolve' : 'thread-resolve', threadId: req.threadId };
+  if (req.action === 'reply') return replyToThread(req);
+  const action = req.action === 'unresolve' ? 'thread-unresolve' : 'thread-resolve';
+  const change: OptimisticChange = { action, threadId: req.threadId };
   const result = await gitHubWrite(action, [req.prUrl],
     () => optimistic.run(req.prUrl, change, () => reviewThreads.act(discussionClient(), req), thread => ({ thread })));
-  if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
   return optimistic.thread(req.prUrl, result);
 });
 
@@ -4243,6 +4386,7 @@ const changeSignals = createChangeSignals({
   },
   known: savedChangeTarget,
   ignored: url => workbench.mutedUrls().has(url),
+  comments: candidates => { void readCommentEvents(candidates); },
   head: (url, sha, updatedAt) => { noteHeadSha(url, sha, { updatedAt, source: 'search' }); },
   refresh: (urls, source) => refreshChangedPrs(urls, source),
   discover: () => {

@@ -4,7 +4,8 @@
  * No Electron imports: main injects the desktop notification factory, the toast sender and focus state.
  */
 import type { DeepLinkTarget } from '../lib/deep-link';
-import type { NotificationEvent } from '../lib/notification-events';
+import type { NotificationEvent, NotificationReplyTarget } from '../lib/notification-events';
+import { desktopExtras, type DesktopExtras, type QuickAction } from '../lib/notification-actions';
 import { isPaused, isPrEvent, type NotificationEventType, type NotificationSettings } from '../lib/notification-settings';
 import {
   batch,
@@ -25,14 +26,25 @@ import type { CounterField } from './notification-store';
 
 export interface DesktopNotification {
   on(event: 'show' | 'click' | 'close' | 'failed', listener: () => void): void;
+  /** macOS inline reply: the text typed. */
+  on(event: 'reply', listener: (text: string) => void): void;
+  /** macOS action button: its index in `actions`. */
+  on(event: 'action', listener: (index: number) => void): void;
   show(): void;
   close(): void;
 }
-export interface DesktopNotificationOptions {
+export interface DesktopNotificationOptions extends DesktopExtras {
   title: string;
   subtitle?: string;
   body: string;
   silent: boolean;
+}
+/** A reply GitHub did not take. The text is kept as a draft on the thread, and the app offers Retry. */
+export interface ReplyFailure {
+  delivery: NotificationDelivery;
+  reply: NotificationReplyTarget;
+  text: string;
+  message: string;
 }
 export type ToastAction = 'clicked' | 'dismissed' | 'timedOut';
 /** Without a `show` event this soon, the desktop notification may have been blocked. Only a hint, never a reroute. */
@@ -51,6 +63,13 @@ export function createNotificationService(deps: {
   show?: () => void;
   count?: (kind: NotificationKind, field: CounterField) => void;
   platform?: string;
+  /** The event icon file for Windows and Linux. */
+  icon?: (kind: NotificationKind) => string | undefined;
+  /** Posts an inline reply through the app's optimistic comment path. Rejects when GitHub refuses it. */
+  reply?: (target: NotificationReplyTarget, text: string) => Promise<void>;
+  replyFailed?: (failure: ReplyFailure) => void;
+  /** "Snooze 1 h" or "Mark read": local only, never a GitHub write. */
+  act?: (action: QuickAction, delivery: NotificationDelivery) => void;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => Timer;
   clearTimer?: (timer: Timer) => void;
@@ -86,12 +105,39 @@ export function createNotificationService(deps: {
     if (deps.toast(value)) count(delivery.kind, 'toastShown');
     else waitingToasts = [...waitingToasts, value];
   }
+  /** The inline reply: posted, or kept for Retry when GitHub refuses it. With replies off, it only opens the thread. */
+  async function sendReply(delivery: NotificationDelivery, typed: string) {
+    const reply = delivery.reply;
+    const body = typed.trim();
+    if (!reply || !body) return;
+    if (!deps.settings().allowReplies || !deps.reply) {
+      if (delivery.target) deps.open(delivery.target);
+      return;
+    }
+    try {
+      await deps.reply(reply, body);
+      count(delivery.kind, 'replied');
+    } catch (error) {
+      count(delivery.kind, 'replyFailed');
+      deps.replyFailed?.({ delivery, reply, text: body, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
   function showDesktop(delivery: NotificationDelivery) {
+    const { extras, actions } = desktopExtras(delivery, {
+      platform: deps.platform,
+      allowReplies: deps.settings().allowReplies,
+      icon: deps.platform === 'darwin' ? undefined : deps.icon?.(delivery.kind),
+    });
+    // Windows and Linux have no subtitle: the body names the repository there when it fits. The title names the PR.
+    const named = `${delivery.body} · ${delivery.subtitle ?? ''}`;
+    const body = deps.platform !== 'darwin' && delivery.subtitle && named.length <= BODY_LIMIT ? named : delivery.body;
     const notification = deps.desktop.create({
       title: text(truncate(delivery.title, TITLE_LIMIT)),
       ...(delivery.subtitle ? { subtitle: text(delivery.subtitle) } : {}),
-      body: text(truncate(delivery.body, BODY_LIMIT)),
+      body: text(truncate(body, BODY_LIMIT)),
       silent: true,
+      ...extras,
+      ...(extras.replyPlaceholder ? { replyPlaceholder: text(extras.replyPlaceholder) } : {}),
     });
     let confirmed = false;
     // Keep a reference so the click handler survives garbage collection. Ones left in the notification centre
@@ -109,6 +155,17 @@ export function createNotificationService(deps: {
       count(delivery.kind, 'clicked');
       if (delivery.target) deps.open(delivery.target);
       else deps.show?.();
+    });
+    notification.on('reply', (typed) => {
+      forget();
+      void sendReply(delivery, typed);
+    });
+    notification.on('action', (index) => {
+      const action = actions[index];
+      if (!action) return;
+      forget();
+      count(delivery.kind, action === 'snooze' ? 'snoozed' : 'markedRead');
+      deps.act?.(action, delivery);
     });
     notification.on('close', forget);
     notification.on('failed', () => {
@@ -231,7 +288,8 @@ export function createNotificationService(deps: {
       heldTimer = undefined;
       const events = held;
       held = [];
-      for (const delivery of batch(events, nextId, `${events.length} updates while notifications were paused`)) route(delivery);
+      // One catch-up summary when a pause ends; a single event is shown as itself.
+      for (const delivery of batch(events, nextId, `${events.length} updates while notifications were paused`, 2)) route(delivery);
     },
     /** The user marked PRs read: their waiting events are no longer news. */
     read(urls: readonly string[]) {
@@ -255,6 +313,11 @@ export function createNotificationService(deps: {
     },
     toastAction(kind: NotificationKind, action: ToastAction) {
       count(kind, action);
+    },
+    /** "Snooze 1 h" or "Mark read" on a toast: the same local handlers as the desktop buttons. */
+    quickAction(action: QuickAction, delivery: NotificationDelivery) {
+      count(delivery.kind, action === 'snooze' ? 'snoozed' : 'markedRead');
+      deps.act?.(action, delivery);
     },
     /** "Send test notification" and "Turn on": always a desktop notification when one can be shown. */
     test(): 'desktop' | 'toast' | 'none' {

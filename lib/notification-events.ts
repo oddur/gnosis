@@ -23,13 +23,26 @@ export interface NotificationEvent {
   target?: DeepLinkTarget;
   /** The reason a snoozed PR came back: "new comment from lena". */
   detail?: string;
+  /** The comment a mention, reply or change request quotes, as plain text. */
+  quote?: string;
+  /** Where an inline reply from the notification goes. */
+  reply?: NotificationReplyTarget;
 }
+/**
+ * The thread a reply from a notification answers: a review thread, or conversation feedback (a comment or a
+ * review), which GitHub answers with a new comment that links to it.
+ */
+export type NotificationReplyTarget =
+  | { kind: 'thread'; prUrl: string; threadId: string; to: string }
+  | { kind: 'feedback'; prUrl: string; sourceId: string; to: string };
 /** Row order of the design's event table: picks the headline when events coalesce. */
 export const EVENT_RANK: readonly NotificationEventType[] = [
   'review-requested',
   'team-review-requested',
   'changes-requested',
+  'mention',
   'checks-failed',
+  'reply',
   'ready-to-merge',
   'approved',
   'snooze-ended',
@@ -151,4 +164,19 @@ export function deriveEvents(previous: PrBasis | undefined, next: PrObservation,
 export function subsume(events: readonly NotificationEvent[]): NotificationEvent[] {
   const ready = new Set(events.filter((event) => event.type === 'ready-to-merge').map((event) => event.url));
   return events.filter((event) => event.type !== 'approved' || !ready.has(event.url));
+}
+
+const REPLY_ID = /^[\w=-]{1,200}$/;
+const REPLY_PR = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*$/;
+const REPLY_LOGIN = /^[A-Za-z0-9][\w-]{0,99}(?:\[bot\])?$/;
+/** Re-validates a reply target that crossed IPC. Unknown fields are dropped. */
+export function parseReplyTarget(value: unknown): NotificationReplyTarget | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.prUrl !== 'string' || !REPLY_PR.test(raw.prUrl) || typeof raw.to !== 'string' || !REPLY_LOGIN.test(raw.to)) return undefined;
+  if (raw.kind === 'thread' && typeof raw.threadId === 'string' && REPLY_ID.test(raw.threadId))
+    return { kind: 'thread', prUrl: raw.prUrl, threadId: raw.threadId, to: raw.to };
+  if (raw.kind === 'feedback' && typeof raw.sourceId === 'string' && REPLY_ID.test(raw.sourceId))
+    return { kind: 'feedback', prUrl: raw.prUrl, sourceId: raw.sourceId, to: raw.to };
+  return undefined;
 }

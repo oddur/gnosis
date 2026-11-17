@@ -40,8 +40,10 @@ import type {
 import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot, ReviewSubject } from '../lib/workbench';
 import type { DeepLinkDelivery } from './deep-link-service';
-import type { NotificationKind, NotificationMessage } from '../lib/notification-routing';
-import type { NotificationPreferences } from '../lib/notification-settings';
+import type { NotificationDelivery, NotificationKind, NotificationMessage } from '../lib/notification-routing';
+import type { NotificationPreferences, PauseChoice } from '../lib/notification-settings';
+import type { NotificationReplyTarget } from '../lib/notification-events';
+import type { QuickAction } from '../lib/notification-actions';
 import type { MenubarShowResult, SystemSettingsPane, SystemSettingsPanes } from '../lib/desktop-setup';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -397,7 +399,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('notification-action', kind, action),
   notificationIntroduce: (accept: boolean): Promise<'desktop' | 'toast' | 'none'> => ipcRenderer.invoke('notification-introduce', accept),
   sendTestNotification: (): Promise<'desktop' | 'toast' | 'none'> => ipcRenderer.invoke('notification-test'),
-  pauseNotifications: (paused: boolean): Promise<NotificationPreferences> => ipcRenderer.invoke('notification-pause', paused),
+  pauseNotifications: (paused: PauseChoice | boolean): Promise<NotificationPreferences> => ipcRenderer.invoke('notification-pause', paused),
+  notificationQuickAction: (action: QuickAction, delivery: NotificationDelivery): Promise<void> =>
+    ipcRenderer.invoke('notification-quick-action', action, { url: delivery.url, kind: delivery.kind }),
+  notificationReply: (reply: NotificationReplyTarget, text: string): Promise<void> => ipcRenderer.invoke('notification-reply', reply, text),
   notificationStatus: (): Promise<{ supported: boolean; blocked: boolean }> => ipcRenderer.invoke('notification-status'),
   systemSettingsPanes: (): Promise<SystemSettingsPanes> => ipcRenderer.invoke('system-settings-panes'),
   openSystemSettings: (pane: SystemSettingsPane): Promise<boolean> => ipcRenderer.invoke('open-system-settings', pane),

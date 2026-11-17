@@ -99,7 +99,10 @@ export function PrChangesView({
   onActiveFile,
   onOpenBrief,
   onOpenFeedback,
+  landOnUnviewed,
 }: {
+  /** A nonce: select the first file not yet marked viewed, once the files load. A review request lands here. */
+  landOnUnviewed?: number;
   account?: string;
   onOpenFeedback?: (url?: string, threadId?: string) => void;
   subject: ReviewSubject;
@@ -406,6 +409,13 @@ export function PrChangesView({
         ? `“${initialFile.path}” is not in the files GitHub returned. This PR’s file list is incomplete.`
         : `“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
   }, [initialFile, entries]);
+  const landedUnviewed = useRef<number>(undefined);
+  useEffect(() => {
+    if (landOnUnviewed === undefined || landedUnviewed.current === landOnUnviewed || !entries.length) return;
+    landedUnviewed.current = landOnUnviewed;
+    const first = entries.find((e) => !progress.isFileViewed(viewKey(e)));
+    if (first) void select(first.key);
+  }, [landOnUnviewed, entries]);
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
   function warmFile(key: string) {
     const target = entries.find((e) => e.key === key);

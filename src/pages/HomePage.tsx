@@ -3,6 +3,7 @@ import { useWorkspaceNavigation, activeWorkspaceRoot } from '../../lib/workspace
 import { ExplanationSetupDialog } from '../../components/ExplanationSetupDialog';
 import type { GenerateReviewRequest } from '../../lib/types';
 import type { FeedbackRequest, ResponseIntent } from '../../lib/feedback';
+import type { PrLanding } from '../../components/PrSummary';
 import { ResponseFilterStatus } from '../../components/ResponseFilterStatus';
 import { needsResponse } from '../../lib/response-needed';
 import { LoadingState, LoadingIndicator } from '../../components/LoadingState';
@@ -174,6 +175,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   useRenderSpan('queue page render');
   const tabs = useWorkspaceNavigation();
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
+  /** Where a deep link or notification lands inside the opened PR. */
+  const [landing, setLanding] = useState<PrLanding & { subjectId: string }>();
   const [responseUnavailable, setResponseUnavailable] = useState(0);
   const [overviewTab,setOverviewTab] = useState<WorkspaceTab>('summary');
   const [reviewRequest, setReviewRequest] = useState<PrReviewRequest>();
@@ -1319,8 +1322,11 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     if (target.subject) {
       setOpenedItem(target.subject);
       setSelected(target.subject.subject.id);
-      // A deep link or notification lands on its tab, such as Checks for failing checks.
+      // A deep link or notification lands on its tab, such as Checks for failing checks, and on its thread,
+      // check, first unviewed file or merge action.
       if (target.open?.tab) setOverviewTab(target.open.tab);
+      const open = target.open;
+      setLanding(open && (open.threadId || open.check || open.focus) ? { ...open, subjectId: target.subject.subject.id } : undefined);
       return;
     }
     if (target.onboarding) {
@@ -1361,6 +1367,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           kind: target.section === 'stacks' ? 'stack' : 'all',
           // A catch-up summary opens the Unread view.
           ...(target.filters?.read ? { readStatus: target.filters.read } : {}),
+          // A notification digest opens the queue filtered to its PRs.
+          urls: target.filters?.prs,
         });
     }
   }, [commandDestination, prefs, loading, onboarding.ready]);
@@ -1741,6 +1749,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         key={summaryItem.subject.id}
         item={summaryItem}
         feedbackRequest={feedbackRequest?.subjectId === summaryItem.subject.id ? feedbackRequest : undefined}
+        landing={landing?.subjectId === summaryItem.subject.id ? landing : undefined}
         matchingUrls={matchingStackMembers(summaryItem, filters, auth?.login, undefined, mergeStates)}
         onScopeChange={selectScope}
         onRenameStack={async name => {

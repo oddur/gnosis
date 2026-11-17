@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react';
 import { Toast } from '@base-ui/react/toast';
-import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Sparkles, Inbox, BellRing, AlarmClock, type LucideIcon } from 'lucide-react';
+import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Sparkles, Inbox, BellRing, AlarmClock, AtSign, MessageSquareReply, type LucideIcon } from 'lucide-react';
 import type { NotificationKind } from '../../lib/notification-routing';
+import { NOTIFICATION_ICONS, type NotificationIconName } from '../../lib/notification-icons';
 import { PrStateIcon } from '../PrStateIcon';
 
 /** Notification toasts carry their kind, so status has an icon as well as a title. Colour stays secondary. */
@@ -14,6 +15,8 @@ export interface ToastData {
   /** The first PR-event toast offers desktop delivery. */
   introduce?: (accept: boolean) => void;
   onDismiss?: () => void;
+  /** Secondary actions, such as "Snooze 1 h" and "Mark read". */
+  actions?: { label: string; onClick: () => void }[];
 }
 // Shadcn's Base UI toast pattern, styled with the workbench's existing tokens.
 export const toast = Toast.createToastManager<ToastData>();
@@ -43,19 +46,22 @@ export function ToastHost() {
   return <div ref={registerHost} className="app-toast-host" />;
 }
 
-const KIND_ICONS: Partial<Record<NotificationKind, LucideIcon>> = {
-  'review-requested': GitPullRequest,
-  'team-review-requested': GitPullRequest,
-  'changes-requested': MessageSquareWarning,
-  'checks-failed': CircleX,
-  'ready-to-merge': GitMerge,
-  approved: CheckCircle2,
-  'explanation-ready': Sparkles,
-  'update-ready': Info,
-  'snooze-ended': AlarmClock,
-  summary: Inbox,
-  test: BellRing,
+/** The same glyphs as the desktop icons on Windows and Linux (lib/notification-icons.ts). */
+const GLYPHS: Record<NotificationIconName, LucideIcon> = {
+  'git-pull-request': GitPullRequest,
+  'message-square-warning': MessageSquareWarning,
+  'circle-check': CheckCircle2,
+  'circle-x': CircleX,
+  'git-merge': GitMerge,
+  'at-sign': AtSign,
+  'message-square-reply': MessageSquareReply,
+  'alarm-clock': AlarmClock,
+  sparkles: Sparkles,
+  info: Info,
+  inbox: Inbox,
+  'bell-ring': BellRing,
 };
+const KIND_ICONS = Object.fromEntries(Object.entries(NOTIFICATION_ICONS).map(([kind, { icon }]) => [kind, GLYPHS[icon]])) as Record<NotificationKind, LucideIcon>;
 function ToastList() {
   const { toasts } = Toast.useToastManager<ToastData>();
   return toasts.map((item) => {
@@ -70,6 +76,7 @@ function ToastList() {
         className="app-toast"
         data-slot="toast"
         data-kind={kind}
+        data-tone={kind ? NOTIFICATION_ICONS[kind].tone : undefined}
         role="group"
         aria-roledescription="notification"
         aria-modal={undefined}
@@ -85,7 +92,18 @@ function ToastList() {
               </p>
             )}
             <Toast.Description className="app-toast-description" />
-            <Toast.Action className="app-toast-action" />
+            {item.data?.actions?.length ? (
+              <div className="app-toast-actions">
+                <Toast.Action className="app-toast-action" />
+                {item.data.actions.map((action) => (
+                  <button key={action.label} type="button" className="app-toast-secondary" onClick={action.onClick}>
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <Toast.Action className="app-toast-action" />
+            )}
             {introduce && (
               <div className="app-toast-introduce">
                 <p>Get these on your desktop when Gnosis is in the background?</p>

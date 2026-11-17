@@ -39,7 +39,16 @@ export interface LinkFilters {
   status?: 'ready' | 'draft';
   read?: 'unread' | 'read';
   kind?: 'pr' | 'stack';
+  /** Only these PRs, as canonical github.com URLs: a notification digest. At most `DIGEST_PR_LIMIT`. */
+  prs?: string[];
 }
+/** The most PRs a queue link names. In a link they are `prs=owner/repo/123,owner/repo/456`. */
+export const DIGEST_PR_LIMIT = 20;
+/** Where to land inside a PR beyond its tab: the first unviewed file in Changes, or the merge action. */
+export type PrFocus = 'unviewed-file' | 'merge';
+export const PR_FOCUSES: readonly PrFocus[] = ['unviewed-file', 'merge'];
+/** The tab each focus belongs to. */
+const FOCUS_TAB: Record<PrFocus, PrTab> = { 'unviewed-file': 'changes', merge: 'summary' };
 export type QueueSection = 'all' | 'response' | 'requested' | 'updated' | 'stacks' | 'saved' | 'starred' | 'snoozed' | 'muted';
 export const QUEUE_SECTIONS: readonly QueueSection[] = ['all', 'response', 'requested', 'updated', 'stacks', 'saved', 'starred', 'snoozed', 'muted'];
 export type LinkSettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'notifications' | 'integrations';
@@ -58,6 +67,7 @@ export type DeepLinkTarget =
       commit?: string;
       check?: string;
       slide?: string;
+      focus?: PrFocus;
     }
   | { kind: 'conflicts'; pr: PrRef }
   | { kind: 'review'; reviewId: string; slide?: string; file?: FileLocator; threadId?: string }
@@ -95,7 +105,7 @@ export const DEEP_LINK_HOSTS: readonly string[] = ['github.com'];
 export const DEEP_LINK_MAX_LENGTH = 4096;
 export const DEEP_LINK_MAX_PARAMETERS = 16;
 const VALUE_MAX = 512;
-const VALUE_LIMITS: Record<string, number> = { file: 1024, q: 200, url: 2000 };
+const VALUE_LIMITS: Record<string, number> = { file: 1024, q: 200, url: 2000, prs: 2400 };
 const GITHUB_URL_MAX = 2000;
 
 // GitHub logins are letters, digits and hyphens; managed (EMU) logins add an `_shortcode` suffix.
@@ -167,7 +177,7 @@ export function prDeepLinks(urls: readonly string[], scheme = 'gnosis'): string[
 }
 
 type LocatorKey = 'file' | 'threadId' | 'commentId' | 'commit' | 'check' | 'slide';
-type Locators = Pick<PrLinkTarget, 'tab' | LocatorKey>;
+type Locators = Pick<PrLinkTarget, 'tab' | LocatorKey | 'focus'>;
 /** Which tabs each locator applies to. A locator on another tab is dropped. */
 const APPLIES: Record<LocatorKey, readonly PrTab[]> = {
   file: ['changes', 'commits'],
@@ -189,9 +199,12 @@ const IMPLIED: [LocatorKey, PrTab][] = [
 /** The PR target for a tab and locators: the tab is implied when missing, `summary` is the default, and locators
  * that do not apply to the tab are dropped. */
 function prWith(pr: PrRef, scope: 'stack' | undefined, locators: Locators): PrLinkTarget {
-  const tab = locators.tab ?? IMPLIED.find(([key]) => locators[key] !== undefined)?.[1];
+  const tab = locators.tab ?? IMPLIED.find(([key]) => locators[key] !== undefined)?.[1] ?? (locators.focus ? FOCUS_TAB[locators.focus] : undefined);
   const target: PrLinkTarget = { kind: 'pr', pr, ...(scope ? { scope } : {}) };
-  if (!tab || tab === 'summary') return target;
+  // A focus on another tab is dropped, like a locator.
+  const focus = locators.focus && FOCUS_TAB[locators.focus] === (tab ?? 'summary') ? { focus: locators.focus } : {};
+  if (!tab || tab === 'summary') return { ...target, ...focus };
+  Object.assign(target, focus);
   target.tab = tab;
   for (const [key] of IMPLIED) {
     const value = locators[key];
@@ -279,6 +292,11 @@ function prLocators(parameters: Parameters, tabParameter: boolean): Result<Locat
     if (!PR_TABS.includes(tab as PrTab)) return fail('bad-parameter');
     locators.tab = tab as PrTab;
   }
+  const focus = parameters.get('focus');
+  if (focus !== undefined) {
+    if (!PR_FOCUSES.includes(focus as PrFocus)) return fail('bad-parameter');
+    locators.focus = focus as PrFocus;
+  }
   return { value: locators };
 }
 
@@ -317,6 +335,19 @@ function linkFilters(parameters: Parameters): Result<LinkFilters | undefined> {
   }
   const query = parameters.get('q');
   if (query !== undefined) filters.query = query;
+  const prs = parameters.get('prs');
+  if (prs !== undefined) {
+    const parts = prs.split(',');
+    if (!prs || parts.length > DIGEST_PR_LIMIT) return fail('bad-parameter');
+    const urls: string[] = [];
+    for (const part of parts) {
+      const [owner = '', repo, number, ...rest] = part.split('/') as Maybe[];
+      if (rest.length || repo === undefined || number === undefined || !validPr(owner, repo, number)) return fail('bad-parameter');
+      const url = prUrl({ host: 'github.com', owner, repo, number: Number(number) });
+      if (!urls.includes(url)) urls.push(url);
+    }
+    filters.prs = urls;
+  }
   return { value: Object.keys(filters).length ? filters : undefined };
 }
 
@@ -343,8 +374,8 @@ function parseRoute(route: DeepLinkRoute, segments: string[], parameters: Parame
     if ('error' in locators) return locators;
     if (page.value.kind !== 'pr') return page;
     // Other parameters override what the URL implies.
-    const { pr, scope, tab, file, threadId, commentId, commit, check, slide } = page.value;
-    const implied: Locators = { tab, file, threadId, commentId, commit, check, slide };
+    const { pr, scope, tab, file, threadId, commentId, commit, check, slide, focus } = page.value;
+    const implied: Locators = { tab, file, threadId, commentId, commit, check, slide, focus };
     const explicit = Object.keys(locators.value).length > 0;
     return { value: prWith(pr, scope, explicit ? { ...implied, ...locators.value } : implied) };
   }
@@ -561,6 +592,12 @@ export function parseGitHubUrl(raw: string, hosts: readonly string[] = DEEP_LINK
 
 // ── Producing links ──
 
+/** `owner/repo/123` for a PR URL, the form a `prs` list uses. */
+const compactPr = (url: string) => {
+  const ref = prRef(url);
+  return ref ? `${ref.owner}/${ref.repo}/${ref.number}` : url;
+};
+
 const encodeValue = (value: string) => encodeURIComponent(value).replace(/%2F/g, '/');
 function query(entries: [string, string | number | undefined][]): string {
   const parts = entries
@@ -597,6 +634,7 @@ export function formatDeepLink(target: DeepLinkTarget, scheme = 'gnosis'): strin
         ['commit', target.commit],
         ['check', target.check],
         ['slide', target.slide],
+        ['focus', target.focus],
       ])}`;
     }
     case 'conflicts':
@@ -612,6 +650,7 @@ export function formatDeepLink(target: DeepLinkTarget, scheme = 'gnosis'): strin
         ['read', target.filters?.read],
         ['kind', target.filters?.kind],
         ['q', target.filters?.query],
+        ['prs', target.filters?.prs?.map(compactPr).join(',')],
       ])}`;
     case 'review':
       return `${base}review/${segment(target.reviewId)}${query([['slide', target.slide], ...fileEntries(target.file), ['thread', target.threadId]])}`;
@@ -725,12 +764,18 @@ function validFilters(value: unknown): LinkFilters | undefined | false {
   if (value === undefined) return undefined;
   if (!record(value)) return false;
   const parameters: Parameters = new Map();
-  const names: [keyof LinkFilters, string][] = [['repo', 'repo'], ['author', 'author'], ['branch', 'branch'], ['status', 'status'], ['read', 'read'], ['kind', 'kind'], ['query', 'q']];
+  const names: [Exclude<keyof LinkFilters, 'prs'>, string][] = [['repo', 'repo'], ['author', 'author'], ['branch', 'branch'], ['status', 'status'], ['read', 'read'], ['kind', 'kind'], ['query', 'q']];
   for (const [key, name] of names) {
     const field = value[key];
     if (field === undefined) continue;
     if (typeof field !== 'string' || !safe(field) || field.length > (VALUE_LIMITS[name] ?? VALUE_MAX)) return false;
     parameters.set(name, field);
+  }
+  if (value.prs !== undefined) {
+    if (!Array.isArray(value.prs) || !value.prs.length || value.prs.length > DIGEST_PR_LIMIT) return false;
+    const refs = value.prs.map((url) => (typeof url === 'string' ? prRef(url) : undefined));
+    if (refs.some((ref) => !ref)) return false;
+    parameters.set('prs', refs.map((ref) => `${ref?.owner}/${ref?.repo}/${ref?.number}`).join(','));
   }
   const filters = linkFilters(parameters);
   return 'error' in filters ? false : (filters.value ?? {});
@@ -757,6 +802,10 @@ export function parseDeepLinkTarget(value: unknown): DeepLinkTarget | undefined 
         const field = value[key];
         if (!optional(field, matches(pattern))) return undefined;
         if (field !== undefined) target[key] = field;
+      }
+      if (value.focus !== undefined) {
+        if (!PR_FOCUSES.includes(value.focus as PrFocus)) return undefined;
+        target.focus = value.focus as PrFocus;
       }
       return target;
     }

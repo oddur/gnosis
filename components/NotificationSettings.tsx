@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import type { NotificationEventType, SavedNotificationPreferences } from '../lib/notification-settings';
-import { normalizeNotificationPreferences, isPaused } from '../lib/notification-settings';
+import { normalizeNotificationPreferences, isPaused, PAUSE_CHOICES, PAUSE_LABELS, type PauseChoice } from '../lib/notification-settings';
 import { notificationMissedHint, notificationSettingsLabel } from '../lib/desktop-setup';
 import { useSystemSettingsPanes } from './DesktopSetup';
+
+/** "09:00", or "Mon 08:00" when the pause ends on another day. */
+function pausedUntilText(until: number, now: number): string {
+  const end = new Date(until);
+  const time = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return end.toDateString() === new Date(now).toDateString() ? time : `${end.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+}
 
 /** Settings › Notifications. Every switch has a visible label; state is never shown by colour alone. */
 export function NotificationSettings({
@@ -63,7 +70,7 @@ export function NotificationSettings({
       />
     </Row>
   );
-  const pause = async (next: boolean) => {
+  const pause = async (next: PauseChoice | false) => {
     try {
       const saved = await window.electronAPI.pauseNotifications(next);
       setNow(Date.now());
@@ -150,6 +157,19 @@ export function NotificationSettings({
         {event('checks-failed', 'Checks failed')}
         {event('ready-to-merge', 'Ready to merge')}
       </section>
+      <section className="settings-group" aria-labelledby="notifications-conversation-title">
+        <h2 id="notifications-conversation-title">Conversations</h2>
+        {event('mention', 'Mentions of you', 'Someone writes @you in a comment or review.')}
+        {event('reply', 'Replies to you', 'New comments in threads you started or wrote in, and from others on your PRs.')}
+        <Row
+          label="Allow replies from notifications"
+          description={platform === 'darwin'
+            ? 'Answer mentions, replies and change requests from the notification. The reply posts to that thread on GitHub.'
+            : 'On this system, the notification opens the thread so you can reply there.'}
+        >
+          <Toggle checked={value.allowReplies} ariaLabel="Allow replies from notifications" onChange={() => onChange({ ...value, allowReplies: !value.allowReplies })} />
+        </Row>
+      </section>
       <section className="settings-group" aria-labelledby="notifications-snooze-title">
         <h2 id="notifications-snooze-title">Snoozed PRs</h2>
         {event('snooze-ended', 'A snoozed PR is back', 'Only when no other notification says why.')}
@@ -162,12 +182,22 @@ export function NotificationSettings({
       <section className="settings-group" aria-labelledby="notifications-quiet-title">
         <h2 id="notifications-quiet-title">Quiet</h2>
         <Row
-          label={paused ? `Paused until ${new Date(value.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Pause notifications'}
-          description="Gnosis also follows your system Focus and Do Not Disturb. Paused updates still mark PRs unread."
+          label={paused ? `Paused until ${pausedUntilText(value.pausedUntil, now)}` : 'Pause notifications'}
+          description="Gnosis also follows your system Focus and Do Not Disturb. Paused updates still mark PRs unread, and one summary follows the pause."
         >
-          <Button type="button" variant="outline" size="sm" onClick={() => void pause(!paused)}>
-            {paused ? 'Resume' : 'Pause for 1 hour'}
-          </Button>
+          {paused ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => void pause(false)}>
+              Resume
+            </Button>
+          ) : (
+            <div className="notification-pause-choices">
+              {PAUSE_CHOICES.map((choice) => (
+                <Button key={choice} type="button" variant="outline" size="sm" onClick={() => void pause(choice)}>
+                  {PAUSE_LABELS[choice]}
+                </Button>
+              ))}
+            </div>
+          )}
         </Row>
       </section>
     </>

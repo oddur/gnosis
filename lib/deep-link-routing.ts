@@ -62,7 +62,14 @@ export function routeDeepLink(
   // A conflicts link opens the PR first; the confirmation before conflict resolution comes with Phase 3.
   const pr: PrLinkTarget = target.kind === 'conflicts' ? { kind: 'pr', pr: target.pr } : target;
   const url = prUrl(pr.pr);
-  const open = { tab: workspaceTab(pr.tab), nonce };
+  // Locators the PR page follows: a thread in Feedback, a check in Checks, the first unviewed file or the merge action.
+  const open = {
+    tab: workspaceTab(pr.tab),
+    nonce,
+    ...(pr.threadId ? { threadId: pr.threadId } : {}),
+    ...(pr.check ? { check: pr.check } : {}),
+    ...(pr.focus ? { focus: pr.focus } : {}),
+  };
   // Never replace what the user is looking at in another tab: reuse the tab showing this PR, or open one.
   const reuse = state.tabs.find(
     (tab) => tab.location?.page === 'home' && tab.location.home.item?.subject.members.some((member) => member.url === url)
@@ -104,12 +111,11 @@ export function prMetadataItem(ref: PrRef, meta: PrMetadata): QueueItem {
 const TAB_LABELS: Record<PrTab, string> = {
   summary: 'Summary', changes: 'Changes', commits: 'Commits', checks: 'Checks', feedback: 'Feedback', explanation: 'Explanation', notes: 'Local notes',
 };
+/** Locators this version cannot follow yet. A thread, a check and a focus are followed. */
 const LOCATOR_LABELS: [keyof PrLinkTarget, string][] = [
   ['file', 'a file or line'],
-  ['threadId', 'a comment'],
   ['commentId', 'a comment'],
   ['commit', 'a commit'],
-  ['check', 'a check'],
   ['slide', 'a slide'],
 ];
 const prName = (ref: PrRef) => `${ref.owner}/${ref.repo}#${ref.number}`;
@@ -136,7 +142,14 @@ export function linkSupport(target: DeepLinkTarget, source: DeepLinkSource): Lin
     const skipped = [...new Set(LOCATOR_LABELS.filter(([key]) => target[key] !== undefined).map(([, label]) => label))];
     if (skipped.length)
       notes.push(`Links to ${skipped.join(' or ')} are not supported yet, so Gnosis opened the ${TAB_LABELS[target.tab ?? 'summary']} tab.`);
-    const plain: PrLinkTarget = { kind: 'pr', pr: target.pr, ...(target.tab ? { tab: target.tab } : {}) };
+    const plain: PrLinkTarget = {
+      kind: 'pr',
+      pr: target.pr,
+      ...(target.tab ? { tab: target.tab } : {}),
+      ...(target.threadId ? { threadId: target.threadId } : {}),
+      ...(target.check ? { check: target.check } : {}),
+      ...(target.focus ? { focus: target.focus } : {}),
+    };
     return { supported: true, target: plain, ...(notes.length ? { note: { title: `Opened ${prName(target.pr)}`, description: notes.join(' ') } } : {}) };
   }
   // The menu bar panel's ⌘, and its short menu open Settings; nothing outside Gnosis can yet.

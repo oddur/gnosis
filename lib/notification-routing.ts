@@ -3,9 +3,9 @@
  * Electron. Each event gets exactly one transient surface: a desktop notification when no Gnosis window has
  * focus, an in-app toast when one does.
  */
-import { byEventRank, EVENT_RANK, subsume, type NotificationEvent } from './notification-events';
+import { byEventRank, EVENT_RANK, subsume, type NotificationEvent, type NotificationReplyTarget } from './notification-events';
 import { isPaused, isPrEvent, type NotificationEventType, type NotificationSettings } from './notification-settings';
-import type { DeepLinkTarget } from './deep-link';
+import { DIGEST_PR_LIMIT, prRef, type DeepLinkTarget } from './deep-link';
 
 /** `failed`: the OS reported a failed delivery this session. `unsupported`: `Notification.isSupported()` is false. */
 export type DesktopState = 'available' | 'unsupported' | 'failed';
@@ -57,6 +57,8 @@ export interface NotificationDelivery {
   types: NotificationEventType[];
   /** Offer "Turn on" for desktop delivery on this toast. */
   introduce?: boolean;
+  /** The thread an inline reply goes to, for mentions, replies and change requests. */
+  reply?: NotificationReplyTarget;
 }
 
 const LABEL: Record<NotificationEventType, string> = {
@@ -69,6 +71,22 @@ const LABEL: Record<NotificationEventType, string> = {
   'explanation-ready': 'Explanation ready',
   'update-ready': 'A Gnosis update is ready',
   'snooze-ended': 'A snoozed PR is back',
+  mention: 'Mentioned you',
+  reply: 'New reply',
+};
+/** The event in words, the first part of every title: "Changes requested · Fix retry backoff". */
+export const EVENT_TITLE: Record<NotificationEventType, string> = {
+  'review-requested': 'Review requested',
+  'team-review-requested': 'Team review requested',
+  'changes-requested': 'Changes requested',
+  approved: 'Approved',
+  'checks-failed': 'Checks failed',
+  'ready-to-merge': 'Ready to merge',
+  'explanation-ready': 'Explanation ready',
+  'update-ready': 'Update ready',
+  'snooze-ended': 'Back from snooze',
+  mention: 'Mentioned',
+  reply: 'Reply',
 };
 const COUNT_LABEL: Record<NotificationEventType, [string, string]> = {
   'review-requested': ['review request', 'review requests'],
@@ -80,6 +98,8 @@ const COUNT_LABEL: Record<NotificationEventType, [string, string]> = {
   'explanation-ready': ['explanation ready', 'explanations ready'],
   'update-ready': ['update', 'updates'],
   'snooze-ended': ['snoozed PR back', 'snoozed PRs back'],
+  mention: ['mention', 'mentions'],
+  reply: ['reply', 'replies'],
 };
 export const TITLE_LIMIT = 60;
 export const BODY_LIMIT = 140;
@@ -87,13 +107,24 @@ export const truncate = (text: string, limit: number) => (text.length > limit ? 
 /** Notification daemons differ in whether they accept markup. */
 export const plainText = (text: string) => text.replace(/[<>&]/g, '');
 
+/** `lena: 'The retry loop never backs off'`, with the quote shortened so the whole line fits `limit`. */
+export function quoteLine(prefix: string, quote: string, limit = BODY_LIMIT): string {
+  const room = Math.max(8, limit - prefix.length - 2);
+  return `${prefix}'${truncate(quote, room)}'`;
+}
 /** The line for one event, used as the body of a single notification and as a line of a coalesced one. */
-export function eventLine(event: NotificationEvent): string {
-  if (event.type === 'changes-requested' && event.actor) return `${event.actor} requested changes`;
+export function eventLine(event: NotificationEvent, limit = BODY_LIMIT): string {
+  if (event.type === 'changes-requested' && event.actor)
+    return event.quote ? quoteLine(`${event.actor} requested changes: `, event.quote, limit) : `${event.actor} requested changes`;
   if (event.type === 'approved' && event.actor) return `${event.actor} approved`;
   if (event.type === 'snooze-ended' && event.detail) return `Back: ${event.detail}`;
+  if ((event.type === 'mention' || event.type === 'reply') && event.actor)
+    return event.quote ? quoteLine(`${event.actor}: `, event.quote, limit) : event.type === 'mention' ? `${event.actor} mentioned you` : `${event.actor} replied`;
+  if (event.type === 'checks-failed' && event.detail) return event.detail;
   return LABEL[event.type];
 }
+/** "Changes requested · Fix retry backoff": the event first, in words, then the PR. */
+export const eventTitle = (type: NotificationEventType, title: string) => truncate(`${EVENT_TITLE[type]} · ${title}`, TITLE_LIMIT);
 const subtitleOf = (event: NotificationEvent) => (event.repo && event.number ? `${event.repo} #${event.number}` : undefined);
 
 /** Several events for one PR, after its settle window, become one notification. */
@@ -109,17 +140,18 @@ export function coalesce(events: readonly NotificationEvent[], id: string): Noti
     target: head.target,
     keys: ranked.map((event) => event.key),
     types: ranked.map((event) => event.type),
+    ...(head.reply ? { reply: head.reply } : {}),
   };
   if (ranked.length === 1) {
     if (head.type === 'update-ready') return { ...common, title: LABEL[head.type], body: truncate(head.title, BODY_LIMIT) };
-    const line = eventLine(head);
-    return { ...common, title: truncate(line, TITLE_LIMIT), body: truncate(head.title, BODY_LIMIT) };
+    return { ...common, title: eventTitle(head.type, head.title), body: truncate(eventLine(head), BODY_LIMIT) };
   }
-  const where = head.number ? `#${head.number}` : 'this PR';
+  // The headline event names the notification; the body says what else happened.
+  const rest = ranked.length - 1;
   return {
     ...common,
-    title: truncate(`${ranked.length} updates on ${where}`, TITLE_LIMIT),
-    body: truncate(`${ranked.slice(0, 2).map(eventLine).join(' · ')} · ${head.title}`, BODY_LIMIT),
+    title: eventTitle(head.type, head.title),
+    body: truncate(`${eventLine(head, 90)} · ${rest === 1 ? eventLine(ranked[1], 40) : `${rest} more updates`}`, BODY_LIMIT),
   };
 }
 
@@ -130,6 +162,11 @@ export function countLine(types: readonly NotificationEventType[]): string {
   return [...counts].map(([type, n]) => `${n} ${COUNT_LABEL[type][n === 1 ? 0 : 1]}`).join(' · ');
 }
 export const UNREAD_TARGET: DeepLinkTarget = { kind: 'queue', filters: { read: 'unread' } };
+/** A digest or summary opens the queue filtered to its PRs. Without PRs, or past the link's limit, the Unread view. */
+export function digestTarget(urls: readonly (string | undefined)[]): DeepLinkTarget {
+  const prs = [...new Set(urls.filter((url): url is string => !!url && !!prRef(url)))];
+  return prs.length && prs.length <= DIGEST_PR_LIMIT ? { kind: 'queue', filters: { prs } } : UNREAD_TARGET;
+}
 /** Three or more held events become one summary that opens the Unread view. */
 export function summarize(events: readonly NotificationEvent[], id: string, title = `${events.length} updates while you were away`): NotificationDelivery {
   return {
@@ -137,7 +174,7 @@ export function summarize(events: readonly NotificationEvent[], id: string, titl
     kind: 'summary',
     title: truncate(title, TITLE_LIMIT),
     body: truncate(countLine(events.map((event) => event.type)), BODY_LIMIT),
-    target: UNREAD_TARGET,
+    target: digestTarget(events.map((event) => event.url)),
     keys: events.map((event) => event.key),
     types: [...new Set(events.map((event) => event.type))],
   };
@@ -149,16 +186,19 @@ export function digest(deliveries: readonly NotificationDelivery[], id: string):
     kind: 'summary',
     title: `${deliveries.length} more updates`,
     body: truncate(countLine(deliveries.flatMap((delivery) => delivery.types)), BODY_LIMIT),
-    target: UNREAD_TARGET,
+    target: digestTarget(deliveries.flatMap((delivery) => (delivery.target?.kind === 'queue' ? (delivery.target.filters?.prs ?? []) : [delivery.url]))),
     keys: deliveries.flatMap((delivery) => delivery.keys),
     types: [...new Set(deliveries.flatMap((delivery) => delivery.types))],
   };
 }
 export const CATCH_UP_SUMMARY_MIN = 3;
-/** A catch-up batch: one or two PRs are delivered as normal, three or more events become one summary. */
-export function batch(events: readonly NotificationEvent[], nextId: () => string, title?: string): NotificationDelivery[] {
+/**
+ * A catch-up batch: one or two PRs are delivered as normal, three or more events become one summary. The end of a
+ * pause passes `min` 2, so anything more than one event is one summary.
+ */
+export function batch(events: readonly NotificationEvent[], nextId: () => string, title?: string, min = CATCH_UP_SUMMARY_MIN): NotificationDelivery[] {
   const kept = subsume(events);
-  if (kept.length >= CATCH_UP_SUMMARY_MIN) return [summarize(kept, nextId(), title)];
+  if (kept.length >= min) return [summarize(kept, nextId(), title)];
   const byPr = new Map<string, NotificationEvent[]>();
   for (const event of kept) byPr.set(event.url ?? event.key, [...(byPr.get(event.url ?? event.key) ?? []), event]);
   return [...byPr.values()].flatMap((group) => coalesce(group, nextId()) ?? []);
@@ -167,7 +207,19 @@ export function batch(events: readonly NotificationEvent[], nextId: () => string
 /** At most three desktop notifications in any five minutes. */
 export const DESKTOP_LIMIT = { count: 3, windowMs: 5 * 60_000 };
 /** Main to renderer, on the `notification` channel. */
-export type NotificationMessage = { type: 'show'; delivery: NotificationDelivery } | { type: 'close'; urls: string[] };
+export type NotificationMessage =
+  | { type: 'show'; delivery: NotificationDelivery }
+  | { type: 'close'; urls: string[] }
+  /** An inline reply GitHub refused: keep the text as a draft on the thread and offer Retry. */
+  | { type: 'reply-failed'; failure: ReplyFailureNotice };
+export interface ReplyFailureNotice {
+  id: string;
+  kind: NotificationKind;
+  reply: NotificationReplyTarget;
+  text: string;
+  message: string;
+  target?: DeepLinkTarget;
+}
 /** When the next desktop notification may be shown, given the times of recent ones. */
 export function nextDesktopSlot(shown: readonly number[], now: number): number {
   const recent = shown.filter((at) => now - at < DESKTOP_LIMIT.windowMs).sort((a, b) => a - b);
