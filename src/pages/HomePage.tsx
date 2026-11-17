@@ -2120,6 +2120,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 onDismissError={() => setError('')}
                 setup={gettingStartedVisible ? () => setTool(null) : undefined}
                 onRefresh={() => void refresh(true)}
+                onSync={() => void refresh()}
                 onShowLane={showLane}
                 onMarkRead={urls => void changeRead(urls, true)}
                 onOpenItem={item => { setSelected(item.subject.id); setOpenedItem(item); }}

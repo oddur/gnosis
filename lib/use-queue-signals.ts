@@ -236,40 +236,74 @@ export function useMergeFilter(scope: string | null, requests: readonly QueueSig
   return { states, phase: enabled ? phase : ('done' as const) };
 }
 
+/** How often the Overview looks for status past its time-to-live. A local check; only expired PRs are read. */
+const OVERVIEW_STATUS_SWEEP_MS = 30_000;
+const isDue = (scope: string, request: QueueSignalRequest) => {
+  const entry = signalAccount(scope).entries.get(queueSignalKey(request));
+  return !entry?.value || !!entry.pending || entry.expires <= Date.now();
+};
 /**
- * Status for the Overview's PRs (#390). Saved status shows first, always, without a GitHub read. While `live`, the
- * same shared backend watch as visible queue rows keeps it current; preview builds without one read through the
- * coalesced 25-PR batches every `QUEUE_SIGNALS_TTL`. Hidden windows pause, as rows do.
+ * Status for every PR the Overview can place in a lane (#390), and how many reads are in flight. Saved status shows
+ * first, always, without a GitHub read. While `live`, every PR without status, or with status past its time-to-live
+ * (`QUEUE_SIGNALS_TTL`), is read through the queue rows' path: the coalesced 25-PR batches, main's 2-minute service
+ * cache, background priority and the automatic rate-limit budget. Native builds also join the shared backend watch,
+ * so changes arrive as they happen. A hidden window reads nothing until it shows again.
+ *
+ * `checking` is the number of these PRs whose read has not answered yet; it changes once per answered batch.
  */
-export function useLiveQueueSignals(scope: string | null, requests: readonly QueueSignalRequest[], live: boolean) {
+export function useOverviewStatus(scope: string | null, requests: readonly QueueSignalRequest[], live: boolean) {
   const key = JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha })));
   const values = useSignalValues(scope, key);
+  const [checking, setChecking] = useState(0);
   useEffect(() => {
+    setChecking(0);
     if (!scope) return;
     const members = JSON.parse(key) as QueueSignalRequest[];
     if (!members.length) return;
     let cancelled = false;
     let stop: (() => void) | undefined;
+    const pending = new Set<string>();
+    let reported = -1;
+    let scheduled = false;
+    // Answers arrive per batch: one count update for each, not one per PR.
+    const report = () => {
+      if (scheduled) return;
+      scheduled = true;
+      queueMicrotask(() => {
+        scheduled = false;
+        if (cancelled || reported === pending.size) return;
+        reported = pending.size;
+        setChecking(pending.size);
+      });
+    };
     const load = () => {
       if (cancelled || !live || document.visibilityState === 'hidden') return;
-      void Promise.all(members.map((request) => read(scope, request)));
+      for (const request of members) {
+        const id = queueSignalKey(request);
+        if (pending.has(id) || !isDue(scope, request)) continue;
+        pending.add(id);
+        void read(scope, request).finally(() => {
+          pending.delete(id);
+          report();
+        });
+      }
+      report();
     };
     void restoreSaved(scope, members, () => cancelled).then((current) => {
       if (!current || !live) return;
       stop ??= watchGitHub({ kind: 'signals', priority: 'visible', targets: members }, (update) => {
         if (update.kind === 'signals') publishQueueSignals(scope, [update.value]);
       });
-      if (!stop) load();
+      load();
     });
-    const timer = live && window.electronAPI.githubSyncVersion !== 1 ? setInterval(load, QUEUE_SIGNALS_TTL) : undefined;
-    const onVisibility = () => { if (window.electronAPI.githubSyncVersion !== 1) load(); };
-    if (live) document.addEventListener('visibilitychange', onVisibility);
+    const timer = live ? setInterval(load, OVERVIEW_STATUS_SWEEP_MS) : undefined;
+    if (live) document.addEventListener('visibilitychange', load);
     return () => {
       cancelled = true;
       stop?.();
       clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('visibilitychange', load);
     };
   }, [scope, key, live]);
-  return values;
+  return { values, checking: live ? checking : 0 };
 }

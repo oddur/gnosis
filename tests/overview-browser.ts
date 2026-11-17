@@ -405,6 +405,59 @@ void app.whenReady().then(async () => {
     await both('all-clear-760');
     await resize(1280);
 
+    step = 'status-arrives';
+    // GitHub has not answered yet: no saved status, and status reads wait. The Overview asks for every lane candidate
+    // itself and says it is checking; lanes that need status fill as the answers arrive, and focus stays put.
+    // A fresh session: the snoozes and mutes made above are forgotten.
+    await js('sessionStorage.clear()');
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?overview&overview-status=held`);
+    await wait(`!!document.querySelector('${P} [data-overview-checking]')`, 600);
+    const checkingIs = (minus = 0) => `document.querySelector('${P} [data-overview-checking]')?.textContent === 'Checking ' + (window.fixtureOverview.requested().length - ${minus}) + '…'`;
+    // Every lane candidate is requested: your own PRs and the review requests.
+    const own = [301, 302, 303, 304, 305, 306, 307, 311, 312, 331, 332, 333, 341, 342];
+    const expected = [...own, ...Array.from({ length: 7 }, (_, i) => 321 + i)].map((n) => `/pull/${n}`);
+    await wait(`(()=>{const r=window.fixtureOverview.requested();return ${JSON.stringify(expected)}.every(n=>r.some(u=>u.endsWith(n)))})()`);
+    await wait(checkingIs());
+    assert.equal(await js(`document.querySelector('${P} [data-overview-unchecked]')`), null, 'checking, not "not checked"');
+    // Review requests and replies need no status; your own PRs wait for it.
+    assert.equal(await tileCounts(), 'answer 1 · review 7 · merge 0 · fix 0');
+    {
+      const requested = new Set(await js<string[]>('window.fixtureOverview.requested()'));
+      const lanes = (await js<string[]>(`[...document.querySelectorAll('${P} [data-overview-row]')].map(b=>b.dataset.overviewRow.split('|').pop())`)).filter((url) => !url.startsWith('stack:'));
+      for (const url of lanes) assert.ok(requested.has(url), `${url} is requested`);
+    }
+    // The user's shape: many more of your PRs arrive before GitHub answers.
+    await js('window.fixtureOverview.heavy()');
+    // 21 + 28 PRs: the reads go out in 25-PR batches, one batch after another, so some are not sent yet.
+    const checkingCount = `Number(document.querySelector('${P} [data-overview-checking]')?.textContent.match(/\\d+/)?.[0] ?? 0)`;
+    await wait(`${checkingCount} === 49`);
+    await js(`document.querySelector('${row('review', 'klang/engine', 321)}').focus()`);
+    assert.equal(await focusedRow(), 'review|https://github.com/klang/engine/pull/321');
+    await capture('status-checking-light');
+    // The first batch answers: the first PRs join their lanes, the rest are still checking.
+    await js('window.fixtureOverview.answerStatus(1)');
+    await wait(`${checkingCount} > 0 && ${checkingCount} < 49`);
+    await wait(`Number(document.querySelector('${tile('merge')} .overview-tile-count')?.textContent) > 0`);
+    assert.equal(await focusedRow(), 'review|https://github.com/klang/engine/pull/321', 'focus stays on the focused item');
+    // GitHub answers the rest: no checking, nothing unchecked, and Fix holds the failing PRs.
+    await js('window.fixtureOverview.answerStatus()');
+    await wait(`!document.querySelector('${P} [data-overview-checking]')`);
+    assert.equal(await js(`document.querySelector('${P} [data-overview-unchecked]')`), null);
+    await wait(`Number(document.querySelector('${tile('fix')} .overview-tile-count')?.textContent) > 10`);
+    assert.equal(await focusedRow(), 'review|https://github.com/klang/engine/pull/321', 'focus stays on the focused item');
+    await capture('status-filled-light');
+
+    step = 'stale-sync';
+    // The last sync is two hours old: the Overview asks main for one, and says so while it runs.
+    const before = (await js<boolean[]>('window.fixtureOverview.discoveries')).length;
+    await js('window.fixtureOverview.setSync(2 * 3600000)');
+    await wait(`window.fixtureOverview.discoveries.length > ${before}`);
+    assert.equal(await js(`window.fixtureOverview.discoveries.at(-1)`), false, 'a sync, not a forced refresh');
+    await js("window.fixtureOverview.setSync(2 * 3600000, 'checking')");
+    await wait(`document.querySelector('${P} [data-overview-syncing]')?.textContent === 'Updating…'`);
+    await js('window.fixtureOverview.setSync(60000)');
+    await wait(`document.querySelector('${P} .queue-freshness')?.textContent.startsWith('Checked')`);
+
     win.destroy();
     app.exit(0);
   } catch (error) {

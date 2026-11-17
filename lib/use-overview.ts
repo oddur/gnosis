@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { isOwnPr, reviewRequest } from './attention';
-import { nextOverviewVisit, overviewModel, overviewVisitKey, parseOverviewVisit, type OverviewModel, type OverviewVisit } from './overview';
-import { useLiveQueueSignals } from './use-queue-signals';
+import { nextOverviewVisit, overviewModel, overviewStatusRequests, overviewVisitKey, parseOverviewVisit, type OverviewModel, type OverviewVisit } from './overview';
+import { useOverviewStatus } from './use-queue-signals';
 import { useStatusNow } from './status-clock';
-import type { QueueItem, ReviewMember } from './workbench';
+import type { QueueItem } from './workbench';
 
-/** At most this many PRs are watched for status. Your own PRs come first. */
-const SIGNAL_LIMIT = 150;
+/** At most this many PRs are read for status: twelve 25-PR batches. Your own PRs come first. */
+const SIGNAL_LIMIT = 300;
 
 function readVisit(key: string | null): OverviewVisit | undefined {
   if (!key) return undefined;
@@ -25,8 +24,9 @@ function saveVisit(key: string, visit: OverviewVisit) {
 }
 
 /**
- * The Overview lanes for the window's queue snapshot (#390). Only status reads are added: saved status first, then the
- * shared watch while `live`. The model is memoized on the snapshot, the status values and the 30-second status clock,
+ * The Overview lanes for the window's queue snapshot (#390). Only status reads are added: saved status first, then,
+ * while `live`, a read of every lane candidate without current status (`useOverviewStatus`). `checking` counts the
+ * reads in flight. The model is memoized on the snapshot, the status values and the 30-second status clock,
  * so a sync tick that changes nothing builds nothing, and rows compare their own `signature`.
  *
  * "New since your last visit" is local and per account. A visit starts when the Overview is shown (`visible`) and is
@@ -43,21 +43,13 @@ export function useOverview(input: {
   ready: boolean;
   teamRequests?: boolean;
   excluded?: ReadonlySet<string>;
-}): OverviewModel {
+}): OverviewModel & { checking: number } {
   const { items, login, scope, live, visible, ready, teamRequests, excluded } = input;
-  const requests = useMemo(() => {
-    if (!login) return [];
-    const own: ReviewMember[] = [];
-    const others: ReviewMember[] = [];
-    for (const item of items)
-      for (const member of item.subject.members) {
-        if (member.state !== 'open' || member.merged) continue;
-        if (isOwnPr(member, login)) own.push(member);
-        else if (reviewRequest(member, login)) others.push(member);
-      }
-    return [...own, ...others].slice(0, SIGNAL_LIMIT).map(({ url, headSha }) => ({ url, headSha }));
-  }, [items, login]);
-  const values = useLiveQueueSignals(scope, requests, live && !!login);
+  const requests = useMemo(
+    () => (login ? overviewStatusRequests(items, login, { teamRequests, excluded }).slice(0, SIGNAL_LIMIT) : []),
+    [items, login, teamRequests, excluded]
+  );
+  const { values, checking } = useOverviewStatus(scope, requests, live && !!login);
   const now = useStatusNow() || Date.now();
   const visitKey = login ? overviewVisitKey(login) : null;
   const [previous, setPrevious] = useState<{ key: string | null; visit?: OverviewVisit }>(() => ({ key: visitKey, visit: readVisit(visitKey) }));
@@ -93,5 +85,5 @@ export function useOverview(input: {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [visible, visitKey]);
-  return model;
+  return useMemo(() => ({ ...model, checking }), [model, checking]);
 }

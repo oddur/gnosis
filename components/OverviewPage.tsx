@@ -17,6 +17,7 @@ import { AlertCircle, ChevronRight, GitMerge, RefreshCw, RotateCcw, Settings, X 
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
+import { useStatusNow } from '../lib/status-clock';
 import { publishOverviewCount } from '../lib/overview-count';
 import {
   OVERVIEW_ACTION_GROUP_LABEL,
@@ -41,7 +42,7 @@ import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrActions } from './PrActions';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { PrFreshness } from './PrFreshness';
-import { LoadingState } from './LoadingState';
+import { LoadingIndicator, LoadingState } from './LoadingState';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
 
@@ -69,6 +70,11 @@ export interface OverviewPageProps {
   /** Getting started has not been dismissed: offer it, since it lives in the queue. */
   setup?: () => void;
   onRefresh: () => void;
+  /**
+   * Asks main for a queue sync without forcing one: main starts discovery only when its last one is over 2 minutes
+   * old. Called when the Overview shows, or stays shown, with a last sync older than `SYNC_STALE_MS`.
+   */
+  onSync?: () => void;
   /** Opens the queue grouped by Action, at this group. */
   onShowLane: (group: OverviewActionGroup) => void;
   onMarkRead: (urls: string[]) => void;
@@ -81,6 +87,12 @@ export interface OverviewPageProps {
 }
 
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+/**
+ * A last sync older than this is behind: main finishes discovery every 2 to 5 minutes while a window is visible
+ * (src/main.ts, `discoveryInterval`). The Overview then asks for a sync, at most once per `SYNC_STALE_MS`.
+ */
+export const SYNC_STALE_MS = 10 * 60_000;
+const syncStale = (checkedAt: number | undefined) => checkedAt !== undefined && Date.now() - checkedAt > SYNC_STALE_MS;
 /** The lane an item id belongs to: ids are `${lane}|${subject}`. */
 const laneOf = (id: string) => id.slice(0, id.indexOf('|')) as OverviewLane;
 
@@ -98,6 +110,16 @@ export function OverviewPage(props: OverviewPageProps) {
   // never renders the items again.
   const callbacks = useRef(props);
   callbacks.current = props;
+  // A last sync that is behind asks main for another while the Overview shows: on showing, and as the clock passes.
+  const syncAsked = useRef(0);
+  const syncNow = useStatusNow();
+  useEffect(() => {
+    const sync = queue.sync;
+    if (!visible || !authenticated || loading || !sync || sync.status === 'checking' || sync.status === 'paused') return;
+    if (!syncStale(sync.checkedAt) || Date.now() - syncAsked.current < SYNC_STALE_MS) return;
+    syncAsked.current = Date.now();
+    callbacks.current.onSync?.();
+  }, [visible, authenticated, loading, queue.sync, syncNow]);
   const root = useRef<HTMLDivElement>(null);
   const tiles = useMemo(() => overviewTiles(model), [model]);
   const briefing = useMemo(() => overviewBriefing(model), [model]);
@@ -291,12 +313,22 @@ export function OverviewPage(props: OverviewPageProps) {
           </p>
         </div>
         <div className="overview-freshness-group">
-          {authenticated && model.unchecked > 0 && (
-            <span className="overview-unchecked" title={`Status not checked yet for ${model.unchecked} of your PRs. They join a lane when GitHub reports it.`}>
+          {authenticated && model.checking > 0 ? (
+            <span className="overview-unchecked" data-overview-checking title={`Reading the status of ${model.checking} PRs from GitHub. Each joins its lane when GitHub answers.`}>
+              Checking {model.checking}…
+            </span>
+          ) : authenticated && model.unchecked > 0 ? (
+            <span className="overview-unchecked" data-overview-unchecked title={`Status not checked yet for ${model.unchecked} of your PRs. They join a lane when GitHub reports it.`}>
               {model.unchecked} not checked
             </span>
+          ) : null}
+          {authenticated && sync?.status === 'checking' && syncStale(sync.checkedAt) ? (
+            <span className="queue-freshness is-refreshing" data-overview-syncing title={`Gnosis last finished reading your pull requests from GitHub at ${new Date(sync.checkedAt ?? 0).toLocaleString()}. It is reading them again now.`}>
+              <LoadingIndicator announce={false}>Updating…</LoadingIndicator>
+            </span>
+          ) : (
+            <PrFreshness className="queue-freshness" queue checkedAt={sync?.checkedAt} refreshing={refreshing} />
           )}
-          <PrFreshness className="queue-freshness" queue checkedAt={sync?.checkedAt} refreshing={refreshing} />
           <button className="workbench-icon" aria-label="Refresh overview" title="Update from GitHub. Follow progress in Activity." onClick={onRefresh}>
             <RefreshCw size={16} />
           </button>

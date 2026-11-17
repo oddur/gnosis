@@ -7,6 +7,7 @@ import {
   overviewBriefing,
   overviewModel,
   overviewRowDetail,
+  overviewStatusRequests,
   overviewTiles,
   type OverviewLane,
   type OverviewLaneState,
@@ -267,4 +268,65 @@ void test('collapsed groups are remembered per view and parsed defensively', () 
   assert.deepEqual(parseCollapsedGroups('{"view:a":["x",3,"x"],"bad":"y"}'), { 'view:a': ['x'] });
   assert.deepEqual(parseCollapsedGroups('not json'), {});
   assert.deepEqual(parseCollapsedGroups(null), {});
+});
+
+void test('the Overview requests status for every PR that can appear in a lane, your own first', () => {
+  const replied = member(1);
+  const requested = member(2, { requestedReviewers: [LOGIN] });
+  const team = member(3, { role: 'review-requested' });
+  const reviewed = member(4);
+  const ready = mine(5);
+  const failing = mine(6);
+  const waiting = mine(7, { requestedReviewers: ['sam'] });
+  const idle = mine(8, { updatedAt: new Date(T0 - 6 * 86_400_000).toISOString() });
+  const answer = mine(9);
+  const unrelated = member(10);
+  const snoozed = mine(11);
+  const muted = mine(12);
+  const closed = mine(13, { state: 'closed' });
+  const stackBase = mine(14);
+  const stackTop = mine(15);
+  const items = [
+    item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } }),
+    item([requested]),
+    item([team]),
+    item([reviewed], { attention: 'updated' }),
+    item([ready]),
+    item([failing]),
+    item([waiting]),
+    item([idle]),
+    item([answer]),
+    item([unrelated]),
+    item([snoozed], { snoozedUrls: [snoozed.url] }),
+    item([muted]),
+    item([closed]),
+    item([stackBase, stackTop]),
+  ];
+  const status: Record<string, QueueSignals> = {
+    [ready.url]: readySignals(ready),
+    [failing.url]: signals(failing, { checks: 'failure' }),
+    [waiting.url]: signals(waiting, { checks: 'success' }),
+    [idle.url]: signals(idle, { checks: 'success', mergeState: 'CLEAN', decision: null }),
+    [answer.url]: signals(answer, { checks: 'success', review: { id: '1', author: 'maya', state: 'CHANGES_REQUESTED' } }),
+    [stackBase.url]: signals(stackBase, { checks: 'failure' }),
+    [stackTop.url]: readySignals(stackTop),
+  };
+  const excluded = new Set([muted.url]);
+  const requests = overviewStatusRequests(items, LOGIN, { teamRequests: true, excluded });
+  const urls = new Set(requests.map((request) => request.url));
+  // Every row in every lane, Parked included, with status known and with it unknown.
+  for (const known of [true, false]) {
+    const model = overviewModel({ items, signals: (m) => (known ? status[m.url] : undefined), login: LOGIN, now: T0, teamRequests: true, excluded });
+    const candidates = model.lanes.flatMap((lane) => [...lane.rows, ...lane.parked]).flatMap((row) => row.entries.map((entry) => entry.member.url));
+    assert.ok(candidates.length > 0);
+    for (const url of candidates) assert.ok(urls.has(url), `${url} is requested`);
+    for (const lane of Object.values(model.urls)) for (const url of lane) assert.ok(urls.has(url), `${url} is requested`);
+  }
+  // Your own PRs come first, each revision once, with the head the snapshot holds.
+  assert.deepEqual(requests.map((request) => Number(request.url.split('/').at(-1))), [5, 6, 7, 8, 9, 14, 15, 1, 2, 3, 4]);
+  assert.deepEqual(requests[0], { url: ready.url, headSha: ready.headSha });
+  // Unrelated, snoozed, muted and closed PRs are not read; team requests only when they count.
+  for (const pr of [unrelated, snoozed, muted, closed]) assert.ok(!urls.has(pr.url), `${pr.number} is not requested`);
+  assert.ok(!overviewStatusRequests(items, LOGIN, { excluded }).some((request) => request.url === team.url));
+  assert.deepEqual(overviewStatusRequests(items, ''), []);
 });

@@ -26,7 +26,7 @@
  * | Ready to merge | The newest approval, else the PR's last update |
  * | Awaiting review | The newest review by someone else (a re-request follows it), else when the PR was opened |
  */
-import { ATTENTION_LABEL, ATTENTION_RANK, explanationFor, freshSignals, isOwnPr, memberKinds, type AttentionKind } from './attention';
+import { ATTENTION_LABEL, ATTENTION_RANK, explanationFor, freshSignals, isOwnPr, memberKinds, reviewRequest, type AttentionKind } from './attention';
 import { changeRequests, type QueueSignals } from './queue-signals';
 import { preciseTarget } from './notification-targets';
 import { prTarget, type DeepLinkTarget } from './deep-link';
@@ -446,6 +446,39 @@ export function mergeReady(notes: readonly OverviewMergeNote[], member: ReviewMe
 }
 
 const sum = (values: (number | undefined)[]) => (values.some((value) => value !== undefined) ? values.reduce<number>((total, value) => total + (value ?? 0), 0) : undefined);
+
+/**
+ * Every PR that can appear in a lane, for the Overview's status requests: your open PRs first (Merge, Answer, Fix and
+ * Waiting all read their status), then review requests (direct, and team ones when they count), then PRs you reviewed
+ * that changed or wait on your reply (their ages read your latest review from status). Snoozed, muted, merged and
+ * closed PRs are left out, as in `overviewModel`. Each PR revision is listed once.
+ */
+export function overviewStatusRequests(
+  items: readonly QueueItem[],
+  login: string,
+  options: { teamRequests?: boolean; excluded?: ReadonlySet<string> } = {}
+): { url: string; headSha: string }[] {
+  if (!login) return [];
+  const own: ReviewMember[] = [];
+  const others: ReviewMember[] = [];
+  const seen = new Set<string>();
+  for (const item of items)
+    for (const member of item.subject.members) {
+      if (!isOpen(member) || item.snoozedUrls?.includes(member.url) || options.excluded?.has(member.url) || seen.has(member.url)) continue;
+      if (isOwnPr(member, login)) {
+        seen.add(member.url);
+        own.push(member);
+        continue;
+      }
+      const request = reviewRequest(member, login);
+      const reviewed = item.attention === 'updated' || (item.responses?.[member.url]?.awaitingReply ?? 0) > 0;
+      if (request === 'direct' || (request === 'team' && options.teamRequests) || reviewed) {
+        seen.add(member.url);
+        others.push(member);
+      }
+    }
+  return [...own, ...others].map(({ url, headSha }) => ({ url, headSha }));
+}
 
 /** The lanes, each sorted oldest first. Snoozed, muted, merged and closed PRs are left out, as in the queue. */
 export function overviewModel(input: OverviewInput): OverviewModel {

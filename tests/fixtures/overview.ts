@@ -187,15 +187,32 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
   const reruns: CheckSelection[] = [];
   const changed = () => window.dispatchEvent(new Event('fixture-workbench-change'));
 
+  // `?overview&overview-status=held`: GitHub has not answered yet. Saved status is empty, and status reads wait until
+  // `answerStatus` answers them, one 25-PR batch at a time, as main does.
+  const params = new URLSearchParams(location.search);
+  let held = params.get('overview-status') === 'held';
+  const heldReads: { requests: QueueSignalRequest[]; resolve: () => void }[] = [];
+  const requested = new Set<string>();
+  const answer = (requests: QueueSignalRequest[]) =>
+    requests.flatMap((request) => {
+      const member = find(request.url);
+      return member && member.headSha === request.headSha ? [signalsFor(member, status.get(member.url) ?? { checks: 'success' })] : [];
+    });
+  // How long ago the queue last synced, and the discoveries the app asked for (`workbenchQueue(force)`).
+  let syncAge = params.has('overview-sync-age') ? Number(params.get('overview-sync-age')) : 2 * 60_000;
+  let syncStatus: 'idle' | 'checking' = 'idle';
+  const discoveries: boolean[] = [];
+
   const queue = mocks.workbenchQueue as () => Promise<WorkbenchQueue>;
   Object.assign(mocks, {
-    workbenchQueue: async () => {
+    workbenchQueue: async (force?: unknown) => {
+      if (typeof force === 'boolean') discoveries.push(force);
       const value = await queue();
       return {
         ...value,
         readStates: structuredClone(reads),
         items: value.items.map((item) => ({ ...item, unreadUrls: item.subject.members.filter((member) => reads[member.url]?.unread.length).map((member) => member.url) })),
-        sync: { status: 'idle' as const, checkedAt: Date.now() - 2 * 60_000 },
+        sync: { status: syncStatus, checkedAt: Date.now() - syncAge },
       };
     },
     workbenchMarkPrRead: (request: MarkPrReadRequest) => {
@@ -203,13 +220,12 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
       writes.push({ kind: request.read ? 'mark-read' : 'mark-unread', url: request.receipts.map((receipt) => receipt.url).join(',') });
       return (mocks.workbenchQueue as () => Promise<WorkbenchQueue>)();
     },
-    getQueueSignals: (requests: QueueSignalRequest[]) =>
-      Promise.resolve(
-        requests.flatMap((request) => {
-          const member = find(request.url);
-          return member && member.headSha === request.headSha ? [signalsFor(member, status.get(member.url) ?? { checks: 'success' })] : [];
-        })
-      ),
+    getQueueSignals: (requests: QueueSignalRequest[], options?: { cachedOnly?: boolean }) => {
+      if (!options?.cachedOnly) for (const request of requests) requested.add(request.url);
+      if (!held) return Promise.resolve(answer(requests));
+      if (options?.cachedOnly) return Promise.resolve([]);
+      return new Promise((resolve) => heldReads.push({ requests, resolve: () => resolve(answer(requests)) }));
+    },
     getPrActionState: (url: string): Promise<PrActionState> => {
       const member = find(url);
       if (!member) return Promise.reject(new Error('This PR is not in the fixture.'));
@@ -279,6 +295,22 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
     fixtureOverview: {
       writes,
       reruns,
+      /** PR URLs the app asked GitHub's status for (not saved-status reads). */
+      requested: () => [...requested],
+      /** Status reads waiting for GitHub's answer, in 25-PR batches. */
+      heldBatches: () => heldReads.length,
+      /** GitHub answers the next `count` waiting batches; with no count, all, and later reads answer at once. */
+      answerStatus: (count?: number) => {
+        for (const read of heldReads.splice(0, count ?? heldReads.length)) read.resolve();
+        if (count === undefined) held = false;
+      },
+      /** The queue last synced `ms` ago; `checking` while a discovery runs. The next snapshot carries it. */
+      setSync: (ms: number, value: 'idle' | 'checking' = 'idle') => {
+        syncAge = ms;
+        syncStatus = value;
+        changed();
+      },
+      discoveries,
       /** GitHub reports a new failing PR of yours: it joins Fix. */
       addFailing: (number = 334, title = 'Bundle the shell completions', repo = 'klang/cli', updated = 30 * 60_000) => {
         const member = add(pr({ number, repo, title, created: updated + 90 * 60_000, updated }), { checks: 'failure' });
