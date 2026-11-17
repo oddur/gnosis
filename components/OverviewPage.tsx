@@ -1,47 +1,42 @@
 /**
- * The Overview (#390): what you can act on right now, across every repository. Lanes come from `lib/overview.ts`
- * over the window's queue snapshot. Rows reuse the queue's vocabulary: the PR state icon, title, repository and PR
- * badges, the GitHub author, the unread dot for "new", and the row menu. Quick actions reuse the existing merge
- * confirmation (`PrActions`), the existing rerun path (`BulkCheckRerun`) and the notification targets.
+ * The Overview (#390): a front page for what you can act on now, across every repository. A briefing sentence says
+ * who is waiting on you and what is ready; four lane tiles (Answer, Review / Merge, Fix) show each lane's count, its
+ * summary and its three oldest items. A tile, its count or "All N" opens the queue grouped by Action at that lane.
+ * Lanes, tiles and the sentence come from `lib/overview.ts` over the window's queue snapshot.
  *
- * Rows are memoized on their `signature`, so a sync tick renders only the rows it changed. Live updates keep focus:
- * rows keep their keys, and a row that React moved gets its focus back without scrolling.
+ * Items are title links with their age. Repository, PR and reason show on hover or focus, at the foot of the tile,
+ * and in each item's accessible description. The quick action (Merge, Rerun failed, Review, Open thread) and the item
+ * menu appear on hover and focus; A and Z work on the focused item. Quick actions reuse the merge confirmation
+ * (`PrActions`), the rerun path (`BulkCheckRerun`) and the notification targets.
+ *
+ * Items are memoized on their `signature`, so a sync tick renders only the items it changed. Live updates keep focus:
+ * items keep their keys, and an item that React moved gets its focus back without scrolling.
  */
-import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
-import { AlertCircle, ArrowRight, BookOpen, ChevronRight, CircleCheck, Clock3, GitMerge, Layers, RefreshCw, RotateCcw, Settings, X } from 'lucide-react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { AlertCircle, ChevronRight, GitMerge, RefreshCw, RotateCcw, Settings, X } from 'lucide-react';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
 import { publishOverviewCount } from '../lib/overview-count';
 import {
-  ACTION_LANES,
-  OVERVIEW_COUNT_LABEL,
+  OVERVIEW_ACTION_GROUP_LABEL,
   OVERVIEW_EMPTY,
   OVERVIEW_LANE_LABEL,
-  OVERVIEW_LANE_LIMIT,
-  OVERVIEW_PARKED_HINT,
-  OVERVIEW_PARKED_LABEL,
-  OVERVIEW_REASON_LABEL,
   OVERVIEW_SINCE_LABEL,
-  OVERVIEW_STALE_TITLE,
+  overviewBriefing,
   overviewCountChange,
-  overviewLaneSummary,
-  overviewRef,
   overviewRowDescription,
-  overviewStaleLabel,
-  type OverviewMergeNoteKind,
+  overviewRowDetail,
+  overviewTiles,
+  type OverviewActionGroup,
   type OverviewLane,
   type OverviewModel,
-  type OverviewReason,
   type OverviewRow,
+  type OverviewTile,
 } from '../lib/overview';
-import { attentionIcons } from '../lib/interface-icons';
 import { openSnoozePicker } from '../lib/snooze-picker';
 import type { QueueItem, ReviewMember, WorkbenchQueue } from '../lib/workbench';
 import type { PrChecks } from '../lib/pr-checks';
-import { PrStateIcon } from './PrStateIcon';
-import { GitHubAuthor } from './GitHubAuthor';
-import { DiffStats } from './DiffStats';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrActions } from './PrActions';
 import { BulkCheckRerun } from './BulkCheckRerun';
@@ -62,9 +57,9 @@ export interface OverviewPageProps {
   /** The snapshot saved last session is on screen while main reads GitHub again. */
   refreshing: boolean;
   visible: boolean;
-  /** Status stays current: shown, or resolving the queue's lane filter. */
+  /** Status stays current: shown, or resolving the queue's lane filter or Action grouping. */
   live: boolean;
-  /** Keys move through rows. Off while a dialog, setup or another surface owns the keyboard. */
+  /** Keys move through items. Off while a dialog, setup or another surface owns the keyboard. */
   keyboard: boolean;
   teamRequests?: boolean;
   excluded?: ReadonlySet<string>;
@@ -74,58 +69,43 @@ export interface OverviewPageProps {
   /** Getting started has not been dismissed: offer it, since it lives in the queue. */
   setup?: () => void;
   onRefresh: () => void;
-  onShowLane: (lane: OverviewLane) => void;
+  /** Opens the queue grouped by Action, at this group. */
+  onShowLane: (group: OverviewActionGroup) => void;
   onMarkRead: (urls: string[]) => void;
-  /** Opens a row in this window when no workspace tabs are available. */
+  /** Opens an item in this window when no workspace tabs are available. */
   onOpenItem: (item: QueueItem) => void;
   onRepositories: () => void;
   onConnect: () => void;
-  /** Each lane's PRs, for the queue's lane filter. */
+  /** The lanes, for the queue's lane filter and Action grouping. */
   onModel?: (model: OverviewModel) => void;
 }
 
-const reasonIcon = (reason: OverviewReason) =>
-  reason === 'review-pending' || reason === 'checks-pending' ? { icon: Clock3, tone: 'warning' as const } : attentionIcons[reason];
-/** Merge notes: the review fact carries the lane's merge icon; the rest are plain text. */
-const MERGE_NOTE_TONE: Readonly<Record<OverviewMergeNoteKind, 'success' | 'muted' | 'warning'>> = {
-  approved: 'success',
-  'no-review': 'success',
-  unapproved: 'muted',
-  'base-open': 'warning',
-  behind: 'muted',
-};
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+/** The lane an item id belongs to: ids are `${lane}|${subject}`. */
+const laneOf = (id: string) => id.slice(0, id.indexOf('|')) as OverviewLane;
 
 export function OverviewPage(props: OverviewPageProps) {
   const { queue, login, scope, authenticated, hasRepositories, loading, refreshing, visible, live, keyboard, teamRequests, excluded, error, onDismissError, setup, onRefresh, onShowLane, onRepositories, onConnect, onModel } = props;
   const model = useOverview({ items: queue.items, login: authenticated ? login : null, scope: authenticated ? scope : null, live, visible, ready: !loading, teamRequests, excluded });
   useEffect(() => { onModel?.(model); }, [model, onModel]);
-  // The tab title counts the four action lanes, as the strip does (lib/overview-count.ts).
+  // The tab title counts the four action lanes, Ready merges only (lib/overview-count.ts).
   const account = authenticated ? login : null;
   useEffect(() => {
     if (account && !loading) publishOverviewCount(account, model.actionable);
   }, [account, loading, model.actionable]);
   const navigation = useWorkspaceNavigation();
-  // The home screen passes new callbacks on every render. Rows read them through this ref, so a home screen render
-  // never renders the rows again.
+  // The home screen passes new callbacks on every render. Items read them through this ref, so a home screen render
+  // never renders the items again.
   const callbacks = useRef(props);
   callbacks.current = props;
   const root = useRef<HTMLDivElement>(null);
-  const [waitingOpen, setWaitingOpen] = useState(false);
-  const [parkedOpen, setParkedOpen] = useState(false);
-  const [current, setCurrent] = useState<string | null>(null);
-  const rows = useMemo(
-    () =>
-      model.lanes.flatMap((state) =>
-        state.lane === 'waiting' && !waitingOpen
-          ? []
-          : [...state.rows.slice(0, OVERVIEW_LANE_LIMIT), ...(parkedOpen ? state.parked.slice(0, OVERVIEW_LANE_LIMIT) : [])]
-      ),
-    [model, waitingOpen, parkedOpen]
-  );
-  const tabStop = rows.some((row) => row.id === current) ? current : (rows[0]?.id ?? null);
-  const latestRows = useRef(rows);
-  latestRows.current = rows;
+  const tiles = useMemo(() => overviewTiles(model), [model]);
+  const briefing = useMemo(() => overviewBriefing(model), [model]);
+  // One roving tab stop per tile: the item last focused there, else its first.
+  const [current, setCurrent] = useState<Partial<Record<OverviewLane, string>>>({});
+  const latestTiles = useRef(tiles);
+  latestTiles.current = tiles;
+  const tileRows = (lane: OverviewLane) => latestTiles.current.find((tile) => tile.lane === lane)?.rows ?? [];
 
   const open = useCallback(
     (row: OverviewRow) => {
@@ -139,39 +119,45 @@ export function OverviewPage(props: OverviewPageProps) {
   );
   const focusRow = useCallback((id: string | undefined) => {
     if (!id) return;
-    setCurrent(id);
+    setCurrent((value) => (value[laneOf(id)] === id ? value : { ...value, [laneOf(id)]: id }));
     root.current?.querySelector<HTMLElement>(`[data-overview-row="${CSS.escape(id)}"]`)?.focus({ preventScroll: false });
   }, []);
+  // j/k and the arrows move within the focused tile. With nothing focused, they start at the first (or last) item.
   const move = useCallback(
     (direction: 1 | -1) => {
-      const list = latestRows.current;
       const active = document.activeElement?.closest<HTMLElement>('[data-overview-row]')?.dataset.overviewRow;
-      const index = list.findIndex((row) => row.id === active);
-      const next = index < 0 ? list.at(direction > 0 ? 0 : -1) : list.at(Math.max(0, Math.min(list.length - 1, index + direction)));
-      focusRow(next?.id);
+      if (!active) {
+        const all = latestTiles.current.flatMap((tile) => tile.rows);
+        focusRow((direction > 0 ? all.at(0) : all.at(-1))?.id);
+        return;
+      }
+      const rows = tileRows(laneOf(active));
+      const index = rows.findIndex((row) => row.id === active);
+      focusRow(rows.at(Math.max(0, Math.min(rows.length - 1, index + direction)))?.id);
     },
     [focusRow]
   );
   const snooze = useCallback(
     (row: OverviewRow) => {
-      const index = latestRows.current.findIndex((entry) => entry.id === row.id);
-      const next = latestRows.current.at(index + 1) ?? (index > 0 ? latestRows.current.at(index - 1) : undefined);
+      const rows = tileRows(row.lane);
+      const index = rows.findIndex((entry) => entry.id === row.id);
+      const next = rows.at(index + 1) ?? (index > 0 ? rows.at(index - 1) : undefined);
       return openSnoozePicker({
         groups: [row.item.subject.members],
-        onSnoozed: () => requestAnimationFrame(() => focusRow(next?.id)),
+        onSnoozed: () => requestAnimationFrame(() => focusRow(next?.id ?? latestTiles.current.find((tile) => tile.lane === row.lane)?.rows[0]?.id)),
       });
     },
     [focusRow]
   );
   const currentRow = () => {
     const id = document.activeElement?.closest<HTMLElement>('[data-overview-row-item]')?.dataset.overviewRowItem;
-    return latestRows.current.find((row) => row.id === id);
+    return id ? tileRows(laneOf(id)).find((row) => row.id === id) : undefined;
   };
   useKeyboardShortcuts(
     {
       j: () => move(1),
       k: () => move(-1),
-      // The row's one quick action: Merge, Rerun failed, Review or Open thread.
+      // The item's one quick action: Merge, Rerun failed, Review or Open thread.
       a: (event) => {
         const row = currentRow();
         if (!row || event.repeat) return false;
@@ -192,14 +178,16 @@ export function OverviewPage(props: OverviewPageProps) {
         move(event.key === 'ArrowDown' ? 1 : -1);
       } else if (event.key === 'Home' || event.key === 'End') {
         event.preventDefault();
-        focusRow(event.key === 'Home' ? latestRows.current[0]?.id : latestRows.current.at(-1)?.id);
+        const id = (event.currentTarget as HTMLElement).dataset.overviewRow;
+        const rows = id ? tileRows(laneOf(id)) : [];
+        focusRow(event.key === 'Home' ? rows[0]?.id : rows.at(-1)?.id);
       }
     },
     [move, focusRow]
   );
-  // A live update can move the focused row's element; React re-inserts it and the browser drops focus. Give it back
+  // A live update can move the focused item's element; React re-inserts it and the browser drops focus. Give it back
   // in place, without scrolling.
-  // A blur long after the last render is the reader moving on (a click elsewhere), and is left alone. A row removed
+  // A blur long after the last render is the reader moving on (a click elsewhere), and is left alone. An item removed
   // and re-inserted by a render either fires no blur, or fires it during that render's commit.
   const focused = useRef<{ id: string; at: number; blurredAt: number } | null>(null);
   useLayoutEffect(() => {
@@ -213,7 +201,7 @@ export function OverviewPage(props: OverviewPageProps) {
       open,
       focus: (id) => {
         focused.current = { id, at: performance.now(), blurredAt: 0 };
-        setCurrent(id);
+        setCurrent((value) => (value[laneOf(id)] === id ? value : { ...value, [laneOf(id)]: id }));
       },
       blur: () => {
         if (focused.current) focused.current.blurredAt = performance.now();
@@ -232,23 +220,16 @@ export function OverviewPage(props: OverviewPageProps) {
     }),
     [open, snooze, onRowKeyDown]
   );
-  const jump = (lane: OverviewLane) => {
-    if (lane === 'waiting') setWaitingOpen(true);
-    requestAnimationFrame(() => {
-      const heading = root.current?.querySelector<HTMLElement>(`#overview-lane-${lane} [data-lane-heading]`);
-      // Scroll only the Overview's own list: scrollIntoView would also move the window's fixed layout.
-      const body = root.current?.querySelector<HTMLElement>('.overview-body');
-      const section = heading?.closest<HTMLElement>('.overview-lane');
-      if (body && section) body.scrollTop += section.getBoundingClientRect().top - body.getBoundingClientRect().top;
-      heading?.focus({ preventScroll: true });
-    });
-  };
+  const showGroup = useCallback((group: OverviewActionGroup) => callbacks.current.onShowLane(group), []);
 
   const sync = queue.sync;
-  // Parked merges are not work, but they are listed: with any, the lanes stay.
-  const allClear = ACTION_LANES.every((lane) => !model.counts[lane]) && !model.parked;
   const readStates = queue.readStates ?? {};
   const unread = (row: OverviewRow) => row.entries.some((entry) => !!readStates[entry.member.url]?.unread.length);
+  const ready = authenticated && !(loading && !queue.items.length) && !(!queue.items.length && !hasRepositories);
+  const others = [
+    { group: 'waiting' as const, count: model.counts.waiting },
+    { group: 'parked' as const, count: model.parked },
+  ].filter((entry) => entry.count > 0);
   const body = !authenticated ? (
     <div className="overview-state">
       <p>Connect GitHub to see what needs you across your repositories.</p>
@@ -272,59 +253,49 @@ export function OverviewPage(props: OverviewPageProps) {
           <Button size="sm" variant="outline" onClick={setup}>Getting started</Button>
         </div>
       )}
-      <nav className="overview-counts" aria-label="Lanes">
-        {model.lanes.map(({ lane }, index) => (
-          <Fragment key={lane}>
-            {index > 0 && <span className="overview-count-separator" aria-hidden="true">·</span>}
-            <button type="button" className="overview-count" data-lane={lane} data-empty={model.counts[lane] ? undefined : ''} onClick={() => jump(lane)}
-              aria-label={`${OVERVIEW_LANE_LABEL[lane]}: ${model.counts[lane]}. Go to the lane.`}>
-              <span>{OVERVIEW_COUNT_LABEL[lane]}</span>
-              <span className="overview-count-value">{model.counts[lane]}</span>
-            </button>
-          </Fragment>
+      <div className="overview-tiles">
+        {tiles.map((tile) => (
+          <Tile key={tile.lane} tile={tile} tabStop={tile.rows.some((row) => row.id === current[tile.lane]) ? current[tile.lane] : tile.rows[0]?.id}
+            actions={actions} unread={unread} onShow={showGroup} />
         ))}
-      </nav>
-      {allClear ? (
-        <p className="overview-clear" role="status">
-          <CircleCheck size={16} aria-hidden="true" />
-          All clear. Nothing needs you right now.
-        </p>
-      ) : (
-        ACTION_LANES.map((lane) => {
-          const state = model.lanes.find((entry) => entry.lane === lane);
-          return (
-            <Lane key={lane} lane={lane} rows={state?.rows ?? []} parked={state?.parked} summary={state ? overviewLaneSummary(state) : []} tabStop={tabStop} actions={actions}
-              unread={unread} onShowLane={onShowLane} parkedOpen={parkedOpen} onToggleParked={() => setParkedOpen((value) => !value)} />
-          );
-        })
-      )}
-      {(() => {
-        const state = model.lanes.find((entry) => entry.lane === 'waiting');
-        return (
-          <Lane lane="waiting" rows={state?.rows ?? []} summary={state ? overviewLaneSummary(state) : []} tabStop={tabStop} actions={actions} unread={unread}
-            onShowLane={onShowLane} collapsed={!waitingOpen} onToggle={() => setWaitingOpen((value) => !value)} />
-        );
-      })()}
-      {model.unchecked > 0 && (
-        <p className="overview-caption">
-          Status not checked yet for {model.unchecked} of your PRs. They join a lane when GitHub reports it.
+      </div>
+      {others.length > 0 && (
+        <p className="overview-others">
+          {others.map(({ group, count }, index) => (
+            <span key={group}>
+              {index > 0 && <span className="overview-others-separator" aria-hidden="true">·</span>}
+              <button type="button" className="overview-others-link" data-group={group} onClick={() => showGroup(group)}
+                aria-label={`${OVERVIEW_ACTION_GROUP_LABEL[group]}: ${count}. Open in the review queue, grouped by action`}>
+                {OVERVIEW_ACTION_GROUP_LABEL[group]} <span className="overview-others-count">{count}</span>
+              </button>
+            </span>
+          ))}
         </p>
       )}
       <p className="sr-only" id="overview-keyboard-help">
-        <kbd>j</kbd> <kbd>k</kbd> or arrows move · <kbd>Enter</kbd> opens · <kbd>a</kbd> runs the row action · <kbd>z</kbd> snoozes
+        <kbd>Tab</kbd> moves between tiles · <kbd>j</kbd> <kbd>k</kbd> or arrows move within a tile · <kbd>Enter</kbd> opens · <kbd>a</kbd> runs the
+        item's action · <kbd>z</kbd> snoozes · <kbd>Shift</kbd>+<kbd>F10</kbd> opens its menu
       </p>
     </>
   );
   const announcement = useCountAnnouncement(model.counts, visible && authenticated && !loading);
   return (
-    // The keyboard help is given once, on the region, not on every row.
+    // The keyboard help is given once, on the region, not on every item.
     <div className="overview" ref={root} aria-labelledby="overview-title" aria-describedby="overview-keyboard-help" role="region">
       <div className="queue-toolbar overview-toolbar">
         <div>
           <h1 id="overview-title">Overview</h1>
-          <p>What you can act on now, across your repositories.</p>
+          {/* A status region that is not live: count changes are announced once, by the region below. */}
+          <p className="overview-briefing" role="status" aria-live="off" data-overview-briefing>
+            {ready ? briefing : 'What you can act on now, across your repositories.'}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="overview-freshness-group">
+          {authenticated && model.unchecked > 0 && (
+            <span className="overview-unchecked" title={`Status not checked yet for ${model.unchecked} of your PRs. They join a lane when GitHub reports it.`}>
+              {model.unchecked} not checked
+            </span>
+          )}
           <PrFreshness className="queue-freshness" queue checkedAt={sync?.checkedAt} refreshing={refreshing} />
           <button className="workbench-icon" aria-label="Refresh overview" title="Update from GitHub. Follow progress in Activity." onClick={onRefresh}>
             <RefreshCw size={16} />
@@ -361,6 +332,8 @@ export function OverviewPage(props: OverviewPageProps) {
 
 /** Settles this long before a count change is announced, so a burst of sync updates is one announcement. */
 const ANNOUNCE_SETTLE_MS = 1200;
+/** Count changes this soon after the Overview shows are status loading, and only move the baseline. */
+const BASELINE_SETTLE_MS = 3000;
 
 /**
  * A short, polite announcement when lane counts change while the Overview is shown: "Fix 3, was 2." The first counts
@@ -369,12 +342,15 @@ const ANNOUNCE_SETTLE_MS = 1200;
 function useCountAnnouncement(counts: OverviewModel['counts'], active: boolean): string {
   const [message, setMessage] = useState('');
   const baseline = useRef<OverviewModel['counts'] | null>(null);
+  const shownAt = useRef(0);
   useEffect(() => {
     if (!active) {
       baseline.current = null;
       return;
     }
-    if (!baseline.current) {
+    // Saved status arrives just after the Overview shows: counts settling then are the baseline, not news.
+    if (!baseline.current || performance.now() - shownAt.current < BASELINE_SETTLE_MS) {
+      if (!baseline.current) shownAt.current = performance.now();
       baseline.current = counts;
       return;
     }
@@ -401,102 +377,76 @@ interface RowActions {
   keyDown: (event: ReactKeyboardEvent) => void;
 }
 
-function Lane({ lane, rows, parked = [], summary = [], tabStop, actions, unread, onShowLane, collapsed, onToggle, parkedOpen, onToggleParked }: {
-  lane: OverviewLane;
-  rows: OverviewRow[];
-  /** After the count: "15 over a week", "12 parked" (`overviewLaneSummary`). */
-  summary?: string[];
-  /** Merge: rows that can merge but are not approved, or idle. A collapsed group under the Ready rows. */
-  parked?: OverviewRow[];
-  tabStop: string | null;
+/**
+ * One lane: its count, name and summary, its three oldest items, and "All N". An empty tile keeps its place in the
+ * grid with a count of 0 and one line, so the layout never moves.
+ */
+function Tile({ tile, tabStop, actions, unread, onShow }: {
+  tile: OverviewTile;
+  tabStop: string | undefined;
   actions: RowActions;
   unread: (row: OverviewRow) => boolean;
-  onShowLane: (lane: OverviewLane) => void;
-  collapsed?: boolean;
-  onToggle?: () => void;
-  parkedOpen?: boolean;
-  onToggleParked?: () => void;
+  onShow: (group: OverviewActionGroup) => void;
 }) {
   const id = useId();
-  const listId = `${id}-rows`;
-  const parkedId = `${id}-parked`;
-  const empty = !rows.length && !parked.length;
-  const shown = rows.slice(0, OVERVIEW_LANE_LIMIT);
+  const { lane, count, rows, summary } = tile;
   const label = OVERVIEW_LANE_LABEL[lane];
-  const total = rows.length + parked.length;
+  const empty = count === 0;
+  // The item the pointer rests on, else the focused one, names its details at the foot of the tile.
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const detailRow = rows.find((row) => row.id === (hovered ?? focusedId));
   return (
-    <section id={`overview-lane-${lane}`} className={`overview-lane${empty ? ' is-empty' : ''}`} aria-labelledby={`${id}-heading`} data-lane={lane}>
-      <div className="overview-lane-heading">
-        <h2 id={`${id}-heading`}>
-          {onToggle && !empty ? (
-            <button type="button" className="overview-lane-toggle" data-lane-heading aria-expanded={!collapsed} aria-controls={listId} onClick={onToggle}>
-              <ChevronRight size={14} aria-hidden="true" />
-              {label}
-            </button>
-          ) : (
-            <span tabIndex={-1} data-lane-heading>{label}</span>
+    <section id={`overview-lane-${lane}`} className="overview-tile" data-lane={lane} data-empty={empty ? '' : undefined} aria-labelledby={`${id}-heading`}
+      onClick={(event: ReactMouseEvent) => {
+        // The tile itself opens the lane; its items, actions and menus do their own thing.
+        if (empty || (event.target as HTMLElement).closest('button, a, input, [role=menu], .overview-tile-item')) return;
+        onShow(lane);
+      }}>
+      <div className="overview-tile-head">
+        <span className="overview-tile-count" aria-hidden="true">{count}</span>
+        <div className="overview-tile-titles">
+          <h2 id={`${id}-heading`}>
+            {label}
+            <span className="sr-only">{`, ${count}${summary.length ? `, ${summary.join(', ')}` : ''}`}</span>
+          </h2>
+          {(empty || summary.length > 0) && (
+            <p className="overview-tile-summary" aria-hidden={empty ? undefined : true}>{empty ? OVERVIEW_EMPTY[lane] : summary.join(' · ')}</p>
           )}
-        </h2>
-        {empty ? (
-          <span className="overview-empty">{OVERVIEW_EMPTY[lane]}</span>
-        ) : (
-          <button type="button" className="overview-lane-total" onClick={() => onShowLane(lane)}
-            title={`Open the ${total} ${total === 1 ? 'item' : 'items'} in ${label} in the review queue`}
-            aria-label={summary.length
-              ? `${label}: ${[parked.length ? `${rows.length} ready` : `${rows.length}`, ...summary].join(', ')}. Open all ${total} in the review queue`
-              : `${label}: open all ${total} in the review queue`}>
-            {rows.length}
-            {summary.length > 0 && <span className="overview-lane-summary"> · {summary.join(' · ')}</span>}
-          </button>
-        )}
+        </div>
       </div>
-      {rows.length > 0 && !collapsed && (
-        <ul className="overview-rows" id={listId}>
-          {shown.map((row) => (
-            <OverviewRowView key={row.id} row={row} tabStop={row.id === tabStop} unread={unread(row)} actions={actions} />
+      {rows.length > 0 && (
+        <ul className="overview-tile-items" aria-label={`${label}, oldest first`}>
+          {rows.map((row) => (
+            <TileItem key={row.id} row={row} tabStop={row.id === tabStop} unread={unread(row)} actions={actions} onHover={setHovered} onFocusItem={setFocusedId} />
           ))}
         </ul>
       )}
-      {rows.length > 0 && !collapsed && rows.length > OVERVIEW_LANE_LIMIT && (
-        <button type="button" className="overview-show-all" onClick={() => onShowLane(lane)}>
-          Show all {rows.length}
-          <ArrowRight size={13} aria-hidden="true" />
-        </button>
-      )}
-      {parked.length > 0 && (
-        <div className="overview-parked" data-parked>
-          <h3 className="overview-parked-heading">
-            <button type="button" className="overview-lane-toggle" aria-expanded={!!parkedOpen} aria-controls={parkedId} onClick={onToggleParked}>
-              <ChevronRight size={14} aria-hidden="true" />
-              {OVERVIEW_PARKED_LABEL} · {parked.length}
-            </button>
-            <span className="overview-parked-hint">({OVERVIEW_PARKED_HINT})</span>
-          </h3>
-          {parkedOpen && (
-            <ul className="overview-rows" id={parkedId}>
-              {parked.slice(0, OVERVIEW_LANE_LIMIT).map((row) => (
-                <OverviewRowView key={row.id} row={row} tabStop={row.id === tabStop} unread={unread(row)} actions={actions} />
-              ))}
-            </ul>
-          )}
-          {parkedOpen && parked.length > OVERVIEW_LANE_LIMIT && (
-            <button type="button" className="overview-show-all" onClick={() => onShowLane(lane)}>
-              Show all {total} in {label}
-              <ArrowRight size={13} aria-hidden="true" />
-            </button>
-          )}
+      {!empty && (
+        <div className="overview-tile-foot">
+          <span className="overview-tile-detail" aria-hidden="true" data-overview-detail>{detailRow ? overviewRowDetail(detailRow) : ''}</span>
+          <button type="button" className="overview-tile-all" onClick={() => onShow(lane)} aria-label={`All ${count} in ${label}. Open in the review queue, grouped by action`}>
+            All {count}
+            <ChevronRight size={13} aria-hidden="true" />
+          </button>
         </div>
       )}
     </section>
   );
 }
 
-const OverviewRowView = memo(
-  function OverviewRowView({ row, tabStop, unread, actions }: { row: OverviewRow; tabStop: boolean; unread: boolean; actions: RowActions }) {
-    if (window.__countRenders) window.__overviewRowRenders = (window.__overviewRowRenders ?? 0) + 1;
+const TileItem = memo(
+  function TileItem({ row, tabStop, unread, actions, onHover, onFocusItem }: {
+    row: OverviewRow;
+    tabStop: boolean;
+    unread: boolean;
+    actions: RowActions;
+    onHover: (id: string | null) => void;
+    onFocusItem: (id: string | null) => void;
+  }) {
+    if (window.__countRenders) { window.__overviewRowRenders = (window.__overviewRowRenders ?? 0) + 1; (window.__overviewRenderedRows ??= []).push(row.id); }
     const member = row.focus;
     const stack = row.kind === 'stack';
-    const ref = overviewRef(row);
     const numbers = row.item.subject.members.filter((candidate) => row.entries.some((entry) => entry.member.url === candidate.url)).map((candidate) => `#${candidate.number}`);
     const groups: EntryActionGroups = [
       [{ label: 'Open', run: () => actions.open(row) }],
@@ -504,7 +454,7 @@ const OverviewRowView = memo(
         { label: stack ? 'Snooze stack…' : 'Snooze PR…', run: () => actions.snooze(row) },
         { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(row) },
       ],
-      // The row shows repository and PR as plain text; copying lives here.
+      // The item shows only its title; copying lives here.
       [
         { label: 'Copy link', run: () => actions.copy(member.url, 'Link') },
         { label: 'Copy repository', run: () => actions.copy(member.repo, 'Repository') },
@@ -513,102 +463,61 @@ const OverviewRowView = memo(
       [{ label: 'Open on GitHub', run: () => void window.electronAPI.openExternal(member.url) }],
     ];
     const since = new Date(row.since);
-    const stale = overviewStaleLabel(row);
     const descriptionId = useId();
+    const detail = overviewRowDetail(row);
     return (
-      <li className={`overview-row${row.isNew ? ' is-new' : ''}`} data-overview-row-item={row.id}>
-        <EntryActions label={stack ? `Actions for stack ${row.title}` : `Actions for PR #${member.number}`} groups={groups}>
+      <li className={`overview-tile-item${row.isNew ? ' is-new' : ''}`} data-overview-row-item={row.id}
+        onPointerEnter={() => onHover(row.id)} onPointerLeave={() => onHover(null)}>
+        <EntryActions label={stack ? `Actions for stack ${row.title}` : `Actions for PR #${member.number}`} groups={groups} triggerTabIndex={-1}>
           {(menu) => (
-            <div className="overview-row-inner">
+            <div className="overview-tile-item-inner">
               <span className="overview-row-gutter">
                 {row.isNew && <span className="pr-unread-dot" role="img" aria-label="New since your last visit" title="New since your last visit" />}
               </span>
-              <span className="overview-row-icon">
-                {stack ? <Layers size={16} aria-label="PR stack" className="queue-stack-icon" /> : <PrStateIcon pr={member} size={16} />}
-              </span>
-              <div className="overview-row-content">
-                <button
-                  type="button"
-                  className="overview-row-main"
-                  data-overview-row={row.id}
-                  tabIndex={tabStop ? 0 : -1}
-                  aria-describedby={descriptionId}
-                  onFocus={() => actions.focus(row.id)}
-                  onBlur={actions.blur}
-                  onKeyDown={actions.keyDown}
-                  onClick={(event: ReactMouseEvent) => {
-                    event.preventDefault();
-                    actions.open(row);
-                  }}
-                >
-                  <span className="overview-title" title={row.title}>{row.title}</span>
-                  {stack && row.stackSize && (
-                    <span className="overview-stack-count">
-                      {row.entries.length === row.stackSize ? `${row.stackSize} PRs` : `${row.entries.length} of ${row.stackSize} PRs`}
-                    </span>
-                  )}
-                </button>
-                <span className="sr-only" id={descriptionId} data-overview-description>{overviewRowDescription(row)}</span>
-                <div className="overview-row-meta">
-                  {row.shown.map((reason) => {
-                    const { icon: Icon, tone } = reasonIcon(reason);
-                    return (
-                      <span key={reason} className="overview-reason" data-tone={tone}>
-                        <Icon size={13} aria-hidden="true" />
-                        {OVERVIEW_REASON_LABEL[reason]}
-                      </span>
-                    );
-                  })}
-                  {row.merge?.notes.map((note, index) => {
-                    const Icon = attentionIcons['ready-to-merge'].icon;
-                    return (
-                      <span key={note.kind} className={index ? 'overview-merge-note' : 'overview-reason'} data-tone={MERGE_NOTE_TONE[note.kind]} data-merge-note={note.kind}>
-                        {index === 0 && <Icon size={13} aria-hidden="true" />}
-                        {note.text}
-                      </span>
-                    );
-                  })}
-                  <span className="overview-ref" title={ref.title}>
-                    <span className="overview-ref-repo">{ref.repo}</span> <span className="overview-ref-number">{ref.number}</span>
-                  </span>
-                  {/* Out of the tab order: the row is one stop; its menu copies and opens. */}
-                  {row.person && <GitHubAuthor login={row.person} tabIndex={-1} />}
-                  {/* Size helps decide what to review; elsewhere the work is yours and its size is known. */}
-                  {row.lane === 'review' && row.additions !== undefined && row.deletions !== undefined && (
-                    <span className="overview-size" title={`${row.additions} lines added, ${row.deletions} removed${row.files !== undefined ? `, ${row.files} files` : ''}`}>
-                      <DiffStats additions={row.additions} deletions={row.deletions} />
-                      {row.files !== undefined && <span>{row.files} {row.files === 1 ? 'file' : 'files'}</span>}
-                    </span>
-                  )}
-                  {row.explanation && (
-                    <span className="overview-explanation">
-                      <BookOpen size={13} aria-hidden="true" />
-                      Explanation ready
-                    </span>
-                  )}
-                </div>
-              </div>
-              <span className="overview-wait"
-                title={`Waiting ${OVERVIEW_SINCE_LABEL[row.source]}, ${since.toLocaleString()}`}>
-                <Clock3 size={13} aria-hidden="true" />
-                <time dateTime={since.toISOString()}>{row.waiting}</time>
-                {stale && <span className="overview-stale" title={OVERVIEW_STALE_TITLE[row.lane]}>{stale}</span>}
-              </span>
-              <span className="overview-row-action">
+              <button
+                type="button"
+                className="overview-tile-title"
+                data-overview-row={row.id}
+                tabIndex={tabStop ? 0 : -1}
+                aria-describedby={descriptionId}
+                title={`${row.title}\n${detail}`}
+                onFocus={() => {
+                  actions.focus(row.id);
+                  onFocusItem(row.id);
+                }}
+                onBlur={() => {
+                  actions.blur();
+                  onFocusItem(null);
+                }}
+                onKeyDown={actions.keyDown}
+                onClick={(event: ReactMouseEvent) => {
+                  event.preventDefault();
+                  actions.open(row);
+                }}
+              >
+                {row.title}
+              </button>
+              <span className="sr-only" id={descriptionId} data-overview-description>{overviewRowDescription(row)}</span>
+              <time className="overview-tile-age" dateTime={since.toISOString()} title={`Waiting ${OVERVIEW_SINCE_LABEL[row.source]}, ${since.toLocaleString()}`}>
+                {row.waiting}
+              </time>
+              <span className="overview-tile-actions">
                 <QuickAction row={row} actions={actions} />
+                {menu}
               </span>
-              {menu}
             </div>
           )}
         </EntryActions>
       </li>
     );
   },
-  (a, b) => a.row.signature === b.row.signature && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
+  (a, b) => a.row.signature === b.row.signature && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions && a.onHover === b.onHover && a.onFocusItem === b.onFocusItem
 );
 
+/** Out of the tab order: Tab moves between tiles, and A runs the focused item's action. */
+const SHORTCUT = { 'data-quick-action': true, 'aria-keyshortcuts': 'A', tabIndex: -1 };
+
 function QuickAction({ row, actions }: { row: OverviewRow; actions: RowActions }) {
-  const shortcut = { 'data-quick-action': true, 'aria-keyshortcuts': 'A' };
   if (row.lane === 'merge') {
     // Base first: in a stack, the lowest PR in the lane merges first (`OverviewMerge.member`).
     const member = row.merge?.member ?? row.focus;
@@ -619,8 +528,8 @@ function QuickAction({ row, actions }: { row: OverviewRow; actions: RowActions }
         onChanged={actions.refresh}
         onResult={(message) => toast.add({ type: 'success', title: message })}
         trigger={(open, busy) => (
-          <Button size="sm" variant="outline" {...shortcut} title={`Merge #${member.number}… · A`} disabled={busy} onClick={() => open('merge')}>
-            <GitMerge size={14} aria-hidden="true" />
+          <Button size="xs" variant="outline" {...SHORTCUT} title={`Merge #${member.number}… · A`} disabled={busy} onClick={() => open('merge')}>
+            <GitMerge size={13} aria-hidden="true" />
             Merge
           </Button>
         )}
@@ -631,7 +540,7 @@ function QuickAction({ row, actions }: { row: OverviewRow; actions: RowActions }
   if (failed.length) return <RerunFailed members={failed} onChanged={actions.refresh} />;
   const label = row.lane === 'review' ? 'Review' : row.lane === 'answer' ? 'Open thread' : 'Open';
   return (
-    <Button size="sm" variant="outline" {...shortcut} title={`${label} · A`} onClick={() => actions.open(row)}>
+    <Button size="xs" variant="outline" {...SHORTCUT} title={`${label} · A`} onClick={() => actions.open(row)}>
       {label}
     </Button>
   );
@@ -655,8 +564,8 @@ function RerunFailed({ members, onChanged }: { members: ReviewMember[]; onChange
       onChanged={onChanged}
       load={load}
       trigger={(open, busy) => (
-        <Button size="sm" variant="outline" data-quick-action aria-keyshortcuts="A" title="Re-run failed jobs… · A" disabled={busy} onClick={open}>
-          <RotateCcw size={14} aria-hidden="true" />
+        <Button size="xs" variant="outline" {...SHORTCUT} title="Re-run failed jobs… · A" disabled={busy} onClick={open}>
+          <RotateCcw size={13} aria-hidden="true" />
           {busy ? 'Reading checks…' : 'Rerun failed'}
         </Button>
       )}
@@ -666,7 +575,9 @@ function RerunFailed({ members, onChanged }: { members: ReviewMember[]; onChange
 
 declare global {
   interface Window {
-    /** Browser checks count Overview row renders when `__countRenders` is set. */
+    /** Browser checks count Overview item renders when `__countRenders` is set. */
     __overviewRowRenders?: number;
+    /** The items those renders were for. */
+    __overviewRenderedRows?: string[];
   }
 }

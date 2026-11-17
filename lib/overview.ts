@@ -651,3 +651,142 @@ export function overviewRef(row: Pick<OverviewRow, 'focus' | 'entries' | 'kind' 
   const number = row.kind === 'stack' && numbers.length > 1 ? `#${first} +${numbers.length - 1}` : `#${first}`;
   return { repo: repoName(repo), number, title: `${repo} ${row.kind === 'stack' ? numbers.map((n) => `#${n}`).join(', ') : `#${first}`}` };
 }
+
+// ── The front page: a briefing sentence and four lane tiles ──
+
+/** The tiles, in reading order: people blocked on you first (Answer, Review), then your own PRs (Merge, Fix). */
+export const OVERVIEW_TILE_LANES: readonly OverviewLane[] = ['answer', 'review', 'merge', 'fix'];
+/** Items each tile lists; "All N" opens the lane in the queue. */
+export const OVERVIEW_TILE_LIMIT = 3;
+
+export interface OverviewTile {
+  lane: OverviewLane;
+  /** The lane's count: on Merge, the Ready rows only. */
+  count: number;
+  /** The oldest `OVERVIEW_TILE_LIMIT` rows: the ones that have waited longest. */
+  rows: OverviewRow[];
+  /** The lane heading's summary (`overviewLaneSummary`): "15 checks failed", "15 over a week", "12 parked". */
+  summary: string[];
+}
+
+/** The four tiles, from the lane model. Pure, so the page and the tests build them the same way. */
+export function overviewTiles(model: Pick<OverviewModel, 'lanes'>): OverviewTile[] {
+  return OVERVIEW_TILE_LANES.map((lane) => {
+    const state = model.lanes.find((entry) => entry.lane === lane);
+    return {
+      lane,
+      count: state?.rows.length ?? 0,
+      rows: (state?.rows ?? []).slice(0, OVERVIEW_TILE_LIMIT),
+      summary: state ? overviewLaneSummary(state) : [],
+    };
+  });
+}
+
+/**
+ * What a tile item keeps off the page until it is hovered or focused, as one line: "web #311 · Changes requested ·
+ * from lena · Stale". The tile names its lane and its most common reason, so this names the rest.
+ */
+export function overviewRowDetail(row: Pick<OverviewRow, 'lane' | 'reasons' | 'merge' | 'focus' | 'entries' | 'kind' | 'item' | 'person' | 'stale' | 'stackSize' | 'explanation'>): string {
+  const ref = overviewRef(row);
+  const words = [
+    `${ref.repo} ${ref.number}`,
+    ...(row.kind === 'stack' && row.stackSize ? [row.entries.length === row.stackSize ? `${row.stackSize} PRs` : `${row.entries.length} of ${row.stackSize} PRs`] : []),
+    ...(row.merge ? row.merge.notes.map((note) => note.text) : rowReasons(row).map((reason) => OVERVIEW_REASON_LABEL[reason])),
+    ...(row.person ? [`${row.lane === 'review' ? 'by' : row.lane === 'waiting' ? 'on' : 'from'} ${row.person}`] : []),
+    ...(row.explanation ? ['Explanation ready'] : []),
+    ...(row.stale ? [OVERVIEW_STALE_LABEL[row.lane]] : []),
+  ];
+  return words.join(' · ');
+}
+
+/**
+ * The Overview's opening line, built from the lanes with no model call. At most two people are named, longest wait
+ * first. People blocked on you come first, then your own PRs. Failed checks are named only when there are any; other
+ * Fix work is "needs a fix".
+ *
+ * - "lena is waiting on your reply, and 7 reviews are waiting on you. 4 PRs are ready to merge, and 2 have failed checks."
+ * - "lena and sam are waiting on your reply on 3 PRs."
+ * - "Nothing needs you right now. 3 of your PRs are waiting on others."
+ */
+export function overviewBriefing(model: Pick<OverviewModel, 'lanes' | 'counts'>): string {
+  const lane = (name: OverviewLane) => model.lanes.find((entry) => entry.lane === name)?.rows ?? [];
+  const answer = lane('answer');
+  // Rows are oldest first, so the first people named have waited longest.
+  const people = [...new Set(answer.map((row) => row.person).filter((person): person is string => !!person))];
+  const blocked: string[] = [];
+  if (answer.length) {
+    const on = answer.length > Math.max(1, people.length) ? ` on ${answer.length} PRs` : '';
+    if (!people.length) blocked.push(`${plural(answer.length, 'PR is', 'PRs are')} waiting on your reply`);
+    else if (people.length === 1) blocked.push(`${people[0]} is waiting on your reply${on}`);
+    else if (people.length === 2) blocked.push(`${people[0]} and ${people[1]} are waiting on your reply${on}`);
+    else blocked.push(`${people[0]}, ${people[1]} and ${plural(people.length - 2, 'other', 'others')} are waiting on your reply${on}`);
+  }
+  const reviews = model.counts.review;
+  if (reviews) blocked.push(`${plural(reviews, 'review is', 'reviews are')} waiting on you`);
+  const own: string[] = [];
+  const merges = model.counts.merge;
+  if (merges) own.push(`${plural(merges, 'PR is', 'PRs are')} ready to merge`);
+  const fix = lane('fix');
+  const failed = fix.filter((row) => row.reasons.includes('checks-failed')).length;
+  // After "N PRs are ready to merge", the second clause says "2 have failed checks": the PRs are already named.
+  if (failed) own.push(merges ? `${failed} ${failed === 1 ? 'has' : 'have'} failed checks` : `${plural(failed, 'PR has', 'PRs have')} failed checks`);
+  else if (fix.length) own.push(merges ? `${fix.length} ${fix.length === 1 ? 'needs' : 'need'} a fix` : `${plural(fix.length, 'PR needs', 'PRs need')} a fix`);
+  // A sentence starts with a capital, except a GitHub login: it is a name, spelled as GitHub spells it.
+  const sentence = (clauses: string[], named: boolean) => {
+    const text = clauses.join(', and ');
+    return `${named ? text : `${text.charAt(0).toUpperCase()}${text.slice(1)}`}.`;
+  };
+  const parts = [
+    ...(blocked.length ? [sentence(blocked, people.length > 0)] : []),
+    ...(own.length ? [sentence(own, false)] : []),
+  ];
+  if (parts.length) return parts.join(' ');
+  const waiting = model.counts.waiting;
+  return `Nothing needs you right now.${waiting ? ` ${waiting === 1 ? '1 of your PRs is' : `${waiting} of your PRs are`} waiting on others.` : ''}`;
+}
+
+/**
+ * Where each PR sits in the queue's Action grouping (`groupBy: 'action'`): the Overview's lanes in the Overview's
+ * order, Merge split into Ready (Merge) and Parked, and Other for PRs in no lane. A PR in two lanes, such as changes
+ * requested and failing checks, goes to the first.
+ */
+export type OverviewActionGroup = 'answer' | 'review' | 'merge' | 'fix' | 'waiting' | 'parked' | 'other';
+export const OVERVIEW_ACTION_GROUPS: readonly OverviewActionGroup[] = ['answer', 'review', 'merge', 'fix', 'waiting', 'parked', 'other'];
+export const OVERVIEW_ACTION_GROUP_LABEL: Readonly<Record<OverviewActionGroup, string>> = {
+  answer: 'Answer',
+  review: 'Review',
+  merge: 'Merge',
+  fix: 'Fix',
+  waiting: 'Waiting on others',
+  parked: 'Parked',
+  other: 'Other',
+};
+export const isOverviewActionGroup = (value: unknown): value is OverviewActionGroup => OVERVIEW_ACTION_GROUPS.includes(value as OverviewActionGroup);
+const groupRank = (group: OverviewActionGroup) => OVERVIEW_ACTION_GROUPS.indexOf(group);
+
+/** Each PR URL's action group, from the lanes. A URL in no lane is absent: it is Other. */
+export function overviewActionGroups(model: Pick<OverviewModel, 'lanes'>): Readonly<Record<string, OverviewActionGroup>> {
+  const groups: Record<string, OverviewActionGroup> = {};
+  const assign = (rows: readonly OverviewRow[], group: OverviewActionGroup) => {
+    for (const row of rows)
+      for (const entry of row.entries) {
+        const current = groups[entry.member.url];
+        if (!current || groupRank(group) < groupRank(current)) groups[entry.member.url] = group;
+      }
+  };
+  for (const state of model.lanes) {
+    assign(state.rows, state.lane);
+    assign(state.parked, 'parked');
+  }
+  return groups;
+}
+
+/** A queue entry's action group: the first group any of its PRs is in, else Other. */
+export function actionGroupOf(item: Pick<QueueItem, 'subject'>, groups: Readonly<Record<string, OverviewActionGroup>>): OverviewActionGroup {
+  let best: OverviewActionGroup = 'other';
+  for (const member of item.subject.members) {
+    const group = groups[member.url];
+    if (group && groupRank(group) < groupRank(best)) best = group;
+  }
+  return best;
+}

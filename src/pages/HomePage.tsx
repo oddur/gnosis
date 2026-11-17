@@ -87,7 +87,10 @@ import {
   type QueueFilters,
 } from '../../lib/queue-filters';
 import { OverviewPage } from '../../components/OverviewPage';
-import type { OverviewLane, OverviewModel } from '../../lib/overview';
+import { overviewActionGroups, type OverviewActionGroup, type OverviewLane, type OverviewModel } from '../../lib/overview';
+import { useOverview } from '../../lib/use-overview';
+import { actionGroupKey, groupQueueItems, parseCollapsedGroups, toggleCollapsedGroup, QUEUE_COLLAPSED_GROUPS_KEY } from '../../lib/queue-groups';
+import { QueueGroupControl } from '../../components/QueueGroupControl';
 import { homeTabPreference, rememberHomeTab, restoredTool } from '../../lib/home-tab';
 import { notificationSettings } from '../../lib/notification-settings';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
@@ -159,6 +162,12 @@ function withOwnView(queue: WorkbenchQueue, own: string | null | undefined): Wor
 const NO_READ_STATES: NonNullable<WorkbenchQueue['readStates']> = {};
 /** Scrolling the queue records its position this long after the last scroll event. */
 const SCROLL_RECORD_MS = 150;
+const NO_ITEMS: QueueItem[] = [];
+/** Saves collapsed queue groups on this computer, and returns them. Storage may be unavailable; the state stays. */
+function persistCollapsedGroups(value: Record<string, string[]>) {
+  try { localStorage.setItem(QUEUE_COLLAPSED_GROUPS_KEY, JSON.stringify(value)); } catch { /* the session keeps it */ }
+  return value;
+}
 const labels = {
   starred: 'Starred',
   updated: 'Changed since AI explanation',
@@ -266,15 +275,24 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   // Mounted once shown, then kept behind the queue, so switching home tabs is instant. A lane filter needs its lanes.
   const overviewMounted = useRef(false);
   if (overviewOpen || filters.lane) overviewMounted.current = true;
-  // "Show all" and a lane's count open the queue filtered to that lane, with no other filters.
-  const showLane = (lane: OverviewLane) => {
+  // A tile, its count or "All N" opens the whole queue grouped by Action, scrolled to that lane's group.
+  const [revealGroup, setRevealGroup] = useState<{ key: string; nonce: number }>();
+  const showLane = (lane: OverviewLane | OverviewActionGroup) => {
     setTool(null);
     setSavedView(false);
     setSelected(null);
-    const patch = { ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope, lane };
+    const key = actionGroupKey(lane);
+    // The plain queue is the list it opens; its group opens if it was collapsed.
+    setCollapsedGroups(current => persistCollapsedGroups(toggleCollapsedGroup(current, 'section:all', key, true)));
+    setRevealGroup({ key, nonce: Date.now() });
+    const patch = { ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope, groupBy: 'action' as const };
     if (activeQueueView) void viewAction({ type: 'activate', id: null, filters: patch }).catch(() => {});
     else updateFilters(patch);
   };
+  // Collapsed groups, per list: a saved view, or a sidebar list. Saved on this computer.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, string[]>>(() => {
+    try { return parseCollapsedGroups(localStorage.getItem(QUEUE_COLLAPSED_GROUPS_KEY)); } catch { return {}; }
+  });
   const openOverview = () => {
     rememberHomeTab('overview');
     setTool('overview');
@@ -415,7 +433,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const setQuery = (value: string) => (section === 'saved' ? setSavedQuery(value) : updateFilters({ query: value }));
   const setRepo = (value: string) => updateFilters({ repo: value });
   const resetFilters = () => {
-    updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope });
+    updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope, groupBy: filters.groupBy });
     setSavedView(false);
   };
   const [selected, setSelected] = useState<string | null>(
@@ -1092,7 +1110,26 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   [visibleHistory, query, savedSort, starredUrls, sortSignals]);
   const saved = useListOrder(sortedSaved, entry => entry.id);
   const sortedItems = useMemo(() => sortQueueItems(items, filters.sort, sortSignals), [items, filters.sort, sortSignals]);
-  const orderedItems = useListOrder(sortedItems, item => item.subject.id);
+  // Group by: memoized on the sorted list, so a render that changes neither builds nothing.
+  const groupViewKey = activeQueueView ? `view:${activeQueueView.id}` : `section:${section}`;
+  const collapsedSet = useMemo(() => new Set(collapsedGroups[groupViewKey] ?? []), [collapsedGroups, groupViewKey]);
+  // Group by Action reads the Overview's lanes here, not from the Overview: a hidden Overview runs no effects, so its
+  // status watch would stop. With another grouping, no items go in and nothing is built or watched.
+  const actionModel = useOverview({
+    items: filters.groupBy === 'action' && section !== 'saved' ? queue.items : NO_ITEMS,
+    login: auth?.authenticated ? auth.login : null,
+    scope: auth?.authenticated ? statusAccount : null,
+    live: filters.groupBy === 'action' && section !== 'saved' && !tool && !summaryItem,
+    visible: false,
+    ready: !loading,
+    teamRequests: !!prefs && notificationSettings(prefs).events['team-review-requested'],
+    excluded: mutedUrls,
+  });
+  const actionGroups = useMemo(() => overviewActionGroups(actionModel), [actionModel]);
+  const queueGrouping = useMemo(() => section === 'saved' ? undefined : groupQueueItems(sortedItems, filters.groupBy, { actionGroups, collapsed: collapsedSet }),
+    [section, sortedItems, filters.groupBy, actionGroups, collapsedSet]);
+  const toggleGroup = useCallback((key: string) => setCollapsedGroups(current => persistCollapsedGroups(toggleCollapsedGroup(current, groupViewKey, key))), [groupViewKey]);
+  const orderedItems = useListOrder(queueGrouping ? queueGrouping.items : sortedItems, item => item.subject.id);
   const orderedIds = useMemo(() => orderedItems.map(item => item.subject.id), [orderedItems]);
   // Switching to a view reads its first screenful again; resting on one in the sidebar prepares it (#saved-view-sync).
   const shownUrls = useMemo(() => orderedItems.flatMap(item => item.subject.members.map(member => member.url)).slice(0, 15), [orderedItems]);
@@ -1399,7 +1436,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     }
     if (target.repo) {
       setSavedView(false);
-      updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, repo: target.repo });
+      updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, repo: target.repo, groupBy: target.filters?.group ?? filters.groupBy });
       return;
     }
     if (target.section) {
@@ -1417,6 +1454,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           urls: target.filters?.prs,
           // An Overview lane link (#390) opens the queue filtered to that lane.
           lane: target.filters?.lane,
+          // `group=action` or `group=repository`; without it the list keeps its grouping.
+          ...(target.filters?.group ? { groupBy: target.filters.group } : {}),
         });
     }
   }, [commandDestination, prefs, loading, onboarding.ready]);
@@ -2252,6 +2291,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               </Popover.Root>
             )}
             <PrListSortControl value={section === 'saved' ? savedSort : filters.sort} onChange={changeSort} savedReviews={section === 'saved'} disabled={viewBusy} />
+            {section !== 'saved' && <QueueGroupControl value={filters.groupBy} onChange={groupBy => updateFilters({ groupBy })} disabled={viewBusy} />}
             {section !== 'saved' && auth?.authenticated && (
               <EntryActions label="Review queue actions" groups={[[{
                 label: 'Mark visible PRs as read',
@@ -2380,6 +2420,9 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   <VirtualReviewQueue
                     items={orderedItems}
                     grouped={filters.sort.key === 'priority'}
+                    groups={queueGrouping}
+                    onToggleGroup={toggleGroup}
+                    reveal={revealGroup}
                     starredFirst={filters.sort.starredFirst}
                     labels={labels}
                     selected={selected}

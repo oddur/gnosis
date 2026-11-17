@@ -5,9 +5,12 @@ import type { QueueSignals } from './queue-signals';
 import { memberMergeState, type MergeStates } from './merge-conflicts';
 import { fingerprint, type Briefing, type QueueItem, type ReviewMember } from './workbench';
 import { isOverviewLane, OVERVIEW_LANE_LABEL, type OverviewLane } from './overview';
+import { isQueueGroupBy, type QueueGroupBy } from './queue-groups';
 
 export interface QueueFilters {
   sort: PrListSort;
+  /** Group the list: by the Overview's action lanes, by repository, or not at all. Like `sort`, it is not a filter. */
+  groupBy: QueueGroupBy;
   starredOnly: boolean;
   readStatus: 'all' | 'unread' | 'read';
   involvement: 'all' | 'mine' | 'review' | 'authored' | 'response';
@@ -81,6 +84,7 @@ export function countBriefings(items: readonly QueueItem[], filters: QueueFilter
 }
 export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
   sort: DEFAULT_PR_SORT,
+  groupBy: 'none',
   starredOnly: false,
   readStatus: 'all',
   involvement: 'all',
@@ -109,6 +113,8 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     RECENCY_DAYS.includes(raw[key] as (typeof RECENCY_DAYS)[number]) ? Number(raw[key]) : 0;
   return {
     sort: normalizePrListSort(raw.sort),
+    // Filters saved before grouping existed have none.
+    groupBy: isQueueGroupBy(raw.groupBy) ? raw.groupBy : 'none',
     starredOnly: raw.starredOnly === true,
     readStatus: choice('readStatus', ['all', 'unread', 'read'], raw.unreadOnly === true ? 'unread' : 'all'),
     involvement: choice('involvement', ['all', 'mine', 'review', 'authored', 'response'], 'all'),
@@ -234,7 +240,7 @@ export function matchesQueueFilters(
 }
 export function activeQueueFilterCount(filters: QueueFilters) {
   return (Object.keys(DEFAULT_QUEUE_FILTERS) as (keyof QueueFilters)[]).filter(
-    (key) => key === 'labels' ? labelFilterActive(filters.labels) : key !== 'briefingScope' && key !== 'sort' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
+    (key) => key === 'labels' ? labelFilterActive(filters.labels) : key !== 'briefingScope' && key !== 'sort' && key !== 'groupBy' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
   ).length + (filters.repos?.length ? 1 : 0) + (filters.urls?.length ? 1 : 0) + (filters.lane ? 1 : 0);
 }
 /** Stable partition preserves the queue's review priority within each group. */

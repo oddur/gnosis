@@ -32,6 +32,7 @@ export function EntryActions({
   triggerIcon,
   triggerTitle,
   popupClassName = '',
+  triggerTabIndex,
 }: {
   label: string;
   groups: EntryActionGroups;
@@ -44,6 +45,8 @@ export function EntryActions({
   triggerIcon?: ReactNode;
   triggerTitle?: string;
   popupClassName?: string;
+  /** -1 keeps the visible trigger out of the tab order, where the entry itself opens the menu (Shift+F10). */
+  triggerTabIndex?: number;
 }) {
   const descriptionId = useId();
   const explanation = description ? (
@@ -164,6 +167,7 @@ export function EntryActions({
         className={`pr-star-button entry-menu-trigger ${buttonClassName}`}
         aria-label={label}
         title={triggerTitle ?? 'More actions · right-click an entry'}
+        tabIndex={triggerTabIndex}
         onClick={(event) => event.stopPropagation()}
       >
         {triggerIcon ?? <MoreHorizontal size={16} aria-hidden="true" />}

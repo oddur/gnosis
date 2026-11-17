@@ -1,13 +1,13 @@
 /**
- * Overview (#390): the default home tab, its counts and lanes, top five and "Show all" into the filtered queue,
- * empty and all-clear states, rows that land in the right tab, Merge through its confirmation, Rerun failed, the row
- * menu, keyboard movement with visible focus, live updates that keep focus, "new since your last visit", and light
- * and dark at 1280×800 and a narrow window. Synthetic data only (tests/fixtures/overview.ts).
- * Screenshots go to .impeccable/review/overview/.
+ * Overview (#390), the front page: a briefing sentence and four lane tiles (Answer, Review / Merge, Fix) with each
+ * lane's count, summary and three oldest items, then "Waiting on others · Parked". Covers the briefing text, the 2×2
+ * grid at 1280×800 and one column at 760, the quick action and details revealed on hover and focus, keyboard movement
+ * within and between tiles, a tile opening the queue grouped by Action at its group, Merge and Rerun through their
+ * confirmations, the item menu, live updates that keep focus, "new since your last visit", long names, and empty and
+ * quiet days. Synthetic data only (tests/fixtures/overview.ts).
  *
- * Clarify pass: each Merge row says why it can merge (approved, no review required, open stack base, behind), the
- * viewer is never a row's person, Parked merges are a collapsed group that the strip and tab title leave out, and a
- * stale Waiting row asks "Nudge?". A heavy load (16 merges, 12 parked) is captured to .impeccable/review/overview-clarify/.
+ * Screenshots go to .impeccable/review/overview-frontpage/: the heavy load and a light day, light and dark, at
+ * 1280×800 and 760 wide.
  */
 import { loadWorkbenchPage } from './workbench-ready';
 import { menuAction } from './entry-menu-helpers';
@@ -18,6 +18,8 @@ import path from 'node:path';
 
 const P = '.workspace-panel[data-workspace-active=true]';
 const row = (lane: string, repo: string, n: number) => `${P} [data-overview-row="${lane}|https://github.com/${repo}/pull/${n}"]`;
+const stackRow = (lane: string, repo: string, n: number) => `${P} [data-overview-row="${lane}|stack:https://github.com/${repo}/pull/${n}"]`;
+const BRIEFING = 'lena and owen are waiting on your reply, and 7 reviews are waiting on you. 4 PRs are ready to merge, and 1 has failed checks.';
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -28,19 +30,15 @@ void app.whenReady().then(async () => {
   });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   let step = 'start';
-  const dir = path.resolve('.impeccable/review/overview');
-  const clarifyDir = path.resolve('.impeccable/review/overview-clarify');
+  const dir = path.resolve('.impeccable/review/overview-frontpage');
   fs.mkdirSync(dir, { recursive: true });
-  fs.mkdirSync(clarifyDir, { recursive: true });
-  const passesDir = path.resolve('.impeccable/review/overview-passes');
-  fs.mkdirSync(passesDir, { recursive: true });
-  const capture = async (name: string, into = dir) => {
+  const capture = async (name: string) => {
     if (process.platform === 'darwin') app.show();
     win.show();
     win.focus();
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 300));
-    fs.writeFileSync(path.join(into, name + '.png'), (await win.webContents.capturePage()).toPNG());
+    fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG());
   };
   const wait = async (code: string, tries = 200) => {
     for (let i = 0; i < tries; i++) {
@@ -50,19 +48,24 @@ void app.whenReady().then(async () => {
     await capture(`failure-${step}`).catch(() => undefined);
     throw Error(`Timed out in "${step}": ${code}\n${await js<string>(`(document.querySelector('${P}')?.innerText ?? document.body.innerText).slice(0, 1500)`)}`);
   };
-  const both = async (name: string, into = dir) => {
+  const both = async (name: string) => {
     await js("document.documentElement.classList.remove('dark')");
-    await capture(`${name}-light`, into);
+    await capture(`${name}-light`);
     await js("document.documentElement.classList.add('dark')");
-    await capture(`${name}-dark`, into);
+    await capture(`${name}-dark`);
     await js("document.documentElement.classList.remove('dark')");
   };
+  const resize = async (width: number) => {
+    win.setSize(width, 800);
+    await new Promise((r) => setTimeout(r, 400));
+  };
   const cdp = win.webContents.debugger;
-  const key = async (name: string, code = name.length === 1 ? `Key${name.toUpperCase()}` : name) => {
+  const key = async (name: string, modifiers = 0) => {
     if (!cdp.isAttached()) cdp.attach('1.3');
-    const vk = name.length === 1 ? name.toUpperCase().charCodeAt(0) : ({ Enter: 13, ArrowDown: 40, ArrowUp: 38, Escape: 27, Tab: 9 } as Record<string, number>)[name];
-    await cdp.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: name, code, ...(name.length === 1 ? { text: name } : name === 'Enter' ? { text: '\r' } : {}), windowsVirtualKeyCode: vk });
-    await cdp.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: name, code, windowsVirtualKeyCode: vk });
+    const code = name.length === 1 ? `Key${name.toUpperCase()}` : name;
+    const vk = name.length === 1 ? name.toUpperCase().charCodeAt(0) : ({ Enter: 13, ArrowDown: 40, ArrowUp: 38, Escape: 27, Tab: 9, Home: 36, End: 35, F10: 121 } as Record<string, number>)[name];
+    await cdp.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: name, code, modifiers, ...(name.length === 1 ? { text: name } : name === 'Enter' ? { text: '\r' } : {}), windowsVirtualKeyCode: vk });
+    await cdp.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: name, code, modifiers, windowsVirtualKeyCode: vk });
     await new Promise((r) => setTimeout(r, 80));
   };
   const click = async (selector: string) => {
@@ -71,12 +74,17 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 80));
   };
   const sidebar = (label: string) => `${P} [data-sidebar-destination][aria-label="${label}"]`;
-  const counts = () => js<string>(`[...document.querySelectorAll('${P} .overview-count')].map(b=>b.textContent).join(' · ')`);
-  const laneRows = (lane: string) => js<number>(`document.querySelectorAll('${P} #overview-lane-${lane} .overview-row').length`);
+  const tile = (lane: string) => `${P} #overview-lane-${lane}`;
+  const tileCounts = () => js<string>(`[...document.querySelectorAll('${P} .overview-tile')].map(t=>t.dataset.lane+' '+t.querySelector('.overview-tile-count').textContent).join(' · ')`);
+  const tileItems = (lane: string) => js<string[]>(`[...document.querySelectorAll('${tile(lane)} [data-overview-row]')].map(b=>b.dataset.overviewRow)`);
   const focusedRow = () => js<string | null>("document.activeElement?.getAttribute('data-overview-row') ?? null");
+  const briefing = () => js<string>(`document.querySelector('${P} [data-overview-briefing]')?.textContent ?? ''`);
   const writes = () => js<{ kind: string; url: string }[]>('window.fixtureOverview.writes');
   const tabCount = () => js<number>('document.querySelectorAll(".workspace-tab").length');
   const activeSection = `document.querySelector('${P} [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent ?? ''`;
+  const noSideways = () => js<boolean>(`(()=>{const b=document.querySelector('${P} .overview-body');return b.scrollWidth <= b.clientWidth + 1})()`);
+  // Tile boxes, to check the grid: [lane, left, top].
+  const boxes = () => js<[string, number, number][]>(`[...document.querySelectorAll('${P} .overview-tile')].map(t=>{const r=t.getBoundingClientRect();return [t.dataset.lane, Math.round(r.left), Math.round(r.top)]})`);
   const firstTab = async () => {
     await js("document.querySelector('.workspace-tab-select').click()");
     await wait(`!!document.querySelector('${P} .overview') && getComputedStyle(document.querySelector('${P} .overview')).display !== 'none'`);
@@ -86,202 +94,168 @@ void app.whenReady().then(async () => {
 
     step = 'default';
     // The Overview opens by default, as the current home destination.
-    await wait(`!!document.querySelector('${P} .overview-row')`, 600);
+    await wait(`!!document.querySelector('${P} .overview-tile [data-overview-row]')`, 600);
     assert.equal(await js(`document.querySelector('${sidebar('Overview')}')?.getAttribute('aria-current')`), 'page');
     assert.equal(await js(`document.querySelector('${P} .overview h1')?.textContent`), 'Overview');
-    // Before the queue's first commit there is no toolbar yet; after it, the toolbar is hidden.
     assert.equal(await js(`(()=>{const t=document.querySelector('${P} .queue-toolbar:not(.overview-toolbar)');return !t || t.getClientRects().length === 0})()`), true, 'the queue waits behind the Overview');
 
-    step = 'counts';
-    // Merge counts its four Ready rows; the two Parked ones are not work.
-    await wait(`[...document.querySelectorAll('${P} .overview-count')].map(b=>b.textContent).join(' · ') === 'Merge4 · Answer2 · Review7 · Fix2 · Waiting3'`);
-    assert.equal(await counts(), 'Merge4 · Answer2 · Review7 · Fix2 · Waiting3');
-    // The tab title counts the four action lanes only: 4 + 2 + 7 + 2, without Waiting or Parked.
-    const actions = await js<number>(`['merge','answer','review','fix'].reduce((n,l)=>n+Number(document.querySelector('${P} .overview-count[data-lane='+l+'] .overview-count-value').textContent),0)`);
-    assert.equal(actions, 15);
-    await wait(`document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(${actions})'`);
-    assert.ok(await js(`document.querySelector('${P} .overview-freshness, ${P} .queue-freshness time')?.textContent.startsWith('Checked')`), 'cached data says when it was checked');
-    // Lane headings are landmarks, in a fixed order, and Waiting starts collapsed.
-    const lanes = await js<string[]>(`[...document.querySelectorAll('${P} section.overview-lane[aria-labelledby]')].map(s=>document.getElementById(s.getAttribute('aria-labelledby')).textContent)`);
-    assert.deepEqual(lanes, ['Merge', 'Answer', 'Review', 'Fix', 'Waiting on others']);
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').getAttribute('aria-expanded')`), 'false');
-    assert.equal(await laneRows('waiting'), 0);
+    step = 'briefing';
+    // One plain sentence about people blocked on you, one about your own PRs. Built from the lanes, no model call.
+    await wait(`document.querySelector('${P} [data-overview-briefing]')?.textContent === ${JSON.stringify(BRIEFING)}`);
+    assert.equal(await js(`document.querySelector('${P} [data-overview-briefing]').getAttribute('role')`), 'status');
+    assert.ok(await js(`document.querySelector('${P} .queue-freshness')?.textContent.startsWith('Checked')`), 'cached data says when it was checked');
 
-    step = 'merge-reasons';
-    // The lane heading keeps the whole lane honest: Ready, then Parked.
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-lane-total').textContent`), '4 · 2 parked');
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-lane-total').getAttribute('aria-label')`), 'Merge: 4 ready, 2 parked. Open all 6 in the review queue');
-    // Each Ready row says why it can merge, in the reason slot.
-    const notes = (selector: string) => js<string[]>(`[...(document.querySelector(${JSON.stringify(selector)})?.closest('.overview-row')?.querySelectorAll('[data-merge-note]') ?? [])].map(n=>n.textContent)`);
-    assert.deepEqual(await notes(row('merge', 'klang/engine', 301)), ['Approved by lena']);
-    assert.deepEqual(await notes(row('merge', 'klang/cli', 302)), ['Approved by sam and 1 other']);
-    assert.deepEqual(await notes(row('merge', 'acme/web', 303)), ['No review required', 'Behind main by 2 commits']);
-    const stackRow = await js<string>(`[...document.querySelectorAll('${P} #overview-lane-merge .overview-row')].find(r=>r.textContent.includes('#307'))?.querySelector('[data-overview-row]')?.getAttribute('data-overview-row') ?? ''`);
-    assert.ok(stackRow, 'the stack has a Merge row');
-    assert.deepEqual(await notes(`${P} [data-overview-row="${stackRow}"]`), ['Approved by ivar', 'Base #306 not merged']);
-    // You are never the person on a row: no author chip reads "oddur", in any lane.
-    await js(`document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
-    await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 3`);
-    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-row .github-author')].filter(a=>a.textContent.trim().toLowerCase()==='oddur').length`), 0);
-    assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-merge .overview-row .github-author').length`), 0, 'merge notes name the approver instead');
-    assert.ok(await js(`document.querySelector('${row('review', 'klang/engine', 321)}')?.closest('.overview-row')?.querySelector('.github-author')?.textContent.includes('maya')`), 'other people stay');
-    // A stale Waiting row asks whether to nudge, in words.
-    assert.equal(await js(`document.querySelector('${row('waiting', 'klang/cli', 341)}')?.closest('.overview-row')?.querySelector('.overview-stale')?.textContent`), 'Nudge?');
-    assert.ok(await js(`document.querySelector('${row('waiting', 'klang/cli', 341)}')?.closest('.overview-row')?.querySelector('.github-author')?.textContent.includes('lena')`), 'Waiting names the reviewer');
-    await js(`document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
-    await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 0`);
-    // Parked is collapsed by default, labelled with its reason.
-    const parkedToggle = `${P} #overview-lane-merge .overview-parked .overview-lane-toggle`;
-    assert.equal(await js(`document.querySelector('${parkedToggle}').getAttribute('aria-expanded')`), 'false');
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked-heading').textContent`), 'Parked · 2(mergeable, not approved or idle over 3 days)');
-    assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length`), 0);
-    assert.equal(await laneRows('merge'), 4);
-    await js(`document.querySelector('${parkedToggle}').click()`);
-    await wait(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 2`);
-    assert.deepEqual(await notes(row('merge', 'klang/cli', 304)), ['No review required']);
-    assert.deepEqual(await notes(row('merge', 'klang/engine', 305)), ['Approved by maya']);
-    // Opening Parked changes no count.
-    assert.equal(await counts(), 'Merge4 · Answer2 · Review7 · Fix2 · Waiting3');
-    await js(`document.querySelector('${parkedToggle}').click()`);
-    await wait(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 0`);
+    step = 'tiles';
+    // Four tiles in reading order: who is blocked on you, then your own PRs. Merge counts Ready rows only.
+    assert.equal(await tileCounts(), 'answer 2 · review 7 · merge 4 · fix 2');
+    const headings = await js<string[]>(`[...document.querySelectorAll('${P} section.overview-tile[aria-labelledby]')].map(s=>document.getElementById(s.getAttribute('aria-labelledby')).firstChild.textContent)`);
+    assert.deepEqual(headings, ['Answer', 'Review', 'Merge', 'Fix'], 'tiles are labelled regions with headings');
+    assert.equal(await js(`document.querySelector('${tile('fix')} h2').textContent`), 'Fix, 2, 2 merge conflicts');
+    // The tab title counts the four action lanes only: 2 + 7 + 4 + 2.
+    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(15)'");
+    // Summaries: the lane heading's words from the quieter pass.
+    assert.equal(await js(`document.querySelector('${tile('merge')} .overview-tile-summary').textContent`), '2 parked');
+    assert.equal(await js(`document.querySelector('${tile('fix')} .overview-tile-summary').textContent`), '2 merge conflicts');
+    assert.equal(await js(`document.querySelector('${tile('answer')} .overview-tile-summary')`), null, 'no summary when there is nothing to add');
+    // Top three, oldest first, each with its age.
+    assert.equal((await tileItems('review')).length, 3);
+    assert.deepEqual(await js(`[...document.querySelectorAll('${tile('review')} .overview-tile-title')].map(t=>t.textContent)`), ['Stream build logs to the dashboard', 'Add a dry-run flag to the release script', 'Batch telemetry writes per request']);
+    assert.deepEqual(await js(`[...document.querySelectorAll('${tile('review')} .overview-tile-age')].map(t=>t.textContent)`), ['5 d', '4 d', '3 d']);
+    assert.equal(await js(`document.querySelector('${tile('review')} .overview-tile-all').textContent`), 'All 7');
+    // Waiting on others and Parked are one slim line under the grid.
+    assert.equal(await js(`document.querySelector('${P} .overview-others').textContent`), 'Waiting on others 3·Parked 2');
+    // The inbox structure is gone: no count strip, no banded lanes, no "Show all" rows, no chips on items.
+    assert.equal(await js(`document.querySelectorAll('${P} .overview-counts, ${P} .overview-lane, ${P} .overview-show-all, ${P} .overview-row').length`), 0);
+    assert.equal(await js(`document.querySelectorAll('${P} .overview-tile .entity-badge, ${P} .overview-tile .github-author').length`), 0, 'metadata stays off the page');
 
-    step = 'distill';
-    // Repository and PR read as one muted token, with the full name on hover; a stack collapses its numbers.
-    const ref = (selector: string) => js<[string, string] | null>(`(()=>{const r=document.querySelector(${JSON.stringify(selector)})?.closest('.overview-row')?.querySelector('.overview-ref');return r?[r.textContent,r.title]:null})()`);
-    assert.deepEqual(await ref(row('merge', 'klang/engine', 301)), ['engine #301', 'klang/engine #301']);
-    assert.deepEqual(await js(`[...document.querySelectorAll('${P} #overview-lane-fix .overview-row')].map(r=>r.querySelector('.overview-ref').textContent)`), ['engine #331 +1', 'web #333']);
-    assert.equal(await js(`document.querySelectorAll('${P} .overview-row .entity-badge-repository, ${P} .overview-row .entity-badge-pr').length`), 0, 'no repository or PR chips');
-    // Size only where it helps decide: Review.
-    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-row .overview-size')].every(s=>s.closest('#overview-lane-review'))`), true);
-    assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-review .overview-row .overview-size').length`), 5);
-    // Fix: both rows have conflicts, so the heading says it once and only the stack's failing checks remain on a row.
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-fix .overview-lane-total').textContent`), '2 · 2 merge conflicts');
-    assert.deepEqual(await js(`[...document.querySelectorAll('${P} #overview-lane-fix .overview-row')].map(r=>[...r.querySelectorAll('.overview-reason')].map(e=>e.textContent).join('|'))`), ['Checks failed', '']);
-    // Answer has no majority, so each row keeps its reason.
-    assert.deepEqual(await js(`[...document.querySelectorAll('${P} #overview-lane-answer .overview-row .overview-reason')].map(e=>e.textContent)`), ['Changes requested', 'Awaiting your reply']);
+    step = 'grid-1280';
+    // 2×2 at 1280×800: Answer beside Review, Merge beside Fix, and nothing scrolls sideways.
+    {
+      const b = Object.fromEntries((await boxes()).map(([lane, left, top]) => [lane, { left, top }]));
+      assert.equal(b.answer.top, b.review.top);
+      assert.equal(b.merge.top, b.fix.top);
+      assert.ok(b.review.left > b.answer.left && b.merge.left === b.answer.left && b.fix.left === b.review.left, JSON.stringify(b));
+      assert.ok(b.merge.top > b.answer.top);
+      assert.ok(await noSideways());
+    }
+    await both('default-1280');
+
+    step = 'details';
+    // Repository, PR and reason are in each item's description, its tooltip, and on hover or focus at the tile's foot.
+    const description = (selector: string) => js<string | null>(`(()=>{const b=document.querySelector(${JSON.stringify(selector)});const d=b&&document.getElementById(b.getAttribute('aria-describedby'));return d&&b.closest('li').contains(d)?d.textContent:null})()`);
+    assert.equal(await description(row('answer', 'acme/web', 311)), 'Changes requested, web #311, from lena, waiting 4 days, stale');
+    assert.equal(await description(row('fix', 'acme/web', 333)), 'Merge conflicts, web #333, waiting 9 hours');
+    assert.equal(await js(`document.querySelector('${row('merge', 'klang/engine', 301)}').title`), 'Cache resolved module paths between builds\nengine #301 · Approved by lena · Stale');
+    const actionsOpacity = (selector: string) => js<string>(`getComputedStyle(document.querySelector(${JSON.stringify(selector)}).closest('li').querySelector('.overview-tile-actions')).opacity`);
+    assert.equal(await actionsOpacity(row('answer', 'acme/web', 311)), '0', 'no per-item buttons at rest');
+    assert.equal(await js(`document.querySelector('${tile('answer')} [data-overview-detail]').textContent`), '');
+    await js(`document.querySelector('${row('answer', 'acme/web', 311)}').focus()`);
+    await wait(`getComputedStyle(document.querySelector('${row('answer', 'acme/web', 311)}').closest('li').querySelector('.overview-tile-actions')).opacity === '1'`);
+    assert.equal(await js(`document.querySelector('${tile('answer')} [data-overview-detail]').textContent`), 'web #311 · Changes requested · from lena · Stale');
+    assert.equal(await js(`document.querySelector('${row('answer', 'acme/web', 311)}').closest('li').querySelector('[data-quick-action]').textContent`), 'Open thread');
+    assert.equal(await actionsOpacity(row('answer', 'klang/engine', 312)), '0', 'only the focused item shows its action');
+    assert.equal(await js(`getComputedStyle(document.querySelector('${row('answer', 'acme/web', 311)}').closest('li')).outlineStyle`), 'solid', 'focus is visible');
+    await both('focus-quick-action');
+    // Hover reveals the same, with the pointer.
+    if (!cdp.isAttached()) cdp.attach('1.3');
+    const point = await js<{ x: number; y: number }>(`(()=>{const r=document.querySelector('${stackRow('merge', 'acme/web', 306)}').getBoundingClientRect();return {x:r.left+20,y:r.top+r.height/2}})()`);
+    await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
+    await wait(`getComputedStyle(document.querySelector('${stackRow('merge', 'acme/web', 306)}').closest('li').querySelector('.overview-tile-actions')).opacity === '1'`);
+    assert.equal(await js(`document.querySelector('${stackRow('merge', 'acme/web', 306)}').closest('li').querySelector('[data-quick-action]').textContent`), 'Merge');
+    assert.match(await js<string>(`document.querySelector('${tile('merge')} [data-overview-detail]').textContent`), /^web #\d+( \+\d)? · \d+ of \d+ PRs · Approved by ivar/);
+    await capture('hover-quick-action-light');
+    await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 790 });
 
     step = 'harden';
-    // The keyboard help is given once, on the region; each row is described by its own words.
     assert.deepEqual(await js(`[...document.querySelectorAll('${P} [aria-describedby="overview-keyboard-help"]')].map(e=>e.className)`), ['overview']);
-    const description = (selector: string) => js<string | null>(`(()=>{const b=document.querySelector(${JSON.stringify(selector)});const d=b&&document.getElementById(b.getAttribute('aria-describedby'));return d&&b.closest('.overview-row').contains(d)?d.textContent:null})()`);
-    assert.equal(await description(row('answer', 'acme/web', 311)), 'Changes requested, web #311, from lena, waiting 4 days, stale');
-    // The heading carries "merge conflicts" for Fix; the row's description still says it.
-    assert.equal(await description(row('fix', 'acme/web', 333)), 'Merge conflicts, web #333, waiting 9 hours');
-    assert.equal(await description(row('merge', 'klang/engine', 301)), 'Approved by lena, engine #301, waiting 2 days, stale');
-    // Badges are out of the tab order: a row offers one stop, plus its quick action and menu.
-    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-row .entity-badge')].every(b=>b.tabIndex===-1)`), true);
-    assert.ok(await js(`document.querySelectorAll('${P} .overview-row .entity-badge').length`), 'people are still shown');
-    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-row')].every(r=>[...r.querySelectorAll('button, a[href], [tabindex]')].filter(e=>e.tabIndex>=0&&!e.disabled&&!e.closest('[data-overview-row]')).length<=2)`), true, 'only the quick action and the menu are tab stops');
-    assert.equal(await js(`document.querySelectorAll('${P} [data-overview-row][tabindex="0"]').length`), 1, 'one roving tab stop for the rows');
-    // The live region starts quiet: opening the Overview announces nothing.
+    assert.equal(await js(`document.querySelectorAll('${P} [data-overview-row][tabindex="0"]').length`), 4, 'one roving tab stop per tile');
+    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-tile-actions button')].every(b=>b.tabIndex===-1)`), true, 'actions and menus are out of the tab order');
     assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').textContent`), '');
     assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').getAttribute('aria-live')`), 'polite');
 
-    step = 'top-five';
-    assert.equal(await laneRows('review'), 5);
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-review .overview-show-all')?.textContent`), 'Show all 7');
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-show-all')`), null);
-    // Oldest first, with waiting time and the stale label in words.
-    const review = await js<string[]>(`[...document.querySelectorAll('${P} #overview-lane-review .overview-title')].map(t=>t.textContent)`);
-    assert.equal(review[0], 'Stream build logs to the dashboard');
-    assert.match(await js<string>(`document.querySelector('${P} #overview-lane-answer .overview-wait')?.textContent`), /^4 dStale$/);
-    assert.ok(await js(`document.querySelector('${P} #overview-lane-review .overview-row')?.textContent.includes('Explanation ready')`), 'review rows mark a ready explanation');
-    assert.ok(await js(`document.querySelector('${P} #overview-lane-fix .overview-row')?.textContent.includes('2 of 2 PRs') || document.querySelector('${P} #overview-lane-fix .overview-row')?.textContent.includes('2 PRs')`), 'a stack is one row with its member count');
-    assert.equal(await js(`document.querySelectorAll('${P} .overview-row.is-new').length`), 0, 'the first visit marks nothing new');
-    await both('default-1280');
-
     step = 'renders';
-    // A sync tick that changes nothing renders no row.
+    // A sync tick that changes nothing renders no item.
     await js('window.__countRenders = true; window.__overviewRowRenders = 0; window.dispatchEvent(new Event("fixture-workbench-change"))');
     await new Promise((r) => setTimeout(r, 1500));
-    assert.equal(await js('window.__overviewRowRenders'), 0, 'unchanged rows do not render again');
+    assert.equal(await js('window.__overviewRowRenders'), 0, 'unchanged items do not render again');
     await js('window.__countRenders = false');
 
-    step = 'heavy';
-    // The real load from the critique: sixteen mergeable PRs, twelve of them unapproved and idle.
-    await js('window.fixtureOverview.heavy()');
-    await wait(`document.querySelector('${P} #overview-lane-merge .overview-lane-total')?.textContent.startsWith('4 · 12 parked')`);
-    assert.equal(await counts(), 'Merge4 · Answer2 · Review7 · Fix18 · Waiting5', 'parked merges never reach the strip');
-    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(31)'");
-    // A census of what the rows show, with every group open: stale flags and metadata chips.
-    {
-      await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click(); document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
-      await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 5 && document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 5`);
-      const census = await js<Record<string, number>>(`(()=>{const rows=[...document.querySelectorAll('${P} .overview-row')];const n=(s)=>rows.reduce((t,r)=>t+r.querySelectorAll(s).length,0);return {rows:rows.length,stale:n('.overview-stale'),amberWaits:rows.filter(r=>r.querySelector('.overview-wait')&&getComputedStyle(r.querySelector('.overview-wait')).color!==getComputedStyle(r.querySelector('.overview-size, .overview-row-meta')).color).length,borderedChips:n('.entity-badge'),authors:n('.github-author'),reasons:n('.overview-reason, .overview-merge-note'),sizes:n('.overview-size'),metaItems:rows.reduce((t,r)=>t+r.querySelector('.overview-row-meta').children.length,0)}})()`);
-      console.log(`Overview census (heavy, every group open): ${JSON.stringify(census)}`);
-      // Quieter: ages are muted text; a flag is always a word, never colour alone, and only outliers carry one.
-      assert.equal(census.amberWaits, 0, 'no age is coloured');
-      // Before this pass, 17 of these 26 rows were flagged. Review counts working days, so the number moves by a row
-      // or two with the weekday; the five oldest Fix rows are genuinely past their limit.
-      assert.ok(census.stale <= 12, `fewer rows are flagged (${census.stale})`);
-      assert.ok(await js(`[...document.querySelectorAll('${P} .overview-stale')].every(e=>['Stale','Nudge?'].includes(e.textContent) && !!e.title)`), 'every flag is a labelled word');
-      assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-stale').length`), 0, 'parked rows are never flagged');
-      assert.equal(await js(`document.querySelector('${P} #overview-lane-fix .overview-lane-total').textContent`), '18 · 15 checks failed · 15 over a week');
-      // Distill: no bordered repository or PR chips, size only in Review, and fewer things per row than before (115).
-      assert.equal(census.borderedChips, census.authors, 'only people remain as chips');
-      assert.equal(census.sizes, await js<number>(`document.querySelectorAll('${P} #overview-lane-review .overview-row').length`));
-      assert.ok(census.metaItems < 80, `fewer metadata items (${census.metaItems})`);
-      await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click(); document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
-      await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 0`);
-    }
-    assert.equal(await laneRows('merge'), 4, 'Parked starts collapsed');
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').textContent`), 'Parked · 12');
-    await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
-    await both('heavy-parked-collapsed-1280', clarifyDir);
-    // After clarify, quieter, distill and harden: the heavy load at 1280 and 760 wide.
-    await both('heavy-1280', passesDir);
-    win.setSize(760, 800);
-    await new Promise((r) => setTimeout(r, 400));
-    assert.ok(await js(`(()=>{const b=document.querySelector('${P} .overview-body');return b.scrollWidth <= b.clientWidth + 1})()`), 'no sideways scrolling at 760');
-    await both('heavy-760', passesDir);
-    await js(`(()=>{const b=document.querySelector('${P} .overview-body');const h=document.querySelector('${P} #overview-lane-fix');b.scrollTop+=h.getBoundingClientRect().top-b.getBoundingClientRect().top})()`);
-    await both('heavy-760-fix', passesDir);
-    win.setSize(1280, 800);
-    await new Promise((r) => setTimeout(r, 400));
-    await js(`(()=>{const b=document.querySelector('${P} .overview-body');const h=document.querySelector('${P} #overview-lane-fix');b.scrollTop+=h.getBoundingClientRect().top-b.getBoundingClientRect().top})()`);
-    await both('heavy-1280-fix', passesDir);
-    await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
-    await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click()`);
-    await wait(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 5`);
-    assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-show-all')?.textContent`), 'Show all 16 in Merge');
-    await js(`(()=>{const b=document.querySelector('${P} .overview-body');const h=document.querySelector('${P} #overview-lane-merge .overview-parked');b.scrollTop+=h.getBoundingClientRect().top-b.getBoundingClientRect().top-120})()`);
-    await both('heavy-parked-open-1280', clarifyDir);
-    await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click()`);
-    await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
-    await js('window.fixtureOverview.restore()');
-    await wait(`document.querySelector('${P} #overview-lane-merge .overview-lane-total')?.textContent === '4 · 2 parked'`);
-
     step = 'keyboard';
-    // Ready merges, oldest first: #301 (approved 2 d ago), then #303 (updated 20 h ago).
+    // j/k and the arrows move within a tile; Tab moves to the tile's "All N", then to the next tile.
     await js('document.activeElement?.blur()');
+    const answer = await tileItems('answer');
+    const review = await tileItems('review');
     await key('j');
-    assert.equal(await focusedRow(), 'merge|https://github.com/klang/engine/pull/301');
-    assert.equal(await js("getComputedStyle(document.activeElement).outlineStyle"), 'solid', 'focus is visible');
+    assert.equal(await focusedRow(), answer[0]);
     await key('j');
-    assert.equal(await focusedRow(), 'merge|https://github.com/acme/web/pull/303');
+    assert.equal(await focusedRow(), answer[1]);
+    await key('j');
+    assert.equal(await focusedRow(), answer[1], 'j stays within the tile');
     await key('k');
-    assert.equal(await focusedRow(), 'merge|https://github.com/klang/engine/pull/301');
-    // Collapsed Parked rows are skipped: four Ready rows, then Answer.
-    for (let i = 0; i < 4; i++) await key('ArrowDown');
-    assert.equal(await focusedRow(), 'answer|https://github.com/acme/web/pull/311');
+    assert.equal(await focusedRow(), answer[0]);
+    await key('End');
+    assert.equal(await focusedRow(), answer[1]);
+    await key('Tab');
+    assert.equal(await js('document.activeElement?.className'), 'overview-tile-all');
+    await key('Tab');
+    assert.equal(await focusedRow(), review[0], 'Tab reaches the next tile');
+    await key('ArrowDown');
+    await key('ArrowDown');
+    assert.equal(await focusedRow(), review[2]);
+    await key('Tab', 8);
+    await key('Tab', 8);
+    assert.equal(await focusedRow(), answer[1], 'Shift+Tab returns to the tile’s last focused item');
     await both('keyboard-focus');
 
+    step = 'heavy';
+    // The real load from the critique: sixteen mergeable PRs (twelve parked) and eighteen to fix.
+    await js('window.fixtureOverview.heavy()');
+    await wait(`document.querySelector('${tile('fix')} .overview-tile-count')?.textContent === '18'`);
+    assert.equal(await tileCounts(), 'answer 2 · review 7 · merge 4 · fix 18', 'parked merges never reach a count');
+    assert.equal(await briefing(), 'lena and owen are waiting on your reply, and 7 reviews are waiting on you. 4 PRs are ready to merge, and 15 have failed checks.');
+    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(31)'");
+    assert.equal(await js(`document.querySelector('${tile('fix')} .overview-tile-summary').textContent`), '15 checks failed · 15 over a week');
+    assert.equal(await js(`document.querySelector('${tile('merge')} .overview-tile-summary').textContent`), '12 parked');
+    assert.equal(await js(`document.querySelector('${P} .overview-others').textContent`), 'Waiting on others 5·Parked 12');
+    assert.equal((await tileItems('fix')).length, 3);
+    await js(`document.activeElement?.blur(); document.querySelector('${P} .overview-body').scrollTop = 0`);
+    await both('heavy-1280');
+    await resize(760);
+    {
+      // One column when narrow, in reading order, with nothing scrolling sideways.
+      const b = await boxes();
+      assert.deepEqual(b.map(([lane]) => lane), ['answer', 'review', 'merge', 'fix']);
+      assert.ok(b.every(([, left]) => left === b[0][1]), `one column: ${JSON.stringify(b)}`);
+      assert.ok(b.every(([, , top], i) => i === 0 || top > b[i - 1][2]));
+      assert.ok(await noSideways(), 'no sideways scrolling at 760');
+    }
+    await both('heavy-760');
+    await js(`(()=>{const b=document.querySelector('${P} .overview-body');b.scrollTop=b.scrollHeight})()`);
+    await both('heavy-760-end');
+    await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
+    await resize(1280);
+    await js('window.fixtureOverview.restore()');
+    await wait(`document.querySelector('${tile('fix')} .overview-tile-count')?.textContent === '2'`);
+    // The burst settles into one announcement before the next change.
+    await wait(`document.querySelector('${P} [data-overview-announcement]').textContent.includes('Fix 2, was 18.')`);
+
     step = 'live-update';
-    // Live updates change rows in place: a renamed PR and a new failing PR, while focus stays on the row.
+    // Live updates change items in place: a renamed PR and a new failing PR, while focus stays on the item.
     await js(`document.querySelector('${row('review', 'klang/cli', 322)}').focus()`);
-    await key('j');
-    await key('k');
     const focused = await focusedRow();
-    assert.equal(focused, 'review|https://github.com/klang/cli/pull/322');
     const scroll = await js<number>(`document.querySelector('${P} .overview-body').scrollTop`);
-    await js("window.__overviewRowRenders = 0; window.fixtureOverview.rename(322, 'Add a dry-run flag to every release script'); window.fixtureOverview.addFailing()");
-    await wait(`document.querySelector('${row('review', 'klang/cli', 322)}')?.textContent.includes('every release script') && !!document.querySelector('${row('fix', 'klang/cli', 334)}')`);
-    assert.equal(await focusedRow(), focused, 'focus stays on the row that changed');
+    await new Promise((r) => setTimeout(r, 200));
+    await js("window.__countRenders = true; window.__overviewRowRenders = 0; window.__overviewRenderedRows = []; window.fixtureOverview.rename(322, 'Add a dry-run flag to every release script'); window.fixtureOverview.addFailing()");
+    await wait(`document.querySelector('${row('review', 'klang/cli', 322)}')?.textContent.includes('every release script') && document.querySelector('${tile('fix')} .overview-tile-count').textContent === '3'`);
+    assert.equal(await focusedRow(), focused, 'focus stays on the item that changed');
     assert.equal(await js<number>(`document.querySelector('${P} .overview-body').scrollTop`), scroll, 'nothing scrolls');
-    assert.ok((await js<number>('window.__overviewRowRenders')) <= 3, 'only the changed and new rows render');
-    assert.match(await counts(), /Fix3/);
-    // The count change is announced once, politely, after the burst settles.
+    // The renamed item, the new one, and Fix items whose words changed with the lane's new majority reason. Nothing in
+    // the tiles that did not change.
+    const rendered = await js<string[]>('window.__overviewRenderedRows');
+    assert.ok(rendered.every((id) => id.startsWith('fix|') || id === `review|${focused?.split('|')[1]}`), `only changed items render: ${rendered.join(', ')}`);
+    await js('window.__countRenders = false');
     await wait(`document.querySelector('${P} [data-overview-announcement]').textContent === 'Fix 3, was 2.'`);
+    assert.match(await briefing(), /and 2 have failed checks\.$/);
 
     step = 'merge';
     // Merge goes through the existing confirmation: nothing is written until it is confirmed.
@@ -295,11 +269,11 @@ void app.whenReady().then(async () => {
     assert.deepEqual((await writes()).filter((w) => w.kind === 'merge'), [{ kind: 'merge', url: 'https://github.com/klang/engine/pull/301' }]);
     await wait(`!document.querySelector('${row('merge', 'klang/engine', 301)}')`);
     await wait(`[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('Merged #301 on GitHub.'))`);
-    assert.match(await counts(), /^Merge3 /);
+    await wait(`document.querySelector('${tile('merge')} .overview-tile-count').textContent === '3'`);
 
     step = 'rerun';
     // Rerun failed goes through the existing rerun confirmation.
-    await js(`document.querySelector('${P} #overview-lane-fix .overview-row [data-quick-action]').click()`);
+    await js(`document.querySelector('${stackRow('fix', 'klang/engine', 331)}').closest('li').querySelector('[data-quick-action]').click()`);
     await wait("[...document.querySelectorAll('[role=dialog]')].some(d=>d.textContent.includes('Re-run failed and cancelled checks') && d.textContent.includes('test (linux)'))");
     await js("[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent==='Re-run workflows').click()");
     await wait('window.fixtureOverview.reruns.length === 1');
@@ -308,17 +282,17 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('[role=dialog]')");
 
     step = 'open-row';
-    // A row opens where the notification for its reason opens: a new tab, or the tab already showing the PR.
+    // An item opens where the notification for its reason opens: a new tab, or the tab already showing the PR.
     const tabs = await tabCount();
-    await js(`document.querySelector('${P} #overview-lane-fix .overview-row-main').click()`);
+    await js(`document.querySelector('${stackRow('fix', 'klang/engine', 331)}').click()`);
     await wait(`${activeSection}.startsWith('Checks')`, 400);
     assert.equal(await tabCount(), tabs + 1);
     await firstTab();
-    await js(`document.querySelector('${P} #overview-lane-fix .overview-row-main').click()`);
+    await js(`document.querySelector('${stackRow('fix', 'klang/engine', 331)}').click()`);
     await wait(`${activeSection}.startsWith('Checks')`, 400);
     assert.equal(await tabCount(), tabs + 1, 'the tab that shows the PR is reused');
     await firstTab();
-    // Enter opens the focused row: changes requested land in Feedback.
+    // Enter opens the focused item: changes requested land in Feedback.
     await js(`document.querySelector('${row('answer', 'acme/web', 311)}').focus()`);
     await key('Enter');
     await wait(`${activeSection}.startsWith('Feedback')`, 400);
@@ -326,43 +300,52 @@ void app.whenReady().then(async () => {
     await firstTab();
 
     step = 'menu';
-    // Mark as read and Snooze live in the row menu.
+    // Mark as read, Snooze and copying live in the item menu; Shift+F10 opens it from the item.
     await menuAction(js, 'Actions for PR #312', 'Mark as read');
     await wait("window.fixtureOverview.writes.some(w=>w.kind==='mark-read' && w.url.endsWith('/312'))");
-    // Copying moved from the row's chips to its menu.
     await js("Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (text) => { (window.__copied ??= []).push(text); } })");
     await menuAction(js, 'Actions for PR #312', 'Copy link');
-    await menuAction(js, 'Actions for PR #312', 'Copy repository');
-    await menuAction(js, 'Actions for PR #312', 'Copy PR number');
-    await wait('window.__copied?.length === 3');
-    assert.deepEqual(await js('window.__copied'), ['https://github.com/klang/engine/pull/312', 'klang/engine', '#312']);
-    await wait("[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('PR number copied'))");
+    await wait('window.__copied?.length === 1');
+    assert.deepEqual(await js('window.__copied'), ['https://github.com/klang/engine/pull/312']);
     await js(`document.querySelectorAll('.app-toast [aria-label="Dismiss notification"]').forEach(b=>b.click())`);
-    await menuAction(js, 'Actions for PR #302', 'Snooze PR…');
+    await js(`document.querySelector('${row('answer', 'klang/engine', 312)}').focus()`);
+    await key('F10', 8);
+    await wait("[...document.querySelectorAll('[role=menuitem]')].some(b=>b.textContent==='Snooze PR…')");
+    await key('Escape');
+    await wait("!document.querySelector('[role=menuitem]')");
+    // Z snoozes the focused item; focus moves to the next one in its tile.
+    await js(`document.querySelector('${row('merge', 'acme/web', 303)}').focus()`);
+    await key('z');
     await wait("!!document.querySelector('.snooze-picker .snooze-option')");
     await js("document.querySelector('.snooze-picker .snooze-option').click()");
-    await wait(`!document.querySelector('${row('merge', 'klang/cli', 302)}')`);
-    await wait(`document.querySelector('${P} #overview-lane-merge .overview-lane-total')?.textContent === '2 · 2 parked'`);
-    assert.match(await counts(), /^Merge2 /);
+    await wait(`!document.querySelector('${row('merge', 'acme/web', 303)}')`);
+    await wait(`document.querySelector('${tile('merge')} .overview-tile-count').textContent === '2'`);
 
-    step = 'show-all';
-    // "Show all" opens the queue filtered to the lane; the switch is quick.
+    step = 'open-lane';
+    // A tile's "All N" opens the whole queue grouped by Action, scrolled to that group, with its heading focused.
     let started = Date.now();
-    await js(`document.querySelector('${P} #overview-lane-review .overview-show-all').click()`);
-    await wait(`document.querySelectorAll('${P} .queue-item').length === 7 && getComputedStyle(document.querySelector('${P} .overview')).display === 'none'`);
+    await js(`document.querySelector('${tile('review')} .overview-tile-all').click()`);
+    await wait(`getComputedStyle(document.querySelector('${P} .overview')).display === 'none' && document.activeElement?.closest('[data-queue-group]')?.dataset.queueGroup === 'action:review'`);
     const toQueue = Date.now() - started;
-    assert.ok(await js(`[...document.querySelectorAll('${P} .queue-filter-chip')].some(c=>c.textContent==='Overview: Review')`), 'the lane is a removable queue filter');
-    await capture('show-all-review-light');
+    assert.deepEqual(await js(`[...document.querySelectorAll('${P} .queue-group-label')].map(e=>e.textContent)`), ['Answer', 'Review', 'Merge', 'Fix', 'Waiting on others', 'Parked']);
+    assert.equal(await js(`document.querySelector('${P} [data-queue-group="action:review"] .queue-group-count').textContent`), '7');
+    assert.equal(await js(`document.querySelector('${P} [data-queue-group-by]').dataset.queueGroupBy`), 'action');
+    assert.equal(await js(`document.querySelectorAll('${P} .queue-filter-chip').length`), 0, 'the whole queue, not a lane filter');
+    assert.ok(await js(`(()=>{const h=document.querySelector('${P} [data-queue-group="action:review"]').getBoundingClientRect();const l=document.querySelector('${P} .queue-list').getBoundingClientRect();return Math.abs(h.top-l.top)<4})()`), 'the group is at the top');
+    await capture('open-lane-review-light');
     started = Date.now();
     await click(sidebar('Overview'));
-    await wait(`getComputedStyle(document.querySelector('${P} .overview')).display !== 'none' && !!document.querySelector('${P} .overview-row')`);
+    await wait(`getComputedStyle(document.querySelector('${P} .overview')).display !== 'none' && !!document.querySelector('${P} [data-overview-row]')`);
     const toOverview = Date.now() - started;
     console.log(`Home tab switch: queue ${toQueue} ms, Overview ${toOverview} ms`);
     assert.ok(toQueue < 2000 && toOverview < 2000, `home tab switches stay quick (${toQueue} ms, ${toOverview} ms)`);
-    // The lane total opens the same filtered queue.
-    await js(`document.querySelector('${P} #overview-lane-fix .overview-lane-total').click()`);
-    await wait(`document.querySelectorAll('${P} .queue-item').length === 3 && [...document.querySelectorAll('${P} .queue-filter-chip')].some(c=>c.textContent==='Overview: Fix')`);
-    // A lane link opens the filtered queue too.
+    // Clicking the tile itself, on its count, opens it too; so does "Waiting on others" under the grid.
+    await js(`document.querySelector('${tile('fix')} .overview-tile-count').click()`);
+    await wait(`document.activeElement?.closest('[data-queue-group]')?.dataset.queueGroup === 'action:fix'`);
+    await click(sidebar('Overview'));
+    await js(`document.querySelector('${P} .overview-others-link[data-group="waiting"]').click()`);
+    await wait(`document.activeElement?.closest('[data-queue-group]')?.dataset.queueGroup === 'action:waiting'`);
+    // A lane link still opens the filtered queue.
     await click(sidebar('Overview'));
     await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:${JSON.stringify({ source: 'notification', target: { kind: 'queue', filters: { lane: 'answer' } } })}}))`);
     await wait(`[...document.querySelectorAll('${P} .queue-filter-chip')].some(c=>c.textContent==='Overview: Answer') && document.querySelectorAll('${P} .queue-item').length === 2`);
@@ -372,63 +355,55 @@ void app.whenReady().then(async () => {
     // Leaving the Overview saves the visit. A PR that appears meanwhile is new when you come back; the rest are not.
     await click(sidebar('Review queue'));
     assert.equal(await js("localStorage.getItem('gnosis-home-tab:v1')"), 'queue', 'the chosen home tab is remembered');
-    await js("window.fixtureOverview.addFailing(335, 'Sign release artifacts')");
+    // A PR failing for two days, so it is among Fix's three oldest.
+    await js("window.fixtureOverview.addFailing(335, 'Sign release artifacts', 'klang/cli', 2 * 86400000)");
     await click(sidebar('Overview'));
-    assert.equal(await js("localStorage.getItem('gnosis-home-tab:v1')"), 'overview');
-    await wait(`!!document.querySelector('${row('fix', 'klang/cli', 335)}')?.closest('.overview-row.is-new')`);
-    assert.equal(await js(`!!document.querySelector('${row('fix', 'klang/cli', 334)}')?.closest('.overview-row.is-new')`), false);
-    assert.equal(await js(`document.querySelectorAll('${P} .overview-row.is-new').length`), 1);
-    assert.equal(await js(`document.querySelector('${P} .overview-row.is-new .pr-unread-dot')?.getAttribute('aria-label')`), 'New since your last visit');
-    await js(`document.querySelectorAll('.app-toast [aria-label="Dismiss notification"]').forEach(b=>b.click()); (()=>{const b=document.querySelector('${P} .overview-body');const r=document.querySelector('${P} .overview-row.is-new');b.scrollTop+=r.getBoundingClientRect().top-b.getBoundingClientRect().top-200})()`);
+    await wait(`!!document.querySelector('${row('fix', 'klang/cli', 335)}')?.closest('.overview-tile-item.is-new')`);
+    assert.equal(await js(`document.querySelectorAll('${P} .overview-tile-item.is-new').length`), 1, 'only the new PR is new');
+    assert.equal(await js(`document.querySelector('${P} .overview-tile-item.is-new .pr-unread-dot')?.getAttribute('aria-label')`), 'New since your last visit');
     await both('new-marker');
 
-    step = 'jump';
-    // A count jumps to its lane; Waiting opens.
-    await js(`document.querySelector('${P} .overview-count[data-lane=waiting]').click()`);
-    await wait(`document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').getAttribute('aria-expanded') === 'true'`);
-    await wait("document.activeElement?.classList.contains('overview-lane-toggle')");
-    assert.equal(await laneRows('waiting'), 3);
-    assert.equal(await js('document.scrollingElement.scrollTop + document.querySelector(".workbench-body")?.scrollTop'), 0, 'only the Overview list scrolls');
-    await both('waiting-open');
-
     step = 'long-names';
-    // A very long title and repository truncate, with the full text on hover, and nothing scrolls sideways.
+    // A very long title truncates, with the full text on hover, and nothing scrolls sideways.
     const longTitle = 'Rework the release pipeline so every artifact is signed, verified against the manifest, and uploaded once per platform with retries';
-    await js(`window.fixtureOverview.addFailing(336, ${JSON.stringify(longTitle)}, 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while')`);
-    await wait(`!!document.querySelector('${row('fix', 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while', 336)}')`);
-    const longRow = `document.querySelector('${row('fix', 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while', 336)}').closest('.overview-row')`;
-    assert.equal(await js(`${longRow}.querySelector('.overview-title').title`), longTitle);
-    assert.equal(await js(`${longRow}.querySelector('.overview-ref').title`), 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while #336');
-    assert.equal(await js(`(()=>{const r=${longRow}.querySelector('.overview-ref-repo');return r.scrollWidth>r.clientWidth})()`), true, 'the repository name truncates');
-    assert.ok(await js(`(()=>{const b=document.querySelector('${P} .overview-body');return b.scrollWidth <= b.clientWidth + 1})()`), 'no sideways scrolling with long names');
+    await js(`window.fixtureOverview.rename(321, ${JSON.stringify(longTitle)})`);
+    await wait(`document.querySelector('${row('review', 'klang/engine', 321)}')?.textContent === ${JSON.stringify(longTitle)}`);
+    assert.ok((await js<string>(`document.querySelector('${row('review', 'klang/engine', 321)}').title`)).startsWith(longTitle));
+    assert.equal(await js(`(()=>{const t=document.querySelector('${row('review', 'klang/engine', 321)}');return t.scrollWidth>t.clientWidth})()`), true, 'the title truncates');
+    assert.ok(await noSideways(), 'no sideways scrolling with long names');
+    await resize(760);
+    assert.ok(await noSideways(), 'no sideways scrolling when narrow');
+    await resize(1280);
 
-    step = 'narrow';
-    win.setSize(760, 800);
+    step = 'light-day';
+    // A light day: one reply, two reviews, one merge.
+    await js("window.fixtureOverview.rename(321, 'Stream build logs to the dashboard'); window.fixtureOverview.only([311, 321, 323, 302])");
+    await wait(`document.querySelectorAll('${P} [data-overview-row]').length === 4`);
+    assert.equal(await briefing(), 'lena is waiting on your reply, and 2 reviews are waiting on you. 1 PR is ready to merge.');
+    // An empty tile keeps its place: a 0 and one line.
+    assert.equal(await tileCounts(), 'answer 1 · review 2 · merge 1 · fix 0');
+    assert.equal(await js(`document.querySelector('${tile('fix')} .overview-tile-summary').textContent`), 'Nothing to fix');
+    assert.equal(await js(`document.querySelector('${tile('fix')} .overview-tile-all')`), null);
+    await js(`document.querySelectorAll('.app-toast [aria-label="Dismiss notification"]').forEach(b=>b.click())`);
     await new Promise((r) => setTimeout(r, 400));
-    assert.ok(await js(`(()=>{const b=document.querySelector('${P} .overview-body');return b.scrollWidth <= b.clientWidth + 1})()`), 'no sideways scrolling when narrow');
-    await both('narrow-760');
-    win.setSize(1280, 800);
-    await new Promise((r) => setTimeout(r, 300));
-
-    step = 'empty';
-    await js('window.fixtureOverview.only([321])');
-    await wait(`document.querySelectorAll('${P} .overview-row').length === 1`);
-    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-empty')].map(e=>e.textContent).join('|')`), 'Nothing to merge|Nothing to answer|Nothing to fix|Nothing waiting on others');
-    await both('empty-lanes');
+    await both('light-day-1280');
+    await resize(760);
+    await both('light-day-760');
+    await resize(1280);
 
     step = 'all-clear';
     await js('window.fixtureOverview.only([341])');
-    await wait(`!!document.querySelector('${P} .overview-clear')`);
-    assert.equal(await js(`document.querySelector('${P} .overview-clear').textContent`), 'All clear. Nothing needs you right now.');
-    assert.equal(await js(`document.querySelectorAll('${P} section.overview-lane').length`), 1, 'only Waiting remains');
+    await wait(`document.querySelector('${P} [data-overview-briefing]')?.textContent.startsWith('Nothing needs you')`);
+    assert.equal(await briefing(), 'Nothing needs you right now. 1 of your PRs is waiting on others.');
+    assert.equal(await tileCounts(), 'answer 0 · review 0 · merge 0 · fix 0', 'the grid stays');
+    assert.deepEqual(await js(`[...document.querySelectorAll('${P} .overview-tile-summary')].map(e=>e.textContent)`), ['Nothing to answer', 'Nothing to review', 'Nothing to merge', 'Nothing to fix']);
     // No work, no count: Waiting on others is not counted in the tab title.
     await wait("!document.querySelector('.workspace-tab .workspace-tab-count')");
     assert.equal(await js("document.querySelector('.workspace-tab-select').getAttribute('title').split('\\n')[0]"), 'Overview');
-    await both('all-clear');
-    win.setSize(760, 800);
-    await new Promise((r) => setTimeout(r, 300));
-    await both('all-clear-narrow');
-    win.setSize(1280, 800);
+    await both('all-clear-1280');
+    await resize(760);
+    await both('all-clear-760');
+    await resize(1280);
 
     win.destroy();
     app.exit(0);

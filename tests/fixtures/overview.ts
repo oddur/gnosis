@@ -280,8 +280,8 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
       writes,
       reruns,
       /** GitHub reports a new failing PR of yours: it joins Fix. */
-      addFailing: (number = 334, title = 'Bundle the shell completions', repo = 'klang/cli') => {
-        const member = add(pr({ number, repo, title, created: 2 * HOUR, updated: 30 * 60_000 }), { checks: 'failure' });
+      addFailing: (number = 334, title = 'Bundle the shell completions', repo = 'klang/cli', updated = 30 * 60_000) => {
+        const member = add(pr({ number, repo, title, created: updated + 90 * 60_000, updated }), { checks: 'failure' });
         items.push(single(member));
         changed();
       },
