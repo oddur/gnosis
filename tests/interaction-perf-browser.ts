@@ -333,8 +333,16 @@ void app.whenReady().then(async () => {
       }
     };
     const listeners = async () => {
-      await win.webContents.debugger.sendCommand('HeapProfiler.collectGarbage');
-      const heap = (await win.webContents.debugger.sendCommand('Runtime.getHeapUsage')) as { usedSize: number };
+      // One pass can leave megabytes for the next on a busy runner; collect until a pass frees under 1 MB.
+      let heap = { usedSize: Infinity };
+      for (let pass = 0; pass < 9; pass++) {
+        await win.webContents.debugger.sendCommand('HeapProfiler.collectGarbage');
+        const next = (await win.webContents.debugger.sendCommand('Runtime.getHeapUsage')) as { usedSize: number };
+        const freed = heap.usedSize - next.usedSize;
+        heap = next;
+        if (freed < 1e6) break;
+        await sleep(50);
+      }
       const fiber = "(()=>{const r=document.getElementById('root');const k=Object.keys(r).find(k=>k.startsWith('__reactContainer'));return Object.getPrototypeOf(r[k])})()";
       return {
         ...(await js<{ receivers: number; watches: number }>('({receivers:window.syncFixture.receivers.size,watches:window.syncFixture.subscriptions.size})')),
