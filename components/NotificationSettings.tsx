@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Button } from './ui/button';
-import type { NotificationEventType, SavedNotificationPreferences } from '../lib/notification-settings';
-import { normalizeNotificationPreferences, isPaused } from '../lib/notification-settings';
+import type { NotificationEventType, RepositoryNotificationLevel, SavedNotificationPreferences } from '../lib/notification-settings';
+import {
+  normalizeBotLogins,
+  normalizeNotificationPreferences,
+  isPaused,
+  REPOSITORY_NOTIFICATION_LABEL,
+  REPOSITORY_NOTIFICATION_LEVELS,
+} from '../lib/notification-settings';
+import { normalizeRepositorySettings, repositoryKey, type RepositorySettingsMap } from '../lib/repository-settings';
+import { SearchableSelect } from './SearchableSelect';
+import { RepositoryMark } from './RepositoryAppearance';
 import { notificationMissedHint, notificationSettingsLabel } from '../lib/desktop-setup';
 import { useSystemSettingsPanes } from './DesktopSetup';
 
@@ -14,9 +23,16 @@ export function NotificationSettings({
   Row,
   Toggle,
   onDesktopSetup,
+  repositorySettings = {},
+  watchedRepos = [],
+  onRepositorySettingsChange,
 }: {
   desktop: boolean;
   value: SavedNotificationPreferences;
+  /** Per-repository levels live in the repository settings. */
+  repositorySettings?: RepositorySettingsMap;
+  watchedRepos?: string[];
+  onRepositorySettingsChange?: (next: RepositorySettingsMap) => void;
   onDesktopChange: (next: boolean) => void;
   onChange: (next: SavedNotificationPreferences) => void;
   Row: (props: { label: string; description?: string; children: React.ReactNode }) => React.ReactNode;
@@ -63,6 +79,26 @@ export function NotificationSettings({
       />
     </Row>
   );
+  const [botDraft, setBotDraft] = useState('');
+  const [botError, setBotError] = useState('');
+  const levelOptions = REPOSITORY_NOTIFICATION_LEVELS.map((level) => ({ value: level, label: REPOSITORY_NOTIFICATION_LABEL[level] }));
+  const exceptions = Object.entries(repositorySettings)
+    .flatMap(([repo, settings]) => (settings.notifications ? [[repo, settings.notifications] as const] : []))
+    .sort(([a], [b]) => a.localeCompare(b));
+  const setLevel = (repo: string, level: RepositoryNotificationLevel | undefined) => {
+    const key = repositoryKey(repo);
+    onRepositorySettingsChange?.(normalizeRepositorySettings({ ...repositorySettings, [key]: { ...repositorySettings[key], notifications: level } }));
+  };
+  const addBot = () => {
+    const [login] = normalizeBotLogins([botDraft]);
+    if (!login) {
+      setBotError('Enter a GitHub login, such as coderabbitai[bot].');
+      return;
+    }
+    setBotError('');
+    setBotDraft('');
+    onChange({ ...value, allowedBots: normalizeBotLogins([...value.allowedBots, login]) });
+  };
   const pause = async (next: boolean) => {
     try {
       const saved = await window.electronAPI.pauseNotifications(next);
@@ -142,6 +178,8 @@ export function NotificationSettings({
         <h2 id="notifications-reviews-title">Reviews you owe</h2>
         {event('review-requested', 'Review requested from you')}
         {event('team-review-requested', 'Requested from your team', 'Teams such as CODEOWNERS can request you often.')}
+        {event('mention', 'Mentions', 'Someone @mentioned you in a comment or review.')}
+        {event('reply', 'Replies to you', 'A new comment in a thread you are in, or on your PR.')}
       </section>
       <section className="settings-group" aria-labelledby="notifications-own-title">
         <h2 id="notifications-own-title">Your PRs</h2>
@@ -158,6 +196,94 @@ export function NotificationSettings({
         <h2 id="notifications-gnosis-title">Gnosis</h2>
         {event('explanation-ready', 'Explanation ready')}
         {event('update-ready', 'Update ready')}
+      </section>
+      <section className="settings-group" aria-labelledby="notifications-repositories-title">
+        <div>
+          <h2 id="notifications-repositories-title">Repositories</h2>
+          <p className="settings-description">
+            A repository can get all notifications, only those where the next move is yours, or none. The switches above still apply everywhere.
+          </p>
+        </div>
+        <Row label="Other repositories" description="Repositories you don’t watch and haven’t given a level. Watched repositories get All.">
+          <SearchableSelect
+            label="Other repositories"
+            value={value.otherRepositories}
+            options={levelOptions}
+            onValueChange={(next) => onChange({ ...value, otherRepositories: next as RepositoryNotificationLevel })}
+          />
+        </Row>
+        <div className="notification-exceptions" role="group" aria-labelledby="notifications-exceptions-title">
+          <h3 id="notifications-exceptions-title" className="text-sm font-medium">Repository exceptions</h3>
+          {exceptions.length ? (
+            <ul className="notification-exception-list">
+              {exceptions.map(([repo, level]) => (
+                <li key={repo} className="notification-exception">
+                  <span className="font-mono text-xs"><RepositoryMark repo={repo} settings={repositorySettings[repo]} /></span>
+                  <SearchableSelect
+                    label={`Notifications from ${repo}`}
+                    value={level}
+                    options={levelOptions}
+                    onValueChange={(next) => setLevel(repo, next as RepositoryNotificationLevel)}
+                  />
+                  <Button type="button" variant="ghost" size="sm" aria-label={`Remove the exception for ${repo}`} onClick={() => setLevel(repo, undefined)}>
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="settings-description">
+              No exceptions. Set one from a PR’s menu or in Settings › Repositories.
+              {watchedRepos.length ? '' : ' You don’t watch any repositories yet.'}
+            </p>
+          )}
+        </div>
+      </section>
+      <section className="settings-group" aria-labelledby="notifications-bots-title">
+        <div>
+          <h2 id="notifications-bots-title">Bots</h2>
+          <p className="settings-description">Bots never notify, as they never mark PRs unread. Add the ones you want to hear from.</p>
+        </div>
+        <div className="notification-bots" role="group" aria-labelledby="notifications-bots-list-title">
+          <h3 id="notifications-bots-list-title" className="text-sm font-medium">Also notify for these bots</h3>
+          {value.allowedBots.length > 0 && (
+            <ul className="notification-exception-list">
+              {value.allowedBots.map((login) => (
+                <li key={login} className="notification-exception">
+                  <span className="font-mono text-xs">{login}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Stop notifications from ${login}`}
+                    onClick={() => onChange({ ...value, allowedBots: value.allowedBots.filter((bot) => bot !== login) })}
+                  >
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form
+            className="notification-bot-add"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addBot();
+            }}
+          >
+            <input
+              aria-label="Bot login"
+              placeholder="coderabbitai[bot]"
+              value={botDraft}
+              aria-invalid={!!botError}
+              onChange={(e) => setBotDraft(e.target.value)}
+            />
+            <Button type="submit" variant="outline" size="sm" disabled={!botDraft.trim()}>
+              Add bot
+            </Button>
+          </form>
+          {botError && <p className="settings-description" role="alert">{botError}</p>}
+        </div>
       </section>
       <section className="settings-group" aria-labelledby="notifications-quiet-title">
         <h2 id="notifications-quiet-title">Quiet</h2>

@@ -14,6 +14,14 @@ import {
   type RepositoryDefaults,
   type BriefingBudget,
 } from '../lib/repository-settings';
+import { SearchableSelect } from './SearchableSelect';
+import {
+  notificationSettings,
+  repositoryNotificationLevel,
+  REPOSITORY_NOTIFICATION_LABEL,
+  REPOSITORY_NOTIFICATION_LEVELS,
+  type RepositoryNotificationLevel,
+} from '../lib/notification-settings';
 export const REPOSITORY_SETTING_KEYS = [
   'explanation',
   'prInactivityDays',
@@ -22,6 +30,7 @@ export const REPOSITORY_SETTING_KEYS = [
   'briefingDailyLimit',
   'icon',
   'color',
+  'notifications',
 ] as const;
 type Key = keyof RepositorySettings;
 const settingNames = {
@@ -32,6 +41,7 @@ const settingNames = {
   briefingDailyLimit: 'daily briefing count',
   icon: 'icon',
   color: 'color',
+  notifications: 'notifications',
 };
 export function RepositorySettingsEditor({
   repo,
@@ -95,6 +105,7 @@ export function RepositorySettingsEditor({
       )
     </label>
   );
+  const inheritedNotifications = repositoryNotificationLevel(notificationSettings({ ...defaults, repositorySettings: {} }), bulk ? '' : repo);
   const usage = budget?.repositories[repo.toLowerCase()];
   const invalidExplanation = draft.explanation?.style === 'custom' && !draft.explanation.customInstructions.trim();
   const invalidEmoji = emojiMode && !validRepositoryIcon(`emoji:${emoji}`);
@@ -214,6 +225,31 @@ export function RepositorySettingsEditor({
                   {Math.max(0, effective.briefingDailyLimit - (usage?.used ?? 0))} of {effective.briefingDailyLimit}{' '}
                   left here · {budget.remaining} left overall
                 </p>
+              )}
+            </div>
+          </div>
+          <div className="repository-setting-row">
+            <div>
+              <h4>Notifications</h4>
+              <p>Global event switches still apply. A level here can only narrow them.</p>
+            </div>
+            <div>
+              <label className="repository-inherit">
+                <input
+                  type="checkbox"
+                  aria-label="Use global default for notifications"
+                  checked={draft.notifications === undefined}
+                  onChange={(e) => patch({ notifications: e.target.checked ? undefined : inheritedNotifications })}
+                />
+                Use default ({REPOSITORY_NOTIFICATION_LABEL[inheritedNotifications]})
+              </label>
+              {draft.notifications !== undefined && (
+                <SearchableSelect
+                  label="Repository notifications"
+                  value={draft.notifications}
+                  options={REPOSITORY_NOTIFICATION_LEVELS.map((level) => ({ value: level, label: REPOSITORY_NOTIFICATION_LABEL[level] }))}
+                  onValueChange={(value) => patch({ notifications: value as RepositoryNotificationLevel })}
+                />
               )}
             </div>
           </div>

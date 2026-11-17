@@ -12,7 +12,9 @@ import { EntryActions, type EntryActionGroups } from './EntryActions';
 import type { ComponentProps } from 'react';
 import { isLocalUrl } from '../lib/local-url';
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
-import { GitBranch } from 'lucide-react';
+import { Bell, GitBranch } from 'lucide-react';
+import { useRepositorySettings, type RepositoryContextValue } from '../lib/use-repository-settings';
+import { REPOSITORY_NOTIFICATION_LEVELS, REPOSITORY_NOTIFICATION_SHORT_LABEL } from '../lib/notification-settings';
 
 export interface PrGenerationActions {
   onGenerateExplanation: () => unknown;
@@ -41,7 +43,10 @@ export function prEntryActionGroups({
   onReadChange,
   onOpenTab,
   unread,
+  repositories,
 }: Partial<PrGenerationActions> & {
+  /** Offers "Notifications from org/repo: All / On me / None" (#385). */
+  repositories?: RepositoryContextValue;
   members: ReviewMember[];
   starredUrls: ReadonlySet<string>;
   busy?: boolean;
@@ -133,6 +138,8 @@ export function prEntryActionGroups({
           ]
         : []),
     ],
+    // Beside Snooze and Mute: all three decide what reaches you.
+    repositories ? repositoryNotificationActions(members, repositories) : [],
     onMute
       ? [
           ...(canSnooze(members) && !members.some((member) => isLocalUrl(member.url))
@@ -156,6 +163,21 @@ export function prEntryActionGroups({
       : [],
   ];
 }
+/** "Notifications from org/repo: All / On me / None", once per repository of the PRs. */
+export function repositoryNotificationActions(members: readonly Pick<ReviewMember, 'repo' | 'url'>[], context: RepositoryContextValue) {
+  const { notificationLevel, setNotificationLevel } = context;
+  if (!notificationLevel || !setNotificationLevel) return [];
+  const repos = [...new Map(members.filter((member) => !isLocalUrl(member.url)).map((member) => [member.repo.toLowerCase(), member.repo])).values()];
+  return repos.flatMap((repo) => {
+    const current = notificationLevel(repo).level;
+    return REPOSITORY_NOTIFICATION_LEVELS.map((level) => ({
+      label: `Notifications from ${repo}: ${REPOSITORY_NOTIFICATION_SHORT_LABEL[level]}`,
+      icon: <Bell size={15} />,
+      ...(level === current ? { detail: 'Current', disabled: true } : {}),
+      run: () => setNotificationLevel(repo, level),
+    }));
+  });
+}
 export function PrEntryActions(
   props: Parameters<typeof prEntryActionGroups>[0] & {
     children?: ComponentProps<typeof EntryActions>['children'];
@@ -164,16 +186,18 @@ export function PrEntryActions(
 ) {
   const tabs=useWorkspaceNavigation();
   const read = useContext(PrReadContext);
+  const repositories = useRepositorySettings();
   const canMark = read && props.members.some(member => read.states[member.url]);
+  const groups = prEntryActionGroups({ ...props, repositories: props.repositories ?? repositories, onOpenTab: props.onOpenTab ?? (tabs && props.members.length===1 && !isLocalUrl(props.members[0].url) ? ()=>tabs.open({kind:'home',url:props.members[0].url}) : undefined), ...(canMark ? {
+        unread: props.members.some(member => read.states[member.url]?.unread.length),
+        busy: props.busy || read.busy,
+        onReadChange: value => read.change(props.members.map(member => member.url), value),
+      } : {}) });
   return (
     <EntryActions
       onBeforeOpen={props.onBeforeOpen}
       label={props.members.length > 1 ? 'Stack actions' : `Actions for PR #${props.members[0]?.number}`}
-      groups={prEntryActionGroups({ ...props, onOpenTab: props.onOpenTab ?? (tabs && props.members.length===1 && !isLocalUrl(props.members[0].url) ? ()=>tabs.open({kind:'home',url:props.members[0].url}) : undefined), ...(canMark ? {
-        unread: props.members.some(member => read.states[member.url]?.unread.length),
-        busy: props.busy || read.busy,
-        onReadChange: value => read.change(props.members.map(member => member.url), value),
-      } : {}) })}
+      groups={groups}
     >
       {props.children}
     </EntryActions>

@@ -28,7 +28,7 @@ test('invalid values fall back; the saved form is complete', () => {
   assert.equal(settings.events['checks-failed'], true);
   assert.equal(settings.pausedUntil, 0);
   assert.equal(settings.introduced, false);
-  assert.deepEqual(Object.keys(normalizeNotificationPreferences(null)).sort(), ['events', 'inApp', 'introduced', 'pausedUntil']);
+  assert.deepEqual(Object.keys(normalizeNotificationPreferences(null)).sort(), ['allowedBots', 'events', 'inApp', 'introduced', 'otherRepositories', 'pausedUntil']);
   assert.equal(isPaused({ pausedUntil: T0 + 1 }, T0), true);
 });
 

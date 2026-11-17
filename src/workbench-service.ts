@@ -158,6 +158,8 @@ interface Deps {
     deliver: (events: NotificationEvent[]) => void;
     /** Local counters follow the analytics preference. */
     count?: () => boolean;
+    /** What the PR's notification asked for is done, or the PR was merged or closed. */
+    resolved?: (url: string, types: import('../lib/notification-events').ResolvedTypes) => void;
   };
   provider?: typeof getProvider;
   /** Tests shorten the briefing phase allowances. */
@@ -492,6 +494,7 @@ export function createWorkbenchService(deps: Deps) {
       finishBaseline: options.finishBaseline,
       own: options.own,
       count: deps.notifications.count?.() ?? false,
+      resolved: deps.notifications.resolved,
       suppress: event => {
         if (!event.url) return undefined;
         if (muted.has(event.url)) return 'muted';
@@ -1595,6 +1598,13 @@ export function createWorkbenchService(deps: Deps) {
       if (!account || !deps.auth().token) throw new Error('Connect GitHub to save unread progress.');
       reads.mark(account, request);
       return view();
+    },
+    /** The PRs among `urls` with nothing unread, so their notifications can close. */
+    readUrls(urls: readonly string[]): string[] {
+      const account = deps.auth().login;
+      if (!account) return [];
+      const states = reads.snapshot(account);
+      return urls.filter(url => states[url] && !states[url].unread.length);
     },
     observeReadSignals(account: string, signals: QueueSignals[]) {
       if (account !== deps.auth().login) return false;

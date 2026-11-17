@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
-import { MapPin, Building2 } from 'lucide-react';
+import { MapPin, Building2, Bell } from 'lucide-react';
+import { ContextMenuItem } from './ui/context-menu';
+import { toast } from './ui/toast';
+import { useRepositorySettings } from '../lib/use-repository-settings';
 import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar';
 import { EntityBadge } from './EntityBadge';
 import { githubAvatarUrl, isGitHubLogin, type GitHubProfile } from '../lib/github-profile';
 
 /** One author identity. Profile details load only after deliberate hover or keyboard focus. */
-export function GitHubAuthor({ login }: { login: string }) {
+export function GitHubAuthor({ login, bot = false }: { login: string; /** GraphQL reported a Bot. */ bot?: boolean }) {
+  const { allowBotNotifications, botNotificationsAllowed } = useRepositorySettings();
   const [open, setOpen] = useState(false);
   const [resolved, setResolved] = useState<{ login: string; profile: GitHubProfile | null } | null>(null);
   const profile = resolved?.login === login ? resolved.profile : null;
@@ -28,6 +32,23 @@ export function GitHubAuthor({ login }: { login: string }) {
     };
   }, [login, open, valid]);
   if (!valid) return <span>{login}</span>;
+  const automation = bot || login.endsWith('[bot]') || profile?.type === 'Bot';
+  // Bots never notify (#385) unless allowed here or in Settings › Notifications.
+  const allowBot =
+    automation && allowBotNotifications && botNotificationsAllowed && !botNotificationsAllowed(login) ? (
+      <ContextMenuItem
+        className="entry-menu-item"
+        onClick={() =>
+          void allowBotNotifications(login).then(
+            () => toast.add({ type: 'success', title: `Notifications from ${login} are on` }),
+            () => toast.add({ type: 'error', title: `Could not allow notifications from ${login}` })
+          )
+        }
+      >
+        <Bell size={15} />
+        Allow notifications from this bot
+      </ContextMenuItem>
+    ) : undefined;
   return (
     <EntityBadge
       kind="user"
@@ -39,6 +60,7 @@ export function GitHubAuthor({ login }: { login: string }) {
         setOpen(next);
       }}
       tooltipReady={resolved?.login === login}
+      menuActions={allowBot}
       icon={
         <Avatar size="sm" className="github-author-avatar">
           <AvatarImage src={githubAvatarUrl(login)} alt="" loading="lazy" referrerPolicy="no-referrer" />

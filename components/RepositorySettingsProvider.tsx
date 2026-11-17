@@ -10,6 +10,14 @@ import {
 } from '../lib/repository-settings';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { RepositorySettingsEditor } from './RepositorySettingsEditor';
+import {
+  botAllowed,
+  normalizeBotLogins,
+  normalizeNotificationPreferences,
+  notificationSettings,
+  repositoryNotificationLevel,
+  type RepositoryNotificationLevel,
+} from '../lib/notification-settings';
 export function RepositorySettingsProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefs] = useState<Preferences>();
   const [repo, setRepo] = useState('');
@@ -55,10 +63,32 @@ export function RepositorySettingsProvider({ children }: { children: ReactNode }
       setSaving(false);
     }
   }
+  /** Saves one change on top of the latest preferences, so edits made elsewhere are kept. */
+  async function update(change: (current: Preferences) => Preferences) {
+    const current = await window.electronAPI.loadPreferences();
+    const next = change(current);
+    await window.electronAPI.savePreferences(next);
+    preferencesUpdated(next);
+  }
+  const notifications = prefs ? notificationSettings(prefs) : undefined;
   return (
     <RepositoryContext.Provider
       value={{
         settings: prefs?.repositorySettings ?? {},
+        notificationLevel: notifications
+          ? (name) => ({ level: repositoryNotificationLevel(notifications, name), explicit: !!notifications.repositories[repositoryKey(name)] })
+          : undefined,
+        setNotificationLevel: (name: string, level: RepositoryNotificationLevel) =>
+          update((current) => {
+            const key = repositoryKey(name);
+            return { ...current, repositorySettings: normalizeRepositorySettings({ ...current.repositorySettings, [key]: { ...current.repositorySettings?.[key], notifications: level } }) };
+          }),
+        allowBotNotifications: (login: string) =>
+          update((current) => {
+            const saved = normalizeNotificationPreferences(current);
+            return { ...current, notificationSettings: { ...saved, allowedBots: normalizeBotLogins([...saved.allowedBots, login]) } };
+          }),
+        botNotificationsAllowed: notifications ? (login) => botAllowed(notifications, login) : undefined,
         configure: prefs
           ? (name) => {
               setError('');

@@ -3,6 +3,7 @@ import lucideIconNames from './lucide-icon-names.json';
 import type { Preferences } from './types';
 import type { ReviewSubject } from './workbench';
 import { isPrRecentlyUpdated, normalizePrInactivityDays, MAX_PR_INACTIVITY_DAYS } from './pr-inactivity';
+import type { RepositoryNotificationLevel } from './notification-settings';
 
 // Names only: main-process validation must not load React or the SVG library.
 const lucideNames = new Set<string>(lucideIconNames);
@@ -24,6 +25,8 @@ export interface RepositorySettings {
   briefingDailyLimit?: number;
   icon?: string;
   color?: (typeof REPOSITORY_COLORS)[number];
+  /** Notification level (#385). Unset: All for a watched repository, else the "Other repositories" default. */
+  notifications?: RepositoryNotificationLevel;
 }
 export type RepositorySettingsMap = Record<string, RepositorySettings>;
 export type RepositoryDefaults = Pick<
@@ -34,7 +37,9 @@ export type RepositoryDefaults = Pick<
   | 'briefingDailyLimit'
   | 'repositoryBriefingDailyLimit'
   | 'repositorySettings'
->;
+> &
+  /** For the default notification level: All for watched repositories, else "Other repositories". */
+  Partial<Pick<Preferences, 'watchedRepos' | 'notificationSettings'>>;
 export const repositoryKey = (repo: string) => repo.trim().toLowerCase();
 export const validRepository = (repo: string) => /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repo);
 export function normalizeBriefingLimit(value: unknown, fallback = 10): number {
@@ -71,6 +76,7 @@ export function normalizeRepositorySettings(input: unknown): RepositorySettingsM
       if (typeof v.icon === 'string' && validRepositoryIcon(v.icon)) settings.icon = v.icon;
       if (typeof v.color === 'string' && (REPOSITORY_COLORS as readonly string[]).includes(v.color))
         settings.color = v.color as RepositorySettings['color'];
+      if (v.notifications === 'all' || v.notifications === 'on-me' || v.notifications === 'none') settings.notifications = v.notifications;
       return Object.keys(settings).length ? [[repositoryKey(name), settings]] : [];
     })
   );
