@@ -24,6 +24,7 @@ import {
   OVERVIEW_REASON_LABEL,
   OVERVIEW_SINCE_LABEL,
   OVERVIEW_STALE_TITLE,
+  overviewLaneSummary,
   overviewStaleLabel,
   rowReasons,
   type OverviewMergeNoteKind,
@@ -284,13 +285,18 @@ export function OverviewPage(props: OverviewPageProps) {
         ACTION_LANES.map((lane) => {
           const state = model.lanes.find((entry) => entry.lane === lane);
           return (
-            <Lane key={lane} lane={lane} rows={state?.rows ?? []} parked={state?.parked} tabStop={tabStop} actions={actions} unread={unread} onShowLane={onShowLane}
-              parkedOpen={parkedOpen} onToggleParked={() => setParkedOpen((value) => !value)} />
+            <Lane key={lane} lane={lane} rows={state?.rows ?? []} parked={state?.parked} summary={state ? overviewLaneSummary(state) : []} tabStop={tabStop} actions={actions}
+              unread={unread} onShowLane={onShowLane} parkedOpen={parkedOpen} onToggleParked={() => setParkedOpen((value) => !value)} />
           );
         })
       )}
-      <Lane lane="waiting" rows={model.lanes.find((state) => state.lane === 'waiting')?.rows ?? []} tabStop={tabStop} actions={actions} unread={unread}
-        onShowLane={onShowLane} collapsed={!waitingOpen} onToggle={() => setWaitingOpen((value) => !value)} />
+      {(() => {
+        const state = model.lanes.find((entry) => entry.lane === 'waiting');
+        return (
+          <Lane lane="waiting" rows={state?.rows ?? []} summary={state ? overviewLaneSummary(state) : []} tabStop={tabStop} actions={actions} unread={unread}
+            onShowLane={onShowLane} collapsed={!waitingOpen} onToggle={() => setWaitingOpen((value) => !value)} />
+        );
+      })()}
       {model.unchecked > 0 && (
         <p className="overview-caption">
           Status not checked yet for {model.unchecked} of your PRs. They join a lane when GitHub reports it.
@@ -352,9 +358,11 @@ interface RowActions {
   keyDown: (event: ReactKeyboardEvent) => void;
 }
 
-function Lane({ lane, rows, parked = [], tabStop, actions, unread, onShowLane, collapsed, onToggle, parkedOpen, onToggleParked }: {
+function Lane({ lane, rows, parked = [], summary = [], tabStop, actions, unread, onShowLane, collapsed, onToggle, parkedOpen, onToggleParked }: {
   lane: OverviewLane;
   rows: OverviewRow[];
+  /** After the count: "15 over a week", "12 parked" (`overviewLaneSummary`). */
+  summary?: string[];
   /** Merge: rows that can merge but are not approved, or idle. A collapsed group under the Ready rows. */
   parked?: OverviewRow[];
   tabStop: string | null;
@@ -391,9 +399,11 @@ function Lane({ lane, rows, parked = [], tabStop, actions, unread, onShowLane, c
         ) : (
           <button type="button" className="overview-lane-total" onClick={() => onShowLane(lane)}
             title={`Open the ${total} ${total === 1 ? 'item' : 'items'} in ${label} in the review queue`}
-            aria-label={parked.length ? `${label}: ${rows.length} ready, ${parked.length} parked. Open all ${total} in the review queue` : `${label}: open all ${rows.length} in the review queue`}>
+            aria-label={summary.length
+              ? `${label}: ${[parked.length ? `${rows.length} ready` : `${rows.length}`, ...summary].join(', ')}. Open all ${total} in the review queue`
+              : `${label}: open all ${total} in the review queue`}>
             {rows.length}
-            {parked.length > 0 && <span className="overview-lane-parked"> · {parked.length} parked</span>}
+            {summary.length > 0 && <span className="overview-lane-summary"> · {summary.join(' · ')}</span>}
           </button>
         )}
       </div>
@@ -527,7 +537,7 @@ const OverviewRowView = memo(
                   )}
                 </div>
               </div>
-              <span className={`overview-wait${row.stale ? ' is-stale' : ''}`}
+              <span className="overview-wait"
                 title={`Waiting ${OVERVIEW_SINCE_LABEL[row.source]}, ${since.toLocaleString()}`}>
                 <Clock3 size={13} aria-hidden="true" />
                 <time dateTime={since.toISOString()}>{row.waiting}</time>

@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import {
   OVERVIEW_IDLE_MS,
   OVERVIEW_LANES,
-  OVERVIEW_STALE_MS,
+  OVERVIEW_STALE_AFTER,
+  elapsed,
+  isStale,
   nextOverviewVisit,
+  overviewLaneSummary,
   overviewCountLine,
   overviewModel,
   overviewStaleLabel,
@@ -203,9 +206,9 @@ void test('each lane sorts oldest first, from when the item entered its state', 
   assert.equal(lane(result, 'review')[0].source, 'opened');
 });
 
-void test('ready to merge waits since the approval; stale items are flagged after three days', () => {
+void test('ready to merge waits since the approval; a Ready merge is flagged after a day', () => {
   const ready = mine(1);
-  const approvedAt = T0 - OVERVIEW_STALE_MS - 60_000;
+  const approvedAt = T0 - 3 * 86_400_000 - 60_000;
   const fresh = mine(2);
   const result = model([item([ready]), item([fresh])], {
     signals: {
@@ -506,6 +509,98 @@ void test('Merge splits into Ready and Parked; only Ready counts as work', () =>
   const parkedOnly = model([item([idleFree])], { signals: { [idleFree.url]: clean(idleFree, { decision: null }) } });
   assert.deepEqual([parkedOnly.counts.merge, parkedOnly.parked, parkedOnly.actionable], [0, 1, 0]);
   assert.equal(OVERVIEW_IDLE_MS, 3 * 86_400_000);
+});
+
+void test('each lane has its own limit before a row is flagged; Review and Answer count working days', () => {
+  assert.deepEqual(OVERVIEW_STALE_AFTER, {
+    merge: { days: 1, working: false },
+    answer: { days: 2, working: true },
+    review: { days: 2, working: true },
+    fix: { days: 2, working: false },
+    waiting: { days: 3, working: false },
+  });
+  const hours = (n: number) => n * 3_600_000;
+  // T0 is Saturday 14 November, 10:00 UTC. A request on Thursday morning has waited under two working days
+  // (in any time zone), though over two calendar days.
+  const thursday = Date.parse('2026-11-12T09:00:00Z');
+  assert.ok(elapsed(thursday, T0, true) < hours(48));
+  assert.equal(elapsed(thursday, T0), hours(49));
+  assert.equal(isStale('review', thursday, T0), false);
+  assert.equal(isStale('answer', thursday, T0), false);
+  assert.equal(isStale('fix', thursday, T0), true);
+  // From Tuesday, the working days are past two.
+  assert.equal(isStale('review', Date.parse('2026-11-10T10:00:00Z'), T0), true);
+  // Merge: a day. Waiting on others: three.
+  assert.equal(isStale('merge', T0 - hours(23), T0), false);
+  assert.equal(isStale('merge', T0 - hours(25), T0), true);
+  assert.equal(isStale('waiting', T0 - hours(71), T0), false);
+  assert.equal(isStale('waiting', T0 - hours(73), T0), true);
+  assert.equal(elapsed(T0, T0 - 1, true), 0, 'a future time has not waited');
+});
+
+void test('rows are flagged by their lane limit, Parked merges never, and headings count rows over a week', () => {
+  const review = member(1, { requestedReviewers: [LOGIN], createdAt: ago(1.5) });
+  const failing = mine(2, { updatedAt: ago(2.5) });
+  const oldFailing = mine(3, { updatedAt: ago(9) });
+  const parked = mine(4, { updatedAt: ago(8) });
+  const waiting = mine(5, { requestedReviewers: ['lena'], createdAt: ago(2) });
+  const result = model([review, failing, oldFailing, parked, waiting].map((pr) => item([pr])), {
+    signals: {
+      [failing.url]: signals(failing, { checks: 'failure' }),
+      [oldFailing.url]: signals(oldFailing, { checks: 'failure' }),
+      [parked.url]: clean(parked, { decision: null }),
+      [waiting.url]: passing(waiting),
+    },
+  });
+  const flag = (name: OverviewLane, n: number) => {
+    const state = result.lanes.find((entry) => entry.lane === name);
+    return [...(state?.rows ?? []), ...(state?.parked ?? [])].find((row) => row.focus.number === n)?.stale;
+  };
+  assert.equal(flag('review', 1), false, 'a day and a half is not an outlier');
+  assert.equal(flag('fix', 2), true);
+  assert.equal(flag('fix', 3), true);
+  assert.equal(flag('merge', 4), false, 'parked rows are already set aside');
+  assert.equal(flag('waiting', 5), false);
+  const fix = result.lanes.find((state) => state.lane === 'fix');
+  assert.equal(fix?.overWeek, 1);
+  assert.deepEqual(overviewLaneSummary(fix!), ['1 over a week']);
+  const merge = result.lanes.find((state) => state.lane === 'merge');
+  assert.deepEqual(overviewLaneSummary(merge!), ['1 parked'], 'parked rows are not counted as over a week');
+  assert.deepEqual(overviewLaneSummary(result.lanes.find((state) => state.lane === 'review')!), []);
+});
+
+void test('at real volume, the flag is rare: only outliers carry it', () => {
+  // The critique's screenshot: Merge 16 (none approved, idle five to eight days), Review 2, Fix 18, Waiting 5.
+  const prs: ReviewMember[] = [];
+  const status: Record<string, QueueSignals> = {};
+  const add = (pr: ReviewMember, value: QueueSignals) => {
+    prs.push(pr);
+    status[pr.url] = value;
+  };
+  for (let i = 0; i < 16; i++) {
+    const pr = mine(100 + i, { updatedAt: ago(5 + (i % 4)) });
+    add(pr, clean(pr, { decision: null }));
+  }
+  for (let i = 0; i < 18; i++) {
+    const pr = mine(200 + i, { updatedAt: ago(i < 3 ? 0.2 : 10 + (i % 3)) });
+    add(pr, signals(pr, { checks: 'failure' }));
+  }
+  for (let i = 0; i < 5; i++) {
+    const pr = mine(300 + i, { requestedReviewers: ['lena'], createdAt: ago(i === 0 ? 10 : 0.1) });
+    add(pr, passing(pr));
+  }
+  const reviews = [member(400, { requestedReviewers: [LOGIN], createdAt: ago(14) }), member(401, { requestedReviewers: [LOGIN], createdAt: ago(0.5) })];
+  const result = model([...prs, ...reviews].map((pr) => item([pr])), { signals: status });
+  const rows = result.lanes.flatMap((state) => [...state.rows, ...state.parked]);
+  assert.equal(rows.length, 41);
+  // Before: anything over three days was flagged. Now: only rows past their lane's limit, and never a Parked merge.
+  const before = rows.filter((row) => T0 - row.since >= 3 * 86_400_000).length;
+  const after = rows.filter((row) => row.stale).length;
+  assert.equal(before, 33);
+  assert.equal(after, 17);
+  assert.equal(result.lanes.find((state) => state.lane === 'merge')?.rows.filter((row) => row.stale).length, 0);
+  assert.deepEqual(overviewLaneSummary(result.lanes.find((state) => state.lane === 'fix')!), ['15 over a week']);
+  assert.deepEqual(overviewLaneSummary(result.lanes.find((state) => state.lane === 'merge')!), ['16 parked']);
 });
 
 void test('the stale label is a word, and Waiting on others asks whether to nudge', () => {

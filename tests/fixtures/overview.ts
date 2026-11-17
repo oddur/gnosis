@@ -322,7 +322,19 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
         const extra = titles.map((title, i) =>
           single(add(pr({ number: 360 + i, repo: repos[i % 3], title, created: (9 + i) * DAY, updated: (5 + (i % 4)) * DAY, additions: 12 + i * 23, deletions: 2 + i * 5, files: 1 + (i % 5) }), noReview))
         );
-        items.splice(0, items.length, ...next, ...extra);
+        // Fix: sixteen more of your PRs, most failing checks for ten to twelve days, two with conflicts, one fresh.
+        const fixes = Array.from({ length: 16 }, (_, i) => {
+          const age = i === 15 ? 5 * HOUR : (10 + (i % 3)) * DAY;
+          const conflicts = i === 4 || i === 9;
+          return single(add(pr({ number: 380 + i, repo: repos[(i + 1) % 3], title: `Fix flaky step ${i + 1} in the release pipeline`, created: age + DAY, updated: age, additions: 10 + i * 7, deletions: 1 + i, files: 1 + (i % 4) }),
+            conflicts ? { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' } : { checks: 'failure' }));
+        });
+        // Waiting: two more on reviewers, one for ten days.
+        const waits = [
+          single(add(pr({ number: 398, repo: 'klang/engine', title: 'Keep each sender’s failed command to itself', created: 10 * DAY, requested: ['plucked'], additions: 163, deletions: 10, files: 6 }), { checks: 'success' })),
+          single(add(pr({ number: 399, repo: 'acme/web', title: 'Build the translation prompt from the guidance', created: 4 * HOUR, requested: ['sam'], additions: 719, deletions: 340, files: 24 }), { checks: 'pending' })),
+        ];
+        items.splice(0, items.length, ...next, ...extra, ...fixes, ...waits);
         changed();
       },
     },

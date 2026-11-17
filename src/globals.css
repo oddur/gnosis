@@ -5011,7 +5011,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-lane-total:hover { background:color-mix(in srgb, var(--foreground) 7%, transparent); color:var(--foreground); }
 .overview-lane-total:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
 .overview-empty { color:var(--muted-foreground); font-size:var(--type-caption); }
-.overview-lane-parked { font-weight:400; }
+.overview-lane-summary { font-weight:400; }
 /* Parked merges: a collapsed group under the Ready rows, with the Waiting toggle, aligned with "Show all". */
 .overview-parked-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 8px; min-height:34px; padding:8px 20px 8px 44px; border-bottom:1px solid var(--border); font-size:var(--type-control); font-weight:500; color:var(--foreground); line-height:1.4; }
 .overview-parked-heading .overview-lane-toggle { align-self:center; }
@@ -5044,8 +5044,8 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-explanation { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; color:var(--color-info); font-weight:500; }
 .overview-wait { flex:none; display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; min-width:4.5em; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .overview-wait svg { flex:none; }
-.overview-wait.is-stale { color:var(--color-warning); font-weight:500; }
-.overview-stale { padding:1px 6px; border-radius:4px; background:var(--status-warning-bg); color:var(--color-warning); font-weight:600; }
+/* Ages are plain muted text. Only a row past its lane's limit carries a label, in words with amber as support. */
+.overview-stale { padding:1px 6px; border-radius:4px; background:var(--status-warning-bg); color:var(--color-warning); font-weight:500; }
 .overview-row-action { flex:none; display:inline-flex; }
 .overview-row-action .pr-actions { margin:0; }
 .overview-show-all { display:inline-flex; align-items:center; gap:4px; margin:6px 0 2px 44px; padding:2px 0; font-size:var(--type-control); font-weight:500; color:var(--primary); }

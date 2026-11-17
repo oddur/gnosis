@@ -57,28 +57,62 @@ export const OVERVIEW_EMPTY: Readonly<Record<OverviewLane, string>> = {
 };
 /** Rows shown per lane; "Show all N" opens the rest in the queue. */
 export const OVERVIEW_LANE_LIMIT = 5;
-/** An item waiting this long is flagged "Stale". */
-export const OVERVIEW_STALE_MS = 3 * 86_400_000;
+const DAY_MS = 86_400_000;
+/**
+ * When a row is an outlier worth a label, per lane. Every age is shown as plain text; only rows past their lane's
+ * limit carry a label. Review and Answer count working days, because someone is blocked on you and weekends do not
+ * count against you. Merge flags only Ready rows: Parked rows are already set aside.
+ */
+export const OVERVIEW_STALE_AFTER: Readonly<Record<OverviewLane, { days: number; working: boolean }>> = {
+  merge: { days: 1, working: false },
+  answer: { days: 2, working: true },
+  review: { days: 2, working: true },
+  fix: { days: 2, working: false },
+  waiting: { days: 3, working: false },
+};
+/** The lane heading counts rows older than this: "Fix 18 · 15 over a week". */
+export const OVERVIEW_LONG_MS = 7 * DAY_MS;
 /** A mergeable PR untouched this long is Parked, not Ready. */
-export const OVERVIEW_IDLE_MS = 3 * 86_400_000;
+export const OVERVIEW_IDLE_MS = 3 * DAY_MS;
 /** The Parked group under Merge, and why its rows are there. */
 export const OVERVIEW_PARKED_LABEL = 'Parked';
 export const OVERVIEW_PARKED_HINT = 'mergeable, not approved or idle over 3 days';
 /**
- * The words on an item that has waited past `OVERVIEW_STALE_MS`, kept here so one pass can change them. Waiting on
- * others asks whether to remind someone; in the other lanes the work is yours and has gone stale. Always a label,
- * never colour alone.
+ * The label on a row past its lane's limit. Waiting on others asks whether to remind someone; in the other lanes the
+ * work is yours and has gone stale. Always words, with colour only as support.
  */
 export const OVERVIEW_STALE_LABEL: Readonly<Record<OverviewLane, string>> = { merge: 'Stale', answer: 'Stale', review: 'Stale', fix: 'Stale', waiting: 'Nudge?' };
+/** The label's tooltip: what the limit is. */
 export const OVERVIEW_STALE_TITLE: Readonly<Record<OverviewLane, string>> = {
-  merge: 'Waiting over 3 days',
-  answer: 'Waiting over 3 days',
-  review: 'Waiting over 3 days',
-  fix: 'Waiting over 3 days',
-  waiting: 'Waiting on others over 3 days. Consider a reminder.',
+  merge: 'Ready to merge for over a day',
+  answer: 'Waiting on your reply for over 2 working days',
+  review: 'Waiting on your review for over 2 working days',
+  fix: 'Unchanged for over 2 days',
+  waiting: 'Waiting on others for over 3 days. Consider a reminder.',
 };
 /** The stale label for a row, or undefined when it is not stale. */
 export const overviewStaleLabel = (row: Pick<OverviewRow, 'lane' | 'stale'>) => (row.stale ? OVERVIEW_STALE_LABEL[row.lane] : undefined);
+
+/** Time from `since` to `now`. With `working`, Saturdays and Sundays (local time) do not count. */
+export function elapsed(since: number, now: number, working = false): number {
+  if (now <= since) return 0;
+  if (!working) return now - since;
+  let total = 0;
+  let cursor = since;
+  // A year of days at most; anything older is long past every limit.
+  for (let i = 0; cursor < now && i < 400; i++) {
+    const day = new Date(cursor);
+    const end = Math.min(new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime(), now);
+    if (day.getDay() !== 0 && day.getDay() !== 6) total += end - cursor;
+    cursor = end;
+  }
+  return total + Math.max(0, now - cursor);
+}
+/** Past the lane's limit (`OVERVIEW_STALE_AFTER`). */
+export function isStale(lane: OverviewLane, since: number, now: number): boolean {
+  const limit = OVERVIEW_STALE_AFTER[lane];
+  return elapsed(since, now, limit.working) >= limit.days * DAY_MS;
+}
 
 export type OverviewReason = Exclude<AttentionKind, 'explanation-ready'> | 'review-pending' | 'checks-pending';
 export const OVERVIEW_REASON_LABEL: Readonly<Record<OverviewReason, string>> = {
@@ -210,6 +244,8 @@ export interface OverviewLaneState {
   rows: OverviewRow[];
   /** Merge only: mergeable rows that are not approved, or idle over three days. Not counted as work. */
   parked: OverviewRow[];
+  /** Rows (not Parked) waiting longer than `OVERVIEW_LONG_MS`, for the heading: "Fix 18 · 15 over a week". */
+  overWeek: number;
 }
 export interface OverviewModel {
   lanes: OverviewLaneState[];
@@ -459,7 +495,8 @@ export function overviewModel(input: OverviewInput): OverviewModel {
         since: first.entry.since,
         source: first.entry.source,
         waiting: waitingLabel(first.entry.since, now),
-        stale: now - first.entry.since >= OVERVIEW_STALE_MS,
+        // Parked merges are set aside already, so they are never flagged.
+        stale: (!merge || merge.ready) && isStale(lane, first.entry.since, now),
         isNew,
         ...(() => {
           const additions = sum(entries.map((entry) => entry.member.additions));
@@ -481,7 +518,8 @@ export function overviewModel(input: OverviewInput): OverviewModel {
   }
   const states = OVERVIEW_LANES.map((lane): OverviewLaneState => {
     const all = (lanes.get(lane) ?? []).sort((a, b) => a.since - b.since || a.title.localeCompare(b.title));
-    return { lane, rows: all.filter((row) => !row.merge || row.merge.ready), parked: all.filter((row) => !!row.merge && !row.merge.ready) };
+    const rows = all.filter((row) => !row.merge || row.merge.ready);
+    return { lane, rows, parked: all.filter((row) => !!row.merge && !row.merge.ready), overWeek: rows.filter((row) => now - row.since >= OVERVIEW_LONG_MS).length };
   });
   const counts = Object.fromEntries(states.map((state) => [state.lane, state.rows.length])) as Record<OverviewLane, number>;
   // New rows in the lanes that are work: not Waiting on others, and not Parked.
@@ -496,6 +534,11 @@ export function overviewModel(input: OverviewInput): OverviewModel {
     urls: Object.fromEntries(OVERVIEW_LANES.map((lane) => [lane, [...(urls.get(lane) ?? [])]])) as Record<OverviewLane, string[]>,
     keys: states.flatMap((state) => [...state.rows, ...state.parked].map((row) => row.key)),
   };
+}
+
+/** What follows a lane heading's count, when it matters: "Fix 18 · 15 over a week", "Merge 4 · 12 parked". */
+export function overviewLaneSummary(state: Pick<OverviewLaneState, 'parked' | 'overWeek'>): string[] {
+  return [state.overWeek ? `${state.overWeek} over a week` : '', state.parked.length ? `${state.parked.length} parked` : ''].filter(Boolean);
 }
 
 /** "Merge 2 · Answer 3 · Review 6 · Fix 1 · Waiting 4". */

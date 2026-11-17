@@ -166,9 +166,26 @@ void app.whenReady().then(async () => {
     step = 'heavy';
     // The real load from the critique: sixteen mergeable PRs, twelve of them unapproved and idle.
     await js('window.fixtureOverview.heavy()');
-    await wait(`document.querySelector('${P} #overview-lane-merge .overview-lane-total')?.textContent === '4 · 12 parked'`);
-    assert.equal(await counts(), 'Merge4 · Answer2 · Review7 · Fix2 · Waiting3', 'parked merges never reach the strip');
-    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(15)'");
+    await wait(`document.querySelector('${P} #overview-lane-merge .overview-lane-total')?.textContent.startsWith('4 · 12 parked')`);
+    assert.equal(await counts(), 'Merge4 · Answer2 · Review7 · Fix18 · Waiting5', 'parked merges never reach the strip');
+    await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(31)'");
+    // A census of what the rows show, with every group open: stale flags and metadata chips.
+    {
+      await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click(); document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
+      await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 5 && document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 5`);
+      const census = await js<Record<string, number>>(`(()=>{const rows=[...document.querySelectorAll('${P} .overview-row')];const n=(s)=>rows.reduce((t,r)=>t+r.querySelectorAll(s).length,0);return {rows:rows.length,stale:n('.overview-stale'),amberWaits:rows.filter(r=>r.querySelector('.overview-wait')&&getComputedStyle(r.querySelector('.overview-wait')).color!==getComputedStyle(r.querySelector('.overview-size, .overview-row-meta')).color).length,borderedChips:n('.entity-badge'),authors:n('.github-author'),reasons:n('.overview-reason, .overview-merge-note'),sizes:n('.overview-size'),metaItems:rows.reduce((t,r)=>t+r.querySelector('.overview-row-meta').children.length,0)}})()`);
+      console.log(`Overview census (heavy, every group open): ${JSON.stringify(census)}`);
+      // Quieter: ages are muted text; a flag is always a word, never colour alone, and only outliers carry one.
+      assert.equal(census.amberWaits, 0, 'no age is coloured');
+      // Before this pass, 17 of these 26 rows were flagged. Review counts working days, so the number moves by a row
+      // or two with the weekday; the five oldest Fix rows are genuinely past their limit.
+      assert.ok(census.stale <= 12, `fewer rows are flagged (${census.stale})`);
+      assert.ok(await js(`[...document.querySelectorAll('${P} .overview-stale')].every(e=>['Stale','Nudge?'].includes(e.textContent) && !!e.title)`), 'every flag is a labelled word');
+      assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-stale').length`), 0, 'parked rows are never flagged');
+      assert.equal(await js(`document.querySelector('${P} #overview-lane-fix .overview-lane-total').textContent`), '18 · 15 over a week');
+      await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click(); document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
+      await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 0`);
+    }
     assert.equal(await laneRows('merge'), 4, 'Parked starts collapsed');
     assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').textContent`), 'Parked · 12');
     await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
