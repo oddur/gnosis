@@ -1,58 +1,80 @@
 /**
  * The Overview's morning page (#390): the questions a reviewer asks on arrival, in order. Pure; built from the lane
- * model (`lib/overview.ts`) and a few reads the page adds. See the last comment of #390 for the spec.
+ * model (`lib/overview.ts`) and a few reads the page adds. `morningPage` builds every section at once.
  *
  * 1. **Since yesterday:** `lib/since-log.ts`.
- * 2. **Move forward now:** quick wins across the lanes, each with one action and why it is quick (`moveForward`).
- * 3. **Waiting on you:** people blocked on you, grouped by person, oldest wait first, then PRs whose requester is
- *    not known ("unassigned") and team requests.
- * 4. **Waiting on others:** your PRs grouped by what blocks them: each requested reviewer (with Nudge), teams, CI,
- *    an earlier PR in a stack that has not merged yet, and you (failing checks, conflicts).
- * 5. **Needs a decision:** your PRs failing, never approved or idle for over a week. Close or snooze them.
+ * 2. **Next up** (`nextUp`): the next few things to do, cheapest first, each with one action and its effort.
+ * 3. **Needs a decision** (`needsDecision`): your PRs failing, never approved or idle for over a week.
+ * 4. **Waiting on you** (`waitingOnYou`): people blocked on you, by person, oldest wait first; then PRs whose
+ *    requester is not known ("unassigned") and team requests.
+ * 5. **Waiting on others** (`waitingOnOthers`): your PRs by what blocks them: stacks as chains, each requested
+ *    reviewer (with Nudge), teams, CI, and you (failing checks, conflicts, restacks), each PR with its own reason.
  *
- * **Counts.** Every section heading is the sum of the PRs its rows stand for (`sectionCount`, `moveCount`), so the
- * heading always matches what the section lists. A row counts PRs, not rows: a stack of five PRs waiting on you is
- * "5 PRs". Within Waiting on you and Waiting on others each PR is listed under one row only.
+ * Needs a decision is drawn last on the page, but it claims its PRs before the Waiting sections do.
  *
- * **Move forward now** (`moveForward`), at most `MOVE_LIMIT` rows:
- * - First, by effort, then the longest wait: approved merges, replies, re-reviews and small reviews.
- * - Then mergeable PRs nobody reviewed ("not reviewed · green": the branch rules require no review), at most
- *   `UNREVIEWED_LIMIT`, oldest first. The rest are counted on a quiet line under the section ("N more ready, not
- *   reviewed"), which opens the review queue grouped by Action at Merge.
- * - The oldest small review request always gets a slot when one qualifies: it replaces the last row when the others
- *   fill the section.
- * - A PR stacked on one that has not merged is not a quick win: it waits under its stack in Waiting on others.
- * - Size: a PR over `QUICK_LINES` changed lines, or a stack whose open PRs total more, is never a quick win, reviewed
- *   or not. It stays in the Merge counts and the queue. Replies are exempt: answering a thread does not depend on the
- *   PR's size. A PR whose size is not known yet waits until it is.
+ * **Each PR once.** Sections list each PR once on the whole page, and a PR goes to the first section that wants it:
+ * Next up, then Needs a decision, then Waiting on you, then Waiting on others. A PR in Next up is removed from the
+ * section below it, so nothing appears twice on screen. Within Waiting on others: stacks, then reviewers, teams, CI,
+ * then you. A stack's chain is complete: a PR of it that another section lists is a reference ("#376 · in Next up"),
+ * not a second line.
  *
- * **Effort heuristic** (`moveEffort`), in minutes, rough on purpose: it only orders the quick wins.
- * - Merge a green PR: 1.
- * - Reply to a thread: 3.
- * - Re-review: 2, plus 1 for every 50 lines changed since your review (5 when the size is not known yet).
- * - A small review (at most `SMALL_REVIEW_LINES` lines; twice that with an explanation ready, never over
- *   `QUICK_LINES`): 3, plus 1 for every 40 lines. A ready explanation takes a third off.
+ * **Counts.** Every section heading is the number of PRs it lists (`sectionCount`, `nextCount`). A row counts PRs,
+ * not rows: a stack of five PRs waiting on your review is "5 PRs". A group's `urls` are exactly its lines' PRs.
  *
- * **Tab count** (`morningCount`): the PRs in Move forward now and Waiting on you, each PR once. Work on your own PRs
- * that waits on others, and decisions, are not counted.
+ * **Next up** (`nextUp`), at most `NEXT_LIMIT` items, whenever there is any work in Waiting on you, Fix or Merge:
+ * - Candidates: ready merges (approved, or nobody reviewed and the branch rules require no review), replies, change
+ *   requests, re-reviews, reviews of any size, and fixes (failing checks, conflicts, restacks).
+ * - Order: estimated effort, cheapest first; then approved before not reviewed; then the merge that unblocks most
+ *   PRs; then PRs within `QUICK_LINES` changed lines before larger ones; then the longest wait. Size never excludes.
+ *   PRs that need a decision (stuck over a week) come after the rest, so they stay in Needs a decision unless there is
+ *   nothing else to do.
+ * - A stacked PR whose base has not merged is not the next step; its base is. A ready base says what it unblocks:
+ *   "not reviewed · green · unblocks 3 PRs".
+ * - Merges nobody reviewed keep the "not reviewed" label, at most `UNREVIEWED_LIMIT` of them. The rest are counted
+ *   on a quiet line (`nextMoreLine`): "N more ready, not reviewed" when some are listed, "N ready to merge without
+ *   review" when none are. It opens the review queue grouped by Action at Merge.
+ * - The oldest review request always gets a slot, whatever its size: it replaces the last item when the rest fill
+ *   the section.
+ * - The heading's hint is the sum of the items' efforts: "~45 min".
+ *
+ * **Effort** (`nextEffort`), in minutes, rough on purpose. Over 15 minutes it rounds to 5; an item shows "1 h+" from
+ * an hour (`effortShort`).
+ * - Merge a green PR: 1. Reply to a thread: 3. Address requested changes: 15.
+ * - Fix: failing checks 10, conflicts 15, a restack 5, per PR.
+ * - Re-review: 2, plus 1 for every 50 lines changed since your review up to 400, then 1 for every 80 (5 when the size
+ *   is not known yet).
+ * - Review: 3, plus 1 for every 40 lines up to 400, then 1 for every 60 lines; `UNKNOWN_REVIEW_LINES` when the size
+ *   is not known yet. A ready explanation takes a third off. A 1,060-line review is ~25 min, 2,800 lines ~55 min.
+ *
+ * **Tab count** (`morningCount`): the PRs in Next up and Waiting on you, each once. Waiting on you is counted before
+ * Needs a decision claims its PRs, so a stale reply still counts. Work on your own PRs that waits on others, and
+ * decisions, are not counted.
  */
 import { reviewRequest } from './attention';
+import { checkView, type CheckView } from './check-summary';
 import { prTarget, type DeepLinkTarget } from './deep-link';
 import { repoName, waitingLabel, type OverviewModel, type OverviewRow } from './overview';
 import type { QueueSignals } from './queue-signals';
-import type { ReviewMember } from './workbench';
+import type { ReviewMember, ReviewSubject } from './workbench';
 
 const DAY_MS = 86_400_000;
-/** Quick wins listed at most. */
-export const MOVE_LIMIT = 6;
-/** Mergeable PRs nobody reviewed, listed at most in Move forward now. The rest are counted under it. */
+/** Next up lists at most this many. */
+export const NEXT_LIMIT = 5;
+/** Mergeable PRs nobody reviewed, listed at most in Next up. The rest are counted under it. */
 export const UNREVIEWED_LIMIT = 2;
-/** A PR, or a stack in total, over this many changed lines is never a quick win. */
+/** Size only orders Next up: within equal effort, PRs this small (or a stack in total) come first. */
 export const QUICK_LINES = 300;
-/** A review this small, in changed lines, is a quick win (twice this with an explanation, up to `QUICK_LINES`). */
-export const SMALL_REVIEW_LINES = 200;
-/** Over this many stacks waiting on earlier PRs, Waiting on others folds them into one row. */
-export const STACKS_SHOWN = 3;
+/** The size a review is estimated at while GitHub has not reported it. */
+export const UNKNOWN_REVIEW_LINES = 200;
+/** Groups with this many PRs or fewer list them inline, without a disclosure. */
+export const INLINE_LIMIT = 3;
+/** An expanded group lists this many PRs, then "N more". */
+export const GROUP_SHOWN = 5;
+/** Waiting on others shows this many stacks, the most actionable first, then "N more stacks". */
+export const STACKS_SHOWN = 4;
+/** A chain over this many PRs shows its first `CHAIN_HEAD` and its last, with "+N more" between. */
+export const CHAIN_SHOWN = 5;
+export const CHAIN_HEAD = 3;
 /** Needs a decision: failing, never approved or idle for this long. */
 export const DECISION_MS = 7 * DAY_MS;
 /** Characters of a reply quoted on its row. */
@@ -60,6 +82,7 @@ export const QUOTE_LENGTH = 60;
 
 const same = (a: string | undefined, b: string) => !!a && a.toLowerCase() === b.toLowerCase();
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const prs = (n: number) => plural(n, 'PR', 'PRs');
 const time = (value: string | undefined) => {
   const parsed = value ? Date.parse(value) : NaN;
   return Number.isFinite(parsed) ? parsed : undefined;
@@ -70,10 +93,7 @@ const memberLines = (member: Pick<ReviewMember, 'additions' | 'deletions'>) =>
 const isOpen = (member: ReviewMember) => member.state === 'open' && !member.merged;
 const unique = <T,>(values: Iterable<T>) => [...new Set(values)];
 
-/**
- * The size a quick win is judged by: a PR's changed lines, or the total of a stack's open PRs. Undefined while any of
- * them is not known.
- */
+/** A row's size: a PR's changed lines, or the total of a stack's open PRs. Undefined while any of them is not known. */
 export function quickSize(row: Pick<OverviewRow, 'kind' | 'item' | 'focus'>): number | undefined {
   const members = row.kind === 'stack' ? row.item.subject.members.filter(isOpen) : [row.focus];
   let total = 0;
@@ -99,24 +119,37 @@ export function repositoryNames(repos: Iterable<string>): ReadonlyMap<string, st
 /** A repository's name on the page, from `repositoryNames`; the short name when it is not in the map. */
 export const repositoryLabel = (names: ReadonlyMap<string, string>, repo: string) => names.get(repo) ?? repoName(repo);
 
-export type MoveKind = 'merge' | 'rereview' | 'reply' | 'review';
-export interface MoveItem {
-  /** `move|${row.id}` */
+export type NextKind = 'merge' | 'rereview' | 'reply' | 'changes' | 'review' | 'fix';
+export type FixReason = 'failing' | 'conflicts' | 'restack';
+export interface NextItem {
+  /** `next|${row.id}` */
   id: string;
-  kind: MoveKind;
+  kind: NextKind;
   row: OverviewRow;
-  /** A merge of a PR nobody reviewed: the branch rules require no review. Ranked after the rest, and capped. */
+  /** What the item names: the PR a merge merges (a stack's base), else the row's title. */
+  title: string;
+  /** The PR the action acts on and the title previews. */
+  member: ReviewMember;
+  /** A merge of a PR nobody reviewed: the branch rules require no review. Capped at `UNREVIEWED_LIMIT`. */
   unreviewed?: boolean;
-  /** One line: "approved by lena · green", "not reviewed · green", "+42 lines since your review", "38 lines". */
+  /** A merge of a stack's base: the open PRs above it, which can merge once it has. */
+  unblocks?: number;
+  /** A fix: what is wrong. */
+  fix?: FixReason;
+  /** One line: "approved by lena · green", "not reviewed · green · unblocks 3 PRs", "1060 lines", "failing checks". */
   why: string;
-  /** Estimated minutes (`moveEffort`). */
+  /** Estimated minutes (`nextEffort`). */
   minutes: number;
-  /** The PRs the row's action covers: the one a merge merges, else the row's PRs. */
+  /** Changed lines, when known: only orders items of equal effort. */
+  lines?: number;
+  /** The PRs the item lists: the one a merge merges, else the row's PRs. */
   urls: string[];
+  /** The check state of those PRs. */
+  check: CheckView;
 }
-export interface MoveForward {
-  items: MoveItem[];
-  /** Ready merges nobody reviewed that are not listed: "N more ready, not reviewed". */
+export interface NextUp {
+  items: NextItem[];
+  /** Ready merges nobody reviewed that are not listed. */
   moreUnreviewed: number;
 }
 export interface MorningInput {
@@ -128,17 +161,33 @@ export interface MorningInput {
   rereviewLines?: Readonly<Record<string, number>>;
   /** The thread waiting on your reply, by PR URL: who wrote last and what. From the saved discussion. */
   replies?: Readonly<Record<string, { author: string; text: string }>>;
+  /** PRs to leave off the page, such as ones closing on GitHub. */
+  hidden?: ReadonlySet<string>;
 }
 
-/** Minutes a quick win takes. See the heuristic at the top of this file. */
-export function moveEffort(kind: MoveKind, lines: number | undefined, explanation = false): number {
+/** The PR's status, when it is for its current revision. */
+const current = (input: Pick<MorningInput, 'signals'>, member: ReviewMember) => {
+  const value = input.signals(member);
+  return value && value.url === member.url && value.headSha === member.headSha ? value : undefined;
+};
+const checksOf = (input: Pick<MorningInput, 'signals'>, members: readonly ReviewMember[]) => checkView(members.map((member) => current(input, member)));
+
+const roundEffort = (minutes: number) => (minutes > 15 ? Math.round(minutes / 5) * 5 : minutes);
+const FIX_MINUTES: Readonly<Record<FixReason, number>> = { failing: 10, conflicts: 15, restack: 5 };
+/** Minutes an item takes. See "Effort" at the top of this file. */
+export function nextEffort(kind: NextKind, lines?: number, explanation = false, fix: FixReason = 'failing'): number {
   if (kind === 'merge') return 1;
   if (kind === 'reply') return 3;
-  if (kind === 'rereview') return lines === undefined ? 5 : 2 + Math.ceil(lines / 50);
-  const minutes = 3 + Math.ceil((lines ?? SMALL_REVIEW_LINES) / 40);
-  return explanation ? Math.max(1, Math.round((minutes * 2) / 3)) : minutes;
+  if (kind === 'changes') return 15;
+  if (kind === 'fix') return FIX_MINUTES[fix];
+  if (kind === 'rereview') return lines === undefined ? 5 : roundEffort(2 + Math.ceil(Math.min(lines, 400) / 50) + Math.ceil(Math.max(0, lines - 400) / 80));
+  const size = lines ?? UNKNOWN_REVIEW_LINES;
+  const minutes = 3 + Math.ceil(Math.min(size, 400) / 40) + Math.ceil(Math.max(0, size - 400) / 60);
+  return roundEffort(explanation ? Math.max(1, Math.round((minutes * 2) / 3)) : minutes);
 }
-/** "~10 min", "~1 h 20 min". */
+/** An item's effort: "~25 min", and "1 h+" from an hour. */
+export const effortShort = (minutes: number) => (minutes >= 60 ? '1 h+' : `~${minutes} min`);
+/** A total: "~10 min", "~1 h 20 min". */
 export function effortLabel(minutes: number): string {
   if (minutes < 60) return `~${minutes} min`;
   const rest = minutes % 60;
@@ -160,117 +209,185 @@ export function quote(text: string): string {
   return `${(space > QUOTE_LENGTH * 0.6 ? cut.slice(0, space) : cut.slice(0, QUOTE_LENGTH)).replace(/[\s,.;:]+$/, '')}…`;
 }
 
-const entryUrls = (row: OverviewRow) => row.entries.map((entry) => entry.member.url);
+const entryMembers = (row: OverviewRow) => row.entries.map((entry) => entry.member);
 /** "3 PRs · " before a stack row's reason, so the row says how many PRs it stands for. */
 const stackPrefix = (row: OverviewRow) => (row.entries.length > 1 ? `${row.entries.length} PRs · ` : '');
-const byEffort = (a: MoveItem, b: MoveItem) => a.minutes - b.minutes || a.row.since - b.row.since;
+const FIX_WORDS: Readonly<Record<FixReason, string>> = { failing: 'failing checks', conflicts: 'conflicts', restack: 'needs a restack' };
+/** Restack needed, Conflicts, Failing checks: the reason a PR is under You. */
+export const FIX_LABEL: Readonly<Record<FixReason, string>> = { failing: 'Failing checks', conflicts: 'Conflicts', restack: 'Restack needed' };
+const fixReason = (reasons: readonly string[]): FixReason => (reasons.includes('checks-failed') ? 'failing' : reasons.includes('conflicts') ? 'conflicts' : 'restack');
 
-/** Move forward now: see the rules at the top of this file. */
-export function moveForward(input: MorningInput): MoveForward {
+/** The open PRs above `member` in its stack: what merging it unblocks. */
+export function openAbove(subject: Pick<ReviewSubject, 'members' | 'edges'>, member: ReviewMember): ReviewMember[] {
+  const found: ReviewMember[] = [];
+  const queue = [member.url];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const url = queue.shift() as string;
+    for (const edge of subject.edges) {
+      if (edge.parent !== url || seen.has(edge.child)) continue;
+      seen.add(edge.child);
+      const child = subject.members.find((candidate) => candidate.url === edge.child);
+      if (child && isOpen(child)) found.push(child);
+      queue.push(edge.child);
+    }
+  }
+  return found;
+}
+
+/** The order of Next up. See the rules at the top of this file. */
+const nextOrder = (stale: ReadonlySet<string>) => {
+  const tier = (item: NextItem) => (item.urls.some((url) => stale.has(url)) ? 1 : 0);
+  const large = (item: NextItem) => (item.lines !== undefined && item.lines > QUICK_LINES ? 1 : 0);
+  return (a: NextItem, b: NextItem) =>
+    tier(a) - tier(b) ||
+    a.minutes - b.minutes ||
+    Number(!!a.unreviewed) - Number(!!b.unreviewed) ||
+    (b.unblocks ?? 0) - (a.unblocks ?? 0) ||
+    large(a) - large(b) ||
+    a.row.since - b.row.since ||
+    a.title.localeCompare(b.title);
+};
+
+/** Next up: see the rules at the top of this file. `stale`: PRs that need a decision, ranked after the rest. */
+export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): NextUp {
   const { model } = input;
-  const ranked: MoveItem[] = [];
-  const unreviewed: MoveItem[] = [];
-  const requests: MoveItem[] = [];
-  const quick = (row: OverviewRow) => {
-    const size = quickSize(row);
-    return size !== undefined && size <= QUICK_LINES;
+  const hidden = input.hidden ?? new Set<string>();
+  const candidates: NextItem[] = [];
+  const add = (value: Omit<NextItem, 'id' | 'check'>) => {
+    // A row for one PR of a stack names that PR, not the stack.
+    const item = value.kind !== 'merge' && value.row.entries.length === 1 ? { ...value, title: value.member.title } : value;
+    if (item.urls.some((url) => hidden.has(url))) return;
+    const members = item.urls.map((url) => item.row.item.subject.members.find((member) => member.url === url)).filter((member): member is ReviewMember => !!member);
+    candidates.push({ ...item, id: `next|${item.row.id}`, check: checksOf(input, members) });
   };
   for (const row of lanes(model, 'merge')?.rows ?? []) {
     const member = row.merge?.member ?? row.focus;
-    const signals = input.signals(member);
-    // A PR stacked on one that has not merged waits for it: it is under its stack in Waiting on others.
+    // A PR stacked on one that has not merged waits for it: its base is the next step.
     if (!row.merge?.ready || row.merge.notes.some((note) => note.kind === 'base-open')) continue;
-    if (signals?.headSha !== member.headSha || signals.checks.state !== 'success' || !quick(row)) continue;
+    if (current(input, member)?.checks.state !== 'success') continue;
     const review = row.merge.notes[0];
-    const merge = { id: `move|${row.id}`, kind: 'merge' as const, row, minutes: moveEffort('merge', undefined), urls: [member.url] };
-    if (review.kind === 'approved') ranked.push({ ...merge, why: `${review.text.replace(/^Approved/, 'approved')} · green` });
-    else if (review.kind === 'no-review') unreviewed.push({ ...merge, unreviewed: true, why: 'not reviewed · green' });
+    if (review.kind !== 'approved' && review.kind !== 'no-review') continue;
+    const unblocks = openAbove(row.item.subject, member).length;
+    const why = [review.kind === 'approved' ? `${review.text.replace(/^Approved/, 'approved')} · green` : 'not reviewed · green', unblocks ? `unblocks ${prs(unblocks)}` : '']
+      .filter(Boolean)
+      .join(' · ');
+    add({
+      kind: 'merge', row, title: member.title, member, why, minutes: nextEffort('merge'), lines: memberLines(member), urls: [member.url],
+      ...(review.kind === 'no-review' ? { unreviewed: true } : {}),
+      ...(unblocks ? { unblocks } : {}),
+    });
   }
+  const requests: NextItem[] = [];
   for (const row of lanes(model, 'review')?.rows ?? []) {
-    if (!quick(row)) continue;
+    const urls = entryMembers(row).map((member) => member.url);
     if (row.reasons.includes('updated-since-review')) {
       const lines = input.rereviewLines?.[row.focus.url];
-      ranked.push({
-        id: `move|${row.id}`,
-        kind: 'rereview',
-        row,
+      add({
+        kind: 'rereview', row, title: row.title, member: row.focus, urls, lines,
         why: stackPrefix(row) + (lines === undefined ? 'updated since your review' : `+${plural(lines, 'line', 'lines')} since your review`),
-        minutes: moveEffort('rereview', lines),
-        urls: entryUrls(row),
+        minutes: nextEffort('rereview', lines),
       });
       continue;
     }
-    const lines = quickSize(row) ?? 0;
+    const lines = quickSize(row);
     const explanation = !!row.explanation;
-    if (lines > Math.min(QUICK_LINES, SMALL_REVIEW_LINES * (explanation ? 2 : 1))) continue;
-    const item: MoveItem = {
-      id: `move|${row.id}`,
-      kind: 'review',
-      row,
-      why: stackPrefix(row) + [plural(lines, 'line', 'lines'), explanation ? 'explanation ready' : ''].filter(Boolean).join(' · '),
-      minutes: moveEffort('review', lines, explanation),
-      urls: entryUrls(row),
-    };
-    ranked.push(item);
-    if (row.reasons.includes('review-requested')) requests.push(item);
+    add({
+      kind: 'review', row, title: row.title, member: row.focus, urls, lines,
+      why: stackPrefix(row) + [lines === undefined ? 'size not known yet' : plural(lines, 'line', 'lines'), explanation ? 'explanation ready' : ''].filter(Boolean).join(' · '),
+      minutes: nextEffort('review', lines, explanation),
+    });
+    const item = candidates.at(-1);
+    if (item?.row === row && row.reasons.includes('review-requested')) requests.push(item);
   }
   for (const row of lanes(model, 'answer')?.rows ?? []) {
-    if (!row.reasons.includes('replies')) continue;
-    const reply = input.replies?.[row.focus.url];
-    ranked.push({
-      id: `move|${row.id}`,
-      kind: 'reply',
-      row,
-      why: reply ? `${reply.author}: “${quote(reply.text)}”` : `${row.person ?? 'Someone'} is waiting on your reply`,
-      minutes: moveEffort('reply', undefined),
-      urls: entryUrls(row),
-    });
+    const urls = entryMembers(row).map((member) => member.url);
+    if (row.reasons.includes('replies')) {
+      const reply = input.replies?.[row.focus.url];
+      add({
+        kind: 'reply', row, title: row.title, member: row.focus, urls, minutes: nextEffort('reply'),
+        why: reply ? `${reply.author}: “${quote(reply.text)}”` : `${row.person ?? 'Someone'} is waiting on your reply`,
+      });
+    } else if (row.reasons.includes('changes-requested'))
+      add({ kind: 'changes', row, title: row.title, member: row.focus, urls, minutes: nextEffort('changes'), why: `${row.person ? `${row.person} requested` : 'Requested'} changes` });
   }
-  ranked.sort(byEffort);
-  unreviewed.sort((a, b) => a.row.since - b.row.since || a.row.title.localeCompare(b.row.title));
-  const items = ranked.slice(0, MOVE_LIMIT);
-  items.push(...unreviewed.slice(0, Math.min(UNREVIEWED_LIMIT, MOVE_LIMIT - items.length)));
-  // A slot for the oldest small review request, when one qualifies: it replaces the last row.
-  const oldest = [...requests].sort((a, b) => a.row.since - b.row.since)[0];
+  for (const row of lanes(model, 'fix')?.rows ?? []) {
+    const fix = fixReason(row.reasons);
+    const minutes = roundEffort(row.entries.reduce((total, entry) => total + nextEffort('fix', undefined, false, fixReason(entry.reasons)), 0));
+    add({ kind: 'fix', row, title: row.title, member: row.focus, fix, minutes, urls: entryMembers(row).map((member) => member.url), why: stackPrefix(row) + FIX_WORDS[fix] });
+  }
+  const order = nextOrder(input.stale ?? new Set());
+  candidates.sort(order);
+  const items: NextItem[] = [];
+  let unreviewed = 0;
+  for (const item of candidates) {
+    if (items.length >= NEXT_LIMIT) break;
+    if (item.unreviewed && unreviewed >= UNREVIEWED_LIMIT) continue;
+    if (item.unreviewed) unreviewed++;
+    items.push(item);
+  }
+  // The oldest review request always has a slot: it replaces the last item when the rest fill the section.
+  const oldest = [...requests].sort((a, b) => a.row.since - b.row.since).at(0);
   if (oldest && !items.includes(oldest)) {
-    if (items.length >= MOVE_LIMIT) items.pop();
+    if (items.length >= NEXT_LIMIT) items.pop();
     items.push(oldest);
+    items.sort(order);
   }
-  const rank = (item: MoveItem) => (item.unreviewed ? 1 : 0);
-  items.sort((a, b) => rank(a) - rank(b) || (rank(a) ? a.row.since - b.row.since : byEffort(a, b)));
   const shown = new Set(items.map((item) => item.row.id));
   const moreUnreviewed = (lanes(model, 'merge')?.rows ?? []).filter(
-    (row) => row.merge?.notes[0]?.kind === 'no-review' && !row.merge.notes.some((note) => note.kind === 'base-open') && !shown.has(row.id)
+    (row) => row.merge?.notes[0]?.kind === 'no-review' && !row.merge.notes.some((note) => note.kind === 'base-open') && !shown.has(row.id) && !hidden.has(row.merge.member.url)
   ).length;
   return { items, moreUnreviewed };
 }
-export const moveMinutes = (items: readonly Pick<MoveItem, 'minutes'>[]) => items.reduce((total, item) => total + item.minutes, 0);
+/** The quiet line under Next up: "2 more ready, not reviewed" when some are listed, else "6 ready to merge without review". */
+export function nextMoreLine(next: NextUp): string | undefined {
+  if (next.moreUnreviewed <= 0) return undefined;
+  return next.items.some((item) => item.unreviewed) ? `${next.moreUnreviewed} more ready, not reviewed` : `${next.moreUnreviewed} ready to merge without review`;
+}
+export const nextMinutes = (items: readonly Pick<NextItem, 'minutes'>[]) => items.reduce((total, item) => total + item.minutes, 0);
+/** Next up's heading: the PRs its items list. */
+export const nextCount = (items: readonly Pick<NextItem, 'urls'>[]) => items.reduce((total, item) => total + item.urls.length, 0);
 
-/** One PR line under an expanded group. */
+/** Where a PR is listed on the page. */
+export type Place = 'next' | 'decide' | 'you' | 'others' | 'hidden';
+export const PLACE_LABEL: Readonly<Record<Exclude<Place, 'hidden' | 'others'>, string>> = { next: 'Next up', decide: 'Needs a decision', you: 'Waiting on you' };
+export type ChainStatus = 'next' | 'ready' | 'checks' | 'waiting' | 'conflicts';
+export const CHAIN_STATUS_LABEL: Readonly<Record<ChainStatus, string>> = { next: 'Next', ready: 'Ready', checks: 'Checks running', waiting: 'Waiting', conflicts: 'Conflicts' };
+
+/** One PR under a group. */
 export interface GroupLine {
-  /** `${row.id}` for a row, `${row.id}|${member.url}` for one PR of a stack row. */
+  /** The PR's URL: a PR is listed once on the page. */
   id: string;
   row: OverviewRow;
-  /** The PR the line names; a stack row's line names the stack and opens its first PR. */
   member: ReviewMember;
   title: string;
   since: number;
   /** Where a click lands. */
   target: DeepLinkTarget;
-  /** After the title, for a PR waiting on an earlier one: "after #380". */
-  note?: string;
-  /** The tooltip and accessible description, when the line needs more than its words. */
-  hint?: string;
+  /** The PR's check state. */
+  check: CheckView;
+  /** Under You: why the PR needs you. */
+  reason?: FixReason;
+  /** In a stack's chain: where the PR stands. */
+  status?: ChainStatus;
+  /** The accessible description, before the check state: "#377, waits for #376 to merge". */
+  description: string;
 }
-/** The open PR a stack waits on, and what it waits on itself. */
-export interface StackBase {
+/** A chain step: a PR the stack lists, or a reference to one another section lists. */
+export type ChainNode = { kind: 'line'; line: GroupLine } | { kind: 'ref'; member: ReviewMember; place: Place };
+/** What a stack waits on, in words, and the action that moves it. */
+export interface StackStep {
+  /** "Merge #376 to unblock 3 PRs", "#36948 is waiting on checks", "#379 waits on review from lena", "#379 has conflicts". */
+  text: string;
+  action: 'merge' | 'nudge' | 'open';
+  /** The PR that has to merge first. */
   member: ReviewMember;
-  /** "#380 is ready to merge", "#380 has failing checks", "#380 waits on lena’s review". */
-  status?: string;
-  /** Merge it from the stack row (your PR, ready), or open it. */
-  action: 'merge' | 'open';
   /** Its row in the lanes: Merge acts on it. */
   row?: OverviewRow;
+  /** Nudge: the reviewer. */
+  reviewer?: string;
+  /** Can merge, or needs you: shown before stacks that wait on others. */
+  actionable: boolean;
 }
 export interface PersonGroup {
   /** `person:lena`, `unassigned`, `team`, `team:org/name`, `review`, `ci`, `stack:owner/repo#380`, `stacks`, `you`. */
@@ -278,50 +395,47 @@ export interface PersonGroup {
   kind: 'person' | 'unassigned' | 'team' | 'ci' | 'stack' | 'stacks' | 'you' | 'review';
   /** "lena", "team", "CI", "Launcher i18n", "Waiting for earlier PRs in a stack to merge", "you". */
   label: string;
-  /** "2 PRs · oldest 4 d", "3 running", "16 failing checks, 2 conflicts", "4 PRs wait for #380 to merge". */
+  /** "2 PRs · oldest 4 d", "3 running", "2 failing checks, 1 conflict", "13 PRs in 5 stacks", "4 PRs". */
   detail: string;
   rows: OverviewRow[];
-  /** The PRs this row stands for, each once: its share of the section heading. */
+  /** The PRs this group lists, each once: its share of the section heading. Exactly its lines' PRs. */
   urls: string[];
   /** The repositories of those PRs, each once. */
   repos: string[];
-  /** Its PRs, one line each, when expanded. */
+  /** Its PRs, one line each. */
   lines: GroupLine[];
   /** When the longest wait in the group began. */
   oldest: number;
   /** A requested reviewer of your PRs: Nudge re-requests their review on these PRs. */
   nudge?: { reviewer: string; members: ReviewMember[] };
-  /** A stack row: the PR that has to merge first. */
-  base?: StackBase;
-  /** The folded stacks row: one row per stack, when expanded. */
+  /** A stack: what it waits on, and its chain in merge order, base first. */
+  step?: StackStep;
+  chain?: ChainNode[];
+  /** The stacks row: one chain per stack, the most actionable first. */
   children?: PersonGroup[];
+  /** People, teams and reviewers: the check state of their PRs together. */
+  check?: CheckView;
 }
-const prs = (n: number) => plural(n, 'PR', 'PRs');
 /** A section heading: the sum of the PRs its rows stand for. */
 export const sectionCount = (groups: readonly Pick<PersonGroup, 'urls'>[]) => groups.reduce((total, group) => total + group.urls.length, 0);
-/** Move forward now's heading: the PRs its rows act on. */
-export const moveCount = (items: readonly Pick<MoveItem, 'urls'>[]) => items.reduce((total, item) => total + item.urls.length, 0);
 
-type GroupSeed = Pick<PersonGroup, 'kind' | 'label'> & Partial<Pick<PersonGroup, 'nudge' | 'base'>>;
-/** Builds groups that list each PR once: the first group a PR is added to keeps it. */
-function grouper() {
+type GroupSeed = Pick<PersonGroup, 'kind' | 'label'> & Partial<Pick<PersonGroup, 'nudge'>>;
+/** Builds groups that list each PR once on the page: a PR another section or group claimed is skipped. */
+function grouper(input: Pick<MorningInput, 'signals'>, claimed: Map<string, Place>, place: Place) {
   const groups = new Map<string, PersonGroup>();
-  const claimed = new Set<string>();
-  const add = (key: string, seed: () => GroupSeed, row: OverviewRow, members: readonly ReviewMember[], line?: (member: ReviewMember) => Pick<GroupLine, 'note' | 'hint'>) => {
-    const fresh = members.filter((member) => !claimed.has(member.url));
-    if (!fresh.length) return undefined;
+  const add = (key: string, seed: () => GroupSeed, row: OverviewRow, member: ReviewMember, extra: Partial<GroupLine> = {}) => {
+    if (claimed.has(member.url)) return undefined;
+    claimed.set(member.url, place);
     const group: PersonGroup = groups.get(key) ?? { key, detail: '', rows: [], urls: [], repos: [], lines: [], oldest: row.since, ...seed() };
     if (!group.rows.includes(row)) group.rows.push(row);
-    for (const member of fresh) {
-      claimed.add(member.url);
-      group.urls.push(member.url);
-      if (!group.repos.includes(member.repo)) group.repos.push(member.repo);
-      if (line) {
-        const since = row.entries.find((entry) => entry.member.url === member.url)?.since ?? row.since;
-        group.lines.push({ id: `${row.id}|${member.url}`, row, member, title: member.title, since, target: prTarget(member.url) ?? row.target, ...line(member) });
-      } else if (!group.lines.some((entry) => entry.row === row)) group.lines.push({ id: row.id, row, member: row.focus, title: row.title, since: row.since, target: row.target });
-    }
-    group.oldest = Math.min(group.oldest, row.since);
+    group.urls.push(member.url);
+    if (!group.repos.includes(member.repo)) group.repos.push(member.repo);
+    const since = row.entries.find((entry) => entry.member.url === member.url)?.since ?? row.since;
+    group.lines.push({
+      id: member.url, row, member, title: member.title, since, target: prTarget(member.url) ?? row.target, check: checksOf(input, [member]),
+      description: `#${member.number}`, ...extra,
+    });
+    group.oldest = Math.min(group.oldest, since);
     groups.set(key, group);
     return group;
   };
@@ -335,20 +449,19 @@ const sortLines = (group: PersonGroup) => {
 /**
  * Waiting on you: review requests and re-reviews by author, replies and change requests by who wrote, oldest wait
  * first; then PRs whose requester is not known ("unassigned"), and team requests last: "team · 3 review requests".
- * A PR in two lanes (a reply and a re-review) is listed once, under its oldest wait.
+ * A PR in two lanes (a reply and a re-review) is listed once, under its oldest wait. PRs in `claimed` are left out.
  */
-export function waitingOnYou(input: Pick<MorningInput, 'model' | 'now' | 'login'>): PersonGroup[] {
-  const { add, groups } = grouper();
+export function waitingOnYou(input: Pick<MorningInput, 'model' | 'now' | 'login' | 'signals'>, claimed = new Map<string, Place>()): PersonGroup[] {
+  const { add, groups } = grouper(input, claimed, 'you');
   const rows = [...(lanes(input.model, 'answer')?.rows ?? []), ...(lanes(input.model, 'review')?.rows ?? [])].sort((a, b) => a.since - b.since);
   for (const row of rows) {
-    const members = row.entries.map((entry) => entry.member);
-    if (row.lane === 'review' && !row.reasons.includes('updated-since-review') && row.entries.every((entry) => reviewRequest(entry.member, input.login) === 'team')) {
-      add('team', () => ({ kind: 'team', label: 'team' }), row, members);
-      continue;
-    }
+    const team = row.lane === 'review' && !row.reasons.includes('updated-since-review') && row.entries.every((entry) => reviewRequest(entry.member, input.login) === 'team');
     const person = row.person ?? (row.lane === 'review' && !same(row.focus.author, input.login) ? row.focus.author : undefined);
-    if (person) add(`person:${person.toLowerCase()}`, () => ({ kind: 'person', label: person }), row, members);
-    else add('unassigned', () => ({ kind: 'unassigned', label: 'unassigned' }), row, members);
+    for (const { member } of row.entries) {
+      if (team) add('team', () => ({ kind: 'team', label: 'team' }), row, member);
+      else if (person) add(`person:${person.toLowerCase()}`, () => ({ kind: 'person', label: person }), row, member);
+      else add('unassigned', () => ({ kind: 'unassigned', label: 'unassigned' }), row, member);
+    }
   }
   const order: PersonGroup['kind'][] = ['person', 'unassigned', 'team'];
   const result = [...groups.values()].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.oldest - b.oldest || a.label.localeCompare(b.label));
@@ -356,6 +469,7 @@ export function waitingOnYou(input: Pick<MorningInput, 'model' | 'now' | 'login'
     sortLines(group);
     const n = group.urls.length;
     group.detail = group.kind === 'team' ? plural(n, 'review request', 'review requests') : `${prs(n)} · oldest ${waitingLabel(group.oldest, input.now)}`;
+    group.check = checksOf(input, group.lines.map((line) => line.member));
   }
   return result;
 }
@@ -369,30 +483,27 @@ function ownRows(model: Pick<OverviewModel, 'lanes'>): OverviewRow[] {
 }
 
 /** The open PR directly below `member` in its stack, if any. */
-function openParent(row: OverviewRow, member: ReviewMember): ReviewMember | undefined {
-  const subject = row.item.subject;
+function openParent(subject: ReviewSubject, member: ReviewMember): ReviewMember | undefined {
   return subject.edges
     .filter((edge) => edge.child === member.url)
     .map((edge) => subject.members.find((candidate) => candidate.url === edge.parent))
     .find((parent): parent is ReviewMember => !!parent && isOpen(parent));
 }
 /** The lowest open PR under `member`: the one that has to merge first. */
-function openRoot(row: OverviewRow, member: ReviewMember): ReviewMember | undefined {
-  let current = openParent(row, member);
+function openRoot(subject: ReviewSubject, member: ReviewMember): ReviewMember | undefined {
+  let found = openParent(subject, member);
   const seen = new Set<string>();
-  while (current && !seen.has(current.url)) {
-    seen.add(current.url);
-    const next = openParent(row, current);
+  while (found && !seen.has(found.url)) {
+    seen.add(found.url);
+    const next = openParent(subject, found);
     if (!next) break;
-    current = next;
+    found = next;
   }
-  return current;
+  return found;
 }
-/** "This PR is stacked on #380 and can merge only after #380 merges." */
-export const stackedHint = (number: number) => `This PR is stacked on #${number} and can merge only after #${number} merges.`;
 
-/** What the PR a stack waits on is waiting on itself, from its row in the lanes. */
-export function stackBase(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember, login: string): StackBase {
+/** What the PR a stack waits on is waiting on itself, from its row in the lanes, and the action that moves it. */
+export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember, login: string, unblocks: number): StackStep {
   const n = `#${member.number}`;
   const find = (lane: OverviewRow['lane'], parked = false) => {
     const state = lanes(model, lane);
@@ -400,42 +511,90 @@ export function stackBase(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
   };
   const reasons = (row: OverviewRow) => row.entries.find((entry) => entry.member.url === member.url)?.reasons ?? row.reasons;
   const fix = find('fix');
-  if (fix) {
-    const why = reasons(fix);
-    const status = why.includes('checks-failed') ? `${n} has failing checks` : why.includes('conflicts') ? `${n} has conflicts` : `${n} needs a restack`;
-    return { member, status, action: 'open', row: fix };
-  }
+  if (fix) return { member, row: fix, action: 'open', actionable: true, text: `${n} ${{ failing: 'has failing checks', conflicts: 'has conflicts', restack: 'needs a restack' }[fixReason(reasons(fix))]}` };
   const answer = find('answer');
-  if (answer) return { member, status: reasons(answer).includes('changes-requested') ? `${n} has changes requested` : `${n} waits on your reply`, action: 'open', row: answer };
+  if (answer) return { member, row: answer, action: 'open', actionable: true, text: reasons(answer).includes('changes-requested') ? `${n} has changes requested` : `${n} waits on your reply` };
   const merge = find('merge');
-  if (merge && merge.merge?.member.url === member.url) return { member, status: `${n} is ready to merge`, action: 'merge', row: merge };
+  if (merge && merge.merge?.member.url === member.url)
+    return { member, row: merge, action: 'merge', actionable: true, text: unblocks ? `Merge ${n} to unblock ${prs(unblocks)}` : `Merge ${n}` };
   const parked = find('merge', true);
-  if (parked) return { member, status: parked.merge?.notes[0]?.kind === 'approved' ? `${n} is approved and can merge` : `${n} can merge, not reviewed`, action: 'open', row: parked };
+  if (parked) return { member, row: parked, action: 'open', actionable: true, text: parked.merge?.notes[0]?.kind === 'approved' ? `${n} is approved and can merge` : `${n} can merge, not reviewed` };
   const waiting = find('waiting');
   if (waiting) {
     const why = reasons(waiting);
-    const reviewer = member.requestedReviewers.find((name) => !same(name, login)) ?? member.requestedTeams[0];
-    const status = why.includes('review-pending') ? (reviewer ? `${n} waits on ${reviewer}’s review` : `${n} waits on a review`) : `${n} has checks running`;
-    return { member, status, action: 'open', row: waiting };
+    if (why.includes('review-pending')) {
+      const reviewer = member.requestedReviewers.find((name) => !same(name, login));
+      const team = member.requestedTeams[0];
+      if (reviewer) return { member, row: waiting, action: 'nudge', reviewer, actionable: false, text: `${n} waits on review from ${reviewer}` };
+      return { member, row: waiting, action: 'open', actionable: false, text: team ? `${n} waits on review from ${team}` : `${n} waits on a review` };
+    }
+    return { member, row: waiting, action: 'open', actionable: false, text: `${n} is waiting on checks` };
   }
   const review = find('review');
-  if (review) return { member, status: `${n} waits on your review`, action: 'open', row: review };
-  return { member, action: 'open' };
+  if (review) return { member, row: review, action: 'open', actionable: true, text: `${n} waits on your review` };
+  return { member, action: 'open', actionable: false, text: `${n} has to merge first` };
 }
 
 /**
- * Waiting on others: your PRs by blocker, each PR under one row. Each requested reviewer is a row with Nudge, oldest
- * wait first (a PR waiting on two reviewers is listed under the first one GitHub names); then requested teams, PRs
- * awaiting a reviewer nobody was asked to be, CI still running, stacks waiting for an earlier PR to merge, and you.
+ * Waiting on others: your PRs by blocker, each PR once on the page. Stacks first, as chains; then each requested
+ * reviewer (with Nudge), oldest wait first (a PR waiting on two reviewers is under the first one GitHub names); then
+ * requested teams, PRs awaiting a reviewer nobody was asked to be, CI still running, and you, each PR with its reason.
  *
- * Stacks: one row per stack, keyed by the repository and number of the open PR at its bottom (never the number
- * alone), so a stack listed twice is one row and equal numbers in two repositories stay apart. A PR is under its
- * stack only when nothing else blocks it: failing checks put it under you, a requested review under the reviewer.
- * Over `STACKS_SHOWN` stacks fold into one row, "Waiting for earlier PRs in a stack to merge", that expands to them.
+ * Stacks: one chain per stack, keyed by the repository and number of the open PR at its bottom (never the number
+ * alone), so a stack listed twice is one chain and equal numbers in two repositories stay apart. The chain lists the
+ * base and every PR waiting for it, in merge order; a PR another section lists is a reference. The step says what
+ * the base waits on. All stacks are one group, "Waiting for earlier PRs in a stack to merge", the most actionable
+ * first (the base can merge, or needs you), then the oldest.
  */
-export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'login'>): PersonGroup[] {
+export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'login' | 'signals'>, claimed = new Map<string, Place>()): PersonGroup[] {
   const { model, now, login } = input;
-  const { add, groups } = grouper();
+  const { add, groups } = grouper(input, claimed, 'others');
+  // Stacks: every PR of yours waiting for an earlier PR, by the PR at the bottom.
+  type Waiting = { member: ReviewMember; row: OverviewRow; reasons: Set<string> };
+  const stacks = new Map<string, { root: ReviewMember; subject: ReviewSubject; row: OverviewRow; waiting: Map<string, Waiting> }>();
+  for (const row of ownRows(model)) {
+    for (const entry of row.entries) {
+      const root = openRoot(row.item.subject, entry.member);
+      if (!root) continue;
+      const key = `stack:${root.repo.toLowerCase()}#${root.number}`;
+      const stack = stacks.get(key) ?? { root, subject: row.item.subject, row, waiting: new Map<string, Waiting>() };
+      const found = stack.waiting.get(entry.member.url) ?? { member: entry.member, row, reasons: new Set<string>() };
+      for (const reason of entry.reasons) found.reasons.add(reason);
+      if (row.lane === 'merge') found.reasons.add('merge');
+      stack.waiting.set(entry.member.url, found);
+      stacks.set(key, stack);
+    }
+  }
+  const stackGroups: PersonGroup[] = [];
+  for (const [key, { root, subject, row, waiting }] of stacks) {
+    const position = (member: ReviewMember) => subject.members.findIndex((candidate) => candidate.url === member.url);
+    const above = [...waiting.values()].sort((a, b) => position(a.member) - position(b.member));
+    if (above.every(({ member }) => claimed.has(member.url))) continue;
+    const step = stackStep(model, root, login, openAbove(subject, root).length);
+    const label = subject.name || root.title;
+    const seed = () => ({ kind: 'stack' as const, label });
+    const chain: ChainNode[] = [];
+    const node = (member: ReviewMember, lineRow: OverviewRow, extra: Partial<GroupLine>) => {
+      const place = claimed.get(member.url);
+      const group = place ? undefined : add(key, seed, lineRow, member, extra);
+      chain.push(group ? { kind: 'line', line: group.lines.at(-1) as GroupLine } : { kind: 'ref', member, place: place ?? 'others' });
+    };
+    node(root, step.row ?? row, { status: 'next', description: `#${root.number}, merges first. ${step.text}` });
+    for (const { member, row: lineRow, reasons } of above) {
+      const parent = openParent(subject, member);
+      const checks = current(input, member)?.checks.state;
+      const status: ChainStatus = reasons.has('conflicts') ? 'conflicts' : checks === 'pending' ? 'checks' : reasons.has('merge') && checks === 'success' ? 'ready' : 'waiting';
+      node(member, lineRow, { status, description: `#${member.number}, waits for #${parent?.number ?? root.number} to merge` });
+    }
+    const group = groups.get(key);
+    if (!group) continue;
+    group.step = step;
+    group.chain = chain;
+    group.detail = prs(group.urls.length);
+    group.oldest = Math.min(...group.lines.map((line) => line.since));
+    groups.delete(key);
+    stackGroups.push(group);
+  }
   for (const row of lanes(model, 'waiting')?.rows ?? []) {
     for (const entry of row.entries) {
       const member = entry.member;
@@ -443,83 +602,57 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
       const reviewer = member.requestedReviewers.find((name) => !same(name, login));
       const team = member.requestedTeams[0];
       if (reviewer) {
-        const group = add(`person:${reviewer.toLowerCase()}`, () => ({ kind: 'person', label: reviewer, nudge: { reviewer, members: [] } }), row, [member]);
+        const group = add(`person:${reviewer.toLowerCase()}`, () => ({ kind: 'person', label: reviewer, nudge: { reviewer, members: [] } }), row, member, { description: `#${member.number}, waits on review from ${reviewer}` });
         if (group?.nudge && !group.nudge.members.some((candidate) => candidate.url === member.url)) group.nudge.members.push(member);
-      } else if (team) add(`team:${team.toLowerCase()}`, () => ({ kind: 'team', label: team }), row, [member]);
-      else add('review', () => ({ kind: 'review', label: 'a reviewer' }), row, [member]);
+      } else if (team) add(`team:${team.toLowerCase()}`, () => ({ kind: 'team', label: team }), row, member, { description: `#${member.number}, waits on review from ${team}` });
+      else add('review', () => ({ kind: 'review', label: 'a reviewer' }), row, member, { description: `#${member.number}, waits on a reviewer` });
     }
-    for (const entry of row.entries) if (entry.reasons.includes('checks-pending')) add('ci', () => ({ kind: 'ci', label: 'CI' }), row, [entry.member]);
+    for (const entry of row.entries)
+      if (entry.reasons.includes('checks-pending')) add('ci', () => ({ kind: 'ci', label: 'CI' }), row, entry.member, { description: `#${entry.member.number}, checks running` });
   }
-  for (const row of lanes(model, 'fix')?.rows ?? []) add('you', () => ({ kind: 'you', label: 'you' }), row, row.entries.map((entry) => entry.member));
-  // A PR waiting for an earlier PR in its stack to merge.
-  for (const row of ownRows(model)) {
+  for (const row of lanes(model, 'fix')?.rows ?? [])
     for (const entry of row.entries) {
-      const parent = openParent(row, entry.member);
-      const root = openRoot(row, entry.member);
-      if (!parent || !root) continue;
-      add(`stack:${root.repo.toLowerCase()}#${root.number}`, () => ({ kind: 'stack', label: row.item.subject.name || root.title, base: stackBase(model, root, login) }), row, [entry.member], () => ({
-        note: `after #${parent.number}`,
-        hint: stackedHint(parent.number),
-      }));
+      const reason = fixReason(entry.reasons);
+      add('you', () => ({ kind: 'you', label: 'you' }), row, entry.member, { reason, description: `#${entry.member.number}, ${FIX_LABEL[reason].toLowerCase()}` });
     }
-  }
-  const order: PersonGroup['kind'][] = ['person', 'team', 'review', 'ci', 'stack', 'you'];
-  let result = [...groups.values()].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.oldest - b.oldest || a.label.localeCompare(b.label));
+  const order: PersonGroup['kind'][] = ['person', 'team', 'review', 'ci', 'you'];
+  const result = [...groups.values()].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.oldest - b.oldest || a.label.localeCompare(b.label));
   for (const group of result) {
     sortLines(group);
     const n = group.urls.length;
     if (group.kind === 'ci') group.detail = `${n} running`;
     else if (group.kind === 'you') {
-      // Per PR, each under its first reason, so the counts add up to the PRs: a stack with two failing PRs counts two,
-      // a PR failing with conflicts counts once, and a stack listed twice counts once.
-      const entries = group.rows.flatMap((row) => row.entries);
-      const first = group.urls.map((url) => {
-        const reasons = entries.find((entry) => entry.member.url === url)?.reasons ?? [];
-        return reasons.includes('checks-failed') ? 'failing' : reasons.includes('conflicts') ? 'conflicts' : 'restack';
-      });
-      const failing = first.filter((reason) => reason === 'failing').length;
-      const conflicts = first.filter((reason) => reason === 'conflicts').length;
-      const restack = first.filter((reason) => reason === 'restack').length;
-      group.detail = [failing ? plural(failing, 'failing check', 'failing checks') : '', conflicts ? plural(conflicts, 'conflict', 'conflicts') : '', restack ? plural(restack, 'restack', 'restacks') : '']
-        .filter(Boolean)
-        .join(', ');
-    } else if (group.kind === 'stack' && group.base) {
-      // Stack order, base first: each PR follows the one it is stacked on.
-      const position = (line: GroupLine) => line.row.item.subject.members.findIndex((candidate) => candidate.url === line.member.url);
-      group.lines.sort((a, b) => position(a) - position(b));
-      const { member, status, row } = group.base;
-      const base = `#${member.number}`;
-      group.detail = [`${n === 1 ? '1 PR waits' : `${n} PRs wait`} for ${base} to merge`, status ?? ''].filter(Boolean).join(' · ');
-      // The PR that has to land first leads the expanded stack, so it is one click away.
-      group.lines.unshift({
-        id: `${group.key}|base`,
-        row: row ?? group.rows[0],
-        member,
-        title: member.title,
-        since: row?.since ?? group.oldest,
-        target: prTarget(member.url) ?? group.rows[0].target,
-        note: status ?? `${base} merges first`,
-        hint: `${base} has to merge before the rest of this stack can.`,
-      });
-    } else group.detail = `${prs(n)} · ${waitingLabel(group.oldest, now)}`;
+      // Each PR under its first reason, so the counts add up to the PRs.
+      const count = (reason: FixReason) => group.lines.filter((line) => line.reason === reason).length;
+      const words: [FixReason, string, string][] = [['failing', 'failing check', 'failing checks'], ['conflicts', 'conflict', 'conflicts'], ['restack', 'restack', 'restacks']];
+      group.detail = words.filter(([reason]) => count(reason)).map(([reason, one, many]) => plural(count(reason), one, many)).join(', ');
+      // Failing first, then conflicts, then restacks; oldest first within each.
+      const rank = (line: GroupLine) => words.findIndex(([reason]) => reason === line.reason);
+      group.lines.sort((a, b) => rank(a) - rank(b) || a.since - b.since);
+    } else {
+      group.detail = `${prs(n)} · ${waitingLabel(group.oldest, now)}`;
+      group.check = checksOf(input, group.lines.map((line) => line.member));
+    }
   }
-  const stacks = result.filter((group) => group.kind === 'stack');
-  if (stacks.length > STACKS_SHOWN) {
-    const urls = stacks.flatMap((group) => group.urls);
-    const folded: PersonGroup = {
+  if (stackGroups.length) {
+    // The base can merge first, then a base that needs you, then the rest; the oldest first within each.
+    const rank = (group: PersonGroup) => (group.step?.action === 'merge' ? 0 : group.step?.actionable ? 1 : 2);
+    stackGroups.sort((a, b) => rank(a) - rank(b) || a.oldest - b.oldest || a.label.localeCompare(b.label));
+    const urls = stackGroups.flatMap((group) => group.urls);
+    const stacksGroup: PersonGroup = {
       key: 'stacks',
       kind: 'stacks',
       label: 'Waiting for earlier PRs in a stack to merge',
-      detail: `${prs(urls.length)} in ${stacks.length} stacks`,
-      rows: unique(stacks.flatMap((group) => group.rows)),
+      detail: `${prs(urls.length)} in ${plural(stackGroups.length, 'stack', 'stacks')}`,
+      rows: unique(stackGroups.flatMap((group) => group.rows)),
       urls,
-      repos: unique(stacks.flatMap((group) => group.repos)),
+      repos: unique(stackGroups.flatMap((group) => group.repos)),
       lines: [],
-      oldest: Math.min(...stacks.map((group) => group.oldest)),
-      children: stacks,
+      oldest: Math.min(...stackGroups.map((group) => group.oldest)),
+      children: stackGroups,
     };
-    const at = result.indexOf(stacks[0]);
-    result = [...result.slice(0, at), folded, ...result.slice(at).filter((group) => group.kind !== 'stack')];
+    const at = result.findIndex((group) => group.kind === 'you');
+    result.splice(at < 0 ? result.length : at, 0, stacksGroup);
   }
   return result;
 }
@@ -535,12 +668,13 @@ export interface DecisionItem {
   /** "Failing 12 d", "Never approved · 9 d", "Idle 9 d". */
   label: string;
   since: number;
+  check: CheckView;
 }
 /**
  * Needs a decision: your PRs failing checks for over a week, mergeable but never approved over a week after they
  * opened, or idle (no push, review or comment) for over a week. One reason each, in that order; oldest first.
  */
-export function needsDecision(input: Pick<MorningInput, 'model' | 'now'>): DecisionItem[] {
+export function needsDecision(input: Pick<MorningInput, 'model' | 'now' | 'signals' | 'hidden'>): DecisionItem[] {
   const { now } = input;
   const items: DecisionItem[] = [];
   const seen = new Set<string>();
@@ -548,25 +682,49 @@ export function needsDecision(input: Pick<MorningInput, 'model' | 'now'>): Decis
     if (row.kind === 'stack' && row.entries.length > 1) continue;
     const member = row.focus;
     // One reason per PR: the first lane that gives one (Fix, then Merge, Waiting, Answer).
-    if (seen.has(member.url)) continue;
+    if (seen.has(member.url) || input.hidden?.has(member.url)) continue;
     const updated = time(member.updatedAt) ?? now;
     const created = time(member.createdAt) ?? now;
     const days = (since: number) => waitingLabel(since, now);
-    let item: Omit<DecisionItem, 'id' | 'row' | 'member'> | undefined;
+    let item: Pick<DecisionItem, 'reason' | 'label' | 'since'> | undefined;
     if (row.lane === 'fix' && row.reasons.includes('checks-failed') && now - row.since >= DECISION_MS) item = { reason: 'failing', label: `Failing ${days(row.since)}`, since: row.since };
     else if (row.merge && row.merge.notes[0]?.kind === 'unapproved' && now - created >= DECISION_MS) item = { reason: 'unapproved', label: `Never approved · ${days(created)}`, since: created };
     else if (now - updated >= DECISION_MS) item = { reason: 'idle', label: `Idle ${days(updated)}`, since: updated };
     if (item) {
       seen.add(member.url);
-      items.push({ id: `decide|${row.id}`, row, member, ...item });
+      items.push({ id: `decide|${row.id}`, row, member, ...item, check: checksOf(input, [member]) });
     }
   }
   return items.sort((a, b) => a.since - b.since || a.row.title.localeCompare(b.row.title));
 }
 
-/** The tab count: PRs in Move forward now and Waiting on you, each once. */
-export function morningCount(move: readonly Pick<MoveItem, 'urls'>[], you: readonly Pick<PersonGroup, 'urls'>[]): number {
-  return new Set([...move.flatMap((item) => item.urls), ...you.flatMap((group) => group.urls)]).size;
+/** The tab count: PRs in Next up and Waiting on you, each once. */
+export function morningCount(next: readonly Pick<NextItem, 'urls'>[], you: readonly Pick<PersonGroup, 'urls'>[]): number {
+  return new Set([...next.flatMap((item) => item.urls), ...you.flatMap((group) => group.urls)]).size;
+}
+
+export interface MorningPage {
+  next: NextUp;
+  decide: DecisionItem[];
+  you: PersonGroup[];
+  others: PersonGroup[];
+  /** The tab count (`morningCount`). */
+  count: number;
+}
+/** Every section, each PR in one: Next up, then Needs a decision, Waiting on you and Waiting on others. */
+export function morningPage(input: MorningInput): MorningPage {
+  const hidden = input.hidden ?? new Set<string>();
+  const all = needsDecision(input);
+  const next = nextUp({ ...input, stale: new Set(all.map((item) => item.member.url)) });
+  const claimed = new Map<string, Place>([...hidden].map((url) => [url, 'hidden' as const]));
+  for (const item of next.items) for (const url of item.urls) claimed.set(url, 'next');
+  const decide = all.filter((item) => !claimed.has(item.member.url));
+  for (const item of decide) claimed.set(item.member.url, 'decide');
+  const you = waitingOnYou(input, claimed);
+  const others = waitingOnOthers(input, claimed);
+  // Waiting on you before decisions claim their PRs, as the tab has always counted it.
+  const count = morningCount(next.items, waitingOnYou(input, new Map([...hidden].map((url) => [url, 'hidden' as const]))));
+  return { next, decide, you, others, count };
 }
 
 // ── Writes: Nudge and Close PR ──

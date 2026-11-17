@@ -2,29 +2,30 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { overviewModel, type OverviewModel } from '../lib/overview';
 import {
-  MOVE_LIMIT,
-  SMALL_REVIEW_LINES,
+  NEXT_LIMIT,
+  UNREVIEWED_LIMIT,
+  QUICK_LINES,
   closeConfirmation,
   closeRequest,
   effortLabel,
-  moveEffort,
-  moveForward,
-  moveMinutes,
-  morningCount,
+  effortShort,
+  morningPage,
   needsDecision,
+  nextCount,
+  nextEffort,
+  nextMinutes,
+  nextMoreLine,
+  nextUp,
   nudgeConfirmation,
   nudgeRequests,
-  QUICK_LINES,
-  STACKS_SHOWN,
-  UNREVIEWED_LIMIT,
-  moveCount,
   quote,
   repositoryNames,
   sectionCount,
-  waitingOnOthers,
   waitingOnYou,
+  type MorningPage,
   type PersonGroup,
 } from '../lib/morning';
+import { checkView } from '../lib/check-summary';
 import { overviewBriefing } from '../lib/overview';
 import { appendSinceEvents, parseSinceEvent, sinceEventsFromNotifications, sinceLabel, sinceLine, sinceSummary, SINCE_LOG_LIMIT, SINCE_LOG_MAX_AGE_MS, type SinceEvent } from '../lib/since-log';
 import { parseRereviewTargets, rereviewCompare, rereviewSize, REREVIEW_LIMIT } from '../lib/rereview-lines';
@@ -37,6 +38,10 @@ import type { GitHubReviewThreads } from '../lib/review-threads';
 import { LOGIN, T0, member, mine, signals, readySignals } from './notification-fixtures';
 
 const DAY = 86_400_000;
+const must = <T,>(value: T | undefined): T => {
+  assert.ok(value);
+  return value;
+};
 const iso = (ago: number) => new Date(T0 - ago).toISOString();
 const item = (members: ReviewMember[], extra: Partial<QueueItem> = {}): QueueItem => ({
   subject: {
@@ -50,28 +55,90 @@ const item = (members: ReviewMember[], extra: Partial<QueueItem> = {}): QueueIte
   attention: 'other',
   ...extra,
 });
-const build = (items: QueueItem[], status: Record<string, QueueSignals>, now = T0): OverviewModel =>
-  overviewModel({ items, signals: (m) => status[m.url], login: LOGIN, now });
-const input = (model: OverviewModel, status: Record<string, QueueSignals>, extra: Partial<Parameters<typeof moveForward>[0]> = {}) => ({
+const build = (items: QueueItem[], status: Record<string, QueueSignals>, now = T0, teamRequests = false): OverviewModel =>
+  overviewModel({ items, signals: (m) => status[m.url], login: LOGIN, now, teamRequests });
+const input = (model: OverviewModel, status: Record<string, QueueSignals>, extra: Partial<Parameters<typeof nextUp>[0]> = {}) => ({
   model,
   now: T0,
   login: LOGIN,
   signals: (m: ReviewMember) => status[m.url],
   ...extra,
 });
+const pr = (repo: string, n: number, extra: Partial<ReviewMember> = {}) =>
+  member(n, { repo, baseRepo: repo, headRepo: repo, url: `https://github.com/${repo}/pull/${n}`, additions: 20, deletions: 5, ...extra });
+const minePr = (repo: string, n: number, extra: Partial<ReviewMember> = {}) => pr(repo, n, { author: LOGIN, role: 'author', ...extra });
+/** A stack subject with an explicit id: equal numbers in two repositories must not share one. */
+const stack = (members: ReviewMember[], id = `${members[0].repo}#${members[0].number}`, name?: string): QueueItem => {
+  const value = item(members);
+  return { ...value, subject: { ...value.subject, id, ...(name ? { name } : {}) } };
+};
+const noReview = (m: ReviewMember) => signals(m, { checks: 'success', decision: null, mergeState: 'CLEAN' });
+const approved = (m: ReviewMember, by = 'lena') => signals(m, { checks: 'success', decision: 'APPROVED', mergeState: 'CLEAN', opinions: [{ id: '1', author: by, state: 'APPROVED' }] });
+const failing = (m: ReviewMember) => signals(m, { checks: 'failure' });
+const conflicted = (m: ReviewMember) => signals(m, { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+/** Five approved merges: cheaper than anything else, so they fill Next up and leave the rest to the sections below. */
+function fillers(status: Record<string, QueueSignals>) {
+  return [901, 902, 903, 904, 905].map((n) => {
+    const m = minePr('o/fill', n);
+    status[m.url] = approved(m);
+    return item([m]);
+  });
+}
+/** The number a row shows for its PRs: "5 PRs · …", "3 running", "17 PRs in 6 stacks", "2 failing checks, 1 conflict". */
+const shown = (group: PersonGroup) =>
+  group.kind === 'you'
+    ? [...group.detail.matchAll(/(\d+) (failing checks?|conflicts?|restacks?)/g)].reduce((total, match) => total + Number(match[1]), 0)
+    : Number(group.detail.match(/^(\d+) (PRs?|running|review requests?)\b/)?.[1] ?? NaN);
 
-void test('quick wins: merges first, then replies, re-reviews and small reviews by effort, capped, with a total', () => {
-  const ready = mine(1, { updatedAt: iso(DAY), additions: 10, deletions: 2 });
-  const pending = mine(2, { updatedAt: iso(DAY), additions: 10, deletions: 2 });
+/**
+ * The whole page: each PR is listed once across every section and every expanded row; a chain's references point at
+ * PRs another section lists; every heading equals what its section lists, and every row says how many PRs it counts.
+ */
+function assertPage(page: MorningPage) {
+  const listed: string[] = [];
+  for (const entry of page.next.items) listed.push(...entry.urls);
+  for (const entry of page.decide) listed.push(entry.member.url);
+  const refs: string[] = [];
+  const walk = (group: PersonGroup): number => {
+    if (group.children) {
+      const total = group.children.reduce((sum, child) => sum + walk(child), 0);
+      assert.equal(group.urls.length, total, `${group.label}: the stacks' PRs`);
+      assert.equal(group.lines.length, 0);
+      return total;
+    }
+    const urls = group.lines.map((line) => line.member.url);
+    listed.push(...urls);
+    assert.deepEqual([...urls].sort(), [...group.urls].sort(), `${group.label}: its PRs are its lines`);
+    if (group.chain) {
+      assert.deepEqual(group.chain.flatMap((node) => (node.kind === 'line' ? [node.line.member.url] : [])).sort(), [...urls].sort());
+      for (const node of group.chain) if (node.kind === 'ref') refs.push(node.member.url);
+    }
+    if (group.kind !== 'stack') assert.equal(shown(group), group.urls.length, `${group.label}: "${group.detail}" says how many PRs it lists`);
+    for (const line of group.lines) assert.ok(line.check.label, 'every line has a check state');
+    return urls.length;
+  };
+  const you = page.you.reduce((total, group) => total + walk(group), 0);
+  const others = page.others.reduce((total, group) => total + walk(group), 0);
+  assert.equal(new Set(listed).size, listed.length, `no PR appears twice: ${listed.filter((url, i) => listed.indexOf(url) !== i).join(', ')}`);
+  for (const url of refs) assert.ok(listed.includes(url), `a chain refers to ${url}, which another section lists`);
+  assert.equal(nextCount(page.next.items), page.next.items.reduce((total, entry) => total + entry.urls.length, 0));
+  assert.equal(sectionCount(page.you), you, 'Waiting on you: heading = rows');
+  assert.equal(sectionCount(page.others), others, 'Waiting on others: heading = rows');
+  for (const entry of page.next.items) if (entry.kind !== 'merge' && entry.row.entries.length > 1) assert.match(entry.why, new RegExp(`^${entry.row.entries.length} PRs · `), 'a stack row says how many PRs');
+  for (const entry of [...page.next.items, ...page.decide]) assert.ok(entry.check.label);
+  return page;
+}
+const page = (model: OverviewModel, status: Record<string, QueueSignals>, extra: Partial<Parameters<typeof nextUp>[0]> = {}) => assertPage(morningPage(input(model, status, extra)));
+
+void test('Next up: cheapest first, at most five, with a total; size orders but never excludes', () => {
+  const ready = mine(1, { additions: 10, deletions: 2 });
+  const pending = mine(2, { additions: 10, deletions: 2 });
   const replied = mine(3);
-  const rereview = member(4, { requestedReviewers: [LOGIN], additions: 200, deletions: 50 });
   const small = member(5, { requestedReviewers: [LOGIN], additions: 30, deletions: 10, author: 'sam' });
-  const large = member(6, { requestedReviewers: [LOGIN], additions: 500, deletions: 200, author: 'maya' });
-  const explained = member(7, { requestedReviewers: [LOGIN], additions: 250, deletions: 50, author: 'lena' });
-  const extra = Array.from({ length: 6 }, (_, i) => member(20 + i, { requestedReviewers: [LOGIN], additions: 10, deletions: 0, createdAt: iso((10 - i) * DAY) }));
+  const large = member(6, { requestedReviewers: [LOGIN], additions: 600, deletions: 100, author: 'maya' });
   const status: Record<string, QueueSignals> = {
     [ready.url]: { ...readySignals(ready), opinions: [{ url: 'r1', author: 'lena', state: 'APPROVED', submittedAt: iso(DAY), headSha: ready.headSha }] },
-    // Approved and mergeable, but checks still running: not a quick win yet.
+    // Approved and mergeable, but checks still running: not a merge yet.
     [pending.url]: { ...readySignals(pending), checks: { state: 'pending', passed: 0, total: 1 } },
     [replied.url]: signals(replied, { checks: 'success' }),
   };
@@ -79,49 +146,135 @@ void test('quick wins: merges first, then replies, re-reviews and small reviews 
     item([ready]),
     item([pending]),
     item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } }),
-    item([rereview], { attention: 'updated' }),
     item([small]),
     item([large]),
-    item([explained], { review: { id: 'x', prUrl: explained.url, prTitle: 'x', status: 'completed', unread: false, explanation: { url: explained.url } } as never }),
-    ...extra.map((pr) => item([pr])),
   ];
-  const model = build(items, status);
-  const { items: all } = moveForward(input(model, status, {
-    rereviewLines: { [rereview.url]: 120 },
-    replies: { [replied.url]: { author: 'owen', text: 'Could we keep the old loading order behind a flag until every plugin has migrated?' } },
-  }));
-  assert.equal(all.length, MOVE_LIMIT, 'capped');
-  assert.deepEqual(all.slice(0, 2).map((entry) => [entry.kind, entry.row.focus.number, entry.why, entry.minutes]), [
-    ['merge', 1, 'approved by lena · green', 1],
-    ['reply', 3, 'owen: “Could we keep the old loading order behind a flag until…”', 3],
+  const few = nextUp(input(build(items, status), status, { replies: { [replied.url]: { author: 'owen', text: 'Could we keep the old loading order behind a flag until every plugin has migrated?' } } }));
+  assert.deepEqual(few.items.map((entry) => [entry.kind, entry.member.number, entry.why, effortShort(entry.minutes)]), [
+    ['merge', 1, 'approved by lena · green', '~1 min'],
+    ['reply', 3, 'owen: “Could we keep the old loading order behind a flag until…”', '~3 min'],
+    ['review', 5, '40 lines', '~4 min'],
+    // 700 lines: not quick, but listed, with an honest estimate.
+    ['review', 6, '700 lines', '~20 min'],
   ]);
-  // Sorted by minutes, then the longest waiting.
+  assert.equal(effortLabel(nextMinutes(few.items)), '~28 min');
+  assert.ok(!few.items.some((entry) => entry.member.number === 2), 'checks still running: not a merge yet');
+  // More work than fits: five, cheapest first.
+  const extra = Array.from({ length: 6 }, (_, i) => member(20 + i, { requestedReviewers: [LOGIN], additions: 10, deletions: 0, createdAt: iso((10 - i) * DAY) }));
+  const { items: all } = nextUp(input(build([...items, ...extra.map((m) => item([m]))], status), status));
+  assert.equal(all.length, NEXT_LIMIT, 'at most five');
   for (let i = 1; i < all.length; i++) assert.ok(all[i - 1].minutes <= all[i].minutes, 'cheapest first');
-  assert.ok(!all.some((entry) => entry.row.focus.number === 2), 'checks still running are not a quick win');
-  assert.ok(!all.some((entry) => entry.row.focus.number === 6), `a review over ${SMALL_REVIEW_LINES} lines is not quick`);
-  // Without the cap: the re-review names the lines since your review; an explanation lets a larger review count.
-  const { items: uncapped } = moveForward(input(build(items.filter((entry) => !extra.some((pr) => pr.url === entry.subject.members[0].url)), status), status, { rereviewLines: { [rereview.url]: 120 } }));
-  const byNumber = Object.fromEntries(uncapped.map((entry) => [entry.row.focus.number, entry]));
-  assert.equal(byNumber[4].why, '+120 lines since your review');
-  assert.equal(byNumber[4].minutes, 5);
-  assert.equal(byNumber[5].why, '40 lines');
-  assert.equal(byNumber[3].why, 'Someone is waiting on your reply', 'without the saved thread, who is waiting');
-  assert.equal(moveMinutes(uncapped), uncapped.reduce((total, entry) => total + entry.minutes, 0));
+  assert.equal(all.some((entry) => entry.member.number === 6), false, 'the large review waits for room; it is still in Waiting on you');
+  const full = page(build([...items, ...extra.map((m) => item([m]))], status), status);
+  assert.ok(full.you.some((group) => group.urls.includes(large.url)));
 });
 
-void test('the effort heuristic and its labels', () => {
-  assert.equal(moveEffort('merge', undefined), 1);
-  assert.equal(moveEffort('reply', undefined), 3);
-  assert.equal(moveEffort('rereview', undefined), 5, 'unknown size');
-  assert.equal(moveEffort('rereview', 120), 5);
-  assert.equal(moveEffort('review', 40), 4);
-  assert.equal(moveEffort('review', 300, true), 7, 'an explanation takes a third off');
-  assert.equal(effortLabel(9), '~9 min');
+void test('the effort heuristic, extended for large PRs, and its labels', () => {
+  assert.equal(nextEffort('merge'), 1);
+  assert.equal(nextEffort('reply'), 3);
+  assert.equal(nextEffort('changes'), 15);
+  assert.deepEqual([nextEffort('fix', undefined, false, 'failing'), nextEffort('fix', undefined, false, 'conflicts'), nextEffort('fix', undefined, false, 'restack')], [10, 15, 5]);
+  assert.equal(nextEffort('rereview', undefined), 5, 'unknown size');
+  assert.equal(nextEffort('rereview', 120), 5);
+  assert.equal(nextEffort('review', 40), 4);
+  assert.equal(nextEffort('review', undefined), 8, 'unknown size counts as 200 lines');
+  assert.equal(nextEffort('review', 300, true), 7, 'an explanation takes a third off');
+  assert.equal(nextEffort('review', 1060), 25, 'a large review');
+  assert.equal(nextEffort('review', 2790), 55);
+  assert.equal(nextEffort('review', 4000), 75);
+  assert.equal(effortShort(25), '~25 min');
+  assert.equal(effortShort(75), '1 h+', 'an item caps at an hour');
+  assert.equal(effortLabel(45), '~45 min');
   assert.equal(effortLabel(80), '~1 h 20 min');
   assert.equal(effortLabel(60), '~1 h');
   assert.equal(quote('Short and `plain`.'), 'Short and plain.');
   assert.ok(quote('x '.repeat(100)).endsWith('…'));
   assert.ok(quote('word '.repeat(40)).length <= 61);
+  assert.deepEqual(checkView([undefined]), { state: 'unknown', label: 'checking…', spoken: 'checks not read yet' });
+});
+
+void test('Next up is never empty while there is work, and says so when there is none', () => {
+  const status: Record<string, QueueSignals> = {};
+  const set = <T extends ReviewMember>(m: T, value: (m: T) => QueueSignals) => { status[m.url] = value(m); return m; };
+  const broken = set(minePr('o/r', 1), failing);
+  const onlyFix = page(build([item([broken])], status), status);
+  assert.deepEqual(onlyFix.next.items.map((entry) => [entry.kind, entry.why, entry.minutes]), [['fix', 'failing checks', 10]]);
+  const huge = set(minePr('o/r', 2, { additions: 3000 }), noReview);
+  assert.deepEqual(page(build([item([huge])], status), status).next.items.map((entry) => [entry.kind, entry.why]), [['merge', 'not reviewed · green']]);
+  const bigReview = pr('o/r', 3, { author: 'ivaremilsson', requestedReviewers: [LOGIN], additions: 2400, deletions: 300 });
+  assert.deepEqual(page(build([item([bigReview])], status), status).next.items.map((entry) => [entry.kind, effortShort(entry.minutes)]), [['review', '~50 min']]);
+  const changes = set(minePr('o/r', 4), (m) => signals(m, { checks: 'success', decision: 'CHANGES_REQUESTED', opinions: [{ id: '1', author: 'lena', state: 'CHANGES_REQUESTED' }] }));
+  assert.deepEqual(page(build([item([changes])], status), status).next.items.map((entry) => [entry.kind, entry.why]), [['changes', 'lena requested changes']]);
+  // A restack: one PR of a stack whose parent merged. The item names that PR, not the stack.
+  const parent = minePr('o/r', 6, { merged: true, state: 'closed', headBranch: 'p6', title: 'Wallet balance API' });
+  const child = set(minePr('o/r', 7, { baseBranch: 'p6', title: 'Wallet balance in the HUD' }), noReview);
+  assert.deepEqual(page(build([item([parent, child])], status), status).next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.minutes]), [['fix', 'Wallet balance in the HUD', 'needs a restack', 5]]);
+  // Nothing in Waiting on you, Fix or Merge: empty, and the page says "Nothing needs you right now."
+  const waiting = set(minePr('o/r', 5, { requestedReviewers: ['lena'] }), (m) => signals(m, { checks: 'success' }));
+  const idle = page(build([item([waiting])], status), status);
+  assert.equal(idle.next.items.length, 0);
+  assert.equal(idle.others.length, 1);
+});
+
+void test('a stacked PR waits for its base; the base merge is the next step and says what it unblocks', () => {
+  const status: Record<string, QueueSignals> = {};
+  const base = minePr('klang/launcher', 376, { title: 'STACK: EPIC', additions: 2400, deletions: 300, headBranch: 'epic' });
+  const rest = [377, 378, 379].map((n, i) => minePr('klang/launcher', n, { baseBranch: i ? `feature-${n - 1}` : 'epic', additions: 400 }));
+  for (const m of [base, ...rest]) status[m.url] = noReview(m);
+  const model = build([stack([base, ...rest], 'epic', 'STACK: EPIC')], status);
+  const result = page(model, status);
+  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.urls.length, entry.unblocks]), [['merge', 'STACK: EPIC', 'not reviewed · green · unblocks 3 PRs', 1, 3]]);
+  assert.equal(nextMoreLine(result.next), undefined, 'the stacked PRs above it are not ready on their own');
+  const stacks = result.others.find((group) => group.kind === 'stacks');
+  const chain = must(stacks?.children?.[0]);
+  assert.equal(must(chain.step).text, 'Merge #376 to unblock 3 PRs');
+  assert.equal(must(chain.step).action, 'merge');
+  // The base is in Next up: the chain refers to it there, and lists the three PRs above it.
+  assert.deepEqual(must(chain.chain).map((node) => (node.kind === 'ref' ? `ref #${node.member.number} ${node.place}` : `#${node.line.member.number} ${node.line.status} · ${node.line.description}`)), [
+    'ref #376 next',
+    '#377 ready · #377, waits for #376 to merge',
+    '#378 ready · #378, waits for #377 to merge',
+    '#379 ready · #379, waits for #378 to merge',
+  ]);
+  assert.equal(stacks?.detail, '3 PRs in 1 stack');
+});
+
+void test('merges nobody reviewed: at most two, small before large, and the line under Next up says how many more', () => {
+  const status: Record<string, QueueSignals> = {};
+  const set = (m: ReviewMember, value: (m: ReviewMember) => QueueSignals) => { status[m.url] = value(m); return m; };
+  // Oldest first, but the large one waits: size orders, it never excludes.
+  const big = set(minePr('o/r', 11, { additions: 2000, updatedAt: iso(30 * 3_600_000) }), noReview);
+  const small = [12, 13].map((n, i) => set(minePr('o/r', n, { updatedAt: iso((20 - i) * 3_600_000) }), noReview));
+  const result = page(build([big, ...small].map((m) => item([m])), status), status);
+  assert.deepEqual(result.next.items.map((entry) => [entry.member.number, entry.why]), [[12, 'not reviewed · green'], [13, 'not reviewed · green']]);
+  assert.equal(result.next.items.filter((entry) => entry.unreviewed).length, UNREVIEWED_LIMIT);
+  assert.equal(result.next.moreUnreviewed, 1);
+  assert.equal(nextMoreLine(result.next), '1 more ready, not reviewed', 'some are listed');
+  assert.ok(big.additions !== undefined && big.additions > QUICK_LINES);
+  // Approved merges come first; when they fill Next up, none of the unreviewed ones is listed.
+  const approvedOnes = [21, 22, 23, 24, 25].map((n) => set(minePr('o/r', n), (m) => approved(m)));
+  const full = page(build([...approvedOnes, big, ...small].map((m) => item([m])), status), status);
+  assert.equal(full.next.items.length, NEXT_LIMIT);
+  assert.equal(full.next.items.some((entry) => entry.unreviewed), false);
+  assert.equal(nextMoreLine(full.next), '3 ready to merge without review', 'none are listed');
+  assert.equal(nextMoreLine({ items: [], moreUnreviewed: 0 }), undefined);
+});
+
+void test('the oldest review request always gets a slot, whatever its size', () => {
+  const status: Record<string, QueueSignals> = {};
+  const merges = [1, 2, 3, 4, 5, 6, 7].map((n) => {
+    const m = minePr('o/r', n);
+    status[m.url] = approved(m);
+    return m;
+  });
+  const older = pr('klang/seed', 40, { author: 'zsolt-klang', requestedReviewers: [LOGIN], createdAt: iso(14 * DAY), additions: 1800, deletions: 200 });
+  const newer = pr('klang/launcher', 41, { author: 'ivaremilsson', requestedReviewers: [LOGIN], createdAt: iso(4 * DAY), additions: 30, deletions: 5 });
+  const result = page(build([...merges.map((m) => item([m])), item([older]), item([newer])], status), status);
+  assert.equal(result.next.items.length, NEXT_LIMIT);
+  assert.deepEqual(result.next.items.filter((entry) => entry.kind === 'review').map((entry) => [entry.member.number, effortShort(entry.minutes)]), [[40, '~40 min']], 'the oldest takes the last slot');
+  assert.equal(result.next.items.filter((entry) => entry.kind === 'merge').length, NEXT_LIMIT - 1);
+  // The rest stay in Waiting on you; the one in Next up is not listed there again.
+  assert.deepEqual(result.you.map((group) => [group.label, group.detail]), [['ivaremilsson', '1 PR · oldest 4 d']]);
 });
 
 void test('waiting on you groups people by their oldest wait, and team requests last', () => {
@@ -130,60 +283,90 @@ void test('waiting on you groups people by their oldest wait, and team requests 
   const sam = member(3, { author: 'sam', requestedReviewers: [LOGIN], createdAt: iso(DAY) });
   const team = member(4, { author: 'maya', role: 'review-requested', createdAt: iso(3 * DAY) });
   const replied = mine(5);
-  const model = overviewModel({
-    items: [item([lena1]), item([lena2]), item([sam]), item([team]), item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } })],
-    signals: (m) => (m.url === replied.url ? { ...signals(replied, { checks: 'success' }), activity: { recent: [{ kind: 'comment', id: 'c', at: iso(5 * DAY), author: 'owen', automated: false }] } } : undefined),
-    login: LOGIN,
-    now: T0,
-    teamRequests: true,
-  });
-  const groups = waitingOnYou({ model, now: T0, login: LOGIN });
+  const status: Record<string, QueueSignals> = {
+    [replied.url]: { ...signals(replied, { checks: 'success' }), activity: { recent: [{ kind: 'comment', id: 'c', at: iso(5 * DAY), author: 'owen', automated: false }] } },
+  };
+  const model = build([item([lena1]), item([lena2]), item([sam]), item([team]), item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } })], status, T0, true);
+  const groups = waitingOnYou(input(model, status));
   assert.deepEqual(groups.map((group) => [group.label, group.detail]), [
     ['owen', '1 PR · oldest 5 d'],
     ['lena', '2 PRs · oldest 4 d'],
     ['sam', '1 PR · oldest 1 d'],
     ['team', '1 review request'],
   ]);
-  assert.deepEqual(groups[1].rows.map((row) => row.focus.number), [2, 1], 'oldest first');
-  const { items: move } = moveForward(input(model, {}));
-  assert.equal(morningCount(move, groups), 5, 'each PR once, across both sections');
+  assert.deepEqual(groups[1].lines.map((line) => line.member.number), [2, 1], 'oldest first');
+  // On the page, Next up takes all five (they fit), and Waiting on you lists none of them again. The tab counts each once.
+  const result = page(model, status);
+  assert.equal(result.next.items.length, 5);
+  assert.equal(sectionCount(result.you), 0);
+  assert.equal(result.count, 5, 'each PR once, across Next up and Waiting on you');
 });
 
-void test('waiting on others groups your PRs by blocker, each PR once: reviewers with Nudge, teams, CI, a stack, and you', () => {
+void test('Waiting on you counts what it lists: a stack is its PRs, and team and unassigned requests are rows', () => {
+  // The real report: "Waiting on you 7" over two people. zsolt-klang's stack of five PRs counted five.
+  const zsolt = [1, 2, 3, 4, 5].map((n) => pr('klang/seed', n, { author: 'zsolt-klang', requestedReviewers: [LOGIN], createdAt: iso(14 * DAY), baseBranch: n > 1 ? `feature-${n - 1}` : 'main' }));
+  const ivar = pr('klang/launcher', 6, { author: 'ivaremilsson', requestedReviewers: [LOGIN], createdAt: iso(4 * DAY), additions: 600 });
+  const team = pr('klang/web', 7, { author: 'maya', role: 'review-requested', createdAt: iso(3 * DAY) });
+  const replied = minePr('klang/web', 8);
+  const status: Record<string, QueueSignals> = { [replied.url]: signals(replied, { checks: 'success' }) };
+  const items = [stack(zsolt), item([ivar]), item([team]), item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } })];
+  const model = build(items, status, T0, true);
+  const you = waitingOnYou(input(model, status));
+  assert.deepEqual(you.map((group) => [group.label, group.detail]), [
+    ['zsolt-klang', '5 PRs · oldest 14 d'],
+    ['ivaremilsson', '1 PR · oldest 4 d'],
+    ['unassigned', '1 PR · oldest 1 h'],
+    ['team', '1 review request'],
+  ]);
+  assert.equal(sectionCount(you), 8);
+  assert.deepEqual(you[0].repos, ['klang/seed']);
+  assert.match(overviewBriefing(model), /7 reviews are waiting on you\./, 'five from zsolt-klang, one from ivaremilsson, one team request');
+  // With five merges ahead of them, the oldest request (zsolt-klang's stack) still takes a slot in Next up.
+  const filled = build([...fillers(status), ...items], status, T0, true);
+  const result = page(filled, status);
+  assert.ok(result.next.items.some((entry) => entry.urls.includes(zsolt[0].url) && entry.why.startsWith('5 PRs · ')));
+  assert.deepEqual(result.you.map((group) => group.label), ['ivaremilsson', 'unassigned', 'team']);
+  assert.equal(result.count, nextCount(result.next.items) + 3, 'the tab: Next up and Waiting on you, each once');
+});
+
+void test('waiting on others: stacks as chains, reviewers with Nudge, teams, CI, and you, each PR once', () => {
   const lena = mine(1, { requestedReviewers: ['lena'], createdAt: iso(4 * DAY) });
   const both = mine(2, { requestedReviewers: ['lena', 'sam'], createdAt: iso(2 * DAY) });
   const team = mine(3, { requestedTeams: ['klang/web'], createdAt: iso(DAY) });
   const ci = mine(4);
   const base = mine(5, { headBranch: 'b1' });
   const top = mine(6, { baseBranch: 'b1' });
-  const failing = mine(7);
+  const broken = mine(7);
   const conflict = mine(8);
   const status: Record<string, QueueSignals> = {
     [lena.url]: signals(lena, { checks: 'success' }),
     [both.url]: signals(both, { checks: 'success' }),
     [team.url]: signals(team, { checks: 'success' }),
     [ci.url]: signals(ci, { checks: 'pending', decision: 'APPROVED' }),
-    [base.url]: signals(base, { checks: 'failure' }),
+    [base.url]: failing(base),
     [top.url]: readySignals(top),
-    [failing.url]: signals(failing, { checks: 'failure' }),
-    [conflict.url]: signals(conflict, { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' }),
+    [broken.url]: failing(broken),
+    [conflict.url]: conflicted(conflict),
   };
-  const model = build([item([lena]), item([both]), item([team]), item([ci]), item([base, top]), item([failing]), item([conflict])], status);
-  const groups = waitingOnOthers({ model, now: T0, login: LOGIN });
+  const model = build([...fillers(status), item([lena]), item([both]), item([team]), item([ci]), item([base, top]), item([broken]), item([conflict])], status);
+  const result = page(model, status);
+  const groups = result.others;
   assert.deepEqual(groups.map((group) => [group.kind, group.label, group.detail]), [
     // #2 waits on lena and sam: it is listed once, under the first reviewer GitHub names.
     ['person', 'lena', '2 PRs · 4 d'],
     ['team', 'klang/web', '1 PR · 1 d'],
     ['ci', 'CI', '1 running'],
-    // #6 waits for #5, which is yours and failing: the stack says so, and #5 itself is under you.
-    ['stack', 'PR 5', '1 PR waits for #5 to merge · #5 has failing checks'],
-    ['you', 'you', '2 failing checks, 1 conflict'],
+    // #6 waits for #5, which is yours and failing: the chain lists both, base first, and says so.
+    ['stacks', 'Waiting for earlier PRs in a stack to merge', '2 PRs in 1 stack'],
+    ['you', 'you', '1 failing check, 1 conflict'],
   ]);
-  assert.equal(sectionCount(groups), 8, 'each of the eight PRs once');
-  assert.deepEqual(groups[3].lines.map((line) => [line.member.number, line.note]), [[5, '#5 has failing checks'], [6, 'after #5']], 'the base leads the expanded stack');
-  assert.equal(groups[3].lines[1].hint, 'This PR is stacked on #5 and can merge only after #5 merges.');
+  const chain = must(groups[3].children?.[0]);
+  assert.equal(must(chain.step).text, '#5 has failing checks');
+  assert.deepEqual(chain.lines.map((line) => [line.member.number, line.status, line.check.label]), [[5, 'next', 'failing'], [6, 'ready', 'passing']]);
+  assert.equal(chain.lines[1].description, '#6, waits for #5 to merge');
   assert.deepEqual(groups[0].nudge?.members.map((m) => m.number), [1, 2]);
   assert.equal(groups[1].nudge, undefined, 'teams are not nudged');
+  assert.equal(groups[0].check?.label, 'passing', 'a person row shows its PRs’ checks together');
   // Nudge: one requested-reviewers write per PR, after a confirmation that names them.
   assert.deepEqual(nudgeRequests(groups[0]), [
     { prUrl: lena.url, action: 'nudge', reviewer: 'lena' },
@@ -198,26 +381,126 @@ void test('waiting on others groups your PRs by blocker, each PR once: reviewers
   assert.deepEqual(nudgeRequests(groups[2]), []);
 });
 
+void test('You: each PR has its own reason, failing first, then conflicts and restacks', () => {
+  const status: Record<string, QueueSignals> = {};
+  const broken = minePr('o/r', 7);
+  const conflict = minePr('o/r', 8);
+  const parent = minePr('o/r', 9, { merged: true, state: 'closed', headBranch: 'p9' });
+  const child = minePr('o/r', 10, { baseBranch: 'p9' });
+  status[broken.url] = failing(broken);
+  status[conflict.url] = conflicted(conflict);
+  status[child.url] = noReview(child);
+  const result = page(build([...fillers(status), item([broken]), item([conflict]), item([parent, child])], status), status);
+  const you = must(result.others.find((group) => group.kind === 'you'));
+  assert.equal(you.detail, '1 failing check, 1 conflict, 1 restack');
+  assert.deepEqual(you.lines.map((line) => [line.member.number, line.reason, line.description, line.check.label]), [
+    [7, 'failing', '#7, failing checks', 'failing'],
+    [8, 'conflicts', '#8, conflicts', 'passing'],
+    [10, 'restack', '#10, restack needed', 'passing'],
+  ]);
+});
+
+void test('stacks: one chain per stack, keyed by repository and number, the most actionable first, each PR once', () => {
+  const status: Record<string, QueueSignals> = {};
+  const set = (m: ReviewMember, value: QueueSignals) => { status[m.url] = value; return m; };
+  // Launcher i18n: a failing base and three PRs above it, listed twice in the queue.
+  const i18n = [set(minePr('klang/launcher', 380, { title: 'Move the launcher text into keys' }), failing(minePr('klang/launcher', 380)))];
+  for (const n of [381, 382, 383]) i18n.push(set(minePr('klang/launcher', n, { baseBranch: `feature-${n - 1}` }), noReview(minePr('klang/launcher', n))));
+  // #384 in two repositories: one ready to merge, one waiting on lena.
+  const launcher384 = [set(minePr('klang/launcher', 384, { title: 'Launcher: read the language' }), approved(minePr('klang/launcher', 384)))];
+  for (const n of [385, 386]) launcher384.push(set(minePr('klang/launcher', n), noReview(minePr('klang/launcher', n))));
+  const web384 = [set(minePr('klang/web', 384, { title: 'Web: language picker', requestedReviewers: ['lena'] }), signals(minePr('klang/web', 384), { checks: 'success' }))];
+  for (const n of [385, 386]) web384.push(set(minePr('klang/web', n), noReview(minePr('klang/web', n))));
+  // A base waiting on checks.
+  const ci = [set(minePr('acme/api', 10, { title: 'API base 10' }), signals(minePr('acme/api', 10), { checks: 'pending', decision: 'APPROVED' }))];
+  ci.push(set(minePr('acme/api', 11), noReview(minePr('acme/api', 11))));
+  const items = [...fillers(status), stack(i18n, 'i18n', 'Launcher i18n'), stack(i18n, 'i18n-again', 'Launcher i18n'), stack(launcher384), stack(web384), stack(ci)];
+  const result = page(build(items, status), status);
+  const stacks = result.others.find((group) => group.kind === 'stacks');
+  assert.ok(stacks);
+  const byKey = Object.fromEntries((stacks.children ?? []).map((child) => [child.key, child]));
+  assert.deepEqual(Object.keys(byKey).sort(), ['stack:acme/api#10', 'stack:klang/launcher#380', 'stack:klang/launcher#384', 'stack:klang/web#384']);
+  // The base can merge, or needs you, first; then those waiting on others.
+  assert.deepEqual(must(stacks.children).map((child) => must(child.step).text), [
+    'Merge #384 to unblock 2 PRs',
+    '#380 has failing checks',
+    '#384 waits on review from lena',
+    '#10 is waiting on checks',
+  ]);
+  assert.deepEqual(must(stacks.children).map((child) => must(child.step).action), ['merge', 'open', 'nudge', 'open']);
+  // Listed twice in the queue, one chain; named by the stack.
+  assert.equal(byKey['stack:klang/launcher#380'].label, 'Launcher i18n');
+  assert.deepEqual(byKey['stack:klang/launcher#380'].lines.map((line) => [line.member.number, line.status]), [[380, 'next'], [381, 'ready'], [382, 'ready'], [383, 'ready']]);
+  assert.deepEqual(byKey['stack:acme/api#10'].lines.map((line) => [line.member.number, line.status, line.check.label]), [[10, 'next', 'running'], [11, 'ready', 'passing']]);
+  assert.equal(stacks.detail, `${stacks.urls.length} PRs in 4 stacks`);
+});
+
+void test('the screenshot-32 shape: Next up is full, each PR once, and the line under it is worded for what it lists', () => {
+  const status: Record<string, QueueSignals> = {};
+  const set = (m: ReviewMember, value: (m: ReviewMember) => QueueSignals) => { status[m.url] = value(m); return m; };
+  // Seven review requests: one small from zsolt-klang, six large or stacked from ivaremilsson.
+  const zsolt = pr('klang/seed', 36990, { author: 'zsolt-klang', requestedReviewers: [LOGIN], createdAt: iso(14 * DAY), additions: 96, deletions: 21 });
+  const ivarLarge = [391, 392, 393].map((n) => pr('klang/seed', n, { author: 'ivaremilsson', requestedReviewers: [LOGIN], createdAt: iso(4 * DAY), additions: 840, deletions: 220 }));
+  const ivarStack = [394, 395, 396].map((n, i) => pr('klang/seed', n, { author: 'ivaremilsson', requestedReviewers: [LOGIN], createdAt: iso(3 * DAY), additions: 260, baseBranch: i ? `feature-${n - 1}` : 'main' }));
+  // Six merges nobody reviewed, all large or stacked: three large, and three stacks whose base can merge.
+  const large = [610, 611, 612].map((n) => set(minePr('klang/launcher', n, { additions: 1600 }), noReview));
+  const bases = [376, 383, 35392].map((n) => set(minePr('klang/launcher', n, { title: `Base ${n}`, headBranch: `b${n}` }), noReview));
+  const above = bases.map((base, s) => [1, 2, 3].slice(0, s === 2 ? 2 : 3).map((k) => set(minePr('klang/launcher', base.number + k, { baseBranch: k === 1 ? `b${base.number}` : `feature-${base.number + k - 1}` }), noReview)));
+  // Four PRs that need a decision and also fail or conflict.
+  const stale = { createdAt: iso(14 * DAY), updatedAt: iso(12 * DAY) };
+  const decide = [
+    set(minePr('klang/launcher', 700, { title: 'feat: new launcher app icon', ...stale }), failing),
+    set(minePr('klang/seed', 701, { title: 'feat: serve in-game notifications from seed-api', ...stale }), conflicted),
+    set(minePr('klang/seed', 702, { title: 'fix: keep each sender’s failed command to itself', requestedReviewers: ['plucked'], ...stale }), conflicted),
+    set(minePr('klang/launcher', 379, { title: 'feat: move the launcher’s text into translation keys (i18n 1/3)', headBranch: 'i18n-1', ...stale }), failing),
+  ];
+  const i18nAbove = [1, 2, 3, 4].map((k) => set(minePr('klang/launcher', 1379 + k, { baseBranch: k === 1 ? 'i18n-1' : `feature-${1379 + k - 1}` }), noReview));
+  const items = [
+    item([zsolt]), ...ivarLarge.map((m) => item([m])), stack(ivarStack),
+    ...large.map((m) => item([m])), ...bases.map((base, s) => stack([base, ...above[s]])),
+    ...decide.slice(0, 3).map((m) => item([m])), stack([decide[3], ...i18nAbove], 'i18n', 'Launcher i18n'),
+  ];
+  const model = build(items, status);
+  assert.match(overviewBriefing(model), /^7 reviews are waiting on you\./);
+  const result = page(model, status);
+  assert.equal(result.next.items.length, NEXT_LIMIT, 'never empty');
+  assert.ok(result.next.items.some((entry) => entry.urls.includes(zsolt.url)), 'the oldest review request has its slot');
+  assert.ok(result.next.items.some((entry) => entry.kind === 'merge' && entry.unblocks === 3 && entry.why.endsWith('unblocks 3 PRs')));
+  assert.ok(result.next.items.filter((entry) => entry.unreviewed).length <= UNREVIEWED_LIMIT);
+  assert.equal(nextMoreLine(result.next), `${result.next.moreUnreviewed} more ready, not reviewed`);
+  // The decisions are listed once, in Needs a decision, not again under You or in their stack.
+  assert.deepEqual(result.decide.map((entry) => entry.member.number).sort(), [379, 700, 701, 702]);
+  const you = result.others.find((group) => group.kind === 'you');
+  assert.ok(!you || !you.urls.some((url) => decide.some((m) => m.url === url)));
+  const i18n = must(result.others.find((group) => group.kind === 'stacks')?.children?.find((child) => child.key === 'stack:klang/launcher#379'));
+  assert.equal(must(i18n.chain)[0].kind, 'ref', 'the stack refers to its base in Needs a decision');
+  assert.equal(must(i18n.step).text, '#379 has failing checks');
+});
+
 void test('needs a decision: failing, never approved or idle for over a week, one reason each, oldest first', () => {
-  const failing = mine(1, { updatedAt: iso(9 * DAY) });
-  const failingNew = mine(2, { updatedAt: iso(2 * DAY) });
+  const broken = mine(1, { updatedAt: iso(9 * DAY) });
+  const brokenNew = mine(2, { updatedAt: iso(2 * DAY) });
   const unapproved = mine(3, { createdAt: iso(10 * DAY), updatedAt: iso(4 * DAY) });
   const idle = mine(4, { requestedReviewers: ['lena'], createdAt: iso(20 * DAY), updatedAt: iso(8 * DAY) });
   const busy = mine(5, { requestedReviewers: ['lena'], updatedAt: iso(DAY) });
   const status: Record<string, QueueSignals> = {
-    [failing.url]: signals(failing, { checks: 'failure' }),
-    [failingNew.url]: signals(failingNew, { checks: 'failure' }),
+    [broken.url]: failing(broken),
+    [brokenNew.url]: failing(brokenNew),
     [unapproved.url]: signals(unapproved, { checks: 'success', decision: '', mergeState: 'CLEAN' }),
     [idle.url]: signals(idle, { checks: 'success' }),
     [busy.url]: signals(busy, { checks: 'success' }),
   };
-  const model = build([item([failing]), item([failingNew]), item([unapproved]), item([idle]), item([busy])], status);
-  const decisions = needsDecision({ model, now: T0 });
-  assert.deepEqual(decisions.map((entry) => [entry.member.number, entry.reason, entry.label]), [
-    [3, 'unapproved', 'Never approved · 10 d'],
-    [1, 'failing', 'Failing 9 d'],
-    [4, 'idle', 'Idle 8 d'],
+  const model = build([item([broken]), item([brokenNew]), item([unapproved]), item([idle]), item([busy])], status);
+  const decisions = needsDecision(input(model, status));
+  assert.deepEqual(decisions.map((entry) => [entry.member.number, entry.reason, entry.label, entry.check.label]), [
+    [3, 'unapproved', 'Never approved · 10 d', 'passing'],
+    [1, 'failing', 'Failing 9 d', 'failing'],
+    [4, 'idle', 'Idle 8 d', 'passing'],
   ]);
+  // On the page: the failing PR that needs a decision ranks after the fresh one in Next up, and stays a decision.
+  const result = page(model, status);
+  assert.deepEqual(result.next.items.map((entry) => entry.member.number), [2, 1]);
+  assert.deepEqual(result.decide.map((entry) => entry.member.number), [3, 4]);
 });
 
 void test('Close PR: the request carries the confirmed revision and an optional comment; the confirmation says it can be reopened', () => {
@@ -309,175 +592,6 @@ void test('the reply quoted on a row is the last human comment of a thread waiti
   } as unknown as GitHubReviewThreads;
   assert.deepEqual(waitingReply(discussion, LOGIN, LOGIN), { author: 'owen', text: 'Could we keep it?' });
   assert.equal(waitingReply(undefined, LOGIN, LOGIN), undefined);
-});
-
-// ── Real-data shapes (#390, morning page 3): stacks, counts, unreviewed merges, the review slot ──
-
-const pr = (repo: string, n: number, extra: Partial<ReviewMember> = {}) =>
-  member(n, { repo, baseRepo: repo, headRepo: repo, url: `https://github.com/${repo}/pull/${n}`, additions: 20, deletions: 5, ...extra });
-const minePr = (repo: string, n: number, extra: Partial<ReviewMember> = {}) => pr(repo, n, { author: LOGIN, role: 'author', ...extra });
-/** A stack subject with an explicit id: equal numbers in two repositories must not share one. */
-const stack = (members: ReviewMember[], id = `${members[0].repo}#${members[0].number}`, name?: string): QueueItem => {
-  const value = item(members);
-  return { ...value, subject: { ...value.subject, id, ...(name ? { name } : {}) } };
-};
-const noReview = (m: ReviewMember) => signals(m, { checks: 'success', decision: null, mergeState: 'CLEAN' });
-const approved = (m: ReviewMember, by = 'lena') => signals(m, { checks: 'success', decision: 'APPROVED', mergeState: 'CLEAN', opinions: [{ id: '1', author: by, state: 'APPROVED' }] });
-const mergeLane = (model: OverviewModel) => model.lanes.find((state) => state.lane === 'merge')?.rows ?? [];
-/** The number a row shows for its PRs: "5 PRs · …", "3 running", "4 PRs wait for …", "17 PRs in 6 stacks", "2 failing checks, 1 conflict". */
-const shown = (group: PersonGroup) =>
-  group.kind === 'you'
-    ? [...group.detail.matchAll(/(\d+) (failing checks?|conflicts?|restacks?)/g)].reduce((total, match) => total + Number(match[1]), 0)
-    : Number(group.detail.match(/^(\d+) (PRs?|running|review requests?)\b/)?.[1] ?? NaN);
-
-/** Every section's heading equals the sum of what its rows say, and no PR is listed twice in a section. */
-function assertCounts(model: OverviewModel, status: Record<string, QueueSignals>) {
-  const morning = input(model, status);
-  const move = moveForward(morning).items;
-  const you = waitingOnYou(morning);
-  const others = waitingOnOthers(morning);
-  const decide = needsDecision(morning);
-  assert.equal(moveCount(move), move.reduce((total, entry) => total + entry.urls.length, 0));
-  for (const entry of move) if (entry.kind !== 'merge' && entry.row.entries.length > 1) assert.match(entry.why, new RegExp(`^${entry.row.entries.length} PRs · `), 'a stack row says how many PRs');
-  for (const groups of [you, others]) {
-    const urls = groups.flatMap((group) => group.urls);
-    assert.equal(new Set(urls).size, urls.length, 'each PR under one row');
-    assert.equal(sectionCount(groups), urls.length);
-    for (const group of groups) {
-      assert.equal(shown(group), group.urls.length, `${group.label}: "${group.detail}" says how many PRs it counts`);
-      if (group.children) assert.equal(group.urls.length, group.children.reduce((total, child) => total + child.urls.length, 0));
-    }
-  }
-  assert.equal(decide.length, new Set(decide.map((entry) => entry.member.url)).size);
-  // The tab: Move forward now and Waiting on you, each PR once.
-  assert.equal(morningCount(move, you), new Set([...move.flatMap((entry) => entry.urls), ...you.flatMap((group) => group.urls)]).size);
-  return { move, you, others, decide };
-}
-
-void test('stacked PRs: one row per stack, keyed by repository and number, folded over three stacks', () => {
-  const status: Record<string, QueueSignals> = {};
-  const set = (m: ReviewMember, value: QueueSignals) => { status[m.url] = value; return m; };
-  // Launcher i18n: a failing base and three PRs above it, listed twice in the queue.
-  const i18n = [set(minePr('klang/launcher', 380, { title: 'Move the launcher text into keys' }), signals(minePr('klang/launcher', 380), { checks: 'failure' }))];
-  for (const n of [381, 382, 383]) i18n.push(set(minePr('klang/launcher', n, { baseBranch: `feature-${n - 1}` }), noReview(minePr('klang/launcher', n))));
-  // #384 in two repositories: one ready to merge, one waiting on lena.
-  const launcher384 = [set(minePr('klang/launcher', 384, { title: 'Launcher: read the language' }), approved(minePr('klang/launcher', 384)))];
-  for (const n of [385, 386]) launcher384.push(set(minePr('klang/launcher', n), noReview(minePr('klang/launcher', n))));
-  const web384 = [set(minePr('klang/web', 384, { title: 'Web: language picker', requestedReviewers: ['lena'] }), signals(minePr('klang/web', 384), { checks: 'success' }))];
-  for (const n of [385, 386]) web384.push(set(minePr('klang/web', n), noReview(minePr('klang/web', n))));
-  const small = [10, 20, 30].map((n) => {
-    const base = set(minePr('acme/api', n, { title: `API base ${n}`, requestedReviewers: ['sam'] }), signals(minePr('acme/api', n), { checks: 'success' }));
-    const top = set(minePr('acme/api', n + 1), noReview(minePr('acme/api', n + 1)));
-    return stack([base, top]);
-  });
-  const items = [stack(i18n, 'i18n', 'Launcher i18n'), stack(i18n, 'i18n-again', 'Launcher i18n'), stack(launcher384), stack(web384), ...small];
-  const model = build(items, status);
-  const { others } = assertCounts(model, status);
-  const folded = others.find((group) => group.kind === 'stacks');
-  assert.ok(folded, `over ${STACKS_SHOWN} stacks fold into one row`);
-  assert.equal(folded.label, 'Waiting for earlier PRs in a stack to merge');
-  assert.equal(folded.detail, '10 PRs in 6 stacks');
-  assert.deepEqual([...folded.repos].sort(), ['acme/api', 'klang/launcher', 'klang/web']);
-  const byKey = Object.fromEntries((folded.children ?? []).map((child) => [child.key, child]));
-  assert.deepEqual(Object.keys(byKey).sort(), ['stack:acme/api#10', 'stack:acme/api#20', 'stack:acme/api#30', 'stack:klang/launcher#380', 'stack:klang/launcher#384', 'stack:klang/web#384']);
-  // Listed twice in the queue, counted once; named by the stack.
-  assert.deepEqual([byKey['stack:klang/launcher#380'].label, byKey['stack:klang/launcher#380'].detail], ['Launcher i18n', '3 PRs wait for #380 to merge · #380 has failing checks']);
-  assert.deepEqual(byKey['stack:klang/launcher#380'].lines.map((line) => [line.member.number, line.note]), [[380, '#380 has failing checks'], [381, 'after #380'], [382, 'after #381'], [383, 'after #382']]);
-  // The same number in two repositories: two rows, each named by its base PR, each with its base's state.
-  assert.deepEqual([byKey['stack:klang/launcher#384'].label, byKey['stack:klang/launcher#384'].detail, byKey['stack:klang/launcher#384'].base?.action],
-    ['Launcher: read the language', '2 PRs wait for #384 to merge · #384 is ready to merge', 'merge']);
-  assert.deepEqual([byKey['stack:klang/web#384'].label, byKey['stack:klang/web#384'].detail, byKey['stack:klang/web#384'].base?.action],
-    ['Web: language picker', '2 PRs wait for #384 to merge · #384 waits on lena’s review', 'open']);
-  // Reviewers first, then stacks, then you.
-  assert.deepEqual(others.map((group) => group.kind), ['person', 'person', 'stacks', 'you']);
-  // Three stacks or fewer: one row each, no fold.
-  const few = waitingOnOthers(input(build([stack(i18n, 'i18n', 'Launcher i18n'), stack(launcher384), stack(web384)], status), status));
-  assert.deepEqual(few.filter((group) => group.kind === 'stack').map((group) => group.key), ['stack:klang/launcher#380', 'stack:klang/launcher#384', 'stack:klang/web#384']);
-  assert.equal(few.some((group) => group.kind === 'stacks'), false);
-});
-
-void test('Waiting on you counts what it lists: a stack is its PRs, and team and unassigned requests are rows', () => {
-  // The real report: "Waiting on you 7" over two people. zsolt-klang's stack of five PRs counted five, but the row said 1.
-  const zsolt = [1, 2, 3, 4, 5].map((n) => pr('klang/seed', n, { author: 'zsolt-klang', requestedReviewers: [LOGIN], createdAt: iso(14 * DAY), baseBranch: n > 1 ? `feature-${n - 1}` : 'main' }));
-  const ivar = pr('klang/launcher', 6, { author: 'ivaremilsson', requestedReviewers: [LOGIN], createdAt: iso(4 * DAY), additions: 600 });
-  const team = pr('klang/web', 7, { author: 'maya', role: 'review-requested', createdAt: iso(3 * DAY) });
-  const replied = minePr('klang/web', 8);
-  const status: Record<string, QueueSignals> = { [replied.url]: signals(replied, { checks: 'success' }) };
-  const model = overviewModel({
-    items: [stack(zsolt), item([ivar]), item([team]), item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } })],
-    signals: (m) => status[m.url],
-    login: LOGIN,
-    now: T0,
-    teamRequests: true,
-  });
-  const { you, move } = assertCounts(model, status);
-  assert.deepEqual(you.map((group) => [group.label, group.detail]), [
-    ['zsolt-klang', '5 PRs · oldest 14 d'],
-    ['ivaremilsson', '1 PR · oldest 4 d'],
-    ['unassigned', '1 PR · oldest 1 h'],
-    ['team', '1 review request'],
-  ]);
-  assert.equal(sectionCount(you), 8);
-  assert.deepEqual(you[0].repos, ['klang/seed']);
-  // The briefing counts the same PRs.
-  assert.match(overviewBriefing(model), /7 reviews are waiting on you\./, 'five from zsolt-klang, one from ivaremilsson, one team request');
-  // The tab: Waiting on you, and the reply in Move forward now, each once.
-  assert.equal(morningCount(move, you), 8);
-});
-
-void test('Move forward now: approved first, unreviewed merges after and capped at two, nothing large', () => {
-  const status: Record<string, QueueSignals> = {};
-  const set = (m: ReviewMember, value: (m: ReviewMember) => QueueSignals) => { status[m.url] = value(m); return m; };
-  const okA = set(minePr('o/r', 1, { updatedAt: iso(5 * 3_600_000) }), (m) => approved(m, 'lena'));
-  const okB = set(minePr('o/r', 2, { updatedAt: iso(4 * 3_600_000) }), (m) => approved(m, 'sam'));
-  const unreviewed = [11, 12, 13, 14, 15, 16].map((n, i) => set(minePr('o/r', n, { updatedAt: iso((20 - i) * 3_600_000) }), noReview));
-  const bigEpic = set(minePr('o/r', 17, { title: 'STACK: EPIC', additions: 2400, deletions: 300, updatedAt: iso(30 * 3_600_000) }), noReview);
-  const bigWorker = set(minePr('o/r', 18, { title: 'Integrate the Rust worker', additions: 280, deletions: 40 }), noReview);
-  const bigApproved = set(minePr('o/r', 19, { additions: 500 }), (m) => approved(m));
-  // A stack whose PRs total over the limit: its small, approved base is not quick either.
-  const stackBase = set(minePr('o/r', 21, { additions: 150, deletions: 0 }), (m) => approved(m));
-  const stackTop = set(minePr('o/r', 22, { additions: 160, deletions: 0, baseBranch: 'feature-21' }), (m) => signals(m, { checks: 'failure' }));
-  const model = build([okA, okB, ...unreviewed, bigEpic, bigWorker, bigApproved].map((m) => item([m])).concat(stack([stackBase, stackTop])), status);
-  const { items, moreUnreviewed } = moveForward(input(model, status));
-  assert.deepEqual(items.map((entry) => [entry.row.focus.number, entry.why]), [
-    [1, 'approved by lena · green'],
-    [2, 'approved by sam · green'],
-    // Oldest first, labelled in words.
-    [11, 'not reviewed · green'],
-    [12, 'not reviewed · green'],
-  ]);
-  assert.equal(items.filter((entry) => entry.unreviewed).length, UNREVIEWED_LIMIT);
-  // 4 more small ones, and the two large ones: still ready, still counted, only not quick.
-  assert.equal(moreUnreviewed, 6);
-  for (const n of [17, 18, 19, 21]) assert.ok(!items.some((entry) => entry.row.focus.number === n), `#${n} is over ${QUICK_LINES} lines, alone or as a stack`);
-  assert.ok(mergeLane(model).some((row) => row.focus.number === 17), 'a large PR stays in Merge');
-  // Unreviewed merges only fill what the rest leave: they never push out an approved merge or a review.
-  const moreApproved = [31, 32, 33, 34, 35].map((n) => set(minePr('o/r', n), (m) => approved(m)));
-  const full = moveForward(input(build([okA, okB, ...moreApproved, ...unreviewed].map((m) => item([m])), status), status));
-  assert.equal(full.items.length, MOVE_LIMIT);
-  assert.equal(full.items.some((entry) => entry.unreviewed), false);
-  assert.equal(full.moreUnreviewed, unreviewed.length);
-});
-
-void test('Move forward now keeps a slot for the oldest small review request', () => {
-  const status: Record<string, QueueSignals> = {};
-  const merges = [1, 2, 3, 4, 5, 6, 7].map((n) => {
-    const m = minePr('o/r', n);
-    status[m.url] = approved(m);
-    return m;
-  });
-  const older = pr('klang/seed', 40, { author: 'zsolt-klang', requestedReviewers: [LOGIN], createdAt: iso(14 * DAY), additions: 60, deletions: 10 });
-  const newer = pr('klang/launcher', 41, { author: 'ivaremilsson', requestedReviewers: [LOGIN], createdAt: iso(4 * DAY), additions: 30, deletions: 5 });
-  const model = build([...merges.map((m) => item([m])), item([older]), item([newer])], status);
-  const { items } = moveForward(input(model, status));
-  assert.equal(items.length, MOVE_LIMIT);
-  assert.deepEqual(items.filter((entry) => entry.kind === 'review').map((entry) => entry.row.focus.number), [40], 'the oldest review takes the last slot');
-  assert.equal(items.filter((entry) => entry.kind === 'merge').length, MOVE_LIMIT - 1);
-  // Both requests large: no slot; they stay in Waiting on you.
-  const large = [older, newer].map((m) => ({ ...m, additions: 900 }));
-  const big = build([...merges.map((m) => item([m])), ...large.map((m) => item([m]))], status);
-  assert.equal(moveForward(input(big, status)).items.some((entry) => entry.kind === 'review'), false);
-  assert.deepEqual(waitingOnYou({ model: big, now: T0, login: LOGIN }).map((group) => group.label), ['zsolt-klang', 'ivaremilsson']);
 });
 
 void test('the briefing says how many merges are approved, and how many can merge without review', () => {

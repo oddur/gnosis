@@ -4,10 +4,10 @@ import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import type { PrBadgePreview } from '../lib/pr-badge-preview';
 import { PrBadgeTooltip } from './PrBadgeTooltip';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { Copy, ExternalLink } from 'lucide-react';
 import { useCopyToClipboard } from '../lib/use-copy';
-import { setEntryMenuOpen } from '../lib/entry-menu-state';
+import { setEntryMenuOpen, useEntryMenusOpen } from '../lib/entry-menu-state';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import {
   ContextMenu,
@@ -200,7 +200,11 @@ export function RepositoryBadge({ repo }: { repo?: string }) {
   return <EntityBadge kind="repository" value={repo} href={`https://github.com/${repo}`} icon={<RepositoryIcon settings={appearance} />} className={`repository-color-${appearance.color ?? 'default'}`}
     menuActions={configure && <ContextMenuItem className="entry-menu-item" onClick={() => configure(repo)}><WorkbenchIcon name="settings" />Repository settings…</ContextMenuItem>} />;
 }
-export function PrBadge({ url, number, title }: { url: string; number?: number | string; title?: string }) {
+/**
+ * The PR preview a PR badge shows on hover and focus (`PrBadgeTooltip`), read from the saved PR details each time it
+ * opens. Shared by `PrBadge` and `PrPreviewTooltip`, so both load, cache and word the preview the same way.
+ */
+export function usePrBadgePreview(url: string, number?: number | string, title?: string) {
   const [open, setOpen] = useState(false);
   const [resolved, setResolved] = useState<{ url: string; value: PrBadgePreview | null; failed?: boolean }>();
   useEffect(() => {
@@ -220,17 +224,28 @@ export function PrBadge({ url, number, title }: { url: string; number?: number |
   }, [open, url]);
   const preview = resolved?.url === url ? resolved.value : null;
   const n = number ?? /\/pull\/(\d+)/.exec(url)?.[1];
+  return {
+    n,
+    ready: resolved?.url === url,
+    heading: preview ? `${preview.member.repo} #${n}` : url,
+    content: <PrBadgeTooltip preview={preview} title={title} failed={resolved?.failed} />,
+    onOpenChange: (next: boolean) => {
+      if (next) setResolved(undefined);
+      setOpen(next);
+    },
+  };
+}
+export function PrBadge({ url, number, title }: { url: string; number?: number | string; title?: string }) {
+  const preview = usePrBadgePreview(url, number, title);
+  const n = preview.n;
   if (!n) return null;
   return (
     <EntityBadge
       kind="pr"
-      tooltipHeading={preview ? `${preview.member.repo} #${n}` : url}
-      tooltipReady={resolved?.url === url}
-      tooltipContent={<PrBadgeTooltip preview={preview} title={title} failed={resolved?.failed} />}
-      onTooltipOpenChange={(next) => {
-        if (next) setResolved(undefined);
-        setOpen(next);
-      }}
+      tooltipHeading={preview.heading}
+      tooltipReady={preview.ready}
+      tooltipContent={preview.content}
+      onTooltipOpenChange={preview.onOpenChange}
       value={url}
       label={`#${n}`}
       href={url}
@@ -239,6 +254,54 @@ export function PrBadge({ url, number, title }: { url: string; number?: number |
         ...(title ? [{ label: 'Copy title', value: title }] : []),
       ]}
     />
+  );
+}
+/** Hover and keyboard focus wait this long before a PR preview opens, as on PR badges. */
+export const PR_PREVIEW_DELAY = 350;
+/**
+ * The PR badge's preview on another trigger, such as a row's title button: the same content, loading and delay as
+ * `PrBadge`. Keyboard focus waits the same delay, so moving through rows does not flash previews. Closes on Escape,
+ * on scroll, on click and while a row menu is open.
+ */
+export function PrPreviewTooltip({ url, number, title, children }: { url: string; number?: number | string; title?: string; children: ReactElement }) {
+  const preview = usePrBadgePreview(url, number, title);
+  const menus = useEntryMenusOpen();
+  const [open, setOpen] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  const viaFocus = useRef(false);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const change = (next: boolean) => {
+    window.clearTimeout(timer.current);
+    if (next && viaFocus.current) {
+      // Radix opens at once on focus; keyboard focus waits like hover does.
+      timer.current = window.setTimeout(() => {
+        setOpen(true);
+        preview.onOpenChange(true);
+      }, PR_PREVIEW_DELAY);
+      return;
+    }
+    setOpen(next);
+    preview.onOpenChange(next);
+  };
+  return (
+    <TooltipProvider delayDuration={PR_PREVIEW_DELAY}>
+      <Tooltip open={open && !menus} onOpenChange={change} disableHoverableContent={!preview.ready}>
+        <TooltipTrigger
+          asChild
+          onFocusCapture={() => { viaFocus.current = true; }}
+          onPointerMove={() => { viaFocus.current = false; }}
+          onKeyDown={(event) => { if (event.key === 'Escape') change(false); }}
+        >
+          {children}
+        </TooltipTrigger>
+        {preview.ready && (
+          <TooltipContent side="top" sideOffset={6} collisionPadding={12} hideWhenDetached className="entity-badge-tooltip pr-badge-tooltip">
+            <span className="entity-badge-full-value">{preview.heading}</span>
+            {preview.content}
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 export function BranchBadge({ branch, repo }: { branch: string; repo?: string }) {

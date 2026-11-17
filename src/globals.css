@@ -4999,11 +4999,15 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-freshness-group { display:flex; align-items:center; gap:8px; margin-top:1px; }
 .overview-unchecked { font-size:var(--type-caption); color:var(--muted-foreground); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .overview-unchecked::after { content:"·"; margin-left:8px; opacity:.6; }
-/* The morning page (#390): one lead section, two columns of people, and a quiet section of decisions. Sections are
-   headed lists, not cards: a hairline under each heading, rows that fill on hover, generous space between sections. */
+/* The morning page (#390): one lead section, then who waits on you and on whom you wait, full width one above the
+   other, and a quiet section of decisions. Sections are headed lists, not cards: a hairline under each heading, rows
+   that fill on hover, generous space between sections. At wide widths the page keeps a reading width and centres,
+   with the toolbar on the same edges. */
 .overview-since { margin-top:4px; max-width:80ch; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
-.morning { display:flex; flex-direction:column; gap:28px; max-width:1180px; padding:4px 24px 0; }
-.morning-columns { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:28px 40px; align-items:start; }
+.overview { --overview-content:1132px; }
+.overview-toolbar { padding-inline:max(24px, calc((100cqi - var(--overview-content)) / 2)); }
+/* Measured from the Overview's width, as the toolbar is, so the scrollbar gutter does not shift the edges apart. */
+.morning { display:flex; flex-direction:column; gap:28px; width:auto; max-width:calc(var(--overview-content) + 48px); margin:0 auto 0 max(0px, calc((100cqi - var(--overview-content)) / 2 - 24px)); padding:4px 24px 0; }
 .morning-section { min-width:0; }
 .morning-section-head { display:flex; align-items:baseline; gap:8px; padding-bottom:6px; margin-bottom:4px; border-bottom:1px solid var(--border); }
 .morning-section-head h2 { font-size:var(--type-body); font-weight:650; line-height:1.4; color:var(--foreground); }
@@ -5022,7 +5026,10 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-row:has(.morning-chevron) .overview-row-gutter { width:14px; margin-right:2px; }
 .morning-title { flex:1; min-width:0; display:flex; align-items:baseline; gap:10px; padding:6px 0 6px 4px; text-align:left; color:var(--foreground); user-select:none; }
 /* The title gives way first, keeping at least a third of the line; then the detail. The repository stays. */
-.morning-title-text { flex:0 100 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-body); font-weight:450; line-height:1.45; }
+.morning-head { flex:0 100 auto; min-width:0; display:flex; align-items:baseline; gap:8px; }
+.morning-title-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-body); font-weight:450; line-height:1.45; }
+/* The PR number leads, in a fixed column of tabular numerals, so titles start on one edge. */
+.morning-number { flex:none; min-width:6.5ch; font-size:var(--type-control); line-height:1.45; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .morning-row.is-new .morning-title-text { font-weight:600; }
 .morning-detail { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-control); line-height:1.45; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .morning-row.is-nested .morning-title-text { max-width:none; font-size:var(--type-control); }
@@ -5040,8 +5047,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-title:focus-visible { outline:none; }
 /* The ring goes around the whole row, so its actions never cover it. */
 .morning-row:has(.morning-title:focus-visible) { outline:2px solid var(--ring); outline-offset:-2px; }
-.morning-meta { flex:none; min-width:3.5em; padding-left:10px; text-align:right; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
-.morning-actions { flex:none; display:flex; align-items:center; gap:4px; padding-left:10px; }
+.morning-meta { flex:none; min-width:4.5em; padding-left:10px; text-align:right; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.morning-actions { flex:none; display:flex; align-items:center; justify-content:flex-end; gap:4px; min-width:108px; padding-left:10px; }
+.morning-section[data-section=decide] .morning-actions { min-width:0; }
 .morning-actions .pr-actions { margin:0; }
 .morning-actions .entry-menu-trigger { width:24px; height:24px; opacity:0; transition:opacity 120ms ease-out; }
 .morning-row:hover .entry-menu-trigger, .morning-row:focus-within .entry-menu-trigger { opacity:1; }
@@ -5052,6 +5060,38 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-actions [data-reveal] { opacity:0; transition:opacity 120ms ease-out; }
 .morning-row:hover .morning-actions [data-reveal], .morning-row:focus-within .morning-actions [data-reveal] { opacity:1; }
 .morning-done { font-size:var(--type-caption); color:var(--muted-foreground); padding:0 6px; }
+/* The check state, as the queue row shows it (.queue-checks); unknown reads "checking…". Never truncated. */
+.morning-checks { flex:none; padding-left:10px; }
+.morning-checks.is-unknown { font-style:italic; }
+/* A chain's status word: the first PR is Next; colour only supports the word. */
+.morning-status { flex:none; padding-left:10px; font-size:var(--type-caption); font-weight:600; line-height:1.45; color:var(--muted-foreground); white-space:nowrap; }
+.morning-status.is-next { color:var(--foreground); }
+.morning-status.is-ready { color:var(--color-success); }
+.morning-status.is-checks { color:var(--color-warning); }
+.morning-status.is-conflicts { color:var(--color-danger); }
+/* Stacks: a header with the name, the repository once and the next step, then the chain in merge order on a thin
+   connector, as on the stack page (StackDependencyChain). The step and the numbers never truncate; titles do, at
+   their end. */
+.morning-stack { --chain-row:30px; margin-top:2px; }
+.morning-stack-head .morning-sub { flex:none; max-width:none; }
+.morning-stack-head .morning-detail { flex:none; overflow:visible; color:var(--foreground); font-weight:500; }
+.morning-stack-head .morning-head { min-width:8ch; }
+.morning-chain { list-style:none; margin:0 0 6px; padding:0; }
+.morning-chain > li { position:relative; }
+.morning-chain > li:not(:last-child)::after { content:""; position:absolute; left:47px; top:calc(var(--chain-row) / 2 + 9px); bottom:calc(9px - var(--chain-row) / 2); width:1px; background:var(--border); pointer-events:none; }
+.morning-row.is-chain .morning-row-inner, .morning-chain-ref { min-height:var(--chain-row); padding-left:30px; }
+.morning-chain .stack-chain-node { width:18px; height:18px; margin-right:6px; color:var(--muted-foreground); }
+.morning-row.is-chain .morning-title { padding-block:4px; }
+.morning-row.is-chain .morning-title-text { font-size:var(--type-control); color:var(--muted-foreground); }
+.morning-row.is-chain.is-next .morning-title-text { color:var(--foreground); font-weight:550; }
+.morning-chain .morning-checks { min-width:7rem; }
+.morning-chain .morning-status { min-width:7.5rem; }
+.morning-chain-ref { display:flex; align-items:center; gap:0; padding-right:6px; font-size:var(--type-control); color:var(--muted-foreground); }
+.morning-chain-ref .overview-row-gutter { flex:none; width:8px; }
+.morning-chain-ref .morning-number { margin-left:4px; }
+.morning-chain-where { flex:1; min-width:0; font-size:var(--type-caption); font-style:italic; }
+.morning-more-row .morning-more-quiet { margin:4px 0 4px 4px; }
+.morning-more-row.is-chain .morning-more-quiet { margin-left:0; font-size:var(--type-caption); }
 .morning-more { padding:6px 0 0 12px; }
 .morning-footer { padding-top:4px; }
 .morning-more-quiet { display:inline-flex; align-items:center; gap:2px; margin-left:-4px; padding:2px 4px; border-radius:4px; font-size:var(--type-control); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
@@ -5067,7 +5107,12 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-state p { max-width:60ch; line-height:1.6; }
 @media (prefers-reduced-motion:reduce) { .morning-chevron, .morning-actions .entry-menu-trigger, .morning-section[data-section=decide] .morning-actions, .morning-actions [data-reveal] { transition:none; } }
 @container overview (max-width:760px) {
-  .morning-columns { grid-template-columns:minmax(0, 1fr); }
+  .morning-stack { --chain-row:44px; }
+  .morning-stack-head .morning-sub { flex:none; flex-wrap:wrap; }
+  .morning-stack-head .morning-detail { white-space:normal; }
+  .morning-chain .morning-checks, .morning-chain .morning-status { min-width:0; }
+  .morning-actions { min-width:0; }
+  .morning-meta:empty { display:none; }
   .morning-title { flex-direction:column; align-items:stretch; gap:0; }
   .morning-sub { flex:none; max-width:none; }
   .morning-row-inner { min-height:44px; }

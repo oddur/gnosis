@@ -1,23 +1,25 @@
 /**
- * The Overview (#390): the morning page. It answers, in order, what happened since you left, what you can finish
- * now, who is blocked on you, where your PRs are stuck and on whom, and what to close or park.
+ * The Overview (#390): the morning page. It answers, in order, what happened since you left, what to do next, who is
+ * blocked on you, where your PRs are stuck and on whom, and what to close or park.
  *
  * - The briefing sentence and a "Since yesterday" line (`lib/since-log.ts`).
- * - **Move forward now:** quick wins across lanes, cheapest first, each with one action and why it is quick.
- * - **Waiting on you** and **Waiting on others**, side by side: people, and your PRs by blocker, with Nudge.
+ * - **Next up:** up to five things to do, cheapest first, each with one action and its effort.
+ * - **Waiting on you** and **Waiting on others**, full width one above the other: people, and your PRs by blocker,
+ *   with Nudge. Stacks are chains in merge order, base first, with the step that moves them.
  * - **Needs a decision:** your PRs failing, never approved or idle for over a week, with Close PR and Snooze.
  *
- * Every row names its repository in plain muted text, with its icon or colour from Settings › Repositories: the short
- * name, or owner/repo where two repositories share one. Headings count the PRs their rows stand for.
+ * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), and every heading counts what it lists.
+ * Every PR line leads with its number, shows its check state as the queue row does, and previews the PR on hover or
+ * focus with the PR badge's tooltip. Repositories are plain muted text, with their icon or colour from Settings ›
+ * Repositories, named once per group when the group has one repository.
  *
- * Sections come from `lib/morning.ts` over the lanes of `lib/overview.ts`. Each section is a labelled region with one
- * roving tab stop: Tab moves between sections, j/k and the arrows move within one, Enter opens (or expands a
- * person), A runs the row's action and Z snoozes. Rows describe themselves to assistive technology, and count
- * changes are announced once by a polite live region. Rows are memoized on their signature, so a sync tick that
- * changes nothing renders nothing, and a moved row gets its focus back without scrolling.
+ * Each section is a labelled region with one roving tab stop: Tab moves between sections, j/k and the arrows move
+ * within one, Enter opens (or expands a group), A runs the row's action and Z snoozes. Rows describe themselves to
+ * assistive technology, and count changes are announced once by a polite live region. Rows are memoized on what they
+ * show, so a sync tick that changes nothing renders nothing, and a moved row gets its focus back without scrolling.
  */
 import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { AlertCircle, ChevronRight, GitMerge, RefreshCw, Settings, X } from 'lucide-react';
+import { AlertCircle, ChevronRight, GitMerge, RefreshCw, RotateCcw, Settings, X } from 'lucide-react';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
@@ -27,22 +29,32 @@ import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import { prTarget, type DeepLinkTarget } from '../lib/deep-link';
 import { publishOverviewCount } from '../lib/overview-count';
-import { overviewBriefing, overviewRef, waitingLabel, spokenWaiting, type OverviewActionGroup, type OverviewModel, type OverviewRow } from '../lib/overview';
+import { checkSummaryIcons } from '../lib/interface-icons';
+import type { CheckView } from '../lib/check-summary';
+import type { PrChecks } from '../lib/pr-checks';
+import { overviewBriefing, waitingLabel, spokenWaiting, type OverviewActionGroup, type OverviewModel, type OverviewRow } from '../lib/overview';
 import {
+  CHAIN_STATUS_LABEL,
+  FIX_LABEL,
+  PLACE_LABEL,
   effortLabel,
-  moveCount,
-  moveForward,
-  moveMinutes,
-  morningCount,
-  needsDecision,
+  effortShort,
+  morningPage,
+  nextCount,
+  nextMinutes,
+  nextMoreLine,
   repositoryLabel,
   repositoryNames,
   sectionCount,
-  waitingOnOthers,
-  waitingOnYou,
+  CHAIN_HEAD,
+  CHAIN_SHOWN,
+  GROUP_SHOWN,
+  INLINE_LIMIT,
+  STACKS_SHOWN,
+  type ChainNode,
   type DecisionItem,
   type GroupLine,
-  type MoveItem,
+  type NextItem,
   type PersonGroup,
 } from '../lib/morning';
 import { sinceLine, sinceSummary } from '../lib/since-log';
@@ -50,8 +62,11 @@ import { openSnoozePicker } from '../lib/snooze-picker';
 import { writeErrorDetail } from '../lib/write-failures';
 import type { QueueItem, ReviewMember, WorkbenchQueue } from '../lib/workbench';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
+import { PrPreviewTooltip } from './EntityBadge';
 import { PrActions } from './PrActions';
 import { PrFreshness } from './PrFreshness';
+import { PrStateIcon } from './PrStateIcon';
+import { BulkCheckRerun } from './BulkCheckRerun';
 import { LoadingIndicator, LoadingState } from './LoadingState';
 import { ClosePrDialog, NudgeDialog } from './OverviewWrites';
 import { RepositoryIcon } from './RepositoryAppearance';
@@ -106,10 +121,10 @@ const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-dig
 export const SYNC_STALE_MS = 10 * 60_000;
 const syncStale = (checkedAt: number | undefined) => checkedAt !== undefined && Date.now() - checkedAt > SYNC_STALE_MS;
 
-type Section = 'move' | 'you' | 'others' | 'decide';
-const SECTIONS: readonly Section[] = ['move', 'you', 'others', 'decide'];
+type Section = 'next' | 'you' | 'others' | 'decide';
+const SECTIONS: readonly Section[] = ['next', 'you', 'others', 'decide'];
 const SECTION_LABEL: Readonly<Record<Section, string>> = {
-  move: 'Move forward now',
+  next: 'Next up',
   you: 'Waiting on you',
   others: 'Waiting on others',
   decide: 'Needs a decision',
@@ -118,10 +133,38 @@ const SECTION_LABEL: Readonly<Record<Section, string>> = {
 const DECIDE_SHOWN = 6;
 /** The section a row id belongs to: ids are `${section}|…`. */
 const sectionOf = (id: string) => id.slice(0, id.indexOf('|')) as Section;
-/** The quiet line under Move forward now: the rest of the merges nobody reviewed. */
-const MORE_UNREVIEWED = 'move|more-unreviewed';
+/** The quiet line under Next up: the rest of the merges nobody reviewed. */
+const MORE_UNREVIEWED = 'next|more-unreviewed';
 const prs = (n: number) => `${n} ${n === 1 ? 'PR' : 'PRs'}`;
 const groupLabel = (group: PersonGroup) => (group.kind === 'you' ? 'You' : group.kind === 'review' ? 'Needs a reviewer' : group.label);
+const lineMembers = (group: PersonGroup) => group.lines.map((line) => line.member);
+
+/**
+ * What the toggles have opened, by row id: an expanded group, `…|more` for a list shown in full. The stacks group is
+ * open by default, so its own id there means collapsed.
+ */
+type Open = ReadonlySet<string>;
+/** A group's disclosure: inline up to `INLINE_LIMIT` PRs; else a chevron, and `GROUP_SHOWN` PRs then "N more". */
+function groupView(group: PersonGroup, id: string, open: Open) {
+  const disclosure = group.lines.length > INLINE_LIMIT;
+  const expanded = !disclosure || open.has(id);
+  const lines = !expanded ? [] : disclosure && !open.has(`${id}|more`) ? group.lines.slice(0, GROUP_SHOWN) : group.lines;
+  return { disclosure, expanded, lines, more: expanded ? group.lines.length - lines.length : 0 };
+}
+/** The stacks group: open by default, the first `STACKS_SHOWN` stacks, then "N more stacks". */
+function stacksView(group: PersonGroup, id: string, open: Open) {
+  const expanded = !open.has(id);
+  const all = group.children ?? [];
+  const children = !expanded ? [] : open.has(`${id}|more`) ? all : all.slice(0, STACKS_SHOWN);
+  return { expanded, children, more: expanded ? all.length - children.length : 0 };
+}
+type ChainStep = ChainNode | { kind: 'gap'; count: number };
+/** A chain over `CHAIN_SHOWN` PRs shows its first `CHAIN_HEAD` and its last, with "+N more" between. */
+function chainView(stack: PersonGroup, id: string, open: Open): ChainStep[] {
+  const chain = stack.chain ?? [];
+  if (chain.length <= CHAIN_SHOWN || open.has(`${id}|more`)) return chain;
+  return [...chain.slice(0, CHAIN_HEAD), { kind: 'gap', count: chain.length - CHAIN_HEAD - 1 }, chain[chain.length - 1]];
+}
 
 /** What a row is: how it opens, what it acts on, and how it snoozes. */
 interface RowRef {
@@ -154,15 +197,11 @@ export function OverviewPage(props: OverviewPageProps) {
   // PRs closing on GitHub leave the page at once; a refusal brings them back.
   const [closing, setClosing] = useState<ReadonlySet<string>>(new Set());
   const [nudged, setNudged] = useState<ReadonlySet<string>>(new Set());
-  const morning = useMemo(() => {
-    const input = { model: view, now, login: account ?? '', signals: view.statusOf, rereviewLines: extras.rereviewLines, replies: extras.replies };
-    const { items: move, moreUnreviewed } = moveForward(input);
-    const you = waitingOnYou(input);
-    const others = waitingOnOthers(input);
-    const decide = needsDecision(input).filter((item) => !closing.has(item.member.url));
-    return { move, moreUnreviewed, you, others, decide, count: morningCount(move, you) };
-  }, [view, now, account, extras.rereviewLines, extras.replies, closing]);
-  // The tab title counts Move forward now and Waiting on you, each PR once (lib/morning.ts, `morningCount`).
+  const morning = useMemo(
+    () => morningPage({ model: view, now, login: account ?? '', signals: view.statusOf, rereviewLines: extras.rereviewLines, replies: extras.replies, hidden: closing }),
+    [view, now, account, extras.rereviewLines, extras.replies, closing]
+  );
+  // The tab title counts Next up and Waiting on you, each PR once (lib/morning.ts, `morningCount`).
   useEffect(() => {
     if (account && !loading) publishOverviewCount(account, morning.count);
   }, [account, loading, morning.count]);
@@ -172,48 +211,52 @@ export function OverviewPage(props: OverviewPageProps) {
   const repoNames = useMemo(() => repositoryNames(repoKey ? repoKey.split(',') : []), [repoKey]);
   const since = useMemo(() => sinceLine(sinceSummary(extras.since.events, extras.since.from), extras.since.from, now), [extras.since, now]);
 
-  // Expanded person and blocker groups, by row id.
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [opened, setOpened] = useState<Open>(new Set());
   const [allDecisions, setAllDecisions] = useState(false);
-  const toggle = useCallback((id: string) => setExpanded((current) => {
-    const next = new Set(current);
+  const toggle = useCallback((id: string) => setOpened((value) => {
+    const next = new Set(value);
     if (!next.delete(id)) next.add(id);
     return next;
   }), []);
   // Every row id per section in reading order, and what each row is.
   const { order, refs } = useMemo(() => {
     const refs = new Map<string, RowRef>();
-    const order: Record<Section, string[]> = { move: [], you: [], others: [], decide: [] };
-    for (const item of morning.move) {
-      order.move.push(item.id);
-      refs.set(item.id, { row: item.row, members: item.row.item.subject.members });
-    }
-    // "N more ready, not reviewed" is the section's last stop: j/k and Tab reach it like a row.
-    if (morning.moreUnreviewed > 0) {
-      order.move.push(MORE_UNREVIEWED);
-      refs.set(MORE_UNREVIEWED, { members: [] });
-    }
-    // A group, then its PRs when expanded; the folded stacks row holds a row per stack.
-    const visit = (section: 'you' | 'others', group: PersonGroup, id: string) => {
+    const order: Record<Section, string[]> = { next: [], you: [], others: [], decide: [] };
+    const push = (section: Section, id: string, ref: RowRef) => {
       order[section].push(id);
-      refs.set(id, { members: group.rows.flatMap((row) => row.entries.map((entry) => entry.member)) });
-      if (!expanded.has(id)) return;
-      for (const child of group.children ?? []) visit(section, child, `${id}|${child.key}`);
-      for (const line of group.lines) {
-        const child = `${id}|${line.id}`;
-        order[section].push(child);
-        // A line for one PR of a stack snoozes that PR; a line for a whole row snoozes the row.
-        refs.set(child, { row: line.row, members: line.id !== line.row.id ? [line.member] : line.row.item.subject.members });
-      }
+      refs.set(id, ref);
+    };
+    for (const item of morning.next.items) push('next', item.id, { row: item.row, members: item.row.entries.map((entry) => entry.member).filter((member) => item.urls.includes(member.url)) });
+    // The quiet line under Next up is the section's last stop: j/k and Tab reach it like a row.
+    if (nextMoreLine(morning.next)) push('next', MORE_UNREVIEWED, { members: [] });
+    const lines = (section: Section, id: string, list: readonly GroupLine[]) => {
+      for (const line of list) push(section, `${id}|${line.id}`, { row: line.row, members: [line.member] });
     };
     for (const [section, groups] of [['you', morning.you], ['others', morning.others]] as const)
-      for (const group of groups) visit(section, group, `${section}|${group.key}`);
-    for (const item of allDecisions ? morning.decide : morning.decide.slice(0, DECIDE_SHOWN)) {
-      order.decide.push(item.id);
-      refs.set(item.id, { row: item.row, members: [item.member] });
-    }
+      for (const group of groups) {
+        const id = `${section}|${group.key}`;
+        if (group.kind === 'stacks') {
+          push(section, id, { members: (group.children ?? []).flatMap(lineMembers) });
+          const stacks = stacksView(group, id, opened);
+          for (const stack of stacks.children) {
+            const sid = `${id}|${stack.key}`;
+            push(section, sid, { row: stack.step?.row ?? stack.rows[0], members: lineMembers(stack) });
+            for (const step of chainView(stack, sid, opened)) {
+              if (step.kind === 'line') lines(section, sid, [step.line]);
+              else if (step.kind === 'gap') push(section, `${sid}|more`, { members: [] });
+            }
+          }
+          if (stacks.more) push(section, `${id}|more`, { members: [] });
+          continue;
+        }
+        push(section, id, { members: lineMembers(group) });
+        const shown = groupView(group, id, opened);
+        lines(section, id, shown.lines);
+        if (shown.more) push(section, `${id}|more`, { members: [] });
+      }
+    for (const item of allDecisions ? morning.decide : morning.decide.slice(0, DECIDE_SHOWN)) push('decide', item.id, { row: item.row, members: [item.member] });
     return { order, refs };
-  }, [morning, expanded, allDecisions]);
+  }, [morning, opened, allDecisions]);
   const latest = useRef({ order, refs });
   latest.current = { order, refs };
   // One roving tab stop per section: the row last focused there, else its first.
@@ -361,16 +404,27 @@ export function OverviewPage(props: OverviewPageProps) {
     );
   }, []);
 
+
   const sync = queue.sync;
   const readStates = queue.readStates ?? {};
   const unread = (members: readonly ReviewMember[]) => members.some((member) => !!readStates[member.url]?.unread.length);
   const ready = authenticated && !(loading && !queue.items.length) && !(!queue.items.length && !hasRepositories);
-  // Each heading is the sum of the PRs its rows stand for (lib/morning.ts, "Counts").
+  // Each heading is the number of PRs its section lists (lib/morning.ts, "Counts").
   const counts: Counts = {
-    move: moveCount(morning.move),
+    next: nextCount(morning.next.items),
     you: sectionCount(morning.you),
     others: sectionCount(morning.others),
     decide: morning.decide.length,
+  };
+  const more = nextMoreLine(morning.next);
+  const group = (section: 'you' | 'others', value: PersonGroup) => {
+    const id = `${section}|${value.key}`;
+    const inside = openWithin(opened, id);
+    return value.kind === 'stacks' ? (
+      <StacksRows key={value.key} id={id} group={value} now={now} open={inside} tabStop={tabStop(section)} nudged={nudged} actions={actions} />
+    ) : (
+      <GroupRows key={value.key} id={id} group={value} now={now} open={inside} tabStop={tabStop(section)} nudged={nudged.has(value.key)} actions={actions} />
+    );
   };
   const body = !authenticated ? (
     <div className="overview-state">
@@ -396,33 +450,26 @@ export function OverviewPage(props: OverviewPageProps) {
         </div>
       )}
       <div className="morning">
-        <MorningSection section="move" count={counts.move} summary={morning.move.length ? effortLabel(moveMinutes(morning.move)) : undefined}
-          empty="Nothing quick right now. The rest of your work is below."
-          footer={morning.moreUnreviewed > 0 && (
+        <MorningSection section="next" count={counts.next} summary={morning.next.items.length ? effortLabel(nextMinutes(morning.next.items)) : undefined}
+          empty="Nothing needs you right now."
+          footer={more && (
             // The rest of the unreviewed merges wait in the queue, grouped by Action at Merge.
-            <button type="button" className="morning-more-quiet" data-overview-more-unreviewed data-overview-row={MORE_UNREVIEWED} tabIndex={tabStop('move') === MORE_UNREVIEWED ? 0 : -1}
+            <button type="button" className="morning-more-quiet" data-overview-more-unreviewed data-overview-row={MORE_UNREVIEWED} tabIndex={tabStop('next') === MORE_UNREVIEWED ? 0 : -1}
               title="Open Merge in the review queue, grouped by Action" onFocus={() => actions.focus(MORE_UNREVIEWED)} onBlur={actions.blur} onKeyDown={actions.keyDown} onClick={() => actions.show('merge')}>
-              {morning.moreUnreviewed} more ready, not reviewed
+              {more}
               <ChevronRight size={13} aria-hidden="true" />
             </button>
           )}>
-          {morning.move.map((item) => (
-            <MoveRow key={item.id} item={item} tabStop={tabStop('move') === item.id} unread={unread(item.row.entries.map((entry) => entry.member))} actions={actions} />
+          {morning.next.items.map((item) => (
+            <NextRow key={item.id} item={item} tabStop={tabStop('next') === item.id} unread={unread(item.row.entries.map((entry) => entry.member))} actions={actions} />
           ))}
         </MorningSection>
-        <div className="morning-columns">
-          <MorningSection section="you" count={counts.you} empty="Nobody is waiting on you.">
-            {morning.you.map((group) => (
-              <GroupRows key={group.key} id={`you|${group.key}`} group={group} now={now} open={openWithin(expanded, `you|${group.key}`)} tabStop={tabStop('you')} actions={actions} />
-            ))}
-          </MorningSection>
-          <MorningSection section="others" count={counts.others} empty="None of your PRs are waiting on anyone.">
-            {morning.others.map((group) => (
-              <GroupRows key={group.key} id={`others|${group.key}`} group={group} now={now} open={openWithin(expanded, `others|${group.key}`)} tabStop={tabStop('others')}
-                nudged={nudged.has(group.key)} actions={actions} />
-            ))}
-          </MorningSection>
-        </div>
+        <MorningSection section="you" count={counts.you} empty="Nobody is waiting on you.">
+          {morning.you.map((value) => group('you', value))}
+        </MorningSection>
+        <MorningSection section="others" count={counts.others} empty="None of your PRs are waiting on anyone.">
+          {morning.others.map((value) => group('others', value))}
+        </MorningSection>
         <MorningSection section="decide" count={counts.decide} quiet empty="Nothing to decide. None of your PRs has been stuck for over a week.">
           {(allDecisions ? morning.decide : morning.decide.slice(0, DECIDE_SHOWN)).map((item) => (
             <DecisionRow key={item.id} item={item} tabStop={tabStop('decide') === item.id} actions={actions} />
@@ -444,15 +491,15 @@ export function OverviewPage(props: OverviewPageProps) {
         group={nudging}
         onClose={() => setNudging(null)}
         onDone={({ sent, error }) => {
-          const group = nudging;
+          const value = nudging;
           setNudging(null);
-          if (!group) return;
+          if (!value) return;
           if (sent.length) {
-            setNudged((current) => new Set([...current, group.key]));
-            toast.add({ type: 'success', title: `Asked ${group.label} to review ${prs(sent.length)} again` });
+            setNudged((current) => new Set([...current, value.key]));
+            toast.add({ type: 'success', title: `Asked ${value.label} to review ${prs(sent.length)} again` });
             callbacks.current.onRefresh();
           }
-          if (error) toast.add({ type: 'error', title: `Could not nudge ${group.label}`, description: error });
+          if (error) toast.add({ type: 'error', title: `Could not nudge ${value.label}`, description: error });
         }}
       />
       <ClosePrDialog member={closingPr} onClose={() => setClosingPr(null)} onConfirm={confirmClose} />
@@ -564,6 +611,7 @@ function useCountAnnouncement(counts: Counts, active: boolean): string {
   return active ? message : '';
 }
 
+
 interface RowActions {
   /** Opens the row where its notification would land, or `target` (one PR of a stack, a stack's base). */
   open: (row: OverviewRow, target?: DeepLinkTarget) => void;
@@ -581,10 +629,11 @@ interface RowActions {
   keyDown: (event: ReactKeyboardEvent) => void;
 }
 
-/** The expanded ids under a group (itself included), as one key, so a group renders again only when its own change. */
-function openWithin(expanded: ReadonlySet<string>, id: string): string {
-  return [...expanded].filter((entry) => entry === id || entry.startsWith(`${id}|`)).sort().join('\n');
+/** The opened ids under a group (itself included), as one key, so a group renders again only when its own change. */
+function openWithin(open: Open, id: string): string {
+  return [...open].filter((entry) => entry === id || entry.startsWith(`${id}|`)).sort().join('\n');
 }
+const openSet = (open: string): Open => new Set(open ? open.split('\n') : []);
 
 /** How repositories are named on the page (`repositoryNames`): short, or owner/repo where two share a short name. */
 const RepoNames = createContext<ReadonlyMap<string, string>>(new Map());
@@ -618,7 +667,6 @@ function RepoName({ repos }: { repos: readonly string[] }) {
     </span>
   );
 }
-const rowRepos = (row: OverviewRow) => [...new Set(row.entries.map((entry) => entry.member.repo))];
 
 function MorningSection({ section, count, summary, empty, quiet = false, footer, children }: {
   section: Section;
@@ -626,7 +674,7 @@ function MorningSection({ section, count, summary, empty, quiet = false, footer,
   summary?: string;
   empty: string;
   quiet?: boolean;
-  /** A quiet line under the rows, such as "8 more ready, not reviewed". */
+  /** A quiet line under the rows, such as "2 more ready, not reviewed". */
   footer?: ReactNode;
   children: ReactNode;
 }) {
@@ -648,6 +696,505 @@ function MorningSection({ section, count, summary, empty, quiet = false, footer,
   );
 }
 
+/** A PR's check state as the queue row shows it (`queue-checks`): an icon and a short word, never colour alone. */
+function CheckState({ check }: { check: CheckView }) {
+  const Icon = checkSummaryIcons[check.state];
+  return (
+    <span className={`queue-checks morning-checks is-${check.state === 'unknown' ? 'unknown' : check.state}`} data-overview-check={check.state} title={check.spoken} aria-hidden="true">
+      <Icon size={13} aria-hidden="true" />
+      {check.label}
+    </span>
+  );
+}
+
+/**
+ * One line: the primary button (the PR number, the title, then its repository and detail), the check state, a
+ * status word, right-aligned meta, the actions and the menu. The number, check and status never truncate; the title
+ * truncates first, at its end. A PR's title previews the PR on hover and focus (`PrPreviewTooltip`).
+ */
+function RowShell({ id, tabStop, actions, label, title, number, preview, prs: listed, repos, detail, check, status, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, as: Tag = 'li', className = '', node, onActivate }: {
+  id: string;
+  tabStop: boolean;
+  actions: RowActions;
+  label: string;
+  title: ReactNode;
+  /** The PR number, in its own column. */
+  number?: number;
+  /** The PR the title previews. */
+  preview?: { url: string; number: number; title: string };
+  /** The PRs the row lists, for the page's each-PR-once check. */
+  prs?: readonly string[];
+  /** The repositories of the row's PRs: one is named, several read "2 repos". */
+  repos?: readonly string[];
+  detail?: ReactNode;
+  check?: CheckView;
+  status?: ReactNode;
+  meta?: ReactNode;
+  quick?: ReactNode;
+  menu?: EntryActionGroups;
+  /** What the menu is for: "PR #312", "stack Billing". */
+  menuLabel?: string;
+  description: string;
+  expanded?: boolean;
+  /** 1 for a group's PRs, 2 for a stack's chain inside the stacks group. */
+  depth?: number;
+  isNew?: boolean;
+  as?: 'li' | 'div';
+  className?: string;
+  /** Before the title: a stack chain's node. */
+  node?: ReactNode;
+  onActivate: () => void;
+}) {
+  if (window.__countRenders) { window.__overviewRowRenders = (window.__overviewRowRenders ?? 0) + 1; (window.__overviewRenderedRows ??= []).push(id); }
+  const descriptionId = useId();
+  const button = (
+    <button
+      type="button"
+      className="morning-title"
+      data-overview-row={id}
+      tabIndex={tabStop ? 0 : -1}
+      aria-describedby={descriptionId}
+      aria-expanded={expanded}
+      // A PR's title has the PR preview; a native tooltip would cover it.
+      title={preview ? undefined : label}
+      onFocus={() => actions.focus(id)}
+      onBlur={actions.blur}
+      onKeyDown={actions.keyDown}
+      onClick={(event) => {
+        event.preventDefault();
+        onActivate();
+      }}
+    >
+      <span className="morning-head">
+        {number !== undefined && <span className="morning-number">#{number}</span>}
+        <span className="morning-title-text">{title}</span>
+      </span>
+      {(repos?.length || detail !== undefined) && (
+        <span className="morning-sub">
+          {repos && <RepoName repos={repos} />}
+          {detail !== undefined && <span className="morning-detail">{detail}</span>}
+        </span>
+      )}
+    </button>
+  );
+  const inner = (trigger: ReactNode) => (
+    <div className="morning-row-inner">
+      <span className="overview-row-gutter">
+        {isNew && <span className="pr-unread-dot" role="img" aria-label="New since your last visit" title="New since your last visit" />}
+        {expanded !== undefined && <ChevronRight size={14} aria-hidden="true" className="morning-chevron" />}
+      </span>
+      {node}
+      {preview ? <PrPreviewTooltip url={preview.url} number={preview.number} title={preview.title}>{button}</PrPreviewTooltip> : button}
+      <span className="sr-only" id={descriptionId} data-overview-description>{description}</span>
+      {check && <CheckState check={check} />}
+      {status}
+      {/* Meta and actions always hold their columns, so check states and ages line up down a section. */}
+      <span className="morning-meta">{meta}</span>
+      <span className="morning-actions">{quick}{trigger}</span>
+    </div>
+  );
+  return (
+    <Tag className={`morning-row${depth ? ` is-nested depth-${depth}` : ''}${isNew ? ' is-new' : ''}${expanded ? ' is-expanded' : ''}${className ? ` ${className}` : ''}`} data-overview-row-item={id} data-overview-prs={listed?.join(' ')}>
+      {menu ? (
+        <EntryActions label={`Actions for ${menuLabel ?? label.split('\n')[0]}`} groups={menu} triggerTabIndex={-1}>
+          {(trigger) => inner(trigger)}
+        </EntryActions>
+      ) : (
+        inner(null)
+      )}
+    </Tag>
+  );
+}
+
+/** Out of the tab order: Tab moves between sections, and A runs the focused row's action. */
+const SHORTCUT = { 'data-quick-action': true, 'aria-keyshortcuts': 'A', tabIndex: -1 };
+const NEXT_ACTION: Readonly<Record<NextItem['kind'], string>> = { merge: 'Merge', rereview: 'Re-review', reply: 'Reply', changes: 'Open', review: 'Review', fix: 'Open' };
+const minutesSpoken = (minutes: number) => (minutes >= 60 ? 'an hour or more' : `about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`);
+
+const NextRow = memo(
+  function NextRow({ item, tabStop, unread, actions }: { item: NextItem; tabStop: boolean; unread: boolean; actions: RowActions }) {
+    const { row, member } = item;
+    const label = useRepoLabel();
+    const members = row.entries.map((entry) => entry.member).filter((entry) => item.urls.includes(entry.url));
+    const repos = [...new Set(members.map((entry) => entry.repo))];
+    const single = item.urls.length === 1;
+    const failing = item.kind === 'fix' && item.fix === 'failing' ? row.entries.filter((entry) => entry.reasons.includes('checks-failed')).map((entry) => entry.member) : [];
+    const action = failing.length ? 'Rerun failed' : NEXT_ACTION[item.kind];
+    const target = member.url === row.focus.url ? row.target : (prTarget(member.url) ?? row.target);
+    const quick =
+      item.kind === 'merge' ? (
+        <MergeAction row={row} actions={actions} />
+      ) : failing.length ? (
+        <RerunFailed members={failing} onChanged={actions.refresh} />
+      ) : (
+        <Button size="xs" variant="outline" {...SHORTCUT} title={`${action} · A`} onClick={() => actions.open(row, target)}>
+          {action}
+        </Button>
+      );
+    return (
+      <RowShell
+        id={item.id}
+        tabStop={tabStop}
+        actions={actions}
+        label={`${item.title}\n${item.why}`}
+        title={item.title}
+        number={single ? member.number : undefined}
+        preview={single ? { url: member.url, number: member.number, title: member.title } : undefined}
+        prs={item.urls}
+        repos={repos}
+        detail={item.why}
+        check={item.check}
+        meta={<span title="Estimated time">{effortShort(item.minutes)}</span>}
+        quick={quick}
+        menu={prMenu(item.id, row, actions, unread, member, single ? target : undefined)}
+        menuLabel={single ? `PR #${member.number}` : menuFor(row)}
+        isNew={row.isNew}
+        description={`${action}, ${item.why}, ${reposSpoken(repos, label)} ${single ? `#${member.number}` : prs(item.urls.length)}, ${item.check.spoken}, ${minutesSpoken(item.minutes)}`}
+        onActivate={() => actions.open(row, target)}
+      />
+    );
+  },
+  (a, b) => a.item.row.signature === b.item.row.signature && a.item.why === b.item.why && a.item.minutes === b.item.minutes && a.item.kind === b.item.kind &&
+    a.item.check.label === b.item.check.label && a.item.title === b.item.title && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
+);
+
+function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMember[]; onChanged: () => void; reveal?: boolean }) {
+  const load = useCallback(async () => {
+    const values: Partial<Record<string, PrChecks>> = {};
+    await Promise.all(
+      members.map(async (member) => {
+        const value = await window.electronAPI.getPrChecks({ url: member.url, headSha: member.headSha }, { opened: true });
+        if (value) values[member.url] = value;
+      })
+    );
+    return values;
+  }, [members]);
+  return (
+    <BulkCheckRerun
+      members={members}
+      values={{}}
+      onChanged={onChanged}
+      load={load}
+      trigger={(open, busy) => (
+        <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title="Re-run failed jobs… · A" disabled={busy} onClick={open}>
+          <RotateCcw size={13} aria-hidden="true" />
+          {busy ? 'Reading checks…' : 'Rerun failed'}
+        </Button>
+      )}
+    />
+  );
+}
+
+/** The age of a line, or the words for it. */
+const age = (since: number, now: number) => waitingLabel(since, now);
+const lineSig = (line: GroupLine, now: number) =>
+  [line.id, line.title, line.row.signature, line.check.label, line.status ?? '', line.reason ?? '', age(line.since, now), line.description].join('~');
+const groupSig = (group: PersonGroup, now: number): string =>
+  [
+    group.key, group.label, group.detail, group.repos.join(), group.check?.label ?? '', group.nudge?.members.length ?? 0, group.step?.text ?? '', group.step?.action ?? '',
+    group.step?.row?.signature ?? '', group.rows.map((row) => row.signature).join(),
+    ...group.lines.map((line) => lineSig(line, now)),
+    ...(group.chain ?? []).map((node) => (node.kind === 'ref' ? `ref:${node.member.url}:${node.place}` : node.line.id)),
+    ...(group.children ?? []).map((child) => groupSig(child, now)),
+  ].join('|');
+
+/**
+ * One PR under a group: its number, title, check state, and what it waits for. Under You, its own reason and action
+ * (Rerun failed, Open), shown on hover and focus. In a chain, its node on the connector and its status word.
+ */
+function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = false, node }: {
+  id: string;
+  line: GroupLine;
+  now: number;
+  depth: number;
+  tabStop: boolean;
+  actions: RowActions;
+  /** The group spans repositories: each PR names its own. */
+  showRepo: boolean;
+  chain?: boolean;
+  node?: ReactNode;
+}) {
+  const label = useRepoLabel();
+  const { row, member } = line;
+  const waited = age(line.since, now);
+  const quick = line.reason === 'failing' ? (
+    <RerunFailed members={[member]} onChanged={actions.refresh} reveal />
+  ) : line.reason ? (
+    <Button size="xs" variant="ghost" {...SHORTCUT} data-reveal title={`Open #${member.number} · A`} onClick={() => actions.open(row, line.target)}>
+      Open
+    </Button>
+  ) : undefined;
+  const status = line.status ? (
+    <span className={`morning-status is-${line.status}`} data-overview-status={line.status}>{CHAIN_STATUS_LABEL[line.status]}</span>
+  ) : undefined;
+  return (
+    <RowShell
+      id={id}
+      tabStop={tabStop}
+      actions={actions}
+      depth={depth}
+      className={chain ? `is-chain${line.status === 'next' ? ' is-next' : ''}` : ''}
+      node={node}
+      label={line.title}
+      title={line.title}
+      number={member.number}
+      preview={{ url: member.url, number: member.number, title: member.title }}
+      prs={[member.url]}
+      repos={showRepo ? [member.repo] : undefined}
+      detail={line.reason ? FIX_LABEL[line.reason] : undefined}
+      check={line.check}
+      status={status}
+      meta={chain ? undefined : <time dateTime={new Date(line.since).toISOString()}>{waited}</time>}
+      quick={quick}
+      menu={prMenu(id, row, actions, false, member, line.target)}
+      menuLabel={`PR #${member.number}`}
+      isNew={row.isNew}
+      description={[line.description, showRepo ? label(member.repo) : '', line.check.spoken, chain ? '' : `waiting ${spokenWaiting(waited)}`].filter(Boolean).join(', ')}
+      onActivate={() => actions.open(row, line.target)}
+    />
+  );
+}
+
+/** "3 more", "2 more stacks", "+4 more": shows the rest of a list. A row in the section's keyboard order. */
+function MoreRow({ id, label, spoken, tabStop, actions, depth, chain = false }: { id: string; label: string; spoken: string; tabStop: boolean; actions: RowActions; depth: number; chain?: boolean }) {
+  return (
+    <li className={`morning-row morning-more-row is-nested depth-${depth}${chain ? ' is-chain is-gap' : ''}`} data-overview-row-item={id}>
+      <div className="morning-row-inner">
+        <span className="overview-row-gutter" />
+        {chain && <span className="stack-chain-node" aria-hidden="true" />}
+        <button type="button" className="morning-more-quiet" data-overview-row={id} data-overview-more-row tabIndex={tabStop ? 0 : -1} aria-label={spoken}
+          onFocus={() => actions.focus(id)} onBlur={actions.blur} onKeyDown={actions.keyDown} onClick={() => actions.toggle(id)}>
+          {label}
+          {!chain && <ChevronRight size={13} aria-hidden="true" />}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+/** A person or blocker and its PRs: inline when there are few, else behind a chevron, `GROUP_SHOWN` at a time. */
+const GroupRows = memo(
+  function GroupRows({ id, group, now, open, tabStop, nudged = false, actions }: {
+    id: string;
+    group: PersonGroup;
+    now: number;
+    /** The opened ids within this group (`openWithin`). */
+    open: string;
+    tabStop: string | undefined;
+    nudged?: boolean;
+    actions: RowActions;
+  }) {
+    const label = useRepoLabel();
+    const view = groupView(group, id, openSet(open));
+    const name = groupLabel(group);
+    const quick = group.nudge ? (
+      nudged ? (
+        <span className="morning-done">Nudged</span>
+      ) : (
+        <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${group.nudge.reviewer}’s review again… · A`} onClick={() => actions.nudge(group)}>
+          Nudge
+        </Button>
+      )
+    ) : group.kind === 'you' ? (
+      <Button size="xs" variant="ghost" {...SHORTCUT} title="Open Fix in the review queue · A" onClick={() => actions.show('fix')}>
+        All {group.urls.length}
+        <ChevronRight size={13} aria-hidden="true" />
+      </Button>
+    ) : undefined;
+    const spoken = `${name}, ${reposSpoken(group.repos, label)}, ${group.detail.replace(/\b\d+ (m|h|d|w)\b/, (value) => spokenWaiting(value))}${group.check ? `, ${group.check.spoken}` : ''}`;
+    const first = group.lines.at(0);
+    return (
+      <>
+        <RowShell
+          id={id}
+          tabStop={tabStop === id}
+          actions={actions}
+          label={`${name} · ${group.detail}`}
+          title={name}
+          repos={group.repos}
+          detail={group.detail}
+          check={group.check}
+          quick={quick}
+          expanded={view.disclosure ? view.expanded : undefined}
+          description={`${spoken}${view.disclosure ? `. ${view.expanded ? 'Expanded' : 'Collapsed'}` : ''}${group.nudge && !nudged ? '. A nudges' : ''}`}
+          onActivate={() => (view.disclosure ? actions.toggle(id) : first && actions.open(first.row, first.target))}
+        />
+        {view.lines.map((line) => {
+          const child = `${id}|${line.id}`;
+          return <LineRow key={child} id={child} line={line} now={now} depth={1} tabStop={tabStop === child} actions={actions} showRepo={group.repos.length > 1} />;
+        })}
+        {view.more > 0 && <MoreRow id={`${id}|more`} label={`${view.more} more`} spoken={`Show ${view.more} more PRs of ${name}`} tabStop={tabStop === `${id}|more`} actions={actions} depth={1} />}
+      </>
+    );
+  },
+  (a, b) => groupSig(a.group, a.now) === groupSig(b.group, b.now) && a.open === b.open && a.tabStop === b.tabStop && a.nudged === b.nudged && a.actions === b.actions
+);
+
+/** "Waiting for earlier PRs in a stack to merge": open by default, a chain per stack, the most actionable first. */
+const StacksRows = memo(
+  function StacksRows({ id, group, open, tabStop, nudged, actions }: {
+    id: string;
+    group: PersonGroup;
+    now: number;
+    open: string;
+    tabStop: string | undefined;
+    nudged: ReadonlySet<string>;
+    actions: RowActions;
+  }) {
+    const label = useRepoLabel();
+    const set = openSet(open);
+    const view = stacksView(group, id, set);
+    return (
+      <>
+        <RowShell
+          id={id}
+          tabStop={tabStop === id}
+          actions={actions}
+          label={`${group.label} · ${group.detail}`}
+          title={group.label}
+          repos={group.repos}
+          detail={group.detail}
+          expanded={view.expanded}
+          description={`${group.label}, ${reposSpoken(group.repos, label)}, ${group.detail}. ${view.expanded ? 'Expanded' : 'Collapsed'}`}
+          onActivate={() => actions.toggle(id)}
+        />
+        {view.children.map((stack) => (
+          <StackChain key={stack.key} id={`${id}|${stack.key}`} stack={stack} open={set} tabStop={tabStop} nudged={nudged.has(`nudge:${stack.key}`)} actions={actions} />
+        ))}
+        {view.more > 0 && (
+          <MoreRow id={`${id}|more`} label={`${view.more} more ${view.more === 1 ? 'stack' : 'stacks'}`} spoken={`Show ${view.more} more stacks`} tabStop={tabStop === `${id}|more`} actions={actions} depth={1} />
+        )}
+      </>
+    );
+  },
+  (a, b) => groupSig(a.group, a.now) === groupSig(b.group, b.now) && a.open === b.open && a.tabStop === b.tabStop && a.actions === b.actions &&
+    [...a.nudged].join() === [...b.nudged].join()
+);
+
+/**
+ * One stack: a header with its name, its repository once, and the step that moves it (Merge, Nudge or Open), then its
+ * chain in merge order, base first, on a thin connector as on the stack page (`StackDependencyChain`). A PR another
+ * section lists is a reference to it there.
+ */
+function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string; stack: PersonGroup; open: Open; tabStop: string | undefined; nudged: boolean; actions: RowActions }) {
+  const label = useRepoLabel();
+  const step = stack.step;
+  if (!step) return null;
+  const size = stack.chain?.length ?? stack.urls.length;
+  const spoken = `Stack ${stack.label}, ${prs(size)}, next: ${step.text}`;
+  const quick =
+    step.action === 'merge' && step.row ? (
+      <MergeAction row={step.row} actions={actions} />
+    ) : step.action === 'nudge' && step.reviewer ? (
+      nudged ? (
+        <span className="morning-done">Nudged</span>
+      ) : (
+        <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${step.reviewer}’s review of #${step.member.number} again… · A`}
+          onClick={() => actions.nudge({ key: `nudge:${stack.key}`, kind: 'person', label: step.reviewer ?? '', detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer: step.reviewer ?? '', members: [step.member] } })}>
+          Nudge
+        </Button>
+      )
+    ) : (
+      <Button size="xs" variant="ghost" {...SHORTCUT} data-reveal title={`Open #${step.member.number}, ${step.member.title} · A`} onClick={() => actions.open(step.row ?? stack.rows[0], prTarget(step.member.url))}>
+        Open #{step.member.number}
+      </Button>
+    );
+  const openBase = () => actions.open(step.row ?? stack.rows[0], prTarget(step.member.url));
+  const node = (member: ReviewMember) => (
+    <span className="stack-chain-node" aria-hidden="true">
+      <PrStateIcon pr={member} size={14} decorative />
+    </span>
+  );
+  return (
+    <li className="morning-stack depth-1" data-overview-stack={stack.key}>
+      <RowShell
+        as="div"
+        id={id}
+        tabStop={tabStop === id}
+        actions={actions}
+        depth={1}
+        className="morning-stack-head"
+        label={`${stack.label}\n${step.text}`}
+        title={stack.label}
+        repos={stack.repos}
+        detail={step.text}
+        meta={prs(size)}
+        quick={quick}
+        description={`${spoken}. ${reposSpoken(stack.repos, label)}${step.action === 'merge' ? `. A merges #${step.member.number}` : step.action === 'nudge' && !nudged ? '. A nudges' : `. A opens #${step.member.number}`}`}
+        onActivate={openBase}
+      />
+      <ul className="morning-chain" aria-label={spoken}>
+        {chainView(stack, id, open).map((entry) => {
+          if (entry.kind === 'gap')
+            return <MoreRow key="gap" id={`${id}|more`} label={`+${entry.count} more`} spoken={`Show ${entry.count} more PRs of this stack`} tabStop={tabStop === `${id}|more`} actions={actions} depth={2} chain />;
+          if (entry.kind === 'ref') {
+            const base = stack.chain?.[0]?.kind === 'ref' && stack.chain[0].member.url === entry.member.url;
+            const where = entry.place === 'next' || entry.place === 'decide' || entry.place === 'you' ? PLACE_LABEL[entry.place] : 'another section';
+            return (
+              <li key={entry.member.url} className={`morning-chain-ref is-chain${base ? ' is-next' : ''}`} data-overview-chain-ref={entry.member.url}>
+                <span className="overview-row-gutter" />
+                {node(entry.member)}
+                <span className="morning-number">#{entry.member.number}</span>
+                <span className="morning-chain-where">in {where}</span>
+                {/* The same columns as the chain's lines, so the status words line up. */}
+                <span className="morning-checks" />
+                <span className="morning-status is-next">{base ? CHAIN_STATUS_LABEL.next : ''}</span>
+                <span className="morning-meta" />
+                <span className="morning-actions" />
+              </li>
+            );
+          }
+          const child = `${id}|${entry.line.id}`;
+          return <LineRow key={child} id={child} line={entry.line} now={0} depth={2} tabStop={tabStop === child} actions={actions} showRepo={false} chain node={node(entry.line.member)} />;
+        })}
+      </ul>
+    </li>
+  );
+}
+
+const DecisionRow = memo(
+  function DecisionRow({ item, tabStop, actions }: { item: DecisionItem; tabStop: boolean; actions: RowActions }) {
+    const { row, member } = item;
+    const label = useRepoLabel();
+    return (
+      <RowShell
+        id={item.id}
+        tabStop={tabStop}
+        actions={actions}
+        label={`${member.title}\n${item.label}`}
+        title={member.title}
+        number={member.number}
+        preview={{ url: member.url, number: member.number, title: member.title }}
+        prs={[member.url]}
+        repos={[member.repo]}
+        detail={item.label}
+        check={item.check}
+        quick={
+          <>
+            <Button size="xs" variant="outline" {...SHORTCUT} title="Close this PR… · A" onClick={() => actions.close(member)}>
+              Close PR
+            </Button>
+            <Button size="xs" variant="ghost" tabIndex={-1} aria-keyshortcuts="Z" title="Snooze… · Z" onClick={() => actions.snooze(item.id)}>
+              Snooze
+            </Button>
+          </>
+        }
+        description={`${item.label}, ${label(member.repo)} #${member.number}, ${item.check.spoken}. A closes, Z snoozes`}
+        onActivate={() => actions.open(row)}
+      />
+    );
+  },
+  (a, b) => a.item.row.signature === b.item.row.signature && a.item.label === b.item.label && a.item.check.label === b.item.check.label && a.tabStop === b.tabStop && a.actions === b.actions
+);
+
+declare global {
+  interface Window {
+    /** Browser checks count Overview row renders when `__countRenders` is set. */
+    __overviewRowRenders?: number;
+    /** The rows those renders were for. */
+    __overviewRenderedRows?: string[];
+  }
+}
 const menuFor = (row: OverviewRow) => (row.kind === 'stack' ? `stack ${row.title}` : `PR #${row.focus.number}`);
 /** The menu every PR row shares: open, snooze, mark read, copy, Open on GitHub. */
 function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boolean, member: ReviewMember = row.focus, target?: DeepLinkTarget): EntryActionGroups {
@@ -666,123 +1213,6 @@ function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boole
     [{ label: 'Open on GitHub', run: () => void window.electronAPI.openExternal(member.url) }],
   ];
 }
-
-/**
- * One line: the primary button (a title, then its repository and detail), right-aligned meta, the actions and the
- * menu. The repository stays visible at every width; the title truncates first.
- */
-function RowShell({ id, tabStop, actions, label, title, repos, detail, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, onActivate }: {
-  id: string;
-  tabStop: boolean;
-  actions: RowActions;
-  label: string;
-  title: ReactNode;
-  /** The repositories of the row's PRs: one is named, several read "2 repos". */
-  repos?: readonly string[];
-  detail?: ReactNode;
-  meta?: ReactNode;
-  quick?: ReactNode;
-  menu?: EntryActionGroups;
-  /** What the menu is for: "PR #312", "stack Billing". */
-  menuLabel?: string;
-  description: string;
-  expanded?: boolean;
-  /** 1 for a group's PRs, 2 for the PRs of a stack inside the folded stacks row. */
-  depth?: number;
-  isNew?: boolean;
-  onActivate: () => void;
-}) {
-  if (window.__countRenders) { window.__overviewRowRenders = (window.__overviewRowRenders ?? 0) + 1; (window.__overviewRenderedRows ??= []).push(id); }
-  const descriptionId = useId();
-  const inner = (trigger: ReactNode) => (
-    <div className="morning-row-inner">
-      <span className="overview-row-gutter">
-        {isNew && <span className="pr-unread-dot" role="img" aria-label="New since your last visit" title="New since your last visit" />}
-        {expanded !== undefined && <ChevronRight size={14} aria-hidden="true" className="morning-chevron" />}
-      </span>
-      <button
-        type="button"
-        className="morning-title"
-        data-overview-row={id}
-        tabIndex={tabStop ? 0 : -1}
-        aria-describedby={descriptionId}
-        aria-expanded={expanded}
-        title={label}
-        onFocus={() => actions.focus(id)}
-        onBlur={actions.blur}
-        onKeyDown={actions.keyDown}
-        onClick={(event) => {
-          event.preventDefault();
-          onActivate();
-        }}
-      >
-        <span className="morning-title-text">{title}</span>
-        {(repos?.length || detail !== undefined) && (
-          <span className="morning-sub">
-            {repos && <RepoName repos={repos} />}
-            {detail !== undefined && <span className="morning-detail">{detail}</span>}
-          </span>
-        )}
-      </button>
-      <span className="sr-only" id={descriptionId} data-overview-description>{description}</span>
-      {meta !== undefined && <span className="morning-meta">{meta}</span>}
-      {(quick || trigger) && <span className="morning-actions">{quick}{trigger}</span>}
-    </div>
-  );
-  return (
-    <li className={`morning-row${depth ? ` is-nested depth-${depth}` : ''}${isNew ? ' is-new' : ''}${expanded ? ' is-expanded' : ''}`} data-overview-row-item={id}>
-      {menu ? (
-        <EntryActions label={`Actions for ${menuLabel ?? label.split('\n')[0]}`} groups={menu} triggerTabIndex={-1}>
-          {(trigger) => inner(trigger)}
-        </EntryActions>
-      ) : (
-        inner(null)
-      )}
-    </li>
-  );
-}
-
-/** Out of the tab order: Tab moves between sections, and A runs the focused row's action. */
-const SHORTCUT = { 'data-quick-action': true, 'aria-keyshortcuts': 'A', tabIndex: -1 };
-const MOVE_ACTION: Readonly<Record<MoveItem['kind'], string>> = { merge: 'Merge', rereview: 'Re-review', reply: 'Reply', review: 'Review' };
-
-const MoveRow = memo(
-  function MoveRow({ item, tabStop, unread, actions }: { item: MoveItem; tabStop: boolean; unread: boolean; actions: RowActions }) {
-    const { row } = item;
-    const ref = overviewRef(row);
-    const label = useRepoLabel();
-    const repos = rowRepos(row);
-    const quick =
-      item.kind === 'merge' ? (
-        <MergeAction row={row} actions={actions} />
-      ) : (
-        <Button size="xs" variant="outline" {...SHORTCUT} title={`${MOVE_ACTION[item.kind]} · A`} onClick={() => actions.open(row)}>
-          {MOVE_ACTION[item.kind]}
-        </Button>
-      );
-    return (
-      <RowShell
-        id={item.id}
-        tabStop={tabStop}
-        actions={actions}
-        label={`${row.title}\n${ref.title} · ${item.why}`}
-        title={row.title}
-        repos={repos}
-        detail={item.why}
-        meta={<span title="Estimated time">{item.minutes} min</span>}
-        quick={quick}
-        menu={prMenu(item.id, row, actions, unread)}
-        menuLabel={menuFor(row)}
-        isNew={row.isNew}
-        description={`${MOVE_ACTION[item.kind]}, ${item.why}, ${reposSpoken(repos, label)} ${ref.number}, about ${item.minutes} ${item.minutes === 1 ? 'minute' : 'minutes'}`}
-        onActivate={() => actions.open(row)}
-      />
-    );
-  },
-  (a, b) => a.item.row.signature === b.item.row.signature && a.item.why === b.item.why && a.item.minutes === b.item.minutes && a.item.kind === b.item.kind &&
-    a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
-);
-
 function MergeAction({ row, actions }: { row: OverviewRow; actions: RowActions }) {
   // Base first: in a stack, the lowest PR in the lane merges first (`OverviewMerge.member`).
   const member = row.merge?.member ?? row.focus;
@@ -800,150 +1230,4 @@ function MergeAction({ row, actions }: { row: OverviewRow; actions: RowActions }
       )}
     />
   );
-}
-
-/** One PR under an expanded group: its title, repository, what it waits for, and how long. */
-function LineRow({ id, line, now, depth, tabStop, actions }: { id: string; line: GroupLine; now: number; depth: number; tabStop: boolean; actions: RowActions }) {
-  const label = useRepoLabel();
-  const { row, member } = line;
-  // A line for one PR of a stack names that PR; a line for a whole row names the row's PRs.
-  const single = line.id !== row.id;
-  const repos = single ? [member.repo] : rowRepos(row);
-  const ref = overviewRef(row);
-  const age = waitingLabel(line.since, now);
-  const number = single ? `#${member.number}` : ref.number;
-  return (
-    <RowShell
-      id={id}
-      tabStop={tabStop}
-      actions={actions}
-      depth={depth}
-      label={line.hint ? `${line.title}\n${line.hint}` : `${line.title}\n${ref.title}`}
-      title={line.title}
-      repos={repos}
-      detail={line.note}
-      meta={<time dateTime={new Date(line.since).toISOString()}>{age}</time>}
-      menu={prMenu(id, row, actions, false, member, single ? line.target : undefined)}
-      menuLabel={single ? `PR #${member.number}` : menuFor(row)}
-      isNew={row.isNew}
-      description={`${reposSpoken(repos, label)} ${number}, waiting ${spokenWaiting(age)}${line.hint ? `. ${line.hint}` : ''}`}
-      onActivate={() => actions.open(row, line.target)}
-    />
-  );
-}
-
-/** A person or blocker and, when expanded, its PRs; the folded stacks row expands to a row per stack. */
-const GroupRows = memo(
-  function GroupRows({ id, group, now, open, tabStop, nudged = false, depth = 0, actions }: {
-    id: string;
-    group: PersonGroup;
-    now: number;
-    /** The expanded ids within this group (`openWithin`). */
-    open: string;
-    tabStop: string | undefined;
-    nudged?: boolean;
-    depth?: number;
-    actions: RowActions;
-  }) {
-    const label = useRepoLabel();
-    const expanded = open.split('\n').includes(id);
-    const name = groupLabel(group);
-    const base = group.base;
-    const quick = group.nudge ? (
-      nudged ? (
-        <span className="morning-done">Nudged</span>
-      ) : (
-        <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${group.nudge.reviewer}’s review again… · A`} onClick={() => actions.nudge(group)}>
-          Nudge
-        </Button>
-      )
-    ) : group.kind === 'you' ? (
-      <Button size="xs" variant="ghost" {...SHORTCUT} title="Open Fix in the review queue · A" onClick={() => actions.show('fix')}>
-        All {group.urls.length}
-        <ChevronRight size={13} aria-hidden="true" />
-      </Button>
-    ) : base?.action === 'merge' && base.row ? (
-      // Merging the PR at the bottom is what moves the whole stack forward.
-      <MergeAction row={base.row} actions={actions} />
-    ) : base ? (
-      // Opening the base is a second look, not the next step: it shows on hover and focus.
-      <Button size="xs" variant="ghost" {...SHORTCUT} data-reveal title={`Open #${base.member.number}, ${base.member.title} · A`} onClick={() => actions.open(base.row ?? group.rows[0], prTarget(base.member.url))}>
-        Open #{base.member.number}
-      </Button>
-    ) : undefined;
-    const spoken = `${name}, ${reposSpoken(group.repos, label)}, ${group.detail.replace(/\b\d+ (m|h|d|w)\b/, (age) => spokenWaiting(age))}`;
-    const hint = base ? `${base.member.title} (#${base.member.number}) has to merge before the rest of this stack can.` : '';
-    return (
-      <>
-        <RowShell
-          id={id}
-          tabStop={tabStop === id}
-          actions={actions}
-          depth={depth}
-          label={[`${name} · ${group.detail}`, hint].filter(Boolean).join('\n')}
-          title={name}
-          repos={group.repos}
-          detail={group.detail}
-          quick={quick}
-          expanded={expanded}
-          description={`${spoken}${hint ? `. ${hint}` : ''}. ${expanded ? 'Expanded' : 'Collapsed'}${group.nudge && !nudged ? '. A nudges' : base ? `. A ${base.action === 'merge' ? 'merges' : 'opens'} #${base.member.number}` : ''}`}
-          onActivate={() => actions.toggle(id)}
-        />
-        {expanded &&
-          group.children?.map((child) => (
-            <GroupRows key={child.key} id={`${id}|${child.key}`} group={child} now={now} open={open} tabStop={tabStop} depth={depth + 1} actions={actions} />
-          ))}
-        {expanded &&
-          group.lines.map((line) => {
-            const child = `${id}|${line.id}`;
-            return <LineRow key={child} id={child} line={line} now={now} depth={depth + 1} tabStop={tabStop === child} actions={actions} />;
-          })}
-      </>
-    );
-  },
-  (a, b) => a.group.key === b.group.key && a.group.detail === b.group.detail && a.open === b.open && a.tabStop === b.tabStop && a.nudged === b.nudged &&
-    a.actions === b.actions && (!a.open || a.now === b.now) && a.group.nudge?.members.length === b.group.nudge?.members.length &&
-    a.group.repos.join() === b.group.repos.join() && a.group.base?.status === b.group.base?.status && a.group.base?.row?.signature === b.group.base?.row?.signature &&
-    a.group.rows.map((row) => row.signature).join() === b.group.rows.map((row) => row.signature).join()
-);
-
-const DecisionRow = memo(
-  function DecisionRow({ item, tabStop, actions }: { item: DecisionItem; tabStop: boolean; actions: RowActions }) {
-    const { row, member } = item;
-    const ref = overviewRef(row);
-    const label = useRepoLabel();
-    return (
-      <RowShell
-        id={item.id}
-        tabStop={tabStop}
-        actions={actions}
-        label={`${row.title}\n${ref.title} · ${item.label}`}
-        title={row.title}
-        repos={[member.repo]}
-        detail={item.label}
-        quick={
-          <>
-            <Button size="xs" variant="outline" {...SHORTCUT} title="Close this PR… · A" onClick={() => actions.close(member)}>
-              Close PR
-            </Button>
-            <Button size="xs" variant="ghost" tabIndex={-1} aria-keyshortcuts="Z" title="Snooze… · Z" onClick={() => actions.snooze(item.id)}>
-              Snooze
-            </Button>
-          </>
-        }
-        description={`${item.label}, ${label(member.repo)} ${ref.number}. A closes, Z snoozes`}
-        onActivate={() => actions.open(row)}
-      />
-    );
-  },
-  (a, b) => a.item.row.signature === b.item.row.signature && a.item.label === b.item.label && a.tabStop === b.tabStop && a.actions === b.actions
-);
-
-declare global {
-  interface Window {
-    /** Browser checks count Overview row renders when `__countRenders` is set. */
-    __overviewRowRenders?: number;
-    /** The rows those renders were for. */
-    __overviewRenderedRows?: string[];
-  }
 }
