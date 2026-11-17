@@ -9,13 +9,19 @@ import { app, BrowserWindow } from 'electron';
  * tab, reads a few files in Changes, steps through the queue so neighbours are predicted, and closes old tabs as new
  * ones open. The JS heap is measured after a full garbage collection, before, during and after.
  *
- * Checks, all on the heap after a full garbage collection:
- * - with six large PRs open, it stays under a budget;
+ * Structural checks, free of GC timing, once every tab closes: only the queue tab stays mounted, no diff stays
+ * rendered, live React fibers return near the baseline, and the inspection caches' own byte estimates stay within
+ * their bounds (before #355 they reported about 85 MB here).
+ *
+ * Heap checks, after garbage collection has settled (CI once kept 18 MB more after a single pass):
+ * - with six large PRs open, the heap stays under a budget;
  * - once every tab closes, it returns near where it started;
- * - what the inspection caches still hold then is bounded: dropping every PR from them (as 15 idle minutes do) frees
- *   less than a budget. Before #355 they kept about 45 MB here, and the heap stayed 25 MB over the baseline.
+ * - dropping every PR from the caches (as 15 idle minutes do) frees less than a budget.
  * Byte budgets do not depend on the machine's speed, so they are not scaled like timing budgets (tests/perf-budget.ts);
- * they leave room for V8's own variation between runs, a few MB.
+ * they leave room for V8's own variation between runs.
+ *
+ * What stays cached after the tabs close is the queue's own preparation: a neighbour PR no tab opened, with all its
+ * files, up to the file bound. Closing a tab does not drop it; 15 idle minutes do.
  *
  * GNOSIS_HEAP_SNAPSHOT_DIR=dir also writes heap snapshots at the peak and after the tabs close, for a closer look.
  */
@@ -30,6 +36,10 @@ const CLOSED_OVER_BASELINE_MB = 30;
 // The renderer's inspection caches hold at most about 24 MB of ASCII text by their bounds (lib/inspection-limits.ts);
 // here they keep about 17 MB. Before #355 they kept about 45 MB.
 const CACHED_AFTER_CLOSE_MB = 30;
+// The caches' own estimates (two bytes a character): their bounds add up to 48 MiB, about 50 MB.
+const CACHE_ESTIMATE_AFTER_CLOSE_MB = 51;
+// The queue page's own fibers vary with the rows it shows (about +1,900 here); one leaked PR tab holds about 18,000.
+const FIBERS_OVER_BASELINE = 5000;
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -64,7 +74,36 @@ void app.whenReady().then(async () => {
     await debug.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(win.webContents);
 
-    /** The JS heap after a full garbage collection, in MB, and what the renderer's caches report. */
+    /** Live React fibers, counted from one fiber's prototype. The object group is released so the count holds none. */
+    const fibers = async () => {
+      const objectGroup = 'renderer-heap';
+      try {
+        const proto = (await debug.sendCommand('Runtime.evaluate', {
+          expression: "(()=>{const r=document.getElementById('root');const k=Object.keys(r).find(k=>k.startsWith('__reactContainer'));return Object.getPrototypeOf(r[k])})()",
+          objectGroup,
+        })) as { result: { objectId?: string } };
+        if (!proto.result.objectId) return -1;
+        const found = (await debug.sendCommand('Runtime.queryObjects', { prototypeObjectId: proto.result.objectId, objectGroup })) as {
+          objects: { objectId: string };
+        };
+        const length = (await debug.sendCommand('Runtime.callFunctionOn', {
+          objectId: found.objects.objectId,
+          functionDeclaration: 'function(){return this.length}',
+          returnByValue: true,
+          objectGroup,
+        })) as { result: { value: number } };
+        return length.result.value;
+      } finally {
+        await debug.sendCommand('Runtime.releaseObjectGroup', { objectGroup });
+      }
+    };
+    /** Estimated bytes the inspection caches report, in MB. */
+    const cachedMB = (caches: Record<string, unknown>) => {
+      const inspection = caches.inspection as Record<string, { bytes?: number } | number>;
+      const bytes = Object.values(inspection).reduce<number>((n, part) => n + (typeof part === 'object' ? (part.bytes ?? 0) : 0), 0);
+      return Math.round(bytes / 1e5) / 10;
+    };
+    /** The JS heap after a full garbage collection, in MB, live fibers, and what the renderer's caches report. */
     const measure = async () => {
       // Collect until the heap settles: just after tabs close, React's passive cleanup and weak callbacks free more on
       // later passes. On CI a single settled-looking pass still held about 18 MB that the next ones freed.
@@ -83,7 +122,7 @@ void app.whenReady().then(async () => {
       const caches = await js<Record<string, unknown>>(
         `(async()=>(await (await import('/lib/diagnostics.ts')).collectRendererDiagnostics()).caches)()`
       );
-      return { heapMB: Math.round(heap.usedSize / 1e5) / 10, caches };
+      return { heapMB: Math.round(heap.usedSize / 1e5) / 10, fibers: await fibers(), caches };
     };
     const snapshot = async (name: string) => {
       const dir = process.env.GNOSIS_HEAP_SNAPSHOT_DIR;
@@ -221,6 +260,13 @@ void app.whenReady().then(async () => {
     await snapshot('closed');
     // What the caches still hold: the PRs the queue tab showed and the neighbours predicted for it. Fifteen idle
     // minutes drop them.
+    console.log(
+      'PRs still cached after the tabs closed (files, inventories):',
+      await js<string>(`(async()=>{const m=await import('/lib/inspection-cache.ts');const f=new Map(),i=new Map();
+        m.inspectionFiles.lastUses(f);m.inspectionData.lastUses(i);
+        const tab=[...document.querySelectorAll('[data-workspace-active=true] .queue-row-main[aria-current], [data-workspace-active=true] [data-queue-id][aria-selected=true]')].map(e=>e.textContent.slice(0,30));
+        return JSON.stringify({files:[...f.keys()],inventories:[...i.keys()],selected:tab})})()`)
+    );
     const idle = await js<string[]>(
       `(async()=>(await import('/lib/inspection-cache.ts')).sweepIdleInspection(Date.now()+24*3600_000))()`
     );
@@ -228,6 +274,8 @@ void app.whenReady().then(async () => {
     samples['idle PRs dropped'] = swept.heapMB;
 
     console.log('Renderer heap after GC (MB):', JSON.stringify(samples));
+    console.log('Live fibers:', JSON.stringify({ baseline: baseline.fibers, peak: peak.fibers, closed: closed.fibers }));
+    console.log('Inspection cache estimates (MB):', JSON.stringify({ peak: cachedMB(peak.caches), closed: cachedMB(closed.caches) }));
     console.log('Caches at the peak:', JSON.stringify(peak.caches));
     console.log('Caches after the tabs closed:', JSON.stringify(closed.caches));
     console.log(`Idle sweep dropped ${idle.length} PRs:`, JSON.stringify(swept.caches));
@@ -245,6 +293,18 @@ void app.whenReady().then(async () => {
       `After the tabs close the inspection caches hold less than ${CACHED_AFTER_CLOSE_MB} MB: ${JSON.stringify(samples)}`
     );
     assert.equal((swept.caches.inspection as { prs: number }).prs, 0, 'Idle PRs leave every inspection cache');
+    // Structural checks, free of GC timing: the closed tabs' trees are gone, and the caches' own byte counts stay
+    // within their bounds. Before #355 the caches still reported about 85 MB here.
+    assert.equal(closed.caches.mountedTabs, 1, 'Only the queue tab stays mounted');
+    assert.equal(closed.caches.shadowDomNodes, 0, 'No diff stays rendered once its tab closes');
+    assert.ok(
+      closed.fibers - baseline.fibers < FIBERS_OVER_BASELINE,
+      `Closed tabs leave no React trees: ${JSON.stringify({ baseline: baseline.fibers, peak: peak.fibers, closed: closed.fibers })}`
+    );
+    assert.ok(
+      cachedMB(closed.caches) < CACHE_ESTIMATE_AFTER_CLOSE_MB,
+      `The inspection caches report less than ${CACHE_ESTIMATE_AFTER_CLOSE_MB} MB after the tabs close: ${cachedMB(closed.caches)} MB`
+    );
     console.log('Renderer heap checks passed');
     app.exit(0);
   } catch (error) {
