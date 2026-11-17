@@ -5038,7 +5038,11 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-reason[data-tone=success] svg { color:var(--color-success); }
 .overview-reason[data-tone=info] svg { color:var(--color-info); }
 .overview-reason[data-tone=review] svg { color:var(--primary); }
-.overview-numbers, .overview-size { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.overview-size { font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* Repository and PR as one muted token; a long repository name truncates, with the full name in the title. */
+.overview-ref { display:inline-flex; align-items:baseline; gap:0.3em; min-width:0; max-width:100%; white-space:nowrap; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.overview-ref-repo { min-width:0; max-width:28ch; overflow:hidden; text-overflow:ellipsis; }
+.overview-ref-number { flex:none; }
 .overview-size { display:inline-flex; align-items:center; gap:6px; }
 .overview-size .diff-stats { display:inline-flex; gap:4px; }
 .overview-explanation { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; color:var(--color-info); font-weight:500; }

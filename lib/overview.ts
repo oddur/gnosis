@@ -140,8 +140,13 @@ export const LANE_REASONS: Readonly<Record<OverviewLane, readonly OverviewReason
   fix: ['checks-failed', 'conflicts', 'restack'],
   waiting: ['review-pending', 'checks-pending'],
 };
-/** The reason the lane's name already says. Rows leave it out, as the menu bar does. */
+/**
+ * The reason the lane's name already says. Rows leave it out, as the menu bar does. The other lanes have several
+ * reasons; there the most common one (`OverviewLaneState.dominant`) is named once in the heading instead.
+ */
 export const LANE_IMPLIED: Readonly<Partial<Record<OverviewLane, OverviewReason>>> = { merge: 'ready-to-merge', review: 'review-requested' };
+/** The lanes whose most common reason moves from the rows to the heading. */
+const DOMINANT_LANES: readonly OverviewLane[] = ['answer', 'fix', 'waiting'];
 /** Work for you on your own PR. Any of it comes before merging, as in `attentionItems`. */
 const OWN_WORK: readonly OverviewReason[] = ['changes-requested', 'replies', 'checks-failed', 'conflicts', 'restack'];
 
@@ -214,6 +219,8 @@ export interface OverviewRow {
   /** A stack's size; absent for a PR. */
   stackSize?: number;
   reasons: OverviewReason[];
+  /** The reasons the row shows: `reasons` without what the lane name or heading already says (`rowReasons`). */
+  shown: OverviewReason[];
   /**
    * Who the row is about: the author to review, or the reviewer you answer or wait on. Never you: absent when you
    * are the only candidate. Absent on Merge rows, whose notes name the approver.
@@ -246,6 +253,11 @@ export interface OverviewLaneState {
   parked: OverviewRow[];
   /** Rows (not Parked) waiting longer than `OVERVIEW_LONG_MS`, for the heading: "Fix 18 · 15 over a week". */
   overWeek: number;
+  /**
+   * Answer, Fix and Waiting: the reason most rows share, when it is more than half of them and at least two. The
+   * heading names it once ("16 checks failed") and rows leave it out, so a row's words mark how it differs.
+   */
+  dominant?: { reason: OverviewReason; count: number };
 }
 export interface OverviewModel {
   lanes: OverviewLaneState[];
@@ -480,7 +492,7 @@ export function overviewModel(input: OverviewInput): OverviewModel {
       const merge = merging && notes ? { member: merging.entry.member, notes, ready: mergeReady(notes, merging.entry.member, merging.fresh, now) } : undefined;
       const person = personFor(lane, first.entry, first.fresh, login);
       const saved = lane === 'review' ? subject.members.map((member) => explanationFor(item, member.url)).find(Boolean) : undefined;
-      const row: Omit<OverviewRow, 'signature'> = {
+      const row: Omit<OverviewRow, 'signature' | 'shown'> = {
         id,
         lane,
         item,
@@ -512,14 +524,28 @@ export function overviewModel(input: OverviewInput): OverviewModel {
         row.key, row.title, row.person, merge?.notes, merge?.ready, merge?.member.url, row.since, row.waiting, row.stale, row.isNew, row.additions, row.deletions, row.files, row.explanation?.reviewId,
         row.stackSize, entries.map((entry) => [entry.member.title, entry.member.isDraft, entry.member.state, entry.member.number, entry.member.repo]),
       ]);
-      lanes.get(lane)?.push({ ...row, signature });
+      // `shown` depends on the lane's other rows; it is set, and signed, once the lane is complete.
+      lanes.get(lane)?.push({ ...row, shown: [], signature });
       for (const entry of entries) urls.get(lane)?.add(entry.member.url);
     }
   }
   const states = OVERVIEW_LANES.map((lane): OverviewLaneState => {
-    const all = (lanes.get(lane) ?? []).sort((a, b) => a.since - b.since || a.title.localeCompare(b.title));
+    const built = lanes.get(lane) ?? [];
+    const dominant = dominantReason(lane, built);
+    const all = built
+      .map((row) => {
+        const shown = rowReasons(row, dominant?.reason);
+        return { ...row, shown, signature: `${row.signature}|${shown.join(',')}` };
+      })
+      .sort((a, b) => a.since - b.since || a.title.localeCompare(b.title));
     const rows = all.filter((row) => !row.merge || row.merge.ready);
-    return { lane, rows, parked: all.filter((row) => !!row.merge && !row.merge.ready), overWeek: rows.filter((row) => now - row.since >= OVERVIEW_LONG_MS).length };
+    return {
+      lane,
+      rows,
+      parked: all.filter((row) => !!row.merge && !row.merge.ready),
+      overWeek: rows.filter((row) => now - row.since >= OVERVIEW_LONG_MS).length,
+      ...(dominant ? { dominant } : {}),
+    };
   });
   const counts = Object.fromEntries(states.map((state) => [state.lane, state.rows.length])) as Record<OverviewLane, number>;
   // New rows in the lanes that are work: not Waiting on others, and not Parked.
@@ -536,9 +562,13 @@ export function overviewModel(input: OverviewInput): OverviewModel {
   };
 }
 
-/** What follows a lane heading's count, when it matters: "Fix 18 · 15 over a week", "Merge 4 · 12 parked". */
-export function overviewLaneSummary(state: Pick<OverviewLaneState, 'parked' | 'overWeek'>): string[] {
-  return [state.overWeek ? `${state.overWeek} over a week` : '', state.parked.length ? `${state.parked.length} parked` : ''].filter(Boolean);
+/**
+ * What follows a lane heading's count, when it matters: the reason most rows share (which they then leave out), long
+ * waits and parked merges. "Fix 18 · 16 checks failed · 15 over a week", "Merge 4 · 12 parked".
+ */
+export function overviewLaneSummary(state: Pick<OverviewLaneState, 'parked' | 'overWeek' | 'dominant'>): string[] {
+  const dominant = state.dominant ? `${state.dominant.count} ${OVERVIEW_REASON_LABEL[state.dominant.reason].toLowerCase()}` : '';
+  return [dominant, state.overWeek ? `${state.overWeek} over a week` : '', state.parked.length ? `${state.parked.length} parked` : ''].filter(Boolean);
 }
 
 /** "Merge 2 · Answer 3 · Review 6 · Fix 1 · Waiting 4". */
@@ -557,4 +587,30 @@ export function waitingLabel(since: number, now: number): string {
 }
 
 /** The words on a row, leaving out what the lane already says. */
-export const rowReasons = (row: Pick<OverviewRow, 'lane' | 'reasons'>) => row.reasons.filter((reason) => reason !== LANE_IMPLIED[row.lane]);
+export const rowReasons = (row: Pick<OverviewRow, 'lane' | 'reasons'>, dominant?: OverviewReason) =>
+  row.reasons.filter((reason) => reason !== LANE_IMPLIED[row.lane] && reason !== dominant);
+
+/** The reason most rows in a lane share (see `OverviewLaneState.dominant`), or undefined. */
+export function dominantReason(lane: OverviewLane, rows: readonly Pick<OverviewRow, 'reasons'>[]): OverviewLaneState['dominant'] {
+  if (!DOMINANT_LANES.includes(lane)) return undefined;
+  const counts = new Map<OverviewReason, number>();
+  for (const row of rows) for (const reason of row.reasons) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  const [reason, count] = [...counts].sort((a, b) => b[1] - a[1] || byReason(a[0], b[0]))[0] ?? [];
+  return reason && count && count >= 2 && count * 2 > rows.length ? { reason, count } : undefined;
+}
+
+/** The short name of a repository: "web-seed-portal" for "klanggames/web-seed-portal". */
+export const repoName = (repo: string) => repo.slice(repo.lastIndexOf('/') + 1) || repo;
+
+/**
+ * A row's repository and PR as one plain token: "web-seed-portal #1994", or "seed-launcher #380 +3" for the stack
+ * members in the lane. `title` is the full form, for truncated names and assistive technology.
+ */
+export function overviewRef(row: Pick<OverviewRow, 'focus' | 'entries' | 'kind' | 'item'>): { repo: string; number: string; title: string } {
+  const repo = row.focus.repo;
+  // Stack members in stack order, base first.
+  const numbers = row.item.subject.members.filter((member) => row.entries.some((entry) => entry.member.url === member.url)).map((member) => member.number);
+  const first = row.kind === 'stack' ? numbers[0] : row.focus.number;
+  const number = row.kind === 'stack' && numbers.length > 1 ? `#${first} +${numbers.length - 1}` : `#${first}`;
+  return { repo: repoName(repo), number, title: `${repo} ${row.kind === 'stack' ? numbers.map((n) => `#${n}`).join(', ') : `#${first}`}` };
+}

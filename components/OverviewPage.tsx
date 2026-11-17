@@ -25,8 +25,8 @@ import {
   OVERVIEW_SINCE_LABEL,
   OVERVIEW_STALE_TITLE,
   overviewLaneSummary,
+  overviewRef,
   overviewStaleLabel,
-  rowReasons,
   type OverviewMergeNoteKind,
   type OverviewLane,
   type OverviewModel,
@@ -39,7 +39,6 @@ import type { QueueItem, ReviewMember, WorkbenchQueue } from '../lib/workbench';
 import type { PrChecks } from '../lib/pr-checks';
 import { PrStateIcon } from './PrStateIcon';
 import { GitHubAuthor } from './GitHubAuthor';
-import { PrBadge, RepositoryBadge } from './EntityBadge';
 import { DiffStats } from './DiffStats';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrActions } from './PrActions';
@@ -220,6 +219,13 @@ export function OverviewPage(props: OverviewPageProps) {
       snooze: (row) => void snooze(row),
       markRead: (row) => callbacks.current.onMarkRead(row.entries.map((entry) => entry.member.url)),
       refresh: () => callbacks.current.onRefresh(),
+      copy: (text, what) =>
+        void Promise.resolve()
+          .then(() => navigator.clipboard.writeText(text))
+          .then(
+            () => toast.add({ type: 'success', title: `${what} copied`, description: text }),
+            () => toast.add({ type: 'error', title: `Could not copy the ${what.toLowerCase()}`, description: 'Try again.' })
+          ),
       keyDown: onRowKeyDown,
     }),
     [open, snooze, onRowKeyDown]
@@ -355,6 +361,8 @@ interface RowActions {
   snooze: (row: OverviewRow) => void;
   markRead: (row: OverviewRow) => void;
   refresh: () => void;
+  /** Copies `text`; `what` names it in the confirmation: "Link copied". */
+  copy: (text: string, what: string) => void;
   keyDown: (event: ReactKeyboardEvent) => void;
 }
 
@@ -451,14 +459,21 @@ function Lane({ lane, rows, parked = [], summary = [], tabStop, actions, unread,
 const OverviewRowView = memo(
   function OverviewRowView({ row, tabStop, unread, actions }: { row: OverviewRow; tabStop: boolean; unread: boolean; actions: RowActions }) {
     if (window.__countRenders) window.__overviewRowRenders = (window.__overviewRowRenders ?? 0) + 1;
-    const reasons = rowReasons(row);
     const member = row.focus;
     const stack = row.kind === 'stack';
+    const ref = overviewRef(row);
+    const numbers = row.item.subject.members.filter((candidate) => row.entries.some((entry) => entry.member.url === candidate.url)).map((candidate) => `#${candidate.number}`);
     const groups: EntryActionGroups = [
       [{ label: 'Open', run: () => actions.open(row) }],
       [
         { label: stack ? 'Snooze stack…' : 'Snooze PR…', run: () => actions.snooze(row) },
         { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(row) },
+      ],
+      // The row shows repository and PR as plain text; copying lives here.
+      [
+        { label: 'Copy link', run: () => actions.copy(member.url, 'Link') },
+        { label: 'Copy repository', run: () => actions.copy(member.repo, 'Repository') },
+        { label: numbers.length > 1 ? 'Copy PR numbers' : 'Copy PR number', run: () => actions.copy(numbers.length > 1 ? numbers.join(', ') : `#${member.number}`, numbers.length > 1 ? 'PR numbers' : 'PR number') },
       ],
       [{ label: 'Open on GitHub', run: () => void window.electronAPI.openExternal(member.url) }],
     ];
@@ -498,7 +513,7 @@ const OverviewRowView = memo(
                   )}
                 </button>
                 <div className="overview-row-meta">
-                  {reasons.map((reason) => {
+                  {row.shown.map((reason) => {
                     const { icon: Icon, tone } = reasonIcon(reason);
                     return (
                       <span key={reason} className="overview-reason" data-tone={tone}>
@@ -516,14 +531,12 @@ const OverviewRowView = memo(
                       </span>
                     );
                   })}
-                  <RepositoryBadge repo={member.repo} />
-                  {stack ? (
-                    <span className="overview-numbers">{row.entries.map((entry) => `#${entry.member.number}`).join(', ')}</span>
-                  ) : (
-                    <PrBadge url={member.url} number={member.number} title={member.title} />
-                  )}
+                  <span className="overview-ref" title={ref.title}>
+                    <span className="overview-ref-repo">{ref.repo}</span> <span className="overview-ref-number">{ref.number}</span>
+                  </span>
                   {row.person && <GitHubAuthor login={row.person} />}
-                  {row.additions !== undefined && row.deletions !== undefined && (
+                  {/* Size helps decide what to review; elsewhere the work is yours and its size is known. */}
+                  {row.lane === 'review' && row.additions !== undefined && row.deletions !== undefined && (
                     <span className="overview-size" title={`${row.additions} lines added, ${row.deletions} removed${row.files !== undefined ? `, ${row.files} files` : ''}`}>
                       <DiffStats additions={row.additions} deletions={row.deletions} />
                       {row.files !== undefined && <span>{row.files} {row.files === 1 ? 'file' : 'files'}</span>}

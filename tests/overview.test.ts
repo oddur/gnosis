@@ -4,7 +4,10 @@ import {
   OVERVIEW_IDLE_MS,
   OVERVIEW_LANES,
   OVERVIEW_STALE_AFTER,
+  dominantReason,
   elapsed,
+  overviewRef,
+  repoName,
   isStale,
   nextOverviewVisit,
   overviewLaneSummary,
@@ -563,7 +566,7 @@ void test('rows are flagged by their lane limit, Parked merges never, and headin
   assert.equal(flag('waiting', 5), false);
   const fix = result.lanes.find((state) => state.lane === 'fix');
   assert.equal(fix?.overWeek, 1);
-  assert.deepEqual(overviewLaneSummary(fix!), ['1 over a week']);
+  assert.deepEqual(overviewLaneSummary(fix!), ['2 checks failed', '1 over a week']);
   const merge = result.lanes.find((state) => state.lane === 'merge');
   assert.deepEqual(overviewLaneSummary(merge!), ['1 parked'], 'parked rows are not counted as over a week');
   assert.deepEqual(overviewLaneSummary(result.lanes.find((state) => state.lane === 'review')!), []);
@@ -599,8 +602,47 @@ void test('at real volume, the flag is rare: only outliers carry it', () => {
   assert.equal(before, 33);
   assert.equal(after, 17);
   assert.equal(result.lanes.find((state) => state.lane === 'merge')?.rows.filter((row) => row.stale).length, 0);
-  assert.deepEqual(overviewLaneSummary(result.lanes.find((state) => state.lane === 'fix')!), ['15 over a week']);
+  assert.deepEqual(overviewLaneSummary(result.lanes.find((state) => state.lane === 'fix')!), ['18 checks failed', '15 over a week']);
   assert.deepEqual(overviewLaneSummary(result.lanes.find((state) => state.lane === 'merge')!), ['16 parked']);
+});
+
+void test('a reason most rows share moves to the heading; rows keep only how they differ', () => {
+  const failing = [1, 2, 3].map((n) => mine(n));
+  const conflicted = mine(4);
+  const restack = mine(5, { baseBranch: 'feature-9' });
+  const merged = mine(9, { merged: true, state: 'closed' });
+  const result = model([...failing.map((pr) => item([pr])), item([conflicted]), item([merged, restack])], {
+    signals: {
+      ...Object.fromEntries(failing.map((pr) => [pr.url, signals(pr, { checks: 'failure' })])),
+      [conflicted.url]: passing(conflicted, { mergeable: 'CONFLICTING', mergeState: 'DIRTY' }),
+      [restack.url]: passing(restack),
+    },
+  });
+  const fix = result.lanes.find((state) => state.lane === 'fix')!;
+  assert.deepEqual(fix.dominant, { reason: 'checks-failed', count: 3 });
+  assert.deepEqual(overviewLaneSummary(fix), ['3 checks failed']);
+  const shown = Object.fromEntries(fix.rows.map((row) => [row.focus.number, row.shown]));
+  assert.deepEqual(shown, { 1: [], 2: [], 3: [], 4: ['conflicts'], 5: ['restack'] });
+  // The lane name still implies its own reason, and a lane without a majority keeps every reason.
+  assert.deepEqual(rowReasons({ lane: 'review', reasons: ['review-requested', 'updated-since-review'] }), ['updated-since-review']);
+  assert.equal(dominantReason('fix', [{ reasons: ['checks-failed'] }, { reasons: ['conflicts'] }]), undefined);
+  assert.equal(dominantReason('fix', [{ reasons: ['checks-failed'] }]), undefined, 'one row is not a pattern');
+  assert.equal(dominantReason('review', [{ reasons: ['updated-since-review'] }, { reasons: ['updated-since-review'] }]), undefined, 'Review keeps its own words');
+  // The row signature follows what the row shows.
+  const alone = model([item([failing[0]])], { signals: { [failing[0].url]: signals(failing[0], { checks: 'failure' }) } });
+  assert.deepEqual(lane(alone, 'fix')[0].shown, ['checks-failed']);
+  assert.notEqual(lane(alone, 'fix')[0].signature, fix.rows.find((row) => row.focus.number === 1)?.signature);
+});
+
+void test('repository and PR are one short token; a stack collapses its numbers', () => {
+  assert.equal(repoName('klanggames/web-seed-portal'), 'web-seed-portal');
+  assert.equal(repoName('solo'), 'solo');
+  const pr = mine(1994, { repo: 'klanggames/web-seed-portal' });
+  const [single] = lane(model([item([pr])], { signals: { [pr.url]: signals(pr, { checks: 'failure' }) } }), 'fix');
+  assert.deepEqual(overviewRef(single), { repo: 'web-seed-portal', number: '#1994', title: 'klanggames/web-seed-portal #1994' });
+  const members = [380, 381, 384, 386].map((n, i) => mine(n, { repo: 'klanggames/seed-launcher', baseBranch: i ? `feature-${[380, 381, 384][i - 1]}` : 'main' }));
+  const stack = model([item(members)], { signals: Object.fromEntries(members.map((m) => [m.url, signals(m, { checks: 'failure' })])) });
+  assert.deepEqual(overviewRef(lane(stack, 'fix')[0]), { repo: 'seed-launcher', number: '#380 +3', title: 'klanggames/seed-launcher #380, #381, #384, #386' });
 });
 
 void test('the stale label is a word, and Waiting on others asks whether to nudge', () => {

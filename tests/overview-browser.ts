@@ -143,6 +143,21 @@ void app.whenReady().then(async () => {
     await js(`document.querySelector('${parkedToggle}').click()`);
     await wait(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 0`);
 
+    step = 'distill';
+    // Repository and PR read as one muted token, with the full name on hover; a stack collapses its numbers.
+    const ref = (selector: string) => js<[string, string] | null>(`(()=>{const r=document.querySelector(${JSON.stringify(selector)})?.closest('.overview-row')?.querySelector('.overview-ref');return r?[r.textContent,r.title]:null})()`);
+    assert.deepEqual(await ref(row('merge', 'klang/engine', 301)), ['engine #301', 'klang/engine #301']);
+    assert.deepEqual(await js(`[...document.querySelectorAll('${P} #overview-lane-fix .overview-row')].map(r=>r.querySelector('.overview-ref').textContent)`), ['engine #331 +1', 'web #333']);
+    assert.equal(await js(`document.querySelectorAll('${P} .overview-row .entity-badge-repository, ${P} .overview-row .entity-badge-pr').length`), 0, 'no repository or PR chips');
+    // Size only where it helps decide: Review.
+    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-row .overview-size')].every(s=>s.closest('#overview-lane-review'))`), true);
+    assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-review .overview-row .overview-size').length`), 5);
+    // Fix: both rows have conflicts, so the heading says it once and only the stack's failing checks remain on a row.
+    assert.equal(await js(`document.querySelector('${P} #overview-lane-fix .overview-lane-total').textContent`), '2 · 2 merge conflicts');
+    assert.deepEqual(await js(`[...document.querySelectorAll('${P} #overview-lane-fix .overview-row')].map(r=>[...r.querySelectorAll('.overview-reason')].map(e=>e.textContent).join('|'))`), ['Checks failed', '']);
+    // Answer has no majority, so each row keeps its reason.
+    assert.deepEqual(await js(`[...document.querySelectorAll('${P} #overview-lane-answer .overview-row .overview-reason')].map(e=>e.textContent)`), ['Changes requested', 'Awaiting your reply']);
+
     step = 'top-five';
     assert.equal(await laneRows('review'), 5);
     assert.equal(await js(`document.querySelector('${P} #overview-lane-review .overview-show-all')?.textContent`), 'Show all 7');
@@ -182,7 +197,11 @@ void app.whenReady().then(async () => {
       assert.ok(census.stale <= 12, `fewer rows are flagged (${census.stale})`);
       assert.ok(await js(`[...document.querySelectorAll('${P} .overview-stale')].every(e=>['Stale','Nudge?'].includes(e.textContent) && !!e.title)`), 'every flag is a labelled word');
       assert.equal(await js(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-stale').length`), 0, 'parked rows are never flagged');
-      assert.equal(await js(`document.querySelector('${P} #overview-lane-fix .overview-lane-total').textContent`), '18 · 15 over a week');
+      assert.equal(await js(`document.querySelector('${P} #overview-lane-fix .overview-lane-total').textContent`), '18 · 15 checks failed · 15 over a week');
+      // Distill: no bordered repository or PR chips, size only in Review, and fewer things per row than before (115).
+      assert.equal(census.borderedChips, census.authors, 'only people remain as chips');
+      assert.equal(census.sizes, await js<number>(`document.querySelectorAll('${P} #overview-lane-review .overview-row').length`));
+      assert.ok(census.metaItems < 80, `fewer metadata items (${census.metaItems})`);
       await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click(); document.querySelector('${P} #overview-lane-waiting .overview-lane-toggle').click()`);
       await wait(`document.querySelectorAll('${P} #overview-lane-waiting .overview-row').length === 0`);
     }
@@ -276,6 +295,15 @@ void app.whenReady().then(async () => {
     // Mark as read and Snooze live in the row menu.
     await menuAction(js, 'Actions for PR #312', 'Mark as read');
     await wait("window.fixtureOverview.writes.some(w=>w.kind==='mark-read' && w.url.endsWith('/312'))");
+    // Copying moved from the row's chips to its menu.
+    await js("Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (text) => { (window.__copied ??= []).push(text); } })");
+    await menuAction(js, 'Actions for PR #312', 'Copy link');
+    await menuAction(js, 'Actions for PR #312', 'Copy repository');
+    await menuAction(js, 'Actions for PR #312', 'Copy PR number');
+    await wait('window.__copied?.length === 3');
+    assert.deepEqual(await js('window.__copied'), ['https://github.com/klang/engine/pull/312', 'klang/engine', '#312']);
+    await wait("[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('PR number copied'))");
+    await js(`document.querySelectorAll('.app-toast [aria-label="Dismiss notification"]').forEach(b=>b.click())`);
     await menuAction(js, 'Actions for PR #302', 'Snooze PR…');
     await wait("!!document.querySelector('.snooze-picker .snooze-option')");
     await js("document.querySelector('.snooze-picker .snooze-option').click()");
