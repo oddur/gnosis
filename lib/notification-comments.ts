@@ -41,7 +41,7 @@ export interface CommentEventInput {
   /** Epoch milliseconds: only comments created after this are new. */
   since: number;
   now: number;
-  /** Bots never notify unless allowed here (the allow list of part 1). */
+  /** Bots never notify unless allowed here: "Also notify for these bots" (`botAllowed`). */
   allowBot?: (login: string) => boolean;
 }
 
@@ -155,6 +155,8 @@ export function commentEvent(input: CommentEventInput): NotificationEvent | unde
     repo: pr.repo,
     number: pr.number,
     actor: entry.comment.author.login,
+    ...(isAutomationActor(entry.comment.author) ? { actorIsBot: true } : {}),
+    ...(own ? { mine: true } : {}),
     at: input.now,
     ...(target ? { target } : {}),
     ...(quote ? { quote } : {}),

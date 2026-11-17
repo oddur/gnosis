@@ -205,7 +205,7 @@ export function GitHubReviewThread({
         {thread.comments.map((comment) => (
           <article key={comment.id} data-pending={isPendingComment(comment) || undefined} data-sending={comment.sending}>
             <header>
-              <strong>{comment.author ? <GitHubAuthor login={comment.author.login} /> : 'Deleted account'}</strong>
+              <strong>{comment.author ? <GitHubAuthor login={comment.author.login} bot={comment.author.__typename === 'Bot'} /> : 'Deleted account'}</strong>
               {comment.sending ? (
                 // The reader's write, before GitHub confirmed it. A new comment has no URL yet; an edited one keeps its own.
                 <span className="github-sending" role="status">{comment.url ? 'Saving…' : 'Sending…'}</span>

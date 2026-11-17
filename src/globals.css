@@ -2013,6 +2013,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .app-toast-action:disabled { opacity:.5; }
 .app-toast .workbench-icon { width:24px; height:24px; }
 .notification-settings-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:4px 0; }
+.notification-exceptions,.notification-bots { display:flex; flex-direction:column; gap:8px; }
+.notification-exception-list { display:flex; flex-direction:column; gap:4px; margin:0; padding:0; list-style:none; }
+.notification-exception { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:8px 12px; min-height:32px; }
+.notification-exception > span { min-width:0; overflow-wrap:anywhere; }
+.notification-bot-add { display:flex; align-items:center; gap:8px; }
+.notification-bot-add input { min-width:0; flex:0 1 240px; height:28px; padding:0 8px; border:1px solid var(--input); border-radius:var(--radius-sm, 6px); background:var(--background); color:var(--foreground); font:inherit; font-size:var(--type-control); }
 .app-toast-subtitle { font-size:var(--type-caption); line-height:1.4; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .app-toast[data-tone=danger] .app-toast-icon { color:var(--color-danger); }
 .app-toast[data-tone=success] .app-toast-icon { color:var(--color-success); }

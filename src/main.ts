@@ -166,7 +166,7 @@ import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
 import { createNotificationService, type DesktopNotification, type ToastAction } from './notification-service';
 import { createDeepLinks } from './deep-link-service';
-import { notificationSettings, normalizeNotificationPreferences, NOTIFICATION_EVENT_TYPES, parsePauseRequest, pauseUntil } from '../lib/notification-settings';
+import { botAllowed, notificationSettings, normalizeNotificationPreferences, NOTIFICATION_EVENT_TYPES, parsePauseRequest, pauseUntil } from '../lib/notification-settings';
 import { commentEvent, withChangeRequest, type CommentCandidate } from '../lib/notification-comments';
 import { preciseTarget } from '../lib/notification-targets';
 import { QUICK_ACTIONS, QUICK_SNOOZE_MS, type QuickAction } from '../lib/notification-actions';
@@ -1564,7 +1564,7 @@ async function readMenubarStatus(force: boolean): Promise<void> {
       force ? workbench.queue(true) : undefined,
     ]);
     if (cachedLogin !== login) return;
-    if (values.length && workbench.observeReadSignals(login, values)) broadcastToAllWindows('pr-read-state-changed');
+    if (values.length && workbench.observeReadSignals(login, values)) readStateChanged();
     // New saved status changes rows, unread state and the queue's responses: rebuild through the usual broadcast.
     if (values.length) notifyLocalChange('workbench-changed');
   } catch (error) {
@@ -2142,7 +2142,7 @@ async function fetchPrStatus(prUrl: string, force = false, expectedHead?: string
   try {
     if (getResolvedToken() !== token) return null;
     workbench.updatePrMetadata(metadata);
-    if (cachedLogin && status.signals && workbench.observeReadSignals(cachedLogin, [status.signals])) broadcastToAllWindows('pr-read-state-changed');
+    if (cachedLogin && status.signals && workbench.observeReadSignals(cachedLogin, [status.signals])) readStateChanged();
   } catch (error) {
     console.warn('Could not update the saved starred PR metadata:', error);
   }
@@ -3155,11 +3155,11 @@ async function notificationQuickAction(action: QuickAction, url: string | undefi
   notifyLocalChange('workbench-changed');
 }
 /**
- * Events from the observer, with the precise place each click lands. A change request quotes the review and
- * replies on its thread: from the saved discussion, or one read of it when none is saved and no catch-up batch
- * is open (a catch-up batch must be delivered before the pass ends).
+ * Events with the precise place each click lands. A change request quotes the review and replies on its thread:
+ * from the saved discussion, or one read of it when none is saved and no catch-up batch is open (a catch-up batch
+ * must be delivered before the pass ends).
  */
-function deliverNotificationEvents(events: NotificationEvent[]) {
+function deliverPreparedEvents(events: NotificationEvent[]) {
   const token = getResolvedToken();
   const client = token ? getGitHubClient(token) : undefined;
   const saved = (url?: string) => (client && url ? reviewThreads.latest(client, url) ?? reviewThreads.stale(client, url) : undefined);
@@ -3207,6 +3207,7 @@ async function readCommentEvents(candidates: CommentCandidate[]) {
       reason: candidate.reason,
       since: candidate.since,
       now: Date.now(),
+      allowBot: name => botAllowed(notificationSettings(loadPreferences()), name),
     });
     if (event) workbench.deliverEvents([event]);
   }
@@ -3252,6 +3253,7 @@ const notifications = createNotificationService({
     contents.send('notification', { type: 'show', delivery });
     return true;
   },
+  closeToasts: urls => broadcastToAllWindows('notification', { type: 'close', urls }),
   open: target => deepLinks.open(target, 'notification'),
   show: showOrCreateWindow,
   count: (kind, field) => { if (cachedLogin && notificationAnalytics()) notificationStore.count(cachedLogin, kind, field); },
@@ -3261,7 +3263,12 @@ const workbench = createWorkbenchService({
   changed: () => { notifyLocalChange('workbench-changed'); notifyLocalChange('activity-changed'); },
   storage: appData,
   signals: (client, requests, options) => getQueueSignals(client, requests, options),
-  notifications: { store: notificationStore, deliver: events => deliverNotificationEvents(events), count: notificationAnalytics },
+  notifications: {
+    store: notificationStore,
+    deliver: deliverNotificationEvents,
+    count: notificationAnalytics,
+    resolved: (url, types) => notifications.resolved(url, types),
+  },
   cachedDiscussion: url => { const token = getResolvedToken(); const value = token ? reviewThreads.latest(getGitHubClient(token), url) : undefined; return value && optimistic.discussion(url, value); },
   cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests).map(optimistic.signals) : []; },
   // The reader's writes GitHub has not shown yet: draft state, auto-merge, reviewers and comment counts.
@@ -3375,6 +3382,46 @@ ipcMain.handle('workbench-mark-pr-read', async (_event, request: MarkPrReadReque
   return result;
 });
 ipcMain.handle('workbench-star-prs', (_event, request: StarPrRequest) => workbench.starPrs(request));
+/**
+ * Events go to the service at once, so a catch-up pass still batches them. Only "Checks failed" outside a catch-up
+ * waits for its check names; it settles for 20 seconds in the service anyway.
+ */
+function deliverNotificationEvents(events: NotificationEvent[]) {
+  const named = notifications.catchingUp() ? [] : events.filter(event => event.type === 'checks-failed' && event.checks);
+  const now = events.filter(event => !named.includes(event));
+  if (now.length) deliverPreparedEvents(now);
+  if (named.length) void withFailedCheckNames(named).then(value => deliverPreparedEvents(value));
+}
+/**
+ * "2 of 14 checks failed: test-windows, lint": reads the settled run's check list (usually cached by the sweep that
+ * saw it) for the names. Without it the counts alone are shown.
+ */
+async function withFailedCheckNames(events: NotificationEvent[]): Promise<NotificationEvent[]> {
+  const failing = events.filter(event => event.type === 'checks-failed' && event.checks && event.url);
+  const token = getResolvedToken();
+  if (!failing.length || !token) return events;
+  try {
+    const client = getGitHubClient(token);
+    const snapshots = await withGitHubPriority('background', () => readPrChecksBatch(client, failing.map(event => ({ url: event.url!, headSha: event.checks!.headSha }))));
+    return events.map(event => {
+      const snapshot = event.type === 'checks-failed' && event.checks ? snapshots.find(item => item.url === event.url && item.headSha === event.checks!.headSha) : undefined;
+      if (!snapshot || !event.checks) return event;
+      const failed = snapshot.checks.filter(check => checkGroup(check) === 'attention');
+      // The click selects the first failing check, when its id is one a link can name.
+      const first = String(failed[0]?.id ?? '');
+      const target = event.target?.kind === 'pr' && /^[1-9]\d{0,19}$/.test(first) ? { target: { ...event.target, check: first } } : {};
+      return { ...event, ...target, checks: { ...event.checks, failed: failed.length || event.checks.failed, total: snapshot.checks.length || event.checks.total, names: failed.map(check => check.name) } };
+    });
+  } catch {
+    return events;
+  }
+}
+/** Read state changed: tell the windows, and close notifications of PRs that are now read, on any device. */
+function readStateChanged() {
+  broadcastToAllWindows('pr-read-state-changed');
+  const read = workbench.readUrls(notifications.notifiedUrls());
+  if (read.length) notifications.read(read);
+}
 // ── Notification and deep-link IPC ──
 // The renderer can navigate: hand it waiting targets, and show toasts that had no window.
 ipcMain.handle('deep-link-take', (event) => {
@@ -3394,7 +3441,10 @@ ipcMain.on('notification-context', (event, raw: unknown) => {
   if (event.senderFrame !== event.sender.mainFrame) return;
   const url = raw && typeof raw === 'object' && typeof (raw as { activeUrl?: unknown }).activeUrl === 'string' ? (raw as { activeUrl: string }).activeUrl : undefined;
   const ref = url ? prRef(url) : undefined;
-  notificationContexts.set(event.sender.id, { activeUrl: ref ? deepLinkPrUrl(ref) : undefined });
+  const activeUrl = ref ? deepLinkPrUrl(ref) : undefined;
+  notificationContexts.set(event.sender.id, { activeUrl });
+  // Opening the PR in Gnosis handles its notification.
+  if (activeUrl) notifications.read([activeUrl]);
 });
 const TOAST_ACTIONS: readonly ToastAction[] = ['clicked', 'dismissed', 'timedOut'];
 const NOTIFICATION_KINDS: readonly NotificationKind[] = [...NOTIFICATION_EVENT_TYPES, 'summary', 'test'];
@@ -3663,7 +3713,7 @@ ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[
   const account = cachedLogin;
   const values = await withGitHubPriority(options?.force ? 'interactive' : options?.active ? 'foreground' : 'background',
     () => getQueueSignals(getGitHubClient(token), requests, options), { automatic: !options?.force });
-  if (account && workbench.observeReadSignals(account, values)) broadcastToAllWindows('pr-read-state-changed');
+  if (account && workbench.observeReadSignals(account, values)) readStateChanged();
   for (const value of values) optimistic.observe(value.url, 'signals', value);
   return values.map(optimistic.signals);
 });
@@ -3831,6 +3881,8 @@ handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   if (account) {
     workbench.noteOwnReview(account, req.prUrl, req.comments.length - result.droppedCommentCount, result.reviewUrl);
     workbench.reviewSubmitted(account, req.prUrl);
+    // The review it asked for is done.
+    notifications.resolved(req.prUrl, ['review-requested', 'team-review-requested']);
     notifyLocalChange('workbench-changed');
   }
   return result;
@@ -4725,7 +4777,7 @@ const githubWrites = createGitHubWriteRefresher({
       () => getQueueSignals(client, [{ url: target.url, headSha }], { force: true, active: true }), { automatic: false })).at(0);
     // The service answers a failed read with the saved copy. That is not news from GitHub.
     if (token !== cachedToken || !value || value.checkedAt < startedAt) return;
-    if (cachedLogin && workbench.observeReadSignals(cachedLogin, [value])) broadcastToAllWindows('pr-read-state-changed');
+    if (cachedLogin && workbench.observeReadSignals(cachedLogin, [value])) readStateChanged();
     publishGitHubUpdates([{ kind: 'signals', url: target.url, value }]);
     return value;
   },

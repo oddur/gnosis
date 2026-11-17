@@ -4,17 +4,21 @@
  * No Electron imports: main injects the desktop notification factory, the toast sender and focus state.
  */
 import type { DeepLinkTarget } from '../lib/deep-link';
-import type { NotificationEvent, NotificationReplyTarget } from '../lib/notification-events';
+import type { NotificationEvent, NotificationReplyTarget, ResolvedTypes } from '../lib/notification-events';
 import { desktopExtras, type DesktopExtras, type QuickAction } from '../lib/notification-actions';
 import { isPaused, isPrEvent, type NotificationEventType, type NotificationSettings } from '../lib/notification-settings';
 import {
   batch,
   coalesce,
   digest,
+  eventGate,
   nextDesktopSlot,
   plainText,
+  QUIET_MS,
+  quietSummary,
   routeEvent,
   SETTLE_MS,
+  urgencyOf,
   truncate,
   TITLE_LIMIT,
   BODY_LIMIT,
@@ -58,6 +62,10 @@ export function createNotificationService(deps: {
   desktop: { supported: () => boolean; create: (options: DesktopNotificationOptions) => DesktopNotification };
   /** Shows a toast in the focused window, or the main window. False when no renderer can show it. */
   toast: (delivery: NotificationDelivery) => boolean;
+  /** Closes the toasts of these PRs in every window. */
+  closeToasts?: (urls: string[]) => void;
+  /** "10:42", for the summary that ends a PR's quiet period. */
+  formatTime?: (at: number) => string;
   open: (target: DeepLinkTarget) => void;
   /** A click on a notification without a target, such as "Update ready", only shows Gnosis. */
   show?: () => void;
@@ -88,7 +96,14 @@ export function createNotificationService(deps: {
   let overflow: NotificationDelivery[] = [];
   let overflowTimer: Timer | undefined;
   let waitingToasts: NotificationDelivery[] = [];
-  const live = new Set<DesktopNotification>();
+  /** Shown desktop notifications, one per PR (keyed by URL; others by delivery id). */
+  const live = new Map<string, DesktopNotification>();
+  /**
+   * Per-PR state for "one notification per PR": the urgency and time of the last banner, and what waits for the
+   * end of the quiet period. Dropped when the PR's notification is handled.
+   */
+  const prs = new Map<string, { urgency: number; bannerAt: number; kind: NotificationKind; waiting: NotificationDelivery[]; timer?: Timer }>();
+  const formatTime = deps.formatTime ?? ((at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
   const localKeys = new Set<string>();
   let failed = false;
   let unconfirmed = 0;
@@ -122,7 +137,16 @@ export function createNotificationService(deps: {
       deps.replyFailed?.({ delivery, reply, text: body, message: error instanceof Error ? error.message : String(error) });
     }
   }
+  /** Closes the PR's shown desktop notification, which also removes it from Notification Centre and Action Center. */
+  function replaceFor(prKey: string) {
+    const previous = live.get(prKey);
+    if (!previous) return;
+    live.delete(prKey);
+    previous.close();
+  }
   function showDesktop(delivery: NotificationDelivery) {
+    const prKey = delivery.url ?? delivery.id;
+    replaceFor(prKey);
     const { extras, actions } = desktopExtras(delivery, {
       platform: deps.platform,
       allowReplies: deps.settings().allowReplies,
@@ -130,7 +154,7 @@ export function createNotificationService(deps: {
     });
     // Windows and Linux have no subtitle: the body names the repository there when it fits. The title names the PR.
     const named = `${delivery.body} · ${delivery.subtitle ?? ''}`;
-    const body = deps.platform !== 'darwin' && delivery.subtitle && named.length <= BODY_LIMIT ? named : delivery.body;
+    const body = (deps.platform === 'win32' || deps.platform === 'linux') && delivery.subtitle && named.length <= BODY_LIMIT ? named : delivery.body;
     const notification = deps.desktop.create({
       title: text(truncate(delivery.title, TITLE_LIMIT)),
       ...(delivery.subtitle ? { subtitle: text(delivery.subtitle) } : {}),
@@ -142,9 +166,11 @@ export function createNotificationService(deps: {
     let confirmed = false;
     // Keep a reference so the click handler survives garbage collection. Ones left in the notification centre
     // never close, so only the newest are kept.
-    live.add(notification);
-    if (live.size > LIVE_LIMIT) live.delete(live.values().next().value as DesktopNotification);
-    const forget = () => live.delete(notification);
+    live.set(prKey, notification);
+    if (live.size > LIVE_LIMIT) live.delete(live.keys().next().value as string);
+    const forget = () => {
+      if (live.get(prKey) === notification) live.delete(prKey);
+    };
     notification.on('show', () => {
       confirmed = true;
       unconfirmed = 0;
@@ -191,6 +217,53 @@ export function createNotificationService(deps: {
     if (waiting.length > 1) for (const item of waiting) count(item.kind, 'coalesced');
     route(next, true);
   }
+  /**
+   * One notification per PR. A PR without a recent banner, or a more urgent event, banners and replaces the PR's
+   * notification. Anything else waits out the 15-minute quiet period and then becomes one summary.
+   */
+  function admit(delivery: NotificationDelivery): boolean {
+    const url = delivery.url;
+    if (!url || delivery.kind === 'test') return true;
+    const pr = prs.get(url);
+    const at = now();
+    if (!pr || at - pr.bannerAt >= QUIET_MS || urgencyOf(delivery) < pr.urgency) {
+      if (pr?.timer) clearTimer(pr.timer);
+      // Events that waited before a more urgent banner are still news: they wait for this banner's quiet period.
+      const waiting = pr && at - pr.bannerAt < QUIET_MS ? pr.waiting : [];
+      const next = { urgency: urgencyOf(delivery), bannerAt: at, kind: delivery.kind, waiting, timer: undefined as Timer | undefined };
+      if (waiting.length) next.timer = setTimer(() => endQuiet(url), QUIET_MS);
+      prs.set(url, next);
+      return true;
+    }
+    pr.waiting.push(delivery);
+    count(delivery.kind, 'suppressed:quiet');
+    pr.timer ??= setTimer(() => endQuiet(url), Math.max(0, pr.bannerAt + QUIET_MS - at));
+    return false;
+  }
+  function endQuiet(url: string) {
+    const pr = prs.get(url);
+    if (!pr) return;
+    pr.timer = undefined;
+    const waiting = pr.waiting;
+    pr.waiting = [];
+    if (!waiting.length) return;
+    route(quietSummary(waiting, nextId(), formatTime(pr.bannerAt)));
+  }
+  /** The PR's notification is handled: close it on both surfaces and forget what waits for it. */
+  function close(urls: readonly string[], types?: ResolvedTypes) {
+    const closed: string[] = [];
+    for (const url of urls) {
+      const pr = prs.get(url);
+      if (types && (!pr || !types.includes(pr.kind as NotificationEventType))) continue;
+      if (pr?.timer) clearTimer(pr.timer);
+      prs.delete(url);
+      if (live.has(url) || pr) closed.push(url);
+      replaceFor(url);
+    }
+    const set = new Set(closed);
+    waitingToasts = waitingToasts.filter((delivery) => !delivery.url || !set.has(delivery.url));
+    if (closed.length) deps.closeToasts?.(closed);
+  }
   function route(delivery: NotificationDelivery, fromOverflow = false) {
     const type: NotificationEventType = delivery.types[0] ?? 'review-requested';
     const result = routeEvent({ type, url: delivery.url }, { ...deps.focus(), desktop: desktopState(), settings: deps.settings(), now: now() });
@@ -199,6 +272,7 @@ export function createNotificationService(deps: {
       return;
     }
     if (result.surface === 'hold') return;
+    if (!fromOverflow && !admit(delivery)) return;
     if (result.surface === 'toast') {
       showToast(delivery);
       return;
@@ -232,8 +306,9 @@ export function createNotificationService(deps: {
     deliver(events: readonly NotificationEvent[]) {
       const settings = deps.settings();
       const enabled = events.filter((event) => {
-        if (settings.events[event.type]) return true;
-        count(event.type, 'suppressed:type-off');
+        const reason = eventGate(event, settings);
+        if (!reason) return true;
+        count(event.type, `suppressed:${reason}`);
         return false;
       });
       if (!enabled.length) return;
@@ -257,8 +332,9 @@ export function createNotificationService(deps: {
       if (localKeys.has(event.key)) return;
       localKeys.add(event.key);
       const settings = deps.settings();
-      if (!settings.events[event.type]) {
-        count(event.type, 'suppressed:type-off');
+      const reason = eventGate(event, settings);
+      if (reason) {
+        count(event.type, `suppressed:${reason}`);
         return;
       }
       if (isPaused(settings, now())) {
@@ -291,7 +367,10 @@ export function createNotificationService(deps: {
       // One catch-up summary when a pause ends; a single event is shown as itself.
       for (const delivery of batch(events, nextId, `${events.length} updates while notifications were paused`, 2)) route(delivery);
     },
-    /** The user marked PRs read: their waiting events are no longer news. */
+    /**
+     * The PRs were handled: opened in Gnosis, read on any device, merged or closed. Their notifications close and
+     * their waiting events are no longer news.
+     */
     read(urls: readonly string[]) {
       for (const url of urls) {
         const pending = settling.get(url);
@@ -301,7 +380,14 @@ export function createNotificationService(deps: {
       const set = new Set(urls);
       held = held.filter((event) => !event.url || !set.has(event.url));
       waitingToasts = waitingToasts.filter((delivery) => !delivery.url || !set.has(delivery.url));
+      close(urls);
     },
+    /** What a PR's notification asked for is done, such as a submitted review or green checks: close it. */
+    resolved(url: string, types: ResolvedTypes) {
+      if (prs.has(url)) close([url], types);
+    },
+    /** PRs with a notification shown or waiting, for checking whether they became read elsewhere. */
+    notifiedUrls: () => [...prs.keys()],
     /** A renderer became ready: show toasts that had no window. More than three become one digest. */
     rendererReady() {
       const waiting = waitingToasts;
@@ -351,6 +437,8 @@ export function createNotificationService(deps: {
     dispose() {
       for (const pending of settling.values()) clearTimer(pending.timer);
       settling.clear();
+      for (const pr of prs.values()) if (pr.timer) clearTimer(pr.timer);
+      prs.clear();
       if (overflowTimer) clearTimer(overflowTimer);
       if (heldTimer) clearTimer(heldTimer);
       live.clear();

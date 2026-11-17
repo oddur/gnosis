@@ -9,7 +9,7 @@ import { needsResponse } from '../../lib/response-needed';
 import { LoadingState, LoadingIndicator } from '../../components/LoadingState';
 import { SubjectIcon } from '../../components/SubjectIcon';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
-import { preferencesUpdated } from '../../lib/use-repository-settings';
+import { preferencesUpdated, useRepositorySettings } from '../../lib/use-repository-settings';
 import { normalizeEffort } from '../../lib/effort';
 import { mergePrStatus } from '../../lib/merge-pr-status';
 import { useEntrySelection } from '../../lib/use-entry-selection';
@@ -174,6 +174,12 @@ function markQueuePainted() {
 export function HomePage({ onAccount, navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   useRenderSpan('queue page render');
   const tabs = useWorkspaceNavigation();
+  const repositories = useRepositorySettings();
+  // Row menus show each repository's notification level: re-render them when a level changes.
+  const notificationLevels = JSON.stringify([
+    repositories.notificationLevel?.('')?.level,
+    Object.entries(repositories.settings).map(([repo, settings]) => [repo, settings.notifications]),
+  ]);
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
   /** Where a deep link or notification lands inside the opened PR. */
   const [landing, setLanding] = useState<PrLanding & { subjectId: string }>();
@@ -1537,6 +1543,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     onStarChange: changeStars,
     onMute: (members: QueueItem['subject']['members']) => changeMutes({ muted: true, members }),
     onSnooze: snoozeMembers,
+    repositories,
     onRefresh: async () => {
       const results = await Promise.allSettled(members.map(async member => {
         const status = await window.electronAPI.getPrStatus(member.url, true);
@@ -1641,7 +1648,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     },
   }), []);
   // Inputs to menu content that are not row props. Changing them re-renders rows with open menus correct.
-  const menuKey = JSON.stringify([starBusy, muteBusy, snoozeBusy, readBusy, batchBusy, auth?.authenticated, auth?.login, !!prefs, pendingStarts.size]);
+  const menuKey = JSON.stringify([starBusy, muteBusy, snoozeBusy, readBusy, batchBusy, auth?.authenticated, auth?.login, !!prefs, pendingStarts.size, notificationLevels]);
   const readStates = queue.readStates ?? NO_READ_STATES;
   const fallbackTabStop = selected && itemIds.has(selected) ? undefined : orderedItems[0]?.subject.id;
   const bulkMenu = multiple ? { groups: selectionGroups, description: selectionDescription } : undefined;

@@ -1,5 +1,6 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
+import { menuAction } from './entry-menu-helpers';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -46,6 +47,32 @@ void app.whenReady().then(async () => {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?notifications`);
     await waitForWorkbenchQueue(win.webContents);
     win.focus();
+
+    // A PR's row menu sets its repository's notification level (#385). The current level is marked and disabled.
+    const menuLabels = async () => {
+      await js(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width&&b.getAttribute('aria-label')==='Actions for PR #152');b.focus();b.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))})()`);
+      await wait("[...document.querySelectorAll('[role=menuitem]')].some(i=>i.textContent.startsWith('Notifications from'))");
+      const labels = await js<{ label: string; disabled: boolean }[]>("[...document.querySelectorAll('[role=menuitem]')].filter(i=>i.textContent.startsWith('Notifications from')).map(i=>({label:i.textContent,disabled:i.hasAttribute('data-disabled')||i.getAttribute('aria-disabled')==='true'}))");
+      await js("document.activeElement?.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+      await wait("!document.querySelector('[role=menuitem]')");
+      return labels;
+    };
+    assert.deepEqual(await menuLabels(), [
+      { label: 'Notifications from klang/engine: AllCurrent', disabled: true },
+      { label: 'Notifications from klang/engine: On me', disabled: false },
+      { label: 'Notifications from klang/engine: None', disabled: false },
+    ]);
+    await menuAction(js, 'Actions for PR #152', 'Notifications from klang/engine: On me');
+    await wait("window.electronAPI.loadPreferences().then(p=>p.repositorySettings?.['klang/engine']?.notifications==='on-me')");
+    assert.equal((await menuLabels()).find((item) => item.disabled)?.label, 'Notifications from klang/engine: On meCurrent');
+
+    // One notification per PR: a newer toast for the same PR replaces the older one.
+    await push({ type: 'show', delivery: delivery({ kind: 'reply', title: 'New reply', url: 'https://github.com/klang/engine/pull/123', keys: ['r1'], types: ['reply'] }) });
+    await wait("!!document.querySelector('.app-toast[data-kind=reply]')");
+    await push({ type: 'show', delivery: delivery({ kind: 'changes-requested', title: 'lena requested changes', url: 'https://github.com/klang/engine/pull/123', keys: ['c1'], types: ['changes-requested'] }) });
+    await wait("!!document.querySelector('.app-toast[data-kind=changes-requested]') && !document.querySelector('.app-toast[data-kind=reply]')");
+    await push({ type: 'close', urls: ['https://github.com/klang/engine/pull/123'] });
+    await wait("!document.querySelector('.app-toast[data-kind=changes-requested]')");
 
     // A pushed PR event: a toast with an icon, a text status and one action. Not a dialog.
     await push({ type: 'show', delivery: delivery({ introduce: true }) });
@@ -128,7 +155,7 @@ void app.whenReady().then(async () => {
     assert.equal(switches['In-app notifications'], 'true');
     assert.equal(switches['Review requested from you'], 'true');
     assert.equal(switches['Requested from your team'], 'false', 'Team requests are off by default');
-    for (const label of ['Changes requested', 'Approved', 'Checks failed', 'Ready to merge', 'Explanation ready', 'Update ready']) assert.equal(switches[label], 'true', label);
+    for (const label of ['Mentions', 'Replies to you', 'Changes requested', 'Approved', 'Checks failed', 'Ready to merge', 'Explanation ready', 'Update ready']) assert.equal(switches[label], 'true', label);
     assert.equal(await js("[...document.querySelectorAll('.settings-panel [role=switch]')].some(s=>s.getAttribute('aria-label')==='Desktop notifications'&&!s.closest('[data-state=active]'))"), false, 'The desktop switch moved out of Integrations');
     await js("document.querySelector('[role=switch][aria-label=\"Approved\"]').click()");
     await wait("window.electronAPI.loadPreferences().then(p=>p.notificationSettings?.events?.approved===false)");
@@ -140,7 +167,33 @@ void app.whenReady().then(async () => {
     await clickText('.settings-panel button', 'Resume');
     await wait("[...document.querySelectorAll('.settings-panel button')].some(b=>b.textContent.trim()==='Pause for 1 hour')");
     assert.deepEqual(await js('window.fixtureNotificationCalls'), ['introduce:true', 'test', 'pause:true', 'pause:false']);
-    console.log('Notification checks passed: non-dialog toasts with kinds, introduction, keyboard dismiss, close on read, reduced motion, click-through, deep links, Settings. Screenshots: ' + shots);
+
+    // Repositories: the "Other repositories" default, and the exception set from the row menu.
+    const setInput = (selector: string, value: string) =>
+      js(`(()=>{const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+    const exists = (selector: string) => js<boolean>(`!!document.querySelector(${JSON.stringify(selector)})`);
+    assert.ok(await exists('#notifications-repositories-title'));
+    assert.ok(await exists('.settings-panel [aria-label="Other repositories"]'));
+    assert.deepEqual(await js("[...document.querySelectorAll('.notification-exceptions .notification-exception')].map(r=>r.textContent.includes('klang/engine'))"), [true]);
+    assert.ok(await exists('.notification-exceptions [aria-label="Notifications from klang/engine"]'));
+    await capture('settings-repositories');
+    await js(`document.querySelector(${JSON.stringify('[aria-label="Remove the exception for klang/engine"]')}).click()`);
+    await wait("!document.querySelector('.notification-exceptions .notification-exception')");
+    await wait("window.electronAPI.loadPreferences().then(p=>p.repositorySettings?.['klang/engine']?.notifications===undefined)");
+
+    // Bots: never by default; an allow list.
+    await setInput('[aria-label="Bot login"]', 'not a login!');
+    await clickText('.settings-panel button', 'Add bot');
+    await wait("!!document.querySelector('.notification-bots [role=alert]')");
+    await setInput('[aria-label="Bot login"]', 'CodeRabbitAI[bot]');
+    await clickText('.settings-panel button', 'Add bot');
+    await wait("window.electronAPI.loadPreferences().then(p=>(p.notificationSettings?.allowedBots??[]).join()==='coderabbitai[bot]')");
+    const stop = '[aria-label="Stop notifications from coderabbitai[bot]"]';
+    await wait(`!!document.querySelector(${JSON.stringify(stop)})`);
+    await capture('settings-bots');
+    await js(`document.querySelector(${JSON.stringify(stop)}).click()`);
+    await wait("window.electronAPI.loadPreferences().then(p=>p.notificationSettings?.allowedBots?.length===0)");
+    console.log('Notification checks passed: non-dialog toasts with kinds, introduction, keyboard dismiss, close on read, one toast per PR, repository levels from the row menu, reduced motion, click-through, deep links, Settings with repository exceptions and bots. Screenshots: ' + shots);
     app.exit(0);
   } catch (error) {
     console.error(error);

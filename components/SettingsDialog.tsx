@@ -445,7 +445,7 @@ export function SettingsDialog({
     applyCodeFont(font);
   }
 
-  const repositoryDefaults = { prInactivityDays, ignoreDependabotPrs, autoBriefings, briefingDailyLimit, repositoryBriefingDailyLimit: repositoryDailyLimit, repositorySettings };
+  const repositoryDefaults = { prInactivityDays, ignoreDependabotPrs, autoBriefings, briefingDailyLimit, repositoryBriefingDailyLimit: repositoryDailyLimit, repositorySettings, watchedRepos, notificationSettings: notificationPrefs };
   const unwatchedSettings = Object.keys(repositorySettings).filter(repo => !watchedRepos.some(watched => repositoryKey(watched) === repo));
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -877,6 +877,9 @@ export function SettingsDialog({
                 value={notificationPrefs}
                 onDesktopChange={(next) => { setNotifications(next); saveField({ notifications: next }); }}
                 onChange={(next) => { setNotificationPrefs(next); saveField({ notificationSettings: next }); }}
+                repositorySettings={repositorySettings}
+                watchedRepos={watchedRepos}
+                onRepositorySettingsChange={(settings) => { setRepositorySettings(settings); saveField({ repositorySettings: settings }); }}
                 Row={SettingRow}
                 Toggle={Toggle}
                 onDesktopSetup={onDesktopSetup}
