@@ -24,8 +24,10 @@ import {
   OVERVIEW_REASON_LABEL,
   OVERVIEW_SINCE_LABEL,
   OVERVIEW_STALE_TITLE,
+  overviewCountChange,
   overviewLaneSummary,
   overviewRef,
+  overviewRowDescription,
   overviewStaleLabel,
   type OverviewMergeNoteKind,
   type OverviewLane,
@@ -313,8 +315,10 @@ export function OverviewPage(props: OverviewPageProps) {
       </p>
     </>
   );
+  const announcement = useCountAnnouncement(model.counts, visible && authenticated && !loading);
   return (
-    <div className="overview" ref={root} aria-labelledby="overview-title" role="region">
+    // The keyboard help is given once, on the region, not on every row.
+    <div className="overview" ref={root} aria-labelledby="overview-title" aria-describedby="overview-keyboard-help" role="region">
       <div className="queue-toolbar overview-toolbar">
         <div>
           <h1 id="overview-title">Overview</h1>
@@ -350,8 +354,39 @@ export function OverviewPage(props: OverviewPageProps) {
         </div>
       )}
       <div className="overview-body">{body}</div>
+      <p className="sr-only" role="status" aria-live="polite" data-overview-announcement>{announcement}</p>
     </div>
   );
+}
+
+/** Settles this long before a count change is announced, so a burst of sync updates is one announcement. */
+const ANNOUNCE_SETTLE_MS = 1200;
+
+/**
+ * A short, polite announcement when lane counts change while the Overview is shown: "Fix 3, was 2." The first counts
+ * after showing are the baseline, so opening the Overview or a sync that changes nothing says nothing.
+ */
+function useCountAnnouncement(counts: OverviewModel['counts'], active: boolean): string {
+  const [message, setMessage] = useState('');
+  const baseline = useRef<OverviewModel['counts'] | null>(null);
+  useEffect(() => {
+    if (!active) {
+      baseline.current = null;
+      return;
+    }
+    if (!baseline.current) {
+      baseline.current = counts;
+      return;
+    }
+    const before = baseline.current;
+    if (!overviewCountChange(before, counts)) return;
+    const timer = window.setTimeout(() => {
+      baseline.current = counts;
+      setMessage(overviewCountChange(before, counts));
+    }, ANNOUNCE_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [counts, active]);
+  return active ? message : '';
 }
 
 interface RowActions {
@@ -479,6 +514,7 @@ const OverviewRowView = memo(
     ];
     const since = new Date(row.since);
     const stale = overviewStaleLabel(row);
+    const descriptionId = useId();
     return (
       <li className={`overview-row${row.isNew ? ' is-new' : ''}`} data-overview-row-item={row.id}>
         <EntryActions label={stack ? `Actions for stack ${row.title}` : `Actions for PR #${member.number}`} groups={groups}>
@@ -496,7 +532,7 @@ const OverviewRowView = memo(
                   className="overview-row-main"
                   data-overview-row={row.id}
                   tabIndex={tabStop ? 0 : -1}
-                  aria-describedby="overview-keyboard-help"
+                  aria-describedby={descriptionId}
                   onFocus={() => actions.focus(row.id)}
                   onBlur={actions.blur}
                   onKeyDown={actions.keyDown}
@@ -505,13 +541,14 @@ const OverviewRowView = memo(
                     actions.open(row);
                   }}
                 >
-                  <span className="overview-title">{row.title}</span>
+                  <span className="overview-title" title={row.title}>{row.title}</span>
                   {stack && row.stackSize && (
                     <span className="overview-stack-count">
                       {row.entries.length === row.stackSize ? `${row.stackSize} PRs` : `${row.entries.length} of ${row.stackSize} PRs`}
                     </span>
                   )}
                 </button>
+                <span className="sr-only" id={descriptionId} data-overview-description>{overviewRowDescription(row)}</span>
                 <div className="overview-row-meta">
                   {row.shown.map((reason) => {
                     const { icon: Icon, tone } = reasonIcon(reason);
@@ -534,7 +571,8 @@ const OverviewRowView = memo(
                   <span className="overview-ref" title={ref.title}>
                     <span className="overview-ref-repo">{ref.repo}</span> <span className="overview-ref-number">{ref.number}</span>
                   </span>
-                  {row.person && <GitHubAuthor login={row.person} />}
+                  {/* Out of the tab order: the row is one stop; its menu copies and opens. */}
+                  {row.person && <GitHubAuthor login={row.person} tabIndex={-1} />}
                   {/* Size helps decide what to review; elsewhere the work is yours and its size is known. */}
                   {row.lane === 'review' && row.additions !== undefined && row.deletions !== undefined && (
                     <span className="overview-size" title={`${row.additions} lines added, ${row.deletions} removed${row.files !== undefined ? `, ${row.files} files` : ''}`}>

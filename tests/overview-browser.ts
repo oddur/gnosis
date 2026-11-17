@@ -32,6 +32,8 @@ void app.whenReady().then(async () => {
   const clarifyDir = path.resolve('.impeccable/review/overview-clarify');
   fs.mkdirSync(dir, { recursive: true });
   fs.mkdirSync(clarifyDir, { recursive: true });
+  const passesDir = path.resolve('.impeccable/review/overview-passes');
+  fs.mkdirSync(passesDir, { recursive: true });
   const capture = async (name: string, into = dir) => {
     if (process.platform === 'darwin') app.show();
     win.show();
@@ -158,6 +160,23 @@ void app.whenReady().then(async () => {
     // Answer has no majority, so each row keeps its reason.
     assert.deepEqual(await js(`[...document.querySelectorAll('${P} #overview-lane-answer .overview-row .overview-reason')].map(e=>e.textContent)`), ['Changes requested', 'Awaiting your reply']);
 
+    step = 'harden';
+    // The keyboard help is given once, on the region; each row is described by its own words.
+    assert.deepEqual(await js(`[...document.querySelectorAll('${P} [aria-describedby="overview-keyboard-help"]')].map(e=>e.className)`), ['overview']);
+    const description = (selector: string) => js<string | null>(`(()=>{const b=document.querySelector(${JSON.stringify(selector)});const d=b&&document.getElementById(b.getAttribute('aria-describedby'));return d&&b.closest('.overview-row').contains(d)?d.textContent:null})()`);
+    assert.equal(await description(row('answer', 'acme/web', 311)), 'Changes requested, web #311, from lena, waiting 4 days, stale');
+    // The heading carries "merge conflicts" for Fix; the row's description still says it.
+    assert.equal(await description(row('fix', 'acme/web', 333)), 'Merge conflicts, web #333, waiting 9 hours');
+    assert.equal(await description(row('merge', 'klang/engine', 301)), 'Approved by lena, engine #301, waiting 2 days, stale');
+    // Badges are out of the tab order: a row offers one stop, plus its quick action and menu.
+    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-row .entity-badge')].every(b=>b.tabIndex===-1)`), true);
+    assert.ok(await js(`document.querySelectorAll('${P} .overview-row .entity-badge').length`), 'people are still shown');
+    assert.equal(await js(`[...document.querySelectorAll('${P} .overview-row')].every(r=>[...r.querySelectorAll('button, a[href], [tabindex]')].filter(e=>e.tabIndex>=0&&!e.disabled&&!e.closest('[data-overview-row]')).length<=2)`), true, 'only the quick action and the menu are tab stops');
+    assert.equal(await js(`document.querySelectorAll('${P} [data-overview-row][tabindex="0"]').length`), 1, 'one roving tab stop for the rows');
+    // The live region starts quiet: opening the Overview announces nothing.
+    assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').textContent`), '');
+    assert.equal(await js(`document.querySelector('${P} [data-overview-announcement]').getAttribute('aria-live')`), 'polite');
+
     step = 'top-five';
     assert.equal(await laneRows('review'), 5);
     assert.equal(await js(`document.querySelector('${P} #overview-lane-review .overview-show-all')?.textContent`), 'Show all 7');
@@ -209,6 +228,19 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').textContent`), 'Parked · 12');
     await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
     await both('heavy-parked-collapsed-1280', clarifyDir);
+    // After clarify, quieter, distill and harden: the heavy load at 1280 and 760 wide.
+    await both('heavy-1280', passesDir);
+    win.setSize(760, 800);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(await js(`(()=>{const b=document.querySelector('${P} .overview-body');return b.scrollWidth <= b.clientWidth + 1})()`), 'no sideways scrolling at 760');
+    await both('heavy-760', passesDir);
+    await js(`(()=>{const b=document.querySelector('${P} .overview-body');const h=document.querySelector('${P} #overview-lane-fix');b.scrollTop+=h.getBoundingClientRect().top-b.getBoundingClientRect().top})()`);
+    await both('heavy-760-fix', passesDir);
+    win.setSize(1280, 800);
+    await new Promise((r) => setTimeout(r, 400));
+    await js(`(()=>{const b=document.querySelector('${P} .overview-body');const h=document.querySelector('${P} #overview-lane-fix');b.scrollTop+=h.getBoundingClientRect().top-b.getBoundingClientRect().top})()`);
+    await both('heavy-1280-fix', passesDir);
+    await js(`document.querySelector('${P} .overview-body').scrollTop = 0`);
     await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-lane-toggle').click()`);
     await wait(`document.querySelectorAll('${P} #overview-lane-merge .overview-parked .overview-row').length === 5`);
     assert.equal(await js(`document.querySelector('${P} #overview-lane-merge .overview-parked .overview-show-all')?.textContent`), 'Show all 16 in Merge');
@@ -248,6 +280,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js<number>(`document.querySelector('${P} .overview-body').scrollTop`), scroll, 'nothing scrolls');
     assert.ok((await js<number>('window.__overviewRowRenders')) <= 3, 'only the changed and new rows render');
     assert.match(await counts(), /Fix3/);
+    // The count change is announced once, politely, after the burst settles.
+    await wait(`document.querySelector('${P} [data-overview-announcement]').textContent === 'Fix 3, was 2.'`);
 
     step = 'merge';
     // Merge goes through the existing confirmation: nothing is written until it is confirmed.
@@ -356,6 +390,17 @@ void app.whenReady().then(async () => {
     assert.equal(await laneRows('waiting'), 3);
     assert.equal(await js('document.scrollingElement.scrollTop + document.querySelector(".workbench-body")?.scrollTop'), 0, 'only the Overview list scrolls');
     await both('waiting-open');
+
+    step = 'long-names';
+    // A very long title and repository truncate, with the full text on hover, and nothing scrolls sideways.
+    const longTitle = 'Rework the release pipeline so every artifact is signed, verified against the manifest, and uploaded once per platform with retries';
+    await js(`window.fixtureOverview.addFailing(336, ${JSON.stringify(longTitle)}, 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while')`);
+    await wait(`!!document.querySelector('${row('fix', 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while', 336)}')`);
+    const longRow = `document.querySelector('${row('fix', 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while', 336)}').closest('.overview-row')`;
+    assert.equal(await js(`${longRow}.querySelector('.overview-title').title`), longTitle);
+    assert.equal(await js(`${longRow}.querySelector('.overview-ref').title`), 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while #336');
+    assert.equal(await js(`(()=>{const r=${longRow}.querySelector('.overview-ref-repo');return r.scrollWidth>r.clientWidth})()`), true, 'the repository name truncates');
+    assert.ok(await js(`(()=>{const b=document.querySelector('${P} .overview-body');return b.scrollWidth <= b.clientWidth + 1})()`), 'no sideways scrolling with long names');
 
     step = 'narrow';
     win.setSize(760, 800);

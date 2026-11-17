@@ -599,6 +599,43 @@ export function dominantReason(lane: OverviewLane, rows: readonly Pick<OverviewR
   return reason && count && count >= 2 && count * 2 > rows.length ? { reason, count } : undefined;
 }
 
+/** "11 d" read aloud: "11 days". */
+export function spokenWaiting(label: string): string {
+  if (label === 'now') return 'just now';
+  const [count, unit] = label.split(' ');
+  const word = ({ m: 'minute', h: 'hour', d: 'day', w: 'week' } as Record<string, string>)[unit] ?? unit;
+  return `${count} ${word}${count === '1' ? '' : 's'}`;
+}
+
+/**
+ * Everything a row says, as one sentence for assistive technology, in the order it is shown:
+ * "Checks failed, web-seed-portal #1959, waiting 11 days, stale". It names the reason even when the heading carries
+ * it for the lane, because a row is often heard alone.
+ */
+export function overviewRowDescription(row: Pick<OverviewRow, 'lane' | 'reasons' | 'merge' | 'focus' | 'entries' | 'kind' | 'item' | 'person' | 'waiting' | 'stale' | 'explanation'>): string {
+  const ref = overviewRef(row);
+  const extra = Number(ref.number.split('+')[1] ?? 0);
+  const words = [
+    ...(row.merge ? row.merge.notes.map((note) => note.text) : rowReasons(row).map((reason) => OVERVIEW_REASON_LABEL[reason])),
+    `${ref.repo} ${extra ? `${ref.number.split(' ')[0]} and ${extra} more` : ref.number}`,
+    ...(row.person ? [`${row.lane === 'review' ? 'by' : row.lane === 'waiting' ? 'on' : 'from'} ${row.person}`] : []),
+    ...(row.explanation ? ['explanation ready'] : []),
+    `waiting ${spokenWaiting(row.waiting)}`,
+    ...(row.stale ? [row.lane === 'waiting' ? 'consider a nudge' : 'stale'] : []),
+  ];
+  return words.join(', ');
+}
+
+/**
+ * What changed in the lane counts, for a polite announcement: "Fix 3, was 2. Merge 1, was 2." Empty when nothing
+ * changed, so a sync that changes nothing says nothing.
+ */
+export function overviewCountChange(before: Readonly<Record<OverviewLane, number>>, after: Readonly<Record<OverviewLane, number>>): string {
+  return OVERVIEW_LANES.filter((lane) => before[lane] !== after[lane])
+    .map((lane) => `${OVERVIEW_COUNT_LABEL[lane]} ${after[lane]}, was ${before[lane]}.`)
+    .join(' ');
+}
+
 /** The short name of a repository: "web-seed-portal" for "klanggames/web-seed-portal". */
 export const repoName = (repo: string) => repo.slice(repo.lastIndexOf('/') + 1) || repo;
 

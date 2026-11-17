@@ -8,7 +8,7 @@ import { EntityBadge } from './EntityBadge';
 import { githubAvatarUrl, isGitHubLogin, type GitHubProfile } from '../lib/github-profile';
 
 /** One author identity. Profile details load only after deliberate hover or keyboard focus. */
-export function GitHubAuthor({ login, bot = false }: { login: string; /** GraphQL reported a Bot. */ bot?: boolean }) {
+export function GitHubAuthor({ login, bot = false, tabIndex }: { login: string; /** GraphQL reported a Bot. */ bot?: boolean; /** -1 keeps it out of the tab order. */ tabIndex?: number }) {
   const { allowBotNotifications, botNotificationsAllowed } = useRepositorySettings();
   const [open, setOpen] = useState(false);
   const [resolved, setResolved] = useState<{ login: string; profile: GitHubProfile | null } | null>(null);
@@ -53,6 +53,7 @@ export function GitHubAuthor({ login, bot = false }: { login: string; /** GraphQ
     <EntityBadge
       kind="user"
       value={login}
+      tabIndex={tabIndex}
       className="github-author"
       href={`https://github.com/${login.endsWith('[bot]') ? 'apps/' : ''}${encodeURIComponent(login.replace(/\[bot\]$/, ''))}`}
       onTooltipOpenChange={(next) => {

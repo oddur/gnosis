@@ -41,8 +41,11 @@ export function EntityBadge({
   tooltipReady = true,
   onTooltipOpenChange,
   menuActions,
+  tabIndex,
 }: {
   menuActions?: ReactNode;
+  /** -1 keeps the badge out of the tab order where its row offers the same actions. */
+  tabIndex?: number;
   kind: Kind;
   value: string;
   label?: string;
@@ -91,6 +94,7 @@ export function EntityBadge({
                   className={`entity-badge entity-badge-${kind} ${className}`}
                   data-entity-kind={kind}
                   data-copy-state={state}
+                  tabIndex={tabIndex}
                   aria-label={`${action}: ${label}`}
                   onClick={(event) => {
                     event.stopPropagation();

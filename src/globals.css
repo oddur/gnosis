@@ -5030,7 +5030,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-row-main:focus-visible { outline:2px solid var(--ring); outline-offset:3px; border-radius:2px; }
 .overview-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-body); font-weight:600; line-height:1.45; }
 .overview-stack-count { flex:none; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
-.overview-row-meta { display:flex; align-items:center; flex-wrap:wrap; gap:2px 10px; min-width:0; font-size:var(--type-caption); color:var(--muted-foreground); line-height:1.4; }
+.overview-row-meta { display:flex; align-items:center; flex-wrap:wrap; gap:2px 10px; min-width:0; min-height:24px; font-size:var(--type-caption); color:var(--muted-foreground); line-height:1.4; }
 .overview-reason { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; font-weight:500; color:var(--foreground); }
 .overview-reason svg { flex:none; color:var(--muted-foreground); }
 .overview-reason[data-tone=danger] svg { color:var(--color-danger); }

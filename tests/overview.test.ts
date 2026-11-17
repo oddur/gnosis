@@ -6,8 +6,11 @@ import {
   OVERVIEW_STALE_AFTER,
   dominantReason,
   elapsed,
+  overviewCountChange,
   overviewRef,
+  overviewRowDescription,
   repoName,
+  spokenWaiting,
   isStale,
   nextOverviewVisit,
   overviewLaneSummary,
@@ -643,6 +646,58 @@ void test('repository and PR are one short token; a stack collapses its numbers'
   const members = [380, 381, 384, 386].map((n, i) => mine(n, { repo: 'klanggames/seed-launcher', baseBranch: i ? `feature-${[380, 381, 384][i - 1]}` : 'main' }));
   const stack = model([item(members)], { signals: Object.fromEntries(members.map((m) => [m.url, signals(m, { checks: 'failure' })])) });
   assert.deepEqual(overviewRef(lane(stack, 'fix')[0]), { repo: 'seed-launcher', number: '#380 +3', title: 'klanggames/seed-launcher #380, #381, #384, #386' });
+});
+
+void test('a row describes itself in one sentence, including the reason its heading carries', () => {
+  const failing = [1, 2, 3].map((n) => mine(n, { repo: 'klanggames/web-seed-portal', updatedAt: ago(11) }));
+  const waiting = mine(4, { requestedReviewers: ['lena'], createdAt: ago(4) });
+  const requested = member(5, { requestedReviewers: [LOGIN], createdAt: ago(0.25), author: 'maya' });
+  const ready = mine(6);
+  const result = model([...[...failing, waiting, requested, ready].map((pr) => item([pr]))], {
+    signals: {
+      ...Object.fromEntries(failing.map((pr) => [pr.url, signals(pr, { checks: 'failure' })])),
+      [waiting.url]: passing(waiting),
+      [ready.url]: clean(ready, { decision: 'APPROVED', opinions: [{ id: '1', author: 'lena', state: 'APPROVED' }] }),
+    },
+  });
+  const fix = lane(result, 'fix')[0];
+  assert.deepEqual(fix.shown, [], 'the heading carries "checks failed"');
+  assert.equal(overviewRowDescription(fix), 'Checks failed, web-seed-portal #1, waiting 11 days, stale');
+  assert.equal(overviewRowDescription(lane(result, 'waiting')[0]), 'Awaiting review, r #4, on lena, waiting 4 days, consider a nudge');
+  assert.equal(overviewRowDescription(lane(result, 'review')[0]), 'r #5, by maya, waiting 6 hours');
+  assert.equal(overviewRowDescription(lane(result, 'merge')[0]), 'Approved by lena, r #6, waiting 1 hour');
+  // A stack names its first PR and how many more.
+  const members = [380, 381, 384].map((n, i) => mine(n, { repo: 'klanggames/seed-launcher', baseBranch: i ? `feature-${[380, 381][i - 1]}` : 'main', updatedAt: ago(0.5) }));
+  const stack = model([item(members)], { signals: Object.fromEntries(members.map((m) => [m.url, signals(m, { checks: 'failure' })])) });
+  assert.equal(overviewRowDescription(lane(stack, 'fix')[0]), 'Checks failed, seed-launcher #380 and 2 more, waiting 12 hours');
+  assert.deepEqual(['now', '1 m', '5 h', '1 d', '3 w'].map(spokenWaiting), ['just now', '1 minute', '5 hours', '1 day', '3 weeks']);
+});
+
+void test('lane count changes are announced briefly; no change says nothing', () => {
+  const before = { merge: 2, answer: 0, review: 3, fix: 1, waiting: 4 };
+  assert.equal(overviewCountChange(before, { ...before }), '');
+  assert.equal(overviewCountChange(before, { ...before, fix: 2, merge: 1 }), 'Merge 1, was 2. Fix 2, was 1.');
+});
+
+void test('edge cases: no author, a long repository name, and a thousand PRs', () => {
+  // A PR whose author GitHub no longer knows (a deleted account) shows no person rather than an empty chip.
+  const ghost = member(1, { requestedReviewers: [LOGIN], author: '' });
+  assert.equal(lane(model([item([ghost])]), 'review')[0].person, undefined);
+  const long = mine(2, { repo: 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while' });
+  const [row] = lane(model([item([long])], { signals: { [long.url]: signals(long, { checks: 'failure' }) } }), 'fix');
+  assert.equal(overviewRef(row).repo, 'a-repository-name-that-goes-on-for-a-while');
+  assert.equal(overviewRef(row).title, 'an-organisation-with-a-long-name/a-repository-name-that-goes-on-for-a-while #2');
+  // A thousand PRs build quickly, and every one lands in a lane.
+  const many = Array.from({ length: 1000 }, (_, i) => mine(1000 + i, { updatedAt: ago(i % 20) }));
+  const status = Object.fromEntries(many.map((pr, i) => [pr.url, i % 2 ? signals(pr, { checks: 'failure' }) : clean(pr, { decision: null })]));
+  const started = performance.now();
+  const big = model(many.map((pr) => item([pr])), { signals: status });
+  const took = performance.now() - started;
+  assert.equal(big.counts.fix + big.counts.merge + big.parked, 1000);
+  assert.ok(took < 1500, `a thousand PRs took ${Math.round(took)} ms`);
+  // Nothing at all: every lane is empty and nothing is counted.
+  const none = model([]);
+  assert.deepEqual([none.actionable, none.parked, none.keys.length], [0, 0, 0]);
 });
 
 void test('the stale label is a word, and Waiting on others asks whether to nudge', () => {
