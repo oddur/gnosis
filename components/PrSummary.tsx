@@ -173,6 +173,7 @@ export interface PrReviewRequest {
   member: ReviewMember;
 }
 
+const handledLandings = new Set<number>();
 /** Where a deep link or notification lands inside the PR. A new `nonce` lands again. */
 export interface PrLanding {
   nonce: number;
@@ -338,7 +339,9 @@ function PrSummaryContent({
   const [unviewedLanding, setUnviewedLanding] = useState<number>();
   const [mergeLanding, setMergeLanding] = useState<number>();
   useEffect(() => {
-    if (!landing) return;
+    // Once per landing, even when this PR is opened again later from the queue.
+    if (!landing || handledLandings.has(landing.nonce)) return;
+    handledLandings.add(landing.nonce);
     if (landing.threadId) {
       setFeedbackPr(undefined);
       setFeedbackThread(landing.threadId);
