@@ -6,10 +6,12 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/site.yml'
-  # Re-trigger on every published release so /changelog stays in
-  # sync without a manual push to site/.
-  release:
-    types: [published]
+  # Rebuild after every release so /changelog shows its notes. Not `release:`: the Release workflow publishes with
+  # GITHUB_TOKEN, whose events start no other workflows, and a release run deploys from the tag, which the
+  # github-pages environment (main only) rejects. workflow_run runs on main.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -24,6 +26,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     defaults:
       run:
