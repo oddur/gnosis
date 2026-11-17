@@ -5066,8 +5066,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* A chain's status word: the first PR is Next; colour only supports the word. */
 .morning-status { flex:none; padding-left:10px; font-size:var(--type-caption); font-weight:600; line-height:1.45; color:var(--muted-foreground); white-space:nowrap; }
 .morning-status.is-next { color:var(--foreground); }
-.morning-status.is-ready { color:var(--color-success); }
-.morning-status.is-checks { color:var(--color-warning); }
 .morning-status.is-conflicts { color:var(--color-danger); }
 /* Stacks: a header with the name, the repository once and the next step, then the chain in merge order on a thin
    connector, as on the stack page (StackDependencyChain). The step and the numbers never truncate; titles do, at
@@ -5094,6 +5092,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-more-row.is-chain .morning-more-quiet { margin-left:0; font-size:var(--type-caption); }
 .morning-more { padding:6px 0 0 12px; }
 .morning-footer { padding-top:4px; }
+.morning-more-note { margin:0; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .morning-more-quiet { display:inline-flex; align-items:center; gap:2px; margin-left:-4px; padding:2px 4px; border-radius:4px; font-size:var(--type-control); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .morning-more-quiet:hover { color:var(--foreground); text-decoration:underline; text-underline-offset:3px; }
 .morning-more-quiet:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }

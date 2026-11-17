@@ -37,6 +37,12 @@ export function workspaceListingRequest(tab: WorkspaceTabEntry): WorkspaceListin
   if (initial.kind === 'home' && !initial.subject && !initial.url)
     return { destination: { kind: 'home', section: initial.section, repo: initial.repo, viewId: initial.viewId } };
 }
+/** The tab shows the Overview, or will when it is first shown. */
+export function isOverviewTab(tab: WorkspaceTabEntry): boolean {
+  const request = workspaceListingRequest(tab);
+  if (!request) return false;
+  return 'kind' in request ? request.kind === 'overview' : request.destination.section === 'overview';
+}
 function resolveListing(request: WorkspaceListingRequest, queue: WorkbenchQueue): Listing | undefined {
   if ('kind' in request) return request;
   const target = request.destination;

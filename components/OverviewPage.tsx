@@ -8,7 +8,8 @@
  *   with Nudge. Stacks are chains in merge order, base first, with the step that moves them.
  * - **Needs a decision:** your PRs failing, never approved or idle for over a week, with Close PR and Snooze.
  *
- * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), and every heading counts what it lists.
+ * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), and every heading counts what it lists: Next
+ * up its rows, the others their PRs. Waiting on you says where its PRs went when Next up lists them.
  * Every PR line leads with its number, shows its check state as the queue row does, and previews the PR on hover or
  * focus with the PR badge's tooltip. Repositories are plain muted text, with their icon or colour from Settings ›
  * Repositories, named once per group when the group has one repository.
@@ -46,6 +47,7 @@ import {
   repositoryLabel,
   repositoryNames,
   sectionCount,
+  waitingOnYouNote,
   CHAIN_HEAD,
   CHAIN_SHOWN,
   GROUP_SHOWN,
@@ -406,10 +408,12 @@ export function OverviewPage(props: OverviewPageProps) {
 
 
   const sync = queue.sync;
+  // Main is reading the PR list again and the last finished read is behind (`SYNC_STALE_MS`).
+  const syncing = authenticated && sync?.status === 'checking' && syncStale(sync.checkedAt);
   const readStates = queue.readStates ?? {};
   const unread = (members: readonly ReviewMember[]) => members.some((member) => !!readStates[member.url]?.unread.length);
   const ready = authenticated && !(loading && !queue.items.length) && !(!queue.items.length && !hasRepositories);
-  // Each heading is the number of PRs its section lists (lib/morning.ts, "Counts").
+  // Next up counts its rows; the other headings count the PRs they list (lib/morning.ts, "Counts").
   const counts: Counts = {
     next: nextCount(morning.next.items),
     you: sectionCount(morning.you),
@@ -417,6 +421,7 @@ export function OverviewPage(props: OverviewPageProps) {
     decide: morning.decide.length,
   };
   const more = nextMoreLine(morning.next);
+  const youNote = waitingOnYouNote(counts.you, morning.youElsewhere);
   const group = (section: 'you' | 'others', value: PersonGroup) => {
     const id = `${section}|${value.key}`;
     const inside = openWithin(opened, id);
@@ -464,7 +469,8 @@ export function OverviewPage(props: OverviewPageProps) {
             <NextRow key={item.id} item={item} tabStop={tabStop('next') === item.id} unread={unread(item.row.entries.map((entry) => entry.member))} actions={actions} />
           ))}
         </MorningSection>
-        <MorningSection section="you" count={counts.you} empty="Nobody is waiting on you.">
+        <MorningSection section="you" count={counts.you} empty={youNote.empty}
+          footer={youNote.more && <p className="morning-more-note" data-overview-you-elsewhere>{youNote.more}</p>}>
           {morning.you.map((value) => group('you', value))}
         </MorningSection>
         <MorningSection section="others" count={counts.others} empty="None of your PRs are waiting on anyone.">
@@ -519,7 +525,8 @@ export function OverviewPage(props: OverviewPageProps) {
           {ready && since && <p className="overview-since" data-overview-since>{since}</p>}
         </div>
         <div className="overview-freshness-group">
-          {authenticated && view.checking > 0 ? (
+          {/* One indicator at a time: while Gnosis reads your PRs again, the status reads still to come are in its tooltip. */}
+          {syncing ? null : authenticated && view.checking > 0 ? (
             <span className="overview-unchecked" data-overview-checking title={`Reading the status of ${view.checking} PRs from GitHub. Each joins its section when GitHub answers.`}>
               Checking {view.checking}…
             </span>
@@ -528,8 +535,9 @@ export function OverviewPage(props: OverviewPageProps) {
               {view.unchecked} not checked
             </span>
           ) : null}
-          {authenticated && sync?.status === 'checking' && syncStale(sync.checkedAt) ? (
-            <span className="queue-freshness is-refreshing" data-overview-syncing title={`Gnosis last finished reading your pull requests from GitHub at ${new Date(sync.checkedAt ?? 0).toLocaleString()}. It is reading them again now.`}>
+          {syncing ? (
+            <span className="queue-freshness is-refreshing" data-overview-syncing
+              title={`Gnosis last finished reading your pull requests from GitHub at ${new Date(sync?.checkedAt ?? 0).toLocaleString()}. It is reading them again now.${view.checking > 0 ? ` The status of ${view.checking} PRs is still to come; each joins its section when GitHub answers.` : ''}`}>
               <LoadingIndicator announce={false}>Updating…</LoadingIndicator>
             </span>
           ) : (
@@ -690,7 +698,7 @@ function MorningSection({ section, count, summary, empty, quiet = false, footer,
         <span className="morning-section-count" aria-hidden="true" data-section-count>{count}</span>
         {summary && <span className="morning-section-summary" aria-hidden="true" title="Estimated time for all of them">{summary}</span>}
       </div>
-      {count === 0 ? <p className="morning-empty">{empty}</p> : <ul className="morning-rows" aria-label={label}>{children}</ul>}
+      {count === 0 ? <p className="morning-empty" data-overview-empty>{empty}</p> : <ul className="morning-rows" aria-label={label}>{children}</ul>}
       {footer && <div className="morning-footer">{footer}</div>}
     </section>
   );
@@ -820,7 +828,8 @@ const NextRow = memo(
     const single = item.urls.length === 1;
     const failing = item.kind === 'fix' && item.fix === 'failing' ? row.entries.filter((entry) => entry.reasons.includes('checks-failed')).map((entry) => entry.member) : [];
     const action = failing.length ? 'Rerun failed' : NEXT_ACTION[item.kind];
-    const target = member.url === row.focus.url ? row.target : (prTarget(member.url) ?? row.target);
+    // A stack row opens where its row does (the stack's review); a single PR opens that PR.
+    const target = !single || member.url === row.focus.url ? row.target : (prTarget(member.url) ?? row.target);
     const quick =
       item.kind === 'merge' ? (
         <MergeAction row={row} actions={actions} />
@@ -838,7 +847,7 @@ const NextRow = memo(
         actions={actions}
         label={`${item.title}\n${item.why}`}
         title={item.title}
-        number={single ? member.number : undefined}
+        number={member.number}
         preview={single ? { url: member.url, number: member.number, title: member.title } : undefined}
         prs={item.urls}
         repos={repos}
@@ -849,13 +858,13 @@ const NextRow = memo(
         menu={prMenu(item.id, row, actions, unread, member, single ? target : undefined)}
         menuLabel={single ? `PR #${member.number}` : menuFor(row)}
         isNew={row.isNew}
-        description={`${action}, ${item.why}, ${reposSpoken(repos, label)} ${single ? `#${member.number}` : prs(item.urls.length)}, ${item.check.spoken}, ${minutesSpoken(item.minutes)}`}
+        description={`${action}, ${item.why}, ${reposSpoken(repos, label)} #${member.number}${single ? '' : ` and ${item.urls.length - 1} more`}, ${item.check.spoken}, ${minutesSpoken(item.minutes)}`}
         onActivate={() => actions.open(row, target)}
       />
     );
   },
   (a, b) => a.item.row.signature === b.item.row.signature && a.item.why === b.item.why && a.item.minutes === b.item.minutes && a.item.kind === b.item.kind &&
-    a.item.check.label === b.item.check.label && a.item.title === b.item.title && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
+    a.item.check.label === b.item.check.label && a.item.title === b.item.title && a.item.member.url === b.item.member.url && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
 );
 
 function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMember[]; onChanged: () => void; reveal?: boolean }) {
@@ -1085,6 +1094,10 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
   const quick =
     step.action === 'merge' && step.row ? (
       <MergeAction row={step.row} actions={actions} />
+    ) : step.action === 'review' && step.row ? (
+      <Button size="xs" variant="outline" {...SHORTCUT} title={`${reviewVerb(step.row)} first · A`} onClick={() => step.row && actions.open(step.row)}>
+        {reviewVerb(step.row)}
+      </Button>
     ) : step.action === 'nudge' && step.reviewer ? (
       nudged ? (
         <span className="morning-done">Nudged</span>
@@ -1120,7 +1133,7 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
         detail={step.text}
         meta={prs(size)}
         quick={quick}
-        description={`${spoken}. ${reposSpoken(stack.repos, label)}${step.action === 'merge' ? `. A merges #${step.member.number}` : step.action === 'nudge' && !nudged ? '. A nudges' : `. A opens #${step.member.number}`}`}
+        description={`${spoken}. ${reposSpoken(stack.repos, label)}${step.action === 'merge' ? `. A merges #${step.member.number}` : step.action === 'review' ? `. A opens the ${step.row ? reviewVerb(step.row).toLowerCase() : 'review'}` : step.action === 'nudge' && !nudged ? '. A nudges' : `. A opens #${step.member.number}`}`}
         onActivate={openBase}
       />
       <ul className="morning-chain" aria-label={spoken}>
@@ -1195,6 +1208,7 @@ declare global {
     __overviewRenderedRows?: string[];
   }
 }
+const reviewVerb = (row: OverviewRow) => (row.reasons.includes('updated-since-review') ? 'Re-review' : 'Review');
 const menuFor = (row: OverviewRow) => (row.kind === 'stack' ? `stack ${row.title}` : `PR #${row.focus.number}`);
 /** The menu every PR row shares: open, snooze, mark read, copy, Open on GitHub. */
 function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boolean, member: ReviewMember = row.focus, target?: DeepLinkTarget): EntryActionGroups {

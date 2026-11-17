@@ -36,7 +36,7 @@ import './workspace-tabs.css';
 import { useWorkspaceListings } from '../lib/use-workspace-listings';
 import { workbenchStore } from '../lib/workbench-store';
 import { SnoozePickerHost } from '../components/SnoozePicker';
-import { workspaceTabTitle } from '../lib/workspace-listings';
+import { isOverviewTab, workspaceTabTitle } from '../lib/workspace-listings';
 import { linkErrorNotice, linkSupport, prLinkBlock, prMetadataItem, queueItemFor, routeDeepLink, type LinkAction, type LinkNotice } from '../lib/deep-link-routing';
 import { formatDeepLink, githubUrl, parseDeepLinkError, parseDeepLinkTarget, prUrl, targetFromLocation, type DeepLinkTarget } from '../lib/deep-link';
 import type { DeepLinkDelivery } from './deep-link-service';
@@ -436,7 +436,15 @@ export function App() {
   useEffect(() => {
     window.electronAPI.notificationContext?.(activeUrl);
   }, [activeUrl]);
-  const navigation = useMemo(() => ({ open, openTarget }), [open, openTarget]);
+  // The Overview is one place: the sidebar's Overview goes to the tab already showing it instead of making another.
+  const focusOverview = useCallback(() => {
+    const s = latest.current;
+    const tab = s.tabs.find((entry) => entry.id !== s.active && isOverviewTab(entry));
+    if (!tab) return false;
+    activate(tab.id);
+    return true;
+  }, [activate]);
+  const navigation = useMemo(() => ({ open, openTarget, focusOverview }), [open, openTarget, focusOverview]);
   const activityMenu = useMemo(() => ({ open: () => setActivityOpen(true), shortcut: ACTIVITY_SHORTCUT.keys() }), []);
   const recentNavigation = useMemo(
     () => ({

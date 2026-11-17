@@ -1938,7 +1938,11 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   aria-current={overviewOpen ? 'page' : undefined}
                   className={overviewOpen ? 'active' : ''}
                   disabled={viewBusy}
-                  onClick={openOverview}
+                  onClick={() => {
+                    // Another tab already shows the Overview: go there rather than make this tab a second one.
+                    if (!overviewOpen && tabs?.focusOverview?.()) return;
+                    openOverview();
+                  }}
                 >
                   <WorkbenchIcon name="overview" size={16} />
                   <span className="sidebar-label">Overview</span>

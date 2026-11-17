@@ -538,6 +538,41 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
         items.splice(0, items.length, ...fill, stackOf(steam, steamRest), stackOf(blocking, blockingRest), stackOf(i18n, i18nRest, 'Launcher i18n'), stackOf(epic, epicRest, 'STACK: EPIC'), stackOf(market, marketRest));
         changed();
       },
+      /**
+       * Screenshot 36: a stack whose base you can merge without review, with two more of your PRs and six of
+       * ivaremilsson's above it that changed since your review; a lone re-review; STACK: EPIC, whose base can merge;
+       * six large merges nobody reviewed; and a small review request. Every review lands in Next up.
+       */
+      real5: () => {
+        const launcher = 'klang/seed-launcher';
+        const seed = 'klang/seed';
+        const stackOf = (members: ReviewMember[], name: string, attention: QueueItem['attention'] = 'other'): QueueItem => {
+          const subject = groupSubjects(members)[0];
+          return { subject: { ...subject, name }, attention };
+        };
+        const linked = (spec: Spec, parent: number) => ({ ...spec, baseBranch: `stack-${parent}`, headBranch: `stack-${spec.number}` });
+        const market = add(pr({ number: 35392, repo: seed, title: 'feat: add the market and create_seedling mcp tools to seed-api', created: 2 * DAY, updated: HOUR, headBranch: 'stack-35392', additions: 410, deletions: 60 }), noReview);
+        const marketOwn = [
+          add(pr(linked({ number: 37378, repo: seed, title: 'chore: keep the small types of one responsibility in one file across seed-api', created: 2 * DAY, updated: HOUR, additions: 90 }, 35392)), noReview),
+          add(pr(linked({ number: 37578, repo: seed, title: 'feat: one seed-api event pipeline with pluggable kinds and a my_events pull tool', created: 2 * DAY, updated: HOUR, additions: 180 }, 37378)), noReview),
+        ];
+        const marketTitles = ['feat: list a seedling on the market', 'feat: buy a listed seedling', 'feat: cancel a listing', 'feat: market fees per region', 'feat: notify the seller on a sale', 'test: market end to end'];
+        const marketTheirs = marketTitles.map((title, i) =>
+          add(pr(linked({ number: 37601 + i, repo: seed, title, author: 'ivaremilsson', created: 3 * DAY, updated: 5 * HOUR, additions: 60 + i * 10, deletions: 8 }, i ? 37600 + i : 37578)), { checks: 'success', reviewedSha: `old-${37601 + i}` }));
+        const lone = add(pr({ number: 377, repo: launcher, title: 'feat: block launches until the player accepts the terms in the launcher', author: 'ivaremilsson', created: 3 * DAY, updated: 5 * HOUR, additions: 70, deletions: 12 }), { checks: 'success', reviewedSha: 'old-377' });
+        const epic = add(pr({ number: 376, repo: launcher, title: 'refactor: model the store distribution channel instead of Steam-only flags', created: 3 * DAY, updated: 2 * HOUR, headBranch: 'stack-376', additions: 220, deletions: 40 }), noReview);
+        const epicRest = [382, 378, 385].map((number, i) =>
+          add(pr(linked({ number, repo: launcher, title: ['fix: quit a store-launched launcher when its last window closes', 'feat: log in with Epic on Epic Games Store launches (L3)', 'feat: import Epic purchases after an Epic login, before play (L3b)'][i], created: 3 * DAY, updated: 2 * HOUR, additions: 80 }, i ? [382, 378][i - 1] : 376)), noReview));
+        const large = ['feat(rust): integrate the Rust worker workspace', 'feat: new launcher shell with a native title bar', 'chore: vendor the Steamworks SDK headers', 'feat: store catalogue sync for Epic', 'refactor: split the payment bridge by store', 'feat: seed-api admin tools'].map((title, i) =>
+          single(add(pr({ number: 611 + i, repo: [seed, launcher][i % 2], title, created: 2 * DAY, updated: (30 - i * 3) * HOUR, additions: 1630 - i * 100, deletions: 90, files: 40 }), noReview)));
+        const zsolt = pr({ number: 36990, repo: seed, title: 'feat: throttle the chat presence updates', author: 'zsolt-klang', created: 6 * DAY, requested: [LOGIN], additions: 96, deletions: 21, files: 4 });
+        items.splice(0, items.length,
+          stackOf([market, ...marketOwn, ...marketTheirs], 'feat: add the market and create_seedling mcp tools to seed-api', 'updated'),
+          single(lone, { attention: 'updated' }), stackOf([epic, ...epicRest], 'STACK: EPIC'), ...large, single(zsolt));
+        void window.electronAPI.loadPreferences().then((prefs) =>
+          window.dispatchEvent(new CustomEvent('gnosis-preferences-changed', { detail: { ...prefs, repositorySettings: { ...prefs.repositorySettings, [launcher]: { icon: 'lucide:rocket', color: 'purple' }, [seed]: { color: 'green' } } } })));
+        changed();
+      },
       /** The queue last synced `ms` ago; `checking` while a discovery runs. The next snapshot carries it. */
       setSync: (ms: number, value: 'idle' | 'checking' = 'idle') => {
         syncAge = ms;
