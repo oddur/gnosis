@@ -357,9 +357,26 @@ void test('.gitattributes rules compile once per PR, so a large file against man
   lines.push('generated/** linguist-generated', 'src/**/*.pb.go linguist-generated=true', 'docs/*.md -linguist-generated');
   const files = [{ path: '.gitattributes', text: lines.join('\n') }];
   const paths = Array.from({ length: 3000 }, (_, i) => (i % 3 === 0 ? `generated/a/b${i}.ts` : i % 3 === 1 ? `src/x/y${i}.pb.go` : `docs/z${i}.md`));
+  // Count regular-expression constructions rather than timing them: wall-clock budgets flaked on shared CI runners.
+  // The old code built one expression per rule per path (about 1.2 million here); compiling once caps it at the rules.
+  const NativeRegExp = globalThis.RegExp;
+  let constructions = 0;
+  class CountingRegExp extends NativeRegExp {
+    constructor(pattern: string | RegExp, flags?: string) {
+      super(pattern, flags);
+      constructions++;
+    }
+  }
+  globalThis.RegExp = CountingRegExp as RegExpConstructor;
+  let values: (boolean | undefined)[];
   const started = performance.now();
-  const values = paths.map((path) => generatedAttribute(path, files)?.value);
+  try {
+    values = paths.map((path) => generatedAttribute(path, files)?.value);
+  } finally {
+    globalThis.RegExp = NativeRegExp;
+  }
   const elapsed = performance.now() - started;
   assert.deepEqual([values[0], values[1], values[2]], [true, true, false]);
-  assert.ok(elapsed < perfBudget(300), `3,000 paths against 403 rules took ${Math.round(elapsed)} ms`);
+  assert.ok(constructions <= lines.length, `3,000 paths against ${lines.length} rules built ${constructions} regular expressions`);
+  assert.ok(elapsed < perfBudget(3000), `3,000 paths against ${lines.length} rules took ${Math.round(elapsed)} ms`);
 });
