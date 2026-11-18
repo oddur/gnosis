@@ -16,15 +16,36 @@ function Tooltip({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Root
 /**
  * Chromium sends a pointer move with no movement when content changes under a still cursor, such as a new tab or page
  * opening where the pointer rests. Radix opens a tooltip on any pointer move, so a preview appeared that nobody asked
- * for (opening a PR from the Overview showed the new page's PR preview in its top-left). Only real movement opens one.
+ * for (opening a PR from the Overview showed the new page's PR preview in its top-left). Only a pointer that moved opens
+ * one. "Moved" is judged by position as well as `movementX/Y`: synthesized input, such as Electron's `sendInputEvent`
+ * and some remote-desktop pointers, reports no movement even when the pointer has gone somewhere new.
  */
+const stationaryMoves = new WeakSet<Event>();
+let lastPointer: { x: number; y: number } | undefined;
+if (typeof window !== 'undefined') {
+  const record = (event: PointerEvent) => {
+    if (event.type === 'pointermove' && lastPointer && lastPointer.x === event.clientX && lastPointer.y === event.clientY)
+      stationaryMoves.add(event);
+    lastPointer = { x: event.clientX, y: event.clientY };
+  };
+  // Capture on the window runs before React's root listener, so the trigger below sees this event's verdict.
+  window.addEventListener('pointermove', record, { capture: true, passive: true });
+  window.addEventListener('pointerdown', record, { capture: true, passive: true });
+}
+
 function TooltipTrigger({ onPointerMove, ...props }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
   return (
     <TooltipPrimitive.Trigger
       data-slot="tooltip-trigger"
       onPointerMove={(event) => {
         // Radix skips its own handler when the event is default-prevented.
-        if (event.pointerType === 'mouse' && event.movementX === 0 && event.movementY === 0) event.preventDefault();
+        if (
+          event.pointerType === 'mouse' &&
+          event.movementX === 0 &&
+          event.movementY === 0 &&
+          stationaryMoves.has(event.nativeEvent)
+        )
+          event.preventDefault();
         onPointerMove?.(event);
       }}
       {...props}
