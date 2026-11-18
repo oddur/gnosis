@@ -11,6 +11,7 @@ import {
   fileSource,
 } from '../lib/file-kinds';
 import { generatedAttribute } from '../lib/git-attributes';
+import { perfBudget } from './perf-budget';
 import { createFileFilterState } from '../src/file-filter-state';
 import { createFileClassificationService } from '../src/file-classification-service';
 import type { PrChanges } from '../lib/pr-changes';
@@ -348,4 +349,17 @@ void test('file classification edits a private copy', async () => {
   assert.deepEqual(saved.headers, {}, 'The shared value is unchanged');
   assert.equal((await service.read(client, snapshot))['src/a.ts'].generated.value, true);
   assert.equal(cache.get(key, valid)?.value.headers['src/a.ts'], true, 'The update is saved as a new value');
+});
+
+void test('.gitattributes rules compile once per PR, so a large file against many paths stays fast', () => {
+  // A repository with many LFS and generated patterns, as in the user's main-process stalls (2026-11-18).
+  const lines = Array.from({ length: 400 }, (_, i) => `*.[eE][xX][tT]${i} filter=lfs diff=lfs merge=lfs -text`);
+  lines.push('generated/** linguist-generated', 'src/**/*.pb.go linguist-generated=true', 'docs/*.md -linguist-generated');
+  const files = [{ path: '.gitattributes', text: lines.join('\n') }];
+  const paths = Array.from({ length: 3000 }, (_, i) => (i % 3 === 0 ? `generated/a/b${i}.ts` : i % 3 === 1 ? `src/x/y${i}.pb.go` : `docs/z${i}.md`));
+  const started = performance.now();
+  const values = paths.map((path) => generatedAttribute(path, files)?.value);
+  const elapsed = performance.now() - started;
+  assert.deepEqual([values[0], values[1], values[2]], [true, true, false]);
+  assert.ok(elapsed < perfBudget(300), `3,000 paths against 403 rules took ${Math.round(elapsed)} ms`);
 });
