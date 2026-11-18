@@ -11,7 +11,8 @@ import type { QueueSignals } from '../lib/queue-signals';
 import { mergeReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 import { useStatusNow } from '../lib/status-clock';
-import { useGitHubAccess, requestGitHubSignIn } from '../lib/use-github-access';
+import { useGitHubAccess, startGitHubSignIn } from '../lib/use-github-access';
+import { useWorkflowFiles } from '../lib/use-workflow-files';
 import { GitHubScopePrompt } from './GitHubScopePrompt';
 
 export function PrReadiness({
@@ -36,9 +37,11 @@ export function PrReadiness({
   // The same clock as the page header, so both agree on whether this status is out of date.
   const now = useStatusNow();
   const access = useGitHubAccess();
-  const readiness = mergeReadiness(member, currentSignals, now, access);
-  // GitHub reports BLOCKED though everything Gnosis can see is met, and the sign-in lacks read:org.
-  const scopePrompt = readiness.signIn && <GitHubScopePrompt onSignIn={requestGitHubSignIn} />;
+  const workflowFiles = useWorkflowFiles(member);
+  const readiness = mergeReadiness(member, currentSignals, now, access, workflowFiles);
+  // GitHub reports BLOCKED though everything Gnosis can see is met, and the sign-in lacks read:org or workflow.
+  // "Sign in again" starts sign-in at once, as it does in the GitHub account dialog.
+  const scopePrompt = readiness.signIn && <GitHubScopePrompt onSignIn={startGitHubSignIn} />;
   const rollup = currentSignals?.headSha === member.headSha ? currentSignals.checks : undefined;
   const checks = rollup
     ? !rollup.total

@@ -4,11 +4,14 @@ import { Copy, ExternalLink, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
-import { lacksOrgRead } from '../lib/github-access';
+import { missingScopes, parseDismissedScopes, serializeDismissedScopes, shouldAskScopes } from '../lib/github-access';
 import { refreshGitHubAccess, useGitHubAccess } from '../lib/use-github-access';
 import { GitHubScopePrompt } from './GitHubScopePrompt';
 
-/** "Not now" on the read:org prompt, per account. The prompt in the merge section still appears when it matters. */
+/**
+ * "Not now" on the scope prompt, per account: the scopes missing when it was dismissed. The prompt returns once when
+ * another scope goes missing. The prompt in the merge section still appears when it matters.
+ */
 const scopePromptKey = (login: string) => `gnosis:github-scope-prompt-dismissed:${login}`;
 
 function message(error: unknown) {
@@ -27,6 +30,8 @@ export function GitHubAuthDialog({
   connectionRequired = false,
   login,
   prUrl,
+  startSignIn = false,
+  onSignInStarted,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -36,6 +41,9 @@ export function GitHubAuthDialog({
   connectionRequired?: boolean;
   login?: string | null;
   prUrl?: string;
+  /** Begin sign-in as soon as the options load: "Sign in again" outside the dialog. */
+  startSignIn?: boolean;
+  onSignInStarted?: () => void;
 }) {
   const [web, setWeb] = useState<boolean>();
   const [method, setMethod] = useState<'web' | 'device' | 'token'>('web');
@@ -52,17 +60,20 @@ export function GitHubAuthDialog({
   const locked = phase === 'saving' || phase === 'signing-out' || phase === 'local';
   const busy = phase === 'starting' || locked;
   const access = useGitHubAccess();
-  const [scopeDismissed, setScopeDismissed] = useState(false);
+  const [scopeDismissed, setScopeDismissed] = useState<string[]>([]);
   useEffect(() => {
     if (!open || !login) return;
     try {
-      setScopeDismissed(localStorage.getItem(scopePromptKey(login)) === '1');
+      setScopeDismissed(parseDismissedScopes(localStorage.getItem(scopePromptKey(login))));
     } catch {
-      setScopeDismissed(false);
+      setScopeDismissed([]);
     }
   }, [open, login]);
-  // An older sign-in asked only for `repo`. Signing in again asks for `read:org` too; the current token keeps working.
-  const askScopes = !!login && access?.login === login && lacksOrgRead(access.scopes) && !scopeDismissed;
+  // An older sign-in may lack `read:org` or `workflow`. Signing in again asks for both; the current token keeps working.
+  const missing = !!login && access?.login === login ? missingScopes(access.scopes) : [];
+  const askScopes = shouldAskScopes(missing, scopeDismissed);
+  const autoStart = useRef(startSignIn);
+  autoStart.current = startSignIn;
 
   const cancel = () => {
     attempt.current++;
@@ -143,7 +154,10 @@ export function GitHubAuthDialog({
       .then((options) => {
         if (id !== attempt.current) return;
         setWeb(options.web);
-        if (!options.web && !login) void device();
+        if (autoStart.current) {
+          onSignInStarted?.();
+          void (options.web ? browser() : device());
+        } else if (!options.web && !login) void device();
       })
       .catch((e: unknown) => {
         if (id === attempt.current) {
@@ -191,11 +205,11 @@ export function GitHubAuthDialog({
             onSignIn={() => void (web ? browser() : device())}
             onDismiss={() => {
               try {
-                if (login) localStorage.setItem(scopePromptKey(login), '1');
+                if (login) localStorage.setItem(scopePromptKey(login), serializeDismissedScopes(missing));
               } catch {
                 /* Storage unavailable: hide it for this opening only. */
               }
-              setScopeDismissed(true);
+              setScopeDismissed(missing);
             }}
           />
         )}

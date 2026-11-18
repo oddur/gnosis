@@ -117,7 +117,7 @@ import {
   AlarmClock,
 } from 'lucide-react';
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
-import { GITHUB_SIGN_IN_EVENT } from '../../lib/use-github-access';
+import { GITHUB_SIGN_IN_EVENT, type GitHubSignInRequest } from '../../lib/use-github-access';
 import { GettingStarted } from '../../components/GettingStarted';
 import { TitlebarScope, WorkspaceMenu } from '../../components/AppTitlebar';
 import type { SettingsSection } from '../../components/SettingsDialog';
@@ -460,9 +460,14 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
   const [showGettingStarted, setShowGettingStarted] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
-  // "Sign in again" in the merge section opens the GitHub account dialog, which asks for the new scopes.
+  // "Sign in again" in the merge section opens the GitHub account dialog and starts sign-in there, asking for the new
+  // scopes. The dialog clears `authStart` once it has begun.
+  const [authStart, setAuthStart] = useState(false);
   useEffect(() => {
-    const open = () => setAuthOpen(true);
+    const open = (event: Event) => {
+      if ((event as CustomEvent<GitHubSignInRequest | undefined>).detail?.start) setAuthStart(true);
+      setAuthOpen(true);
+    };
     window.addEventListener(GITHUB_SIGN_IN_EVENT, open);
     return () => window.removeEventListener(GITHUB_SIGN_IN_EVENT, open);
   }, []);
@@ -2776,7 +2781,12 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
       <GitHubAuthDialog
         open={authOpen || connectionRequired}
         connectionRequired={connectionRequired}
-        onOpenChange={setAuthOpen}
+        onOpenChange={(next) => {
+          if (!next) setAuthStart(false);
+          setAuthOpen(next);
+        }}
+        startSignIn={authStart}
+        onSignInStarted={() => setAuthStart(false)}
         onConnected={syncAuth}
         onSignedOut={async () => {
           onAccount?.('local');

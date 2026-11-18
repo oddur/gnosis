@@ -16,6 +16,7 @@ import {
   draftActionBlockedReason,
   branchUpdateBlockedReason,
   singleMergePlan,
+  workflowPermissionReason,
   mergeMethodLabels,
   type MergeMethod,
   type PrActionKind,
@@ -27,6 +28,9 @@ import type { ReviewMember } from '../lib/workbench';
 import { applyToActionState, prActionChange, type OptimisticChange } from '../lib/optimistic-patches';
 import { optimisticWrite } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
+import { useGitHubAccess } from '../lib/use-github-access';
+import { useWorkflowFiles } from '../lib/use-workflow-files';
+import { lacksWorkflow } from '../lib/github-access';
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const revision = (m: PrActionMember) => ({
@@ -144,7 +148,15 @@ export function PrActions({
   }
   const plan = dialog?.plan;
   const nativeCount = state?.stack?.members.filter((m) => m.state !== 'MERGED').findIndex((m) => m.url === state.url);
-  const blocked = state ? mergeBlockedReason(state) : 'Checking GitHub permissions…';
+  // A PR that changes workflow files needs a sign-in with `workflow` to merge or rebase; GitHub refuses otherwise.
+  const access = useGitHubAccess();
+  const workflowFiles = useWorkflowFiles(member);
+  const noWorkflow = lacksWorkflow(access?.scopes);
+  const workflowReason = (target: PrActionState, action: 'merge' | 'update-rebase') =>
+    workflowPermissionReason(target, action, noWorkflow, workflowFiles);
+  const blocked = state
+    ? (mergeBlockedReason(state) ?? (stackMembers ? undefined : workflowReason(state, 'merge')))
+    : 'Checking GitHub permissions…';
   const mergeLabel =
     state?.stack && nativeCount !== undefined && nativeCount > 0
       ? `Merge through #${member.number}…`
@@ -152,6 +164,7 @@ export function PrActions({
         ? 'Add to merge queue…'
         : 'Merge PR…';
   const updateBlocked = state ? branchUpdateBlockedReason(state) : 'Checking GitHub permissions…';
+  const rebaseBlocked = updateBlocked ?? (state ? workflowReason(state, 'update-rebase') : undefined);
   const active = state?.state === 'OPEN' && !state.archived;
   const kind = dialog?.kind;
   const members = plan ? (kind === 'merge' ? plan.members : [plan.target]) : [];
@@ -177,8 +190,10 @@ export function PrActions({
                 : 'Update branch with merge commit';
   const actionBlock = plan
     ? kind === 'merge'
-      ? plan.blockedReason
-      : kind === 'enable-auto'
+      ? (plan.blockedReason ?? (members.length === 1 ? workflowReason(plan.target, 'merge') : undefined))
+      : kind === 'update-rebase'
+        ? (branchUpdateBlockedReason(plan.target) ?? workflowReason(plan.target, 'update-rebase'))
+        : kind === 'enable-auto'
         ? plan.target.stack
           ? 'GitHub does not support auto-merge for native stacked PRs.'
           : !plan.target.canEnableAuto
@@ -417,8 +432,8 @@ export function PrActions({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={loading || busy || !!updateBlocked}
-                  title={updateBlocked}
+                  disabled={loading || busy || !!rebaseBlocked}
+                  title={rebaseBlocked}
                   onClick={() => void open('update-rebase')}
                 >
                   <GitBranch size={14} />
@@ -447,11 +462,15 @@ export function PrActions({
                         Merge {state?.baseBranch ?? member.baseBranch} into {state?.headBranch ?? member.headBranch}.
                       </span>
                     </DropdownMenu.Item>
-                    <DropdownMenu.Item onSelect={() => void open('update-rebase')}>
+                    <DropdownMenu.Item
+                      disabled={!!rebaseBlocked}
+                      title={rebaseBlocked}
+                      onSelect={() => void open('update-rebase')}
+                    >
                       <strong>Update with rebase</strong>
                       <span>
-                        Replay this branch’s commits on {state?.baseBranch ?? member.baseBranch}. Commit history
-                        changes.
+                        {rebaseBlocked ??
+                          `Replay this branch’s commits on ${state?.baseBranch ?? member.baseBranch}. Commit history changes.`}
                       </span>
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
@@ -669,7 +688,7 @@ export function PrActions({
                       merging is blocked, the GitHub stack remains.
                     </p>
                   )}
-                  {kind === 'merge' && members.length === 1 && blockedButMet(plan.target) && (
+                  {kind === 'merge' && members.length === 1 && blockedButMet(plan.target) && !actionBlock && (
                     <p className="pr-action-note" data-github-blocked>
                       GitHub reports this PR as blocked to Gnosis’s sign-in, though every requirement Gnosis can see is
                       met. If GitHub refuses the merge, its reason shows here and nothing merges.

@@ -41,6 +41,15 @@ export function useGitHubAccess(): GitHubAccess | undefined {
   return useSyncExternalStore(subscribe, () => access, () => undefined);
 }
 
-/** Open the GitHub account dialog, where "Sign in again" asks for the new scopes. HomePage listens. */
+/**
+ * Open the GitHub account dialog. With `start`, the dialog begins sign-in at once (browser or code, as offered), which
+ * asks for the new scopes. HomePage listens.
+ */
 export const GITHUB_SIGN_IN_EVENT = 'gnosis-github-sign-in';
-export const requestGitHubSignIn = () => window.dispatchEvent(new CustomEvent(GITHUB_SIGN_IN_EVENT));
+export interface GitHubSignInRequest {
+  start?: boolean;
+}
+export const requestGitHubSignIn = (detail: GitHubSignInRequest = {}) =>
+  window.dispatchEvent(new CustomEvent<GitHubSignInRequest>(GITHUB_SIGN_IN_EVENT, { detail }));
+/** "Sign in again" outside the dialog: one click starts the same sign-in the dialog's button does. */
+export const startGitHubSignIn = () => requestGitHubSignIn({ start: true });

@@ -100,6 +100,27 @@ export function blockedButMet(state: Pick<PrActionState, 'mergeable' | 'mergeSta
   );
 }
 
+export const WORKFLOW_MERGE_REASON = 'Needs the workflow permission. Sign in again, or merge on GitHub.';
+export const WORKFLOW_REBASE_REASON = 'Needs the workflow permission. Sign in again, or update the branch on GitHub.';
+
+/**
+ * GitHub refuses a token without `workflow` any write that creates commits changing `.github/workflows/`. Merging this
+ * PR does, and so does rebasing its branch, which rewrites its commits. A merge-commit update only writes the base
+ * branch's changes, which Gnosis does not list, so it stays available and GitHub's refusal shows if it comes.
+ * `lacksWorkflow` is from `missingScopes`; `workflowFiles` from `changedWorkflowFiles`, undefined while unknown.
+ */
+export function workflowPermissionReason(
+  state: Pick<PrActionState, 'mergeable' | 'mergeState' | 'reviewDecision' | 'checkState' | 'stack'>,
+  kind: 'merge' | 'update-rebase',
+  lacksWorkflow: boolean,
+  workflowFiles: readonly string[] | undefined
+): string | undefined {
+  if (!lacksWorkflow || !workflowFiles?.length) return undefined;
+  if (kind === 'update-rebase') return WORKFLOW_REBASE_REASON;
+  // Merging: GitHub's BLOCKED answer, with every visible requirement met, is the workflow scope's doing.
+  if (!state.stack && blockedButMet(state)) return WORKFLOW_MERGE_REASON;
+}
+
 export function mergeBlockedReason(state: PrActionState): string | undefined {
   if (state.archived) return 'This repository is archived.';
   if (state.state !== 'OPEN') return state.state === 'MERGED' ? 'This PR is already merged.' : 'This PR is closed.';

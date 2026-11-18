@@ -9,7 +9,7 @@ import { createPrActionsService, PrMergeFailure } from '../src/pr-actions-servic
 import { createPrMergeMonitor } from '../src/pr-merge-monitor';
 import { createActivityService } from '../src/activity-service';
 import { GitHubBackoffError } from '../lib/github-client';
-import { singleMergePlan, type PrActionRequest } from '../lib/pr-actions';
+import { singleMergePlan, workflowPermissionReason, type PrActionRequest } from '../lib/pr-actions';
 const url = (n: number) => `https://github.com/o/r/pull/${n}`;
 function fixture(native = false) {
   let nativeStack = native,
@@ -218,6 +218,25 @@ void test('BLOCKED with every visible requirement met keeps Merge available, and
     blocked(g, decision, rollup);
     assert.match(singleMergePlan(await g.service.read(g.client, url(1), true)).blockedReason ?? '', /not confirmed/, `${decision} ${rollup}`);
   }
+});
+void test('a PR that changes workflow files: Merge and rebase need the workflow permission, merge-commit updates do not', () => {
+  const met = { mergeable: 'MERGEABLE', mergeState: 'BLOCKED', reviewDecision: null, checkState: 'SUCCESS', stack: null };
+  const files = ['.github/workflows/seed_job_seed_api.yaml'];
+  assert.equal(
+    workflowPermissionReason(met, 'merge', true, files),
+    'Needs the workflow permission. Sign in again, or merge on GitHub.'
+  );
+  assert.equal(
+    workflowPermissionReason(met, 'update-rebase', true, files),
+    'Needs the workflow permission. Sign in again, or update the branch on GitHub.'
+  );
+  assert.equal(workflowPermissionReason(met, 'merge', false, files), undefined, 'With workflow: GitHub decides');
+  assert.equal(workflowPermissionReason(met, 'merge', true, []), undefined, 'No workflow files');
+  assert.equal(workflowPermissionReason(met, 'merge', true, undefined), undefined, 'Paths unknown: GitHub decides');
+  assert.equal(workflowPermissionReason(met, 'update-rebase', true, undefined), undefined);
+  // GitHub answered CLEAN: nothing to explain. A visible blocker keeps mergeBlockedReason's answer.
+  assert.equal(workflowPermissionReason({ ...met, mergeState: 'CLEAN' }, 'merge', true, files), undefined);
+  assert.equal(workflowPermissionReason({ ...met, reviewDecision: 'REVIEW_REQUIRED' }, 'merge', true, files), undefined);
 });
 void test('an unconfirmed merge response never reports success or retries the write', async () => {
   for (const response of [{}, { mergePullRequest: null }, { mergePullRequest: { pullRequest: { merged: false } } }]) {

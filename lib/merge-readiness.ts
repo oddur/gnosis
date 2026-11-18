@@ -2,7 +2,7 @@ import type { PrStatus } from './types';
 import { QUEUE_SIGNALS_TTL, type QueueSignals } from './queue-signals';
 import type { ReviewMember, ReviewSubject } from './workbench';
 import { hasMergeConflicts } from './merge-conflicts';
-import { lacksOrgRead } from './github-access';
+import { lacksOrgRead, lacksWorkflow } from './github-access';
 
 export interface MergeReadiness {
   label: string;
@@ -17,8 +17,10 @@ export interface MergeReadiness {
    * token, so its website can show the PR ready while Gnosis's sign-in reads BLOCKED.
    */
   mismatch?: boolean;
-  /** The sign-in lacks `read:org`, which GitHub may need to evaluate these rules. Offer "Sign in again". */
+  /** The sign-in lacks `read:org` or `workflow`, which GitHub may need for this merge. Offer "Sign in again". */
   signIn?: boolean;
+  /** The PR changes `.github/workflows/` and the sign-in lacks `workflow`: GitHub refuses the merge. */
+  needsWorkflow?: boolean;
 }
 
 /** Wording for a GitHub-blocked PR that meets every requirement Gnosis can see. */
@@ -27,6 +29,12 @@ export const GITHUB_BLOCKED_DETAIL =
   'Every requirement Gnosis can see is met. GitHub works out merge rules for the account and access asking, so check the PR on GitHub.';
 export const ORG_SCOPE_DETAIL =
   'Gnosis’s sign-in can’t read your organization’s settings, which GitHub may need for this. Sign in again to allow it.';
+export const WORKFLOW_LABEL = 'Needs the workflow permission';
+export const WORKFLOW_DETAIL =
+  'This PR changes GitHub Actions workflows (.github/workflows/…). GitHub only lets sign-ins with the workflow permission merge it.';
+/** The sign-in lacks `workflow` and the PR's files are not loaded yet, so Gnosis can't tell whether it matters. */
+export const WORKFLOW_SCOPE_DETAIL =
+  'Gnosis’s sign-in can’t update workflow files. If this PR changes GitHub Actions workflows, GitHub needs that permission to merge it. Sign in again to allow it.';
 /** GitHub allows the merge in these states, so the branch rules do not require an up-to-date branch. */
 const MERGE_ALLOWED = ['CLEAN', 'UNSTABLE', 'HAS_HOOKS'];
 
@@ -36,7 +44,12 @@ export function mergeReadiness(
   signals?: QueueSignals,
   now = Date.now(),
   /** The scopes GitHub reports for Gnosis's sign-in, to explain a BLOCKED answer. See `GitHubAccess`. */
-  access?: { scopes?: readonly string[] | null }
+  access?: { scopes?: readonly string[] | null },
+  /**
+   * This revision's changed paths under `.github/workflows/`, from the Changes inventory. Undefined while the paths
+   * are not loaded (or GitHub capped the list before any matched).
+   */
+  workflowFiles?: readonly string[]
 ): MergeReadiness {
   const snapshot = signals && signals.url === member.url && signals.headSha === member.headSha ? signals : undefined;
   const status = snapshot?.readiness;
@@ -47,7 +60,7 @@ export function mergeReadiness(
     tone: MergeReadiness['tone'],
     details: string[],
     ready = false,
-    extra: Pick<MergeReadiness, 'mismatch' | 'signIn'> = {}
+    extra: Pick<MergeReadiness, 'mismatch' | 'signIn' | 'needsWorkflow'> = {}
   ): MergeReadiness => ({
     ...extra,
     label: stale && ready ? 'Readiness out of date' : label,
@@ -116,11 +129,24 @@ export function mergeReadiness(
     status.mergeable === 'MERGEABLE' &&
     (snapshot.checks.state === 'success' || snapshot.checks.state === 'neutral')
   ) {
-    const signIn = lacksOrgRead(access?.scopes);
-    return result(GITHUB_BLOCKED_LABEL, 'warning', [...details, GITHUB_BLOCKED_DETAIL, ...(signIn ? [ORG_SCOPE_DETAIL] : [])], false, {
-      mismatch: true,
-      signIn,
-    });
+    const noWorkflow = lacksWorkflow(access?.scopes);
+    // GitHub reports BLOCKED to a token without `workflow` when merging would update workflow files.
+    if (noWorkflow && workflowFiles?.length)
+      return result(WORKFLOW_LABEL, 'warning', [...details, WORKFLOW_DETAIL], false, {
+        mismatch: true,
+        signIn: true,
+        needsWorkflow: true,
+      });
+    const noOrg = lacksOrgRead(access?.scopes);
+    // Unknown paths: say what the missing scope would mean. Known paths with no workflow files: it doesn't matter.
+    const workflowNote = noWorkflow && workflowFiles === undefined;
+    return result(
+      GITHUB_BLOCKED_LABEL,
+      'warning',
+      [...details, GITHUB_BLOCKED_DETAIL, ...(noOrg ? [ORG_SCOPE_DETAIL] : []), ...(workflowNote ? [WORKFLOW_SCOPE_DETAIL] : [])],
+      false,
+      { mismatch: true, signIn: noOrg || workflowNote }
+    );
   }
   if (status.mergeState === 'BLOCKED')
     return result('Merge blocked', 'danger', [

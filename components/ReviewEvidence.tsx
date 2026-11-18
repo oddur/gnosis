@@ -21,6 +21,17 @@ import { timeAgo } from '../lib/utils';
 import { useStatusNow } from '../lib/status-clock';
 import { useGitHubAccess } from '../lib/use-github-access';
 import { accessLabel } from '../lib/github-access';
+import { useWorkflowFiles } from '../lib/use-workflow-files';
+
+/** "Changes workflow files: yes", when this revision's Changes inventory lists `.github/workflows/` files. */
+function WorkflowFilesLine({ member }: { member: ReviewMember }) {
+  const files = useWorkflowFiles(member);
+  return files?.length ? (
+    <li data-workflow-files title={files.join('\n')}>
+      Changes workflow files: yes
+    </li>
+  ) : null;
+}
 
 /**
  * GitHub's raw merge answer for each displayed commit, as Gnosis's sign-in receives it, and the access that sign-in
@@ -60,6 +71,7 @@ function GitHubAnswer({
             ) : (
               <li>GitHub merge state: not read for this commit yet</li>
             )}
+            <WorkflowFilesLine member={member} />
           </ul>
         );
       })}

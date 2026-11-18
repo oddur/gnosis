@@ -55,7 +55,7 @@ const onboardingScenario = new URLSearchParams(location.search).has('onboarding'
 const detectedTools = new Map<string, { installed: boolean; resolvedPath: string | null }>();
 // The scopes GitHub reports for the fixture's sign-in (`X-OAuth-Scopes`). Browser checks change them with
 // `window.setFixtureGitHubScopes`, as main's `github-access-changed` broadcast does.
-let fixtureScopes: string[] | null = ['repo', 'read:org'];
+let fixtureScopes: string[] | null = ['repo', 'read:org', 'workflow'];
 const scopeListeners = new Set<(access: { login: string | null; scopes?: string[] | null }) => void>();
 (window as unknown as { setFixtureGitHubScopes: (scopes: string[] | null) => void }).setFixtureGitHubScopes = (scopes) => {
   fixtureScopes = scopes;
@@ -603,6 +603,11 @@ const mocks = {
     const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];
     return Promise.resolve({version:1 as const,url,metadata:member,comparisonBase:member.baseSha,fetchedAt:Date.now(),files: new URLSearchParams(location.search).has('markdown-review') ? markdownFiles : new URLSearchParams(location.search).has('file-filters') ? filterFixtureFiles(url) : [
       ...(new URLSearchParams(location.search).has('diff-gaps') ? diffGapFiles : []),
+      // klanggames/seed#35392: the PR changes two GitHub Actions workflows.
+      ...(new URLSearchParams(location.search).has('workflow-files') && url.endsWith('/150') ? [
+        {path:'.github/workflows/seed_job_seed-api-portal-tests.yaml',status:'modified' as const,additions:3,deletions:1,changeId:'workflow-portal-v1'},
+        {path:'.github/workflows/seed_job_seed_api.yaml',status:'modified' as const,additions:2,deletions:2,changeId:'workflow-api-v1'},
+      ] : []),
       {path:'src/worker.ts',status:'modified' as const,additions:1,deletions:1,changeId:'worker-v1',patch:'@@ -33,7 +33,7 @@\n const value32 = 32;\n const value33 = 33;\n const value34 = 34;\n-const value35 = 35;\n+const value35 = 36;\n const value36 = 36;\n const value37 = 37;\n const value38 = 38;'},
       {path:'src/new.ts',status:'added' as const,additions:2,deletions:0,changeId:'new-v1'},
       {path:'src/old.ts',status:'deleted' as const,additions:0,deletions:2,changeId:'old-v1'},
@@ -681,13 +686,13 @@ const mocks = {
   },
   githubAuthOptions: () => Promise.resolve({ web: onboardingScenario }),
   beginGitHubSignIn: () => Promise.resolve({ id: 'fixture-auth', userCode: 'TEST-CODE', verificationUri: 'https://github.com/login/device', expiresAt: Date.now()+900000 }),
-  completeGitHubSignIn: () => { fixtureAuthenticated = true; fixtureScopes = ['repo', 'read:org']; return Promise.resolve('oddur'); },
+  completeGitHubSignIn: () => { fixtureAuthenticated = true; fixtureScopes = ['repo', 'read:org', 'workflow']; return Promise.resolve('oddur'); },
   cancelGitHubSignIn: () => Promise.resolve(),
   cancelOAuth: () => Promise.resolve(),
   signOut: () => { fixtureAuthenticated = false; return Promise.resolve(); },
   startOAuth: () => {
     fixtureAuthenticated = true;
-    fixtureScopes = ['repo', 'read:org'];
+    fixtureScopes = ['repo', 'read:org', 'workflow'];
     sessionStorage.setItem('ftue-auth', 'true');
     return Promise.resolve();
   },
