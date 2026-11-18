@@ -25,9 +25,13 @@
  * `urls` are exactly its lines' PRs.
  *
  * **Waiting on you elsewhere.** A PR waiting on you that Next up or Needs a decision lists is not in Waiting on you,
- * so the section says where it went (`waitingOnYouNote`): "All 7 are in Next up." when it is empty for that reason,
- * "2 more are in Next up." under its rows. "Nobody is waiting on you." only when nobody is. The briefing's reviews
- * are the PRs in all three places.
+ * so the section points at where it went, by name and as a link (`waitingOnYouNote`): "#377 and #37286’s stack (6 PRs)
+ * are in Next up." "Nobody is waiting on you." only when nobody is.
+ *
+ * **Briefing** (`morningBriefing`): counted from the sections, never apart from them, and each number links to the
+ * rows it counts. Reviews and re-reviews apart, with their stacks spelled out ("7 re-reviews (6 in one stack)");
+ * approved merges and merges without review are Next up's rows plus its quiet line (`readyMerges`); fixes by their
+ * first reason, as the You group counts them; decisions apart.
  *
  * **Next up** (`nextUp`), at most `NEXT_LIMIT` items, whenever there is any work in Waiting on you, Fix or Merge:
  * - Candidates: ready merges (approved, or nobody reviewed and the branch rules require no review), replies, change
@@ -170,8 +174,32 @@ export interface NextItem {
 }
 export interface NextUp {
   items: NextItem[];
-  /** Ready merges nobody reviewed that are not listed, and whose stack has no row in Next up. */
-  moreUnreviewed: number;
+  /**
+   * Ready merges nobody reviewed that no row lists: the quiet line's number. Every ready merge is in exactly one of
+   * the rows, this list and `moreApproved` (`readyMerges`), so the briefing counts them from here.
+   */
+  unreviewed: string[];
+  /** Approved merges no row lists: Next up is full, the stack's review comes first, or the PR has no checks. */
+  moreApproved: string[];
+}
+/**
+ * Every ready merge on the page, by its PR: Merge lane rows that are ready, not stacked on an open base, not leaving
+ * the page, and not failing or running checks (those are fixes, or wait on CI). `approved`: approved and passing;
+ * `other`: approved without passing checks (none, or not known yet).
+ */
+export function readyMerges(model: Pick<OverviewModel, 'lanes'>, signals: MorningInput['signals'], hidden: ReadonlySet<string> = new Set()): { approved: string[]; unreviewed: string[]; other: string[] } {
+  const result = { approved: [] as string[], unreviewed: [] as string[], other: [] as string[] };
+  for (const row of lanes(model, 'merge')?.rows ?? []) {
+    const member = row.merge?.member ?? row.focus;
+    if (!row.merge?.ready || row.merge.notes.some((note) => note.kind === 'base-open') || hidden.has(member.url)) continue;
+    const checks = current({ signals }, member)?.checks.state;
+    if (checks === 'failure' || checks === 'pending') continue;
+    const review = row.merge.notes[0]?.kind;
+    if (review === 'approved' && checks === 'success') result.approved.push(member.url);
+    else if (review === 'no-review') result.unreviewed.push(member.url);
+    else result.other.push(member.url);
+  }
+  return result;
 }
 /** The stack (or PR) an item belongs to: Next up gives each one row. */
 const stackKey = (item: Pick<NextItem, 'row'>) => item.row.item.subject.id;
@@ -395,18 +423,27 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     items.push(oldest);
     items.sort(order);
   }
-  const shown = new Set(items.map(stackKey));
-  const moreUnreviewed = (lanes(model, 'merge')?.rows ?? []).filter(
-    (row) =>
-      row.merge?.notes[0]?.kind === 'no-review' && !row.merge.notes.some((note) => note.kind === 'base-open') &&
-      !shown.has(row.item.subject.id) && !reviewing.has(row.item.subject.id) && !hidden.has(row.merge.member.url)
-  ).length;
-  return { items, moreUnreviewed };
+  // Every ready merge no row lists is on the quiet line, so the briefing's merge numbers are the page's.
+  const listed = new Set(items.filter((item) => item.kind === 'merge').flatMap((item) => item.urls));
+  const ready = readyMerges(model, input.signals, hidden);
+  return {
+    items,
+    unreviewed: ready.unreviewed.filter((url) => !listed.has(url)),
+    moreApproved: [...ready.approved, ...ready.other].filter((url) => !listed.has(url)),
+  };
 }
-/** The quiet line under Next up: "2 more ready, not reviewed" when some are listed, else "6 ready to merge without review". */
-export function nextMoreLine(next: NextUp): string | undefined {
-  if (next.moreUnreviewed <= 0) return undefined;
-  return next.items.some((item) => item.unreviewed) ? `${next.moreUnreviewed} more ready, not reviewed` : `${next.moreUnreviewed} ready to merge without review`;
+/**
+ * The quiet line under Next up: the ready merges no row lists. "10 ready to merge without review", "2 more ready, not
+ * reviewed" when rows list some, "3 more approved and ready to merge".
+ */
+export function nextMoreLine(next: Pick<NextUp, 'unreviewed' | 'moreApproved'> & { items: readonly Pick<NextItem, 'unreviewed'>[] }): string | undefined {
+  const unreviewed = next.unreviewed.length;
+  const approved = next.moreApproved.length;
+  const words = [
+    unreviewed ? (next.items.some((item) => item.unreviewed) ? `${unreviewed} more ready, not reviewed` : `${unreviewed} ready to merge without review`) : '',
+    approved ? `${approved} more approved and ready to merge` : '',
+  ].filter(Boolean);
+  return words.length ? words.join(' · ') : undefined;
 }
 /** Next up's heading: the rows it shows. A row for several PRs says so on the row; the quiet line keeps its own number. */
 export const nextCount = (items: readonly unknown[]) => items.length;
@@ -841,28 +878,178 @@ export interface MorningPage {
   decide: DecisionItem[];
   you: PersonGroup[];
   others: PersonGroup[];
-  /** PRs waiting on you that an earlier section lists instead: Next up, Needs a decision. */
-  youElsewhere: { next: number; decide: number };
+  /** PRs waiting on you that an earlier section lists instead: the Next up rows that hold them, and Needs a decision's. */
+  youElsewhere: YouElsewhere;
   /** The tab count (`morningCount`). */
   count: number;
+  /** The sentence under the title, counted from these sections (`morningBriefing`). */
+  briefing: Briefing;
+}
+export interface YouElsewhere {
+  /** Next up's rows that hold PRs waiting on you: "#377", "#37286’s stack (6 PRs)". */
+  next: { label: string; urls: string[] }[];
+  /** PRs waiting on you that Needs a decision lists. */
+  decide: string[];
+}
+
+/** A link in a sentence: it scrolls to and focuses the rows of `place` that list `urls`. */
+export interface PageLink {
+  text: string;
+  urls: string[];
+  place: AlsoPlace;
+}
+/**
+ * What Waiting on you says about the PRs waiting on you that it does not list: where they are, by name, as links.
+ * "#377 and #37286’s stack (6 PRs) are in Next up.", "#311 is in Next up, and 2 are in Needs a decision.", and
+ * "Nobody is waiting on you." when nobody is. Empty when the section lists them all.
+ */
+export function waitingOnYouNote(listed: number, elsewhere: YouElsewhere): { parts: (string | PageLink)[]; text: string } {
+  const parts: (string | PageLink)[] = [];
+  const names = elsewhere.next.map((entry) => entry.label);
+  const decide = elsewhere.decide.length;
+  if (!names.length && !decide) {
+    const text = listed ? '' : 'Nobody is waiting on you.';
+    return { parts: text ? [text] : [], text };
+  }
+  if (names.length) {
+    const shown = names.length > 3 ? [...names.slice(0, 2), `${names.length - 2} more`] : names;
+    const list = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0];
+    const many = names.length > 1 || elsewhere.next[0].urls.length > 1;
+    parts.push({ text: `${list} ${many ? 'are' : 'is'} in Next up`, urls: elsewhere.next.flatMap((entry) => entry.urls), place: 'next' });
+  }
+  if (decide) {
+    if (parts.length) parts.push(', and ');
+    parts.push({ text: `${decide} ${decide === 1 ? 'is' : 'are'} in Needs a decision`, urls: elsewhere.decide, place: 'decide' });
+  }
+  parts.push('.');
+  return { parts, text: parts.map((part) => (typeof part === 'string' ? part : part.text)).join('') };
+}
+
+/** What a Next up row is called where another line points at it: "#377", "STACK: EPIC (4 PRs)", "#37286’s stack (6 PRs)". */
+export function nextItemName(item: Pick<NextItem, 'member' | 'urls' | 'row'>): string {
+  if (item.urls.length <= 1) return `#${item.member.number}`;
+  const name = item.row.item.subject.name;
+  const short = name && name.length <= 24 && !item.row.item.subject.members.some((member) => member.title === name);
+  return short ? `${name} (${prs(item.urls.length)})` : `#${item.member.number}’s stack (${prs(item.urls.length)})`;
+}
+
+/** A number in the briefing: the PRs it counts, which the page lists in rows (or on the quiet line under Next up). */
+export type BriefingKey = 'replies' | 'reviews' | 'rereviews' | 'approved' | 'unreviewed' | 'failing' | 'conflicts' | 'rebase' | 'decide' | 'waiting';
+export interface BriefingCount {
+  key: BriefingKey;
+  /** The link's words: "7 re-reviews", "13", "your reply". */
+  text: string;
+  count: number;
+  urls: string[];
+  /** Merges: the quiet line under Next up lists the ones no row lists. */
+  line?: boolean;
+}
+export interface Briefing {
+  /** Words and links, in order. */
+  parts: (string | BriefingCount)[];
+  text: string;
+  counts: BriefingCount[];
 }
 
 /**
- * What Waiting on you says about the PRs waiting on you that it does not list (`MorningPage.youElsewhere`).
- * `empty`: the text when it lists none. `more`: the quiet line under its rows when it lists some.
+ * The briefing. Every number is counted from the sections below it, never apart from them, and links to the rows it
+ * counts. Each PR counts once, under its section's reason.
+ * - Who is blocked on you: replies and change requests on your PRs (at most two people named), then reviews and
+ *   re-reviews, each saying how many sit in stacks: "7 re-reviews (6 in one stack) are waiting on you."
+ * - Your PRs: approved merges (Next up's rows, and the quiet line), merges without review (the quiet line), then fixes
+ *   by their first reason, as the You group counts them: failing checks, conflicts, rebasing. A fix Needs a decision
+ *   lists is counted there instead.
+ * - Decisions: "7 PRs need a decision."
+ * - With none of these: "Nothing needs you right now.", and how many of your PRs wait on others.
  */
-export function waitingOnYouNote(listed: number, elsewhere: MorningPage['youElsewhere']): { empty: string; more?: string } {
-  const { next, decide } = elsewhere;
-  const total = next + decide;
-  const is = (n: number) => (n === 1 ? 'is' : 'are');
-  const where = next && decide ? `${next} in Next up and ${decide} in Needs a decision` : next ? 'in Next up' : 'in Needs a decision';
-  if (!total) return { empty: 'Nobody is waiting on you.' };
-  if (!listed) {
-    const empty = next && decide ? `${total} ${is(total)} waiting on you: ${where}.` : total === 1 ? `The one PR waiting on you is ${where}.` : `All ${total} are ${where}.`;
-    return { empty };
+export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, page: Pick<MorningPage, 'next' | 'decide' | 'others'>): Briefing {
+  const hidden = input.hidden ?? new Set<string>();
+  const decided = new Set(page.decide.map((item) => item.member.url));
+  const open = (rows: readonly OverviewRow[]) =>
+    rows.map((row) => ({ row, urls: row.entries.map((entry) => entry.member.url).filter((url) => !hidden.has(url)) })).filter(({ urls }) => urls.length);
+  const counts: BriefingCount[] = [];
+  const count = (key: BriefingKey, urls: readonly string[], text: (n: number) => string, extra: Partial<BriefingCount> = {}): BriefingCount | undefined => {
+    const all = unique(urls);
+    if (!all.length) return undefined;
+    const value: BriefingCount = { key, text: text(all.length), count: all.length, urls: all, ...extra };
+    counts.push(value);
+    return value;
+  };
+  type Clause = (string | BriefingCount)[];
+  const parts: (string | BriefingCount)[] = [];
+  const sentence = (clauses: Clause[]) => {
+    if (!clauses.length) return;
+    if (parts.length) parts.push(' ');
+    clauses.forEach((clause, i) => {
+      if (i) parts.push(i < clauses.length - 1 ? ', ' : clauses.length > 2 ? ', and ' : ' and ');
+      parts.push(...clause);
+    });
+    parts.push('.');
+  };
+
+  // Who is blocked on you.
+  const blocked: Clause[] = [];
+  const answer = open(lanes(input.model, 'answer')?.rows ?? []);
+  const people = unique(answer.map(({ row }) => row.person).filter((person): person is string => !!person));
+  const replies = count('replies', answer.flatMap(({ urls }) => urls), (n) => (n === 1 && people.length ? 'your reply' : prs(n)));
+  if (replies) {
+    const who = people.length > 2 ? `${people[0]}, ${people[1]} and ${plural(people.length - 2, 'other', 'others')}` : people.join(' and ');
+    if (!people.length) blocked.push([replies, ` ${replies.count === 1 ? 'is' : 'are'} waiting on your reply`]);
+    else if (replies.count === 1) blocked.push([`${who} is waiting on `, replies]);
+    else blocked.push([`${who} ${people.length > 1 ? 'are' : 'is'} waiting on your reply on `, replies]);
   }
-  return { empty: '', more: next && decide ? `${total} more: ${where}.` : `${total} more ${is(total)} ${where}.` };
+  const review = open(lanes(input.model, 'review')?.rows ?? []);
+  const reviewClause: Clause = [];
+  let reviews = 0;
+  for (const kind of [
+    { key: 'reviews' as const, rows: review.filter(({ row }) => !row.reasons.includes('updated-since-review')), one: 'review', many: 'reviews' },
+    { key: 'rereviews' as const, rows: review.filter(({ row }) => row.reasons.includes('updated-since-review')), one: 're-review', many: 're-reviews' },
+  ]) {
+    const value = count(kind.key, kind.rows.flatMap(({ urls }) => urls), (n) => plural(n, kind.one, kind.many));
+    if (!value) continue;
+    reviews += value.count;
+    // Stacks are spelled out, so six PRs of one stack do not read as six separate reviews.
+    const stacked = kind.rows.filter(({ urls }) => urls.length > 1);
+    const inStacks = stacked.reduce((total, { urls }) => total + urls.length, 0);
+    const where = stacked.length === 1 ? 'one stack' : `${stacked.length} stacks`;
+    if (reviewClause.length) reviewClause.push(' and ');
+    reviewClause.push(value);
+    if (stacked.length) reviewClause.push(inStacks === value.count ? ` (${stacked.length === 1 ? 'one stack' : `in ${where}`})` : ` (${inStacks} in ${where})`);
+  }
+  if (reviewClause.length) blocked.push([...reviewClause, ` ${reviews === 1 ? 'is' : 'are'} waiting on you`]);
+  sentence(blocked);
+
+  // Your PRs: merges, then fixes by their first reason.
+  const own: Clause[] = [];
+  const listed = page.next.items.filter((item) => item.kind === 'merge');
+  const approved = count('approved', [...listed.filter((item) => !item.unreviewed).flatMap((item) => item.urls), ...page.next.moreApproved], (n) => plural(n, 'approved PR', 'approved PRs'), page.next.moreApproved.length ? { line: true } : {});
+  if (approved) own.push([approved, ' can merge']);
+  const unreviewed = count('unreviewed', [...listed.filter((item) => item.unreviewed).flatMap((item) => item.urls), ...page.next.unreviewed], (n) => (approved ? `${n} more` : prs(n)), page.next.unreviewed.length ? { line: true } : {});
+  if (unreviewed) own.push([unreviewed, ' can merge without review']);
+  const fixes = (lanes(input.model, 'fix')?.rows ?? []).flatMap((row) => row.entries).filter((entry) => !hidden.has(entry.member.url) && !decided.has(entry.member.url));
+  const fixWords: [FixReason, BriefingKey, string, string][] = [
+    ['failing', 'failing', 'has failing checks', 'have failing checks'],
+    ['conflicts', 'conflicts', 'has conflicts', 'have conflicts'],
+    ['restack', 'rebase', 'needs rebasing', 'need rebasing'],
+  ];
+  for (const [reason, key, one, many] of fixWords) {
+    // The first number of the sentence names its unit: "13 PRs have failing checks"; later ones are bare: "4 have conflicts".
+    const lead = !own.length;
+    const value = count(key, fixes.filter((entry) => fixReason(entry.reasons) === reason).map((entry) => entry.member.url), (n) => (lead ? prs(n) : `${n}`));
+    if (value) own.push([value, ` ${value.count === 1 ? one : many}`]);
+  }
+  sentence(own);
+  const decide = count('decide', page.decide.map((item) => item.member.url), (n) => prs(n));
+  if (decide) sentence([[decide, ` ${decide.count === 1 ? 'needs' : 'need'} a decision`]]);
+
+  if (!parts.length) {
+    parts.push('Nothing needs you right now.');
+    const waiting = count('waiting', page.others.flatMap((group) => group.urls), (n) => (n === 1 ? '1 of your PRs' : `${n} of your PRs`));
+    if (waiting) parts.push(' ', waiting, ` ${waiting.count === 1 ? 'is' : 'are'} waiting on others.`);
+  }
+  return { parts, text: parts.map((part) => (typeof part === 'string' ? part : part.text)).join(''), counts };
 }
+
 /** Every section, each PR in one: Next up, then Needs a decision, Waiting on you and Waiting on others. */
 export function morningPage(input: MorningInput): MorningPage {
   const hidden = input.hidden ?? new Set<string>();
@@ -876,13 +1063,16 @@ export function morningPage(input: MorningInput): MorningPage {
   const others = waitingOnOthers(input, claimed);
   // Waiting on you before decisions claim their PRs, as the tab has always counted it.
   const waiting = waitingOnYou(input, new Map([...hidden].map((url) => [url, 'hidden' as const])));
-  const youElsewhere = { next: 0, decide: 0 };
-  for (const url of waiting.flatMap((group) => group.urls)) {
-    const place = claimed.get(url);
-    if (place === 'next' || place === 'decide') youElsewhere[place]++;
-  }
+  const yours = new Set(waiting.flatMap((group) => group.urls));
+  const youElsewhere: YouElsewhere = {
+    next: next.items
+      .map((item) => ({ item, urls: item.urls.filter((url) => yours.has(url)) }))
+      .filter(({ urls }) => urls.length)
+      .map(({ item, urls }) => ({ label: nextItemName(item), urls })),
+    decide: decide.map((item) => item.member.url).filter((url) => yours.has(url)),
+  };
   const count = morningCount(next.items, waiting);
-  return { next, decide, you, others, youElsewhere, count };
+  return { next, decide, you, others, youElsewhere, count, briefing: morningBriefing(input, { next, decide, others }) };
 }
 
 // ── Writes: Nudge and Close PR ──

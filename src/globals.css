@@ -4996,6 +4996,13 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-notice { flex-shrink:0; }
 .overview-toolbar { align-items:flex-start; }
 .queue-toolbar > div:first-child > p.overview-briefing { margin-top:8px; max-width:68ch; font-size:var(--type-prose); line-height:1.55; color:var(--foreground); white-space:normal; overflow:visible; text-wrap:balance; }
+/* A briefing number, and Waiting on you's pointer: inline text links to the rows they count. */
+.overview-count-link { display:inline; padding:0; font:inherit; color:inherit; text-align:inherit; text-decoration:underline; text-decoration-color:color-mix(in srgb, currentColor 40%, transparent); text-underline-offset:3px; text-decoration-thickness:1px; border-radius:2px; cursor:pointer; }
+.overview-count-link:hover { text-decoration-color:currentColor; }
+.overview-count-link:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.overview-count-link svg { display:inline; margin-left:2px; vertical-align:-1px; }
+/* The rows a link counts, marked for a moment after it is followed. */
+.morning-row[data-overview-highlight], .morning-more-quiet[data-overview-highlight] { background:var(--accent); transition:background-color 600ms ease-out; }
 .overview-freshness-group { display:flex; align-items:center; gap:8px; margin-top:1px; }
 .overview-unchecked { font-size:var(--type-caption); color:var(--muted-foreground); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .overview-unchecked::after { content:"·"; margin-left:8px; opacity:.6; }

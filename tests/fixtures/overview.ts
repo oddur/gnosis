@@ -649,6 +649,90 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
           window.dispatchEvent(new CustomEvent('gnosis-preferences-changed', { detail: { ...prefs, repositorySettings: { ...prefs.repositorySettings, [launcher]: { icon: 'lucide:rocket', color: 'purple' }, [seed]: { color: 'green' } } } })));
         changed();
       },
+      /**
+       * Screenshot 39, at its real volume (about 50 rows): 7 re-reviews (#377, and six of ivaremilsson's PRs above
+       * your #35392, whose merge waits for them); 10 merges nobody reviewed (four stack bases, #383, #36948, #376 with
+       * no checks and #35392, and six large PRs); a restack of a draft; 6 stacks in 4 repositories, with #384 and #385
+       * in two repositories each; 13 failing checks and 4 conflicts on your PRs; 7 decisions (the i18n base among
+       * them); plucked's review and CI. Comments on several PRs.
+       */
+      real7: () => {
+        const launcher = 'klang/seed-launcher';
+        const seed = 'klang/seed';
+        const bridge = 'klang/service-payment-bridge';
+        const portal = 'klang/web-seed-portal';
+        const stackOf = (members: ReviewMember[], name?: string, attention: QueueItem['attention'] = 'other'): QueueItem => {
+          const subject = groupSubjects(members)[0];
+          return { subject: { ...subject, ...(name ? { name } : {}) }, attention };
+        };
+        const linked = (spec: Spec, parent: number) => ({ ...spec, baseBranch: `stack-${parent}`, headBranch: `stack-${spec.number}` });
+        const none = { ...noReview, checks: 'neutral' as const, total: 0 };
+        // The payment stack: its base can merge without review and unblocks three.
+        const steam = add(pr({ number: 383, repo: bridge, title: 'fix: keep Steam and Epic orders out of Adyen refunds and paid-order effects', created: 2 * DAY, updated: 18 * HOUR, headBranch: 'stack-383', additions: 310, deletions: 40 }), { ...noReview, commentCount: 2 });
+        const steamRest = [384, 385, 397].map((number, i) =>
+          add(pr(linked({ number, repo: bridge, title: ['fix: never commit store orders to AvaTax', 'fix: claim each store purchase before creating its order', 'feat: provision and refund Epic Games Store purchases (P2)'][i], created: 2 * DAY, updated: (17 - i) * HOUR }, i ? [384, 385][i - 1] : 383)), { ...noReview, commentCount: 2 }));
+        // The blocking-objects stack: its base can merge without review and unblocks one.
+        const blocking = add(pr({ number: 36948, repo: seed, title: 'fix: keep a construction’s blocking objects when their recheck fails', created: 3 * DAY, updated: 13 * HOUR, headBranch: 'stack-36948', additions: 160, deletions: 12 }), { ...noReview, commentCount: 3 });
+        const blockingRest = [add(pr(linked({ number: 36962, repo: seed, title: 'fix: fail a building edit whose blocking-objects check fails', created: 6 * DAY, updated: 6 * DAY }, 36948)), { ...noReview, commentCount: 4 })];
+        // STACK: EPIC: no checks at all; its base can merge without review.
+        const epic = add(pr({ number: 376, repo: launcher, title: 'refactor: model the store distribution channel instead of Steam-only checks', created: 3 * DAY, updated: DAY, headBranch: 'stack-376', additions: 220, deletions: 40 }), { ...none, commentCount: 1 });
+        const epicRest = [382, 378, 385].map((number, i) =>
+          add(pr(linked({ number, repo: launcher, title: ['fix: quit a store-launched launcher when its last window closes', 'feat: log in with Epic on Epic Games Store launches (L3)', 'feat: import Epic purchases after an Epic login, before play (L3b)'][i], created: 3 * DAY, updated: DAY, additions: 80 }, i ? [382, 378][i - 1] : 376)), { ...none, commentCount: i < 2 ? 1 : 0 }));
+        // The i18n stack, unnamed: its base is idle for eight days with conflicts, so it needs a decision.
+        const i18n = add(pr({ number: 379, repo: launcher, title: 'feat: move the launcher’s text into translation keys (i18n 1/3)', created: 14 * DAY, updated: 8 * DAY, headBranch: 'stack-379' }), { checks: 'neutral', total: 0, mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+        const i18nRest = [380, 381, 384, 386].map((number, i) =>
+          add(pr(linked({ number, repo: launcher, title: ['feat: add German, Spanish and French to the launcher (i18n 2/3)', 'feat: let players pick the launcher’s language and keep it in their account', 'refactor: derive the language in state, send translation keys, and tidy the i18n stack', 'fix: address review findings on the player-facing wording'][i], created: 8 * DAY, updated: 8 * DAY }, i ? [380, 381, 384][i - 1] : 379)), none));
+        // The portal stack: its base waits on lena's review.
+        const portalBase = add(pr({ number: 1960, repo: portal, title: 'feat: show the player’s language in the account menu', created: 4 * DAY, updated: 2 * DAY, requested: ['lena'], headBranch: 'stack-1960' }), { checks: 'success', commentCount: 1 });
+        const portalRest = [1961, 1962].map((number, i) =>
+          add(pr(linked({ number, repo: portal, title: ['feat: remember the chosen language per account', 'feat: translate the checkout'][i], created: 4 * DAY, updated: 2 * DAY }, i ? 1961 : 1960)), noReview));
+        // The wallet stack, named: its base fails checks.
+        const wallet = add(pr({ number: 36100, repo: seed, title: 'feat: wallet balance API with per-currency rounding', created: 2 * DAY, updated: 9 * HOUR, headBranch: 'stack-36100' }), { checks: 'failure', commentCount: 2 });
+        const walletRest = [add(pr(linked({ number: 36101, repo: seed, title: 'feat: wallet balance in the HUD', created: 2 * DAY, updated: 9 * HOUR }, 36100)), noReview)];
+        // The market stack: six of ivaremilsson's PRs above your base changed since your review.
+        const market = add(pr({ number: 35392, repo: seed, title: 'feat: add the market and create_seedling mcp tools to seed-api', created: 4 * DAY, updated: 2 * DAY, headBranch: 'stack-35392', additions: 410, deletions: 60 }), noReview);
+        const marketTheirs = ['feat: list a seedling on the market', 'feat: buy a listed seedling', 'feat: cancel a listing', 'feat: market fees per region', 'feat: notify the seller on a sale', 'test: market end to end'].map((title, i) =>
+          add(pr(linked({ number: 37286 + i, repo: seed, title, author: 'ivaremilsson', created: 5 * DAY, updated: 4 * DAY, additions: 60 + i * 10, deletions: 8 }, i ? 37285 + i : 35392)), { checks: 'success', reviewedSha: `old-${37286 + i}`, commentCount: i === 0 ? 24 : 0 }));
+        const lone = add(pr({ number: 377, repo: launcher, title: 'feat: block launches until the player accepts the terms in the launcher', author: 'ivaremilsson', created: 16 * DAY, updated: 15 * DAY, additions: 70, deletions: 12 }), { checks: 'success', reviewedSha: 'old-377' });
+        // A restack of a draft: its parent merged.
+        const parent = pr({ number: 35390, repo: seed, title: 'feat: seedling events API', created: 4 * DAY, updated: DAY, headBranch: 'events-1' });
+        parent.merged = true;
+        parent.state = 'closed';
+        const restack = add(pr({ number: 35391, repo: seed, title: 'feat: deliver seedling events to chatgpt through seed-api’s mcp events', created: 3 * DAY, updated: DAY, baseBranch: 'events-1' }), { ...noReview, commentCount: 8 });
+        restack.isDraft = true;
+        // Six large merges nobody reviewed.
+        const large = ['feat(rust): integrate the Rust worker workspace', 'chore: vendor the Steamworks SDK headers', 'feat: new launcher shell with a native title bar', 'feat: store catalogue sync for Epic', 'refactor: split the payment bridge by store', 'feat: seed-api admin tools'].map((title, i) =>
+          single(add(pr({ number: 640 + i, repo: [seed, launcher, bridge][i % 3], title, created: 2 * DAY, updated: (20 + i) * HOUR, additions: 1630 - i * 100, deletions: 90, files: 40 }), noReview)));
+        // Seven decisions: failing, idle or conflicted for over a week.
+        const decisions = [
+          single(add(pr({ number: 371, repo: launcher, title: 'fix: build the Icon Composer app icon on the mac runner', created: 15 * DAY, updated: 13 * DAY }), { checks: 'failure' })),
+          single(add(pr({ number: 1959, repo: portal, title: 'feat: let the launcher and game read and save a player’s language', created: 14 * DAY, updated: 12 * DAY }), { checks: 'failure', commentCount: 1 })),
+          single(add(pr({ number: 35432, repo: seed, title: 'feat: serve in-game notifications from seed-api', created: 14 * DAY, updated: 12 * DAY }), { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY', commentCount: 7 })),
+          single(add(pr({ number: 15914, repo: 'klang/iac-gcloud', title: 'feat: add the seed:notifications:read scope for seed-api', created: 14 * DAY, updated: 12 * DAY }), { checks: 'failure', mergeable: 'CONFLICTING', mergeState: 'DIRTY', commentCount: 4 })),
+          single(add(pr({ number: 36138, repo: seed, title: 'fix: don’t count a production whose output swap was refused', created: 13 * DAY, updated: 11 * DAY }), { checks: 'failure', commentCount: 3 })),
+          single(add(pr({ number: 36164, repo: seed, title: 'fix: keep an onboarding chat quest until its seedling reaches the chat system', created: 13 * DAY, updated: 11 * DAY }), { checks: 'failure', commentCount: 3 })),
+        ];
+        // Your PRs: 13 failing checks and 4 conflicts, all under a week old.
+        const failingTitles = ['fix: retry the store webhook once before failing the order', 'feat: Epic entitlement cache', 'fix: keep the patch queue across restarts', 'chore: pin the Unity build image', 'fix: round wallet totals per currency',
+          'feat: seed-api health endpoint', 'fix: close the launcher log on exit', 'test: cover the refund path', 'fix: drop stale Steam sessions', 'feat: per-region store prices', 'fix: keep chat presence across reconnects', 'chore: bump the CLI to 4.2.1', 'fix: guard the empty inventory'];
+        const failing = failingTitles.map((title, i) =>
+          single(add(pr({ number: 36990 + i, repo: [seed, launcher, bridge, portal, 'klang/iac-gcloud'][i % 5], title, created: (2 + (i % 4)) * DAY, updated: (1 + (i % 5)) * DAY }), { checks: 'failure', commentCount: i % 3 })));
+        const conflictTitles = ['fix: read the player language from the launcher', 'feat: Epic achievements', 'fix: one ledger row per purchase', 'refactor: split the launcher settings'];
+        const conflicts = conflictTitles.map((title, i) =>
+          single(add(pr({ number: 722 + i, repo: [launcher, launcher, bridge, seed][i], title, created: 3 * DAY, updated: (1 + i) * DAY }), { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' })));
+        // Waiting on plucked's review, and on CI.
+        const plucked = single(add(pr({ number: 36950, repo: seed, title: 'fix: keep each sender’s failed command to itself', created: 4 * DAY, updated: DAY, requested: ['plucked'] }), { checks: 'success', commentCount: 1 }));
+        const running = single(add(pr({ number: 36960, repo: seed, title: 'feat: spin wallet balance digits with a new NumberFlow label', created: DAY, updated: 2 * HOUR }), { checks: 'pending', decision: 'APPROVED' }));
+        items.splice(0, items.length,
+          stackOf([steam, ...steamRest]), stackOf([blocking, ...blockingRest]), stackOf([epic, ...epicRest], 'STACK: EPIC'), stackOf([i18n, ...i18nRest]),
+          stackOf([portalBase, ...portalRest]), stackOf([wallet, ...walletRest], 'Wallet'),
+          stackOf([market, ...marketTheirs], undefined, 'updated'),
+          single(lone, { attention: 'updated' }), { subject: groupSubjects([parent, restack])[0], attention: 'other' },
+          ...large, ...decisions, ...failing, ...conflicts, plucked, running);
+        void window.electronAPI.loadPreferences().then((prefs) =>
+          window.dispatchEvent(new CustomEvent('gnosis-preferences-changed', { detail: { ...prefs, repositorySettings: { ...prefs.repositorySettings, [launcher]: { icon: 'lucide:rocket', color: 'purple' }, [seed]: { color: 'green' }, [bridge]: { icon: 'lucide:columns-2' } } } })));
+        changed();
+      },
       /** The queue last synced `ms` ago; `checking` while a discovery runs. The next snapshot carries it. */
       setSync: (ms: number, value: 'idle' | 'checking' = 'idle') => {
         syncAge = ms;

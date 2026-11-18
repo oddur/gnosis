@@ -40,7 +40,7 @@ import { actionIcons, checkSummaryIcons, conflictIcon as ConflictIcon, subjectIc
 import { githubAvatarUrl } from '../lib/github-profile';
 import type { CheckView } from '../lib/check-summary';
 import type { PrChecks } from '../lib/pr-checks';
-import { OVERVIEW_SINCE_LABEL, overviewBriefing, waitingLabel, spokenWaiting, type OverviewActionGroup, type OverviewModel, type OverviewRow, type OverviewSinceSource } from '../lib/overview';
+import { OVERVIEW_SINCE_LABEL, waitingLabel, spokenWaiting, type OverviewActionGroup, type OverviewModel, type OverviewRow, type OverviewSinceSource } from '../lib/overview';
 import {
   CHAIN_STATUS_LABEL,
   FIX_LABEL,
@@ -58,10 +58,12 @@ import {
   INLINE_LIMIT,
   STACKS_SHOWN,
   type AlsoPlace,
+  type BriefingCount,
   type ChainNode,
   type DecisionItem,
   type GroupLine,
   type NextItem,
+  type PageLink,
   type PersonGroup,
 } from '../lib/morning';
 import { sinceLine, sinceSummary } from '../lib/since-log';
@@ -178,6 +180,8 @@ function chainView(stack: PersonGroup, id: string, open: Open): ChainStep[] {
 interface RowRef {
   row?: OverviewRow;
   members: ReviewMember[];
+  /** A chain's line for a PR another section lists: that section's row is the one that counts it. */
+  also?: boolean;
 }
 
 export function OverviewPage(props: OverviewPageProps) {
@@ -213,7 +217,6 @@ export function OverviewPage(props: OverviewPageProps) {
   useEffect(() => {
     if (account && !loading) publishOverviewCount(account, morning.count);
   }, [account, loading, morning.count]);
-  const briefing = useMemo(() => overviewBriefing(view), [view]);
   // Repositories by their short name, or owner/repo where two share one.
   const repoKey = [...new Set(queue.items.flatMap((item) => item.subject.members.map((member) => member.repo)))].sort().join(',');
   const repoNames = useMemo(() => repositoryNames(repoKey ? repoKey.split(',') : []), [repoKey]);
@@ -250,7 +253,10 @@ export function OverviewPage(props: OverviewPageProps) {
             const sid = `${id}|${stack.key}`;
             push(section, sid, { row: stack.step?.row ?? stack.rows[0], members: lineMembers(stack) });
             for (const step of chainView(stack, sid, opened)) {
-              if (step.kind === 'line') lines(section, sid, [step.line]);
+              if (step.kind === 'line') {
+                lines(section, sid, [step.line]);
+                if (step.also) refs.set(`${sid}|${step.line.id}`, { row: step.line.row, members: [step.line.member], also: true });
+              }
               else if (step.kind === 'gap') push(section, `${sid}|more`, { members: [] });
             }
           }
@@ -318,19 +324,70 @@ export function OverviewPage(props: OverviewPageProps) {
     },
     [focusRow]
   );
-  // A chain line's link: the row in `place` that lists the PR. A PR's own line before a group that holds it, so a
-  // collapsed group in Waiting on you takes the focus in its line's place.
-  const reveal = useCallback(
-    (url: string, place: AlsoPlace) => {
-      const { order: rows, refs: known } = latest.current;
-      const listing = rows[place].filter((id) => known.get(id)?.members.some((member) => member.url === url));
-      const id = listing.find((candidate) => known.get(candidate)?.members.length === 1) ?? listing[0];
-      if (!id) return;
-      focusRow(id);
-      root.current?.querySelector<HTMLElement>(`[data-overview-row="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
+  // The rows that list `urls`: a briefing number, a pointer ("#377 is in Next up") or a chain line's "↑ Next up".
+  // Groups that hold them open first; then the rows are marked for a moment, scrolled to, and the first is focused.
+  const latestMorning = useRef(morning);
+  latestMorning.current = morning;
+  const marked = useRef<{ timer: number; ids: string[] }>({ timer: 0, ids: [] });
+  const showRows = useCallback(
+    (urls: readonly string[], options: { place?: Section; line?: boolean } = {}) => {
+      const wanted = new Set(urls);
+      const page = latestMorning.current;
+      const holds = (lines: readonly GroupLine[]) => lines.some((line) => wanted.has(line.id));
+      setOpened((value) => {
+        const next = new Set(value);
+        for (const [section, groups] of [['you', page.you], ['others', page.others]] as const) {
+          if (options.place && options.place !== section) continue;
+          for (const group of groups) {
+            const id = `${section}|${group.key}`;
+            if (group.kind === 'stacks') {
+              const children = group.children ?? [];
+              const holding = children.filter((child) => holds(child.lines));
+              if (!holding.length) continue;
+              next.delete(id);
+              if (children.findIndex((child) => holds(child.lines)) >= STACKS_SHOWN) next.add(`${id}|more`);
+              continue;
+            }
+            if (!holds(group.lines) || group.lines.length <= INLINE_LIMIT) continue;
+            next.add(id);
+            if (group.lines.findIndex((line) => wanted.has(line.id)) >= GROUP_SHOWN) next.add(`${id}|more`);
+          }
+        }
+        return next;
+      });
+      if ((!options.place || options.place === 'decide') && page.decide.slice(DECIDE_SHOWN).some((item) => wanted.has(item.member.url))) setAllDecisions(true);
+      // After the groups have opened.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const { order: rows, refs: known } = latest.current;
+        const sections = options.place ? [options.place] : SECTIONS;
+        let ids = sections.flatMap((section) => rows[section]).filter((id) => {
+          if (id === MORE_UNREVIEWED) return !!options.line;
+          const ref = known.get(id);
+          return !!ref && !ref.also && ref.members.length > 0 && ref.members.every((member) => wanted.has(member.url));
+        });
+        // A group's own lines stand for it when they are shown.
+        ids = ids.filter((id) => !ids.some((other) => other !== id && other.startsWith(`${id}|`)));
+        const find = (id: string) => root.current?.querySelector<HTMLElement>(`[data-overview-row-item="${CSS.escape(id)}"]`);
+        window.clearTimeout(marked.current.timer);
+        for (const id of marked.current.ids) find(id)?.removeAttribute('data-overview-highlight');
+        for (const id of ids) find(id)?.setAttribute('data-overview-highlight', '');
+        marked.current = {
+          ids,
+          timer: window.setTimeout(() => {
+            for (const id of ids) find(id)?.removeAttribute('data-overview-highlight');
+            marked.current.ids = [];
+          }, HIGHLIGHT_MS),
+        };
+        const first = ids[0];
+        if (!first) return;
+        focusRow(first);
+        root.current?.querySelector<HTMLElement>(`[data-overview-row="${CSS.escape(first)}"]`)?.scrollIntoView({ block: 'nearest' });
+      }));
     },
     [focusRow]
   );
+  useEffect(() => () => window.clearTimeout(marked.current.timer), []);
+  const reveal = useCallback((url: string, place: AlsoPlace) => showRows([url], { place }), [showRows]);
   const activeRow = () => document.activeElement?.closest<HTMLElement>('[data-overview-row-item]')?.dataset.overviewRowItem;
   useKeyboardShortcuts(
     {
@@ -443,6 +500,7 @@ export function OverviewPage(props: OverviewPageProps) {
   };
   const more = nextMoreLine(morning.next);
   const youNote = waitingOnYouNote(counts.you, morning.youElsewhere);
+  const youPointer = youNote.parts.length ? <p className="morning-more-note" data-overview-you-elsewhere><Sentence parts={youNote.parts} onLink={(link) => showRows(link.urls, { place: link.place })} /></p> : null;
   const group = (section: 'you' | 'others', value: PersonGroup) => {
     const id = `${section}|${value.key}`;
     const inside = openWithin(opened, id);
@@ -480,7 +538,7 @@ export function OverviewPage(props: OverviewPageProps) {
           empty="Nothing needs you right now."
           footer={more && (
             // The rest of the unreviewed merges wait in the queue, grouped by Action at Merge.
-            <button type="button" className="morning-more-quiet" data-overview-more-unreviewed data-overview-row={MORE_UNREVIEWED} tabIndex={tabStop('next') === MORE_UNREVIEWED ? 0 : -1}
+            <button type="button" className="morning-more-quiet" data-overview-more-unreviewed data-overview-row={MORE_UNREVIEWED} data-overview-row-item={MORE_UNREVIEWED} tabIndex={tabStop('next') === MORE_UNREVIEWED ? 0 : -1}
               title="Open Merge in the review queue, grouped by Action" onFocus={() => actions.focus(MORE_UNREVIEWED)} onBlur={actions.blur} onKeyDown={actions.keyDown} onClick={() => actions.show('merge')}>
               {more}
               <ChevronRight size={13} aria-hidden="true" />
@@ -490,8 +548,8 @@ export function OverviewPage(props: OverviewPageProps) {
             <NextRow key={item.id} item={item} waited={waitingLabel(item.since, now)} tabStop={tabStop('next') === item.id} unread={unread(item.row.entries.map((entry) => entry.member).filter((entry) => item.urls.includes(entry.url)))} actions={actions} />
           ))}
         </MorningSection>
-        <MorningSection section="you" count={counts.you} empty={youNote.empty}
-          footer={youNote.more && <p className="morning-more-note" data-overview-you-elsewhere>{youNote.more}</p>}>
+        <MorningSection section="you" count={counts.you} empty={youPointer}
+          footer={counts.you > 0 ? youPointer : null}>
           {morning.you.map((value) => group('you', value))}
         </MorningSection>
         <MorningSection section="others" count={counts.others} empty="None of your PRs are waiting on anyone.">
@@ -541,7 +599,11 @@ export function OverviewPage(props: OverviewPageProps) {
           <h1 id="overview-title">Overview</h1>
           {/* A status region that is not live: count changes are announced once, by the region below. */}
           <p className="overview-briefing" role="status" aria-live="off" data-overview-briefing>
-            {ready ? briefing : 'What you can act on now, across your repositories.'}
+            {ready ? (
+              <Sentence parts={morning.briefing.parts} onCount={(count) => showRows(count.urls, { line: count.line })} />
+            ) : (
+              'What you can act on now, across your repositories.'
+            )}
           </p>
           {ready && since && <p className="overview-since" data-overview-since>{since}</p>}
         </div>
@@ -600,6 +662,36 @@ export function OverviewPage(props: OverviewPageProps) {
       </RepoNames.Provider>
       <p className="sr-only" role="status" aria-live="polite" data-overview-announcement>{announcement}</p>
     </div>
+  );
+}
+
+/** A briefing number's rows stay marked this long after it is followed. */
+const HIGHLIGHT_MS = 2400;
+
+/**
+ * A sentence with links: the briefing's numbers (`BriefingCount`) and Waiting on you's pointers (`PageLink`). Each link
+ * scrolls to and focuses the rows it counts; a pointer carries the arrow of where they are.
+ */
+function Sentence({ parts, onCount, onLink }: { parts: readonly (string | BriefingCount | PageLink)[]; onCount?: (count: BriefingCount) => void; onLink?: (link: PageLink) => void }) {
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (typeof part === 'string') return <span key={i}>{part}</span>;
+        if ('key' in part)
+          return (
+            <button key={i} type="button" className="overview-count-link" data-briefing-count={part.key} data-count={part.count} title={`Show ${part.count === 1 ? 'it' : `these ${part.count}`} on the page`} onClick={() => onCount?.(part)}>
+              {part.text}
+            </button>
+          );
+        const Arrow = ALSO_UP[part.place] ? ArrowUp : ArrowDown;
+        return (
+          <button key={i} type="button" className="overview-count-link" data-overview-pointer={part.place} onClick={() => onLink?.(part)}>
+            {part.text}
+            <Arrow size={12} aria-hidden="true" />
+          </button>
+        );
+      })}
+    </>
   );
 }
 
@@ -744,7 +836,7 @@ function RepoName({ repos }: { repos: readonly string[] }) {
 function MorningSection({ section, count, empty, quiet = false, footer, children }: {
   section: Section;
   count: number;
-  empty: string;
+  empty: ReactNode;
   quiet?: boolean;
   /** A quiet line under the rows, such as "2 more ready, not reviewed". */
   footer?: ReactNode;

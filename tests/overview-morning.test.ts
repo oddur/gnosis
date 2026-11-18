@@ -23,6 +23,7 @@ import {
   sectionCount,
   waitingOnYou,
   type MorningPage,
+  type GroupLine,
   type PersonGroup,
 } from '../lib/morning';
 import { checkView } from '../lib/check-summary';
@@ -36,6 +37,7 @@ import type { QueueSignals } from '../lib/queue-signals';
 import type { NotificationEvent } from '../lib/notification-events';
 import type { GitHubReviewThreads } from '../lib/review-threads';
 import { LOGIN, T0, member, mine, signals, readySignals } from './notification-fixtures';
+import { FIXTURE_LOGIN, OVERVIEW_FIXTURES, overviewFixture } from './fixtures/overview-node';
 
 const DAY = 86_400_000;
 const must = <T,>(value: T | undefined): T => {
@@ -142,8 +144,8 @@ function assertPage(page: MorningPage) {
     assert.ok(entry.urls.includes(entry.member.url), `the row's number, #${entry.member.number}, is one of its PRs`);
   }
   const more = nextMoreLine(page.next);
-  if (more) assert.match(more, new RegExp(`^${page.next.moreUnreviewed} `), 'the quiet line says its own number');
-  else assert.equal(page.next.moreUnreviewed, 0);
+  if (more) assert.match(more, new RegExp(`^${page.next.unreviewed.length || page.next.moreApproved.length} `), 'the quiet line says its own number');
+  else assert.equal(page.next.unreviewed.length + page.next.moreApproved.length, 0);
   // One row per stack, carrying its one next step: never a merge of a stack you owe a review on.
   const stacks = page.next.items.map((entry) => entry.row.item.subject.id);
   assert.equal(new Set(stacks).size, stacks.length, 'at most one Next up row per stack');
@@ -154,7 +156,8 @@ function assertPage(page: MorningPage) {
   assert.equal(sectionCount(page.others), others, 'Waiting on others: heading = rows');
   // Waiting on you's note: where the PRs it does not list went.
   const note = waitingOnYouNote(you, page.youElsewhere);
-  if (!you) assert.equal(note.empty === 'Nobody is waiting on you.', page.youElsewhere.next + page.youElsewhere.decide === 0, `"${note.empty}"`);
+  if (!you) assert.equal(note.text === 'Nobody is waiting on you.', page.youElsewhere.next.length + page.youElsewhere.decide.length === 0, `"${note.text}"`);
+  assertBriefing(page);
   // Chains: the first PR is Next, every one after it Waiting (or Conflicts), never Ready.
   for (const group of page.others.flatMap((entry) => entry.children ?? []))
     for (const [i, node] of (group.chain ?? []).entries())
@@ -166,6 +169,52 @@ function assertPage(page: MorningPage) {
   return page;
 }
 const page = (model: OverviewModel, status: Record<string, QueueSignals>, extra: Partial<Parameters<typeof nextUp>[0]> = {}) => assertPage(morningPage(input(model, status, extra)));
+
+/**
+ * Briefing = sections: every number in the briefing is the PRs the page lists for it, found here from the sections
+ * themselves (the rows' kinds and reasons), not from the lanes the briefing reads.
+ */
+function assertBriefing(page: MorningPage) {
+  const { briefing } = page;
+  const chainLines = page.others.flatMap((group) => group.children ?? []).flatMap((stack) => (stack.chain ?? []).filter((node) => !node.also).map((node) => node.line));
+  const lines = [...page.you, ...page.others].flatMap((group) => group.lines);
+  const listed = new Set([...page.next.items.flatMap((entry) => entry.urls), ...page.decide.map((entry) => entry.member.url), ...lines.map((line) => line.id), ...chainLines.map((line) => line.id)]);
+  const youLines = page.you.flatMap((group) => group.lines);
+  const entryOf = (line: GroupLine) => line.row.entries.find((entry) => entry.member.url === line.id);
+  const fixOf = (line: GroupLine) => (line.row.lane === 'fix' ? entryOf(line)?.reasons : undefined);
+  const firstFix = (reasons: readonly string[] | undefined) => (!reasons ? undefined : reasons.includes('checks-failed') ? 'failing' : reasons.includes('conflicts') ? 'conflicts' : 'rebase');
+  const fixRows = (reason: string) =>
+    page.next.items.filter((entry) => entry.kind === 'fix').flatMap((entry) => entry.row.entries.filter((e) => entry.urls.includes(e.member.url) && firstFix(e.reasons) === reason).map((e) => e.member.url));
+  const expected: Record<string, string[]> = {
+    reviews: [...page.next.items.filter((entry) => entry.kind === 'review').flatMap((entry) => entry.urls), ...youLines.filter((line) => line.row.lane === 'review' && !line.row.reasons.includes('updated-since-review')).map((line) => line.id)],
+    rereviews: [...page.next.items.filter((entry) => entry.kind === 'rereview').flatMap((entry) => entry.urls), ...youLines.filter((line) => line.row.lane === 'review' && line.row.reasons.includes('updated-since-review')).map((line) => line.id)],
+    replies: [
+      ...page.next.items.filter((entry) => entry.kind === 'reply' || entry.kind === 'changes').flatMap((entry) => entry.urls),
+      ...youLines.filter((line) => line.row.lane === 'answer').map((line) => line.id),
+      ...page.decide.filter((entry) => entry.row.lane === 'answer').map((entry) => entry.member.url),
+    ],
+    approved: [...page.next.items.filter((entry) => entry.kind === 'merge' && !entry.unreviewed).flatMap((entry) => entry.urls), ...page.next.moreApproved],
+    unreviewed: [...page.next.items.filter((entry) => entry.kind === 'merge' && entry.unreviewed).flatMap((entry) => entry.urls), ...page.next.unreviewed],
+    decide: page.decide.map((entry) => entry.member.url),
+  };
+  for (const reason of ['failing', 'conflicts', 'rebase'])
+    expected[reason] = [...fixRows(reason), ...[...lines, ...chainLines].filter((line) => firstFix(fixOf(line)) === reason).map((line) => line.id)];
+  const counted = new Map(briefing.counts.map((count) => [count.key, count]));
+  for (const [key, urls] of Object.entries(expected)) {
+    const count = counted.get(key as never);
+    const want = [...new Set(urls)].sort();
+    assert.deepEqual(count ? [...count.urls].sort() : [], want, `briefing "${key}" = the PRs the page lists for it: ${briefing.text}`);
+    if (count) assert.equal(count.count, want.length);
+  }
+  for (const count of briefing.counts) {
+    // The number in the words is the number of PRs; every PR it counts is on the page, in a row or on the quiet line.
+    assert.ok(count.text === 'your reply' ? count.count === 1 : count.text.startsWith(`${count.count}`), `"${count.text}" says ${count.count}`);
+    for (const url of count.urls) assert.ok(listed.has(url) || page.next.unreviewed.includes(url) || page.next.moreApproved.includes(url), `${count.key}: ${url} is on the page`);
+    assert.ok(briefing.text.includes(count.text));
+  }
+  // The pointer under Waiting on you names the rows that hold its PRs.
+  for (const entry of page.youElsewhere.next) assert.ok(page.next.items.some((item) => entry.urls.every((url) => item.urls.includes(url))));
+}
 
 void test('Next up: cheapest first, at most five, with a total; size orders but never excludes', () => {
   const ready = mine(1, { additions: 10, deletions: 2 });
@@ -280,7 +329,7 @@ void test('merges nobody reviewed: at most two, small before large, and the line
   const result = page(build([big, ...small].map((m) => item([m])), status), status);
   assert.deepEqual(result.next.items.map((entry) => [entry.member.number, entry.why]), [[12, 'not reviewed · green'], [13, 'not reviewed · green']]);
   assert.equal(result.next.items.filter((entry) => entry.unreviewed).length, UNREVIEWED_LIMIT);
-  assert.equal(result.next.moreUnreviewed, 1);
+  assert.equal(result.next.unreviewed.length, 1);
   assert.equal(nextMoreLine(result.next), '1 more ready, not reviewed', 'some are listed');
   assert.ok(big.additions !== undefined && big.additions > QUICK_LINES);
   // Approved merges come first; when they fill Next up, none of the unreviewed ones is listed.
@@ -289,7 +338,7 @@ void test('merges nobody reviewed: at most two, small before large, and the line
   assert.equal(full.next.items.length, NEXT_LIMIT);
   assert.equal(full.next.items.some((entry) => entry.unreviewed), false);
   assert.equal(nextMoreLine(full.next), '3 ready to merge without review', 'none are listed');
-  assert.equal(nextMoreLine({ items: [], moreUnreviewed: 0 }), undefined);
+  assert.equal(nextMoreLine({ items: [], unreviewed: [], moreApproved: [] }), undefined);
 });
 
 void test('the oldest review request always gets a slot, whatever its size', () => {
@@ -500,7 +549,7 @@ void test('the screenshot-32 shape: Next up is full, each PR once, and the line 
   assert.ok(result.next.items.some((entry) => entry.urls.includes(zsolt.url)), 'the oldest review request has its slot');
   assert.ok(result.next.items.some((entry) => entry.kind === 'merge' && entry.unblocks === 3 && entry.why.endsWith('unblocks 3 PRs')));
   assert.ok(result.next.items.filter((entry) => entry.unreviewed).length <= UNREVIEWED_LIMIT);
-  assert.equal(nextMoreLine(result.next), `${result.next.moreUnreviewed} more ready, not reviewed`);
+  assert.equal(nextMoreLine(result.next), `${result.next.unreviewed.length} more ready, not reviewed`);
   // The decisions are listed once, in Needs a decision, not again under You or in their stack.
   assert.deepEqual(result.decide.map((entry) => entry.member.number).sort(), [379, 700, 701, 702]);
   const you = result.others.find((group) => group.kind === 'you');
@@ -549,8 +598,8 @@ void test('screenshot 36: Next up counts its rows, and a row for a stack says ho
   assert.ok(nextCount(result.next.items) < result.next.items.reduce((total, entry) => total + entry.urls.length, 0), 'the heading is not the PRs inside the rows');
   // The quiet line keeps its own number: the merges nobody reviewed that no row lists.
   const shownMerges = result.next.items.filter((entry) => entry.unreviewed).length;
-  assert.equal(nextMoreLine(result.next), `${result.next.moreUnreviewed} more ready, not reviewed`);
-  assert.equal(result.next.moreUnreviewed + shownMerges, 7, 'six large merges and #376; #35392 waits for the re-review');
+  assert.equal(nextMoreLine(result.next), `${result.next.unreviewed.length} more ready, not reviewed`);
+  assert.equal(result.next.unreviewed.length + shownMerges, 8, 'six large merges, #376, and #35392, which waits for the re-review');
 });
 
 void test('a stack you owe a re-review on never also offers its base merge, and has one row in Next up', () => {
@@ -588,20 +637,26 @@ void test('Waiting on you says where its PRs went, and agrees with the briefing'
   const result = page(model, status, { rereviewLines: { [lone.url]: 12 } });
   // All seven reviews are in Next up, so Waiting on you lists none, and says so.
   assert.equal(sectionCount(result.you), 0);
-  assert.deepEqual(result.youElsewhere, { next: 7, decide: 0 });
-  assert.deepEqual(waitingOnYouNote(0, result.youElsewhere), { empty: 'All 7 are in Next up.' });
-  // The briefing's number is the PRs Waiting on you lists plus those listed above and below it.
-  const reviews = Number(briefing.match(/^(\d+) reviews?/)?.[1]);
-  assert.equal(reviews, sectionCount(result.you) + result.youElsewhere.next + result.youElsewhere.decide);
+  assert.deepEqual(result.youElsewhere.next.map((entry) => `${entry.label}:${entry.urls.length}`).sort(), ['#37601’s stack (6 PRs):6', '#377:1']);
+  assert.match(waitingOnYouNote(0, result.youElsewhere).text, /^(#377 and #37601’s stack \(6 PRs\)|#37601’s stack \(6 PRs\) and #377) are in Next up\.$/);
+  // The briefing's numbers are the PRs Waiting on you lists plus those listed above and below it.
+  assert.equal(result.briefing.text, '7 re-reviews (6 in one stack) are waiting on you. 8 PRs can merge without review.');
+  const reviews = result.briefing.counts.filter((count) => count.key === 'reviews' || count.key === 'rereviews').reduce((total, count) => total + count.count, 0);
+  assert.equal(reviews, sectionCount(result.you) + result.youElsewhere.next.reduce((total, entry) => total + entry.urls.length, 0) + result.youElsewhere.decide.length);
+  void briefing;
   assert.equal(result.count, new Set([...result.next.items.flatMap((entry) => entry.urls), ...result.you.flatMap((group) => group.urls)]).size, 'the tab counts PRs, each once');
-  // The words for every case.
-  assert.deepEqual(waitingOnYouNote(0, { next: 0, decide: 0 }), { empty: 'Nobody is waiting on you.' });
-  assert.deepEqual(waitingOnYouNote(0, { next: 1, decide: 0 }), { empty: 'The one PR waiting on you is in Next up.' });
-  assert.deepEqual(waitingOnYouNote(0, { next: 0, decide: 2 }), { empty: 'All 2 are in Needs a decision.' });
-  assert.deepEqual(waitingOnYouNote(0, { next: 5, decide: 2 }), { empty: '7 are waiting on you: 5 in Next up and 2 in Needs a decision.' });
-  assert.deepEqual(waitingOnYouNote(3, { next: 2, decide: 0 }), { empty: '', more: '2 more are in Next up.' });
-  assert.deepEqual(waitingOnYouNote(3, { next: 1, decide: 0 }), { empty: '', more: '1 more is in Next up.' });
-  assert.deepEqual(waitingOnYouNote(3, { next: 0, decide: 0 }), { empty: 'Nobody is waiting on you.' });
+  // The words for every case: concrete pointers, never "All 7".
+  const at = (label: string, n = 1) => ({ label, urls: Array.from({ length: n }, (_, i) => `${label}/${i}`) });
+  assert.equal(waitingOnYouNote(0, { next: [], decide: [] }).text, 'Nobody is waiting on you.');
+  assert.equal(waitingOnYouNote(0, { next: [at('#377')], decide: [] }).text, '#377 is in Next up.');
+  assert.equal(waitingOnYouNote(0, { next: [at('#37286’s stack (6 PRs)', 6)], decide: [] }).text, '#37286’s stack (6 PRs) are in Next up.');
+  assert.equal(waitingOnYouNote(0, { next: [], decide: ['a', 'b'] }).text, '2 are in Needs a decision.');
+  assert.equal(waitingOnYouNote(0, { next: [at('#377'), at('#12')], decide: ['a', 'b'] }).text, '#377 and #12 are in Next up, and 2 are in Needs a decision.');
+  assert.equal(waitingOnYouNote(3, { next: [at('#1'), at('#2'), at('#3'), at('#4')], decide: [] }).text, '#1, #2 and 2 more are in Next up.');
+  assert.equal(waitingOnYouNote(3, { next: [], decide: [] }).text, '');
+  // Each pointer is a link to the rows it names.
+  const links = waitingOnYouNote(0, { next: [at('#377')], decide: ['x'] }).parts.filter((part) => typeof part !== 'string');
+  assert.deepEqual(links.map((link) => typeof link !== 'string' && [link.place, link.urls]), [['next', ['#377/0']], ['decide', ['x']]]);
 });
 
 void test('needs a decision: failing, never approved or idle for over a week, one reason each, oldest first', () => {
@@ -849,4 +904,29 @@ void test('a stack header’s merge says what it goes ahead without, as Next up 
   // A base with conflicts says so, and is marked for the conflict icon.
   const dirty = header(base, conflicted(base));
   assert.deepEqual([dirty.text, dirty.conflicts], ['#61 has conflicts', true]);
+});
+
+/** Every fixture day the browser suite shows: the default day, a light day, and the real shapes. */
+async function fixturePage(name: (typeof OVERVIEW_FIXTURES)[number]) {
+  const fixture = await overviewFixture(name);
+  const now = Date.now();
+  const model = overviewModel({ items: fixture.items, signals: fixture.signals, login: FIXTURE_LOGIN, now });
+  const rereviewLines = Object.fromEntries(fixture.items.flatMap((entry) => entry.subject.members).map((m) => [m.url, 42]));
+  return { fixture, model, page: morningPage({ model, now, login: FIXTURE_LOGIN, signals: fixture.signals, rereviewLines }) };
+}
+
+void test('briefing = sections, on every fixture: each number is the PRs the page lists for it', async () => {
+  for (const name of OVERVIEW_FIXTURES) {
+    const { page: result } = await fixturePage(name);
+    assertPage(result);
+    assert.ok(result.briefing.text.length > 0, name);
+  }
+  // Screenshot 39 at its real volume: 7 reviews, 10 merges without review and 19 failing checks no longer disagree
+  // with the page. The failing checks the page lists outside Needs a decision are counted; decisions on their own.
+  const { page: real7 } = await fixturePage('real7');
+  const numbers = Object.fromEntries(real7.briefing.counts.map((count) => [count.key, count.count]));
+  assert.equal(numbers.rereviews, 7);
+  assert.equal(numbers.unreviewed, 10);
+  assert.equal(numbers.decide, 7);
+  assert.match(real7.briefing.text, /^7 re-reviews \(6 in one stack\) are waiting on you\./);
 });
