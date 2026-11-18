@@ -81,6 +81,26 @@ export interface WorkbenchQueueParts {
   filters: string;
   sync: string;
 }
+/**
+ * Main's GitHub sync state, as the Overview's freshness line reads it (lib/overview-freshness.ts).
+ *
+ * - `checkedAt`: when the last full discovery pass finished (`discoveredAt`).
+ * - `progress`: the pass in progress: PRs read so far of the pass's total, once the total is known.
+ * - `requested`: the reader asked for this pass (Refresh), so the page shows a spinner until its first results.
+ * - `signals`: the change signals (notifications feed or changed-PR search) answered within their normal interval
+ *   (lib/github-change-signals.ts, `healthy`). Absent where main does not run them.
+ * - `reason`: why the status is `error`. `unreachable` when the pass failed; `incomplete` when it finished with
+ *   warnings, such as a repository it could not read.
+ */
+export interface WorkbenchSync {
+  status: 'idle' | 'checking' | 'paused' | 'error';
+  checkedAt?: number;
+  retryAt?: number;
+  progress?: { done: number; total: number };
+  requested?: boolean;
+  signals?: boolean;
+  reason?: 'unreachable' | 'incomplete';
+}
 export interface WorkbenchQueue {
   /** Content hash of the whole snapshot except saved reviews. */
   revision?: string;
@@ -91,7 +111,7 @@ export interface WorkbenchQueue {
   /** Locally retained hierarchy, including completed stacks outside the active queue. */
   stacks?: ReviewSubject[];
   readStates?: Partial<Record<string, import('./pr-read-state').PrReadState>>;
-  sync?: { status: 'idle' | 'checking' | 'paused' | 'error'; checkedAt?: number; retryAt?: number };
+  sync?: WorkbenchSync;
   /** Frozen in the main process and shared between snapshots. */
   mutedPrs?: readonly import('./muted-prs').MutedPr[];
   /** Tools › Snoozed. Hidden from every queue section, saved view and count until they wake. */

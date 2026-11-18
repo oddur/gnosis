@@ -54,6 +54,8 @@ void test('device sign-in keeps its secret in main, respects polling/slow-down/R
   assert.deepEqual(saved, ['result-token:reviewer']);
   assert.ok(requests.every((r) => !r.has('client_secret')));
   assert.equal(requests[1].get('grant_type'), 'urn:ietf:params:oauth:grant-type:device_code');
+  // Organization reads let GitHub evaluate rulesets and team review requests for Gnosis as it does on github.com.
+  assert.equal(requests[0].get('scope'), 'repo read:org workflow');
 });
 void test('device denial, expiry, and disabled applications offer recovery without saving tokens', async () => {
   for (const error of ['access_denied', 'expired_token', 'device_flow_disabled']) {
@@ -151,6 +153,7 @@ void test('browser OAuth uses state and PKCE, ignores an invalid callback, then 
     const auth = new URL(await opening);
     const callback = auth.searchParams.get('redirect_uri');
     assert.ok(callback);
+    assert.equal(auth.searchParams.get('scope'), 'repo read:org workflow');
     assert.equal((await fetch(callback + '?state=wrong&code=bad')).status, 400);
     const response = await fetch(
       callback + '?' + new URLSearchParams({ state: auth.searchParams.get('state') ?? '', code: 'approved' }).toString()
@@ -285,4 +288,121 @@ void test('cancelling browser OAuth during identity lookup ends its callback and
   await rejected;
   assert.equal((await response).status, 400);
   assert.equal(saves, 0);
+});
+
+void test('missing scopes: read:org and workflow, with admin:org covering read:org', async () => {
+  const { missingScopes, lacksWorkflow } = await import('../lib/github-access');
+  assert.deepEqual(missingScopes(['repo', 'read:org', 'workflow']), []);
+  assert.deepEqual(missingScopes(['repo', 'workflow']), ['read:org']);
+  assert.deepEqual(missingScopes(['repo', 'read:org']), ['workflow']);
+  assert.deepEqual(missingScopes(['repo']), ['read:org', 'workflow']);
+  assert.deepEqual(missingScopes([]), ['read:org', 'workflow']);
+  assert.deepEqual(missingScopes(['admin:org', 'repo', 'workflow']), [], 'admin:org includes read:org');
+  assert.deepEqual(missingScopes(['write:org', 'repo']), ['workflow'], 'write:org includes read:org');
+  assert.deepEqual(missingScopes(null), [], 'Fine-grained tokens report no scopes and never prompt');
+  assert.deepEqual(missingScopes(undefined), []);
+  assert.equal(lacksWorkflow(['repo', 'read:org']), true);
+  assert.equal(lacksWorkflow(['repo', 'workflow']), false);
+  assert.equal(lacksWorkflow(null), false);
+});
+
+void test('"Not now" remembers the missing scopes and returns once a new one goes missing', async () => {
+  const { parseDismissedScopes, serializeDismissedScopes, shouldAskScopes } = await import('../lib/github-access');
+  assert.equal(shouldAskScopes([], []), false, 'Nothing missing, nothing to ask');
+  assert.equal(shouldAskScopes(['read:org', 'workflow'], []), true, 'Never dismissed');
+  const dismissed = parseDismissedScopes(serializeDismissedScopes(['read:org', 'workflow']));
+  assert.deepEqual(dismissed, ['read:org', 'workflow']);
+  assert.equal(shouldAskScopes(['read:org', 'workflow'], dismissed), false);
+  assert.equal(shouldAskScopes(['workflow'], dismissed), false, 'Fewer missing scopes stay dismissed');
+  // The earlier boolean form dismissed the read:org prompt; workflow is new since, so it asks once more.
+  const legacy = parseDismissedScopes('1');
+  assert.deepEqual(legacy, ['read:org']);
+  assert.equal(shouldAskScopes(['read:org'], legacy), false);
+  assert.equal(shouldAskScopes(['read:org', 'workflow'], legacy), true);
+  const again = parseDismissedScopes(serializeDismissedScopes(['read:org', 'workflow']));
+  assert.equal(shouldAskScopes(['read:org', 'workflow'], again), false, 'Dismissed again: stays dismissed');
+  assert.deepEqual(parseDismissedScopes(null), []);
+  assert.deepEqual(parseDismissedScopes('not json'), []);
+  assert.deepEqual(parseDismissedScopes('{"a":1}'), []);
+});
+
+void test('changed workflow files come from the revision’s Changes inventory', async () => {
+  const { changedWorkflowFiles, GITHUB_SCOPE_PROMPT } = await import('../lib/github-access');
+  assert.equal(
+    GITHUB_SCOPE_PROMPT,
+    'Gnosis now asks for two more GitHub permissions: reading your organization membership, so team review requests match GitHub, and updating workflow files, so it can merge PRs that change GitHub Actions workflows.'
+  );
+  const revision = { headSha: 'head' };
+  const inventory = (files: { path: string; previousPath?: string }[], extra = {}) => ({
+    metadata: { headSha: 'head' },
+    files,
+    ...extra,
+  });
+  assert.deepEqual(
+    changedWorkflowFiles(
+      inventory([
+        { path: '.github/workflows/seed_job_seed-api-portal-tests.yaml' },
+        { path: '.github/workflows/seed_job_seed_api.yaml' },
+        { path: 'src/api.ts' },
+      ]),
+      revision
+    ),
+    ['.github/workflows/seed_job_seed-api-portal-tests.yaml', '.github/workflows/seed_job_seed_api.yaml']
+  );
+  assert.deepEqual(changedWorkflowFiles(inventory([{ path: 'src/api.ts' }]), revision), [], 'Known: none');
+  assert.deepEqual(
+    changedWorkflowFiles(inventory([{ path: 'ci/old.yaml', previousPath: '.github/workflows/old.yaml' }]), revision),
+    ['.github/workflows/old.yaml'],
+    'Moving a workflow out of the directory changes it too'
+  );
+  assert.deepEqual(changedWorkflowFiles(inventory([{ path: '.github/actions/setup/action.yml' }]), revision), []);
+  assert.equal(changedWorkflowFiles(undefined, revision), undefined, 'Not loaded');
+  assert.equal(changedWorkflowFiles(inventory([{ path: '.github/workflows/a.yml' }]), { headSha: 'newer' }), undefined, 'Another revision');
+  assert.equal(changedWorkflowFiles(inventory([{ path: 'src/api.ts' }], { filesTruncated: true }), revision), undefined, 'Capped list: unknown');
+  assert.deepEqual(
+    changedWorkflowFiles(inventory([{ path: '.github/workflows/a.yml' }], { filesTruncated: true }), revision),
+    ['.github/workflows/a.yml']
+  );
+  assert.equal(changedWorkflowFiles(inventory([{ path: '.github/workflows/a.yml' }], { comparison: {} }), revision), undefined, 'A commit range is not the PR');
+});
+
+void test('scopes come from the X-OAuth-Scopes header of each account’s responses', async () => {
+  const { parseOAuthScopes, lacksOrgRead, accessLabel, GITHUB_OAUTH_SCOPE } = await import('../lib/github-access');
+  assert.equal(GITHUB_OAUTH_SCOPE, 'repo read:org workflow');
+  assert.deepEqual(parseOAuthScopes('repo, read:org, workflow'), ['repo', 'read:org', 'workflow']);
+  assert.deepEqual(parseOAuthScopes('repo'), ['repo']);
+  assert.deepEqual(parseOAuthScopes(''), []);
+  assert.equal(parseOAuthScopes(undefined), undefined);
+  assert.equal(lacksOrgRead(['repo']), true);
+  assert.equal(lacksOrgRead(['repo', 'read:org']), false);
+  assert.equal(lacksOrgRead(['admin:org', 'repo']), false, 'admin:org includes organization reads');
+  assert.equal(lacksOrgRead(null), false, 'Fine-grained tokens report no scopes and never prompt');
+  assert.equal(lacksOrgRead(undefined), false);
+  assert.equal(accessLabel(['repo', 'read:org']), 'repo, read:org');
+
+  const scopes: Record<string, string | undefined> = { old: 'repo', fine: undefined };
+  const pool = createGitHubClientPool({
+    fetch: ((_url: string, init: RequestInit) => {
+      const token = new Headers(init.headers).get('authorization')?.replace(/^token /, '') ?? '';
+      const header = scopes[token];
+      return Promise.resolve(json({ login: token }, 200, header === undefined ? {} : { 'x-oauth-scopes': header }));
+    }) as typeof fetch,
+  });
+  let changes = 0;
+  pool.onScopesChange(() => changes++);
+  assert.equal(pool.oauthScopes('old'), undefined, 'Unknown before the first response');
+  await pool.client('old').request('GET /user', { headers: { 'cache-control': 'no-cache' } });
+  assert.deepEqual(pool.oauthScopes('old'), ['repo']);
+  await pool.client('fine').request('GET /user', { headers: { 'cache-control': 'no-cache' } });
+  assert.equal(pool.oauthScopes('fine'), null, 'No header: not a classic token');
+  assert.equal(changes, 2);
+  // The latest value per account: signing in again with more scopes replaces it.
+  scopes.old = 'repo, read:org';
+  await pool.client('old').request('GET /user', { headers: { 'cache-control': 'no-cache' } });
+  assert.deepEqual(pool.oauthScopes('old'), ['repo', 'read:org']);
+  assert.equal(changes, 3);
+  await pool.client('old').request('GET /user', { headers: { 'cache-control': 'no-cache' } });
+  assert.equal(changes, 3, 'An unchanged header is not a change');
+  pool.forget('old');
+  assert.equal(pool.oauthScopes('old'), undefined);
 });

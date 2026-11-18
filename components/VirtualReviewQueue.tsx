@@ -8,7 +8,9 @@ import { GitHubAuthor } from './GitHubAuthor';
 import { timeAgo } from '../lib/utils';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
+import { ChevronRight } from 'lucide-react';
 import type { QueueItem } from '../lib/workbench';
+import type { QueueGroup, QueueGrouping } from '../lib/queue-groups';
 import type { ReviewHistoryEntry } from '../lib/types';
 
 /** Lists longer than this mount only the rows near the viewport. */
@@ -54,41 +56,128 @@ interface Props {
   onVisibleItemsChange?: (ids: string[]) => void;
   /** The row under the pointer or keyboard focus, or null when neither rests on a row. */
   onIntent?: (id: string | null) => void;
+  /** Group by Action or Repository: a sticky, collapsible heading before each group. `items` are in group order. */
+  groups?: QueueGrouping;
+  onToggleGroup?: (key: string) => void;
+  /** Scroll this group's heading to the top of the list and focus it, once per `nonce`. */
+  reveal?: { key: string; nonce: number };
+}
+
+/** One line of the list: a group heading, or an entry. */
+type Line = { kind: 'group'; group: QueueGroup } | { kind: 'item'; item: QueueItem };
+const lineKey = (line: Line) => (line.kind === 'group' ? `group:${line.group.key}` : line.item.subject.id);
+
+function GroupHeading({ group, onToggle }: { group: QueueGroup; onToggle?: (key: string) => void }) {
+  return (
+    <h2 className="queue-section-title queue-group-title">
+      <button type="button" className="queue-group-toggle" aria-expanded={!group.collapsed} onClick={() => onToggle?.(group.key)}>
+        <ChevronRight size={14} aria-hidden="true" />
+        <span className="queue-group-label">{group.label}</span>
+        <span className="queue-group-count" aria-label={`${group.count} ${group.count === 1 ? 'entry' : 'entries'}`}>{group.count}</span>
+      </button>
+    </h2>
+  );
 }
 
 /** Keep expanded stacks measured and the keyboard selection mounted in large queues. */
-export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, onIntent, grouped = true, starredFirst = true }: Props) {
+export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, onIntent, grouped = true, starredFirst = true, groups, onToggleGroup, reveal }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<string | null>(null);
-  const virtual = items.length > QUEUE_VIRTUAL_THRESHOLD;
+  // Without groups, one line per entry, as before. Grouped, a heading line before each group's entries.
+  const lines = useMemo<Line[]>(() => {
+    if (!groups) return items.map((item) => ({ kind: 'item', item }));
+    const byGroup = new Map<string, QueueItem[]>();
+    for (const item of items) {
+      const key = groups.groupOf.get(item.subject.id) ?? '';
+      const list = byGroup.get(key);
+      if (list) list.push(item);
+      else byGroup.set(key, [item]);
+    }
+    const result: Line[] = [];
+    for (const group of groups.groups) {
+      result.push({ kind: 'group', group });
+      for (const item of byGroup.get(group.key) ?? []) result.push({ kind: 'item', item });
+      byGroup.delete(group.key);
+    }
+    // An entry without a known group (an open menu held the old order) still shows, at the end.
+    for (const list of byGroup.values()) for (const item of list) result.push({ kind: 'item', item });
+    return result;
+  }, [items, groups]);
+  const virtual = lines.length > QUEUE_VIRTUAL_THRESHOLD;
   const margin = useScrollMargin(scrollElement, container, virtual);
   const category = useCallback((item: QueueItem) => item.starred && starredFirst ? 'starred' : item.attention, [starredFirst]);
-  const { indexes, counts, ids } = useMemo(() => {
+  const { indexes, counts, ids, headings, positions } = useMemo(() => {
     const counts = new Map<QueueItem['attention'] | 'starred', number>();
     for (const item of items) counts.set(category(item), (counts.get(category(item)) ?? 0) + 1);
-    return { indexes: new Map(items.map((item, index) => [item.subject.id, index])), counts, ids: items.map(item => item.subject.id) };
-  }, [items, category]);
+    // Entries are numbered among entries only: headings are not list items.
+    const headings: number[] = [];
+    const positions = new Map<number, number>();
+    lines.forEach((line, index) => {
+      if (line.kind === 'group') headings.push(index);
+      else positions.set(index, positions.size + 1);
+    });
+    return { indexes: new Map(lines.map((line, index) => [lineKey(line), index])), counts, ids: items.map(item => item.subject.id), headings, positions };
+  }, [items, lines, category]);
   const selectedIndex = selected ? indexes.get(selected) ?? -1 : -1;
   const focusedIndex = focused ? indexes.get(focused) ?? -1 : -1;
-  const rowKey = useCallback((index: number) => items[index].subject.id, [items]);
+  const rowKey = useCallback((index: number) => lineKey(lines[index]), [lines]);
+  // The heading of the group at the top of the viewport stays mounted and sticks there.
+  const activeHeading = useRef(-1);
   const virtualizer = useVirtualizer({
-    count: items.length,
+    count: lines.length,
     getScrollElement: () => scrollElement,
     getItemKey: rowKey,
-    estimateSize: () => 104,
+    estimateSize: (index) => lines[index]?.kind === 'group' ? 37 : 104,
     overscan: 5,
     enabled: virtual,
     initialOffset,
     initialMeasurementsCache: measurements.current,
     scrollMargin: margin,
-    rangeExtractor: (range) => [...new Set([
-      ...defaultRangeExtractor(range),
-      // Preserve a tab stop and an actively focused stack member while scrolling.
-      Math.max(0, selectedIndex),
-      ...(focusedIndex >= 0 ? [focusedIndex] : []),
-    ])].sort((a, b) => a - b),
+    rangeExtractor: (range) => {
+      let heading = -1;
+      for (const index of headings) {
+        if (index > range.startIndex) break;
+        heading = index;
+      }
+      activeHeading.current = heading;
+      return [...new Set([
+        ...defaultRangeExtractor(range),
+        // Preserve a tab stop and an actively focused stack member while scrolling.
+        Math.max(0, selectedIndex),
+        ...(focusedIndex >= 0 ? [focusedIndex] : []),
+        ...(heading >= 0 ? [heading] : []),
+      ])].sort((a, b) => a - b);
+    },
   });
-  useListScrollAnchor(scrollElement, ids, selected, index => { if (virtual && index >= 0) virtualizer.scrollToIndex(index, { align: 'start' }); });
+  useListScrollAnchor(scrollElement, ids, selected, index => {
+    const line = index >= 0 ? indexes.get(ids[index]) ?? -1 : -1;
+    if (virtual && line >= 0) virtualizer.scrollToIndex(line, { align: 'start' });
+  });
+  // An Overview tile opens its group: the heading scrolls to the top of the list and takes focus. It waits until the
+  // group is there, since the list may still be applying the new grouping.
+  const revealed = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!reveal || revealed.current === reveal.nonce || !scrollElement) return;
+    const index = indexes.get(`group:${reveal.key}`);
+    if (index === undefined) return;
+    revealed.current = reveal.nonce;
+    if (virtual) virtualizer.scrollToIndex(index, { align: 'start' });
+    let frames = 0;
+    let frame = 0;
+    const settle = () => {
+      const heading = container.current?.querySelector<HTMLElement>(`[data-queue-group="${CSS.escape(reveal.key)}"]`);
+      // Virtual lines are measured after they mount; give them two frames to settle first.
+      if (heading && (!virtual || frames >= 2)) {
+        if (!virtual) scrollElement.scrollTop += heading.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top;
+        heading.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
+        return;
+      }
+      if (virtual && frames === 1) virtualizer.scrollToIndex(index, { align: 'start' });
+      if (++frames < 12) frame = requestAnimationFrame(settle);
+    };
+    frame = requestAnimationFrame(settle);
+    return () => cancelAnimationFrame(frame);
+  }, [reveal, indexes, virtual, virtualizer, scrollElement]);
   useLayoutEffect(() => () => {
     measurements.current = virtualizer.takeSnapshot();
   }, [virtualizer, measurements]);
@@ -128,7 +217,10 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
   }, [scrollElement, onVisibleItemsChange]);
 
   const render = (index: number) => {
-    const item = items[index];
+    const line = lines[index];
+    if (line.kind === 'group') return <GroupHeading group={line.group} onToggle={onToggleGroup} />;
+    const item = line.item;
+    if (groups) return renderRow(item);
     const group = category(item);
     const first = index === 0 || category(items[index - 1]) !== group;
     return <>
@@ -140,6 +232,7 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
     // #248 adds hover and focus intent handlers on this container; keep rows marked with data-queue-id.
     <div ref={container} role="list" aria-label={`${items.length} PRs and stacks`}
       data-queue-total={items.length}
+      data-queue-grouped={groups ? '' : undefined}
       style={virtual ? { height: virtualizer.getTotalSize(), position: 'relative' } : undefined}
       onPointerOver={(event) => onIntent?.((event.target as HTMLElement).closest<HTMLElement>('[data-queue-id]')?.dataset.queueId ?? null)}
       onPointerLeave={() => onIntent?.(null)}
@@ -156,15 +249,31 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
           onIntent?.(owner?.dataset.queueId ?? null);
         }
       }}>
-      {virtual ? virtualizer.getVirtualItems().map((entry) => (
-        <div key={entry.key} ref={virtualizer.measureElement} data-index={entry.index}
-          data-queue-id={items[entry.index].subject.id}
-          role="listitem" aria-posinset={entry.index + 1} aria-setsize={items.length}
-          style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${entry.start - margin}px)` }}>
-          {render(entry.index)}
-        </div>
-      )) : items.map((item, index) => (
-        <div key={item.subject.id} role="listitem" data-queue-id={item.subject.id}>{render(index)}</div>
+      {virtual ? virtualizer.getVirtualItems().map((entry) => {
+        const line = lines[entry.index];
+        if (line.kind === 'group') {
+          // The heading of the group at the top sticks there; the others sit in place.
+          const sticky = entry.index === activeHeading.current;
+          return (
+            <div key={entry.key} ref={virtualizer.measureElement} data-index={entry.index} className="queue-group-heading"
+              data-queue-group={line.group.key} data-sticky={sticky ? '' : undefined}
+              style={sticky ? { position: 'sticky', top: 0, width: '100%' } : { position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${entry.start - margin}px)` }}>
+              {render(entry.index)}
+            </div>
+          );
+        }
+        return (
+          <div key={entry.key} ref={virtualizer.measureElement} data-index={entry.index}
+            data-queue-id={line.item.subject.id}
+            role="listitem" aria-posinset={positions.get(entry.index)} aria-setsize={items.length}
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${entry.start - margin}px)` }}>
+            {render(entry.index)}
+          </div>
+        );
+      }) : lines.map((line, index) => line.kind === 'group' ? (
+        <div key={lineKey(line)} className="queue-group-heading" data-queue-group={line.group.key}>{render(index)}</div>
+      ) : (
+        <div key={line.item.subject.id} role="listitem" data-queue-id={line.item.subject.id}>{render(index)}</div>
       ))}
     </div>
   );

@@ -63,7 +63,7 @@ import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue, VirtualSavedReviews, SavedRow, type SavedRowActions } from '../../components/VirtualReviewQueue';
 import { QueueRow, type QueueRowActions } from '../../components/QueueRow';
 import { useReviewHistory, useWorkbenchQueue, useWorkbenchStatus, workbenchStore } from '../../lib/workbench-store';
-import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
+import { conflictIcon as ConflictIcon, workbenchIcons, workspaceSections } from '../../lib/interface-icons';
 import { WorkbenchIcon } from '../../components/WorkbenchIcon';
 import { PrLabels } from '../../components/PrLabels';
 import type { PrReadingPosition, PrReviewRequest } from '../../components/PrSummary';
@@ -87,8 +87,11 @@ import {
   type QueueFilters,
 } from '../../lib/queue-filters';
 import { OverviewPage } from '../../components/OverviewPage';
-import type { OverviewLane, OverviewModel } from '../../lib/overview';
-import { homeTabPreference, rememberHomeTab, restoredTool } from '../../lib/home-tab';
+import { overviewActionGroups, type OverviewActionGroup, type OverviewLane, type OverviewModel } from '../../lib/overview';
+import { useOverview } from '../../lib/use-overview';
+import { actionGroupKey, groupQueueItems, parseCollapsedGroups, toggleCollapsedGroup, QUEUE_COLLAPSED_GROUPS_KEY } from '../../lib/queue-groups';
+import { QueueGroupControl } from '../../components/QueueGroupControl';
+import { homeTabPreference, rememberHomeTab, restoredTool, type HomeTab } from '../../lib/home-tab';
 import { notificationSettings } from '../../lib/notification-settings';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
 import { Activity, Suspense, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -114,6 +117,8 @@ import {
   AlarmClock,
 } from 'lucide-react';
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
+import { TeamRequestsNote } from '../../components/TeamRequestsNote';
+import { GITHUB_SIGN_IN_EVENT, type GitHubSignInRequest } from '../../lib/use-github-access';
 import { GettingStarted } from '../../components/GettingStarted';
 import { TitlebarScope, WorkspaceMenu } from '../../components/AppTitlebar';
 import type { SettingsSection } from '../../components/SettingsDialog';
@@ -139,6 +144,11 @@ import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry } from '../
 interface Props {
   onAccount?: (account: string, resumeSetup?: boolean) => void;
   navigationRestoration?: { location: HomeLocation; nonce: number };
+  /**
+   * What this tab shows when nothing names a list. The window decides it from its other tabs, so a new or restored tab
+   * shows the Overview by default only when no other tab does. Without it, the home tab preference.
+   */
+  homeDefault?: HomeTab;
   onNavigationChange?: (location: HomeLocation, mutedUrls?: Set<string>) => void;
   onReviewReady: (review: ReviewGuide) => void;
   onReviewOriginChange?: (origin: { name: string; reviews: { id: string; title: string }[] }) => void;
@@ -159,6 +169,12 @@ function withOwnView(queue: WorkbenchQueue, own: string | null | undefined): Wor
 const NO_READ_STATES: NonNullable<WorkbenchQueue['readStates']> = {};
 /** Scrolling the queue records its position this long after the last scroll event. */
 const SCROLL_RECORD_MS = 150;
+const NO_ITEMS: QueueItem[] = [];
+/** Saves collapsed queue groups on this computer, and returns them. Storage may be unavailable; the state stays. */
+function persistCollapsedGroups(value: Record<string, string[]>) {
+  try { localStorage.setItem(QUEUE_COLLAPSED_GROUPS_KEY, JSON.stringify(value)); } catch { /* the session keeps it */ }
+  return value;
+}
 const labels = {
   starred: 'Starred',
   updated: 'Changed since AI explanation',
@@ -176,7 +192,7 @@ function markQueuePainted() {
     prefetchScreens();
   }));
 }
-export function HomePage({ onAccount, navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   useRenderSpan('queue page render');
   const tabs = useWorkspaceNavigation();
   const repositories = useRepositorySettings();
@@ -256,25 +272,34 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   // Tools › Snoozed and Tools › Muted PRs replace the list, and so does the Overview (#390), the default home tab.
   // `setMutedOpen(false)` closes any of them. A link, saved view or restored list opens that list instead.
   const [tool, setTool] = useState<'muted' | 'snoozed' | 'overview' | null>(() => {
-    if (navigationRestoration) return restoredTool(navigationRestoration.location);
+    if (navigationRestoration) return restoredTool(navigationRestoration.location, homeDefault ?? homeTabPreference());
     const destination = commandDestination?.destination;
     if (destination?.section === 'overview') return 'overview';
     if (destination && (destination.section || destination.viewId || destination.repo || destination.filters || destination.settings)) return null;
-    return homeTabPreference() === 'overview' ? 'overview' : null;
+    return (homeDefault ?? homeTabPreference()) === 'overview' ? 'overview' : null;
   });
   const mutedOpen = tool === 'muted', snoozedOpen = tool === 'snoozed', overviewOpen = tool === 'overview';
   // Mounted once shown, then kept behind the queue, so switching home tabs is instant. A lane filter needs its lanes.
   const overviewMounted = useRef(false);
   if (overviewOpen || filters.lane) overviewMounted.current = true;
-  // "Show all" and a lane's count open the queue filtered to that lane, with no other filters.
-  const showLane = (lane: OverviewLane) => {
+  // A tile, its count or "All N" opens the whole queue grouped by Action, scrolled to that lane's group.
+  const [revealGroup, setRevealGroup] = useState<{ key: string; nonce: number }>();
+  const showLane = (lane: OverviewLane | OverviewActionGroup) => {
     setTool(null);
     setSavedView(false);
     setSelected(null);
-    const patch = { ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope, lane };
+    const key = actionGroupKey(lane);
+    // The plain queue is the list it opens; its group opens if it was collapsed.
+    setCollapsedGroups(current => persistCollapsedGroups(toggleCollapsedGroup(current, 'section:all', key, true)));
+    setRevealGroup({ key, nonce: Date.now() });
+    const patch = { ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope, groupBy: 'action' as const };
     if (activeQueueView) void viewAction({ type: 'activate', id: null, filters: patch }).catch(() => {});
     else updateFilters(patch);
   };
+  // Collapsed groups, per list: a saved view, or a sidebar list. Saved on this computer.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, string[]>>(() => {
+    try { return parseCollapsedGroups(localStorage.getItem(QUEUE_COLLAPSED_GROUPS_KEY)); } catch { return {}; }
+  });
   const openOverview = () => {
     rememberHomeTab('overview');
     setTool('overview');
@@ -415,7 +440,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const setQuery = (value: string) => (section === 'saved' ? setSavedQuery(value) : updateFilters({ query: value }));
   const setRepo = (value: string) => updateFilters({ repo: value });
   const resetFilters = () => {
-    updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope });
+    updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope, groupBy: filters.groupBy });
     setSavedView(false);
   };
   const [selected, setSelected] = useState<string | null>(
@@ -436,6 +461,20 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
   const [showGettingStarted, setShowGettingStarted] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  // "Sign in again" in the merge section opens the GitHub account dialog and starts sign-in there, asking for the new
+  // scopes. The dialog clears `authStart` once it has begun.
+  // A personal access token opens on the token form instead: signing in again with it would not change its scopes.
+  const [authStart, setAuthStart] = useState<false | 'sign-in' | 'token'>(false);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent<GitHubSignInRequest | undefined>).detail;
+      if (detail?.start) setAuthStart('sign-in');
+      else if (detail?.token) setAuthStart('token');
+      setAuthOpen(true);
+    };
+    window.addEventListener(GITHUB_SIGN_IN_EVENT, open);
+    return () => window.removeEventListener(GITHUB_SIGN_IN_EVENT, open);
+  }, []);
   const connectionRequired = !!auth && !!prefs && prefs.firstRunSeen && !auth.authenticated && !prefs.guestMode && !onboarding.open;
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
@@ -1092,7 +1131,26 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   [visibleHistory, query, savedSort, starredUrls, sortSignals]);
   const saved = useListOrder(sortedSaved, entry => entry.id);
   const sortedItems = useMemo(() => sortQueueItems(items, filters.sort, sortSignals), [items, filters.sort, sortSignals]);
-  const orderedItems = useListOrder(sortedItems, item => item.subject.id);
+  // Group by: memoized on the sorted list, so a render that changes neither builds nothing.
+  const groupViewKey = activeQueueView ? `view:${activeQueueView.id}` : `section:${section}`;
+  const collapsedSet = useMemo(() => new Set(collapsedGroups[groupViewKey] ?? []), [collapsedGroups, groupViewKey]);
+  // Group by Action reads the Overview's lanes here, not from the Overview: a hidden Overview runs no effects, so its
+  // status watch would stop. With another grouping, no items go in and nothing is built or watched.
+  const actionModel = useOverview({
+    items: filters.groupBy === 'action' && section !== 'saved' ? queue.items : NO_ITEMS,
+    login: auth?.authenticated ? auth.login : null,
+    scope: auth?.authenticated ? statusAccount : null,
+    live: filters.groupBy === 'action' && section !== 'saved' && !tool && !summaryItem,
+    visible: false,
+    ready: !loading,
+    teamRequests: !!prefs && notificationSettings(prefs).events['team-review-requested'],
+    excluded: mutedUrls,
+  });
+  const actionGroups = useMemo(() => overviewActionGroups(actionModel), [actionModel]);
+  const queueGrouping = useMemo(() => section === 'saved' ? undefined : groupQueueItems(sortedItems, filters.groupBy, { actionGroups, collapsed: collapsedSet }),
+    [section, sortedItems, filters.groupBy, actionGroups, collapsedSet]);
+  const toggleGroup = useCallback((key: string) => setCollapsedGroups(current => persistCollapsedGroups(toggleCollapsedGroup(current, groupViewKey, key))), [groupViewKey]);
+  const orderedItems = useListOrder(queueGrouping ? queueGrouping.items : sortedItems, item => item.subject.id);
   const orderedIds = useMemo(() => orderedItems.map(item => item.subject.id), [orderedItems]);
   // Switching to a view reads its first screenful again; resting on one in the sidebar prepares it (#saved-view-sync).
   const shownUrls = useMemo(() => orderedItems.flatMap(item => item.subject.members.map(member => member.url)).slice(0, 15), [orderedItems]);
@@ -1216,7 +1274,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       const version = filterVersion.current;
       setSavedView(next.savedView);
       setSavedQuery(next.savedQuery);
-      setTool(restoredTool(next));
+      setTool(restoredTool(next, homeDefault ?? homeTabPreference()));
       setOpenedItem(next.item);
       setSelected(next.selected);
       setOverviewTab(next.tab);
@@ -1399,7 +1457,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     }
     if (target.repo) {
       setSavedView(false);
-      updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, repo: target.repo });
+      updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, repo: target.repo, groupBy: target.filters?.group ?? filters.groupBy });
       return;
     }
     if (target.section) {
@@ -1417,6 +1475,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           urls: target.filters?.prs,
           // An Overview lane link (#390) opens the queue filtered to that lane.
           lane: target.filters?.lane,
+          // `group=action` or `group=repository`; without it the list keeps its grouping.
+          ...(target.filters?.group ? { groupBy: target.filters.group } : {}),
         });
     }
   }, [commandDestination, prefs, loading, onboarding.ready]);
@@ -1899,7 +1959,11 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   aria-current={overviewOpen ? 'page' : undefined}
                   className={overviewOpen ? 'active' : ''}
                   disabled={viewBusy}
-                  onClick={openOverview}
+                  onClick={() => {
+                    // Another tab already shows the Overview: go there rather than make this tab a second one.
+                    if (!overviewOpen && tabs?.focusOverview?.()) return;
+                    openOverview();
+                  }}
                 >
                   <WorkbenchIcon name="overview" size={16} />
                   <span className="sidebar-label">Overview</span>
@@ -2118,6 +2182,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                         ? 'Your review requests. Changed PRs appear under Updated PRs.'
                         : 'PR content or stack changes since your saved AI explanation.'}
               </p>
+              {section === 'requested' && !activeQueueView && (
+                <TeamRequestsNote
+                  surface="review-requests"
+                  showsTeamRequests={!!prefs && notificationSettings(prefs).events['team-review-requested']}
+                />
+              )}
             </div>
             <div className="flex items-center gap-2">
               <PrFreshness className="queue-freshness" queue checkedAt={queue.sync?.checkedAt} refreshing={!!storeStatus.saved} />
@@ -2252,6 +2322,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               </Popover.Root>
             )}
             <PrListSortControl value={section === 'saved' ? savedSort : filters.sort} onChange={changeSort} savedReviews={section === 'saved'} disabled={viewBusy} />
+            {section !== 'saved' && <QueueGroupControl value={filters.groupBy} onChange={groupBy => updateFilters({ groupBy })} disabled={viewBusy} />}
             {section !== 'saved' && auth?.authenticated && (
               <EntryActions label="Review queue actions" groups={[[{
                 label: 'Mark visible PRs as read',
@@ -2294,6 +2365,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   aria-label={`Remove ${label} filter`}
                   onClick={() => updateFilters({ [key]: DEFAULT_QUEUE_FILTERS[key] })}
                 >
+                  {key === 'merge' && <ConflictIcon size={12} aria-hidden="true" />}
                   {label}
                   <X size={12} />
                 </button>
@@ -2380,6 +2452,9 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   <VirtualReviewQueue
                     items={orderedItems}
                     grouped={filters.sort.key === 'priority'}
+                    groups={queueGrouping}
+                    onToggleGroup={toggleGroup}
+                    reveal={revealGroup}
                     starredFirst={filters.sort.starredFirst}
                     labels={labels}
                     selected={selected}
@@ -2716,7 +2791,13 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       <GitHubAuthDialog
         open={authOpen || connectionRequired}
         connectionRequired={connectionRequired}
-        onOpenChange={setAuthOpen}
+        onOpenChange={(next) => {
+          if (!next) setAuthStart(false);
+          setAuthOpen(next);
+        }}
+        startSignIn={authStart === 'sign-in'}
+        startToken={authStart === 'token'}
+        onSignInStarted={() => setAuthStart(false)}
         onConnected={syncAuth}
         onSignedOut={async () => {
           onAccount?.('local');

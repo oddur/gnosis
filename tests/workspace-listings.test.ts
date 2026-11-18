@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { snapshot, groupSubjects, type ReviewMember, type QueueItem, type WorkbenchQueue } from '../lib/workbench';
 import { normalizeQueueFilters } from '../lib/queue-filters';
 import { emptyReadVersions } from '../lib/pr-read-state';
-import { countWorkspaceListing, workspaceListingRequest } from '../lib/workspace-listings';
+import { countWorkspaceListing, isOverviewTab, workspaceListingRequest } from '../lib/workspace-listings';
 import { newWorkspaceTab } from '../lib/workspace-tabs';
 const member = (n: number, patch: Partial<ReviewMember> = {}): ReviewMember => ({
   number: n,
@@ -130,4 +130,12 @@ void test('explanation freshness is checked against the whole stack snapshot', (
   assert.deepEqual(countWorkspaceListing(request, queue, [], 'alice'), { count: 2, unread: false });
   stack.subject.members[1].headSha = 'new-commit';
   assert.deepEqual(countWorkspaceListing(request, queue, [], 'alice'), { count: 0, unread: false });
+});
+
+test('the sidebar finds a tab already showing the Overview, and only that', () => {
+  assert.equal(isOverviewTab(newWorkspaceTab('o', { kind: 'home', section: 'overview' })), true);
+  assert.equal(isOverviewTab(newWorkspaceTab('q', { kind: 'home', section: 'all' })), false);
+  assert.equal(isOverviewTab(newWorkspaceTab('v', { kind: 'home', viewId: 'hotfix' })), false);
+  assert.equal(isOverviewTab(newWorkspaceTab('pr', { kind: 'home', url: member(1).url })), false);
+  assert.equal(isOverviewTab(newWorkspaceTab('r', { kind: 'review', reviewId: 'saved' })), false);
 });

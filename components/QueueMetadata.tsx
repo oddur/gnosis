@@ -1,5 +1,6 @@
 import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { checkSummaryIcons } from '../lib/interface-icons';
+import { checkSummaryState } from '../lib/check-summary';
 import { MessageSquare } from 'lucide-react';
 import { GitHubAuthor } from './GitHubAuthor';
 import type { ReviewSubject } from '../lib/workbench';
@@ -25,15 +26,7 @@ export function QueueMetadata({ subject, account, onChecks }: { subject: ReviewS
   const lastChecked = complete
     ? timeAgo(new Date(Math.min(...values.map((value) => value.checkedAt))).toISOString())
     : null;
-  const state = !complete
-    ? 'unknown'
-    : values.some((v) => v.checks.state === 'failure')
-      ? 'failure'
-      : values.some((v) => v.checks.state === 'pending')
-        ? 'pending'
-        : total
-          ? 'success'
-          : 'neutral';
+  const state = checkSummaryState(values, complete);
   const CheckIcon = checkSummaryIcons[state];
   const failed = values.reduce((n, value) => n + (value.checks.failed ?? 0), 0);
   const CheckControl = onChecks ? 'button' : 'span';

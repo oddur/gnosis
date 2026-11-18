@@ -53,6 +53,20 @@ if (new URLSearchParams(location.search).has('navigation-history') && !savedView
 }
 const onboardingScenario = new URLSearchParams(location.search).has('onboarding') || new URLSearchParams(location.search).has('ftue');
 const detectedTools = new Map<string, { installed: boolean; resolvedPath: string | null }>();
+// The scopes GitHub reports for the fixture's sign-in (`X-OAuth-Scopes`). Browser checks change them with
+// `window.setFixtureGitHubScopes`, as main's `github-access-changed` broadcast does.
+let fixtureScopes: string[] | null = ['repo', 'read:org', 'workflow'];
+// `classic` stands for a pasted personal access token (`ghp_…`); `oauth` for Gnosis's own sign-in.
+let fixtureTokenKind: 'oauth' | 'classic' | 'fine-grained' = 'oauth';
+const scopeListeners = new Set<(access: { login: string | null; scopes?: string[] | null; tokenKind?: typeof fixtureTokenKind }) => void>();
+const publishFixtureAccess = () => {
+  for (const listener of scopeListeners) listener({ login: fixtureAuthenticated ? 'oddur' : null, scopes: fixtureScopes, tokenKind: fixtureTokenKind });
+};
+(window as unknown as { setFixtureGitHubScopes: (scopes: string[] | null, tokenKind?: typeof fixtureTokenKind) => void }).setFixtureGitHubScopes = (scopes, tokenKind) => {
+  fixtureScopes = scopes;
+  if (tokenKind) fixtureTokenKind = tokenKind;
+  publishFixtureAccess();
+};
 let fixtureAuthenticated = new URLSearchParams(location.search).has('ftue') ? sessionStorage.getItem('ftue-auth') === 'true' : !onboardingScenario;
 let fixtureStarted = false;
 const polishScenario = new URLSearchParams(location.search).has('polish');
@@ -415,6 +429,8 @@ let prefs: Preferences = {
   educationMode: true,
   claudeContext: false,
   guestMode: onboardingScenario && sessionStorage.getItem('fixture-guest-mode') === 'true',
+  // `?team-requests`: team review requests are on, so the Overview lists them under "Your team".
+  ...(new URLSearchParams(location.search).has('team-requests') ? { notificationSettings: { events: { 'team-review-requested': true } } } : {}),
 };
 let activities: ActivityTask[] = [
   {
@@ -595,6 +611,11 @@ const mocks = {
     const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];
     return Promise.resolve({version:1 as const,url,metadata:member,comparisonBase:member.baseSha,fetchedAt:Date.now(),files: new URLSearchParams(location.search).has('markdown-review') ? markdownFiles : new URLSearchParams(location.search).has('file-filters') ? filterFixtureFiles(url) : [
       ...(new URLSearchParams(location.search).has('diff-gaps') ? diffGapFiles : []),
+      // klanggames/seed#35392: the PR changes two GitHub Actions workflows.
+      ...(new URLSearchParams(location.search).has('workflow-files') && url.endsWith('/150') ? [
+        {path:'.github/workflows/seed_job_seed-api-portal-tests.yaml',status:'modified' as const,additions:3,deletions:1,changeId:'workflow-portal-v1'},
+        {path:'.github/workflows/seed_job_seed_api.yaml',status:'modified' as const,additions:2,deletions:2,changeId:'workflow-api-v1'},
+      ] : []),
       {path:'src/worker.ts',status:'modified' as const,additions:1,deletions:1,changeId:'worker-v1',patch:'@@ -33,7 +33,7 @@\n const value32 = 32;\n const value33 = 33;\n const value34 = 34;\n-const value35 = 35;\n+const value35 = 36;\n const value36 = 36;\n const value37 = 37;\n const value38 = 38;'},
       {path:'src/new.ts',status:'added' as const,additions:2,deletions:0,changeId:'new-v1'},
       {path:'src/old.ts',status:'deleted' as const,additions:0,deletions:2,changeId:'old-v1'},
@@ -666,15 +687,21 @@ const mocks = {
   detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
   searchRepos: (query: string) => Promise.resolve([{ fullName: 'klang/engine', description: 'Game engine' }, { fullName: 'klang/tools', description: 'Developer tools' }].filter(repo => repo.fullName.includes(query))),
   getAuthState: () =>
-    Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null }),
+    Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null, scopes: fixtureAuthenticated ? fixtureScopes : undefined, tokenKind: fixtureAuthenticated ? fixtureTokenKind : undefined }),
+  onGitHubAccessChanged: (callback: (access: { login: string | null; scopes?: string[] | null }) => void) => {
+    scopeListeners.add(callback);
+    return () => void scopeListeners.delete(callback);
+  },
   githubAuthOptions: () => Promise.resolve({ web: onboardingScenario }),
   beginGitHubSignIn: () => Promise.resolve({ id: 'fixture-auth', userCode: 'TEST-CODE', verificationUri: 'https://github.com/login/device', expiresAt: Date.now()+900000 }),
-  completeGitHubSignIn: () => { fixtureAuthenticated = true; return Promise.resolve('oddur'); },
+  completeGitHubSignIn: () => { fixtureAuthenticated = true; fixtureScopes = ['repo', 'read:org', 'workflow']; fixtureTokenKind = 'oauth'; return Promise.resolve('oddur'); },
   cancelGitHubSignIn: () => Promise.resolve(),
   cancelOAuth: () => Promise.resolve(),
   signOut: () => { fixtureAuthenticated = false; return Promise.resolve(); },
   startOAuth: () => {
     fixtureAuthenticated = true;
+    fixtureScopes = ['repo', 'read:org', 'workflow'];
+    fixtureTokenKind = 'oauth';
     sessionStorage.setItem('ftue-auth', 'true');
     return Promise.resolve();
   },

@@ -9,7 +9,7 @@ import { createPrActionsService, PrMergeFailure } from '../src/pr-actions-servic
 import { createPrMergeMonitor } from '../src/pr-merge-monitor';
 import { createActivityService } from '../src/activity-service';
 import { GitHubBackoffError } from '../lib/github-client';
-import { singleMergePlan, type PrActionRequest } from '../lib/pr-actions';
+import { singleMergePlan, workflowPermissionReason, type PrActionRequest } from '../lib/pr-actions';
 const url = (n: number) => `https://github.com/o/r/pull/${n}`;
 function fixture(native = false) {
   let nativeStack = native,
@@ -184,6 +184,59 @@ void test('mergeable optional failing checks and hooks defer final enforcement t
     assert.equal((await f.service.act(f.client, await f.request())).status, 'merged');
     assert.equal(f.writes.length, 1);
   }
+});
+void test('BLOCKED with every visible requirement met keeps Merge available, and a refusal from GitHub is reported once', async () => {
+  const blocked = (f: ReturnType<typeof fixture>, reviewDecision: string | null, rollup: string | null) =>
+    Object.assign(f.prs[0], {
+      mergeStateStatus: 'BLOCKED',
+      reviewDecision,
+      commits: { nodes: [{ commit: { statusCheckRollup: rollup === null ? null : { state: rollup } } }] },
+    });
+  // klanggames/seed#35392 to a repo-only sign-in: BLOCKED, no review decision, checks passed.
+  const f = fixture();
+  blocked(f, null, 'SUCCESS');
+  const state = await f.service.read(f.client, url(1), true);
+  assert.equal(singleMergePlan(state).blockedReason, undefined);
+  assert.equal((await f.service.act(f.client, await f.request())).status, 'merged');
+  // GitHub refuses a merge its rules do not allow; its reason reaches the dialog and nothing is retried.
+  const refused = fixture();
+  blocked(refused, 'APPROVED', null);
+  const original = refused.client.graphql;
+  let attempts = 0;
+  refused.client.graphql = (async (query: string, params: Record<string, unknown>) => {
+    if (query.includes('MergePullRequestInput')) {
+      attempts++;
+      throw new Error('Repository rule violations found\n\nReview from code owner required.');
+    }
+    return original(query, params);
+  }) as typeof refused.client.graphql;
+  await assert.rejects(refused.service.act(refused.client, await refused.request()), /Repository rule violations found/);
+  assert.equal(attempts, 1);
+  // Anything Gnosis can see that blocks still disables Merge.
+  for (const [decision, rollup] of [['REVIEW_REQUIRED', 'SUCCESS'], ['CHANGES_REQUESTED', 'SUCCESS'], [null, 'FAILURE'], [null, 'PENDING']] as const) {
+    const g = fixture();
+    blocked(g, decision, rollup);
+    assert.match(singleMergePlan(await g.service.read(g.client, url(1), true)).blockedReason ?? '', /not confirmed/, `${decision} ${rollup}`);
+  }
+});
+void test('a PR that changes workflow files: Merge and rebase need the workflow permission, merge-commit updates do not', () => {
+  const met = { mergeable: 'MERGEABLE', mergeState: 'BLOCKED', reviewDecision: null, checkState: 'SUCCESS', stack: null };
+  const files = ['.github/workflows/seed_job_seed_api.yaml'];
+  assert.equal(
+    workflowPermissionReason(met, 'merge', true, files),
+    'Needs the workflow permission. Sign in again, or merge on GitHub.'
+  );
+  assert.equal(
+    workflowPermissionReason(met, 'update-rebase', true, files),
+    'Needs the workflow permission. Sign in again, or update the branch on GitHub.'
+  );
+  assert.equal(workflowPermissionReason(met, 'merge', false, files), undefined, 'With workflow: GitHub decides');
+  assert.equal(workflowPermissionReason(met, 'merge', true, []), undefined, 'No workflow files');
+  assert.equal(workflowPermissionReason(met, 'merge', true, undefined), undefined, 'Paths unknown: GitHub decides');
+  assert.equal(workflowPermissionReason(met, 'update-rebase', true, undefined), undefined);
+  // GitHub answered CLEAN: nothing to explain. A visible blocker keeps mergeBlockedReason's answer.
+  assert.equal(workflowPermissionReason({ ...met, mergeState: 'CLEAN' }, 'merge', true, files), undefined);
+  assert.equal(workflowPermissionReason({ ...met, reviewDecision: 'REVIEW_REQUIRED' }, 'merge', true, files), undefined);
 });
 void test('an unconfirmed merge response never reports success or retries the write', async () => {
   for (const response of [{}, { mergePullRequest: null }, { mergePullRequest: { pullRequest: { merged: false } } }]) {

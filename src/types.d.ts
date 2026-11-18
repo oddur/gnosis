@@ -1,3 +1,4 @@
+import type { GitHubTokenKind } from '../lib/github-access';
 import type { AppUpdateStatus } from './update-state';
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
@@ -128,7 +129,8 @@ declare global {
       beginGitHubSignIn: () => Promise<GitHubDevicePrompt>;
       completeGitHubSignIn: (id: string) => Promise<string>;
       cancelGitHubSignIn: (id: string) => Promise<void>;
-      getAuthState: () => Promise<{ authenticated: boolean; login: string | null }>;
+      getAuthState: () => Promise<{ authenticated: boolean; login: string | null; scopes?: string[] | null; tokenKind?: GitHubTokenKind }>;
+      onGitHubAccessChanged?: (callback: (access: { login: string | null; scopes?: string[] | null; tokenKind?: GitHubTokenKind }) => void) => () => void;
       signOut: () => Promise<void>;
       savePat: (token: string, prUrl?: string) => Promise<string>;
       listReviews: () => Promise<ReviewHistoryEntry[]>;
@@ -210,6 +212,10 @@ declare global {
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
       getStackMergePlan: (urls: string[]) => Promise<import('../lib/pr-actions').PrMergePlan>;
       performPrAction: (request: import('../lib/pr-actions').PrActionRequest) => Promise<import('../lib/pr-actions').PrActionResult>;
+      /** The Overview's "Since yesterday" events after `since` (#390). Local only. */
+      getOverviewSince?: (since: number) => Promise<import('../lib/since-log').SinceEvent[]>;
+      /** Lines changed since your review, one compare read per PR, cached (#390). */
+      getRereviewLines?: (targets: import('../lib/rereview-lines').RereviewTarget[]) => Promise<import('../lib/rereview-lines').RereviewLines[]>;
       submitReview: (req: SubmitReviewRequest) => Promise<{ reviewUrl: string; droppedCommentCount: number }>;
       checkPrFreshness: (prUrl: string, headSha: string | undefined) => Promise<FreshnessResult>;
       loadOnboarding: () => Promise<OnboardingState>;

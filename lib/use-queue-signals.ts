@@ -1,6 +1,6 @@
 import { watchGitHub } from './watch-github';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { QUEUE_SIGNALS_TTL, queueSignalKey, type QueueSignalRequest, type QueueSignals } from './queue-signals';
+import { OVERVIEW_STATUS_SWEEP_MS, QUEUE_SIGNALS_TTL, overviewStatusOptions, overviewStatusPriority, queueSignalKey, type QueueSignalOptions, type QueueSignalRequest, type QueueSignals } from './queue-signals';
 import {
   publishQueueSignals,
   signalAccount,
@@ -20,25 +20,29 @@ import {
 
 export { publishQueueSignals } from './queue-signal-store';
 
-// Only rows intersecting the scrollport enter the batch. Coalesce their IPC and GitHub reads.
-function read(scope: string, request: QueueSignalRequest): Promise<QueueSignals | undefined> {
+// Only rows intersecting the scrollport enter the batch. Coalesce their IPC and GitHub reads. `options.active` reads
+// at visible priority: such requests go to main in their own 25-PR chunks, the rest at background priority.
+function read(scope: string, request: QueueSignalRequest, options: Pick<QueueSignalOptions, 'active'> = {}): Promise<QueueSignals | undefined> {
   const account = signalAccount(scope);
   const key = queueSignalKey(request);
   const current = account.entries.get(key);
   if (current?.pending) return current.pending;
   if (current && current.expires > Date.now()) return Promise.resolve(current.value);
   const entry: SignalEntry = { value: current?.value, expires: 0 };
-  entry.pending = new Promise((resolve) => account.batch.set(key, { request, resolve }));
+  entry.pending = new Promise((resolve) => account.batch.set(key, { request, resolve, ...(options.active ? { active: true } : {}) }));
   account.entries.set(key, entry);
   const state = account;
   state.timer ??= setTimeout(() => {
     state.timer = undefined;
-    const batch = [...state.batch.entries()];
+    const all = [...state.batch.entries()];
     state.batch.clear();
+    // Visible reads first, in their own chunks, so each chunk has one priority.
+    const active = all.filter(([, item]) => item.active);
+    const chunks = [active, all.filter(([, item]) => !item.active)].flatMap((list) =>
+      Array.from({ length: Math.ceil(list.length / 25) }, (_, i) => ({ chunk: list.slice(i * 25, i * 25 + 25), active: list === active })));
     void (async () => {
-      for (let i = 0; i < batch.length; i += 25) {
-        const chunk = batch.slice(i, i + 25);
-        const result = await window.electronAPI.getQueueSignals(chunk.map(([, item]) => item.request)).catch(() => []);
+      for (const { chunk, active } of chunks) {
+        const result = await window.electronAPI.getQueueSignals(chunk.map(([, item]) => item.request), ...(active ? [{ active: true }] : [])).catch(() => []);
         for (const [id, item] of chunk) {
           const record = state.entries.get(id);
           if (!record) {
@@ -236,40 +240,96 @@ export function useMergeFilter(scope: string | null, requests: readonly QueueSig
   return { states, phase: enabled ? phase : ('done' as const) };
 }
 
+const NO_PENDING: ReadonlyMap<string, number> = new Map();
+const isDue = (scope: string, request: QueueSignalRequest) => {
+  const entry = signalAccount(scope).entries.get(queueSignalKey(request));
+  return !entry?.value || !!entry.pending || entry.expires <= Date.now();
+};
 /**
- * Status for the Overview's PRs (#390). Saved status shows first, always, without a GitHub read. While `live`, the
- * same shared backend watch as visible queue rows keeps it current; preview builds without one read through the
- * coalesced 25-PR batches every `QUEUE_SIGNALS_TTL`. Hidden windows pause, as rows do.
+ * Status for every PR the Overview can place in a lane (#390), and how many reads are in flight. Saved status shows
+ * first, always, without a GitHub read. While `live`, every PR without status, or with status past its time-to-live
+ * (`QUEUE_SIGNALS_TTL`), is read through the queue rows' path: the coalesced 25-PR batches, main's 2-minute service
+ * cache and the automatic rate-limit budget. Native builds also join the shared backend watch, so changes arrive as
+ * they happen. A hidden window reads nothing until it shows again.
+ *
+ * Priority (`overviewStatusPriority`): `visible` while the Overview is `shown` (the active tab) and the window is
+ * visible, else `background`. It is read at each sweep, so showing the Overview raises the next reads without
+ * restarting anything; the budget, back-off and batching are the same at both.
+ *
+ * `checking` is the number of these PRs whose read has not answered yet; it changes once per answered batch.
+ * `pending` names them, by `queueSignalKey`, with when each read started, so the Overview's freshness line can tell
+ * a read that just started from one that is taking long (lib/overview-freshness.ts).
  */
-export function useLiveQueueSignals(scope: string | null, requests: readonly QueueSignalRequest[], live: boolean) {
+export function useOverviewStatus(scope: string | null, requests: readonly QueueSignalRequest[], live: boolean, shown = false) {
+  const visibleRef = useRef(shown);
+  visibleRef.current = shown;
+  // The sweep, once saved status is restored: showing the Overview runs it at once, at visible priority.
+  const sweep = useRef<(() => void) | undefined>(undefined);
   const key = JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha })));
   const values = useSignalValues(scope, key);
+  const [inFlight, setInFlight] = useState<ReadonlyMap<string, number>>(NO_PENDING);
   useEffect(() => {
+    setInFlight(NO_PENDING);
     if (!scope) return;
     const members = JSON.parse(key) as QueueSignalRequest[];
     if (!members.length) return;
     let cancelled = false;
     let stop: (() => void) | undefined;
+    const pending = new Map<string, number>();
+    // Counts reads started and answered, so a batch answering as another starts still reports.
+    let changes = 0;
+    let reported = -1;
+    let scheduled = false;
+    // Answers arrive per batch: one count update for each, not one per PR.
+    const report = () => {
+      if (scheduled) return;
+      scheduled = true;
+      queueMicrotask(() => {
+        scheduled = false;
+        if (cancelled || reported === changes) return;
+        reported = changes;
+        setInFlight(pending.size ? new Map(pending) : NO_PENDING);
+      });
+    };
     const load = () => {
-      if (cancelled || !live || document.visibilityState === 'hidden') return;
-      void Promise.all(members.map((request) => read(scope, request)));
+      const windowVisible = document.visibilityState !== 'hidden';
+      // A hidden window reads nothing; it reads again when it shows.
+      if (cancelled || !live || !windowVisible) return;
+      const options = overviewStatusOptions(overviewStatusPriority(visibleRef.current, windowVisible));
+      for (const request of members) {
+        const id = queueSignalKey(request);
+        if (pending.has(id) || !isDue(scope, request)) continue;
+        pending.set(id, Date.now());
+        changes++;
+        void read(scope, request, options).finally(() => {
+          pending.delete(id);
+          changes++;
+          report();
+        });
+      }
+      report();
     };
     void restoreSaved(scope, members, () => cancelled).then((current) => {
       if (!current || !live) return;
       stop ??= watchGitHub({ kind: 'signals', priority: 'visible', targets: members }, (update) => {
         if (update.kind === 'signals') publishQueueSignals(scope, [update.value]);
       });
-      if (!stop) load();
+      sweep.current = load;
+      load();
     });
-    const timer = live && window.electronAPI.githubSyncVersion !== 1 ? setInterval(load, QUEUE_SIGNALS_TTL) : undefined;
-    const onVisibility = () => { if (window.electronAPI.githubSyncVersion !== 1) load(); };
-    if (live) document.addEventListener('visibilitychange', onVisibility);
+    const timer = live ? setInterval(load, OVERVIEW_STATUS_SWEEP_MS) : undefined;
+    if (live) document.addEventListener('visibilitychange', load);
     return () => {
       cancelled = true;
+      sweep.current = undefined;
       stop?.();
       clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('visibilitychange', load);
     };
   }, [scope, key, live]);
-  return values;
+  useEffect(() => {
+    if (shown) sweep.current?.();
+  }, [shown]);
+  const pending = live ? inFlight : NO_PENDING;
+  return { values, checking: pending.size, pending };
 }

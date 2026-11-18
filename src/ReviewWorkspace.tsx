@@ -46,6 +46,8 @@ export interface WorkspaceController {
 interface Props {
   id: string;
   initial?: import('../lib/workspace-tabs').WorkspaceTarget;
+  /** What the home tab shows when nothing names a list; the window decides it from its other tabs. */
+  homeDefault?: 'overview' | 'queue';
   recentlyViewed: ReturnType<typeof import('../lib/recently-viewed').createRecentlyViewed>;
   register: (id: string, controller: WorkspaceController) => () => void;
   onLocation: (id: string, location: AppLocation, title?: string) => void;
@@ -57,6 +59,7 @@ interface Props {
 export const ReviewWorkspace = memo(function ReviewWorkspace({
   id,
   initial,
+  homeDefault,
   recentlyViewed,
   register,
   onLocation,
@@ -533,6 +536,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
             commandDestination={homeCommand}
             explanationDestination={explanationDestination}
             navigationRestoration={homeRestoration}
+            homeDefault={homeDefault}
             onNavigationChange={recordHome}
             onShowActivity={() => setActivityOpen(true)}
           />

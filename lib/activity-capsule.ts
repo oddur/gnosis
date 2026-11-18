@@ -20,6 +20,9 @@ export interface ActivityCapsule {
   label: string;
 }
 
+/** "2 tasks failed": says tasks, so the title bar is not read as failing CI checks. */
+export const failedTasksLabel = (count: number) => `${count} ${count === 1 ? 'task' : 'tasks'} failed`;
+
 /** A task's identity at its latest state, so a retried task that fails again is new. */
 export const seenKey = (task: Pick<ActivityTask, 'id' | 'updatedAt'>) => `${task.id}@${task.updatedAt}`;
 
@@ -43,7 +46,7 @@ export function activityCapsule(tasks: readonly ActivityTask[], seen: ReadonlySe
   const label = [
     active && `${active} running`,
     queued && `${queued} queued`,
-    unseenFailed && `${unseenFailed} failed`,
+    unseenFailed && failedTasksLabel(unseenFailed),
     unseenReady && `${unseenReady} ready`,
   ]
     .filter(Boolean)

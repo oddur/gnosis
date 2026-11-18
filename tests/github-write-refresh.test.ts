@@ -289,6 +289,8 @@ void test('every GitHub write in the app is in the inventory', () => {
     "src/conflict-restack.ts: 'push',",
     "src/pr-actions-service.ts: 'POST /repos",
     "src/pr-actions-service.ts: 'PUT /repos",
+    // Close PR (#390): the optional comment, then the closePullRequest mutation.
+    'src/pr-actions-service.ts: .issues.createComment(',
     'src/pr-actions-service.ts: mutation',
     'src/pr-checks-service.ts: .actions.reRunWorkflow(',
     'src/pr-checks-service.ts: .actions.reRunWorkflowFailedJobs(',

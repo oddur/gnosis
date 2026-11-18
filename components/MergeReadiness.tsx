@@ -1,4 +1,5 @@
 import { AlertCircle, CheckCircle2, CircleHelp, Clock3 } from 'lucide-react';
+import { conflictIcon } from '../lib/interface-icons';
 import type { MergeReadiness } from '../lib/merge-readiness';
 import { timeAgo } from '../lib/utils';
 
@@ -6,13 +7,17 @@ export function ReadinessBadge({ readiness, reviewStatusShown = false, staleLabe
   // The prominent review badge already communicates these states. Keep this slot for merge eligibility.
   if (reviewStatusShown && ['Changes requested', 'Approval required', 'Draft PR', 'Merged', 'Closed'].includes(readiness.label)) return null;
   const Icon =
-    readiness.tone === 'success'
-      ? CheckCircle2
-      : readiness.tone === 'danger'
-        ? AlertCircle
-        : readiness.tone === 'warning'
-          ? Clock3
-          : CircleHelp;
+    readiness.label === 'Merge conflicts'
+      ? conflictIcon
+      : readiness.mismatch
+        ? CircleHelp
+        : readiness.tone === 'success'
+        ? CheckCircle2
+        : readiness.tone === 'danger'
+          ? AlertCircle
+          : readiness.tone === 'warning'
+            ? Clock3
+            : CircleHelp;
   const description = [
     ...readiness.details,
     readiness.checkedAt ? `Last checked ${new Date(readiness.checkedAt).toLocaleString()}.` : '',

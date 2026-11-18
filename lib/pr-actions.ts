@@ -6,7 +6,9 @@ export type PrActionKind =
   | 'update-merge'
   | 'update-rebase'
   | 'mark-ready'
-  | 'convert-draft';
+  | 'convert-draft'
+  /** Close without merging (#390, Needs a decision). It can be reopened on GitHub. */
+  | 'close';
 export interface PrActionRevision {
   url: string;
   headSha: string;
@@ -30,6 +32,10 @@ export interface PrActionState extends PrActionMember {
   canWrite: boolean;
   mergeable: string;
   mergeState: string;
+  /** GitHub's review decision for this sign-in. Undefined in states read before it was requested. */
+  reviewDecision?: string | null;
+  /** The head commit's check rollup (`SUCCESS`, `FAILURE`, `PENDING`…); null when no checks are reported. */
+  checkState?: string | null;
   methods: MergeMethod[];
   defaultMethod: MergeMethod;
   autoMerge: MergeMethod | null;
@@ -65,6 +71,8 @@ export interface PrActionRequest {
   commitTitle?: string;
   commitBody?: string;
   createStack?: boolean;
+  /** Close only: a comment posted first, such as why. */
+  comment?: string;
 }
 export interface PrActionResult {
   status: 'completed' | 'pending' | 'merged' | 'enqueued';
@@ -76,6 +84,43 @@ export const mergeMethodLabels: Record<MergeMethod, string> = {
   MERGE: 'Create a merge commit',
   REBASE: 'Rebase and merge',
 };
+/**
+ * GitHub reports BLOCKED, but every requirement Gnosis can see is met: no review blocker, checks passed or none. GitHub
+ * evaluates rules for the account and token asking, so its website can allow this merge while Gnosis's sign-in reads
+ * BLOCKED. The merge stays available: GitHub refuses a merge it does not allow, and the dialog shows its reason.
+ */
+export function blockedButMet(state: Pick<PrActionState, 'mergeable' | 'mergeState' | 'reviewDecision' | 'checkState'>): boolean {
+  return (
+    state.mergeState === 'BLOCKED' &&
+    state.mergeable === 'MERGEABLE' &&
+    state.reviewDecision !== undefined &&
+    state.reviewDecision !== 'CHANGES_REQUESTED' &&
+    state.reviewDecision !== 'REVIEW_REQUIRED' &&
+    (state.checkState === null || state.checkState === 'SUCCESS')
+  );
+}
+
+export const WORKFLOW_MERGE_REASON = 'Needs the workflow permission. Sign in again, or merge on GitHub.';
+export const WORKFLOW_REBASE_REASON = 'Needs the workflow permission. Sign in again, or update the branch on GitHub.';
+
+/**
+ * GitHub refuses a token without `workflow` any write that creates commits changing `.github/workflows/`. Merging this
+ * PR does, and so does rebasing its branch, which rewrites its commits. A merge-commit update only writes the base
+ * branch's changes, which Gnosis does not list, so it stays available and GitHub's refusal shows if it comes.
+ * `lacksWorkflow` is from `missingScopes`; `workflowFiles` from `changedWorkflowFiles`, undefined while unknown.
+ */
+export function workflowPermissionReason(
+  state: Pick<PrActionState, 'mergeable' | 'mergeState' | 'reviewDecision' | 'checkState' | 'stack'>,
+  kind: 'merge' | 'update-rebase',
+  lacksWorkflow: boolean,
+  workflowFiles: readonly string[] | undefined
+): string | undefined {
+  if (!lacksWorkflow || !workflowFiles?.length) return undefined;
+  if (kind === 'update-rebase') return WORKFLOW_REBASE_REASON;
+  // Merging: GitHub's BLOCKED answer, with every visible requirement met, is the workflow scope's doing.
+  if (!state.stack && blockedButMet(state)) return WORKFLOW_MERGE_REASON;
+}
+
 export function mergeBlockedReason(state: PrActionState): string | undefined {
   if (state.archived) return 'This repository is archived.';
   if (state.state !== 'OPEN') return state.state === 'MERGED' ? 'This PR is already merged.' : 'This PR is closed.';
@@ -86,7 +131,8 @@ export function mergeBlockedReason(state: PrActionState): string | undefined {
   // Stack policy is evaluated atomically by GitHub, including its ultimate base branch.
   if (
     !state.stack &&
-    (state.mergeable !== 'MERGEABLE' || !['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(state.mergeState))
+    (state.mergeable !== 'MERGEABLE' ||
+      (!['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(state.mergeState) && !blockedButMet(state)))
   )
     return 'GitHub has not confirmed this PR is ready to merge. Refresh its status or inspect the merge requirements.';
 }
@@ -128,4 +174,11 @@ export function branchUpdateBlockedReason(state: PrActionState): string | undefi
     return 'Resolve merge conflicts locally or on GitHub before updating this branch.';
   if (!state.canUpdateBranch)
     return 'This branch is up to date, cannot be updated automatically, or you do not have permission.';
+}
+
+/** Close: open, in an active repository, and you wrote it or can write to the repository. */
+export function closeBlockedReason(state: PrActionState): string | undefined {
+  if (state.archived) return 'This repository is archived.';
+  if (state.state !== 'OPEN') return state.state === 'MERGED' ? 'This PR is already merged.' : 'This PR is already closed.';
+  if (!state.canChangeDraft) return 'Only the PR author or someone with write permission can close this PR.';
 }

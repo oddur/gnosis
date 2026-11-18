@@ -43,7 +43,12 @@ export interface LinkFilters {
   prs?: string[];
   /** Only PRs in this Overview lane (#390), as `lane=fix`. */
   lane?: LinkLane;
+  /** Group the list, as `group=action` or `group=repository`. Absent: the list keeps its grouping. */
+  group?: LinkGroup;
 }
+/** How a queue link groups the list; the same words as `QueueGroupBy` in lib/queue-groups.ts, without `none`. */
+export type LinkGroup = 'action' | 'repository';
+export const LINK_GROUPS: readonly LinkGroup[] = ['action', 'repository'];
 /** The Overview lanes a queue link can name; the same words as `OverviewLane` in lib/overview.ts. */
 export type LinkLane = 'merge' | 'answer' | 'review' | 'fix' | 'waiting';
 export const LINK_LANES: readonly LinkLane[] = ['merge', 'answer', 'review', 'fix', 'waiting'];
@@ -345,6 +350,11 @@ function linkFilters(parameters: Parameters): Result<LinkFilters | undefined> {
   if (lane !== undefined) {
     if (!LINK_LANES.includes(lane as LinkLane)) return fail('bad-parameter');
     filters.lane = lane as LinkLane;
+  }
+  const group = parameters.get('group');
+  if (group !== undefined) {
+    if (!LINK_GROUPS.includes(group as LinkGroup)) return fail('bad-parameter');
+    filters.group = group as LinkGroup;
   }
   const prs = parameters.get('prs');
   if (prs !== undefined) {
@@ -663,6 +673,7 @@ export function formatDeepLink(target: DeepLinkTarget, scheme = 'gnosis'): strin
         ['q', target.filters?.query],
         ['prs', target.filters?.prs?.map(compactPr).join(',')],
         ['lane', target.filters?.lane],
+        ['group', target.filters?.group],
       ])}`;
     case 'review':
       return `${base}review/${segment(target.reviewId)}${query([['slide', target.slide], ...fileEntries(target.file), ['thread', target.threadId]])}`;
@@ -739,6 +750,7 @@ export function targetFromLocation(location: AppLocation): DeepLinkTarget | unde
   if (f.repo && f.repo !== 'all' && 'value' in linkFilters(new Map([['repo', f.repo]]))) filters.repo = f.repo;
   if (f.readStatus !== 'all') filters.read = f.readStatus;
   if (f.lane) filters.lane = f.lane;
+  if (f.groupBy && f.groupBy !== 'none') filters.group = f.groupBy;
   return { kind: 'queue', ...(section ? { section } : {}), ...(Object.keys(filters).length ? { filters } : {}) };
 }
 
@@ -778,7 +790,7 @@ function validFilters(value: unknown): LinkFilters | undefined | false {
   if (value === undefined) return undefined;
   if (!record(value)) return false;
   const parameters: Parameters = new Map();
-  const names: [Exclude<keyof LinkFilters, 'prs'>, string][] = [['repo', 'repo'], ['author', 'author'], ['branch', 'branch'], ['status', 'status'], ['read', 'read'], ['kind', 'kind'], ['query', 'q'], ['lane', 'lane']];
+  const names: [Exclude<keyof LinkFilters, 'prs'>, string][] = [['repo', 'repo'], ['author', 'author'], ['branch', 'branch'], ['status', 'status'], ['read', 'read'], ['kind', 'kind'], ['query', 'q'], ['lane', 'lane'], ['group', 'group']];
   for (const [key, name] of names) {
     const field = value[key];
     if (field === undefined) continue;

@@ -3,6 +3,7 @@ import { PrStateIcon } from './PrStateIcon';
 import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { GitMerge, RefreshCw, GitBranch, ChevronDown, Loader2, ExternalLink } from 'lucide-react';
+import { conflictIcon as ConflictIcon } from '../lib/interface-icons';
 import { DropdownMenu } from 'radix-ui';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
@@ -11,9 +12,11 @@ import { StepCard } from './StepCard';
 import { stackMergeSteps, type StackMergePage } from '../lib/action-steps';
 import {
   mergeBlockedReason,
+  blockedButMet,
   draftActionBlockedReason,
   branchUpdateBlockedReason,
   singleMergePlan,
+  workflowPermissionReason,
   mergeMethodLabels,
   type MergeMethod,
   type PrActionKind,
@@ -25,6 +28,10 @@ import type { ReviewMember } from '../lib/workbench';
 import { applyToActionState, prActionChange, type OptimisticChange } from '../lib/optimistic-patches';
 import { optimisticWrite } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
+import { startGitHubSignIn, startGitHubTokenSignIn as requestTokenSignIn, useGitHubAccess } from '../lib/use-github-access';
+import { useWorkflowFiles } from '../lib/use-workflow-files';
+import { githubWriteError, lacksWorkflow, WORKFLOW_WRITE_MESSAGE } from '../lib/github-access';
+import { GitHubScopePrompt } from './GitHubScopePrompt';
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const revision = (m: PrActionMember) => ({
@@ -142,7 +149,15 @@ export function PrActions({
   }
   const plan = dialog?.plan;
   const nativeCount = state?.stack?.members.filter((m) => m.state !== 'MERGED').findIndex((m) => m.url === state.url);
-  const blocked = state ? mergeBlockedReason(state) : 'Checking GitHub permissions…';
+  // A PR that changes workflow files needs a sign-in with `workflow` to merge or rebase; GitHub refuses otherwise.
+  const access = useGitHubAccess();
+  const workflowFiles = useWorkflowFiles(member);
+  const noWorkflow = lacksWorkflow(access?.scopes);
+  const workflowReason = (target: PrActionState, action: 'merge' | 'update-rebase') =>
+    workflowPermissionReason(target, action, noWorkflow, workflowFiles);
+  const blocked = state
+    ? (mergeBlockedReason(state) ?? (stackMembers ? undefined : workflowReason(state, 'merge')))
+    : 'Checking GitHub permissions…';
   const mergeLabel =
     state?.stack && nativeCount !== undefined && nativeCount > 0
       ? `Merge through #${member.number}…`
@@ -150,6 +165,7 @@ export function PrActions({
         ? 'Add to merge queue…'
         : 'Merge PR…';
   const updateBlocked = state ? branchUpdateBlockedReason(state) : 'Checking GitHub permissions…';
+  const rebaseBlocked = updateBlocked ?? (state ? workflowReason(state, 'update-rebase') : undefined);
   const active = state?.state === 'OPEN' && !state.archived;
   const kind = dialog?.kind;
   const members = plan ? (kind === 'merge' ? plan.members : [plan.target]) : [];
@@ -175,8 +191,10 @@ export function PrActions({
                 : 'Update branch with merge commit';
   const actionBlock = plan
     ? kind === 'merge'
-      ? plan.blockedReason
-      : kind === 'enable-auto'
+      ? (plan.blockedReason ?? (members.length === 1 ? workflowReason(plan.target, 'merge') : undefined))
+      : kind === 'update-rebase'
+        ? (branchUpdateBlockedReason(plan.target) ?? workflowReason(plan.target, 'update-rebase'))
+        : kind === 'enable-auto'
         ? plan.target.stack
           ? 'GitHub does not support auto-merge for native stacked PRs.'
           : !plan.target.canEnableAuto
@@ -253,7 +271,8 @@ export function PrActions({
         void refresh();
       }
     } catch (e) {
-      if (current.current === started) setError(messageOf(e));
+      // GitHub's workflow-scope refusal reads as "Needs the workflow permission", with Sign in again.
+      if (current.current === started) setError(githubWriteError(e).message);
     } finally {
       pending.current = false;
       setBusy(false);
@@ -336,7 +355,7 @@ export function PrActions({
       ? {
           step: errorStep === 'submit' ? 'merge' : 'review',
           message:
-            errorStep === 'submit'
+            errorStep === 'submit' && error !== WORKFLOW_WRITE_MESSAGE
               ? `${error} If GitHub may have received the request, check the PR before trying again.`
               : error,
         }
@@ -371,6 +390,7 @@ export function PrActions({
           <div className="pr-action-controls">
             {(hasConflicts || state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY') && (
               <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>
+                <ConflictIcon size={14} aria-hidden="true" />
                 Resolve conflicts…
               </Button>
             )}
@@ -414,8 +434,8 @@ export function PrActions({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={loading || busy || !!updateBlocked}
-                  title={updateBlocked}
+                  disabled={loading || busy || !!rebaseBlocked}
+                  title={rebaseBlocked}
                   onClick={() => void open('update-rebase')}
                 >
                   <GitBranch size={14} />
@@ -444,11 +464,15 @@ export function PrActions({
                         Merge {state?.baseBranch ?? member.baseBranch} into {state?.headBranch ?? member.headBranch}.
                       </span>
                     </DropdownMenu.Item>
-                    <DropdownMenu.Item onSelect={() => void open('update-rebase')}>
+                    <DropdownMenu.Item
+                      disabled={!!rebaseBlocked}
+                      title={rebaseBlocked}
+                      onSelect={() => void open('update-rebase')}
+                    >
                       <strong>Update with rebase</strong>
                       <span>
-                        Replay this branch’s commits on {state?.baseBranch ?? member.baseBranch}. Commit history
-                        changes.
+                        {rebaseBlocked ??
+                          `Replay this branch’s commits on ${state?.baseBranch ?? member.baseBranch}. Commit history changes.`}
                       </span>
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
@@ -666,6 +690,12 @@ export function PrActions({
                       merging is blocked, the GitHub stack remains.
                     </p>
                   )}
+                  {kind === 'merge' && members.length === 1 && blockedButMet(plan.target) && !actionBlock && (
+                    <p className="pr-action-note" data-github-blocked>
+                      GitHub reports this PR as blocked to Gnosis’s sign-in, though every requirement Gnosis can see is
+                      met. If GitHub refuses the merge, its reason shows here and nothing merges.
+                    </p>
+                  )}
                   {kind === 'merge' && members.length > 1 && (
                     <p className="pr-action-note">
                       GitHub checks every PR’s requirements. All listed PRs merge together, or none do.
@@ -704,7 +734,22 @@ export function PrActions({
                   )}
                 </>
               )}
-              {error && (
+              {error === WORKFLOW_WRITE_MESSAGE ? (
+                // GitHub refused the write outright, so nothing changed and there is nothing to check first.
+                <div role="alert" className="pr-action-error" data-workflow-permission>
+                  <GitHubScopePrompt
+                    message={WORKFLOW_WRITE_MESSAGE}
+                    onSignIn={() => {
+                      cancel();
+                      startGitHubSignIn();
+                    }}
+                    onUseToken={() => {
+                      cancel();
+                      requestTokenSignIn();
+                    }}
+                  />
+                </div>
+              ) : error && (
                 <div role="alert" className="pr-action-error">
                   <p>{error}</p>
                   <p>If GitHub may have received the request, check the PR before trying again.</p>

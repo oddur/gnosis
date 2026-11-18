@@ -4,6 +4,11 @@ import { Copy, ExternalLink, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
+import { missingScopes, parseDismissedScopes, serializeDismissedScopes, shouldAskScopes } from '../lib/github-access';
+// "Not now" on the scope prompt, per account: the scopes missing when it was dismissed. The prompt returns once when
+// another scope goes missing. The prompt in the merge section still appears when it matters.
+import { refreshGitHubAccess, scopePromptKey, useGitHubAccess } from '../lib/use-github-access';
+import { GitHubScopePrompt } from './GitHubScopePrompt';
 
 function message(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).replace(
@@ -21,6 +26,9 @@ export function GitHubAuthDialog({
   connectionRequired = false,
   login,
   prUrl,
+  startSignIn = false,
+  startToken = false,
+  onSignInStarted,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -30,6 +38,11 @@ export function GitHubAuthDialog({
   connectionRequired?: boolean;
   login?: string | null;
   prUrl?: string;
+  /** Begin sign-in as soon as the options load: "Sign in again" outside the dialog. */
+  startSignIn?: boolean;
+  /** Open on the token form: "Enter new token" after a personal access token lacked scopes. */
+  startToken?: boolean;
+  onSignInStarted?: () => void;
 }) {
   const [web, setWeb] = useState<boolean>();
   const [method, setMethod] = useState<'web' | 'device' | 'token'>('web');
@@ -45,6 +58,30 @@ export function GitHubAuthDialog({
   const webPending = useRef(false);
   const locked = phase === 'saving' || phase === 'signing-out' || phase === 'local';
   const busy = phase === 'starting' || locked;
+  const access = useGitHubAccess();
+  const [scopeDismissed, setScopeDismissed] = useState<string[]>([]);
+  useEffect(() => {
+    if (!open || !login) return;
+    try {
+      setScopeDismissed(parseDismissedScopes(localStorage.getItem(scopePromptKey(login))));
+    } catch {
+      setScopeDismissed([]);
+    }
+  }, [open, login]);
+  // An older sign-in may lack `read:org` or `workflow`. Signing in again asks for both; the current token keeps working.
+  const missing = !!login && access?.login === login ? missingScopes(access.scopes) : [];
+  const askScopes = shouldAskScopes(missing, scopeDismissed);
+  const autoStart = useRef(startSignIn);
+  autoStart.current = startSignIn;
+  const tokenStart = useRef(startToken);
+  tokenStart.current = startToken;
+  const showTokenForm = () => {
+    cancel();
+    setMethod('token');
+    setPhase('idle');
+    setPrompt(undefined);
+    setError('');
+  };
 
   const cancel = () => {
     attempt.current++;
@@ -58,6 +95,7 @@ export function GitHubAuthDialog({
     flow.current = undefined;
     webPending.current = false;
     await onConnected();
+    await refreshGitHubAccess();
     if (id === attempt.current) onOpenChange(false);
   };
   const device = async () => {
@@ -124,7 +162,13 @@ export function GitHubAuthDialog({
       .then((options) => {
         if (id !== attempt.current) return;
         setWeb(options.web);
-        if (!options.web && !login) void device();
+        if (autoStart.current) {
+          onSignInStarted?.();
+          void (options.web ? browser() : device());
+        } else if (tokenStart.current) {
+          onSignInStarted?.();
+          setMethod('token');
+        } else if (!options.web && !login) void device();
       })
       .catch((e: unknown) => {
         if (id === attempt.current) {
@@ -165,6 +209,21 @@ export function GitHubAuthDialog({
           <p className="github-auth-error" role="alert">
             {error}
           </p>
+        )}
+        {askScopes && !prompt && phase === 'idle' && method !== 'token' && web !== undefined && (
+          <GitHubScopePrompt
+            disabled={busy}
+            onSignIn={() => void (web ? browser() : device())}
+            onUseToken={showTokenForm}
+            onDismiss={() => {
+              try {
+                if (login) localStorage.setItem(scopePromptKey(login), serializeDismissedScopes(missing));
+              } catch {
+                /* Storage unavailable: hide it for this opening only. */
+              }
+              setScopeDismissed(missing);
+            }}
+          />
         )}
         {web === undefined ? (
           <LoadingState compact title="Checking sign-in options…" />
@@ -279,8 +338,9 @@ export function GitHubAuthDialog({
                   </p>
                   <p>
                     Allow <strong>Checks: Read</strong> and <strong>Commit statuses: Read</strong> for CI status. To
-                    submit reviews and replies, allow <strong>Pull requests: Read and write</strong>. A classic token
-                    needs the repo scope.
+                    submit reviews and replies, allow <strong>Pull requests: Read and write</strong>. To merge PRs that
+                    change GitHub Actions workflows, allow <strong>Workflows: Read and write</strong>. A classic token
+                    needs the repo, read:org and workflow scopes.
                   </p>
                   <button
                     className="workbench-help-link"

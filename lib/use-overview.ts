@@ -1,12 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { isOwnPr, reviewRequest } from './attention';
-import { nextOverviewVisit, overviewModel, overviewVisitKey, parseOverviewVisit, type OverviewModel, type OverviewVisit } from './overview';
-import { useLiveQueueSignals } from './use-queue-signals';
+import { nextOverviewVisit, overviewModel, overviewStatusRequests, overviewVisitKey, parseOverviewVisit, type OverviewModel, type OverviewVisit } from './overview';
+import { useOverviewStatus } from './use-queue-signals';
+import { statusFreshness, type StatusFreshness } from './overview-freshness';
+import { queueSignalKey } from './queue-signals';
 import { useStatusNow } from './status-clock';
 import type { QueueItem, ReviewMember } from './workbench';
+import type { QueueSignals } from './queue-signals';
 
-/** At most this many PRs are watched for status. Your own PRs come first. */
-const SIGNAL_LIMIT = 150;
+/** The lanes, plus what the page reads beside them. */
+export interface OverviewView extends OverviewModel {
+  /** Status reads in flight. */
+  checking: number;
+  /** How current the page's status reads are, for the freshness line (lib/overview-freshness.ts). */
+  status: StatusFreshness;
+  /** When the last visit started: "Since yesterday" counts from here. Undefined on a first visit. */
+  visitAt?: number;
+  /** The status the lanes were built from, by PR. */
+  statusOf: (member: Pick<ReviewMember, 'url'>) => QueueSignals | undefined;
+}
+
+/** At most this many PRs are read for status: twelve 25-PR batches. Your own PRs come first. */
+const SIGNAL_LIMIT = 300;
 
 function readVisit(key: string | null): OverviewVisit | undefined {
   if (!key) return undefined;
@@ -25,8 +39,9 @@ function saveVisit(key: string, visit: OverviewVisit) {
 }
 
 /**
- * The Overview lanes for the window's queue snapshot (#390). Only status reads are added: saved status first, then the
- * shared watch while `live`. The model is memoized on the snapshot, the status values and the 30-second status clock,
+ * The Overview lanes for the window's queue snapshot (#390). Only status reads are added: saved status first, then,
+ * while `live`, a read of every lane candidate without current status (`useOverviewStatus`). `checking` counts the
+ * reads in flight. The model is memoized on the snapshot, the status values and the 30-second status clock,
  * so a sync tick that changes nothing builds nothing, and rows compare their own `signature`.
  *
  * "New since your last visit" is local and per account. A visit starts when the Overview is shown (`visible`) and is
@@ -43,26 +58,25 @@ export function useOverview(input: {
   ready: boolean;
   teamRequests?: boolean;
   excluded?: ReadonlySet<string>;
-}): OverviewModel {
+}): OverviewView {
   const { items, login, scope, live, visible, ready, teamRequests, excluded } = input;
-  const requests = useMemo(() => {
-    if (!login) return [];
-    const own: ReviewMember[] = [];
-    const others: ReviewMember[] = [];
-    for (const item of items)
-      for (const member of item.subject.members) {
-        if (member.state !== 'open' || member.merged) continue;
-        if (isOwnPr(member, login)) own.push(member);
-        else if (reviewRequest(member, login)) others.push(member);
-      }
-    return [...own, ...others].slice(0, SIGNAL_LIMIT).map(({ url, headSha }) => ({ url, headSha }));
-  }, [items, login]);
-  const values = useLiveQueueSignals(scope, requests, live && !!login);
-  const now = useStatusNow() || Date.now();
+  const requests = useMemo(
+    () => (login ? overviewStatusRequests(items, login, { teamRequests, excluded }).slice(0, SIGNAL_LIMIT) : []),
+    [items, login, teamRequests, excluded]
+  );
+  // Visible priority while the Overview is the shown tab; background while it only resolves the queue's lane filter.
+  const { values, checking, pending } = useOverviewStatus(scope, requests, live && !!login, visible);
+  // The clock ticks only while the lanes are shown or kept current. HomePage calls this hook for Group by Action; with the
+  // clock always on, every focus and 30-second tick re-rendered HomePage, and with it an open PR summary.
+  const now = useStatusNow(items.length > 0 && (live || visible)) || Date.now();
+  const status = useMemo(
+    () => statusFreshness(requests, new Map(values.map((value) => [queueSignalKey(value), value])), pending, now),
+    [requests, values, pending, now]
+  );
   const visitKey = login ? overviewVisitKey(login) : null;
   const [previous, setPrevious] = useState<{ key: string | null; visit?: OverviewVisit }>(() => ({ key: visitKey, visit: readVisit(visitKey) }));
+  const byUrl = useMemo(() => new Map(values.map((value) => [value.url, value])), [values]);
   const model = useMemo(() => {
-    const byUrl = new Map(values.map((value) => [value.url, value]));
     return overviewModel({
       items,
       signals: (member) => byUrl.get(member.url),
@@ -72,7 +86,7 @@ export function useOverview(input: {
       previous: previous.key === visitKey ? previous.visit : undefined,
       excluded,
     });
-  }, [items, values, login, now, teamRequests, previous, visitKey, excluded]);
+  }, [items, byUrl, login, now, teamRequests, previous, visitKey, excluded]);
   const latest = useRef({ model, ready });
   latest.current = { model, ready };
   useEffect(() => {
@@ -93,5 +107,9 @@ export function useOverview(input: {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [visible, visitKey]);
-  return model;
+  const visitAt = previous.key === visitKey ? previous.visit?.at : undefined;
+  return useMemo(
+    () => ({ ...model, checking, status, visitAt, statusOf: (member: Pick<ReviewMember, 'url'>) => byUrl.get(member.url) }),
+    [model, checking, status, visitAt, byUrl]
+  );
 }

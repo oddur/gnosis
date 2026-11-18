@@ -13,6 +13,20 @@ export interface QueueSignalOptions {
   /** Main only: receives the measured `rateLimit.cost` of a request this call made. */
   cost?: (cost: number) => void;
 }
+/** How urgently the Overview reads status: `visible` while it is the shown tab in a visible window, else `background`. */
+export type OverviewStatusPriority = 'visible' | 'background';
+/**
+ * The Overview's status read priority (#390). Shown, as the active tab of a visible window: `visible`. Anything else
+ * (hidden behind another tab, resolving the queue's lane filter, or a hidden window): `background`.
+ */
+export const overviewStatusPriority = (shown: boolean, windowVisible: boolean): OverviewStatusPriority => (shown && windowVisible ? 'visible' : 'background');
+/**
+ * The queue-signals request options for a priority. Visible reads are `active`, which main runs at foreground
+ * priority (`withGitHubPriority`), still automatic, so they stay inside the automatic budget, back-off and 25-PR
+ * batches. Background reads carry no options, like the queue rows' own reads.
+ */
+export const overviewStatusOptions = (priority: OverviewStatusPriority): QueueSignalOptions => (priority === 'visible' ? { active: true } : {});
+
 export interface SignalReview {
   url: string;
   author: string;
@@ -72,6 +86,8 @@ export interface QueueSignals extends QueueSignalRequest {
 }
 export const QUEUE_SIGNALS_TTL = 2 * 60_000;
 export const ACTIVE_SIGNALS_TTL = 25_000;
+/** How often the Overview looks for status past its time-to-live. A local check; only expired PRs are read. */
+export const OVERVIEW_STATUS_SWEEP_MS = 30_000;
 export const queueSignalKey = (request: QueueSignalRequest) => `${request.url}@${request.headSha}`;
 /** Queue check counts from a check list, so rows agree with the Checks tab. */
 export function checkSignals(checks: CiCheck[]): QueueSignals['checks'] {

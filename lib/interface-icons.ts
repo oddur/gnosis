@@ -3,7 +3,8 @@ import {
   Clock3, Copy, FileDiff, FileText, FolderGit2, GitBranch, GitCommitHorizontal, GitPullRequest,
   History, Inbox, Layers, LayoutList, Lightbulb, ListChecks, MessageSquare,
   MessageSquarePlus, MessagesSquare, Network, NotebookPen, RefreshCw, RotateCcw, Settings, Star, UserRound, VolumeX, AlarmClock,
-  CircleX, Eye, GitCompareArrows, GitMerge, LayoutDashboard, MessageSquareWarning, Sparkles, TriangleAlert,
+  CircleX, Eye, GitCompareArrows, GitMerge, GitMergeConflict, LayoutDashboard, MessageSquareWarning, Sparkles,
+  BellRing, GitPullRequestClosed, Hourglass,
   type LucideIcon,
 } from 'lucide-react';
 import type { WorkspaceTab } from './navigation-history';
@@ -57,12 +58,19 @@ export const attentionIcons: Record<AttentionKind, { icon: LucideIcon; tone: 're
   'updated-since-review': { icon: GitCompareArrows, tone: 'review' },
   'changes-requested': { icon: MessageSquareWarning, tone: 'danger' },
   'checks-failed': { icon: CircleX, tone: 'danger' },
-  conflicts: { icon: TriangleAlert, tone: 'warning' },
+  conflicts: { icon: GitMergeConflict, tone: 'danger' },
   replies: { icon: MessagesSquare, tone: 'warning' },
   restack: { icon: Layers, tone: 'warning' },
   'ready-to-merge': { icon: GitMerge, tone: 'success' },
   'explanation-ready': { icon: Sparkles, tone: 'info' },
 };
+
+/**
+ * A PR that has merge conflicts with its base, everywhere the app says so: the attention catalog (menu bar, Overview),
+ * Resolve conflicts… actions, the readiness line, stack branch status, and the queue's conflicts filter. Danger, as
+ * the readiness line words it. A conflicted *file* inside the resolver is a different meaning and keeps its own icon.
+ */
+export const conflictIcon = GitMergeConflict;
 
 export const checkGroupIcons = {
   attention: CircleAlert, running: Clock3, passed: CircleCheck, skipped: CircleMinus,
@@ -75,3 +83,19 @@ export const checkSummaryIcons = {
   neutral: checkGroupIcons.skipped,
   unknown: CircleHelp,
 };
+
+/**
+ * Row actions on the Overview. An action that changes something (on GitHub, or a snooze) carries its icon; an action
+ * that only opens a PR (Review, Re-review, Reply, Open) carries none. Merge and re-run match PR actions and Checks;
+ * Snooze matches the PR summary's snooze button and the sidebar's Snoozed.
+ */
+export const actionIcons = {
+  merge: GitMerge,
+  rerun: RefreshCw,
+  nudge: BellRing,
+  close: GitPullRequestClosed,
+  snooze: AlarmClock,
+};
+
+/** How long a PR has waited in its current state. Not a clock: Clock3 means checks running. */
+export const waitingIcon = Hourglass;

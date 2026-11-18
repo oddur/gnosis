@@ -17,6 +17,7 @@ export type GitHubWriteAction =
   | 'update-branch'
   | 'mark-ready'
   | 'convert-draft'
+  | 'close-pr'
   | 'submit-review'
   | 'review-comment'
   | 'thread-reply'
@@ -124,6 +125,13 @@ export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
     kinds: ['metadata', 'signals'],
     probes: ['metadata'],
     seen: ({ metadata }) => metadata?.isDraft === true,
+    queue: true,
+  },
+  // The PR leaves the queue once GitHub reports it closed.
+  'close-pr': {
+    kinds: ALL,
+    probes: ['metadata'],
+    seen: ({ metadata }) => metadata?.state === 'closed',
     queue: true,
   },
   // The review decision, the latest review and the reviewer's queue section.

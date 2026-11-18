@@ -20,6 +20,15 @@ const fromHome = (home: Pick<HomeLocation, 'savedView' | 'muted' | 'snoozed' | '
 });
 /** Only listing metadata: scroll updates must not recalculate every background filter. */
 export function workspaceListingRequest(tab: WorkspaceTabEntry): WorkspaceListingRequest | undefined {
+  const request = listingRequest(tab);
+  // A home tab that names no list shows what the window chose for it: the Overview or the queue (lib/home-tab.ts).
+  if (request && 'destination' in request && tab.homeDefault === 'overview') {
+    const d = request.destination;
+    if (!d.section && !d.repo && !d.viewId) return { destination: { ...d, section: 'overview' } };
+  }
+  return request;
+}
+function listingRequest(tab: WorkspaceTabEntry): WorkspaceListingRequest | undefined {
   if (tab.location)
     return tab.location.page === 'home' && !tab.location.home.item ? fromHome(tab.location.home) : undefined;
   const initial = tab.initial;
@@ -36,6 +45,12 @@ export function workspaceListingRequest(tab: WorkspaceTabEntry): WorkspaceListin
   }
   if (initial.kind === 'home' && !initial.subject && !initial.url)
     return { destination: { kind: 'home', section: initial.section, repo: initial.repo, viewId: initial.viewId } };
+}
+/** The tab shows the Overview, or will when it is first shown. */
+export function isOverviewTab(tab: WorkspaceTabEntry): boolean {
+  const request = workspaceListingRequest(tab);
+  if (!request) return false;
+  return 'kind' in request ? request.kind === 'overview' : request.destination.section === 'overview';
 }
 function resolveListing(request: WorkspaceListingRequest, queue: WorkbenchQueue): Listing | undefined {
   if ('kind' in request) return request;

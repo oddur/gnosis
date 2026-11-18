@@ -4,6 +4,8 @@
  * that list.
  */
 import type { HomeLocation } from './navigation-history';
+import type { SavedWorkspaceTab, WorkspaceTabEntry, WorkspaceTabsState } from './workspace-tabs';
+import { isOverviewTab } from './workspace-listings';
 
 export type HomeTab = 'overview' | 'queue';
 export const HOME_TAB_KEY = 'gnosis-home-tab:v1';
@@ -51,4 +53,65 @@ export function restoredTool(home: HomeLocation, preference: HomeTab = homeTabPr
   if (home.snoozed) return 'snoozed';
   if (home.overview === undefined && preference === 'overview' && isPlainQueue(home)) return 'overview';
   return null;
+}
+
+/**
+ * One Overview at a time by default. A home tab with no explicit list (a new tab, a tab never shown, a plain queue
+ * saved before the Overview existed) opens the home tab preference only while no other tab shows the Overview, and
+ * the review queue otherwise. Cmd-click, middle-click, links and locations saved with `overview: true` still open a
+ * second Overview on purpose.
+ */
+export function defaultHomeTab(others: readonly WorkspaceTabEntry[], preference: HomeTab = homeTabPreference()): HomeTab {
+  return others.some(isOverviewTab) ? 'queue' : preference;
+}
+
+type OverviewClaim = 'explicit' | 'default' | undefined;
+/** Why a restored tab would show the Overview: it was saved that way, only by default, or it would not. */
+function overviewClaim(saved: SavedWorkspaceTab, preference: HomeTab): OverviewClaim {
+  if (saved.reviewId) return;
+  if (saved.home) {
+    if (saved.home.subjectId || saved.home.url) return;
+    if (saved.home.overview) return 'explicit';
+    if (saved.home.overview === undefined && preference === 'overview' && isPlainQueue({ ...saved.home, item: null }))
+      return 'default';
+    return;
+  }
+  const d = saved.destination;
+  if (d?.section === 'overview' && !d.url) return 'explicit';
+  if (!d || (!d.section && !d.repo && !d.viewId && !d.url)) return preference === 'overview' ? 'default' : undefined;
+}
+
+/**
+ * Restored tabs show at most one Overview. Tabs saved with `overview: true` win over tabs that would show it only by
+ * default (these came from the duplicate-Overview bug); within either group the active tab wins, else the first. The
+ * others restore as the review queue. Each choice is written into the tab's saved location and `homeDefault`, so the
+ * tab strip counts what a tab will show before it is first shown, and the next save keeps it.
+ */
+export function dedupeRestoredOverviews(state: WorkspaceTabsState, preference: HomeTab = homeTabPreference()): WorkspaceTabsState {
+  const claims = state.tabs.map((tab) => (tab.initial?.kind === 'restore' ? overviewClaim(tab.initial.saved, preference) : undefined));
+  const pick = (claim: OverviewClaim) => {
+    const ids = state.tabs.filter((_, index) => claims[index] === claim).map((tab) => tab.id);
+    return ids.includes(state.active) ? state.active : ids[0];
+  };
+  const keep = state.tabs.some((tab) => tab.initial?.kind !== 'restore' && isOverviewTab(tab))
+    ? undefined
+    : (pick('explicit') ?? pick('default'));
+  return {
+    ...state,
+    tabs: state.tabs.map((tab, index) => {
+      if (tab.initial?.kind !== 'restore') return tab;
+      const overview = tab.id === keep;
+      const homeDefault: HomeTab = overview ? 'overview' : 'queue';
+      if (!claims[index]) return { ...tab, homeDefault };
+      const saved = tab.initial.saved;
+      // A restored tab shows its saved title until it is first shown. A tab turned back into the queue must not keep
+      // "Overview" as its name (the user saw three "Overview" tabs that were really queues), and the kept one says so.
+      const title = overview ? 'Overview' : saved.title === 'Overview' ? 'Review queue' : saved.title;
+      const named = { ...saved, title };
+      const next: SavedWorkspaceTab = named.home
+        ? { ...named, home: { ...named.home, overview } }
+        : { ...named, destination: { ...named.destination, kind: 'home', section: overview ? 'overview' : undefined } };
+      return { ...tab, title, homeDefault, initial: { ...tab.initial, saved: next } };
+    }),
+  };
 }

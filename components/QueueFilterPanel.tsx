@@ -6,6 +6,7 @@ import { normalizePrInactivityDays } from '../lib/pr-inactivity';
 import { useId } from 'react';
 import type { QueueItem } from '../lib/workbench';
 import { RECENCY_DAYS, type QueueFilters } from '../lib/queue-filters';
+import { conflictIcon as ConflictIcon } from '../lib/interface-icons';
 
 export function QueueFilterPanel({
   filters,
@@ -123,7 +124,7 @@ export function QueueFilterPanel({
       <div className="queue-filter-fields">
         {fields.filter(field => !setup || ['readStatus', 'status', 'author'].includes(field.key)).map((field) => (
           <Fragment key={field.key}><label htmlFor={`${id}-${field.key}`}>
-            <span>{field.label}</span>
+            <span>{field.key === 'merge' && <ConflictIcon size={12} aria-hidden="true" className="queue-filter-conflict-icon" />}{field.label}</span>
             {field.key === 'author' ? (
               <SearchableSelect
                 id={`${id}-${field.key}`}

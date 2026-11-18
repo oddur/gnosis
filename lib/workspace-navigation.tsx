@@ -7,6 +7,11 @@ export const WorkspaceNavigation = createContext<{
    * rows use it (#390).
    */
   openTarget?: (target: import('./deep-link').DeepLinkTarget) => Promise<void>;
+  /**
+   * Activates another tab that shows the Overview, if there is one, and says whether it did. The sidebar's Overview
+   * uses it, so a second Overview tab is only made on purpose (Cmd-click, middle-click, a new tab).
+   */
+  focusOverview?: () => boolean;
 } | null>(null);
 export const useWorkspaceNavigation = () => useContext(WorkspaceNavigation);
 /** Dialogs protect a pending submission or edit from accidental tab shortcuts. */

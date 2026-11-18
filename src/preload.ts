@@ -1,3 +1,4 @@
+import type { GitHubTokenKind } from '../lib/github-access';
 import type { WorkbenchQueueDelta } from '../lib/workbench-delta';
 import type { AppUpdateStatus } from './update-state';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
@@ -302,7 +303,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   beginGitHubSignIn: (): Promise<GitHubDevicePrompt> => ipcRenderer.invoke('begin-github-sign-in'),
   completeGitHubSignIn: (id: string): Promise<string> => ipcRenderer.invoke('complete-github-sign-in', id),
   cancelGitHubSignIn: (id: string): Promise<void> => ipcRenderer.invoke('cancel-github-sign-in', id),
-  getAuthState: (): Promise<{ authenticated: boolean; login: string | null }> => ipcRenderer.invoke('get-auth-state'),
+  getAuthState: (): Promise<{ authenticated: boolean; login: string | null; scopes?: string[] | null; tokenKind?: GitHubTokenKind }> => ipcRenderer.invoke('get-auth-state'),
+  /** The scopes GitHub reports for the signed-in token changed (`X-OAuth-Scopes`). */
+  onGitHubAccessChanged: (callback: (access: { login: string | null; scopes?: string[] | null; tokenKind?: GitHubTokenKind }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, access: { login: string | null; scopes?: string[] | null; tokenKind?: GitHubTokenKind }) => callback(access);
+    ipcRenderer.on('github-access-changed', handler);
+    return () => {
+      ipcRenderer.removeListener('github-access-changed', handler);
+    };
+  },
   signOut: (): Promise<void> => ipcRenderer.invoke('sign-out'),
   savePat: (token: string, prUrl?: string): Promise<string> => ipcRenderer.invoke('save-pat', token, prUrl),
   listReviews: (): Promise<ReviewHistoryEntry[]> => ipcRenderer.invoke('list-reviews'),
@@ -437,6 +446,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   performPrAction: (
     request: import('../lib/pr-actions').PrActionRequest
   ): Promise<import('../lib/pr-actions').PrActionResult> => ipcRenderer.invoke('perform-pr-action', request),
+  getOverviewSince: (since: number): Promise<import('../lib/since-log').SinceEvent[]> => ipcRenderer.invoke('overview-since', since),
+  getRereviewLines: (targets: import('../lib/rereview-lines').RereviewTarget[]): Promise<import('../lib/rereview-lines').RereviewLines[]> =>
+    ipcRenderer.invoke('rereview-lines', targets),
   submitReview: (req: SubmitReviewRequest): Promise<{ reviewUrl: string; droppedCommentCount: number }> =>
     ipcRenderer.invoke('submit-review', req),
   checkPrFreshness: (prUrl: string, headSha: string | undefined): Promise<FreshnessResult> =>

@@ -52,8 +52,8 @@ void test('BLOCKED while required checks run says checks are running, not merge 
   assert.equal(readiness.tone, 'warning');
   assert.equal(readiness.ready, false);
   assert.ok(readiness.details.some((detail) => /required checks finish/.test(detail)));
-  // Finished checks leave GitHub's block as the reason.
-  assert.equal(mergeReadiness(member, signals({ mergeState: 'BLOCKED', reviewDecision: null }), now).label, 'Merge blocked');
+  // Finished checks, with everything else met, leave GitHub's answer unexplained: say so instead of "Merge blocked".
+  assert.equal(mergeReadiness(member, signals({ mergeState: 'BLOCKED', reviewDecision: null }), now).label, 'GitHub reports this as blocked');
   assert.equal(mergeReadiness(member, { ...running, checks: { state: 'failure', total: 5, passed: 4, failed: 1 } }, now).tone, 'danger');
   // A review blocker still outranks running checks.
   for (const [reviewDecision, label] of [['CHANGES_REQUESTED', 'Changes requested'], ['REVIEW_REQUIRED', 'Approval required']]) {
@@ -295,4 +295,87 @@ void test('stack summary separates missing, stale and pending status from confir
   assert.equal(mixed.status.unconfirmed, 1);
   assert.deepEqual(mixed.groups.map(group => group.key), ['conflicts', 'refresh']);
   assert.match(mixed.groups[0].entries[0].detail ?? '', /Conflicts with feature\/base/);
+});
+
+void test('BLOCKED with every visible requirement met explains the mismatch, with and without read:org', () => {
+  // klanggames/seed#35392 as Gnosis's repo-only sign-in saw it: MERGEABLE, BLOCKED, no review decision, checks
+  // passed, 77 commits behind. GitHub's website and a token with read:org showed it ready to merge.
+  const seen = signals({ mergeState: 'BLOCKED', reviewDecision: null, behindBy: 77, baseBranch: 'develop' });
+  const withOrg = mergeReadiness(member, seen, now, { scopes: ['repo', 'read:org', 'workflow'] });
+  assert.equal(withOrg.label, 'GitHub reports this as blocked');
+  assert.equal(withOrg.tone, 'warning', 'Not the danger tone of a known blocker');
+  assert.equal(withOrg.ready, false);
+  assert.equal(withOrg.mismatch, true);
+  assert.equal(withOrg.signIn, false);
+  assert.deepEqual(withOrg.details, [
+    'Behind develop by 77 commits. GitHub hasn’t said whether it must be updated.',
+    'Every requirement Gnosis can see is met. GitHub works out merge rules for the account and access asking, so check the PR on GitHub.',
+  ]);
+  const repoOnly = mergeReadiness(member, seen, now, { scopes: ['repo', 'workflow'] });
+  assert.equal(repoOnly.signIn, true);
+  assert.equal(
+    repoOnly.details.at(-1),
+    'Gnosis’s sign-in can’t read your organization’s settings, which GitHub may need for this. Sign in again to allow it.'
+  );
+  // Unknown scopes (fine-grained token, or none reported yet) never ask to sign in again.
+  assert.equal(mergeReadiness(member, seen, now, { scopes: null }).signIn, false);
+  assert.equal(mergeReadiness(member, seen, now).signIn, false);
+  // Neutral: no checks reported. Still everything Gnosis can see.
+  assert.equal(mergeReadiness(member, { ...seen, checks: { state: 'neutral', total: 0, passed: 0 } }, now).mismatch, true);
+  // Anything Gnosis can see that blocks keeps its own answer.
+  assert.equal(mergeReadiness(member, { ...seen, checks: { state: 'failure', total: 5, passed: 4, failed: 1 } }, now).label, 'Merge blocked');
+  assert.equal(mergeReadiness(member, signals({ mergeState: 'BLOCKED', mergeable: 'UNKNOWN' }), now).label, 'Merge blocked');
+  assert.equal(mergeReadiness(member, signals({ mergeState: 'BLOCKED', reviewDecision: 'REVIEW_REQUIRED' }), now).label, 'Approval required');
+  assert.equal(mergeReadiness(member, signals({ mergeState: 'BLOCKED', isDraft: true }), now).label, 'Draft PR');
+  assert.equal(mergeReadiness(member, signals({ mergeState: 'BLOCKED', queueState: 'QUEUED' }), now).label, 'In merge queue');
+});
+void test('BLOCKED for a PR that changes workflow files names the workflow permission when the sign-in lacks it', () => {
+  // klanggames/seed#35392 changes two files under .github/workflows/. GitHub answers BLOCKED to a token without
+  // `workflow` and CLEAN to one with it.
+  const seen = signals({ mergeState: 'BLOCKED', reviewDecision: null, behindBy: 77, baseBranch: 'develop' });
+  const files = ['.github/workflows/seed_job_seed-api-portal-tests.yaml', '.github/workflows/seed_job_seed_api.yaml'];
+  const needs = mergeReadiness(member, seen, now, { scopes: ['repo', 'read:org'] }, files);
+  assert.equal(needs.label, 'Needs the workflow permission');
+  assert.equal(needs.tone, 'warning');
+  assert.equal(needs.ready, false);
+  assert.equal(needs.needsWorkflow, true);
+  assert.equal(needs.signIn, true);
+  assert.deepEqual(needs.details, [
+    'Behind develop by 77 commits. GitHub hasn’t said whether it must be updated.',
+    'This PR changes GitHub Actions workflows (.github/workflows/…). GitHub only lets sign-ins with the workflow permission merge it.',
+  ]);
+  // With `workflow`, GitHub's BLOCKED has another cause: the generic answer, no sign-in prompt.
+  const granted = mergeReadiness(member, seen, now, { scopes: ['repo', 'read:org', 'workflow'] }, files);
+  assert.equal(granted.label, 'GitHub reports this as blocked');
+  assert.equal(granted.needsWorkflow, undefined);
+  assert.equal(granted.signIn, false);
+  // Paths not loaded yet: the generic answer plus what the missing scope would mean.
+  const unknown = mergeReadiness(member, seen, now, { scopes: ['repo', 'read:org'] });
+  assert.equal(unknown.label, 'GitHub reports this as blocked');
+  assert.equal(unknown.signIn, true);
+  assert.equal(
+    unknown.details.at(-1),
+    'Gnosis’s sign-in can’t update workflow files. If this PR changes GitHub Actions workflows, GitHub needs that permission to merge it. Sign in again to allow it.'
+  );
+  // Paths known, none under .github/workflows/: workflow doesn't matter here.
+  const none = mergeReadiness(member, seen, now, { scopes: ['repo', 'read:org'] }, []);
+  assert.equal(none.label, 'GitHub reports this as blocked');
+  assert.equal(none.signIn, false);
+  assert.equal(none.details.at(-1), 'Every requirement Gnosis can see is met. GitHub works out merge rules for the account and access asking, so check the PR on GitHub.');
+  // Neither scope, workflow files: the specific answer; the prompt covers both scopes.
+  assert.equal(mergeReadiness(member, seen, now, { scopes: ['repo'] }, files).label, 'Needs the workflow permission');
+  // Unknown scopes never claim the permission is missing.
+  assert.equal(mergeReadiness(member, seen, now, { scopes: null }, files).label, 'GitHub reports this as blocked');
+  // CLEAN once the sign-in has workflow.
+  assert.equal(mergeReadiness(member, signals({ mergeState: 'CLEAN' }), now, { scopes: ['repo', 'read:org', 'workflow'] }, files).label, 'Ready to merge');
+  // A visible blocker keeps its own answer.
+  assert.equal(
+    mergeReadiness(member, { ...seen, checks: { state: 'failure', total: 5, passed: 4, failed: 1 } }, now, { scopes: ['repo'] }, files).label,
+    'Merge blocked'
+  );
+});
+void test('behind the base: optional when GitHub allows the merge, otherwise short and unconfirmed', () => {
+  for (const mergeState of ['CLEAN', 'UNSTABLE', 'HAS_HOOKS'])
+    assert.ok(mergeReadiness(member, signals({ mergeState, behindBy: 77 }), now).details.includes('Behind feature/base by 77 commits; updating is optional for merging.'), mergeState);
+  assert.ok(mergeReadiness(member, signals({ mergeState: 'BLOCKED', behindBy: 1 }), now).details.includes('Behind feature/base by 1 commit. GitHub hasn’t said whether it must be updated.'));
 });

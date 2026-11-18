@@ -872,6 +872,81 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await publishes(), 4, 'A blocked publish never pushes');
     await click('Close');
+
+    // 4. The resolution changes a GitHub Actions workflow and the sign-in has repo and read:org, not workflow. GitHub
+    // would refuse the push, so the confirmation says why, keeps Push disabled and signs in again with one click.
+    const workflowPatch =
+      'diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -1 +1 @@\n-  node-version: 20\n+  node-version: 22\n';
+    const refusal = `Error invoking remote method 'conflict-resolution': Error: Git could not complete this operation. To https://github.com/klang/engine.git\n ! [remote rejected] ${'d'.repeat(40)} -> feature/retry (refusing to allow an OAuth App to create or update workflow \`.github/workflows/ci.yml\` without \`workflow\` scope)\nerror: failed to push some refs`;
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false});
+      window.conflictFixture.files.forEach(f=>f.resolved=true);
+      window.conflictPreview=[...window.conflictPreview,...${JSON.stringify(parsePatchFiles(workflowPatch).flatMap((p) => p.files))}];
+      const inner=window.electronAPI.conflictResolution;
+      window.electronAPI.conflictResolution=async req=>{
+        if(req.kind==='publish'&&window.refuseWorkflow){window.conflictCalls.push(req);throw Error(${JSON.stringify(refusal)});}
+        return inner(req);
+      };
+      window.signInStarts=0;
+      const begin=window.electronAPI.beginGitHubSignIn;
+      window.electronAPI.beginGitHubSignIn=(...args)=>{window.signInStarts++;return begin(...args)};
+      const complete=window.electronAPI.completeGitHubSignIn;
+      window.electronAPI.completeGitHubSignIn=async(...args)=>{await new Promise(r=>window.authorizeSignIn=r);return complete(...args)};
+      window.setFixtureGitHubScopes(['repo','read:org']);
+    })()`);
+    await reviewAndPush();
+    const warning = "document.querySelector('.conflict-confirm [data-workflow-push-warning] .github-scope-prompt')";
+    await wait(`!!${warning}`);
+    assert.equal(
+      await js(`${warning}.querySelector('p').textContent`),
+      'This resolution changes GitHub Actions workflows (.github/workflows/…). GitHub only accepts pushes that change workflows from sign-ins with the workflow permission.'
+    );
+    assert.ok(await js(`(${visibleButton('Push merge commit')}).disabled`), 'Push waits for the workflow permission');
+    await captureAll('workflow-permission');
+    await js(`[...${warning}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Sign in again').click()`);
+    await wait("document.querySelector('.github-auth-dialog [aria-label=\"GitHub sign-in code\"]')?.textContent==='TEST-CODE'");
+    assert.equal(await js('window.signInStarts'), 1, 'One click starts sign-in');
+    assert.ok(await js("!!document.querySelector('.conflict-workspace')"), 'The workspace stays open behind sign-in');
+    await capture('workflow-permission-sign-in');
+    await js('window.authorizeSignIn();window.authorizeSignIn=undefined');
+    // GitHub authorizes the new scopes, including workflow: Push is available again, nothing was pushed meanwhile.
+    await wait("!document.querySelector('.github-auth-dialog')");
+    await wait(`!${warning}`);
+    await wait(`!(${visibleButton('Push merge commit')}).disabled`);
+    assert.equal(await publishes(), 4);
+
+    // GitHub refuses the push anyway, as it does for a token that reports no scopes: the same plain message and
+    // Sign in again, not Git's words. The resolutions stay; nothing is reopened.
+    await js("window.refuseWorkflow=true;window.setFixtureGitHubScopes(null,'fine-grained')");
+    await click('Push merge commit');
+    await wait("document.querySelector('.conflict-confirm .conflict-error')");
+    assert.equal(await publishes(), 5);
+    assert.equal(await js("document.querySelector('.conflict-error-title').textContent"), 'Needs the workflow permission.');
+    const refusedText = await js<string>(
+      "[...document.querySelectorAll('.conflict-error > div > p')].map(p=>p.textContent).join(' ')"
+    );
+    assert.match(
+      refusedText,
+      /This resolution changes GitHub Actions workflows \(\.github\/workflows\/…\)\. GitHub only accepts pushes that change workflows from sign-ins with the workflow permission\. Nothing was pushed\. Your resolutions are saved\./
+    );
+    assert.doesNotMatch(refusedText, /refusing to allow|remote rejected|Git could not/);
+    assert.match(await js<string>("document.querySelector('.conflict-error-details pre').textContent"), /refusing to allow an OAuth App/);
+    assert.ok(await js(`(${visibleButton('Push merge commit')}).disabled`), 'A refused push is never replayed on its own');
+    assert.ok(await exists('Sign in again'));
+    assert.equal(await js('window.conflictFixture.files.every(f=>f.resolved)'), true, 'Resolutions are kept');
+    assert.equal(await js("window.conflictCalls.at(-1).kind"), 'publish', 'Nothing reopened or discarded the draft');
+    await captureAll('workflow-push-refused');
+    await click('Sign in again');
+    await wait("typeof window.authorizeSignIn==='function' && document.querySelector('.github-auth-dialog [aria-label=\"GitHub sign-in code\"]')");
+    await js('window.authorizeSignIn();window.authorizeSignIn=undefined');
+    await wait("!document.querySelector('.github-auth-dialog')");
+    await wait(`!(${visibleButton('Push merge commit')}).disabled`);
+    assert.equal(await js("!!document.querySelector('.conflict-confirm .conflict-error')"), false);
+    await js('window.refuseWorkflow=false');
+    await click('Push merge commit');
+    await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
+    assert.equal(await publishes(), 6);
+    await click('Done');
     console.log(
       'Conflict workspace passed: labelled versions, per-block undo, shortcuts, review before mark, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'
     );

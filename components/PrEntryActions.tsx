@@ -5,6 +5,7 @@ import { useContext } from 'react';
 import { PrReadContext } from '../lib/pr-read-context';
 import { Mail, MailOpen } from 'lucide-react';
 import { AlarmClock, Copy, ExternalLink, Link, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { conflictIcon as ConflictIcon } from '../lib/interface-icons';
 import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
 import { prDeepLinks } from '../lib/deep-link';
 import type { ReviewMember } from '../lib/workbench';
@@ -12,7 +13,7 @@ import { EntryActions, type EntryActionGroups } from './EntryActions';
 import type { ComponentProps } from 'react';
 import { isLocalUrl } from '../lib/local-url';
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
-import { Bell, GitBranch } from 'lucide-react';
+import { Bell } from 'lucide-react';
 import { useRepositorySettings, type RepositoryContextValue } from '../lib/use-repository-settings';
 import { REPOSITORY_NOTIFICATION_LEVELS, REPOSITORY_NOTIFICATION_SHORT_LABEL } from '../lib/notification-settings';
 
@@ -110,7 +111,7 @@ export function prEntryActionGroups({
         ? [{ label: 'Refresh GitHub status', icon: <RefreshCw size={15} />, disabled: busy, run: onRefresh }]
         : []),
       ...(!stack && !isLocalUrl(members[0].url) && !members[0].merged && members[0].state === 'open'
-        ? [{ label: 'Resolve conflicts…', icon: <GitBranch size={15} />, disabled: busy, run: () => openConflictWorkspace(members[0].url) }]
+        ? [{ label: 'Resolve conflicts…', icon: <ConflictIcon size={15} />, disabled: busy, run: () => openConflictWorkspace(members[0].url) }]
         : []),
     ],
     [

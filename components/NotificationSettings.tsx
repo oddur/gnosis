@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from './ui/button';
+import { TeamRequestsNote } from './TeamRequestsNote';
 import type { NotificationEventType, RepositoryNotificationLevel, SavedNotificationPreferences } from '../lib/notification-settings';
 import {
   normalizeBotLogins,
@@ -188,6 +189,7 @@ export function NotificationSettings({
         <h2 id="notifications-reviews-title">Reviews you owe</h2>
         {event('review-requested', 'Review requested from you')}
         {event('team-review-requested', 'Requested from your team', 'Teams such as CODEOWNERS can request you often.')}
+        <TeamRequestsNote surface="notifications" showsTeamRequests={value.events['team-review-requested']} />
         {event('rereview', 'New commits since your review', 'On PRs you reviewed, once per new push.')}
         {event('mention', 'Mentions', 'Someone @mentioned you in a comment or review.')}
         {event('reply', 'Replies to you', 'A new comment in a thread you are in, or on your PR.')}

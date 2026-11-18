@@ -65,6 +65,7 @@
   "pr-summary": 23,
   "preload": 13,
   "preload-activity": 9,
+  "queue-grouping": 30,
   "queue-metadata": 9,
   "readiness": 14,
   "renderer-heap": 110,

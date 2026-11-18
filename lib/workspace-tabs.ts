@@ -16,6 +16,11 @@ export interface WorkspaceTabEntry {
   status?: 'opening' | 'error';
   initial?: WorkspaceTarget;
   location?: AppLocation;
+  /**
+   * What the home tab shows when nothing names a list: the Overview or the review queue. The window decides it when it
+   * makes or restores the tab, from the other tabs (lib/home-tab.ts), so only one tab shows the Overview by default.
+   */
+  homeDefault?: 'overview' | 'queue';
 }
 export interface WorkspaceTabsState {
   tabs: WorkspaceTabEntry[];
@@ -305,7 +310,7 @@ export function restoreWorkspaceTabs(value: unknown, account: string): Workspace
         return [];
       if (
         d.section !== undefined &&
-        !['response', 'all', 'requested', 'updated', 'stacks', 'saved', 'starred', 'snoozed', 'muted'].includes(d.section)
+        !['response', 'all', 'requested', 'updated', 'stacks', 'saved', 'starred', 'snoozed', 'muted', 'overview'].includes(d.section)
       )
         return [];
       if (

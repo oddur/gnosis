@@ -167,6 +167,11 @@ interface Deps {
   now?: () => number;
   /** The shared GitHub pause, for the notification sweep and watch mode. Tests inject one. */
   backoff?: typeof githubClients.backoff;
+  /**
+   * The change signals answered within their normal interval (lib/github-change-signals.ts, `healthy`). Each
+   * snapshot carries it as `sync.signals`; main broadcasts when it flips.
+   */
+  signalsHealthy?: () => boolean | undefined;
 }
 interface VisibleHistory {
   history: readonly ReviewHistoryEntry[];
@@ -656,6 +661,7 @@ export function createWorkbenchService(deps: Deps) {
         ).length,
       ])
     );
+    const signals = deps.signalsHealthy?.();
     return stampQueue({
       items,
       stacks: visibleSubjects.filter(subject => subject.kind === 'stack'),
@@ -665,7 +671,7 @@ export function createWorkbenchService(deps: Deps) {
       mutedPrs: mutedIndex.rows,
       snoozedPrs: snoozed.rows,
       warnings,
-      sync: sync ?? { status: 'idle', checkedAt: s.discoveredAt },
+      sync: { ...(sync ?? { status: 'idle', checkedAt: s.discoveredAt }), ...(signals === undefined ? {} : { signals }) },
       remaining: Math.max(0, limit(preferences) - s.used),
       briefingBudget: briefingBudget(preferences, [...preferences.watchedRepos, ...Object.keys(preferences.repositorySettings ?? {}), ...allMembers.map(m => m.repo)], s.used, s.repositoryUsed ?? {}, now()),
       filters,
@@ -933,11 +939,12 @@ export function createWorkbenchService(deps: Deps) {
         // Drain the batch before saving or pausing; Promise.all can reject while
         // other requests are still completing and updating the checkpoint.
         const results = await Promise.allSettled(entries.slice(i, i + 5).map(([url, role]) => add(url, role, listedByUrl.get(url))));
+        // Count the batch before publishing it, so the snapshot that shows its PRs also shows the count.
+        progress('Updating pull request details', { completed: Math.min(i + 5, total), total, unit: 'PRs' });
         // add() updates dirty across the awaited batch.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (dirty) { publish(); checkpoint(); }
         for (const result of results) if (result.status === 'rejected') throw result.reason;
-        progress('Updating pull request details', { completed: Math.min(i + 5, total), total, unit: 'PRs' });
       }
       // Fetch repository siblings once, including parents omitted by review-request filters.
       const repos = [...new Set([...members.values()].map((m) => m.repo))];
@@ -1222,8 +1229,12 @@ export function createWorkbenchService(deps: Deps) {
   }
   async function queue(force = false, revalidate = force): Promise<WorkbenchQueue> {
     const existing = refresh;
-    if (existing) return !force && load().subjects.length ? view() :
-      withGitHubPriority(force && revalidate ? 'interactive' : 'background', () => joinGitHubWork(existing));
+    if (existing) {
+      if (!force && load().subjects.length) return view();
+      // The reader asked for the pass already running: it is theirs now, and shows a spinner until it has results.
+      if (force && revalidate && sync?.status === 'checking' && !sync.requested) { sync = { ...sync, requested: true }; deps.changed?.(); }
+      return withGitHubPriority(force && revalidate ? 'interactive' : 'background', () => joinGitHubWork(existing));
+    }
     const { token, login } = deps.auth();
     if (!token || !login) return { items: [], warnings: [], remaining: 0 };
     const settings = discoveryKey();
@@ -1271,19 +1282,28 @@ export function createWorkbenchService(deps: Deps) {
       return view();
     }
     const visibleActivity = (force && revalidate) || tracked || !load().discoveredAt;
-    sync = { status: 'checking', checkedAt: load().discoveredAt };
+    sync = { status: 'checking', checkedAt: load().discoveredAt, ...(force && revalidate ? { requested: true } : {}) };
+    // Windows show the pass at once: a spinner for one the reader asked for, else the quiet progress note.
+    deps.changed?.();
     if (visibleActivity) deps.activities?.start(
       { id, kind: 'github', title: 'Updating GitHub information', detail: 'Finding your pull requests' },
       { retry: () => queue(true) }
     );
     refresh = withGitHubPriority(force && revalidate ? 'interactive' : 'background', () => createGitHubWork(() => discover((detail, progress) => {
       if (visibleActivity) deps.activities?.update(id, detail, progress);
+      // The pass's PR count, for the Overview's "Refreshing PR list · 120 of 273". Batches that change PRs publish
+      // it with their snapshot; the total is broadcast once, when it becomes known.
+      if (progress?.unit === 'PRs' && sync?.status === 'checking') {
+        const known = !!sync.progress;
+        sync = { ...sync, progress: { done: progress.completed, total: progress.total } };
+        if (!known) deps.changed?.();
+      }
     }, revalidate)
       .then((result) => {
         if (deps.auth().login !== login) {
           if (visibleActivity) deps.activities?.finish(id, 'cancelled', 'GitHub account changed.');
         } else {
-          sync = { status: result.warnings.length ? 'error' : 'idle', checkedAt: load().discoveredAt };
+          sync = result.warnings.length ? { status: 'error', reason: 'incomplete', checkedAt: load().discoveredAt } : { status: 'idle', checkedAt: load().discoveredAt };
           if (visibleActivity) deps.activities?.finish(
             id,
             'completed',
@@ -1315,7 +1335,7 @@ export function createWorkbenchService(deps: Deps) {
           return view();
         }
         const message = error instanceof Error ? error.message : String(error);
-        sync = { status: 'error', checkedAt: load().discoveredAt };
+        sync = { status: 'error', reason: 'unreachable', checkedAt: load().discoveredAt };
         const detail = load().subjects.length
           ? `Could not update GitHub information. Showing your saved queue. ${message}`
           : `Could not update GitHub information. Retry to load your queue. ${message}`;

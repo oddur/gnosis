@@ -4,10 +4,10 @@ import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import type { PrBadgePreview } from '../lib/pr-badge-preview';
 import { PrBadgeTooltip } from './PrBadgeTooltip';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { Copy, ExternalLink } from 'lucide-react';
 import { useCopyToClipboard } from '../lib/use-copy';
-import { setEntryMenuOpen } from '../lib/entry-menu-state';
+import { setEntryMenuOpen, useEntryMenusOpen } from '../lib/entry-menu-state';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import {
   ContextMenu,
@@ -41,8 +41,11 @@ export function EntityBadge({
   tooltipReady = true,
   onTooltipOpenChange,
   menuActions,
+  tabIndex,
 }: {
   menuActions?: ReactNode;
+  /** -1 keeps the badge out of the tab order where its row offers the same actions. */
+  tabIndex?: number;
   kind: Kind;
   value: string;
   label?: string;
@@ -91,6 +94,7 @@ export function EntityBadge({
                   className={`entity-badge entity-badge-${kind} ${className}`}
                   data-entity-kind={kind}
                   data-copy-state={state}
+                  tabIndex={tabIndex}
                   aria-label={`${action}: ${label}`}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -129,7 +133,8 @@ export function EntityBadge({
               onContextMenu={(event) => event.stopPropagation()}
             />
           </TooltipTrigger>
-          {tooltipReady && (
+          {/* Mounted only while open, as in PrPreviewTooltip: no exit animation can leave it stranded. */}
+          {tooltipReady && open && !menuOpen && (
             <TooltipContent
               side="top"
               sideOffset={6}
@@ -196,7 +201,11 @@ export function RepositoryBadge({ repo }: { repo?: string }) {
   return <EntityBadge kind="repository" value={repo} href={`https://github.com/${repo}`} icon={<RepositoryIcon settings={appearance} />} className={`repository-color-${appearance.color ?? 'default'}`}
     menuActions={configure && <ContextMenuItem className="entry-menu-item" onClick={() => configure(repo)}><WorkbenchIcon name="settings" />Repository settings…</ContextMenuItem>} />;
 }
-export function PrBadge({ url, number, title }: { url: string; number?: number | string; title?: string }) {
+/**
+ * The PR preview a PR badge shows on hover and focus (`PrBadgeTooltip`), read from the saved PR details each time it
+ * opens. Shared by `PrBadge` and `PrPreviewTooltip`, so both load, cache and word the preview the same way.
+ */
+export function usePrBadgePreview(url: string, number?: number | string, title?: string) {
   const [open, setOpen] = useState(false);
   const [resolved, setResolved] = useState<{ url: string; value: PrBadgePreview | null; failed?: boolean }>();
   useEffect(() => {
@@ -216,17 +225,28 @@ export function PrBadge({ url, number, title }: { url: string; number?: number |
   }, [open, url]);
   const preview = resolved?.url === url ? resolved.value : null;
   const n = number ?? /\/pull\/(\d+)/.exec(url)?.[1];
+  return {
+    n,
+    ready: resolved?.url === url,
+    heading: preview ? `${preview.member.repo} #${n}` : url,
+    content: <PrBadgeTooltip preview={preview} title={title} failed={resolved?.failed} />,
+    onOpenChange: (next: boolean) => {
+      if (next) setResolved(undefined);
+      setOpen(next);
+    },
+  };
+}
+export function PrBadge({ url, number, title }: { url: string; number?: number | string; title?: string }) {
+  const preview = usePrBadgePreview(url, number, title);
+  const n = preview.n;
   if (!n) return null;
   return (
     <EntityBadge
       kind="pr"
-      tooltipHeading={preview ? `${preview.member.repo} #${n}` : url}
-      tooltipReady={resolved?.url === url}
-      tooltipContent={<PrBadgeTooltip preview={preview} title={title} failed={resolved?.failed} />}
-      onTooltipOpenChange={(next) => {
-        if (next) setResolved(undefined);
-        setOpen(next);
-      }}
+      tooltipHeading={preview.heading}
+      tooltipReady={preview.ready}
+      tooltipContent={preview.content}
+      onTooltipOpenChange={preview.onOpenChange}
       value={url}
       label={`#${n}`}
       href={url}
@@ -235,6 +255,118 @@ export function PrBadge({ url, number, title }: { url: string; number?: number |
         ...(title ? [{ label: 'Copy title', value: title }] : []),
       ]}
     />
+  );
+}
+/** Hover and keyboard focus wait this long before a PR preview opens, as on PR badges. */
+export const PR_PREVIEW_DELAY = 350;
+/**
+ * The PR badge's preview on another trigger, such as a row's title button: the same content, loading and delay as
+ * `PrBadge`. Keyboard focus waits the same delay, so moving through rows does not flash previews. Closes on Escape,
+ * on scroll, on click and while a row menu is open.
+ */
+export function PrPreviewTooltip({ url, number, title, children }: { url: string; number?: number | string; title?: string; children: ReactElement }) {
+  const preview = usePrBadgePreview(url, number, title);
+  const menus = useEntryMenusOpen();
+  const [open, setOpen] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  const viaFocus = useRef(false);
+  /** Set by a press on the trigger: the focus a click brings is not keyboard focus, and opens no preview. */
+  const pressed = useRef(false);
+  const trigger = useRef<HTMLElement | null>(null);
+  // A hidden page (another workspace tab, an Activity that hid this view) runs this cleanup: close, so the preview
+  // never stays behind with nothing to anchor to, which drew it in the window's top-left corner.
+  useEffect(
+    () => () => {
+      window.clearTimeout(timer.current);
+      setOpen(false);
+    },
+    []
+  );
+  // While open: a press anywhere outside the preview closes it (pressing a row's action opens the PR, often in another
+  // tab, and Radix only closes on a press of the trigger itself), and so does the trigger leaving the screen (a hidden
+  // workspace tab stays mounted, so nothing else would close it and it was drawn in the window's top-left corner).
+  useEffect(() => {
+    if (!open) return;
+    const element = trigger.current;
+    const onPress = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('.pr-badge-tooltip')) return;
+      close();
+    };
+    window.addEventListener('pointerdown', onPress, true);
+    const watch =
+      element && typeof IntersectionObserver === 'function'
+        ? new IntersectionObserver((entries) => {
+            if (entries.some((entry) => !entry.isIntersecting)) close();
+          })
+        : undefined;
+    if (element) watch?.observe(element);
+    return () => {
+      window.removeEventListener('pointerdown', onPress, true);
+      watch?.disconnect();
+    };
+  }, [open]);
+  /** The trigger is on screen: connected, laid out and in a visible document. */
+  const shown = () => {
+    const element = trigger.current;
+    return !!element && element.isConnected && element.getClientRects().length > 0 && document.visibilityState === 'visible';
+  };
+  const close = () => {
+    window.clearTimeout(timer.current);
+    setOpen(false);
+  };
+  const change = (next: boolean) => {
+    window.clearTimeout(timer.current);
+    if (next && pressed.current) return;
+    if (next && viaFocus.current) {
+      // Radix opens at once on focus; keyboard focus waits like hover does.
+      timer.current = window.setTimeout(() => {
+        if (!shown()) return;
+        setOpen(true);
+        preview.onOpenChange(true);
+      }, PR_PREVIEW_DELAY);
+      return;
+    }
+    if (next && !shown()) return;
+    setOpen(next);
+    preview.onOpenChange(next);
+  };
+  return (
+    <TooltipProvider delayDuration={PR_PREVIEW_DELAY}>
+      <Tooltip open={open && !menus} onOpenChange={change} disableHoverableContent={!preview.ready}>
+        <TooltipTrigger
+          asChild
+          ref={(element: HTMLElement | null) => { trigger.current = element; }}
+          onFocusCapture={() => { viaFocus.current = true; }}
+          // Focus that leaves before the delay cancels it: Radix reports no change for a tooltip that never opened.
+          onBlurCapture={() => {
+            window.clearTimeout(timer.current);
+            pressed.current = false;
+          }}
+          onPointerDownCapture={() => {
+            // A press opens the PR (often in another tab): no preview for the focus it brings, and none pending.
+            pressed.current = true;
+            close();
+          }}
+          onPointerMove={() => { viaFocus.current = false; }}
+          onPointerLeave={() => { pressed.current = false; }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') change(false);
+            // Enter or Space opens the row: drop the preview with it.
+            if (event.key === 'Enter' || event.key === ' ') close();
+          }}
+        >
+          {children}
+        </TooltipTrigger>
+        {/* Mounted only while open: a closing preview whose row was just hidden (the PR opened in another tab) never
+            finished its exit animation and stayed on screen, closed, in the window's top-left corner. */}
+        {preview.ready && open && !menus && (
+          <TooltipContent side="top" sideOffset={6} collisionPadding={12} hideWhenDetached className="entity-badge-tooltip pr-badge-tooltip">
+            <span className="entity-badge-full-value">{preview.heading}</span>
+            {preview.content}
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 export function BranchBadge({ branch, repo }: { branch: string; repo?: string }) {

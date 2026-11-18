@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { PrActions } from './PrActions';
 import { DiffStats } from './DiffStats';
 import { ChevronDown, CircleCheck, CircleHelp, CircleAlert, Clock3, GitPullRequest } from 'lucide-react';
+import { conflictIcon as ConflictIcon } from '../lib/interface-icons';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 import { githubFailureMessage } from '../lib/github-feedback';
@@ -10,6 +11,9 @@ import type { QueueSignals } from '../lib/queue-signals';
 import { mergeReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 import { useStatusNow } from '../lib/status-clock';
+import { useGitHubAccess, startGitHubSignIn } from '../lib/use-github-access';
+import { useWorkflowFiles } from '../lib/use-workflow-files';
+import { GitHubScopePrompt } from './GitHubScopePrompt';
 
 export function PrReadiness({
   member,
@@ -32,7 +36,12 @@ export function PrReadiness({
     signals && (!status?.signals || signals.checkedAt >= status.signals.checkedAt) ? signals : status?.signals;
   // The same clock as the page header, so both agree on whether this status is out of date.
   const now = useStatusNow();
-  const readiness = mergeReadiness(member, currentSignals, now);
+  const access = useGitHubAccess();
+  const workflowFiles = useWorkflowFiles(member);
+  const readiness = mergeReadiness(member, currentSignals, now, access, workflowFiles);
+  // GitHub reports BLOCKED though everything Gnosis can see is met, and the sign-in lacks read:org or workflow.
+  // "Sign in again" starts sign-in at once, as it does in the GitHub account dialog.
+  const scopePrompt = readiness.signIn && <GitHubScopePrompt onSignIn={startGitHubSignIn} />;
   const rollup = currentSignals?.headSha === member.headSha ? currentSignals.checks : undefined;
   const checks = rollup
     ? !rollup.total
@@ -91,6 +100,7 @@ export function PrReadiness({
                 ))}
               </ul>
             )}
+            {scopePrompt}
             {(!readiness.ready || readiness.stale) && (
               <a className="pr-merge-requirements" href={member.url} target="_blank" rel="noopener noreferrer">
                 Merge requirements on GitHub
@@ -123,6 +133,7 @@ export function PrReadiness({
             <li key={detail}>{detail}</li>
           ))}
         </ul>
+        {scopePrompt}
         <div className="pr-merge-detail-actions">
           <ReadinessCheckedAt readiness={readiness} updating={!!status?.stale && !error} />
           <a href={member.url} target="_blank" rel="noopener noreferrer">
@@ -180,7 +191,7 @@ export function PrReadiness({
         </span>
         <span>
           {mergeable === false ? (
-            <CircleAlert size={14} />
+            <ConflictIcon size={14} aria-hidden="true" className="is-conflict" />
           ) : mergeable ? (
             <CircleCheck size={14} />
           ) : (
