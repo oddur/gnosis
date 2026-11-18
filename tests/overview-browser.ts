@@ -1108,6 +1108,29 @@ void app.whenReady().then(async () => {
     await wait(`${freshnessKind} === 'up-to-date'`);
     settle();
 
+    step = 'team-requests-note';
+    // Team review requests on, and a sign-in GitHub reports without read:org: GitHub hides the organization's teams,
+    // so Waiting on you says the team requests may be incomplete. Once, quietly, with Sign in again and Not now.
+    await js('sessionStorage.clear();localStorage.clear()');
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?overview&team-requests`);
+    await wait(`!!document.querySelector('${P} .morning [data-overview-row]')`, 600);
+    const teamNote = `${section('you')} [data-team-requests-note="overview"]`;
+    soft(await js(`!!document.querySelector('${teamNote}')`), false, 'a sign-in with read:org gets no note');
+    await js("window.setFixtureGitHubScopes(['repo','workflow'])");
+    await wait(`!!document.querySelector('${teamNote}')`);
+    soft(
+      await js(`document.querySelector('${teamNote} p').textContent`),
+      'Team review requests may be incomplete: Gnosis can’t read your organization’s teams. Sign in again to allow it.'
+    );
+    soft(await js(`document.querySelectorAll('${P} [data-team-requests-note]').length`), 1, 'one note on the Overview');
+    soft(await js(`[...document.querySelectorAll('${teamNote} button')].map(b=>b.textContent.trim())`), ['Sign in again', 'Not now']);
+    await capture('team-requests-note-1280-light');
+    await click(`${teamNote} button:last-child`);
+    await wait(`!document.querySelector('${teamNote}')`);
+    soft(await js("localStorage.getItem('gnosis:github-scope-prompt-dismissed:oddur:team-requests:overview')"), '["read:org"]', 'Not now is kept per surface');
+    await js("window.setFixtureGitHubScopes(['repo','read:org','workflow'])");
+    settle();
+
     win.destroy();
     app.exit(0);
   } catch (error) {

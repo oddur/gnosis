@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { failureTitle, type OptimisticAction } from './optimistic-patches';
+import { githubWriteError } from './github-access';
 
 /**
  * Failed GitHub writes, kept in the renderer until the reader retries or dismisses them. Main already rolled the change
@@ -16,6 +17,8 @@ export interface WriteFailure {
   /** The text the reader typed, so nothing is lost. */
   body?: string;
   retry?: () => Promise<unknown>;
+  /** GitHub refused for the workflow permission: the notice offers the sign-in prompt instead of Retry. */
+  workflowPermission?: boolean;
 }
 const failures = new Map<string, WriteFailure>();
 /** Notices on screen, by failure key. A failure no notice shows is announced another way. */
@@ -39,17 +42,20 @@ const inFlight = new Set<string>();
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((listener) => listener());
 
-/** GitHub's reason without Electron's IPC wrapper. */
+/** GitHub's reason without Electron's IPC wrapper, or "Needs the workflow permission" (`githubWriteError`). */
 export function writeErrorDetail(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return (
-    text.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '').trim() ||
-    'GitHub did not accept the change.'
-  );
+  return githubWriteError(error).message || 'GitHub did not accept the change.';
 }
-export function reportWriteFailure(input: Omit<WriteFailure, 'title' | 'detail'> & { error: unknown; title?: string }) {
+export function reportWriteFailure(
+  input: Omit<WriteFailure, 'title' | 'detail' | 'workflowPermission'> & { error: unknown; title?: string }
+) {
   const { error, title, ...rest } = input;
-  const failure = { ...rest, title: title ?? failureTitle(input.action), detail: writeErrorDetail(error) };
+  const failure: WriteFailure = {
+    ...rest,
+    title: title ?? failureTitle(input.action),
+    detail: writeErrorDetail(error),
+    ...(githubWriteError(error).workflowPermission ? { workflowPermission: true } : {}),
+  };
   failures.set(input.key, failure);
   emit();
   // The view that made the write may have gone, or not come back yet after the rollback restored its composer.

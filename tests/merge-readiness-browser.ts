@@ -180,6 +180,14 @@ void app.whenReady().then(async () => {
     await wait(`!${detail}.querySelector('.github-scope-prompt')`);
     assert.equal(await js(`${detail}.querySelector('.merge-readiness-badge').textContent`), 'GitHub reports this as blocked');
     await wait(`${mergeButton}?.disabled===false`);
+    // A fine-grained token reports no scopes: a quiet line names its Workflows permission, with no prompt.
+    await js("window.setFixtureGitHubScopes(null,'fine-grained')");
+    await wait(`${detail}.textContent.includes('If you signed in with a fine-grained token, it may need the Workflows permission (read and write) for this repository.')`);
+    assert.equal(await js(`${detail}.querySelector('.merge-readiness-badge').textContent`), 'GitHub reports this as blocked');
+    assert.equal(await js(`!!${detail}.querySelector('.github-scope-prompt')`), false);
+    await capture('github-blocked-fine-grained');
+    await js("window.setFixtureGitHubScopes(['repo','read:org','workflow'],'oauth')");
+    await wait(`!${detail}.textContent.includes('fine-grained token')`);
     // With workflow, GitHub answers CLEAN.
     await js('window.mismatch=false');
     await click('Refresh status');

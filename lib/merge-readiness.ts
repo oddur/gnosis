@@ -2,7 +2,7 @@ import type { PrStatus } from './types';
 import { QUEUE_SIGNALS_TTL, type QueueSignals } from './queue-signals';
 import type { ReviewMember, ReviewSubject } from './workbench';
 import { hasMergeConflicts } from './merge-conflicts';
-import { lacksOrgRead, lacksWorkflow } from './github-access';
+import { FINE_GRAINED_WORKFLOW_NOTE, WORKFLOW_PERMISSION_LABEL, fineGrainedWorkflowNote, lacksOrgRead, lacksWorkflow } from './github-access';
 
 export interface MergeReadiness {
   label: string;
@@ -29,7 +29,7 @@ export const GITHUB_BLOCKED_DETAIL =
   'Every requirement Gnosis can see is met. GitHub works out merge rules for the account and access asking, so check the PR on GitHub.';
 export const ORG_SCOPE_DETAIL =
   'Gnosis’s sign-in can’t read your organization’s settings, which GitHub may need for this. Sign in again to allow it.';
-export const WORKFLOW_LABEL = 'Needs the workflow permission';
+export const WORKFLOW_LABEL = WORKFLOW_PERMISSION_LABEL;
 export const WORKFLOW_DETAIL =
   'This PR changes GitHub Actions workflows (.github/workflows/…). GitHub only lets sign-ins with the workflow permission merge it.';
 /** The sign-in lacks `workflow` and the PR's files are not loaded yet, so Gnosis can't tell whether it matters. */
@@ -140,10 +140,18 @@ export function mergeReadiness(
     const noOrg = lacksOrgRead(access?.scopes);
     // Unknown paths: say what the missing scope would mean. Known paths with no workflow files: it doesn't matter.
     const workflowNote = noWorkflow && workflowFiles === undefined;
+    // A fine-grained token reports no scopes: name its Workflows permission as the likely cause, without a prompt.
+    const fineGrained = fineGrainedWorkflowNote(access?.scopes, workflowFiles);
     return result(
       GITHUB_BLOCKED_LABEL,
       'warning',
-      [...details, GITHUB_BLOCKED_DETAIL, ...(noOrg ? [ORG_SCOPE_DETAIL] : []), ...(workflowNote ? [WORKFLOW_SCOPE_DETAIL] : [])],
+      [
+        ...details,
+        GITHUB_BLOCKED_DETAIL,
+        ...(noOrg ? [ORG_SCOPE_DETAIL] : []),
+        ...(workflowNote ? [WORKFLOW_SCOPE_DETAIL] : []),
+        ...(fineGrained ? [FINE_GRAINED_WORKFLOW_NOTE] : []),
+      ],
       false,
       { mismatch: true, signIn: noOrg || workflowNote }
     );

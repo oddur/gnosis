@@ -5,14 +5,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from './ui/button';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import { missingScopes, parseDismissedScopes, serializeDismissedScopes, shouldAskScopes } from '../lib/github-access';
-import { refreshGitHubAccess, useGitHubAccess } from '../lib/use-github-access';
+// "Not now" on the scope prompt, per account: the scopes missing when it was dismissed. The prompt returns once when
+// another scope goes missing. The prompt in the merge section still appears when it matters.
+import { refreshGitHubAccess, scopePromptKey, useGitHubAccess } from '../lib/use-github-access';
 import { GitHubScopePrompt } from './GitHubScopePrompt';
-
-/**
- * "Not now" on the scope prompt, per account: the scopes missing when it was dismissed. The prompt returns once when
- * another scope goes missing. The prompt in the merge section still appears when it matters.
- */
-const scopePromptKey = (login: string) => `gnosis:github-scope-prompt-dismissed:${login}`;
 
 function message(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).replace(
@@ -31,6 +27,7 @@ export function GitHubAuthDialog({
   login,
   prUrl,
   startSignIn = false,
+  startToken = false,
   onSignInStarted,
 }: {
   open: boolean;
@@ -43,6 +40,8 @@ export function GitHubAuthDialog({
   prUrl?: string;
   /** Begin sign-in as soon as the options load: "Sign in again" outside the dialog. */
   startSignIn?: boolean;
+  /** Open on the token form: "Enter new token" after a personal access token lacked scopes. */
+  startToken?: boolean;
   onSignInStarted?: () => void;
 }) {
   const [web, setWeb] = useState<boolean>();
@@ -74,6 +73,15 @@ export function GitHubAuthDialog({
   const askScopes = shouldAskScopes(missing, scopeDismissed);
   const autoStart = useRef(startSignIn);
   autoStart.current = startSignIn;
+  const tokenStart = useRef(startToken);
+  tokenStart.current = startToken;
+  const showTokenForm = () => {
+    cancel();
+    setMethod('token');
+    setPhase('idle');
+    setPrompt(undefined);
+    setError('');
+  };
 
   const cancel = () => {
     attempt.current++;
@@ -157,6 +165,9 @@ export function GitHubAuthDialog({
         if (autoStart.current) {
           onSignInStarted?.();
           void (options.web ? browser() : device());
+        } else if (tokenStart.current) {
+          onSignInStarted?.();
+          setMethod('token');
         } else if (!options.web && !login) void device();
       })
       .catch((e: unknown) => {
@@ -203,6 +214,7 @@ export function GitHubAuthDialog({
           <GitHubScopePrompt
             disabled={busy}
             onSignIn={() => void (web ? browser() : device())}
+            onUseToken={showTokenForm}
             onDismiss={() => {
               try {
                 if (login) localStorage.setItem(scopePromptKey(login), serializeDismissedScopes(missing));
@@ -326,8 +338,9 @@ export function GitHubAuthDialog({
                   </p>
                   <p>
                     Allow <strong>Checks: Read</strong> and <strong>Commit statuses: Read</strong> for CI status. To
-                    submit reviews and replies, allow <strong>Pull requests: Read and write</strong>. A classic token
-                    needs the repo scope.
+                    submit reviews and replies, allow <strong>Pull requests: Read and write</strong>. To merge PRs that
+                    change GitHub Actions workflows, allow <strong>Workflows: Read and write</strong>. A classic token
+                    needs the repo, read:org and workflow scopes.
                   </p>
                   <button
                     className="workbench-help-link"

@@ -1,3 +1,4 @@
+import type { GitHubTokenKind } from '../lib/github-access';
 import type { WorkbenchQueueDelta } from '../lib/workbench-delta';
 import type { AppUpdateStatus } from './update-state';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
@@ -302,10 +303,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   beginGitHubSignIn: (): Promise<GitHubDevicePrompt> => ipcRenderer.invoke('begin-github-sign-in'),
   completeGitHubSignIn: (id: string): Promise<string> => ipcRenderer.invoke('complete-github-sign-in', id),
   cancelGitHubSignIn: (id: string): Promise<void> => ipcRenderer.invoke('cancel-github-sign-in', id),
-  getAuthState: (): Promise<{ authenticated: boolean; login: string | null; scopes?: string[] | null }> => ipcRenderer.invoke('get-auth-state'),
+  getAuthState: (): Promise<{ authenticated: boolean; login: string | null; scopes?: string[] | null; tokenKind?: GitHubTokenKind }> => ipcRenderer.invoke('get-auth-state'),
   /** The scopes GitHub reports for the signed-in token changed (`X-OAuth-Scopes`). */
-  onGitHubAccessChanged: (callback: (access: { login: string | null; scopes?: string[] | null }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, access: { login: string | null; scopes?: string[] | null }) => callback(access);
+  onGitHubAccessChanged: (callback: (access: { login: string | null; scopes?: string[] | null; tokenKind?: GitHubTokenKind }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, access: { login: string | null; scopes?: string[] | null; tokenKind?: GitHubTokenKind }) => callback(access);
     ipcRenderer.on('github-access-changed', handler);
     return () => {
       ipcRenderer.removeListener('github-access-changed', handler);

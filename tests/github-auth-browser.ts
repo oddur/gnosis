@@ -158,6 +158,43 @@ void app.whenReady().then(async () => {
       false,
       'Connecting GitHub must leave local mode'
     );
+    // A personal access token without read:org and workflow: signing in again would not change its scopes, so the
+    // account dialog explains which token to create instead, with the scopes preselected on GitHub.
+    await js(
+      "window.electronAPI.openExternal=(url)=>{window.openedAuthUrl=url;return Promise.resolve();};window.setFixtureGitHubScopes(['repo'],'classic')"
+    );
+    await js(chooseWorkspaceMenuItem('[data-github-account]'));
+    const tokenPrompt = ".github-auth-dialog .github-scope-prompt[data-scope-prompt='token']";
+    await wait(`!!document.querySelector("${tokenPrompt}")`);
+    assert.equal(
+      await js(`document.querySelector("${tokenPrompt} p").textContent`),
+      'Your personal access token is missing: read:org, workflow. Create a token with repo, read:org and workflow, then sign in with it.'
+    );
+    assert.deepEqual(await js(`[...document.querySelectorAll("${tokenPrompt} button")].map(b=>b.textContent.trim())`), [
+      'Create a token on GitHub',
+      'Enter new token',
+      'Sign in with GitHub instead',
+      'Not now',
+    ]);
+    assert.equal(
+      await js("[...document.querySelectorAll('.github-auth-dialog .github-scope-prompt button')].some(b=>b.textContent.trim()==='Sign in again')"),
+      false,
+      'A token never loops through Sign in again'
+    );
+    await capture('pat-missing-scopes');
+    await click('Create a token on GitHub');
+    assert.equal(
+      await js('window.openedAuthUrl'),
+      'https://github.com/settings/tokens/new?scopes=repo,read:org,workflow&description=Gnosis'
+    );
+    await click('Enter new token');
+    await wait("!!document.querySelector('#github-auth-token')");
+    assert.match(
+      await js<string>("document.querySelector('.github-token-help').textContent"),
+      /A classic token needs the repo, read:org and workflow scopes\./
+    );
+    await click('Close');
+    await wait("!document.querySelector('.github-auth-dialog')");
     console.log(
       'GitHub auth browser checks passed: web failure to device fallback, code approval, cancellation, PAT permission recovery, preview default, account management and laptop themes.'
     );

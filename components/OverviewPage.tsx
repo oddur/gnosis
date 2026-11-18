@@ -79,6 +79,7 @@ import {
 import { sinceLabel, sinceLine, sinceSummary } from '../lib/since-log';
 import { openSnoozePicker } from '../lib/snooze-picker';
 import { writeErrorDetail } from '../lib/write-failures';
+import { TeamRequestsNote } from './TeamRequestsNote';
 import type { QueueItem, ReviewMember, WorkbenchQueue } from '../lib/workbench';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrPreviewTooltip } from './EntityBadge';
@@ -579,6 +580,7 @@ export function OverviewPage(props: OverviewPageProps) {
           ))}
         </MorningSection>
         <MorningSection section="you" count={counts.you} empty={youPointer}
+          note={<TeamRequestsNote surface="overview" showsTeamRequests={!!teamRequests} />}
           footer={counts.you > 0 ? youPointer : null}>
           {morning.you.map((value) => group('you', value))}
         </MorningSection>
@@ -910,11 +912,13 @@ function RepoName({ repos }: { repos: readonly string[] }) {
   );
 }
 
-function MorningSection({ section, count, empty, quiet = false, footer, children }: {
+function MorningSection({ section, count, empty, quiet = false, note, footer, children }: {
   section: Section;
   count: number;
   empty: ReactNode;
   quiet?: boolean;
+  /** A quiet line under the heading, such as the team-request note. */
+  note?: ReactNode;
   /** A quiet line under the rows, such as "2 more ready, not reviewed". */
   footer?: ReactNode;
   children: ReactNode;
@@ -929,6 +933,7 @@ function MorningSection({ section, count, empty, quiet = false, footer, children
           <span className="morning-section-count" data-section-count>{count}</span>
         </h2>
       </div>
+      {note}
       {count === 0 ? <p className="morning-empty" data-overview-empty>{empty}</p> : <ul className="morning-rows" aria-label={label}>{children}</ul>}
       {footer && <div className="morning-footer">{footer}</div>}
     </section>

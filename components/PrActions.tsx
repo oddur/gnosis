@@ -28,9 +28,10 @@ import type { ReviewMember } from '../lib/workbench';
 import { applyToActionState, prActionChange, type OptimisticChange } from '../lib/optimistic-patches';
 import { optimisticWrite } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
-import { useGitHubAccess } from '../lib/use-github-access';
+import { startGitHubSignIn, startGitHubTokenSignIn as requestTokenSignIn, useGitHubAccess } from '../lib/use-github-access';
 import { useWorkflowFiles } from '../lib/use-workflow-files';
-import { lacksWorkflow } from '../lib/github-access';
+import { githubWriteError, lacksWorkflow, WORKFLOW_WRITE_MESSAGE } from '../lib/github-access';
+import { GitHubScopePrompt } from './GitHubScopePrompt';
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const revision = (m: PrActionMember) => ({
@@ -270,7 +271,8 @@ export function PrActions({
         void refresh();
       }
     } catch (e) {
-      if (current.current === started) setError(messageOf(e));
+      // GitHub's workflow-scope refusal reads as "Needs the workflow permission", with Sign in again.
+      if (current.current === started) setError(githubWriteError(e).message);
     } finally {
       pending.current = false;
       setBusy(false);
@@ -353,7 +355,7 @@ export function PrActions({
       ? {
           step: errorStep === 'submit' ? 'merge' : 'review',
           message:
-            errorStep === 'submit'
+            errorStep === 'submit' && error !== WORKFLOW_WRITE_MESSAGE
               ? `${error} If GitHub may have received the request, check the PR before trying again.`
               : error,
         }
@@ -732,7 +734,22 @@ export function PrActions({
                   )}
                 </>
               )}
-              {error && (
+              {error === WORKFLOW_WRITE_MESSAGE ? (
+                // GitHub refused the write outright, so nothing changed and there is nothing to check first.
+                <div role="alert" className="pr-action-error" data-workflow-permission>
+                  <GitHubScopePrompt
+                    message={WORKFLOW_WRITE_MESSAGE}
+                    onSignIn={() => {
+                      cancel();
+                      startGitHubSignIn();
+                    }}
+                    onUseToken={() => {
+                      cancel();
+                      requestTokenSignIn();
+                    }}
+                  />
+                </div>
+              ) : error && (
                 <div role="alert" className="pr-action-error">
                   <p>{error}</p>
                   <p>If GitHub may have received the request, check the PR before trying again.</p>

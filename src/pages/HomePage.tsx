@@ -117,6 +117,7 @@ import {
   AlarmClock,
 } from 'lucide-react';
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
+import { TeamRequestsNote } from '../../components/TeamRequestsNote';
 import { GITHUB_SIGN_IN_EVENT, type GitHubSignInRequest } from '../../lib/use-github-access';
 import { GettingStarted } from '../../components/GettingStarted';
 import { TitlebarScope, WorkspaceMenu } from '../../components/AppTitlebar';
@@ -462,10 +463,13 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   const [authOpen, setAuthOpen] = useState(false);
   // "Sign in again" in the merge section opens the GitHub account dialog and starts sign-in there, asking for the new
   // scopes. The dialog clears `authStart` once it has begun.
-  const [authStart, setAuthStart] = useState(false);
+  // A personal access token opens on the token form instead: signing in again with it would not change its scopes.
+  const [authStart, setAuthStart] = useState<false | 'sign-in' | 'token'>(false);
   useEffect(() => {
     const open = (event: Event) => {
-      if ((event as CustomEvent<GitHubSignInRequest | undefined>).detail?.start) setAuthStart(true);
+      const detail = (event as CustomEvent<GitHubSignInRequest | undefined>).detail;
+      if (detail?.start) setAuthStart('sign-in');
+      else if (detail?.token) setAuthStart('token');
       setAuthOpen(true);
     };
     window.addEventListener(GITHUB_SIGN_IN_EVENT, open);
@@ -2178,6 +2182,12 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
                         ? 'Your review requests. Changed PRs appear under Updated PRs.'
                         : 'PR content or stack changes since your saved AI explanation.'}
               </p>
+              {section === 'requested' && !activeQueueView && (
+                <TeamRequestsNote
+                  surface="review-requests"
+                  showsTeamRequests={!!prefs && notificationSettings(prefs).events['team-review-requested']}
+                />
+              )}
             </div>
             <div className="flex items-center gap-2">
               <PrFreshness className="queue-freshness" queue checkedAt={queue.sync?.checkedAt} refreshing={!!storeStatus.saved} />
@@ -2785,7 +2795,8 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
           if (!next) setAuthStart(false);
           setAuthOpen(next);
         }}
-        startSignIn={authStart}
+        startSignIn={authStart === 'sign-in'}
+        startToken={authStart === 'token'}
         onSignInStarted={() => setAuthStart(false)}
         onConnected={syncAuth}
         onSignedOut={async () => {

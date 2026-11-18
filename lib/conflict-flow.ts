@@ -1,4 +1,5 @@
 import type { BaseMove, ConflictFileStage } from './conflict-resolution';
+import { githubWriteError, WORKFLOW_PERMISSION_LABEL, WORKFLOW_PUSH_WARNING } from './github-access';
 
 /**
  * The one next action for the selected file. Each state has exactly one primary action, so the
@@ -20,7 +21,7 @@ export function conflictFileAction(state: {
   return state.otherFilesPending ? 'next-file' : 'confirm';
 }
 
-export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry';
+export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in';
 export interface ConflictErrorCopy {
   /** One plain sentence: what happened. */
   title: string;
@@ -48,6 +49,15 @@ export function describeConflictError(
   const details = raw;
   const reload =
     'Nothing was pushed. Your resolutions are saved. Select Load latest changes to merge the new commits; resolutions that still apply are reused.';
+  // GitHub refuses a push that changes workflow files from a sign-in without `workflow`. It refused outright, so
+  // nothing was pushed, and signing in again is the way forward.
+  if (githubWriteError(raw).workflowPermission)
+    return {
+      title: `${WORKFLOW_PERMISSION_LABEL}.`,
+      body: `${WORKFLOW_PUSH_WARNING} Nothing was pushed. Your resolutions are saved.`,
+      recovery: 'sign-in',
+      details,
+    };
   if (
     /\(stale info\)|\bstale info\b|\(fetch first\)|non-fast-forward|failed to push some refs.*lease/i.test(raw) ||
     /^The PR branch has new commits/.test(raw) ||

@@ -105,7 +105,7 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import { getGitHubClient, githubClients, githubCacheFor, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
-import type { GitHubAccess } from '../lib/github-access';
+import { githubTokenKind, githubWriteError, type GitHubAccess } from '../lib/github-access';
 import { createGitHubWebAuth } from './github-web-auth';
 import { createGitHubAuthService } from './github-auth-service';
 import { checkGitHubPrAccess, githubAccessMessage, readAccessiblePr } from '../lib/github-auth';
@@ -317,7 +317,13 @@ async function resolveGitHubLogin(token: string): Promise<string> {
 
 // The scopes GitHub reports for the signed-in token (`X-OAuth-Scopes`), so Settings and the merge section can ask for
 // `read:org` when an older sign-in lacks it. Undefined until the first GitHub response; null for tokens without scopes.
-const githubAccess = (): GitHubAccess => ({ login: cachedLogin, scopes: cachedToken ? githubClients.oauthScopes(cachedToken) : undefined });
+// `tokenKind` tells a pasted personal access token from Gnosis's own sign-in, so the prompt never asks a token to sign
+// in again. It comes from the token's prefix; the token stays in main.
+const githubAccess = (): GitHubAccess => ({
+  login: cachedLogin,
+  scopes: cachedToken ? githubClients.oauthScopes(cachedToken) : undefined,
+  ...(cachedToken ? { tokenKind: githubTokenKind(cachedToken) } : {}),
+});
 let publishedAccess = '';
 function publishGitHubAccess() {
   const access = githubAccess();
@@ -1829,7 +1835,7 @@ function handleInteractive(channel: string, listener: Parameters<typeof ipcMain.
 handleInteractive('get-auth-state', async () => {
   const token = getResolvedToken();
   if (!token) return { authenticated: false, login: null };
-  const withScopes = <T extends { authenticated: boolean; login: string | null }>(state: T) => ({ ...state, scopes: githubClients.oauthScopes(token) });
+  const withScopes = <T extends { authenticated: boolean; login: string | null }>(state: T) => ({ ...state, scopes: githubClients.oauthScopes(token), tokenKind: githubTokenKind(token) });
 
   cachedLogin ??= githubClients.savedLogin(token) ?? null;
   if (!cachedLogin) {
@@ -4093,7 +4099,8 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
     }
     return result;
   } catch (error) {
-    activities.finish(id, 'failed', error instanceof Error ? error.message : String(error));
+    // GitHub's workflow-scope refusal reads as "Needs the workflow permission" in Activity too.
+    activities.finish(id, 'failed', githubWriteError(error).message);
     throw error;
   }
 });

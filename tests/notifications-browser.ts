@@ -219,6 +219,23 @@ void app.whenReady().then(async () => {
     assert.equal(switches['Requested from your team'], 'false', 'Team requests are off by default');
     for (const label of ['Mentions', 'Replies to you', 'Changes requested', 'Approved', 'Checks failed', 'Ready to merge', 'Explanation ready', 'Update ready']) assert.equal(switches[label], 'true', label);
     assert.equal(await js("[...document.querySelectorAll('.settings-panel [role=switch]')].some(s=>s.getAttribute('aria-label')==='Desktop notifications'&&!s.closest('[data-state=active]'))"), false, 'The desktop switch moved out of Integrations');
+    // Team requests on, with a sign-in GitHub reports without read:org: one quiet note under the switch.
+    const teamNote = ".settings-panel [data-team-requests-note='notifications']";
+    await js("window.setFixtureGitHubScopes(['repo','workflow'])");
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(await js(`!!document.querySelector("${teamNote}")`), false, 'No note while team requests are off');
+    await js("document.querySelector('[role=switch][aria-label=\"Requested from your team\"]').click()");
+    await wait(`!!document.querySelector("${teamNote}")`);
+    assert.equal(
+      await js(`document.querySelector("${teamNote} p").textContent`),
+      'Team review requests may be incomplete: Gnosis can’t read your organization’s teams. Sign in again to allow it.'
+    );
+    assert.equal(await js("document.querySelectorAll('.settings-panel [data-team-requests-note]').length"), 1);
+    await capture('settings-team-note');
+    await js(`[...document.querySelectorAll("${teamNote} button")].find(b=>b.textContent.trim()==='Not now').click()`);
+    await wait(`!document.querySelector("${teamNote}")`);
+    await js("document.querySelector('[role=switch][aria-label=\"Requested from your team\"]').click()");
+    await js("window.setFixtureGitHubScopes(['repo','read:org','workflow'])");
     await js("document.querySelector('[role=switch][aria-label=\"Approved\"]').click()");
     await wait("window.electronAPI.loadPreferences().then(p=>p.notificationSettings?.events?.approved===false)");
     await clickText('.settings-panel button', 'Send test notification');

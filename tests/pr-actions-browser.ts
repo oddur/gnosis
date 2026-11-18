@@ -54,7 +54,7 @@ void app.whenReady().then(async () => {
       window.electronAPI.getPrStatus=async(...args)=>{const result=await originalStatus(...args);const state=window.actionState(args[0]);return {...result,isDraft:state.isDraft,signals:{...result.signals,checkedAt:Date.now(),readiness:{...result.signals.readiness,isDraft:state.isDraft,mergeable:state.mergeable,mergeState:state.mergeState}}};};
       window.electronAPI.getPrActionState=async(url)=>window.actionState(url);
       window.electronAPI.getStackMergePlan=async urls=>{const members=urls.map(window.actionState);return {target:members.at(-1),members,baseBranch:members[0].baseBranch,methods:['SQUASH','MERGE','REBASE'],mergeQueue:false,createStack:!window.nativeStack};};
-      window.electronAPI.performPrAction=async request=>{window.writes.push(request);if(window.failAction)throw Error('This PR changed since confirmation. Refresh the action and inspect the new revision.');await new Promise(r=>setTimeout(r,120));const m=q.items.flatMap(i=>i.subject.members).find(m=>m.url===request.url);if(request.kind==='enable-auto')m.autoMerge={method:request.method};if(request.kind==='disable-auto')m.autoMerge=null;if(request.kind==='convert-draft')m.isDraft=true;if(request.kind==='mark-ready')m.isDraft=false;
+      window.electronAPI.performPrAction=async request=>{window.writes.push(request);if(window.failAction)throw Error(typeof window.failAction==='string'?window.failAction:'This PR changed since confirmation. Refresh the action and inspect the new revision.');await new Promise(r=>setTimeout(r,120));const m=q.items.flatMap(i=>i.subject.members).find(m=>m.url===request.url);if(request.kind==='enable-auto')m.autoMerge={method:request.method};if(request.kind==='disable-auto')m.autoMerge=null;if(request.kind==='convert-draft')m.isDraft=true;if(request.kind==='mark-ready')m.isDraft=false;
         if(request.kind==='merge'&&request.revisions.length>1){window.actionTasks.push({id:'merge-operation',kind:'pr-action',title:'Merging 3 PRs',detail:'GitHub is processing the merge.',status:'running',updatedAt:new Date().toISOString(),canCancel:false,canRetry:false});return {status:'pending',message:'GitHub is processing the merge. Follow its progress in Activity.'};}
         return {status:'completed',message:request.kind==='merge'?'Merged on GitHub.':'GitHub action completed.'};};
     })()`);
@@ -169,6 +169,35 @@ void app.whenReady().then(async () => {
     await click('Update branch with merge commit');
     await wait("!document.querySelector('.pr-action-dialog')");
     assert.equal(await js('window.writes.at(-1).kind'), 'update-merge');
+    // GitHub refuses a merge-commit update when the base branch's changes include workflow files and the sign-in lacks
+    // workflow. The update stays available (Gnosis can't see those files), and the refusal reads plainly.
+    const workflowRefusal =
+      "Error invoking remote method 'perform-pr-action': Error: Request failed due to following response errors:\n - refusing to allow an OAuth App to create or update workflow `.github/workflows/build.yml` without `workflow` scope";
+    await js(`window.failAction=${JSON.stringify(workflowRefusal)};window.setFixtureGitHubScopes(['repo','read:org'])`);
+    const updateMerge =
+      "[...document.querySelectorAll('.pr-action-controls button')].find(e=>e.textContent==='Update with merge commit…')";
+    await wait(`${updateMerge}?.disabled===false`);
+    await js(`${updateMerge}.click()`);
+    await wait("!!document.querySelector('.pr-action-members')");
+    await click('Update branch with merge commit');
+    await wait("!!document.querySelector('.pr-action-dialog [data-workflow-permission] .github-scope-prompt')");
+    const refused = await js<string>("document.querySelector('.pr-action-dialog [data-workflow-permission]').textContent");
+    assert.match(
+      refused,
+      /^Needs the workflow permission\. GitHub only accepts changes to GitHub Actions workflows \(\.github\/workflows\/…\) from sign-ins with the workflow permission\./
+    );
+    assert.doesNotMatch(await js<string>("document.querySelector('.pr-action-dialog').textContent"), /refusing to allow|response errors/);
+    assert.doesNotMatch(refused, /If GitHub may have received the request/, 'A refusal is definite');
+    await capture('update-merge-workflow-refused');
+    await js(`(()=>{
+      window.signInStarts=0;
+      const begin=window.electronAPI.beginGitHubSignIn;
+      window.electronAPI.beginGitHubSignIn=(...args)=>{window.signInStarts++;return begin(...args)};
+    })()`);
+    await click('Sign in again');
+    await wait("!document.querySelector('.pr-action-dialog') && window.signInStarts===1");
+    await wait("!document.querySelector('.github-auth-dialog')");
+    await js("window.failAction=false");
     await click('Merge PR…');
     await wait('!!document.querySelector(\'[aria-label="Merge method"]\')');
     await js("window.selectOption('[aria-label=\"Merge method\"]','REBASE')");

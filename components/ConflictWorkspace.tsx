@@ -48,6 +48,14 @@ import {
   type ConflictRequest,
   type ConflictSession,
 } from '../lib/conflict-resolution';
+import {
+  conflictPushNeedsWorkflow,
+  githubWriteError,
+  scopePromptCopy,
+  WORKFLOW_PUSH_WARNING,
+} from '../lib/github-access';
+import { useGitHubAccess } from '../lib/use-github-access';
+import { GitHubScopeActions, GitHubScopePrompt } from './GitHubScopePrompt';
 
 const GUIDE_KEY = 'gnosis-conflict-guide';
 const guideDismissed = () => {
@@ -242,6 +250,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'failed'>('idle');
   const [error, setError] = useState('');
   const [failedKind, setFailedKind] = useState<ConflictRequest['kind'] | 'open'>();
+  // GitHub refuses a push that changes workflow files from a sign-in without `workflow`. The sign-in it refused, so
+  // Push returns once you have signed in again; a refusal is definite, so there is nothing to check first.
+  const access = useGitHubAccess();
+  const accessKey = JSON.stringify(access ?? null);
+  const accessNow = useRef(accessKey);
+  accessNow.current = accessKey;
+  const [refusedAccess, setRefusedAccess] = useState<string>();
   const [preview, setPreview] = useState<ConflictReply['preview']>();
   const [confirming, setConfirming] = useState(false);
   const [message, setMessage] = useState('');
@@ -388,6 +403,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setFailedKind(kind);
+      setRefusedAccess(
+        kind === 'publish' && githubWriteError(e).workflowPermission ? accessNow.current : undefined
+      );
       return false;
     } finally {
       pending.current = false;
@@ -611,15 +629,26 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const title = session
     ? `Bring ${session.baseBranch} into ${ownBranch ? `your ${session.headBranch}` : headLabel}`
     : 'Resolve conflicts';
-  const errorCopy = error
+  const describedError = error
     ? describeConflictError(error, {
         stage: failedKind === 'publish' ? 'push' : failedKind === 'open' ? 'prepare' : 'other',
         headBranch: session?.headBranch,
         baseBranch: session?.baseBranch,
       })
     : undefined;
+  // A personal access token can't sign in again for the workflow permission: its instructions follow the copy.
+  const errorCopy =
+    describedError?.recovery === 'sign-in'
+      ? { ...describedError, body: scopePromptCopy(access, describedError.body).text }
+      : describedError;
+  // The preview lists every file the merge commit changes against the PR head. Push waits for the workflow permission.
+  const pushNeedsWorkflow = conflictPushNeedsWorkflow(access?.scopes, preview?.files);
+  const workflowRefused = !!pushError && refusedAccess !== undefined;
+  const signedInSinceRefusal = workflowRefused && refusedAccess !== accessKey;
   const recover = (copy: ConflictErrorCopy) =>
-    copy.recovery === 'load-latest' ? (
+    copy.recovery === 'sign-in' ? (
+      <GitHubScopeActions disabled={busy} />
+    ) : copy.recovery === 'load-latest' ? (
       <Button size="sm" disabled={busy} onClick={() => void load(true, true)}>
         Load latest changes
       </Button>
@@ -972,7 +1001,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
               backLabel={session.files.length ? 'Back to files' : 'Back'}
               status="Nothing is pushed until you select Push."
               continueLabel={busy ? 'Pushing…' : 'Push merge commit'}
-              continueDisabled={!message.trim() || failedKind === 'publish'}
+              continueDisabled={
+                !message.trim() || pushNeedsWorkflow || (failedKind === 'publish' && !signedInSinceRefusal)
+              }
               onContinue={() =>
                 void run(
                   (s) => ({ kind: 'publish', id: s.id, version: s.version, previewToken: preview.token, message }),
@@ -991,7 +1022,14 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 )
               }
             >
-              {pushError && errorCopy && <ErrorPanel copy={errorCopy} actions={recover(errorCopy)} focus />}
+              {pushError && errorCopy && !signedInSinceRefusal && (
+                <ErrorPanel copy={errorCopy} actions={recover(errorCopy)} focus />
+              )}
+              {pushNeedsWorkflow && !workflowRefused && (
+                <div data-workflow-push-warning>
+                  <GitHubScopePrompt message={WORKFLOW_PUSH_WARNING} disabled={busy} />
+                </div>
+              )}
               <ul className="conflict-confirm-facts">
                 {baseNote && <li data-base-moved="">{baseNote}</li>}
                 <li>

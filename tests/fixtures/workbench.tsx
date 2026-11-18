@@ -56,10 +56,16 @@ const detectedTools = new Map<string, { installed: boolean; resolvedPath: string
 // The scopes GitHub reports for the fixture's sign-in (`X-OAuth-Scopes`). Browser checks change them with
 // `window.setFixtureGitHubScopes`, as main's `github-access-changed` broadcast does.
 let fixtureScopes: string[] | null = ['repo', 'read:org', 'workflow'];
-const scopeListeners = new Set<(access: { login: string | null; scopes?: string[] | null }) => void>();
-(window as unknown as { setFixtureGitHubScopes: (scopes: string[] | null) => void }).setFixtureGitHubScopes = (scopes) => {
+// `classic` stands for a pasted personal access token (`ghp_…`); `oauth` for Gnosis's own sign-in.
+let fixtureTokenKind: 'oauth' | 'classic' | 'fine-grained' = 'oauth';
+const scopeListeners = new Set<(access: { login: string | null; scopes?: string[] | null; tokenKind?: typeof fixtureTokenKind }) => void>();
+const publishFixtureAccess = () => {
+  for (const listener of scopeListeners) listener({ login: fixtureAuthenticated ? 'oddur' : null, scopes: fixtureScopes, tokenKind: fixtureTokenKind });
+};
+(window as unknown as { setFixtureGitHubScopes: (scopes: string[] | null, tokenKind?: typeof fixtureTokenKind) => void }).setFixtureGitHubScopes = (scopes, tokenKind) => {
   fixtureScopes = scopes;
-  for (const listener of scopeListeners) listener({ login: fixtureAuthenticated ? 'oddur' : null, scopes });
+  if (tokenKind) fixtureTokenKind = tokenKind;
+  publishFixtureAccess();
 };
 let fixtureAuthenticated = new URLSearchParams(location.search).has('ftue') ? sessionStorage.getItem('ftue-auth') === 'true' : !onboardingScenario;
 let fixtureStarted = false;
@@ -423,6 +429,8 @@ let prefs: Preferences = {
   educationMode: true,
   claudeContext: false,
   guestMode: onboardingScenario && sessionStorage.getItem('fixture-guest-mode') === 'true',
+  // `?team-requests`: team review requests are on, so the Overview lists them under "Your team".
+  ...(new URLSearchParams(location.search).has('team-requests') ? { notificationSettings: { events: { 'team-review-requested': true } } } : {}),
 };
 let activities: ActivityTask[] = [
   {
@@ -679,20 +687,21 @@ const mocks = {
   detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
   searchRepos: (query: string) => Promise.resolve([{ fullName: 'klang/engine', description: 'Game engine' }, { fullName: 'klang/tools', description: 'Developer tools' }].filter(repo => repo.fullName.includes(query))),
   getAuthState: () =>
-    Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null, scopes: fixtureAuthenticated ? fixtureScopes : undefined }),
+    Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null, scopes: fixtureAuthenticated ? fixtureScopes : undefined, tokenKind: fixtureAuthenticated ? fixtureTokenKind : undefined }),
   onGitHubAccessChanged: (callback: (access: { login: string | null; scopes?: string[] | null }) => void) => {
     scopeListeners.add(callback);
     return () => void scopeListeners.delete(callback);
   },
   githubAuthOptions: () => Promise.resolve({ web: onboardingScenario }),
   beginGitHubSignIn: () => Promise.resolve({ id: 'fixture-auth', userCode: 'TEST-CODE', verificationUri: 'https://github.com/login/device', expiresAt: Date.now()+900000 }),
-  completeGitHubSignIn: () => { fixtureAuthenticated = true; fixtureScopes = ['repo', 'read:org', 'workflow']; return Promise.resolve('oddur'); },
+  completeGitHubSignIn: () => { fixtureAuthenticated = true; fixtureScopes = ['repo', 'read:org', 'workflow']; fixtureTokenKind = 'oauth'; return Promise.resolve('oddur'); },
   cancelGitHubSignIn: () => Promise.resolve(),
   cancelOAuth: () => Promise.resolve(),
   signOut: () => { fixtureAuthenticated = false; return Promise.resolve(); },
   startOAuth: () => {
     fixtureAuthenticated = true;
     fixtureScopes = ['repo', 'read:org', 'workflow'];
+    fixtureTokenKind = 'oauth';
     sessionStorage.setItem('ftue-auth', 'true');
     return Promise.resolve();
   },

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { clearWriteFailure, onUnseenWriteFailure, showingWriteFailure, useWriteFailure } from '../lib/write-failures';
 import { toast } from './ui/toast';
+import { GitHubScopePrompt } from './GitHubScopePrompt';
+import { startGitHubSignIn } from '../lib/use-github-access';
 
 // A failure whose own notice is not on screen, such as a comment on a file scrolled out of view, still reaches the
 // reader: as a toast with the same text and Retry. The typed text is already back in its composer.
@@ -51,11 +53,21 @@ export function WriteFailureNotice({ failureKey, className }: { failureKey: stri
       className={`write-failure ${className ?? ''}`}
       data-action={failure.action}
     >
-      <p>
-        <strong>{failure.title}</strong> <span className="write-failure-detail">{failure.detail}</span>
-      </p>
+      {failure.workflowPermission ? (
+        // Retrying with the same sign-in would be refused again: offer the sign-in prompt instead.
+        <>
+          <p>
+            <strong>{failure.title}</strong>
+          </p>
+          <GitHubScopePrompt message={failure.detail} onSignIn={startGitHubSignIn} />
+        </>
+      ) : (
+        <p>
+          <strong>{failure.title}</strong> <span className="write-failure-detail">{failure.detail}</span>
+        </p>
+      )}
       <div className="write-failure-actions">
-        {retry && (
+        {retry && !failure.workflowPermission && (
           <button
             type="button"
             disabled={retrying}

@@ -4118,6 +4118,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .github-scope-prompt { display:grid; grid-template-columns:auto 1fr; gap:6px 8px; align-items:start; margin-top:10px; padding:10px 12px; border:1px solid var(--border); max-width:75ch; font-size:var(--type-control); line-height:1.5; }
 .github-scope-prompt > svg { margin-top:3px; color:var(--muted-foreground); }
 .github-scope-prompt-actions { grid-column:2; display:flex; flex-wrap:wrap; gap:6px; }
+/* Team review requests without read:org: one quiet line where team requests show, with a text-weight action. */
+.team-requests-note { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; margin:6px 0 8px; max-width:75ch; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); }
+.team-requests-note > svg { flex:none; }
+.team-requests-note > p { flex:1 1 32ch; margin:0; }
+.team-requests-note-actions { display:flex; flex-wrap:wrap; gap:4px; }
 .review-evidence-github-answer ul { list-style:none; padding:0; margin:6px 0 0; display:grid; gap:2px; }
 .review-evidence-github-answer code { font-size:var(--type-caption); overflow-wrap:anywhere; }
 .pr-actions-compact { margin:0; flex:none; max-width:100%; }
