@@ -104,10 +104,14 @@ export function dedupeRestoredOverviews(state: WorkspaceTabsState, preference: H
       const homeDefault: HomeTab = overview ? 'overview' : 'queue';
       if (!claims[index]) return { ...tab, homeDefault };
       const saved = tab.initial.saved;
-      const next: SavedWorkspaceTab = saved.home
-        ? { ...saved, home: { ...saved.home, overview } }
-        : { ...saved, destination: { ...saved.destination, kind: 'home', section: overview ? 'overview' : undefined } };
-      return { ...tab, homeDefault, initial: { ...tab.initial, saved: next } };
+      // A restored tab shows its saved title until it is first shown. A tab turned back into the queue must not keep
+      // "Overview" as its name (the user saw three "Overview" tabs that were really queues), and the kept one says so.
+      const title = overview ? 'Overview' : saved.title === 'Overview' ? 'Review queue' : saved.title;
+      const named = { ...saved, title };
+      const next: SavedWorkspaceTab = named.home
+        ? { ...named, home: { ...named.home, overview } }
+        : { ...named, destination: { ...named.destination, kind: 'home', section: overview ? 'overview' : undefined } };
+      return { ...tab, title, homeDefault, initial: { ...tab.initial, saved: next } };
     }),
   };
 }

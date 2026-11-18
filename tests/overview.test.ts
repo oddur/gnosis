@@ -735,6 +735,9 @@ void test('one Overview at a time by default: restored tabs, new tabs and Cmd-cl
   assert.deepEqual(tools(dedupeRestoredOverviews(restore(legacy, 'b'), 'overview')), [null, 'overview', null]);
   // A reader who chose the queue gets no Overview by default.
   assert.deepEqual(tools(dedupeRestoredOverviews(restore(legacy), 'queue')), [null, null, null]);
+  // Tabs saved while they showed the Overview keep that name until shown: only the kept one may still say so.
+  const titled = [tab('a', { title: 'Overview' }), tab('b', { title: 'Overview' }), tab('c', { title: 'Overview' })];
+  assert.deepEqual(dedupeRestoredOverviews(restore(titled, 'c'), 'overview').tabs.map((entry) => entry.title), ['Review queue', 'Review queue', 'Overview']);
   // Two tabs saved with `overview: true`: one stays, the active one, else the first.
   const explicit = [tab('a', { home: { ...home, overview: true } }), tab('b', { home: { ...home, overview: true } }), tab('c')];
   assert.deepEqual(tools(dedupeRestoredOverviews(restore(explicit), 'overview')), ['overview', null, null]);
