@@ -27,9 +27,10 @@ import {
 } from '../lib/overview';
 import { DEFAULT_QUEUE_FILTERS, describeQueueFilters, matchesQueueFilters, normalizeQueueFilters, withLaneUrls, activeQueueFilterCount } from '../lib/queue-filters';
 import { formatDeepLink, parseDeepLink, targetFromLocation } from '../lib/deep-link';
-import { homeTabPreference, rememberHomeTab, restoredTool, HOME_TAB_KEY } from '../lib/home-tab';
+import { dedupeRestoredOverviews, defaultHomeTab, homeTabPreference, rememberHomeTab, restoredTool, HOME_TAB_KEY } from '../lib/home-tab';
+import { initialWorkspaceTabs, newWorkspaceTab, reduceWorkspaceTabs, restoreWorkspaceTabs, saveWorkspaceTabs, type SavedWorkspaceTab, type WorkspaceTabsState } from '../lib/workspace-tabs';
 import type { HomeLocation } from '../lib/navigation-history';
-import { countWorkspaceListing, workspaceListingRequest, workspaceTabTitle } from '../lib/workspace-listings';
+import { countWorkspaceListing, isOverviewTab, workspaceListingRequest, workspaceTabTitle } from '../lib/workspace-listings';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReviewHistoryEntry } from '../lib/types';
@@ -713,4 +714,58 @@ void test('the stale label is a word, and Waiting on others asks whether to nudg
   assert.equal(overviewStaleLabel({ lane: 'waiting', stale: true }), 'Nudge?');
   for (const name of ['merge', 'answer', 'review', 'fix'] as const) assert.equal(overviewStaleLabel({ lane: name, stale: true }), 'Stale');
   assert.equal(overviewStaleLabel({ lane: 'waiting', stale: false }), undefined);
+});
+
+void test('one Overview at a time by default: restored tabs, new tabs and Cmd-click', () => {
+  const home = { account: LOGIN, filters: DEFAULT_QUEUE_FILTERS, savedView: false, savedQuery: '', viewId: null, muted: false, tab: 'summary' as const, selected: null, scroll: 0 };
+  const tab = (id: string, extra: Partial<SavedWorkspaceTab> = {}): SavedWorkspaceTab => ({ id, title: 'Review queue', label: 'Queue', detail: '', section: 'queue', home, ...extra });
+  const restore = (tabs: SavedWorkspaceTab[], active = tabs[0].id) => restoreWorkspaceTabs({ version: 1, active, tabs }, LOGIN)!;
+  const tools = (state: WorkspaceTabsState) =>
+    state.tabs.map((entry) => {
+      const saved = entry.initial?.kind === 'restore' ? entry.initial.saved : undefined;
+      const tool = saved?.home ? restoredTool({ ...saved.home, item: null }, entry.homeDefault) : entry.homeDefault === 'overview' ? 'overview' : null;
+      if (!saved?.home?.subjectId) assert.equal(isOverviewTab(entry), tool === 'overview', `${entry.id}: the tab strip counts what the tab shows`);
+      return tool;
+    });
+
+  // Three plain queues saved by v0.40.0 (no `overview` field): one Overview, the first, and two queues.
+  const legacy = [tab('a'), tab('b'), tab('c')];
+  assert.deepEqual(tools(dedupeRestoredOverviews(restore(legacy), 'overview')), ['overview', null, null]);
+  // The active tab wins when it is one of them.
+  assert.deepEqual(tools(dedupeRestoredOverviews(restore(legacy, 'b'), 'overview')), [null, 'overview', null]);
+  // A reader who chose the queue gets no Overview by default.
+  assert.deepEqual(tools(dedupeRestoredOverviews(restore(legacy), 'queue')), [null, null, null]);
+  // Two tabs saved with `overview: true`: one stays, the active one, else the first.
+  const explicit = [tab('a', { home: { ...home, overview: true } }), tab('b', { home: { ...home, overview: true } }), tab('c')];
+  assert.deepEqual(tools(dedupeRestoredOverviews(restore(explicit), 'overview')), ['overview', null, null]);
+  assert.deepEqual(tools(dedupeRestoredOverviews(restore(explicit, 'b'), 'overview')), [null, 'overview', null]);
+  // A saved Overview wins over a tab that would show it only by default, even the active one.
+  assert.deepEqual(tools(dedupeRestoredOverviews(restore([tab('a'), tab('b', { home: { ...home, overview: true } })], 'a'), 'overview')), [null, 'overview']);
+  // Named lists and PRs are left alone.
+  const lists = [tab('a', { home: { ...home, muted: true } }), tab('b', { home: { ...home, viewId: 'v' } }), tab('c', { home: { ...home, subjectId: 's' } }), tab('d')];
+  const listed = dedupeRestoredOverviews(restore(lists), 'overview');
+  assert.deepEqual(tools(listed), ['muted', null, null, 'overview']);
+  // Tabs never shown, saved as a plain home destination: the same rule, and the choice is saved.
+  const plain = [tab('a', { home: undefined }), tab('b', { home: undefined, destination: { kind: 'home' } })];
+  const deduped = dedupeRestoredOverviews(restore(plain), 'overview');
+  assert.deepEqual(deduped.tabs.map(isOverviewTab), [true, false]);
+  assert.deepEqual(saveWorkspaceTabs(deduped).tabs.map((saved) => saved.destination?.section), ['overview', undefined]);
+  // The saved choice restores again, with 'overview' now a valid saved section.
+  assert.deepEqual(dedupeRestoredOverviews(restore(saveWorkspaceTabs(deduped).tabs), 'overview').tabs.map(isOverviewTab), [true, false]);
+
+  // A new tab: the queue while another tab shows the Overview, the preference when none does.
+  const overview = newWorkspaceTab('o', { kind: 'home', section: 'overview' });
+  const queue = newWorkspaceTab('q', { kind: 'home', section: 'all' });
+  assert.equal(defaultHomeTab([overview, queue], 'overview'), 'queue');
+  assert.equal(defaultHomeTab([queue], 'overview'), 'overview');
+  assert.equal(defaultHomeTab([], 'queue'), 'queue');
+  const shown = newWorkspaceTab('s');
+  shown.location = { page: 'home', home: { ...home, overview: true, item: null } };
+  assert.equal(defaultHomeTab([shown], 'overview'), 'queue');
+  assert.equal(isOverviewTab({ ...newWorkspaceTab('n'), homeDefault: defaultHomeTab([overview], 'overview') }), false);
+  assert.equal(isOverviewTab({ ...newWorkspaceTab('n'), homeDefault: defaultHomeTab([queue], 'overview') }), true);
+  // Cmd-click or a link asks for the Overview by name: a second one opens on purpose.
+  let state = initialWorkspaceTabs(overview);
+  state = reduceWorkspaceTabs(state, { type: 'open', tab: { ...newWorkspaceTab('cmd', { kind: 'home', section: 'overview' }), homeDefault: defaultHomeTab(state.tabs, 'overview') }, background: true });
+  assert.deepEqual(state.tabs.map(isOverviewTab), [true, true]);
 });

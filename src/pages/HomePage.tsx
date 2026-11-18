@@ -91,7 +91,7 @@ import { overviewActionGroups, type OverviewActionGroup, type OverviewLane, type
 import { useOverview } from '../../lib/use-overview';
 import { actionGroupKey, groupQueueItems, parseCollapsedGroups, toggleCollapsedGroup, QUEUE_COLLAPSED_GROUPS_KEY } from '../../lib/queue-groups';
 import { QueueGroupControl } from '../../components/QueueGroupControl';
-import { homeTabPreference, rememberHomeTab, restoredTool } from '../../lib/home-tab';
+import { homeTabPreference, rememberHomeTab, restoredTool, type HomeTab } from '../../lib/home-tab';
 import { notificationSettings } from '../../lib/notification-settings';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
 import { Activity, Suspense, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -142,6 +142,11 @@ import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry } from '../
 interface Props {
   onAccount?: (account: string, resumeSetup?: boolean) => void;
   navigationRestoration?: { location: HomeLocation; nonce: number };
+  /**
+   * What this tab shows when nothing names a list. The window decides it from its other tabs, so a new or restored tab
+   * shows the Overview by default only when no other tab does. Without it, the home tab preference.
+   */
+  homeDefault?: HomeTab;
   onNavigationChange?: (location: HomeLocation, mutedUrls?: Set<string>) => void;
   onReviewReady: (review: ReviewGuide) => void;
   onReviewOriginChange?: (origin: { name: string; reviews: { id: string; title: string }[] }) => void;
@@ -185,7 +190,7 @@ function markQueuePainted() {
     prefetchScreens();
   }));
 }
-export function HomePage({ onAccount, navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   useRenderSpan('queue page render');
   const tabs = useWorkspaceNavigation();
   const repositories = useRepositorySettings();
@@ -265,11 +270,11 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   // Tools › Snoozed and Tools › Muted PRs replace the list, and so does the Overview (#390), the default home tab.
   // `setMutedOpen(false)` closes any of them. A link, saved view or restored list opens that list instead.
   const [tool, setTool] = useState<'muted' | 'snoozed' | 'overview' | null>(() => {
-    if (navigationRestoration) return restoredTool(navigationRestoration.location);
+    if (navigationRestoration) return restoredTool(navigationRestoration.location, homeDefault ?? homeTabPreference());
     const destination = commandDestination?.destination;
     if (destination?.section === 'overview') return 'overview';
     if (destination && (destination.section || destination.viewId || destination.repo || destination.filters || destination.settings)) return null;
-    return homeTabPreference() === 'overview' ? 'overview' : null;
+    return (homeDefault ?? homeTabPreference()) === 'overview' ? 'overview' : null;
   });
   const mutedOpen = tool === 'muted', snoozedOpen = tool === 'snoozed', overviewOpen = tool === 'overview';
   // Mounted once shown, then kept behind the queue, so switching home tabs is instant. A lane filter needs its lanes.
@@ -1253,7 +1258,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       const version = filterVersion.current;
       setSavedView(next.savedView);
       setSavedQuery(next.savedQuery);
-      setTool(restoredTool(next));
+      setTool(restoredTool(next, homeDefault ?? homeTabPreference()));
       setOpenedItem(next.item);
       setSelected(next.selected);
       setOverviewTab(next.tab);

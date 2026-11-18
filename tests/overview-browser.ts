@@ -977,6 +977,54 @@ void app.whenReady().then(async () => {
     await js(`document.querySelectorAll('.workspace-tab')[${queueTab}].querySelector('.workspace-tab-close').click()`);
     await wait(`document.querySelectorAll('.workspace-tab').length === ${tabsBefore} && ${selectedTab} >= 0 && !!document.querySelector('${P} .overview [data-overview-row]')`);
 
+    step = 'new-tab-queue';
+    // One Overview at a time by default: "+" beside the Overview opens the review queue, not a second Overview.
+    const overviewShown = `(()=>{const o=document.querySelector('${P} .overview');return !!o && o.getClientRects().length > 0})()`;
+    const overviewCurrent = `(document.querySelector('${sidebar('Overview')}')?.getAttribute('aria-current') === 'page')`;
+    const tabTitles = `[...document.querySelectorAll('.workspace-tab .workspace-tab-title')].map(t=>t.textContent.trim())`;
+    const homeTab = await js<number>(selectedTab);
+    await js(`document.querySelector('[aria-label="New tab"]').click()`);
+    await wait(`document.querySelectorAll('.workspace-tab').length === ${tabsBefore + 1} && ${selectedTab} === ${tabsBefore} && !!document.querySelector('${sidebar('Review queue')}')`);
+    await wait(`document.querySelector('${sidebar('Review queue')}')?.getAttribute('aria-current') === 'page'`);
+    assert.equal(await js(overviewShown), false, 'the new tab shows the review queue');
+    assert.equal(await js(overviewCurrent), false, 'the sidebar marks the review queue, not the Overview');
+    await wait(`${tabTitles}.filter(t=>t==='Overview').length === 1`);
+    // The sidebar's Overview goes back to the one Overview tab.
+    await click(sidebar('Overview'));
+    await wait(`${selectedTab} === ${homeTab} && ${overviewShown}`);
+    assert.equal(await tabCount(), tabsBefore + 1, 'no second Overview tab');
+    await js(`document.querySelectorAll('.workspace-tab')[${tabsBefore}].querySelector('.workspace-tab-close').click()`);
+    await wait(`document.querySelectorAll('.workspace-tab').length === ${tabsBefore}`);
+
+    step = 'restore-one-overview';
+    // Three plain queues saved before the Overview existed (no `overview` field) restore as one Overview, the active
+    // tab, and two review queues. Each tab's title and sidebar follow what it shows.
+    const plainHome = { account: '', filters: {}, savedView: false, savedQuery: '', viewId: null, muted: false, tab: 'summary', selected: null, scroll: 0 };
+    const legacy = ['legacy-a', 'legacy-b', 'legacy-c'].map((id) => ({ id, title: 'Review queue', label: 'Queue', detail: '', section: 'queue', home: plainHome }));
+    await js(`sessionStorage.setItem('fixture-workspace-tabs', ${JSON.stringify(JSON.stringify({ version: 1, active: 'legacy-b', tabs: legacy }))})`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?overview`);
+    await wait(`document.querySelectorAll('.workspace-tab').length === 3 && ${selectedTab} === 1`, 600);
+    await wait(`${overviewShown} && ${overviewCurrent}`, 600);
+    const shows: boolean[] = [];
+    for (const index of [0, 2, 1]) {
+      await js(`document.querySelectorAll('.workspace-tab-select')[${index}].click()`);
+      await wait(`${selectedTab} === ${index} && !!document.querySelector('${sidebar('Review queue')}') && (${overviewShown} === ${overviewCurrent})`, 600);
+      // Let a late default settle before reading what the tab shows.
+      await new Promise((r) => setTimeout(r, 300));
+      shows[index] = await js<boolean>(overviewShown);
+      soft(await js(overviewCurrent), shows[index], `tab ${index}: the sidebar marks what the tab shows`);
+    }
+    soft(shows, [false, true, false], 'exactly one restored tab shows the Overview: the active one');
+    await wait(`${tabTitles}.filter(t=>t==='Overview').length === 1`);
+    soft(await js(`[...document.querySelectorAll('.workspace-tab-select')].filter(b=>b.getAttribute('aria-label').startsWith('Overview')).length`), 1, 'one tab title reads Overview');
+    // From a queue tab, the sidebar's Overview switches to the restored Overview.
+    await js(`document.querySelectorAll('.workspace-tab-select')[2].click()`);
+    await wait(`${selectedTab} === 2 && !${overviewShown}`);
+    await click(sidebar('Overview'));
+    await wait(`${selectedTab} === 1 && ${overviewShown}`);
+    assert.equal(await tabCount(), 3, 'the sidebar switches tabs rather than making an Overview');
+    settle();
+
     step = 'status-arrives';
     // GitHub has not answered yet: no saved status, and status reads wait. The Overview asks for every lane candidate
     // itself and says it is checking; rows that need status arrive with the answers, and focus stays put.

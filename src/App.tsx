@@ -26,6 +26,7 @@ import {
   saveWorkspaceTabs,
   restoreWorkspaceTabs,
   type WorkspaceTarget,
+  type WorkspaceTabEntry,
   type WorkspaceTabsState,
 } from '../lib/workspace-tabs';
 import type { AppLocation } from '../lib/navigation-history';
@@ -37,6 +38,7 @@ import { useWorkspaceListings } from '../lib/use-workspace-listings';
 import { workbenchStore } from '../lib/workbench-store';
 import { SnoozePickerHost } from '../components/SnoozePicker';
 import { isOverviewTab, workspaceTabTitle } from '../lib/workspace-listings';
+import { dedupeRestoredOverviews, defaultHomeTab } from '../lib/home-tab';
 import { linkErrorNotice, linkSupport, prLinkBlock, prMetadataItem, queueItemFor, routeDeepLink, type LinkAction, type LinkNotice } from '../lib/deep-link-routing';
 import { formatDeepLink, githubUrl, parseDeepLinkError, parseDeepLinkTarget, prUrl, targetFromLocation, type DeepLinkTarget } from '../lib/deep-link';
 import type { DeepLinkDelivery } from './deep-link-service';
@@ -48,7 +50,11 @@ import { retainTabPrs } from '../lib/inspection-retention';
 // Record slow clicks and key presses for the diagnostics export (#345). It only observes; it adds no work to input.
 startInteractionMonitor();
 
-const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID(), target);
+/** A new tab. `others` are the window's other tabs: a home tab shows the Overview by default only if none of them does. */
+const newTab = (target?: WorkspaceTarget, others: readonly WorkspaceTabEntry[] = []): WorkspaceTabEntry => ({
+  ...newWorkspaceTab(crypto.randomUUID(), target),
+  homeDefault: defaultHomeTab(others),
+});
 /** A PR link that arrived signed out is kept this long and opens once GitHub is connected. */
 const SIGNED_OUT_HOLD_MS = 10 * 60_000;
 const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
@@ -130,12 +136,14 @@ export function App() {
       recentlyViewed.scope(key);
       let next: WorkspaceTabsState;
       try {
-        next = restoreWorkspaceTabs(readReviewState(storageKey(key)), key) ?? initialWorkspaceTabs(newTab());
+        const restored = restoreWorkspaceTabs(readReviewState(storageKey(key)), key);
+        // Tabs saved before the Overview existed, or by the duplicate-Overview bug, restore one Overview at most.
+        next = restored ? dedupeRestoredOverviews(restored) : initialWorkspaceTabs(newTab());
       } catch {
         next = initialWorkspaceTabs(newTab());
       }
       if (resumeSetup) {
-        const setup = newTab({ kind: 'home', onboarding: 'setup' });
+        const setup = newTab({ kind: 'home', onboarding: 'setup' }, next.tabs);
         next =
           next.tabs.length === 1 && !next.tabs[0].initial
             ? initialWorkspaceTabs(setup)
@@ -197,7 +205,10 @@ export function App() {
       if (title) tab.title = title;
       if (!background) focusTab.current = true;
       if (!background) setVisited((old) => new Set([...old, tab.id]));
-      change({ type: 'open', tab, background });
+      // Decided against the tabs this opens beside, so two quick new tabs cannot both take the Overview.
+      setState((old) =>
+        reduceWorkspaceTabs(old, { type: 'open', tab: { ...tab, homeDefault: defaultHomeTab(old.tabs) }, background })
+      );
     },
     [change]
   );
@@ -321,7 +332,7 @@ export function App() {
     const existing = controllers.current.get(id);
     if (!existing) {
       // A restored tab that was never shown has no controller yet.
-      const tab = newTab(route.destination);
+      const tab = newTab(route.destination, latest.current.tabs.filter((other) => other.id !== id));
       change({ type: 'replace', id, tab });
       activate(tab.id);
       return;
@@ -519,12 +530,19 @@ export function App() {
                               onRetry={refreshQueue}
                               onQueue={() => {
                                 // Tabs share one queue snapshot, so read it again before replacing the failed tab.
-                                void refreshQueue().finally(() => change({ type: 'replace', id: tab.id, tab: newTab() }));
+                                void refreshQueue().finally(() =>
+                                  change({
+                                    type: 'replace',
+                                    id: tab.id,
+                                    tab: newTab(undefined, latest.current.tabs.filter((other) => other.id !== tab.id)),
+                                  })
+                                );
                               }}
                             >
                               <ReviewWorkspace
                                 id={tab.id}
                                 initial={tab.initial}
+                                homeDefault={tab.homeDefault}
                                 recentlyViewed={recentlyViewed}
                                 register={register}
                                 onLocation={record}
