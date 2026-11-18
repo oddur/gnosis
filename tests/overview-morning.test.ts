@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { overviewModel, type OverviewModel } from '../lib/overview';
+import { nextOverviewVisit, overviewModel, type OverviewModel } from '../lib/overview';
 import {
   NEXT_LIMIT,
 
@@ -24,6 +24,9 @@ import {
   waitingOnYou,
   type MorningPage,
   NEXT_TIER,
+  chainNumber,
+  qualifyChains,
+  stackLine,
   type GroupLine,
   type PersonGroup,
 } from '../lib/morning';
@@ -974,4 +977,74 @@ void test('briefing = sections, on every fixture: each number is the PRs the pag
   assert.equal(numbers.unreviewed, 10);
   assert.equal(numbers.decide, 7);
   assert.match(real7.briefing.text, /^7 re-reviews \(6 in one stack\) are waiting on you\./);
+});
+
+void test('one-line stacks: name, repository, size and step; a step Next up lists is a pointer, not a second Merge', async () => {
+  const { page: real7 } = await fixturePage('real7');
+  const stacks = must(real7.others.find((group) => group.kind === 'stacks')?.children);
+  const names = repositoryNames(real7.others.flatMap((group) => group.repos));
+  const byBase = Object.fromEntries(stacks.map((entry) => [must(entry.step).member.number, entry]));
+  // The unnamed i18n stack is called by its base's title; its base's line shows its number alone.
+  assert.equal(stackLine(byBase[379], names), 'feat: move the launcher’s text into translation keys (i18n 1/3) · seed-launcher · 5 PRs · #379 has conflicts');
+  assert.equal(must(byBase[379].chain)[0].line.bare, true);
+  assert.equal(stackLine(byBase[376], names), 'STACK: EPIC · seed-launcher · 4 PRs · Merge #376 (not reviewed, no checks) to unblock 3 PRs');
+  assert.equal(must(byBase[376].chain)[0].line.bare, undefined, 'a named stack keeps its base’s title on the line');
+  // Wallet's base is a Next up row (its failing checks): the stack points there, with no action of its own.
+  assert.ok(real7.next.items.some((entry) => entry.member.number === 36100));
+  assert.equal(must(byBase[36100].step).inNext, true);
+  assert.equal(stackLine(byBase[36100], names), 'Wallet · seed · 2 PRs · next step in Next up');
+  for (const entry of stacks) if (!entry.step?.inNext) assert.ok(!real7.next.items.some((row) => row.urls.includes(must(entry.step).member.url)), `${entry.label}: no pointer without a row`);
+  // An approved base in Next up: the same pointer instead of a second Merge.
+  const status: Record<string, QueueSignals> = {};
+  const base = minePr('o/s', 1, { headBranch: 'b1' });
+  const top = minePr('o/s', 2, { baseBranch: 'b1' });
+  status[base.url] = approved(base);
+  status[top.url] = noReview(top);
+  const result = page(build([stack([base, top], 'pair', 'Pair')], status), status);
+  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.member.number]), [['merge', 1]]);
+  const step = must(result.others.find((group) => group.kind === 'stacks')?.children?.[0]?.step);
+  assert.deepEqual([step.action, step.inNext], ['merge', true]);
+});
+
+void test('chain rows say repo#number when stacks from several repositories are on the page', async () => {
+  const { page: real7 } = await fixturePage('real7');
+  const group = must(real7.others.find((entry) => entry.kind === 'stacks'));
+  assert.equal(qualifyChains(group), true, 'four repositories');
+  const names = repositoryNames(group.repos);
+  const labels = must(group.children).flatMap((entry) => (entry.chain ?? []).map((node) => chainNumber(node.line.member, qualifyChains(group), names)));
+  // #384 and #385 are in two repositories each: their labels differ.
+  assert.ok(labels.includes('service-payment-bridge#384') && labels.includes('seed-launcher#384'));
+  assert.ok(labels.includes('service-payment-bridge#385') && labels.includes('seed-launcher#385'));
+  assert.equal(new Set(labels).size, labels.length, 'no chain number is ambiguous');
+  // One repository: plain numbers.
+  assert.equal(qualifyChains({ repos: ['klang/seed'] }), false);
+  assert.equal(chainNumber({ repo: 'klang/seed', number: 384 }, false), '#384');
+});
+
+void test('the unread dot: only a real state change since the last visit, never a PR that only loaded late or was not opened', async () => {
+  const fixture = await overviewFixture('real7');
+  const now = Date.now();
+  const at = now - 14 * 3_600_000;
+  const build7 = (signalsOf: (m: ReviewMember) => QueueSignals | undefined, previous?: ReturnType<typeof nextOverviewVisit>, items = fixture.items) =>
+    overviewModel({ items, signals: signalsOf, login: FIXTURE_LOGIN, now, previous });
+  const dots = (model: OverviewModel) => {
+    const result = morningPage({ model, now, login: FIXTURE_LOGIN, signals: fixture.signals });
+    const lines = [...result.you, ...result.others].flatMap((group) => [...group.lines, ...(group.children ?? []).flatMap((child) => (child.chain ?? []).map((node) => node.line))]);
+    return [...result.next.items.filter((entry) => entry.isNew).map((entry) => entry.member.number), ...lines.filter((line) => line.isNew).map((line) => line.member.number)].sort((a, b) => a - b);
+  };
+  // No visit yet: nothing is new.
+  assert.deepEqual(dots(build7(fixture.signals)), []);
+  // The last visit was saved while your PRs' status was still loading (the dots on screenshot 39): nothing is new.
+  assert.deepEqual(dots(build7(fixture.signals, nextOverviewVisit(build7(() => undefined), at))), []);
+  // Nothing changed, though many PRs were updated after the visit: nothing is new.
+  assert.deepEqual(dots(build7(fixture.signals, nextOverviewVisit(build7(fixture.signals), at))), []);
+  // Two real changes: #36990's checks turned red, and #377 arrived. Exactly those two.
+  const red = must(fixture.items.flatMap((entry) => entry.subject.members).find((m) => m.number === 36990));
+  const greenThen = (m: ReviewMember) => (m.url === red.url ? { ...must(fixture.signals(m)), checks: { state: 'success' as const, passed: 10, failed: 0, running: 0, total: 10 } } : fixture.signals(m));
+  const lone = fixture.items.find((entry) => entry.subject.members.some((m) => m.number === 377));
+  const visit = nextOverviewVisit(build7(greenThen, undefined, fixture.items.filter((entry) => entry !== lone)), at);
+  assert.deepEqual(dots(build7(fixture.signals, visit)), [377, 36990]);
+  // Unread activity alone (a PR never opened) is not a dot: the dot reads only the last visit.
+  const unread = fixture.items.map((entry) => ({ ...entry, unreadUrls: entry.subject.members.map((m) => m.url) }));
+  assert.deepEqual(dots(build7(fixture.signals, nextOverviewVisit(build7(fixture.signals), at), unread)), []);
 });

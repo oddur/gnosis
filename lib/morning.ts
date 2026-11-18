@@ -17,7 +17,13 @@
  * section below it, so nothing appears twice on screen. Within Waiting on others: stacks, then reviewers, teams, CI,
  * then you. A stack's chain is the one exception: it shows the stack's structure, so it lists every PR of the stack as
  * a full line, even a PR another section lists. That line ends in a quiet link to the other section ("↑ Next up"),
- * and it does not count toward its section's heading.
+ * and it does not count toward its section's heading. On the page a stack is one line until expanded (`stackLine`):
+ * its name, repository, size and step, or "next step in Next up" when Next up lists the step. Chain rows say
+ * `repo#number` when stacks from several repositories are on the page (`chainNumber`).
+ *
+ * **Unread dots** (`OverviewEntry.isNew`, `GroupLine.isNew`, `NextItem.isNew`): a PR's own state change since the last
+ * visit (`entryChanged` in `lib/overview.ts`), never a row's other PRs, an update that changes no state, or a PR
+ * that is only unopened.
  *
  * **Counts.** Next up's heading is the number of rows it shows (`nextCount`); a row that stands for several PRs says
  * so ("6 PRs · updated since your review"), and the quiet line under it keeps its own number. The other headings are
@@ -140,6 +146,8 @@ export type FixReason = 'failing' | 'conflicts' | 'restack';
 export interface NextItem {
   /** `next|${row.id}` */
   id: string;
+  /** Any of its PRs changed state since the last visit (`OverviewEntry.isNew`): the unread dot. */
+  isNew?: boolean;
   kind: NextKind;
   row: OverviewRow;
   /** What the item names: the PR a merge merges (a stack's base), else the row's title. */
@@ -331,7 +339,8 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     // One PR waits since its own entry in the lane; a row for several since the oldest of them.
     const waited = sinceOf(item.row, members.length === 1 ? members[0] : undefined);
     const comments = commentsOf(input, members);
-    candidates.push({ ...item, id: `next|${item.row.id}`, check: checksOf(input, members), ...waited, ...(comments !== undefined ? { comments } : {}) });
+    const isNew = item.row.entries.some((entry) => entry.isNew && item.urls.includes(entry.member.url));
+    candidates.push({ ...item, id: `next|${item.row.id}`, check: checksOf(input, members), ...waited, ...(comments !== undefined ? { comments } : {}), ...(isNew ? { isNew } : {}) });
   };
   for (const row of lanes(model, 'merge')?.rows ?? []) {
     const member = row.merge?.member ?? row.focus;
@@ -478,6 +487,10 @@ export interface GroupLine {
   status?: ChainStatus;
   /** The accessible description, before the check state: "#377, waiting, after #376". */
   description: string;
+  /** Its state changed since the last visit (`OverviewEntry.isNew`): the unread dot. */
+  isNew?: boolean;
+  /** A stack's base whose title names the stack: the header says it, so the line shows its number alone. */
+  bare?: boolean;
 }
 /** A section a chain's line links to: the PR is also listed there. */
 export type AlsoPlace = Exclude<Place, 'hidden' | 'others'>;
@@ -510,6 +523,8 @@ export interface StackStep {
   reviewer?: string;
   /** Can merge, or needs you: shown before stacks that wait on others. */
   actionable: boolean;
+  /** The step is a Next up row already: the stack's line points there ("next step in Next up") with no action of its own. */
+  inNext?: boolean;
 }
 export interface PersonGroup {
   /** `person:lena`, `unassigned`, `team`, `team:org/name`, `review`, `ci`, `stack:owner/repo#380`, `stacks`, `you`. */
@@ -538,6 +553,21 @@ export interface PersonGroup {
   /** People, teams and reviewers: the check state of their PRs together. */
   check?: CheckView;
 }
+/**
+ * A stack's one line, as the page shows it collapsed: its name, its repository, how many PRs, and its step, or where
+ * its step is when Next up lists it. "Launcher i18n · seed-launcher · 5 PRs · #379 has conflicts".
+ */
+export function stackLine(stack: Pick<PersonGroup, 'label' | 'repos' | 'chain' | 'urls' | 'step'>, names: ReadonlyMap<string, string> = new Map()): string {
+  const size = stack.chain?.length ?? stack.urls.length;
+  const repo = stack.repos.length === 1 ? repositoryLabel(names, stack.repos[0]) : `${stack.repos.length} repos`;
+  return [stack.label, repo, prs(size), stack.step?.inNext ? 'next step in Next up' : stack.step?.text].filter(Boolean).join(' · ');
+}
+/** Chain rows name their repository when stacks from several repositories are on the page: #384 is never ambiguous. */
+export const qualifyChains = (stacks: Pick<PersonGroup, 'repos'>) => stacks.repos.length > 1;
+/** A chain row's number: "seed-launcher#384" when `qualify`, else "#384". */
+export const chainNumber = (member: Pick<ReviewMember, 'repo' | 'number'>, qualify: boolean, names: ReadonlyMap<string, string> = new Map()) =>
+  qualify ? `${repositoryLabel(names, member.repo)}#${member.number}` : `#${member.number}`;
+
 /** A section heading: the sum of the PRs its rows stand for. */
 export const sectionCount = (groups: readonly Pick<PersonGroup, 'urls'>[]) => groups.reduce((total, group) => total + group.urls.length, 0);
 
@@ -549,9 +579,10 @@ function grouper(input: Pick<MorningInput, 'signals'>, claimed: Map<string, Plac
   const line = (row: OverviewRow, member: ReviewMember, extra: Partial<GroupLine> = {}): GroupLine => {
     const { since, source } = sinceOf(row, member);
     const comments = commentsOf(input, [member]);
+    const isNew = row.entries.some((entry) => entry.member.url === member.url && entry.isNew);
     return {
       id: member.url, row, member, title: member.title, since, source, target: prTarget(member.url) ?? row.target, check: checksOf(input, [member]),
-      ...(comments !== undefined ? { comments } : {}), description: `#${member.number}`, ...extra,
+      ...(comments !== undefined ? { comments } : {}), ...(isNew ? { isNew } : {}), description: `#${member.number}`, ...extra,
     };
   };
   const add = (key: string, seed: () => GroupSeed, row: OverviewRow, member: ReviewMember, extra: Partial<GroupLine> = {}) => {
@@ -729,6 +760,10 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
     const above = [...waiting.values()].sort((a, b) => position(a.member) - position(b.member));
     if (above.every(({ member }) => claimed.has(member.url))) continue;
     const step = stackStep(model, root, login, openAbove(subject, root).length, checksOf(input, [root]));
+    // The step is a Next up row already: a review of the stack, or the base's own merge or fix.
+    const stepUrls = step.action === 'review' && step.row ? step.row.entries.map((entry) => entry.member.url) : [step.member.url];
+    if (stepUrls.some((url) => claimed.get(url) === 'next')) step.inNext = true;
+    // Named by the stack, else by its base's title; the base's line then shows its number alone.
     const label = subject.name || root.title;
     const seed = () => ({ kind: 'stack' as const, label });
     const chain: ChainNode[] = [];
@@ -741,7 +776,7 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
       else chain.push({ kind: 'line', line: line(lineRow, member, extra), ...(place && place !== 'others' ? { also: place } : {}) });
     };
     // The base's line is its own row in the lanes, not the review row a `review` step opens.
-    node(root, step.action === 'review' ? row : (step.row ?? row), { status: 'next', description: `#${root.number}, next, merges first. ${step.text}` });
+    node(root, step.action === 'review' ? row : (step.row ?? row), { status: 'next', description: `#${root.number}, next, merges first. ${step.text}`, ...(label === root.title ? { bare: true } : {}) });
     for (const { member, row: lineRow, reasons } of above) {
       const parent = openParent(subject, member);
       const status: ChainStatus = reasons.has('conflicts') ? 'conflicts' : 'waiting';

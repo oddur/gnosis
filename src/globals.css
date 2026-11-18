@@ -5088,8 +5088,10 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
    connector, as on the stack page (StackDependencyChain). The step and the numbers never truncate; titles do, at
    their end. */
 .morning-stack { --chain-row:30px; margin-top:2px; }
-.morning-stack-head .morning-sub { flex:none; max-width:none; }
-.morning-stack-head .morning-detail { flex:none; overflow:visible; color:var(--foreground); font-weight:500; }
+/* One line per stack: the step keeps its words until the line runs out, then truncates at its end. */
+.morning-stack-head .morning-detail { color:var(--foreground); font-weight:500; }
+/* "seed-launcher#384": a chain's number with its repository, where numbers repeat across repositories. */
+.morning-number.is-qualified { min-width:0; max-width:24ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .morning-stack-head .morning-head { min-width:8ch; }
 .morning-chain .stack-chain-node .pr-state-icon { width:14px; height:14px; }
 .morning-chain { list-style:none; margin:0 0 6px; padding:0; }

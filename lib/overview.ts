@@ -182,6 +182,11 @@ export interface OverviewEntry {
   reasons: OverviewReason[];
   since: number;
   source: OverviewSinceSource;
+  /**
+   * The PR's state in this lane changed since the last visit (`entryChanged`): the unread dot. Never for a PR that was
+   * only unopened or unread.
+   */
+  isNew?: boolean;
 }
 /**
  * One fact about why a Merge row can merge, shown in the row's reason slot.
@@ -233,6 +238,7 @@ export interface OverviewRow {
   /** "2 d": how long it has waited, at the model's time. */
   waiting: string;
   stale: boolean;
+  /** Any of its entries changed since the last visit (`OverviewEntry.isNew`). */
   isNew: boolean;
   additions?: number;
   deletions?: number;
@@ -275,12 +281,22 @@ export interface OverviewModel {
   urls: Readonly<Record<OverviewLane, string[]>>;
   /** Row keys, saved as the visit when the Overview is shown. */
   keys: string[];
+  /** Each PR's state per lane (`entryKey`), saved as the visit: what "changed since your last visit" compares. */
+  entryKeys: string[];
+  /** Every open PR the lanes considered, and the ones of yours whose status was not known yet. */
+  seen: string[];
+  uncheckedUrls: string[];
 }
 
 /** The last visit, saved per account in local storage. */
 export interface OverviewVisit {
   at: number;
   keys: string[];
+  /** The PRs' states then (`entryKey`). A visit saved before these existed marks nothing new. */
+  entries?: string[];
+  /** Every open PR then, and the ones whose status was not known, so their state then is not known either. */
+  seen?: string[];
+  unchecked?: string[];
 }
 export const overviewVisitKey = (account: string) => `gnosis-overview-visit:v1:${account}`;
 export function parseOverviewVisit(raw: string | null): OverviewVisit | undefined {
@@ -288,12 +304,37 @@ export function parseOverviewVisit(raw: string | null): OverviewVisit | undefine
   try {
     const value = JSON.parse(raw) as Partial<OverviewVisit>;
     if (typeof value.at !== 'number' || !Number.isFinite(value.at) || !Array.isArray(value.keys)) return undefined;
-    return { at: value.at, keys: value.keys.filter((key): key is string => typeof key === 'string').slice(0, 2000) };
+    const strings = (list: unknown) => (Array.isArray(list) ? list.filter((key): key is string => typeof key === 'string').slice(0, VISIT_LIMIT) : undefined);
+    const entries = strings(value.entries);
+    const seen = strings(value.seen);
+    const unchecked = strings(value.unchecked);
+    return { at: value.at, keys: strings(value.keys) ?? [], ...(entries ? { entries } : {}), ...(seen ? { seen } : {}), ...(unchecked ? { unchecked } : {}) };
   } catch {
     return undefined;
   }
 }
-export const nextOverviewVisit = (model: Pick<OverviewModel, 'keys'>, now: number): OverviewVisit => ({ at: now, keys: model.keys.slice(0, 2000) });
+/** At most this many keys of each kind are saved per visit. */
+const VISIT_LIMIT = 4000;
+export const nextOverviewVisit = (model: Pick<OverviewModel, 'keys'> & Partial<Pick<OverviewModel, 'entryKeys' | 'seen' | 'uncheckedUrls'>>, now: number): OverviewVisit => ({
+  at: now,
+  keys: model.keys.slice(0, VISIT_LIMIT),
+  entries: (model.entryKeys ?? []).slice(0, VISIT_LIMIT),
+  seen: (model.seen ?? []).slice(0, VISIT_LIMIT),
+  unchecked: (model.uncheckedUrls ?? []).slice(0, VISIT_LIMIT),
+});
+/** One PR's state in one lane: its head commit and its reasons there. A push or a new reason changes it. */
+export const entryKey = (lane: OverviewLane, entry: Pick<OverviewEntry, 'member' | 'reasons'>) => `${lane}|${entry.member.url}@${entry.member.headSha}|${entry.reasons.join(',')}`;
+/**
+ * The unread dot: the PR's state in this lane is not the one the last visit saw, and the last visit knew the PR's
+ * state (it was in the queue with its status known), or the PR was not in the queue at all then. A PR whose status
+ * was still loading at the last visit, an update that changes no state (a label, a comment on a PR waiting on
+ * others) and a PR that is only unopened are not new. Without a saved visit of this kind, nothing is new.
+ */
+export function entryChanged(previous: { entries: ReadonlySet<string>; seen: ReadonlySet<string>; unchecked: ReadonlySet<string> } | undefined, lane: OverviewLane, entry: Pick<OverviewEntry, 'member' | 'reasons'>): boolean {
+  if (!previous || previous.entries.has(entryKey(lane, entry))) return false;
+  const url = entry.member.url;
+  return !previous.seen.has(url) || !previous.unchecked.has(url);
+}
 
 export interface OverviewInput {
   items: readonly QueueItem[];
@@ -486,7 +527,11 @@ export function overviewModel(input: OverviewInput): OverviewModel {
   const lanes = new Map<OverviewLane, OverviewRow[]>(OVERVIEW_LANES.map((lane) => [lane, []]));
   const urls = new Map<OverviewLane, Set<string>>(OVERVIEW_LANES.map((lane) => [lane, new Set()]));
   const unchecked = new Set<string>();
-  const previous = input.previous ? new Set(input.previous.keys) : undefined;
+  const seen = new Set<string>();
+  const entryKeys: string[] = [];
+  const before = input.previous?.entries && input.previous.seen
+    ? { entries: new Set(input.previous.entries), seen: new Set(input.previous.seen), unchecked: new Set(input.previous.unchecked ?? []) }
+    : undefined;
   for (const item of input.items) {
     const subject = item.subject;
     const mergedUrls = new Set(subject.members.filter((member) => member.merged).map((member) => member.url));
@@ -496,6 +541,7 @@ export function overviewModel(input: OverviewInput): OverviewModel {
       if (!isOpen(member) || item.snoozedUrls?.includes(member.url) || input.excluded?.has(member.url)) continue;
       const signals = freshSignals(input.signals(member), now);
       const current = signals && signals.url === member.url && signals.headSha === member.headSha ? signals : undefined;
+      seen.add(member.url);
       if (isOwnPr(member, login) && !current) unchecked.add(member.url);
       const reasons = memberReasons(item, member, current, login, { teamRequests: input.teamRequests, parentMerged: parentMerged.has(member.url) });
       for (const lane of OVERVIEW_LANES) {
@@ -504,7 +550,10 @@ export function overviewModel(input: OverviewInput): OverviewModel {
         // A PR has waited since the first of its reasons in this lane.
         const since = laneReasons.map((reason) => reasonSince(reason, member, current, login)).sort((a, b) => a.at - b.at)[0];
         const list = perLane.get(lane) ?? [];
-        list.push({ entry: { member, reasons: laneReasons, since: Math.min(since.at, now), source: since.source }, fresh: current });
+        const entry: OverviewEntry = { member, reasons: laneReasons, since: Math.min(since.at, now), source: since.source };
+        entryKeys.push(entryKey(lane, entry));
+        if (entryChanged(before, lane, entry)) entry.isNew = true;
+        list.push({ entry, fresh: current });
         perLane.set(lane, list);
       }
     }
@@ -517,8 +566,7 @@ export function overviewModel(input: OverviewInput): OverviewModel {
       const stack = subject.kind === 'stack';
       const id = `${lane}|${subject.id}`;
       const key = `${id}|${entries.map((entry) => `${entry.member.url}@${entry.member.headSha}`).join(',')}|${reasons.join(',')}`;
-      const changedAt = Math.max(first.entry.since, ...entries.map((entry) => time(entry.member.updatedAt) ?? 0));
-      const isNew = !!previous && !!input.previous && (!previous.has(key) || changedAt > input.previous.at);
+      const isNew = entries.some((entry) => entry.isNew);
       // Base first: in a stack, the lowest PR in the lane is the one to merge.
       const merging = lane === 'merge' ? (subject.members.map((member) => list.find(({ entry }) => entry.member.url === member.url)).find(Boolean) ?? first) : undefined;
       const notes = merging ? mergeNotes(item, merging.entry.member, merging.fresh, login) : undefined;
@@ -555,7 +603,7 @@ export function overviewModel(input: OverviewInput): OverviewModel {
       };
       const signature = JSON.stringify([
         row.key, row.title, row.person, merge?.notes, merge?.ready, merge?.member.url, row.since, row.waiting, row.stale, row.isNew, row.additions, row.deletions, row.files, row.explanation?.reviewId,
-        row.stackSize, entries.map((entry) => [entry.member.title, entry.member.isDraft, entry.member.state, entry.member.number, entry.member.repo]),
+        row.stackSize, entries.map((entry) => [entry.member.title, entry.member.isDraft, entry.member.state, entry.member.number, entry.member.repo, !!entry.isNew]),
       ]);
       // `shown` depends on the lane's other rows; it is set, and signed, once the lane is complete.
       lanes.get(lane)?.push({ ...row, shown: [], signature });
@@ -592,6 +640,9 @@ export function overviewModel(input: OverviewInput): OverviewModel {
     unchecked: unchecked.size,
     urls: Object.fromEntries(OVERVIEW_LANES.map((lane) => [lane, [...(urls.get(lane) ?? [])]])) as Record<OverviewLane, string[]>,
     keys: states.flatMap((state) => [...state.rows, ...state.parked].map((row) => row.key)),
+    entryKeys,
+    seen: [...seen],
+    uncheckedUrls: [...unchecked],
   };
 }
 

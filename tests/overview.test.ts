@@ -249,9 +249,18 @@ void test('"new" compares with the last visit, per row and its revisions', () =>
   const next = model([item([pushed]), item([requested]), item([added])], { signals: { [pushed.url]: signals(pushed, { checks: 'failure' }) }, previous: visit });
   assert.deepEqual(next.lanes.flatMap((state) => state.rows).filter((row) => row.isNew).map((row) => row.focus.number).sort(), [1, 3]);
   assert.equal(next.fresh, 2);
-  // Updated after the visit, with the same key, is new too.
+  // Updated after the visit with no change of state (a label, a comment) is not new: the dot is for state changes.
   const touched = model([item([failing]), item([{ ...requested, updatedAt: '2026-11-14T09:45:00Z' }])], { signals: values, previous: visit });
-  assert.deepEqual(touched.lanes.flatMap((state) => state.rows).filter((row) => row.isNew).map((row) => row.focus.number), [2]);
+  assert.deepEqual(touched.lanes.flatMap((state) => state.rows).filter((row) => row.isNew).map((row) => row.focus.number), []);
+  // A PR whose status was still loading at the last visit is not new once it loads: its state then is not known.
+  const loading = model(items, { signals: {} });
+  const early = nextOverviewVisit(loading, Date.parse('2026-11-14T09:00:00Z'));
+  assert.deepEqual(model(items, { signals: values, previous: early }).lanes.flatMap((state) => state.rows).filter((row) => row.isNew).map((row) => row.focus.number), []);
+  // Its checks turning red after a visit that knew them green is new.
+  const green = nextOverviewVisit(model(items, { signals: { [failing.url]: signals(failing, { checks: 'success', decision: 'REVIEW_REQUIRED' }) } }), Date.parse('2026-11-14T09:00:00Z'));
+  assert.deepEqual(model(items, { signals: values, previous: green }).lanes.flatMap((state) => state.rows).filter((row) => row.isNew).map((row) => row.focus.number), [1]);
+  // A visit saved before PR states were kept marks nothing new.
+  assert.equal(model([item([pushed]), item([added])], { signals: values, previous: { at: visit.at, keys: [] } }).fresh, 0);
 });
 
 void test('visits are saved per account and parsed defensively', () => {

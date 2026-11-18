@@ -46,7 +46,10 @@ import {
   CHAIN_STATUS_LABEL,
   FIX_LABEL,
   PLACE_LABEL,
+  chainNumber,
   morningPage,
+  qualifyChains,
+  stackLine,
   nextCount,
   nextMoreLine,
   repositoryLabel,
@@ -223,7 +226,19 @@ export function OverviewPage(props: OverviewPageProps) {
   const repoNames = useMemo(() => repositoryNames(repoKey ? repoKey.split(',') : []), [repoKey]);
   const since = useMemo(() => sinceLine(sinceSummary(extras.since.events, extras.since.from), extras.since.from, now), [extras.since, now]);
 
-  const [opened, setOpened] = useState<Open>(new Set());
+  // Stacks are one line each until expanded; the expanded ones are remembered per account on this computer.
+  const stacksKey = account ? overviewStacksKey(account) : null;
+  const [opened, setOpened] = useState<Open>(() => new Set(readExpandedStacks(stacksKey)));
+  const restored = useRef(stacksKey);
+  useEffect(() => {
+    if (restored.current === stacksKey) return;
+    restored.current = stacksKey;
+    const saved = readExpandedStacks(stacksKey);
+    if (saved.length) setOpened((value) => new Set([...value, ...saved]));
+  }, [stacksKey]);
+  useEffect(() => {
+    if (stacksKey && restored.current === stacksKey) saveExpandedStacks(stacksKey, opened);
+  }, [stacksKey, opened]);
   const [allDecisions, setAllDecisions] = useState(false);
   const toggle = useCallback((id: string) => setOpened((value) => {
     const next = new Set(value);
@@ -253,6 +268,7 @@ export function OverviewPage(props: OverviewPageProps) {
           for (const stack of stacks.children) {
             const sid = `${id}|${stack.key}`;
             push(section, sid, { row: stack.step?.row ?? stack.rows[0], members: lineMembers(stack) });
+            if (!opened.has(sid)) continue;
             for (const step of chainView(stack, sid, opened)) {
               if (step.kind === 'line') {
                 lines(section, sid, [step.line]);
@@ -347,6 +363,11 @@ export function OverviewPage(props: OverviewPageProps) {
               if (!holding.length) continue;
               next.delete(id);
               if (children.findIndex((child) => holds(child.lines)) >= STACKS_SHOWN) next.add(`${id}|more`);
+              // A stack's PRs are its chain's lines: the stacks that hold them expand.
+              for (const child of holding) {
+                next.add(`${id}|${child.key}`);
+                if ((child.chain ?? []).length > CHAIN_SHOWN) next.add(`${id}|${child.key}|more`);
+              }
               continue;
             }
             if (!holds(group.lines) || group.lines.length <= INLINE_LIMIT) continue;
@@ -388,7 +409,7 @@ export function OverviewPage(props: OverviewPageProps) {
     [focusRow]
   );
   useEffect(() => () => window.clearTimeout(marked.current.timer), []);
-  const reveal = useCallback((url: string, place: AlsoPlace) => showRows([url], { place }), [showRows]);
+  const reveal = useCallback((urls: readonly string[], place: AlsoPlace) => showRows(urls, { place }), [showRows]);
   const activeRow = () => document.activeElement?.closest<HTMLElement>('[data-overview-row-item]')?.dataset.overviewRowItem;
   useKeyboardShortcuts(
     {
@@ -666,6 +687,26 @@ export function OverviewPage(props: OverviewPageProps) {
   );
 }
 
+/** The stacks expanded to their chains, per account, on this computer. */
+export const overviewStacksKey = (account: string) => `gnosis-overview-stacks:v1:${account}`;
+const STACK_ID = /^others\|stacks\|stack:[^|]+$/;
+function readExpandedStacks(key: string | null): string[] {
+  if (!key) return [];
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? '[]') as unknown;
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && STACK_ID.test(id)).slice(0, 200) : [];
+  } catch {
+    return [];
+  }
+}
+function saveExpandedStacks(key: string, open: Open) {
+  try {
+    localStorage.setItem(key, JSON.stringify([...open].filter((id) => STACK_ID.test(id)).slice(0, 200)));
+  } catch {
+    // Storage may be full or unavailable; stacks then open as one line next time.
+  }
+}
+
 /** A briefing number's rows stay marked this long after it is followed. */
 const HIGHLIGHT_MS = 2400;
 
@@ -753,8 +794,8 @@ interface RowActions {
   /** Copies `text`; `what` names it in the confirmation: "Link copied". */
   copy: (text: string, what: string) => void;
   keyDown: (event: ReactKeyboardEvent) => void;
-  /** Scrolls to and focuses the row that lists `url` in `place`: a chain line's "↑ Next up". */
-  reveal: (url: string, place: AlsoPlace) => void;
+  /** Scrolls to and focuses the rows that list `urls` in `place`: a chain line's "↑ Next up", a stack's next step. */
+  reveal: (urls: readonly string[], place: AlsoPlace) => void;
 }
 
 /** The opened ids under a group (itself included), as one key, so a group renders again only when its own change. */
@@ -924,7 +965,7 @@ function Conflicts({ children = 'Conflicts' }: { children?: ReactNode }) {
  * The number, check and status never truncate; the title truncates first, at its end. A PR's title previews the PR
  * on hover and focus (`PrPreviewTooltip`).
  */
-function RowShell({ id, tabStop, actions, label, title, number, preview, prs: listed, repos, detail, check, comments, status, waited, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, as: Tag = 'li', className = '', icon, onActivate }: {
+function RowShell({ id, tabStop, actions, label, title, number, numberLabel, preview, prs: listed, repos, detail, check, comments, status, waited, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, as: Tag = 'li', className = '', icon, onActivate }: {
   id: string;
   tabStop: boolean;
   actions: RowActions;
@@ -932,6 +973,8 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
   title: ReactNode;
   /** The PR number, in its own column. */
   number?: number;
+  /** What the number column says instead of "#N": "seed-launcher#384" where numbers repeat across repositories. */
+  numberLabel?: string;
   /** The PR the title previews. */
   preview?: { url: string; number: number; title: string };
   /** The PRs the row lists, for the page's each-PR-once check. */
@@ -983,8 +1026,8 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
       }}
     >
       <span className="morning-head">
-        {number !== undefined && <span className="morning-number">#{number}</span>}
-        <span className="morning-title-text">{title}</span>
+        {number !== undefined && <span className={`morning-number${numberLabel ? ' is-qualified' : ''}`}>{numberLabel ?? `#${number}`}</span>}
+        {title ? <span className="morning-title-text">{title}</span> : null}
       </span>
       {(repos?.length || detail !== undefined) && (
         <span className="morning-sub">
@@ -1075,7 +1118,7 @@ const NextRow = memo(
         quick={quick}
         menu={prMenu(item.id, row, actions, unread, member, members, single ? target : undefined)}
         menuLabel={single ? `PR #${member.number}` : menuFor(row)}
-        isNew={row.isNew}
+        isNew={!!item.isNew}
         // One PR leads with its state; a row for several PRs of a stack with the stack icon, as in the queue.
         icon={single ? <PrIcon member={member} /> : <GroupIcon group={{ kind: 'stack', label: row.title }} />}
         description={`${action}, ${item.why}, ${reposSpoken(repos, label)} #${member.number}${single ? '' : ` and ${item.urls.length - 1} more`}, ${item.check.spoken}, ${extrasSpoken(item.comments, waited)}`}
@@ -1083,7 +1126,7 @@ const NextRow = memo(
       />
     );
   },
-  (a, b) => a.item.row.signature === b.item.row.signature && a.item.why === b.item.why && a.item.kind === b.item.kind &&
+  (a, b) => a.item.row.signature === b.item.row.signature && a.item.why === b.item.why && a.item.kind === b.item.kind && a.item.isNew === b.item.isNew &&
     a.item.check.label === b.item.check.label && a.item.title === b.item.title && a.item.member.url === b.item.member.url && a.item.comments === b.item.comments &&
     a.item.since === b.item.since && a.waited === b.waited && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
 );
@@ -1118,11 +1161,11 @@ function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMe
 /** The age of a line, or the words for it. */
 const age = (since: number, now: number) => waitingLabel(since, now);
 const lineSig = (line: GroupLine, now: number) =>
-  [line.id, line.title, line.row.signature, line.check.label, line.status ?? '', line.reason ?? '', age(line.since, now), line.source, line.comments ?? '', line.description].join('~');
+  [line.id, line.title, line.row.signature, line.check.label, line.status ?? '', line.reason ?? '', age(line.since, now), line.source, line.comments ?? '', line.description, line.isNew ? 'new' : '', line.bare ? 'bare' : ''].join('~');
 const groupSig = (group: PersonGroup, now: number): string =>
   [
     group.key, group.label, group.detail, group.repos.join(), group.check?.label ?? '', group.nudge?.members.length ?? 0, group.step?.text ?? '', group.step?.action ?? '',
-    group.step?.row?.signature ?? '', group.rows.map((row) => row.signature).join(),
+    group.step?.row?.signature ?? '', group.step?.inNext ? 'in-next' : '', group.rows.map((row) => row.signature).join(),
     ...group.lines.map((line) => lineSig(line, now)),
     ...(group.chain ?? []).map((node) => `${lineSig(node.line, now)}:${node.also ?? ''}`),
     ...(group.children ?? []).map((child) => groupSig(child, now)),
@@ -1133,7 +1176,7 @@ const groupSig = (group: PersonGroup, now: number): string =>
  * reason and action (Rerun failed, Open), shown on hover and focus. In a chain, its node on the connector and its
  * status word.
  */
-function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = false, node, also }: {
+function LineRow({ id, line, now, depth, tabStop, actions, showRepo, qualify = false, chain = false, node, also }: {
   id: string;
   line: GroupLine;
   now: number;
@@ -1142,6 +1185,8 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
   actions: RowActions;
   /** The group spans repositories: each PR names its own. */
   showRepo: boolean;
+  /** Stacks from several repositories are on the page: the number says its repository, "seed-launcher#384". */
+  qualify?: boolean;
   chain?: boolean;
   /** In a chain: the node on the connector, in place of the row's icon. */
   node?: ReactNode;
@@ -1149,6 +1194,7 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
   also?: AlsoPlace;
 }) {
   const label = useRepoLabel();
+  const names = useContext(RepoNames);
   const unread = useContext(Unread);
   const { row, member } = line;
   const waited = age(line.since, now);
@@ -1176,8 +1222,9 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
       className={chain ? `is-chain${line.status === 'next' ? ' is-next' : ''}` : ''}
       icon={node ?? <PrIcon member={member} />}
       label={line.title}
-      title={line.title}
+      title={line.bare ? '' : line.title}
       number={member.number}
+      numberLabel={qualify ? chainNumber(member, true, names) : undefined}
       preview={{ url: member.url, number: member.number, title: member.title }}
       prs={[member.url]}
       repos={showRepo ? [member.repo] : undefined}
@@ -1189,8 +1236,8 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
       quick={quick}
       menu={prMenu(id, row, actions, unread([member]), member, [member], line.target)}
       menuLabel={`PR #${member.number}`}
-      isNew={row.isNew}
-      description={[line.description, showRepo ? label(member.repo) : '', line.check.spoken, extrasSpoken(line.comments, waited), also ? `also listed in ${PLACE_LABEL[also]}. A goes there` : ''].filter(Boolean).join(', ')}
+      isNew={!!line.isNew}
+      description={[line.description, line.bare ? line.title : '', showRepo ? label(member.repo) : '', line.check.spoken, extrasSpoken(line.comments, waited), also ? `also listed in ${PLACE_LABEL[also]}. A goes there` : ''].filter(Boolean).join(', ')}
       onActivate={() => actions.open(row, line.target)}
     />
   );
@@ -1206,7 +1253,7 @@ function AlsoLink({ url, place, actions }: { url: string; place: AlsoPlace; acti
   const Arrow = ALSO_UP[place] ? ArrowUp : ArrowDown;
   return (
     <button type="button" className="morning-more-quiet morning-also" {...SHORTCUT} data-overview-also={place} aria-label={`Also listed in ${PLACE_LABEL[place]}`}
-      title={`Also listed in ${PLACE_LABEL[place]} · A`} onClick={() => actions.reveal(url, place)}>
+      title={`Also listed in ${PLACE_LABEL[place]} · A`} onClick={() => actions.reveal([url], place)}>
       <Arrow size={12} aria-hidden="true" />
       {PLACE_LABEL[place]}
     </button>
@@ -1320,7 +1367,7 @@ const StacksRows = memo(
           onActivate={() => actions.toggle(id)}
         />
         {view.children.map((stack) => (
-          <StackChain key={stack.key} id={`${id}|${stack.key}`} stack={stack} now={now} open={set} tabStop={tabStop} nudged={nudged.has(`nudge:${stack.key}`)} actions={actions} />
+          <StackChain key={stack.key} id={`${id}|${stack.key}`} stack={stack} now={now} open={set} tabStop={tabStop} nudged={nudged.has(`nudge:${stack.key}`)} actions={actions} qualify={qualifyChains(group)} />
         ))}
         {view.more > 0 && (
           <MoreRow id={`${id}|more`} label={`${view.more} more ${view.more === 1 ? 'stack' : 'stacks'}`} spoken={`Show ${view.more} more stacks`} tabStop={tabStop === `${id}|more`} actions={actions} depth={1} />
@@ -1333,48 +1380,58 @@ const StacksRows = memo(
 );
 
 /**
- * One stack: a header with the stack icon, its name, its repository once, and the step that moves it (Merge, Nudge or
- * Open), then its chain in merge order, base first, on a thin connector as on the stack page (`StackDependencyChain`).
- * A merge step says what it goes ahead without, as Next up does: "Merge #376 (not reviewed, no checks) to unblock 3
- * PRs". Every PR of the chain is a full line; one another section lists too ends in a link there ("↑ Next up").
+ * One stack, one line by default: the stack icon, its name (its base's title when it has none), its repository, how
+ * many PRs, the step that moves it, and one action (Merge, Nudge, Review or Open). Enter or a click expands it to its
+ * chain in merge order, base first, on a thin connector as on the stack page (`StackDependencyChain`); the expanded
+ * stacks are remembered. When the step is a Next up row already, the line points there ("next step in Next up ↑")
+ * and has no action of its own. A merge step says what it goes ahead without: "Merge #376 (not reviewed, no checks)
+ * to unblock 3 PRs". Every PR of the chain is a full line; one another section lists too ends in a link there.
  */
-function StackChain({ id, stack, now, open, tabStop, nudged, actions }: { id: string; stack: PersonGroup; now: number; open: Open; tabStop: string | undefined; nudged: boolean; actions: RowActions }) {
-  const label = useRepoLabel();
+function StackChain({ id, stack, now, open, tabStop, nudged, actions, qualify }: { id: string; stack: PersonGroup; now: number; open: Open; tabStop: string | undefined; nudged: boolean; actions: RowActions; qualify: boolean }) {
+  const names = useContext(RepoNames);
   const unread = useContext(Unread);
   const step = stack.step;
   if (!step) return null;
+  const expanded = open.has(id);
   const size = stack.chain?.length ?? stack.urls.length;
-  const spoken = `Stack ${stack.label}, ${prs(size)}, next: ${step.text}`;
-  const quick =
-    step.action === 'merge' && step.row ? (
-      <MergeAction row={step.row} actions={actions} caveats={step.caveats} />
-    ) : step.action === 'review' && step.row ? (
-      <Button size="xs" variant="outline" {...SHORTCUT} title={`${reviewVerb(step.row)} first · A`} onClick={() => step.row && actions.open(step.row)}>
-        {reviewVerb(step.row)}
-      </Button>
-    ) : step.action === 'nudge' && step.reviewer ? (
-      nudged ? (
-        <span className="morning-done">Nudged</span>
-      ) : (
-        <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${step.reviewer}’s review of #${step.member.number} again… · A`}
-          onClick={() => actions.nudge({ key: `nudge:${stack.key}`, kind: 'person', label: step.reviewer ?? '', detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer: step.reviewer ?? '', members: [step.member] } })}>
-          <NudgeIcon size={13} aria-hidden="true" />
-          Nudge
-        </Button>
-      )
+  const spoken = `Stack ${stackLine(stack, names)}`;
+  const stepUrls = step.action === 'review' && step.row ? step.row.entries.map((entry) => entry.member.url) : [step.member.url];
+  const quick = step.inNext ? (
+    <button type="button" className="morning-more-quiet morning-also" {...SHORTCUT} data-overview-also="next" data-overview-next-step
+      title="The next step is a row in Next up · A" onClick={() => actions.reveal(stepUrls, 'next')}>
+      next step in Next up
+      <ArrowUp size={12} aria-hidden="true" />
+    </button>
+  ) : step.action === 'merge' && step.row ? (
+    <MergeAction row={step.row} actions={actions} caveats={step.caveats} />
+  ) : step.action === 'review' && step.row ? (
+    <Button size="xs" variant="outline" {...SHORTCUT} title={`${reviewVerb(step.row)} first · A`} onClick={() => step.row && actions.open(step.row)}>
+      {reviewVerb(step.row)}
+    </Button>
+  ) : step.action === 'nudge' && step.reviewer ? (
+    nudged ? (
+      <span className="morning-done">Nudged</span>
     ) : (
-      <Button size="xs" variant="ghost" {...SHORTCUT} data-reveal title={`Open #${step.member.number}, ${step.member.title} · A`} onClick={() => actions.open(step.row ?? stack.rows[0], prTarget(step.member.url))}>
-        Open #{step.member.number}
+      <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${step.reviewer}’s review of #${step.member.number} again… · A`}
+        onClick={() => actions.nudge({ key: `nudge:${stack.key}`, kind: 'person', label: step.reviewer ?? '', detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer: step.reviewer ?? '', members: [step.member] } })}>
+        <NudgeIcon size={13} aria-hidden="true" />
+        Nudge
       </Button>
-    );
+    )
+  ) : (
+    <Button size="xs" variant="ghost" {...SHORTCUT} title={`Open #${step.member.number}, ${step.member.title}${step.caveats?.length ? ` (${step.caveats.join(', ')})` : ''} · A`} onClick={() => actions.open(step.row ?? stack.rows[0], prTarget(step.member.url))}>
+      Open #{step.member.number}
+    </Button>
+  );
   const openBase = () => actions.open(step.row ?? stack.rows[0], prTarget(step.member.url));
   const node = (member: ReviewMember) => (
     <span className="stack-chain-node" data-overview-icon="pr" aria-hidden="true">
       <PrStateIcon pr={member} size={14} decorative />
     </span>
   );
+  const what = step.action === 'merge' ? `A merges #${step.member.number}` : step.action === 'review' ? `A opens the ${step.row ? reviewVerb(step.row).toLowerCase() : 'review'}` : step.action === 'nudge' && !nudged ? 'A nudges' : `A opens #${step.member.number}`;
   return (
-    <li className="morning-stack depth-1" data-overview-stack={stack.key}>
+    <li className={`morning-stack depth-1${expanded ? ' is-expanded' : ''}`} data-overview-stack={stack.key}>
       <RowShell
         as="div"
         id={id}
@@ -1386,22 +1443,34 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions }: { id: st
         title={stack.label}
         icon={<GroupIcon group={stack} />}
         repos={stack.repos}
-        detail={step.conflicts ? <Conflicts>{step.text}</Conflicts> : step.text}
-        meta={prs(size)}
+        detail={
+          step.inNext ? (
+            prs(size)
+          ) : (
+            <>
+              {prs(size)}
+              {' · '}
+              {step.conflicts ? <Conflicts>{step.text}</Conflicts> : step.text}
+            </>
+          )
+        }
         quick={quick}
+        expanded={expanded}
         menu={stackMenu(id, stack, actions, unread(stack.lines.map((line) => line.member)), openBase)}
         menuLabel={`stack ${stack.label}`}
-        description={`${spoken}. ${reposSpoken(stack.repos, label)}${step.action === 'merge' ? `. A merges #${step.member.number}` : step.action === 'review' ? `. A opens the ${step.row ? reviewVerb(step.row).toLowerCase() : 'review'}` : step.action === 'nudge' && !nudged ? '. A nudges' : `. A opens #${step.member.number}`}`}
-        onActivate={openBase}
+        description={`${spoken}. ${expanded ? 'Expanded' : 'Collapsed'}. ${step.inNext ? 'The next step is in Next up; A goes there' : what}`}
+        onActivate={() => actions.toggle(id)}
       />
-      <ul className="morning-chain" aria-label={spoken}>
-        {chainView(stack, id, open).map((entry) => {
-          if (entry.kind === 'gap')
-            return <MoreRow key="gap" id={`${id}|more`} label={`+${entry.count} more`} spoken={`Show ${entry.count} more PRs of this stack`} tabStop={tabStop === `${id}|more`} actions={actions} depth={2} chain />;
-          const child = `${id}|${entry.line.id}`;
-          return <LineRow key={child} id={child} line={entry.line} now={now} depth={2} tabStop={tabStop === child} actions={actions} showRepo={false} chain node={node(entry.line.member)} also={entry.also} />;
-        })}
-      </ul>
+      {expanded && (
+        <ul className="morning-chain" aria-label={spoken}>
+          {chainView(stack, id, open).map((entry) => {
+            if (entry.kind === 'gap')
+              return <MoreRow key="gap" id={`${id}|more`} label={`+${entry.count} more`} spoken={`Show ${entry.count} more PRs of this stack`} tabStop={tabStop === `${id}|more`} actions={actions} depth={2} chain />;
+            const child = `${id}|${entry.line.id}`;
+            return <LineRow key={child} id={child} line={entry.line} now={now} depth={2} tabStop={tabStop === child} actions={actions} showRepo={false} qualify={qualify} chain node={node(entry.line.member)} also={entry.also} />;
+          })}
+        </ul>
+      )}
     </li>
   );
 }
