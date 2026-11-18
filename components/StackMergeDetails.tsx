@@ -1,4 +1,5 @@
 import { ExternalLink } from 'lucide-react';
+import { conflictIcon as ConflictIcon } from '../lib/interface-icons';
 import { checkLabel } from '../lib/pr-checks';
 import { stackMemberStatus } from '../lib/stack-member-status';
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
@@ -66,7 +67,7 @@ export function StackMemberDetails({
               <span className="stack-blocker-reason">{blocker.text}</span>
               <div className="stack-inline-actions">
                 {blocker.key === 'conflicts' && (
-                  <button onClick={() => openConflictWorkspace(member.url)}>Resolve conflicts…</button>
+                  <button onClick={() => openConflictWorkspace(member.url)}><ConflictIcon size={14} aria-hidden="true" />Resolve conflicts…</button>
                 )}
                 {['draft', 'update'].includes(blocker.key) && (
                   <PrActions

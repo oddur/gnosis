@@ -28,7 +28,8 @@ import { useStatusNow } from '../lib/status-clock';
 /** ↻ stays disabled for 10 seconds after a refresh. */
 export const REFRESH_COOLDOWN_MS = 10_000;
 
-const KIND_ICON = attentionIcons;
+/** Each kind's icon: the shared attention catalog, so the panel and the Overview agree (conflicts: GitMergeConflict). */
+export const KIND_ICON = attentionIcons;
 
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 /** "just now", "3 min ago", "2 h ago", "yesterday". */

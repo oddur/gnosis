@@ -5,6 +5,7 @@ import { stackDependencyOrder } from '../lib/stack-overview';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { ArrowRight, CircleAlert, CircleCheck, CircleHelp, CircleMinus, Clock3 } from 'lucide-react';
+import { conflictIcon as ConflictIcon } from '../lib/interface-icons';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
 import { type QueueSignals } from '../lib/queue-signals';
 import type { PrChecks } from '../lib/pr-checks';
@@ -253,6 +254,7 @@ export function StackOverview({
                   </span>
                 ) : (
                   <span title={facts.branch.detail ? `${facts.branch.label} · ${facts.branch.detail}` : undefined}>
+                    {facts.branch.label === 'Conflicts' && <ConflictIcon size={14} aria-hidden="true" className="stack-conflict-icon" />}
                     {facts.branch.label}
                   </span>
                 )}

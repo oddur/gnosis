@@ -10,9 +10,12 @@
  *
  * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), and every heading counts what it lists: Next
  * up its rows, the others their PRs. Waiting on you says where its PRs went when Next up lists them.
- * Every PR line leads with its number, shows its check state as the queue row does, and previews the PR on hover or
- * focus with the PR badge's tooltip. Repositories are plain muted text, with their icon or colour from Settings ›
- * Repositories, named once per group when the group has one repository.
+ * Every PR line leads with its state icon (`PrStateIcon`; a row for several PRs of a stack, the stack icon) and its
+ * number, shows the queue row's comment badge above 0 and its check state, and how long it has waited, in a column that
+ * lines up down the page; the tooltip names the timestamp (`lib/overview.ts`, "Waiting time"). Next up adds the effort,
+ * plain, in its own column. It previews the PR on hover or focus with the PR badge's tooltip. Buttons that change
+ * something carry their icon (`actionIcons`); buttons that only open a PR carry none. Repositories are plain muted
+ * text, with their icon or colour from Settings › Repositories, named once per group when the group has one repository.
  *
  * Each section is a labelled region with one roving tab stop: Tab moves between sections, j/k and the arrows move
  * within one, Enter opens (or expands a group), A runs the row's action and Z snoozes. Rows describe themselves to
@@ -20,7 +23,7 @@
  * show, so a sync tick that changes nothing renders nothing, and a moved row gets its focus back without scrolling.
  */
 import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { AlertCircle, ChevronRight, GitMerge, RefreshCw, RotateCcw, Settings, X } from 'lucide-react';
+import { AlertCircle, ChevronRight, ListChecks, MessageSquare, RefreshCw, Settings, UserRound, UsersRound, X } from 'lucide-react';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
@@ -30,10 +33,11 @@ import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import { prTarget, type DeepLinkTarget } from '../lib/deep-link';
 import { publishOverviewCount } from '../lib/overview-count';
-import { checkSummaryIcons } from '../lib/interface-icons';
+import { actionIcons, checkSummaryIcons, conflictIcon as ConflictIcon, subjectIcons, waitingIcon as WaitingIcon } from '../lib/interface-icons';
+import { githubAvatarUrl } from '../lib/github-profile';
 import type { CheckView } from '../lib/check-summary';
 import type { PrChecks } from '../lib/pr-checks';
-import { overviewBriefing, waitingLabel, spokenWaiting, type OverviewActionGroup, type OverviewModel, type OverviewRow } from '../lib/overview';
+import { OVERVIEW_SINCE_LABEL, overviewBriefing, waitingLabel, spokenWaiting, type OverviewActionGroup, type OverviewModel, type OverviewRow, type OverviewSinceSource } from '../lib/overview';
 import {
   CHAIN_STATUS_LABEL,
   FIX_LABEL,
@@ -72,6 +76,7 @@ import { BulkCheckRerun } from './BulkCheckRerun';
 import { LoadingIndicator, LoadingState } from './LoadingState';
 import { ClosePrDialog, NudgeDialog } from './OverviewWrites';
 import { RepositoryIcon } from './RepositoryAppearance';
+import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
 
@@ -466,7 +471,7 @@ export function OverviewPage(props: OverviewPageProps) {
             </button>
           )}>
           {morning.next.items.map((item) => (
-            <NextRow key={item.id} item={item} tabStop={tabStop('next') === item.id} unread={unread(item.row.entries.map((entry) => entry.member))} actions={actions} />
+            <NextRow key={item.id} item={item} waited={waitingLabel(item.since, now)} tabStop={tabStop('next') === item.id} unread={unread(item.row.entries.map((entry) => entry.member))} actions={actions} />
           ))}
         </MorningSection>
         <MorningSection section="you" count={counts.you} empty={youNote.empty}
@@ -478,7 +483,7 @@ export function OverviewPage(props: OverviewPageProps) {
         </MorningSection>
         <MorningSection section="decide" count={counts.decide} quiet empty="Nothing to decide. None of your PRs has been stuck for over a week.">
           {(allDecisions ? morning.decide : morning.decide.slice(0, DECIDE_SHOWN)).map((item) => (
-            <DecisionRow key={item.id} item={item} tabStop={tabStop('decide') === item.id} actions={actions} />
+            <DecisionRow key={item.id} item={item} waited={waitingLabel(item.since, now)} tabStop={tabStop('decide') === item.id} actions={actions} />
           ))}
           {morning.decide.length > DECIDE_SHOWN && (
             <li className="morning-more">
@@ -571,7 +576,9 @@ export function OverviewPage(props: OverviewPageProps) {
         </div>
       )}
       <RepoNames.Provider value={repoNames}>
-        <div className="overview-body">{body}</div>
+        <Viewer.Provider value={account ?? ''}>
+          <div className="overview-body">{body}</div>
+        </Viewer.Provider>
       </RepoNames.Provider>
       <p className="sr-only" role="status" aria-live="polite" data-overview-announcement>{announcement}</p>
     </div>
@@ -649,6 +656,42 @@ const useRepoLabel = () => {
   const names = useContext(RepoNames);
   return useCallback((repo: string) => repositoryLabel(names, repo), [names]);
 };
+/** The signed-in account: the You group shows its avatar. */
+const Viewer = createContext('');
+
+/**
+ * Every row leads with what it is, in the icons the queue and sidebar use: a PR its GitHub state (`PrStateIcon`: open,
+ * draft, merged, closed), a stack Layers, a person their avatar, a team or an unnamed reviewer the user icons, CI the
+ * Checks icon. Decorative: the row's description says what it is.
+ */
+function PrIcon({ member }: { member: ReviewMember }) {
+  return (
+    <span className="morning-icon" data-overview-icon="pr" aria-hidden="true">
+      <PrStateIcon pr={member} size={14} decorative />
+    </span>
+  );
+}
+const StackIcon = subjectIcons.stack;
+function GroupIcon({ group }: { group: Pick<PersonGroup, 'kind' | 'label'> }) {
+  const viewer = useContext(Viewer);
+  const login = group.kind === 'person' ? group.label : group.kind === 'you' ? viewer : '';
+  if (login)
+    return (
+      <span className="morning-icon is-avatar" data-overview-icon="person" aria-hidden="true">
+        <Avatar size="sm" className="morning-avatar">
+          <AvatarImage src={githubAvatarUrl(login)} alt="" loading="lazy" referrerPolicy="no-referrer" />
+          <AvatarFallback>{login.slice(0, 1).toUpperCase()}</AvatarFallback>
+        </Avatar>
+      </span>
+    );
+  const Icon = group.kind === 'stack' || group.kind === 'stacks' ? StackIcon : group.kind === 'team' ? UsersRound : group.kind === 'ci' ? ListChecks : UserRound;
+  return (
+    <span className="morning-icon" data-overview-icon={group.kind === 'stack' || group.kind === 'stacks' ? 'stack' : group.kind} aria-hidden="true">
+      <Icon size={14} aria-hidden="true" />
+    </span>
+  );
+}
+
 /** "seed-launcher", "klang/web", or "2 repos": in words, for row descriptions. */
 const reposSpoken = (repos: readonly string[], label: (repo: string) => string) => (repos.length > 1 ? `${repos.length} repositories` : repos.length ? label(repos[0]) : '');
 
@@ -715,12 +758,60 @@ function CheckState({ check }: { check: CheckView }) {
   );
 }
 
+/** "3 comments", for a row's description. */
+export const commentsSpoken = (count: number | undefined) => (count ? `${count} ${count === 1 ? 'comment' : 'comments'}` : '');
 /**
- * One line: the primary button (the PR number, the title, then its repository and detail), the check state, a
- * status word, right-aligned meta, the actions and the menu. The number, check and status never truncate; the title
- * truncates first, at its end. A PR's title previews the PR on hover and focus (`PrPreviewTooltip`).
+ * The queue row's comment badge (`QueueMetadata`, `.queue-comments`): the comment icon and the count, inline review
+ * comments included. Shown only above 0; its column is always held, so check states line up down a section.
  */
-function RowShell({ id, tabStop, actions, label, title, number, preview, prs: listed, repos, detail, check, status, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, as: Tag = 'li', className = '', node, onActivate }: {
+function CommentCount({ count }: { count?: number }) {
+  return (
+    <span className="queue-comments morning-comments" aria-hidden="true" {...(count ? { 'data-overview-comments': count, title: `${commentsSpoken(count)}, including inline review comments` } : {})}>
+      {!!count && (
+        <>
+          <MessageSquare size={13} aria-hidden="true" />
+          {count}
+        </>
+      )}
+    </span>
+  );
+}
+
+/** How long a PR has waited in its current state, and since what: one right-aligned column on every PR row. */
+interface Waited {
+  since: number;
+  source: OverviewSinceSource;
+  /** `waitingLabel`: "4 d", "3 h". */
+  label: string;
+}
+/** "Waiting since your last review, 14 Nov 2026, 09:12": the source of a waiting time (`lib/overview.ts`). */
+export const waitingTitle = (since: number, source: OverviewSinceSource) => `Waiting ${OVERVIEW_SINCE_LABEL[source]}, ${new Date(since).toLocaleString()}`;
+function Age({ waited }: { waited: Waited }) {
+  return (
+    <span className="morning-age" data-overview-age={waited.label} data-overview-age-source={waited.source} title={waitingTitle(waited.since, waited.source)} aria-hidden="true">
+      <WaitingIcon size={12} aria-hidden="true" />
+      <time dateTime={new Date(waited.since).toISOString()}>{waited.label}</time>
+    </span>
+  );
+}
+/** "Conflicts", with the app's conflict icon: a PR that has merge conflicts with its base. */
+function Conflicts({ children = 'Conflicts' }: { children?: ReactNode }) {
+  return (
+    <span className="morning-conflicts" data-overview-conflicts>
+      <ConflictIcon size={13} aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
+/**
+ * One line: what it is (its icon), the primary button (the PR number, the title, then its repository and detail), the
+ * comments, the check state, a status word, Next up's effort, how long it has waited (or a header's count), the
+ * actions and the menu. Comments, check, effort, age and actions hold their columns, so they line up down the page.
+ * The number, check and status never truncate; the title truncates first, at its end. A PR's title previews the PR
+ * on hover and focus (`PrPreviewTooltip`).
+ */
+function RowShell({ id, tabStop, actions, label, title, number, preview, prs: listed, repos, detail, check, comments, status, effort, waited, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, as: Tag = 'li', className = '', icon, onActivate }: {
   id: string;
   tabStop: boolean;
   actions: RowActions;
@@ -736,7 +827,14 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
   repos?: readonly string[];
   detail?: ReactNode;
   check?: CheckView;
+  /** Rows with a check state hold the comment column; the badge shows above 0. */
+  comments?: number;
   status?: ReactNode;
+  /** Next up: the estimated effort, "~5 min", in its own column left of the age. */
+  effort?: string;
+  /** A PR row: how long it has waited. */
+  waited?: Waited;
+  /** A header row: what it holds, "4 PRs", in the age column. */
   meta?: ReactNode;
   quick?: ReactNode;
   menu?: EntryActionGroups;
@@ -749,8 +847,8 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
   isNew?: boolean;
   as?: 'li' | 'div';
   className?: string;
-  /** Before the title: a stack chain's node. */
-  node?: ReactNode;
+  /** Before the title: the row's icon (`PrIcon`, `GroupIcon`), or a stack chain's node. */
+  icon?: ReactNode;
   onActivate: () => void;
 }) {
   if (window.__countRenders) { window.__overviewRowRenders = (window.__overviewRowRenders ?? 0) + 1; (window.__overviewRenderedRows ??= []).push(id); }
@@ -791,13 +889,15 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
         {isNew && <span className="pr-unread-dot" role="img" aria-label="New since your last visit" title="New since your last visit" />}
         {expanded !== undefined && <ChevronRight size={14} aria-hidden="true" className="morning-chevron" />}
       </span>
-      {node}
+      {icon}
       {preview ? <PrPreviewTooltip url={preview.url} number={preview.number} title={preview.title}>{button}</PrPreviewTooltip> : button}
       <span className="sr-only" id={descriptionId} data-overview-description>{description}</span>
+      {check && <CommentCount count={comments} />}
       {check && <CheckState check={check} />}
       {status}
-      {/* Meta and actions always hold their columns, so check states and ages line up down a section. */}
-      <span className="morning-meta">{meta}</span>
+      {effort !== undefined && <span className="morning-effort" data-overview-effort title="Estimated time to do it" aria-hidden="true">{effort}</span>}
+      {/* The age (or a header's count) and the actions always hold their columns, so ages line up down the page. */}
+      {waited ? <Age waited={waited} /> : <span className="morning-meta">{meta}</span>}
       <span className="morning-actions">{quick}{trigger}</span>
     </div>
   );
@@ -818,9 +918,17 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
 const SHORTCUT = { 'data-quick-action': true, 'aria-keyshortcuts': 'A', tabIndex: -1 };
 const NEXT_ACTION: Readonly<Record<NextItem['kind'], string>> = { merge: 'Merge', rereview: 'Re-review', reply: 'Reply', changes: 'Open', review: 'Review', fix: 'Open' };
 const minutesSpoken = (minutes: number) => (minutes >= 60 ? 'an hour or more' : `about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`);
+/** The words a row's description adds for its comments and its wait: ", 3 comments, waiting 4 days". */
+const extrasSpoken = (comments: number | undefined, waited: string) => [commentsSpoken(comments), `waiting ${spokenWaiting(waited)}`].filter(Boolean).join(', ');
+/** Buttons that change something carry their icon (`actionIcons`); buttons that only open a PR carry none. */
+const MergeIcon = actionIcons.merge;
+const RerunIcon = actionIcons.rerun;
+const NudgeIcon = actionIcons.nudge;
+const CloseIcon = actionIcons.close;
+const SnoozeIcon = actionIcons.snooze;
 
 const NextRow = memo(
-  function NextRow({ item, tabStop, unread, actions }: { item: NextItem; tabStop: boolean; unread: boolean; actions: RowActions }) {
+  function NextRow({ item, waited, tabStop, unread, actions }: { item: NextItem; waited: string; tabStop: boolean; unread: boolean; actions: RowActions }) {
     const { row, member } = item;
     const label = useRepoLabel();
     const members = row.entries.map((entry) => entry.member).filter((entry) => item.urls.includes(entry.url));
@@ -851,20 +959,25 @@ const NextRow = memo(
         preview={single ? { url: member.url, number: member.number, title: member.title } : undefined}
         prs={item.urls}
         repos={repos}
-        detail={item.why}
+        detail={item.fix === 'conflicts' ? <Conflicts>{item.why}</Conflicts> : item.why}
         check={item.check}
-        meta={<span title="Estimated time">{effortShort(item.minutes)}</span>}
+        comments={item.comments}
+        effort={effortShort(item.minutes)}
+        waited={{ since: item.since, source: item.source, label: waited }}
         quick={quick}
         menu={prMenu(item.id, row, actions, unread, member, single ? target : undefined)}
         menuLabel={single ? `PR #${member.number}` : menuFor(row)}
         isNew={row.isNew}
-        description={`${action}, ${item.why}, ${reposSpoken(repos, label)} #${member.number}${single ? '' : ` and ${item.urls.length - 1} more`}, ${item.check.spoken}, ${minutesSpoken(item.minutes)}`}
+        // One PR leads with its state; a row for several PRs of a stack with the stack icon, as in the queue.
+        icon={single ? <PrIcon member={member} /> : <GroupIcon group={{ kind: 'stack', label: row.title }} />}
+        description={`${action}, ${item.why}, ${reposSpoken(repos, label)} #${member.number}${single ? '' : ` and ${item.urls.length - 1} more`}, ${item.check.spoken}, ${extrasSpoken(item.comments, waited)}, ${minutesSpoken(item.minutes)}`}
         onActivate={() => actions.open(row, target)}
       />
     );
   },
   (a, b) => a.item.row.signature === b.item.row.signature && a.item.why === b.item.why && a.item.minutes === b.item.minutes && a.item.kind === b.item.kind &&
-    a.item.check.label === b.item.check.label && a.item.title === b.item.title && a.item.member.url === b.item.member.url && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
+    a.item.check.label === b.item.check.label && a.item.title === b.item.title && a.item.member.url === b.item.member.url && a.item.comments === b.item.comments &&
+    a.item.since === b.item.since && a.waited === b.waited && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
 );
 
 function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMember[]; onChanged: () => void; reveal?: boolean }) {
@@ -886,7 +999,7 @@ function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMe
       load={load}
       trigger={(open, busy) => (
         <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title="Re-run failed jobs… · A" disabled={busy} onClick={open}>
-          <RotateCcw size={13} aria-hidden="true" />
+          <RerunIcon size={13} aria-hidden="true" />
           {busy ? 'Reading checks…' : 'Rerun failed'}
         </Button>
       )}
@@ -897,7 +1010,7 @@ function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMe
 /** The age of a line, or the words for it. */
 const age = (since: number, now: number) => waitingLabel(since, now);
 const lineSig = (line: GroupLine, now: number) =>
-  [line.id, line.title, line.row.signature, line.check.label, line.status ?? '', line.reason ?? '', age(line.since, now), line.description].join('~');
+  [line.id, line.title, line.row.signature, line.check.label, line.status ?? '', line.reason ?? '', age(line.since, now), line.source, line.comments ?? '', line.description].join('~');
 const groupSig = (group: PersonGroup, now: number): string =>
   [
     group.key, group.label, group.detail, group.repos.join(), group.check?.label ?? '', group.nudge?.members.length ?? 0, group.step?.text ?? '', group.step?.action ?? '',
@@ -908,8 +1021,9 @@ const groupSig = (group: PersonGroup, now: number): string =>
   ].join('|');
 
 /**
- * One PR under a group: its number, title, check state, and what it waits for. Under You, its own reason and action
- * (Rerun failed, Open), shown on hover and focus. In a chain, its node on the connector and its status word.
+ * One PR under a group: its state, number, title, comments, check state and how long it has waited. Under You, its own
+ * reason and action (Rerun failed, Open), shown on hover and focus. In a chain, its node on the connector and its
+ * status word.
  */
 function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = false, node }: {
   id: string;
@@ -921,6 +1035,7 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
   /** The group spans repositories: each PR names its own. */
   showRepo: boolean;
   chain?: boolean;
+  /** In a chain: the node on the connector, in place of the row's icon. */
   node?: ReactNode;
 }) {
   const label = useRepoLabel();
@@ -934,7 +1049,10 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
     </Button>
   ) : undefined;
   const status = line.status ? (
-    <span className={`morning-status is-${line.status}`} data-overview-status={line.status}>{CHAIN_STATUS_LABEL[line.status]}</span>
+    <span className={`morning-status is-${line.status}`} data-overview-status={line.status}>
+      {line.status === 'conflicts' && <ConflictIcon size={13} aria-hidden="true" />}
+      {CHAIN_STATUS_LABEL[line.status]}
+    </span>
   ) : undefined;
   return (
     <RowShell
@@ -943,22 +1061,23 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
       actions={actions}
       depth={depth}
       className={chain ? `is-chain${line.status === 'next' ? ' is-next' : ''}` : ''}
-      node={node}
+      icon={node ?? <PrIcon member={member} />}
       label={line.title}
       title={line.title}
       number={member.number}
       preview={{ url: member.url, number: member.number, title: member.title }}
       prs={[member.url]}
       repos={showRepo ? [member.repo] : undefined}
-      detail={line.reason ? FIX_LABEL[line.reason] : undefined}
+      detail={line.reason === 'conflicts' ? <Conflicts>{FIX_LABEL.conflicts}</Conflicts> : line.reason ? FIX_LABEL[line.reason] : undefined}
       check={line.check}
+      comments={line.comments}
       status={status}
-      meta={chain ? undefined : <time dateTime={new Date(line.since).toISOString()}>{waited}</time>}
+      waited={{ since: line.since, source: line.source, label: waited }}
       quick={quick}
       menu={prMenu(id, row, actions, false, member, line.target)}
       menuLabel={`PR #${member.number}`}
       isNew={row.isNew}
-      description={[line.description, showRepo ? label(member.repo) : '', line.check.spoken, chain ? '' : `waiting ${spokenWaiting(waited)}`].filter(Boolean).join(', ')}
+      description={[line.description, showRepo ? label(member.repo) : '', line.check.spoken, extrasSpoken(line.comments, waited)].filter(Boolean).join(', ')}
       onActivate={() => actions.open(row, line.target)}
     />
   );
@@ -1001,6 +1120,7 @@ const GroupRows = memo(
         <span className="morning-done">Nudged</span>
       ) : (
         <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${group.nudge.reviewer}’s review again… · A`} onClick={() => actions.nudge(group)}>
+          <NudgeIcon size={13} aria-hidden="true" />
           Nudge
         </Button>
       )
@@ -1020,6 +1140,7 @@ const GroupRows = memo(
           actions={actions}
           label={`${name} · ${group.detail}`}
           title={name}
+          icon={<GroupIcon group={group} />}
           repos={group.repos}
           detail={group.detail}
           check={group.check}
@@ -1041,7 +1162,7 @@ const GroupRows = memo(
 
 /** "Waiting for earlier PRs in a stack to merge": open by default, a chain per stack, the most actionable first. */
 const StacksRows = memo(
-  function StacksRows({ id, group, open, tabStop, nudged, actions }: {
+  function StacksRows({ id, group, now, open, tabStop, nudged, actions }: {
     id: string;
     group: PersonGroup;
     now: number;
@@ -1061,6 +1182,7 @@ const StacksRows = memo(
           actions={actions}
           label={`${group.label} · ${group.detail}`}
           title={group.label}
+          icon={<GroupIcon group={group} />}
           repos={group.repos}
           detail={group.detail}
           expanded={view.expanded}
@@ -1068,7 +1190,7 @@ const StacksRows = memo(
           onActivate={() => actions.toggle(id)}
         />
         {view.children.map((stack) => (
-          <StackChain key={stack.key} id={`${id}|${stack.key}`} stack={stack} open={set} tabStop={tabStop} nudged={nudged.has(`nudge:${stack.key}`)} actions={actions} />
+          <StackChain key={stack.key} id={`${id}|${stack.key}`} stack={stack} now={now} open={set} tabStop={tabStop} nudged={nudged.has(`nudge:${stack.key}`)} actions={actions} />
         ))}
         {view.more > 0 && (
           <MoreRow id={`${id}|more`} label={`${view.more} more ${view.more === 1 ? 'stack' : 'stacks'}`} spoken={`Show ${view.more} more stacks`} tabStop={tabStop === `${id}|more`} actions={actions} depth={1} />
@@ -1081,11 +1203,12 @@ const StacksRows = memo(
 );
 
 /**
- * One stack: a header with its name, its repository once, and the step that moves it (Merge, Nudge or Open), then its
- * chain in merge order, base first, on a thin connector as on the stack page (`StackDependencyChain`). A PR another
- * section lists is a reference to it there.
+ * One stack: a header with the stack icon, its name, its repository once, and the step that moves it (Merge, Nudge or
+ * Open), then its chain in merge order, base first, on a thin connector as on the stack page (`StackDependencyChain`).
+ * A merge step says what it goes ahead without, as Next up does: "Merge #376 (not reviewed, no checks) to unblock 3
+ * PRs". A PR another section lists is a reference to it there.
  */
-function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string; stack: PersonGroup; open: Open; tabStop: string | undefined; nudged: boolean; actions: RowActions }) {
+function StackChain({ id, stack, now, open, tabStop, nudged, actions }: { id: string; stack: PersonGroup; now: number; open: Open; tabStop: string | undefined; nudged: boolean; actions: RowActions }) {
   const label = useRepoLabel();
   const step = stack.step;
   if (!step) return null;
@@ -1093,7 +1216,7 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
   const spoken = `Stack ${stack.label}, ${prs(size)}, next: ${step.text}`;
   const quick =
     step.action === 'merge' && step.row ? (
-      <MergeAction row={step.row} actions={actions} />
+      <MergeAction row={step.row} actions={actions} caveats={step.caveats} />
     ) : step.action === 'review' && step.row ? (
       <Button size="xs" variant="outline" {...SHORTCUT} title={`${reviewVerb(step.row)} first · A`} onClick={() => step.row && actions.open(step.row)}>
         {reviewVerb(step.row)}
@@ -1104,6 +1227,7 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
       ) : (
         <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${step.reviewer}’s review of #${step.member.number} again… · A`}
           onClick={() => actions.nudge({ key: `nudge:${stack.key}`, kind: 'person', label: step.reviewer ?? '', detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer: step.reviewer ?? '', members: [step.member] } })}>
+          <NudgeIcon size={13} aria-hidden="true" />
           Nudge
         </Button>
       )
@@ -1114,7 +1238,7 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
     );
   const openBase = () => actions.open(step.row ?? stack.rows[0], prTarget(step.member.url));
   const node = (member: ReviewMember) => (
-    <span className="stack-chain-node" aria-hidden="true">
+    <span className="stack-chain-node" data-overview-icon="pr" aria-hidden="true">
       <PrStateIcon pr={member} size={14} decorative />
     </span>
   );
@@ -1129,8 +1253,9 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
         className="morning-stack-head"
         label={`${stack.label}\n${step.text}`}
         title={stack.label}
+        icon={<GroupIcon group={stack} />}
         repos={stack.repos}
-        detail={step.text}
+        detail={step.conflicts ? <Conflicts>{step.text}</Conflicts> : step.text}
         meta={prs(size)}
         quick={quick}
         description={`${spoken}. ${reposSpoken(stack.repos, label)}${step.action === 'merge' ? `. A merges #${step.member.number}` : step.action === 'review' ? `. A opens the ${step.row ? reviewVerb(step.row).toLowerCase() : 'review'}` : step.action === 'nudge' && !nudged ? '. A nudges' : `. A opens #${step.member.number}`}`}
@@ -1150,6 +1275,7 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
                 <span className="morning-number">#{entry.member.number}</span>
                 <span className="morning-chain-where">in {where}</span>
                 {/* The same columns as the chain's lines, so the status words line up. */}
+                <span className="morning-comments" />
                 <span className="morning-checks" />
                 <span className="morning-status is-next">{base ? CHAIN_STATUS_LABEL.next : ''}</span>
                 <span className="morning-meta" />
@@ -1158,7 +1284,7 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
             );
           }
           const child = `${id}|${entry.line.id}`;
-          return <LineRow key={child} id={child} line={entry.line} now={0} depth={2} tabStop={tabStop === child} actions={actions} showRepo={false} chain node={node(entry.line.member)} />;
+          return <LineRow key={child} id={child} line={entry.line} now={now} depth={2} tabStop={tabStop === child} actions={actions} showRepo={false} chain node={node(entry.line.member)} />;
         })}
       </ul>
     </li>
@@ -1166,7 +1292,7 @@ function StackChain({ id, stack, open, tabStop, nudged, actions }: { id: string;
 }
 
 const DecisionRow = memo(
-  function DecisionRow({ item, tabStop, actions }: { item: DecisionItem; tabStop: boolean; actions: RowActions }) {
+  function DecisionRow({ item, waited, tabStop, actions }: { item: DecisionItem; waited: string; tabStop: boolean; actions: RowActions }) {
     const { row, member } = item;
     const label = useRepoLabel();
     return (
@@ -1180,24 +1306,29 @@ const DecisionRow = memo(
         preview={{ url: member.url, number: member.number, title: member.title }}
         prs={[member.url]}
         repos={[member.repo]}
-        detail={item.label}
+        detail={item.conflicts ? <>{item.label} · <Conflicts /></> : item.label}
         check={item.check}
+        comments={item.comments}
+        waited={{ since: item.since, source: item.source, label: waited }}
+        icon={<PrIcon member={member} />}
         quick={
           <>
             <Button size="xs" variant="outline" {...SHORTCUT} title="Close this PR… · A" onClick={() => actions.close(member)}>
+              <CloseIcon size={13} aria-hidden="true" />
               Close PR
             </Button>
-            <Button size="xs" variant="ghost" tabIndex={-1} aria-keyshortcuts="Z" title="Snooze… · Z" onClick={() => actions.snooze(item.id)}>
-              Snooze
+            <Button size="icon-xs" variant="ghost" tabIndex={-1} aria-keyshortcuts="Z" aria-label="Snooze" title="Snooze… · Z" onClick={() => actions.snooze(item.id)}>
+              <SnoozeIcon size={13} aria-hidden="true" />
             </Button>
           </>
         }
-        description={`${item.label}, ${label(member.repo)} #${member.number}, ${item.check.spoken}. A closes, Z snoozes`}
+        description={`${item.label}${item.conflicts ? ', conflicts' : ''}, ${label(member.repo)} #${member.number}, ${item.check.spoken}, ${extrasSpoken(item.comments, waited)}. A closes, Z snoozes`}
         onActivate={() => actions.open(row)}
       />
     );
   },
-  (a, b) => a.item.row.signature === b.item.row.signature && a.item.label === b.item.label && a.item.check.label === b.item.check.label && a.tabStop === b.tabStop && a.actions === b.actions
+  (a, b) => a.item.row.signature === b.item.row.signature && a.item.label === b.item.label && a.item.check.label === b.item.check.label && a.item.comments === b.item.comments &&
+    a.item.conflicts === b.item.conflicts && a.item.since === b.item.since && a.waited === b.waited && a.tabStop === b.tabStop && a.actions === b.actions
 );
 
 declare global {
@@ -1227,7 +1358,8 @@ function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boole
     [{ label: 'Open on GitHub', run: () => void window.electronAPI.openExternal(member.url) }],
   ];
 }
-function MergeAction({ row, actions }: { row: OverviewRow; actions: RowActions }) {
+/** Merge, with its confirmation (`PrActions`). `caveats`: what the merge goes ahead without, for the tooltip. */
+function MergeAction({ row, actions, caveats = [] }: { row: OverviewRow; actions: RowActions; caveats?: readonly string[] }) {
   // Base first: in a stack, the lowest PR in the lane merges first (`OverviewMerge.member`).
   const member = row.merge?.member ?? row.focus;
   return (
@@ -1237,8 +1369,8 @@ function MergeAction({ row, actions }: { row: OverviewRow; actions: RowActions }
       onChanged={actions.refresh}
       onResult={(message) => toast.add({ type: 'success', title: message })}
       trigger={(open, busy) => (
-        <Button size="xs" variant="outline" {...SHORTCUT} title={`Merge #${member.number}… · A`} disabled={busy} onClick={() => open('merge')}>
-          <GitMerge size={13} aria-hidden="true" />
+        <Button size="xs" variant="outline" {...SHORTCUT} title={`Merge #${member.number}${caveats.length ? ` (${caveats.join(', ')})` : ''}… · A`} disabled={busy} onClick={() => open('merge')}>
+          <MergeIcon size={13} aria-hidden="true" />
           Merge
         </Button>
       )}

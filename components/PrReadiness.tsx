@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { PrActions } from './PrActions';
 import { DiffStats } from './DiffStats';
 import { ChevronDown, CircleCheck, CircleHelp, CircleAlert, Clock3, GitPullRequest } from 'lucide-react';
+import { conflictIcon as ConflictIcon } from '../lib/interface-icons';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 import { githubFailureMessage } from '../lib/github-feedback';
@@ -180,7 +181,7 @@ export function PrReadiness({
         </span>
         <span>
           {mergeable === false ? (
-            <CircleAlert size={14} />
+            <ConflictIcon size={14} aria-hidden="true" className="is-conflict" />
           ) : mergeable ? (
             <CircleCheck size={14} />
           ) : (

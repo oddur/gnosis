@@ -3,6 +3,7 @@ import { PrStateIcon } from './PrStateIcon';
 import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { GitMerge, RefreshCw, GitBranch, ChevronDown, Loader2, ExternalLink } from 'lucide-react';
+import { conflictIcon as ConflictIcon } from '../lib/interface-icons';
 import { DropdownMenu } from 'radix-ui';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
@@ -371,6 +372,7 @@ export function PrActions({
           <div className="pr-action-controls">
             {(hasConflicts || state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY') && (
               <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>
+                <ConflictIcon size={14} aria-hidden="true" />
                 Resolve conflicts…
               </Button>
             )}

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGitHubClientPool } from '../lib/github-client';
 import { createQueueSignalsService } from '../src/queue-signals-service';
-import { QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
+import { QUEUE_SIGNALS_TTL, overviewStatusOptions, overviewStatusPriority } from '../lib/queue-signals';
 const request = { url: 'https://github.com/example/repo/pull/1', headSha: 'abc123' };
 function harness() {
   let now = 1_000_000,
@@ -310,4 +310,15 @@ void test('signals carry GitHub’s comment total, recent authors, the head auth
   const [fallback] = await h.get(h.client, [request], { force: true });
   assert.equal(fallback.comments, 4);
   assert.equal(fallback.threads?.complete, false, 'Past the first 100 threads');
+});
+
+void test('the Overview reads status at visible priority while shown in a visible window, and at background priority otherwise', () => {
+  assert.equal(overviewStatusPriority(true, true), 'visible');
+  assert.equal(overviewStatusPriority(true, false), 'background', 'a hidden window');
+  assert.equal(overviewStatusPriority(false, true), 'background', 'another tab, or only resolving the lane filter');
+  assert.equal(overviewStatusPriority(false, false), 'background');
+  // Visible reads are `active`, which main runs at foreground priority inside the automatic budget; background reads
+  // carry no options, like the queue rows' own reads.
+  assert.deepEqual(overviewStatusOptions('visible'), { active: true });
+  assert.deepEqual(overviewStatusOptions('background'), {});
 });

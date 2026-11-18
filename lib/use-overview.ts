@@ -60,7 +60,8 @@ export function useOverview(input: {
     () => (login ? overviewStatusRequests(items, login, { teamRequests, excluded }).slice(0, SIGNAL_LIMIT) : []),
     [items, login, teamRequests, excluded]
   );
-  const { values, checking } = useOverviewStatus(scope, requests, live && !!login);
+  // Visible priority while the Overview is the shown tab; background while it only resolves the queue's lane filter.
+  const { values, checking } = useOverviewStatus(scope, requests, live && !!login, visible);
   const now = useStatusNow() || Date.now();
   const visitKey = login ? overviewVisitKey(login) : null;
   const [previous, setPrevious] = useState<{ key: string | null; visit?: OverviewVisit }>(() => ({ key: visitKey, visit: readVisit(visitKey) }));

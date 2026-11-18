@@ -1,6 +1,6 @@
 import { watchGitHub } from './watch-github';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { QUEUE_SIGNALS_TTL, queueSignalKey, type QueueSignalRequest, type QueueSignals } from './queue-signals';
+import { QUEUE_SIGNALS_TTL, overviewStatusOptions, overviewStatusPriority, queueSignalKey, type QueueSignalOptions, type QueueSignalRequest, type QueueSignals } from './queue-signals';
 import {
   publishQueueSignals,
   signalAccount,
@@ -20,25 +20,29 @@ import {
 
 export { publishQueueSignals } from './queue-signal-store';
 
-// Only rows intersecting the scrollport enter the batch. Coalesce their IPC and GitHub reads.
-function read(scope: string, request: QueueSignalRequest): Promise<QueueSignals | undefined> {
+// Only rows intersecting the scrollport enter the batch. Coalesce their IPC and GitHub reads. `options.active` reads
+// at visible priority: such requests go to main in their own 25-PR chunks, the rest at background priority.
+function read(scope: string, request: QueueSignalRequest, options: Pick<QueueSignalOptions, 'active'> = {}): Promise<QueueSignals | undefined> {
   const account = signalAccount(scope);
   const key = queueSignalKey(request);
   const current = account.entries.get(key);
   if (current?.pending) return current.pending;
   if (current && current.expires > Date.now()) return Promise.resolve(current.value);
   const entry: SignalEntry = { value: current?.value, expires: 0 };
-  entry.pending = new Promise((resolve) => account.batch.set(key, { request, resolve }));
+  entry.pending = new Promise((resolve) => account.batch.set(key, { request, resolve, ...(options.active ? { active: true } : {}) }));
   account.entries.set(key, entry);
   const state = account;
   state.timer ??= setTimeout(() => {
     state.timer = undefined;
-    const batch = [...state.batch.entries()];
+    const all = [...state.batch.entries()];
     state.batch.clear();
+    // Visible reads first, in their own chunks, so each chunk has one priority.
+    const active = all.filter(([, item]) => item.active);
+    const chunks = [active, all.filter(([, item]) => !item.active)].flatMap((list) =>
+      Array.from({ length: Math.ceil(list.length / 25) }, (_, i) => ({ chunk: list.slice(i * 25, i * 25 + 25), active: list === active })));
     void (async () => {
-      for (let i = 0; i < batch.length; i += 25) {
-        const chunk = batch.slice(i, i + 25);
-        const result = await window.electronAPI.getQueueSignals(chunk.map(([, item]) => item.request)).catch(() => []);
+      for (const { chunk, active } of chunks) {
+        const result = await window.electronAPI.getQueueSignals(chunk.map(([, item]) => item.request), ...(active ? [{ active: true }] : [])).catch(() => []);
         for (const [id, item] of chunk) {
           const record = state.entries.get(id);
           if (!record) {
@@ -246,12 +250,20 @@ const isDue = (scope: string, request: QueueSignalRequest) => {
  * Status for every PR the Overview can place in a lane (#390), and how many reads are in flight. Saved status shows
  * first, always, without a GitHub read. While `live`, every PR without status, or with status past its time-to-live
  * (`QUEUE_SIGNALS_TTL`), is read through the queue rows' path: the coalesced 25-PR batches, main's 2-minute service
- * cache, background priority and the automatic rate-limit budget. Native builds also join the shared backend watch,
- * so changes arrive as they happen. A hidden window reads nothing until it shows again.
+ * cache and the automatic rate-limit budget. Native builds also join the shared backend watch, so changes arrive as
+ * they happen. A hidden window reads nothing until it shows again.
+ *
+ * Priority (`overviewStatusPriority`): `visible` while the Overview is `shown` (the active tab) and the window is
+ * visible, else `background`. It is read at each sweep, so showing the Overview raises the next reads without
+ * restarting anything; the budget, back-off and batching are the same at both.
  *
  * `checking` is the number of these PRs whose read has not answered yet; it changes once per answered batch.
  */
-export function useOverviewStatus(scope: string | null, requests: readonly QueueSignalRequest[], live: boolean) {
+export function useOverviewStatus(scope: string | null, requests: readonly QueueSignalRequest[], live: boolean, shown = false) {
+  const visibleRef = useRef(shown);
+  visibleRef.current = shown;
+  // The sweep, once saved status is restored: showing the Overview runs it at once, at visible priority.
+  const sweep = useRef<(() => void) | undefined>(undefined);
   const key = JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha })));
   const values = useSignalValues(scope, key);
   const [checking, setChecking] = useState(0);
@@ -277,12 +289,15 @@ export function useOverviewStatus(scope: string | null, requests: readonly Queue
       });
     };
     const load = () => {
-      if (cancelled || !live || document.visibilityState === 'hidden') return;
+      const windowVisible = document.visibilityState !== 'hidden';
+      // A hidden window reads nothing; it reads again when it shows.
+      if (cancelled || !live || !windowVisible) return;
+      const options = overviewStatusOptions(overviewStatusPriority(visibleRef.current, windowVisible));
       for (const request of members) {
         const id = queueSignalKey(request);
         if (pending.has(id) || !isDue(scope, request)) continue;
         pending.add(id);
-        void read(scope, request).finally(() => {
+        void read(scope, request, options).finally(() => {
           pending.delete(id);
           report();
         });
@@ -294,16 +309,21 @@ export function useOverviewStatus(scope: string | null, requests: readonly Queue
       stop ??= watchGitHub({ kind: 'signals', priority: 'visible', targets: members }, (update) => {
         if (update.kind === 'signals') publishQueueSignals(scope, [update.value]);
       });
+      sweep.current = load;
       load();
     });
     const timer = live ? setInterval(load, OVERVIEW_STATUS_SWEEP_MS) : undefined;
     if (live) document.addEventListener('visibilitychange', load);
     return () => {
       cancelled = true;
+      sweep.current = undefined;
       stop?.();
       clearInterval(timer);
       document.removeEventListener('visibilitychange', load);
     };
   }, [scope, key, live]);
+  useEffect(() => {
+    if (shown) sweep.current?.();
+  }, [shown]);
   return { values, checking: live ? checking : 0 };
 }

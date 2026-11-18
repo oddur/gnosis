@@ -6,6 +6,8 @@ import {
   UNREVIEWED_LIMIT,
   QUICK_LINES,
   closeConfirmation,
+  commentsOf,
+  mergeCaveats,
   closeRequest,
   effortLabel,
   effortShort,
@@ -254,7 +256,7 @@ void test('a stacked PR waits for its base; the base merge is the next step and 
   assert.equal(nextMoreLine(result.next), undefined, 'the stacked PRs above it are not ready on their own');
   const stacks = result.others.find((group) => group.kind === 'stacks');
   const chain = must(stacks?.children?.[0]);
-  assert.equal(must(chain.step).text, 'Merge #376 to unblock 3 PRs');
+  assert.equal(must(chain.step).text, 'Merge #376 (not reviewed) to unblock 3 PRs');
   assert.equal(must(chain.step).action, 'merge');
   // The base is in Next up: the chain refers to it there, and lists the three PRs above it.
   assert.deepEqual(must(chain.chain).map((node) => (node.kind === 'ref' ? `ref #${node.member.number} ${node.place}` : `#${node.line.member.number} ${node.line.status} · ${node.line.description}`)), [
@@ -612,9 +614,9 @@ void test('needs a decision: failing, never approved or idle for over a week, on
   const model = build([item([broken]), item([brokenNew]), item([unapproved]), item([idle]), item([busy])], status);
   const decisions = needsDecision(input(model, status));
   assert.deepEqual(decisions.map((entry) => [entry.member.number, entry.reason, entry.label, entry.check.label]), [
-    [3, 'unapproved', 'Never approved · 10 d', 'passing'],
-    [1, 'failing', 'Failing 9 d', 'failing'],
-    [4, 'idle', 'Idle 8 d', 'passing'],
+    [3, 'unapproved', 'Never approved', 'passing'],
+    [1, 'failing', 'Failing checks', 'failing'],
+    [4, 'idle', 'Idle', 'passing'],
   ]);
   // On the page: the failing PR that needs a decision ranks after the fresh one in Next up, and stays a decision.
   const result = page(model, status);
@@ -746,4 +748,99 @@ void test('the since log saves an object, which the state store accepts, and sti
   assert.equal(parseSinceLog(saved).length, 1);
   assert.equal(parseSinceLog([event]).length, 1, 'a bare array from an earlier build still reads');
   assert.deepEqual(parseSinceLog(serializeSinceLog(parseSinceLog([event]))), parseSinceLog([event]));
+});
+
+void test('comment counts: every PR row carries the queue row’s count from the snapshot, 0 included, and none while unknown', () => {
+  const status: Record<string, QueueSignals> = {};
+  const talked = mine(41, { additions: 10, deletions: 2 });
+  const quiet = mine(42, { additions: 10, deletions: 2 });
+  status[talked.url] = { ...approved(talked), comments: 3 };
+  status[quiet.url] = { ...approved(quiet), comments: 0 };
+  const result = page(build([item([talked]), item([quiet])], status), status);
+  assert.deepEqual(result.next.items.map((entry) => [entry.member.number, entry.comments]).sort(), [[41, 3], [42, 0]]);
+  // The page shows the badge above 0 only: 0 is known, and hidden.
+  assert.equal(commentsOf({ signals: (m) => status[m.url] }, [talked, quiet]), 3, 'a stack row sums its PRs');
+  // No status and no count on the PR copy: not known, so nothing is shown.
+  const unknown = mine(43);
+  assert.equal(commentsOf({ signals: () => undefined }, [unknown]), undefined);
+  // The PR copy's count, inline review comments included, when no status is saved (`prCommentTotal`).
+  assert.equal(commentsOf({ signals: () => undefined }, [mine(44, { commentCount: 2, reviewCommentCount: 5 })]), 7);
+  // Lines under a group and decisions carry it too.
+  const waiting = mine(45, { requestedReviewers: ['lena'] });
+  status[waiting.url] = { ...signals(waiting, { checks: 'success' }), comments: 4 };
+  const others = page(build([item([waiting])], status), status).others;
+  assert.equal(others.flatMap((group) => group.lines).find((line) => line.member.number === 45)?.comments, 4);
+  const stale = mine(46, { updatedAt: iso(9 * DAY), requestedReviewers: ['lena'] });
+  status[stale.url] = { ...signals(stale, { checks: 'success' }), comments: 2 };
+  assert.equal(needsDecision(input(build([item([stale])], status), status))[0]?.comments, 2);
+});
+
+void test('waiting time: each row type waits since its state began, and says which timestamp that is', () => {
+  const status: Record<string, QueueSignals> = {};
+  // Next up, a merge: since the approval.
+  const merge = mine(51, { additions: 10, deletions: 2 });
+  status[merge.url] = approved(merge);
+  // Next up, a review request with no earlier review: since the PR opened.
+  const review = pr('o/r', 52, { author: 'zsolt', requestedReviewers: [LOGIN], createdAt: iso(3 * DAY) });
+  // Next up, a fix: since the PR's last update.
+  const broken = mine(53, { updatedAt: iso(2 * DAY) });
+  status[broken.url] = failing(broken);
+  // Waiting on others: since the PR opened, nobody reviewed it yet.
+  const waiting = mine(54, { requestedReviewers: ['lena'], createdAt: iso(4 * DAY) });
+  status[waiting.url] = signals(waiting, { checks: 'success' });
+  // Needs a decision: idle since the last update; never approved since it opened.
+  const idle = mine(55, { requestedReviewers: ['lena'], updatedAt: iso(9 * DAY) });
+  status[idle.url] = signals(idle, { checks: 'success' });
+  const unapproved = mine(56, { createdAt: iso(10 * DAY), updatedAt: iso(4 * DAY) });
+  status[unapproved.url] = signals(unapproved, { checks: 'success', decision: '', mergeState: 'CLEAN' });
+  const model = build([item([merge]), item([review]), item([broken]), item([waiting]), item([idle]), item([unapproved])], status);
+  const result = page(model, status);
+  const next = (n: number) => must(result.next.items.find((entry) => entry.member.number === n));
+  assert.deepEqual([next(51).source, next(51).since], ['approval', Date.parse('2026-11-14T09:00:00Z')]);
+  assert.deepEqual([next(52).source, next(52).since], ['opened', T0 - 3 * DAY]);
+  assert.deepEqual([next(53).source, next(53).since], ['updated', T0 - 2 * DAY]);
+  const line = must(result.others.flatMap((group) => group.lines).find((entry) => entry.member.number === 54));
+  assert.deepEqual([line.source, line.since], ['opened', T0 - 4 * DAY]);
+  const decisions = needsDecision(input(model, status));
+  assert.deepEqual(decisions.map((entry) => [entry.member.number, entry.label, entry.source, entry.since]), [
+    [56, 'Never approved', 'opened', T0 - 10 * DAY],
+    [55, 'Idle', 'updated', T0 - 9 * DAY],
+  ]);
+  // A stack row for several PRs waits since the oldest of them.
+  const base = pr('o/r', 57, { author: 'ivar', requestedReviewers: [LOGIN], createdAt: iso(5 * DAY), headBranch: 's57' });
+  const top = pr('o/r', 58, { author: 'ivar', requestedReviewers: [LOGIN], createdAt: iso(2 * DAY), baseBranch: 's57' });
+  const stacked = page(build([stack([base, top])], status), status).next.items[0];
+  assert.deepEqual([stacked.urls.length, stacked.source, stacked.since], [2, 'opened', T0 - 5 * DAY]);
+});
+
+void test('a stack header’s merge says what it goes ahead without, as Next up does', () => {
+  const status: Record<string, QueueSignals> = {};
+  const header = (base: ReviewMember, value: QueueSignals) => {
+    const rest = [mine(62, { baseBranch: base.headBranch, additions: 40 })];
+    status[base.url] = value;
+    status[rest[0].url] = noReview(rest[0]);
+    const model = build([stack([base, ...rest], `stack-${base.number}`)], status);
+    const group = morningPage(input(model, status)).others.find((entry) => entry.kind === 'stacks');
+    return must(must(group?.children?.[0]).step);
+  };
+  const base = mine(61, { headBranch: 's61', additions: 2400, deletions: 300 });
+  // Not reviewed, green: Next up lists the base, and the header names what it lacks.
+  assert.equal(header(base, noReview(base)).text, 'Merge #61 (not reviewed) to unblock 1 PR');
+  // Not reviewed, no checks at all.
+  const none = header(base, { ...noReview(base), checks: { state: 'neutral', passed: 0, total: 0 } });
+  assert.equal(none.text, 'Merge #61 (not reviewed, no checks) to unblock 1 PR');
+  assert.deepEqual(none.caveats, ['not reviewed', 'no checks']);
+  // Approved and green: nothing to add.
+  assert.equal(header(base, approved(base)).text, 'Merge #61 to unblock 1 PR');
+  // Failing and running checks, in Next up's words.
+  const row = { merge: { member: base, ready: true, notes: [{ kind: 'no-review' as const, text: 'No review required' }] } };
+  assert.deepEqual(mergeCaveats(row, { state: 'failure' }), ['not reviewed', 'failing checks']);
+  assert.deepEqual(mergeCaveats(row, { state: 'pending' }), ['not reviewed', 'checks running']);
+  assert.deepEqual(mergeCaveats({ merge: { ...row.merge, notes: [{ kind: 'approved', text: 'Approved' }] } }, { state: 'success' }), []);
+  // A failing base is a fix, not a merge: the header says so, with no Merge.
+  const red = header(base, failing(base));
+  assert.deepEqual([red.text, red.action], ['#61 has failing checks', 'open']);
+  // A base with conflicts says so, and is marked for the conflict icon.
+  const dirty = header(base, conflicted(base));
+  assert.deepEqual([dirty.text, dirty.conflicts], ['#61 has conflicts', true]);
 });

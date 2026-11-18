@@ -71,6 +71,10 @@ type Status = {
   mergeable?: string;
   opinions?: { author: string; state: string; ago: number }[];
   comments?: { author: string; ago: number }[];
+  /** The comment count GitHub reports (inline review comments included), when it is not the quoted comments. */
+  commentCount?: number;
+  /** Checks reported: 0 for a PR with no checks at all. */
+  total?: number;
   behindBy?: number;
   /** Your latest review was on this commit, not the head: the PR changed since. */
   reviewedSha?: string;
@@ -88,7 +92,7 @@ function signalsFor(member: ReviewMember, status: Status): QueueSignals {
     url: member.url,
     headSha: member.headSha,
     checkedAt: Date.now(),
-    comments: status.comments?.length ?? 0,
+    comments: status.commentCount ?? status.comments?.length ?? 0,
     opinions,
     latestReview: opinions.at(-1) ?? null,
     activity: {
@@ -96,10 +100,10 @@ function signalsFor(member: ReviewMember, status: Status): QueueSignals {
     },
     checks: {
       state: status.checks ?? 'success',
-      passed: status.checks === 'failure' ? 8 : 10,
+      passed: status.total === 0 ? 0 : status.checks === 'failure' ? 8 : 10,
       failed: status.checks === 'failure' ? 2 : 0,
       running: status.checks === 'pending' ? 3 : 0,
-      total: 10,
+      total: status.total ?? 10,
     },
     readiness: {
       state: 'OPEN',
@@ -569,6 +573,78 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
         items.splice(0, items.length,
           stackOf([market, ...marketOwn, ...marketTheirs], 'feat: add the market and create_seedling mcp tools to seed-api', 'updated'),
           single(lone, { attention: 'updated' }), stackOf([epic, ...epicRest], 'STACK: EPIC'), ...large, single(zsolt));
+        void window.electronAPI.loadPreferences().then((prefs) =>
+          window.dispatchEvent(new CustomEvent('gnosis-preferences-changed', { detail: { ...prefs, repositorySettings: { ...prefs.repositorySettings, [launcher]: { icon: 'lucide:rocket', color: 'purple' }, [seed]: { color: 'green' } } } })));
+        changed();
+      },
+      /**
+       * Screenshot 37: two stacks whose base can merge without review (one unblocks three PRs, one unblocks one), a
+       * lone re-review, a re-review of six PRs whose base merges after it, and a restack of a draft. STACK: EPIC can
+       * merge with no checks at all; Launcher i18n's base needs a decision and has conflicts; a later PR of the
+       * payment stack has conflicts too. Six decisions, failing or idle for over a week; fixes under You; plucked's
+       * review. Several PRs have comments.
+       */
+      real6: () => {
+        const launcher = 'klang/seed-launcher';
+        const seed = 'klang/seed';
+        const bridge = 'klang/service-payment-bridge';
+        const portal = 'klang/web-seed-portal';
+        const stackOf = (members: ReviewMember[], name?: string, attention: QueueItem['attention'] = 'other'): QueueItem => {
+          const subject = groupSubjects(members)[0];
+          return { subject: { ...subject, ...(name ? { name } : {}) }, attention };
+        };
+        const linked = (spec: Spec, parent: number) => ({ ...spec, baseBranch: `stack-${parent}`, headBranch: `stack-${spec.number}` });
+        const none = { ...noReview, checks: 'neutral' as const, total: 0 };
+        // The payment stack: its base merges without review and unblocks three; #385 above it has conflicts.
+        const steam = add(pr({ number: 383, repo: bridge, title: 'fix: keep Steam and Epic orders out of Adyen refunds and paid-order effects', created: 2 * DAY, updated: 4 * HOUR, headBranch: 'stack-383', additions: 310, deletions: 40 }), { ...noReview, commentCount: 3 });
+        const steamRest = [
+          add(pr(linked({ number: 384, repo: bridge, title: 'fix: never commit store orders to AvaTax', created: 2 * DAY, updated: 4 * HOUR }, 383)), noReview),
+          add(pr(linked({ number: 385, repo: bridge, title: 'fix: claim each store purchase before creating its order', created: 2 * DAY, updated: 3 * HOUR }, 384)), { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY', commentCount: 1 }),
+          add(pr(linked({ number: 397, repo: bridge, title: 'feat: provision and refund Epic Games Store purchases (P2)', created: 2 * DAY, updated: 3 * HOUR }, 385)), noReview),
+        ];
+        // The blocking-objects stack: its base merges without review and unblocks one.
+        const blocking = add(pr({ number: 36948, repo: seed, title: 'fix: keep a construction’s blocking objects when their recheck fails', created: 3 * DAY, updated: 5 * HOUR, headBranch: 'stack-36948', additions: 160, deletions: 12 }), noReview);
+        const blockingRest = [add(pr(linked({ number: 36962, repo: seed, title: 'fix: fail a building edit whose blocking-objects check fails', created: 3 * DAY, updated: 5 * HOUR }, 36948)), noReview)];
+        // STACK: EPIC: no checks at all on any PR; its base can merge without review.
+        const epic = add(pr({ number: 376, repo: launcher, title: 'refactor: model the store distribution channel instead of Steam-only checks', created: 3 * DAY, updated: 2 * HOUR, headBranch: 'stack-376', additions: 220, deletions: 40 }), none);
+        const epicRest = [382, 378, 386].map((number, i) =>
+          add(pr(linked({ number, repo: launcher, title: ['fix: quit a store-launched launcher when its last window closes', 'feat: log in with Epic on Epic Games Store launches (L3)', 'feat: import Epic purchases after an Epic login, before play (L3b)'][i], created: 3 * DAY, updated: 2 * HOUR, additions: 80 }, i ? [382, 378][i - 1] : 376)), none));
+        // Launcher i18n: the base is idle for nine days with conflicts, so it needs a decision.
+        const i18n = add(pr({ number: 379, repo: launcher, title: 'feat: move the launcher’s text into translation keys (i18n 1/3)', created: 14 * DAY, updated: 9 * DAY, headBranch: 'stack-379' }), { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY', commentCount: 6 });
+        const i18nRest = [380, 381, 387, 388].map((number, i) =>
+          add(pr(linked({ number, repo: launcher, title: ['feat: add German, Spanish and French to the launcher (i18n 2/3)', 'feat: let players pick the launcher’s language and keep it in their account', 'refactor: derive the language in state, send translation keys, and tidy the i18n stack', 'fix: address review findings on the player-facing wording'][i], created: 6 * DAY, updated: 2 * DAY }, i ? [380, 381, 387][i - 1] : 379)), none));
+        // A re-review of six PRs above your base: the review first, then merge #35392.
+        const market = add(pr({ number: 35392, repo: seed, title: 'feat: add the market and create_seedling mcp tools to seed-api', created: 2 * DAY, updated: HOUR, headBranch: 'stack-35392', additions: 410, deletions: 60 }), noReview);
+        const marketTheirs = ['feat: list a seedling on the market', 'feat: buy a listed seedling', 'feat: cancel a listing', 'feat: market fees per region', 'feat: notify the seller on a sale', 'test: market end to end'].map((title, i) =>
+          add(pr(linked({ number: 37286 + i, repo: seed, title, author: 'ivaremilsson', created: 3 * DAY, updated: 5 * HOUR, additions: 60 + i * 10, deletions: 8 }, i ? 37285 + i : 35392)), { checks: 'success', reviewedSha: `old-${37286 + i}`, commentCount: i === 0 ? 4 : 0 }));
+        const lone = add(pr({ number: 377, repo: launcher, title: 'feat: block launches until the player accepts the terms in the launcher', author: 'ivaremilsson', created: 3 * DAY, updated: 5 * HOUR, additions: 70, deletions: 12 }), { checks: 'success', reviewedSha: 'old-377', commentCount: 12 });
+        // A restack of a draft: its parent merged.
+        const parent = pr({ number: 35390, repo: seed, title: 'feat: seedling events API', created: 4 * DAY, updated: DAY, headBranch: 'events-1' });
+        parent.merged = true;
+        parent.state = 'closed';
+        const restack = add(pr({ number: 35391, repo: seed, title: 'feat: deliver seedling events to chatgpt through seed-api’s mcp events', created: 3 * DAY, updated: 20 * HOUR, baseBranch: 'events-1' }), noReview);
+        restack.isDraft = true;
+        // Two more large merges nobody reviewed: counted under Next up.
+        const large = ['feat(rust): integrate the Rust worker workspace', 'chore: vendor the Steamworks SDK headers'].map((title, i) =>
+          single(add(pr({ number: 640 + i, repo: [seed, launcher][i], title, created: 2 * DAY, updated: (20 + i) * HOUR, additions: 1630, deletions: 90, files: 40 }), noReview)));
+        // Decisions: failing or idle for over a week.
+        const decisions = [
+          single(add(pr({ number: 35316, repo: seed, title: 'perf: keep unity’s terrain heights as 16-bit integers in the polygon navmesh', created: 20 * DAY, updated: 13 * DAY, requested: ['plucked'] }), { checks: 'success', commentCount: 2 })),
+          single(add(pr({ number: 371, repo: launcher, title: 'fix: build the Icon Composer app icon on the mac runner', created: 15 * DAY, updated: 13 * DAY }), { checks: 'failure' })),
+          single(add(pr({ number: 1959, repo: portal, title: 'feat: let the launcher and game read and save a player’s language', created: 14 * DAY, updated: 12 * DAY }), { checks: 'failure', commentCount: 1 })),
+        ];
+        // You: failing checks and conflicts that are not a week old.
+        const fixes = [
+          single(add(pr({ number: 36990, repo: seed, title: 'fix: retry the store webhook once before failing the order', created: 2 * DAY, updated: DAY }), { checks: 'failure', commentCount: 3 })),
+          single(add(pr({ number: 722, repo: launcher, title: 'fix: read the player language from the launcher', created: 2 * DAY, updated: DAY }), { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' })),
+        ];
+        // Waiting on plucked's review for a few days.
+        const plucked = single(add(pr({ number: 36950, repo: seed, title: 'fix: keep each sender’s failed command to itself', created: 4 * DAY, updated: DAY, requested: ['plucked'] }), { checks: 'success', commentCount: 1 }));
+        items.splice(0, items.length,
+          stackOf([steam, ...steamRest]), stackOf([blocking, ...blockingRest]), stackOf([epic, ...epicRest], 'STACK: EPIC'), stackOf([i18n, ...i18nRest]),
+          stackOf([market, ...marketTheirs], 'feat: add the market and create_seedling mcp tools to seed-api', 'updated'),
+          single(lone, { attention: 'updated' }), { subject: groupSubjects([parent, restack])[0], attention: 'other' },
+          ...large, ...decisions, ...fixes, plucked);
         void window.electronAPI.loadPreferences().then((prefs) =>
           window.dispatchEvent(new CustomEvent('gnosis-preferences-changed', { detail: { ...prefs, repositorySettings: { ...prefs.repositorySettings, [launcher]: { icon: 'lucide:rocket', color: 'purple' }, [seed]: { color: 'green' } } } })));
         changed();

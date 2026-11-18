@@ -8,6 +8,8 @@ export interface SignalEntry {
 export interface SignalBatchItem {
   request: QueueSignalRequest;
   resolve: (value: QueueSignals | undefined) => void;
+  /** Read at visible priority (`QueueSignalOptions.active`): the Overview while it is shown. */
+  active?: boolean;
 }
 export interface SignalAccount {
   entries: Map<string, SignalEntry>;

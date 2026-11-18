@@ -57,6 +57,11 @@
  * - Review: 3, plus 1 for every 40 lines up to 400, then 1 for every 60 lines; `UNKNOWN_REVIEW_LINES` when the size
  *   is not known yet. A ready explanation takes a third off. A 1,060-line review is ~25 min, 2,800 lines ~55 min.
  *
+ * **Waiting time and comments.** Every PR row says how long it has waited (`since`, `source`): the time its lane entry
+ * began, as `lib/overview.ts` documents per reason (a row for several PRs, the oldest of them; a decision, when it
+ * started failing, opened or was last updated). And its comments, inline review comments included, as the queue row
+ * counts them (`commentsOf`), from the status snapshot or the PR copy: no GitHub reads.
+ *
  * **Tab count** (`morningCount`): the PRs in Next up and Waiting on you, each once. Waiting on you is counted before
  * Needs a decision claims its PRs, so a stale reply still counts. Work on your own PRs that waits on others, and
  * decisions, are not counted.
@@ -64,8 +69,8 @@
 import { reviewRequest } from './attention';
 import { checkView, type CheckView } from './check-summary';
 import { prTarget, type DeepLinkTarget } from './deep-link';
-import { repoName, waitingLabel, type OverviewModel, type OverviewRow } from './overview';
-import type { QueueSignals } from './queue-signals';
+import { repoName, waitingLabel, type OverviewModel, type OverviewRow, type OverviewSinceSource } from './overview';
+import { prCommentTotal, type QueueSignals } from './queue-signals';
 import type { ReviewMember, ReviewSubject } from './workbench';
 
 const DAY_MS = 86_400_000;
@@ -157,6 +162,11 @@ export interface NextItem {
   urls: string[];
   /** The check state of those PRs. */
   check: CheckView;
+  /** When the item entered its current state, and where that time comes from (`lib/overview.ts`, "Waiting time"). */
+  since: number;
+  source: OverviewSinceSource;
+  /** Comments on those PRs, inline review comments included, as the queue row counts them (`commentsOf`). */
+  comments?: number;
 }
 export interface NextUp {
   items: NextItem[];
@@ -190,6 +200,24 @@ const current = (input: Pick<MorningInput, 'signals'>, member: ReviewMember) => 
   return value && value.url === member.url && value.headSha === member.headSha ? value : undefined;
 };
 const checksOf = (input: Pick<MorningInput, 'signals'>, members: readonly ReviewMember[]) => checkView(members.map((member) => current(input, member)));
+/**
+ * Comments on these PRs, inline review comments included: the queue row's count (`QueueMetadata`, `prCommentTotal`),
+ * from the status snapshot or the PR copy. Undefined while any PR's count is not known. No GitHub reads.
+ */
+export function commentsOf(input: Pick<MorningInput, 'signals'>, members: readonly ReviewMember[]): number | undefined {
+  let total = 0;
+  for (const member of members) {
+    const count = prCommentTotal(member, current(input, member));
+    if (count === undefined) return undefined;
+    total += count;
+  }
+  return members.length ? total : undefined;
+}
+/** When one PR of a row entered the row's state: its own entry, else the row's oldest. */
+function sinceOf(row: OverviewRow, member?: ReviewMember): { since: number; source: OverviewSinceSource } {
+  const entry = member && row.entries.find((candidate) => candidate.member.url === member.url);
+  return entry ? { since: entry.since, source: entry.source } : { since: row.since, source: row.source };
+}
 
 const roundEffort = (minutes: number) => (minutes > 15 ? Math.round(minutes / 5) * 5 : minutes);
 const FIX_MINUTES: Readonly<Record<FixReason, number>> = { failing: 10, conflicts: 15, restack: 5 };
@@ -273,12 +301,15 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
   const { model } = input;
   const hidden = input.hidden ?? new Set<string>();
   const candidates: NextItem[] = [];
-  const add = (value: Omit<NextItem, 'id' | 'check'>) => {
+  const add = (value: Omit<NextItem, 'id' | 'check' | 'since' | 'source' | 'comments'>) => {
     // A row for one PR of a stack names that PR, not the stack.
     const item = value.kind !== 'merge' && value.row.entries.length === 1 ? { ...value, title: value.member.title } : value;
     if (item.urls.some((url) => hidden.has(url))) return;
     const members = item.urls.map((url) => item.row.item.subject.members.find((member) => member.url === url)).filter((member): member is ReviewMember => !!member);
-    candidates.push({ ...item, id: `next|${item.row.id}`, check: checksOf(input, members) });
+    // One PR waits since its own entry in the lane; a row for several since the oldest of them.
+    const waited = sinceOf(item.row, members.length === 1 ? members[0] : undefined);
+    const comments = commentsOf(input, members);
+    candidates.push({ ...item, id: `next|${item.row.id}`, check: checksOf(input, members), ...waited, ...(comments !== undefined ? { comments } : {}) });
   };
   for (const row of lanes(model, 'merge')?.rows ?? []) {
     const member = row.merge?.member ?? row.focus;
@@ -404,7 +435,11 @@ export interface GroupLine {
   row: OverviewRow;
   member: ReviewMember;
   title: string;
+  /** When the PR entered its current state in its lane, and where that time comes from (`lib/overview.ts`). */
   since: number;
+  source: OverviewSinceSource;
+  /** Comments, inline review comments included (`commentsOf`). Undefined while not known. */
+  comments?: number;
   /** Where a click lands. */
   target: DeepLinkTarget;
   /** The PR's check state. */
@@ -421,10 +456,17 @@ export type ChainNode = { kind: 'line'; line: GroupLine } | { kind: 'ref'; membe
 /** What a stack waits on, in words, and the action that moves it. */
 export interface StackStep {
   /**
-   * "Merge #376 to unblock 3 PRs", "#36948 is waiting on checks", "#379 waits on review from lena", "#379 has
-   * conflicts", "Re-review 6 PRs first, then merge #35392".
+   * "Merge #376 to unblock 3 PRs", "Merge #376 (not reviewed, no checks) to unblock 3 PRs", "#36948 is waiting on
+   * checks", "#379 waits on review from lena", "#379 has conflicts", "Re-review 6 PRs first, then merge #35392".
    */
   text: string;
+  /**
+   * A merge: what the merge goes ahead without, in Next up's words: "not reviewed", "no checks", "failing checks",
+   * "checks running". Empty for an approved, green base. The header and its button's tooltip both say them.
+   */
+  caveats?: string[];
+  /** The PR has merge conflicts with its base: shown with the conflict icon. */
+  conflicts?: boolean;
   /** `review`: you owe a review on the stack, so its base merges after it. */
   action: 'merge' | 'nudge' | 'open' | 'review';
   /** The PR that has to merge first. */
@@ -477,10 +519,11 @@ function grouper(input: Pick<MorningInput, 'signals'>, claimed: Map<string, Plac
     if (!group.rows.includes(row)) group.rows.push(row);
     group.urls.push(member.url);
     if (!group.repos.includes(member.repo)) group.repos.push(member.repo);
-    const since = row.entries.find((entry) => entry.member.url === member.url)?.since ?? row.since;
+    const { since, source } = sinceOf(row, member);
+    const comments = commentsOf(input, [member]);
     group.lines.push({
-      id: member.url, row, member, title: member.title, since, target: prTarget(member.url) ?? row.target, check: checksOf(input, [member]),
-      description: `#${member.number}`, ...extra,
+      id: member.url, row, member, title: member.title, since, source, target: prTarget(member.url) ?? row.target, check: checksOf(input, [member]),
+      ...(comments !== undefined ? { comments } : {}), description: `#${member.number}`, ...extra,
     });
     group.oldest = Math.min(group.oldest, since);
     groups.set(key, group);
@@ -549,8 +592,24 @@ function openRoot(subject: ReviewSubject, member: ReviewMember): ReviewMember | 
   return found;
 }
 
-/** What the PR a stack waits on is waiting on itself, from its row in the lanes, and the action that moves it. */
-export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember, login: string, unblocks: number): StackStep {
+/**
+ * What a merge goes ahead without, in Next up's words: "not reviewed" unless approved, then "no checks", "failing
+ * checks" or "checks running". An approved, green PR has none.
+ */
+export function mergeCaveats(row: Pick<OverviewRow, 'merge'>, checks?: Pick<CheckView, 'state'>): string[] {
+  const caveats: string[] = [];
+  if (row.merge?.notes[0]?.kind !== 'approved') caveats.push('not reviewed');
+  const words: Partial<Record<CheckView['state'], string>> = { neutral: 'no checks', failure: 'failing checks', pending: 'checks running' };
+  const word = checks && words[checks.state];
+  if (word) caveats.push(word);
+  return caveats;
+}
+
+/**
+ * What the PR a stack waits on is waiting on itself, from its row in the lanes, and the action that moves it.
+ * `checks`: the PR's check state, so a merge says what it goes ahead without (`mergeCaveats`).
+ */
+export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember, login: string, unblocks: number, checks?: Pick<CheckView, 'state'>): StackStep {
   const n = `#${member.number}`;
   const find = (lane: OverviewRow['lane'], parked = false) => {
     const state = lanes(model, lane);
@@ -558,7 +617,10 @@ export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
   };
   const reasons = (row: OverviewRow) => row.entries.find((entry) => entry.member.url === member.url)?.reasons ?? row.reasons;
   const fix = find('fix');
-  if (fix) return { member, row: fix, action: 'open', actionable: true, text: `${n} ${{ failing: 'has failing checks', conflicts: 'has conflicts', restack: 'needs a restack' }[fixReason(reasons(fix))]}` };
+  if (fix) {
+    const reason = fixReason(reasons(fix));
+    return { member, row: fix, action: 'open', actionable: true, ...(reason === 'conflicts' ? { conflicts: true } : {}), text: `${n} ${{ failing: 'has failing checks', conflicts: 'has conflicts', restack: 'needs a restack' }[reason]}` };
+  }
   const answer = find('answer');
   if (answer) return { member, row: answer, action: 'open', actionable: true, text: reasons(answer).includes('changes-requested') ? `${n} has changes requested` : `${n} waits on your reply` };
   const merge = find('merge');
@@ -569,8 +631,11 @@ export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
     const verb = owed.reasons.includes('updated-since-review') ? 'Re-review' : 'Review';
     return { member, row: owed, action: 'review', actionable: true, text: `${verb} ${owed.entries.length > 1 ? prs(owed.entries.length) : `#${owed.focus.number}`} first, then merge ${n}` };
   }
-  if (merge && merge.merge?.member.url === member.url)
-    return { member, row: merge, action: 'merge', actionable: true, text: unblocks ? `Merge ${n} to unblock ${prs(unblocks)}` : `Merge ${n}` };
+  if (merge && merge.merge?.member.url === member.url) {
+    const caveats = mergeCaveats(merge, checks);
+    const merging = `Merge ${n}${caveats.length ? ` (${caveats.join(', ')})` : ''}`;
+    return { member, row: merge, action: 'merge', actionable: true, caveats, text: unblocks ? `${merging} to unblock ${prs(unblocks)}` : merging };
+  }
   if (parked) return { member, row: parked, action: 'open', actionable: true, text: parked.merge?.notes[0]?.kind === 'approved' ? `${n} is approved and can merge` : `${n} can merge, not reviewed` };
   const waiting = find('waiting');
   if (waiting) {
@@ -623,7 +688,7 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
     const position = (member: ReviewMember) => subject.members.findIndex((candidate) => candidate.url === member.url);
     const above = [...waiting.values()].sort((a, b) => position(a.member) - position(b.member));
     if (above.every(({ member }) => claimed.has(member.url))) continue;
-    const step = stackStep(model, root, login, openAbove(subject, root).length);
+    const step = stackStep(model, root, login, openAbove(subject, root).length, checksOf(input, [root]));
     const label = subject.name || root.title;
     const seed = () => ({ kind: 'stack' as const, label });
     const chain: ChainNode[] = [];
@@ -718,10 +783,16 @@ export interface DecisionItem {
   /** The PR Close and Snooze act on. */
   member: ReviewMember;
   reason: DecisionReason;
-  /** "Failing 12 d", "Never approved · 9 d", "Idle 9 d". */
+  /** "Failing checks", "Never approved", "Idle". The age is its own column (`since`). */
   label: string;
+  /** When the PR started failing, opened, or was last updated, and where that time comes from. */
   since: number;
+  source: OverviewSinceSource;
   check: CheckView;
+  /** Comments, inline review comments included (`commentsOf`). */
+  comments?: number;
+  /** The PR also has merge conflicts with its base: shown beside its reason with the conflict icon. */
+  conflicts?: boolean;
 }
 /**
  * Needs a decision: your PRs failing checks for over a week, mergeable but never approved over a week after they
@@ -738,14 +809,15 @@ export function needsDecision(input: Pick<MorningInput, 'model' | 'now' | 'signa
     if (seen.has(member.url) || input.hidden?.has(member.url)) continue;
     const updated = time(member.updatedAt) ?? now;
     const created = time(member.createdAt) ?? now;
-    const days = (since: number) => waitingLabel(since, now);
-    let item: Pick<DecisionItem, 'reason' | 'label' | 'since'> | undefined;
-    if (row.lane === 'fix' && row.reasons.includes('checks-failed') && now - row.since >= DECISION_MS) item = { reason: 'failing', label: `Failing ${days(row.since)}`, since: row.since };
-    else if (row.merge && row.merge.notes[0]?.kind === 'unapproved' && now - created >= DECISION_MS) item = { reason: 'unapproved', label: `Never approved · ${days(created)}`, since: created };
-    else if (now - updated >= DECISION_MS) item = { reason: 'idle', label: `Idle ${days(updated)}`, since: updated };
+    let item: Pick<DecisionItem, 'reason' | 'label' | 'since' | 'source'> | undefined;
+    if (row.lane === 'fix' && row.reasons.includes('checks-failed') && now - row.since >= DECISION_MS) item = { reason: 'failing', label: 'Failing checks', since: row.since, source: row.source };
+    else if (row.merge && row.merge.notes[0]?.kind === 'unapproved' && now - created >= DECISION_MS) item = { reason: 'unapproved', label: 'Never approved', since: created, source: 'opened' };
+    else if (now - updated >= DECISION_MS) item = { reason: 'idle', label: 'Idle', since: updated, source: 'updated' };
     if (item) {
       seen.add(member.url);
-      items.push({ id: `decide|${row.id}`, row, member, ...item, check: checksOf(input, [member]) });
+      const comments = commentsOf(input, [member]);
+      const conflicts = row.entries.find((entry) => entry.member.url === member.url)?.reasons.includes('conflicts') ?? false;
+      items.push({ id: `decide|${row.id}`, row, member, ...item, check: checksOf(input, [member]), ...(comments !== undefined ? { comments } : {}), ...(conflicts ? { conflicts } : {}) });
     }
   }
   return items.sort((a, b) => a.since - b.since || a.row.title.localeCompare(b.row.title));

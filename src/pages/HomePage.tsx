@@ -63,7 +63,7 @@ import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue, VirtualSavedReviews, SavedRow, type SavedRowActions } from '../../components/VirtualReviewQueue';
 import { QueueRow, type QueueRowActions } from '../../components/QueueRow';
 import { useReviewHistory, useWorkbenchQueue, useWorkbenchStatus, workbenchStore } from '../../lib/workbench-store';
-import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
+import { conflictIcon as ConflictIcon, workbenchIcons, workspaceSections } from '../../lib/interface-icons';
 import { WorkbenchIcon } from '../../components/WorkbenchIcon';
 import { PrLabels } from '../../components/PrLabels';
 import type { PrReadingPosition, PrReviewRequest } from '../../components/PrSummary';
@@ -2339,6 +2339,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                   aria-label={`Remove ${label} filter`}
                   onClick={() => updateFilters({ [key]: DEFAULT_QUEUE_FILTERS[key] })}
                 >
+                  {key === 'merge' && <ConflictIcon size={12} aria-hidden="true" />}
                   {label}
                   <X size={12} />
                 </button>

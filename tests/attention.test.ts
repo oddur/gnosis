@@ -5,6 +5,10 @@ import type { QueueItem, ReviewMember } from '../lib/workbench';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReviewHistoryEntry } from '../lib/types';
 import { LOGIN, T0, member, mine, signals, readySignals } from './notification-fixtures';
+import { GitMergeConflict } from 'lucide-react';
+import { attentionIcons, conflictIcon } from '../lib/interface-icons';
+import { NOTIFICATION_ICONS } from '../lib/notification-icons';
+import { KIND_ICON } from '../components/MenubarView';
 
 const pr = (url: string) => {
   const [, owner, repo, number] = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url) ?? [];
@@ -215,4 +219,17 @@ void test('badgeCount counts new rows, or every row', () => {
   assert.equal(badgeCount(result, 'new'), 1);
   assert.equal(badgeCount(result, 'all'), 2);
   assert.equal(badgeCount([], 'new'), 0);
+});
+
+void test('a PR with merge conflicts has one icon everywhere: GitMergeConflict, in the danger tone the readiness line uses', () => {
+  assert.equal(conflictIcon, GitMergeConflict);
+  assert.equal(attentionIcons.conflicts.icon, GitMergeConflict, 'the attention catalog (menu bar, Overview)');
+  assert.equal(attentionIcons.conflicts.tone, 'danger', 'the readiness line words conflicts as danger');
+  // The menu bar panel draws its kinds from the attention catalog, so it shows the same icon and tone.
+  assert.equal(KIND_ICON, attentionIcons);
+  assert.equal(KIND_ICON.conflicts.icon, GitMergeConflict);
+  // Notifications have no conflicts event today; one that names conflicts must use the same glyph.
+  const conflictKinds = Object.entries(NOTIFICATION_ICONS).filter(([kind]) => kind.includes('conflict'));
+  for (const [kind, value] of conflictKinds) assert.equal(value.icon as string, 'git-merge-conflict', `${kind} uses the conflict icon`);
+  assert.ok(!Object.values(NOTIFICATION_ICONS).some((value) => (value.icon as string) === 'triangle-alert'), 'no notification uses the old warning triangle');
 });
