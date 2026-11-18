@@ -101,7 +101,8 @@ function assertPage(page: MorningPage) {
   const listed: string[] = [];
   for (const entry of page.next.items) listed.push(...entry.urls);
   for (const entry of page.decide) listed.push(entry.member.url);
-  const refs: string[] = [];
+  // A chain shows its whole stack, so it is exempt from "each PR once": a line for a PR another section lists links there.
+  const also: { url: string; place: string }[] = [];
   const walk = (group: PersonGroup): number => {
     if (group.children) {
       const total = group.children.reduce((sum, child) => sum + walk(child), 0);
@@ -113,8 +114,13 @@ function assertPage(page: MorningPage) {
     listed.push(...urls);
     assert.deepEqual([...urls].sort(), [...group.urls].sort(), `${group.label}: its PRs are its lines`);
     if (group.chain) {
-      assert.deepEqual(group.chain.flatMap((node) => (node.kind === 'line' ? [node.line.member.url] : [])).sort(), [...urls].sort());
-      for (const node of group.chain) if (node.kind === 'ref') refs.push(node.member.url);
+      assert.deepEqual(group.chain.filter((node) => !node.also).map((node) => node.line.member.url).sort(), [...urls].sort(), `${group.label}: its own chain lines are its PRs`);
+      assert.equal(group.chain[0]?.line.status, 'next', `${group.label}: the base is first, and Next`);
+      for (const { line, also: place } of group.chain) {
+        // Every chain line is a full line: state, number, title, check state, status word and age.
+        assert.ok(line.title && line.member.number && line.check.label && line.status && Number.isFinite(line.since), `${group.label}: #${line.member.number} is a full line`);
+        if (place) also.push({ url: line.member.url, place });
+      }
     }
     if (group.kind !== 'stack') assert.equal(shown(group), group.urls.length, `${group.label}: "${group.detail}" says how many PRs it lists`);
     for (const line of group.lines) assert.ok(line.check.label, 'every line has a check state');
@@ -123,7 +129,12 @@ function assertPage(page: MorningPage) {
   const you = page.you.reduce((total, group) => total + walk(group), 0);
   const others = page.others.reduce((total, group) => total + walk(group), 0);
   assert.equal(new Set(listed).size, listed.length, `no PR appears twice: ${listed.filter((url, i) => listed.indexOf(url) !== i).join(', ')}`);
-  for (const url of refs) assert.ok(listed.includes(url), `a chain refers to ${url}, which another section lists`);
+  const places = new Map<string, string>([
+    ...page.next.items.flatMap((entry) => entry.urls.map((url) => [url, 'next'] as const)),
+    ...page.decide.map((entry) => [entry.member.url, 'decide'] as const),
+    ...page.you.flatMap((group) => group.urls.map((url) => [url, 'you'] as const)),
+  ]);
+  for (const { url, place } of also) assert.equal(places.get(url), place, `a chain line links to ${place} for ${url}, which lists it there`);
   // Next up: the heading is the rows shown. A row for several PRs says how many on the row, and leads with a PR
   // number like any other row; the quiet line keeps its own number, for merges no row lists.
   assert.equal(nextCount(page.next.items), page.next.items.length, 'Next up: heading = rows');
@@ -258,9 +269,9 @@ void test('a stacked PR waits for its base; the base merge is the next step and 
   const chain = must(stacks?.children?.[0]);
   assert.equal(must(chain.step).text, 'Merge #376 (not reviewed) to unblock 3 PRs');
   assert.equal(must(chain.step).action, 'merge');
-  // The base is in Next up: the chain refers to it there, and lists the three PRs above it.
-  assert.deepEqual(must(chain.chain).map((node) => (node.kind === 'ref' ? `ref #${node.member.number} ${node.place}` : `#${node.line.member.number} ${node.line.status} · ${node.line.description}`)), [
-    'ref #376 next',
+  // The base is in Next up: the chain still shows it as a full line, linked there, and the three PRs above it.
+  assert.deepEqual(must(chain.chain).map((node) => `#${node.line.member.number} ${node.line.status} · ${node.line.description}${node.also ? ` · also ${node.also}` : ''}`), [
+    '#376 next · #376, next, merges first. Merge #376 (not reviewed) to unblock 3 PRs · also next',
     '#377 waiting · #377, waiting, after #376',
     '#378 waiting · #378, waiting, after #377',
     '#379 waiting · #379, waiting, after #378',
@@ -503,7 +514,10 @@ void test('the screenshot-32 shape: Next up is full, each PR once, and the line 
   const you = result.others.find((group) => group.kind === 'you');
   assert.ok(!you || !you.urls.some((url) => decide.some((m) => m.url === url)));
   const i18n = must(result.others.find((group) => group.kind === 'stacks')?.children?.find((child) => child.key === 'stack:klang/launcher#379'));
-  assert.equal(must(i18n.chain)[0].kind, 'ref', 'the stack refers to its base in Needs a decision');
+  // The chain still shows its base as a full line, with a link down to Needs a decision; it does not count it.
+  const base = must(i18n.chain)[0];
+  assert.deepEqual([base.line.member.number, base.line.status, base.also], [379, 'next', 'decide'], 'the base is a full line that links to Needs a decision');
+  assert.ok(!i18n.urls.includes(base.line.member.url), 'the stack does not count its base twice');
   assert.equal(must(i18n.step).text, '#379 has failing checks');
 });
 
@@ -557,7 +571,7 @@ void test('a stack you owe a re-review on never also offers its base merge, and 
   const chain = must(result.others.find((group) => group.kind === 'stacks')?.children?.find((child) => child.key === 'stack:klang/seed#35392'));
   assert.equal(must(chain.step).action, 'review');
   assert.equal(must(chain.step).text, 'Re-review 6 PRs first, then merge #35392');
-  assert.deepEqual(must(chain.chain).map((node) => (node.kind === 'line' ? `#${node.line.member.number} ${node.line.status}` : `ref #${node.member.number}`)), ['#35392 next', '#37378 waiting', '#37578 waiting']);
+  assert.deepEqual(must(chain.chain).map((node) => `#${node.line.member.number} ${node.line.status}${node.also ? ` also ${node.also}` : ''}`), ['#35392 next', '#37378 waiting', '#37578 waiting']);
   // A stack with a review request on its base: the same rule.
   const status2: Record<string, QueueSignals> = {};
   const mineBase = minePr('o/s', 1, { headBranch: 'b1' });

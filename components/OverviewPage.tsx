@@ -8,13 +8,16 @@
  *   with Nudge. Stacks are chains in merge order, base first, with the step that moves them.
  * - **Needs a decision:** your PRs failing, never approved or idle for over a week, with Close PR and Snooze.
  *
- * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), and every heading counts what it lists: Next
- * up its rows, the others their PRs. Waiting on you says where its PRs went when Next up lists them.
+ * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), except in a stack's chain, which shows every PR
+ * of the stack as a full line and links to the section that also lists one ("↑ Next up"). Every heading counts what it
+ * lists, each PR once: Next up its rows, the others their PRs. Waiting on you says where its PRs went when Next up lists them.
  * Every PR line leads with its state icon (`PrStateIcon`; a row for several PRs of a stack, the stack icon) and its
  * number, shows the queue row's comment badge above 0 and its check state, and how long it has waited, in a column that
  * lines up down the page; the tooltip names the timestamp (`lib/overview.ts`, "Waiting time"). Next up adds the effort,
  * plain, in its own column. It previews the PR on hover or focus with the PR badge's tooltip. Buttons that change
- * something carry their icon (`actionIcons`); buttons that only open a PR carry none. Repositories are plain muted
+ * something carry their icon (`actionIcons`); buttons that only open a PR carry none. Every PR line, in every section and
+ * chain, has the same "…" row menu (`prMenu`), shown on hover and focus, at the end of the action column, so the menus
+ * form one column down the page; a stack header has the stack's part of it (`stackMenu`). Shift+F10 opens it. Repositories are plain muted
  * text, with their icon or colour from Settings › Repositories, named once per group when the group has one repository.
  *
  * Each section is a labelled region with one roving tab stop: Tab moves between sections, j/k and the arrows move
@@ -23,7 +26,7 @@
  * show, so a sync tick that changes nothing renders nothing, and a moved row gets its focus back without scrolling.
  */
 import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { AlertCircle, ChevronRight, ListChecks, MessageSquare, RefreshCw, Settings, UserRound, UsersRound, X } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ChevronRight, ListChecks, MessageSquare, RefreshCw, Settings, UserRound, UsersRound, X } from 'lucide-react';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
@@ -57,6 +60,7 @@ import {
   GROUP_SHOWN,
   INLINE_LIMIT,
   STACKS_SHOWN,
+  type AlsoPlace,
   type ChainNode,
   type DecisionItem,
   type GroupLine,
@@ -317,6 +321,19 @@ export function OverviewPage(props: OverviewPageProps) {
     },
     [focusRow]
   );
+  // A chain line's link: the row in `place` that lists the PR. A PR's own line before a group that holds it, so a
+  // collapsed group in Waiting on you takes the focus in its line's place.
+  const reveal = useCallback(
+    (url: string, place: AlsoPlace) => {
+      const { order: rows, refs: known } = latest.current;
+      const listing = rows[place].filter((id) => known.get(id)?.members.some((member) => member.url === url));
+      const id = listing.find((candidate) => known.get(candidate)?.members.length === 1) ?? listing[0];
+      if (!id) return;
+      focusRow(id);
+      root.current?.querySelector<HTMLElement>(`[data-overview-row="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
+    },
+    [focusRow]
+  );
   const activeRow = () => document.activeElement?.closest<HTMLElement>('[data-overview-row-item]')?.dataset.overviewRowItem;
   useKeyboardShortcuts(
     {
@@ -389,8 +406,9 @@ export function OverviewPage(props: OverviewPageProps) {
             () => toast.add({ type: 'error', title: `Could not copy the ${what.toLowerCase()}`, description: 'Try again.' })
           ),
       keyDown: onRowKeyDown,
+      reveal,
     }),
-    [open, snooze, toggle, onRowKeyDown]
+    [open, snooze, toggle, onRowKeyDown, reveal]
   );
   const confirmClose = useCallback((request: Parameters<typeof window.electronAPI.performPrAction>[0], member: ReviewMember) => {
     setClosingPr(null);
@@ -417,6 +435,7 @@ export function OverviewPage(props: OverviewPageProps) {
   const syncing = authenticated && sync?.status === 'checking' && syncStale(sync.checkedAt);
   const readStates = queue.readStates ?? {};
   const unread = (members: readonly ReviewMember[]) => members.some((member) => !!readStates[member.url]?.unread.length);
+  const unreadOf = useCallback((members: readonly ReviewMember[]) => members.some((member) => !!readStates[member.url]?.unread.length), [readStates]);
   const ready = authenticated && !(loading && !queue.items.length) && !(!queue.items.length && !hasRepositories);
   // Next up counts its rows; the other headings count the PRs they list (lib/morning.ts, "Counts").
   const counts: Counts = {
@@ -471,7 +490,7 @@ export function OverviewPage(props: OverviewPageProps) {
             </button>
           )}>
           {morning.next.items.map((item) => (
-            <NextRow key={item.id} item={item} waited={waitingLabel(item.since, now)} tabStop={tabStop('next') === item.id} unread={unread(item.row.entries.map((entry) => entry.member))} actions={actions} />
+            <NextRow key={item.id} item={item} waited={waitingLabel(item.since, now)} tabStop={tabStop('next') === item.id} unread={unread(item.row.entries.map((entry) => entry.member).filter((entry) => item.urls.includes(entry.url)))} actions={actions} />
           ))}
         </MorningSection>
         <MorningSection section="you" count={counts.you} empty={youNote.empty}
@@ -577,7 +596,9 @@ export function OverviewPage(props: OverviewPageProps) {
       )}
       <RepoNames.Provider value={repoNames}>
         <Viewer.Provider value={account ?? ''}>
-          <div className="overview-body">{body}</div>
+          <Unread.Provider value={unreadOf}>
+            <div className="overview-body">{body}</div>
+          </Unread.Provider>
         </Viewer.Provider>
       </RepoNames.Provider>
       <p className="sr-only" role="status" aria-live="polite" data-overview-announcement>{announcement}</p>
@@ -642,6 +663,8 @@ interface RowActions {
   /** Copies `text`; `what` names it in the confirmation: "Link copied". */
   copy: (text: string, what: string) => void;
   keyDown: (event: ReactKeyboardEvent) => void;
+  /** Scrolls to and focuses the row that lists `url` in `place`: a chain line's "↑ Next up". */
+  reveal: (url: string, place: AlsoPlace) => void;
 }
 
 /** The opened ids under a group (itself included), as one key, so a group renders again only when its own change. */
@@ -658,6 +681,8 @@ const useRepoLabel = () => {
 };
 /** The signed-in account: the You group shows its avatar. */
 const Viewer = createContext('');
+/** Whether any of these PRs has unread activity: every PR line's menu enables Mark as read from it. */
+const Unread = createContext<(members: readonly ReviewMember[]) => boolean>(() => false);
 
 /**
  * Every row leads with what it is, in the icons the queue and sidebar use: a PR its GitHub state (`PrStateIcon`: open,
@@ -965,7 +990,7 @@ const NextRow = memo(
         effort={effortShort(item.minutes)}
         waited={{ since: item.since, source: item.source, label: waited }}
         quick={quick}
-        menu={prMenu(item.id, row, actions, unread, member, single ? target : undefined)}
+        menu={prMenu(item.id, row, actions, unread, member, members, single ? target : undefined)}
         menuLabel={single ? `PR #${member.number}` : menuFor(row)}
         isNew={row.isNew}
         // One PR leads with its state; a row for several PRs of a stack with the stack icon, as in the queue.
@@ -1016,7 +1041,7 @@ const groupSig = (group: PersonGroup, now: number): string =>
     group.key, group.label, group.detail, group.repos.join(), group.check?.label ?? '', group.nudge?.members.length ?? 0, group.step?.text ?? '', group.step?.action ?? '',
     group.step?.row?.signature ?? '', group.rows.map((row) => row.signature).join(),
     ...group.lines.map((line) => lineSig(line, now)),
-    ...(group.chain ?? []).map((node) => (node.kind === 'ref' ? `ref:${node.member.url}:${node.place}` : node.line.id)),
+    ...(group.chain ?? []).map((node) => `${lineSig(node.line, now)}:${node.also ?? ''}`),
     ...(group.children ?? []).map((child) => groupSig(child, now)),
   ].join('|');
 
@@ -1025,7 +1050,7 @@ const groupSig = (group: PersonGroup, now: number): string =>
  * reason and action (Rerun failed, Open), shown on hover and focus. In a chain, its node on the connector and its
  * status word.
  */
-function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = false, node }: {
+function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = false, node, also }: {
   id: string;
   line: GroupLine;
   now: number;
@@ -1037,8 +1062,11 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
   chain?: boolean;
   /** In a chain: the node on the connector, in place of the row's icon. */
   node?: ReactNode;
+  /** In a chain: another section lists the PR too; the line ends in a link to it. */
+  also?: AlsoPlace;
 }) {
   const label = useRepoLabel();
+  const unread = useContext(Unread);
   const { row, member } = line;
   const waited = age(line.since, now);
   const quick = line.reason === 'failing' ? (
@@ -1047,6 +1075,8 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
     <Button size="xs" variant="ghost" {...SHORTCUT} data-reveal title={`Open #${member.number} · A`} onClick={() => actions.open(row, line.target)}>
       Open
     </Button>
+  ) : also ? (
+    <AlsoLink url={member.url} place={also} actions={actions} />
   ) : undefined;
   const status = line.status ? (
     <span className={`morning-status is-${line.status}`} data-overview-status={line.status}>
@@ -1074,12 +1104,29 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, chain = fal
       status={status}
       waited={{ since: line.since, source: line.source, label: waited }}
       quick={quick}
-      menu={prMenu(id, row, actions, false, member, line.target)}
+      menu={prMenu(id, row, actions, unread([member]), member, [member], line.target)}
       menuLabel={`PR #${member.number}`}
       isNew={row.isNew}
-      description={[line.description, showRepo ? label(member.repo) : '', line.check.spoken, extrasSpoken(line.comments, waited)].filter(Boolean).join(', ')}
+      description={[line.description, showRepo ? label(member.repo) : '', line.check.spoken, extrasSpoken(line.comments, waited), also ? `also listed in ${PLACE_LABEL[also]}. A goes there` : ''].filter(Boolean).join(', ')}
       onActivate={() => actions.open(row, line.target)}
     />
+  );
+}
+
+/** The sections above Waiting on others, and the one below it. */
+const ALSO_UP: Readonly<Record<AlsoPlace, boolean>> = { next: true, you: true, decide: false };
+/**
+ * The end of a chain line whose PR another section lists: "↑ Next up", "↓ Needs a decision". It scrolls to that row
+ * and focuses it. It is the line's action, so A on the line follows it too.
+ */
+function AlsoLink({ url, place, actions }: { url: string; place: AlsoPlace; actions: RowActions }) {
+  const Arrow = ALSO_UP[place] ? ArrowUp : ArrowDown;
+  return (
+    <button type="button" className="morning-more-quiet morning-also" {...SHORTCUT} data-overview-also={place} aria-label={`Also listed in ${PLACE_LABEL[place]}`}
+      title={`Also listed in ${PLACE_LABEL[place]} · A`} onClick={() => actions.reveal(url, place)}>
+      <Arrow size={12} aria-hidden="true" />
+      {PLACE_LABEL[place]}
+    </button>
   );
 }
 
@@ -1206,10 +1253,11 @@ const StacksRows = memo(
  * One stack: a header with the stack icon, its name, its repository once, and the step that moves it (Merge, Nudge or
  * Open), then its chain in merge order, base first, on a thin connector as on the stack page (`StackDependencyChain`).
  * A merge step says what it goes ahead without, as Next up does: "Merge #376 (not reviewed, no checks) to unblock 3
- * PRs". A PR another section lists is a reference to it there.
+ * PRs". Every PR of the chain is a full line; one another section lists too ends in a link there ("↑ Next up").
  */
 function StackChain({ id, stack, now, open, tabStop, nudged, actions }: { id: string; stack: PersonGroup; now: number; open: Open; tabStop: string | undefined; nudged: boolean; actions: RowActions }) {
   const label = useRepoLabel();
+  const unread = useContext(Unread);
   const step = stack.step;
   if (!step) return null;
   const size = stack.chain?.length ?? stack.urls.length;
@@ -1258,6 +1306,8 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions }: { id: st
         detail={step.conflicts ? <Conflicts>{step.text}</Conflicts> : step.text}
         meta={prs(size)}
         quick={quick}
+        menu={stackMenu(id, stack, actions, unread(stack.lines.map((line) => line.member)), openBase)}
+        menuLabel={`stack ${stack.label}`}
         description={`${spoken}. ${reposSpoken(stack.repos, label)}${step.action === 'merge' ? `. A merges #${step.member.number}` : step.action === 'review' ? `. A opens the ${step.row ? reviewVerb(step.row).toLowerCase() : 'review'}` : step.action === 'nudge' && !nudged ? '. A nudges' : `. A opens #${step.member.number}`}`}
         onActivate={openBase}
       />
@@ -1265,26 +1315,8 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions }: { id: st
         {chainView(stack, id, open).map((entry) => {
           if (entry.kind === 'gap')
             return <MoreRow key="gap" id={`${id}|more`} label={`+${entry.count} more`} spoken={`Show ${entry.count} more PRs of this stack`} tabStop={tabStop === `${id}|more`} actions={actions} depth={2} chain />;
-          if (entry.kind === 'ref') {
-            const base = stack.chain?.[0]?.kind === 'ref' && stack.chain[0].member.url === entry.member.url;
-            const where = entry.place === 'next' || entry.place === 'decide' || entry.place === 'you' ? PLACE_LABEL[entry.place] : 'another section';
-            return (
-              <li key={entry.member.url} className={`morning-chain-ref is-chain${base ? ' is-next' : ''}`} data-overview-chain-ref={entry.member.url}>
-                <span className="overview-row-gutter" />
-                {node(entry.member)}
-                <span className="morning-number">#{entry.member.number}</span>
-                <span className="morning-chain-where">in {where}</span>
-                {/* The same columns as the chain's lines, so the status words line up. */}
-                <span className="morning-comments" />
-                <span className="morning-checks" />
-                <span className="morning-status is-next">{base ? CHAIN_STATUS_LABEL.next : ''}</span>
-                <span className="morning-meta" />
-                <span className="morning-actions" />
-              </li>
-            );
-          }
           const child = `${id}|${entry.line.id}`;
-          return <LineRow key={child} id={child} line={entry.line} now={now} depth={2} tabStop={tabStop === child} actions={actions} showRepo={false} chain node={node(entry.line.member)} />;
+          return <LineRow key={child} id={child} line={entry.line} now={now} depth={2} tabStop={tabStop === child} actions={actions} showRepo={false} chain node={node(entry.line.member)} also={entry.also} />;
         })}
       </ul>
     </li>
@@ -1295,6 +1327,7 @@ const DecisionRow = memo(
   function DecisionRow({ item, waited, tabStop, actions }: { item: DecisionItem; waited: string; tabStop: boolean; actions: RowActions }) {
     const { row, member } = item;
     const label = useRepoLabel();
+    const unread = useContext(Unread);
     return (
       <RowShell
         id={item.id}
@@ -1322,6 +1355,8 @@ const DecisionRow = memo(
             </Button>
           </>
         }
+        menu={prMenu(item.id, row, actions, unread([member]), member, [member], prTarget(member.url) ?? row.target)}
+        menuLabel={`PR #${member.number}`}
         description={`${item.label}${item.conflicts ? ', conflicts' : ''}, ${label(member.repo)} #${member.number}, ${item.check.spoken}, ${extrasSpoken(item.comments, waited)}. A closes, Z snoozes`}
         onActivate={() => actions.open(row)}
       />
@@ -1341,14 +1376,16 @@ declare global {
 }
 const reviewVerb = (row: OverviewRow) => (row.reasons.includes('updated-since-review') ? 'Re-review' : 'Review');
 const menuFor = (row: OverviewRow) => (row.kind === 'stack' ? `stack ${row.title}` : `PR #${row.focus.number}`);
-/** The menu every PR row shares: open, snooze, mark read, copy, Open on GitHub. */
-function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boolean, member: ReviewMember = row.focus, target?: DeepLinkTarget): EntryActionGroups {
-  const stack = row.kind === 'stack' && member === row.focus;
+/**
+ * The menu every PR row shares: open, snooze, mark read, copy, Open on GitHub. `members`: the PRs the row stands for,
+ * which Snooze and Mark as read act on; one PR's row says "Snooze PR…", a row for several of a stack "Snooze stack…".
+ */
+function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boolean, member: ReviewMember, members: readonly ReviewMember[], target?: DeepLinkTarget): EntryActionGroups {
   return [
     [{ label: 'Open', run: () => actions.open(row, target) }],
     [
-      { label: stack ? 'Snooze stack…' : 'Snooze PR…', run: () => actions.snooze(id) },
-      { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(row.entries.map((entry) => entry.member.url)) },
+      { label: members.length > 1 ? 'Snooze stack…' : 'Snooze PR…', run: () => actions.snooze(id) },
+      { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(members.map((entry) => entry.url)) },
     ],
     [
       { label: 'Copy link', run: () => actions.copy(member.url, 'Link') },
@@ -1356,6 +1393,16 @@ function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boole
       { label: 'Copy PR number', run: () => actions.copy(`#${member.number}`, 'PR number') },
     ],
     [{ label: 'Open on GitHub', run: () => void window.electronAPI.openExternal(member.url) }],
+  ];
+}
+/** A stack header's menu: the stack's part of `prMenu` (open its base, snooze the stack, mark it read). */
+function stackMenu(id: string, stack: PersonGroup, actions: RowActions, unread: boolean, open: () => void): EntryActionGroups {
+  return [
+    [{ label: 'Open', run: open }],
+    [
+      { label: 'Snooze stack…', run: () => actions.snooze(id) },
+      { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(stack.lines.map((line) => line.member.url)) },
+    ],
   ];
 }
 /** Merge, with its confirmation (`PrActions`). `caveats`: what the merge goes ahead without, for the tooltip. */

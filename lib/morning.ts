@@ -15,8 +15,9 @@
  * **Each PR once.** Sections list each PR once on the whole page, and a PR goes to the first section that wants it:
  * Next up, then Needs a decision, then Waiting on you, then Waiting on others. A PR in Next up is removed from the
  * section below it, so nothing appears twice on screen. Within Waiting on others: stacks, then reviewers, teams, CI,
- * then you. A stack's chain is complete: a PR of it that another section lists is a reference ("#376 · in Next up"),
- * not a second line.
+ * then you. A stack's chain is the one exception: it shows the stack's structure, so it lists every PR of the stack as
+ * a full line, even a PR another section lists. That line ends in a quiet link to the other section ("↑ Next up"),
+ * and it does not count toward its section's heading.
  *
  * **Counts.** Next up's heading is the number of rows it shows (`nextCount`); a row that stands for several PRs says
  * so ("6 PRs · updated since your review"), and the quiet line under it keeps its own number. The other headings are
@@ -451,8 +452,13 @@ export interface GroupLine {
   /** The accessible description, before the check state: "#377, waiting, after #376". */
   description: string;
 }
-/** A chain step: a PR the stack lists, or a reference to one another section lists. */
-export type ChainNode = { kind: 'line'; line: GroupLine } | { kind: 'ref'; member: ReviewMember; place: Place };
+/** A section a chain's line links to: the PR is also listed there. */
+export type AlsoPlace = Exclude<Place, 'hidden' | 'others'>;
+/**
+ * A chain step: always a full line. `also`: another section lists the PR too, so the line links there, and the
+ * stack's `urls` (its heading count) leave it out.
+ */
+export type ChainNode = { kind: 'line'; line: GroupLine; also?: AlsoPlace };
 /** What a stack waits on, in words, and the action that moves it. */
 export interface StackStep {
   /**
@@ -512,6 +518,15 @@ type GroupSeed = Pick<PersonGroup, 'kind' | 'label'> & Partial<Pick<PersonGroup,
 /** Builds groups that list each PR once on the page: a PR another section or group claimed is skipped. */
 function grouper(input: Pick<MorningInput, 'signals'>, claimed: Map<string, Place>, place: Place) {
   const groups = new Map<string, PersonGroup>();
+  /** A PR's line, without claiming it: a chain's line for a PR another section lists. */
+  const line = (row: OverviewRow, member: ReviewMember, extra: Partial<GroupLine> = {}): GroupLine => {
+    const { since, source } = sinceOf(row, member);
+    const comments = commentsOf(input, [member]);
+    return {
+      id: member.url, row, member, title: member.title, since, source, target: prTarget(member.url) ?? row.target, check: checksOf(input, [member]),
+      ...(comments !== undefined ? { comments } : {}), description: `#${member.number}`, ...extra,
+    };
+  };
   const add = (key: string, seed: () => GroupSeed, row: OverviewRow, member: ReviewMember, extra: Partial<GroupLine> = {}) => {
     if (claimed.has(member.url)) return undefined;
     claimed.set(member.url, place);
@@ -519,17 +534,13 @@ function grouper(input: Pick<MorningInput, 'signals'>, claimed: Map<string, Plac
     if (!group.rows.includes(row)) group.rows.push(row);
     group.urls.push(member.url);
     if (!group.repos.includes(member.repo)) group.repos.push(member.repo);
-    const { since, source } = sinceOf(row, member);
-    const comments = commentsOf(input, [member]);
-    group.lines.push({
-      id: member.url, row, member, title: member.title, since, source, target: prTarget(member.url) ?? row.target, check: checksOf(input, [member]),
-      ...(comments !== undefined ? { comments } : {}), description: `#${member.number}`, ...extra,
-    });
-    group.oldest = Math.min(group.oldest, since);
+    const added = line(row, member, extra);
+    group.lines.push(added);
+    group.oldest = Math.min(group.oldest, added.since);
     groups.set(key, group);
     return group;
   };
-  return { groups, add };
+  return { groups, add, line };
 }
 const sortLines = (group: PersonGroup) => {
   group.rows.sort((a, b) => a.since - b.since);
@@ -660,13 +671,14 @@ export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
  *
  * Stacks: one chain per stack, keyed by the repository and number of the open PR at its bottom (never the number
  * alone), so a stack listed twice is one chain and equal numbers in two repositories stay apart. The chain lists the
- * base and every PR waiting for it, in merge order; a PR another section lists is a reference. The step says what
+ * base and every PR waiting for it, in merge order, each as a full line; a PR another section lists links there
+ * (`ChainNode.also`) and is left out of the stack's `urls`. The step says what
  * the base waits on. All stacks are one group, "Waiting for earlier PRs in a stack to merge", the most actionable
  * first (the base can merge, or needs you), then the oldest.
  */
 export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'login' | 'signals'>, claimed = new Map<string, Place>()): PersonGroup[] {
   const { model, now, login } = input;
-  const { add, groups } = grouper(input, claimed, 'others');
+  const { add, groups, line } = grouper(input, claimed, 'others');
   // Stacks: every PR of yours waiting for an earlier PR, by the PR at the bottom.
   type Waiting = { member: ReviewMember; row: OverviewRow; reasons: Set<string> };
   const stacks = new Map<string, { root: ReviewMember; subject: ReviewSubject; row: OverviewRow; waiting: Map<string, Waiting> }>();
@@ -694,8 +706,11 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
     const chain: ChainNode[] = [];
     const node = (member: ReviewMember, lineRow: OverviewRow, extra: Partial<GroupLine>) => {
       const place = claimed.get(member.url);
+      // A PR leaving the page (closing) leaves its chain too.
+      if (place === 'hidden') return;
       const group = place ? undefined : add(key, seed, lineRow, member, extra);
-      chain.push(group ? { kind: 'line', line: group.lines.at(-1) as GroupLine } : { kind: 'ref', member, place: place ?? 'others' });
+      if (group) chain.push({ kind: 'line', line: group.lines.at(-1) as GroupLine });
+      else chain.push({ kind: 'line', line: line(lineRow, member, extra), ...(place && place !== 'others' ? { also: place } : {}) });
     };
     // The base's line is its own row in the lanes, not the review row a `review` step opens.
     node(root, step.action === 'review' ? row : (step.row ?? row), { status: 'next', description: `#${root.number}, next, merges first. ${step.text}` });

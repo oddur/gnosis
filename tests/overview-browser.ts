@@ -10,10 +10,12 @@
  *
  * Every PR line leads with its state icon and shows its check state and how long it has waited, in one column that
  * lines up down a section; comment counts show above 0; action buttons carry an icon by type (a write has one, an
- * open has none); a stack header's merge says what it goes ahead without.
+ * open has none); a stack header's merge says what it goes ahead without. Every PR line and stack header has the same
+ * "…" row menu in one column, and a stack chain shows every PR of its stack in full, linking to the section that also
+ * lists one.
  *
- * Screenshots go to .impeccable/review/overview-morning-6/, light and dark: the default day, the screenshot-32 shape
- * at 1440×1000, 1920×1080 and 760 wide, the screenshot-34 chains at 1440 and 760, the screenshot-36 shape at
+ * Screenshots go to .impeccable/review/overview-morning-7/, light and dark: the default day, the screenshot-32 shape
+ * at 1440×1000, 1920×1080 and 760 wide, its stacks at 1440×1000, the screenshot-34 chains at 1440 and 760, the screenshot-36 shape at
  * 1440×1000, the screenshot-37 shape at 1440×1000 and 760, a light day, and the PR preview.
  */
 import { loadWorkbenchPage } from './workbench-ready';
@@ -38,7 +40,7 @@ void app.whenReady().then(async () => {
   });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   let step = 'start';
-  const dir = path.resolve('.impeccable/review/overview-morning-6');
+  const dir = path.resolve('.impeccable/review/overview-morning-7');
   fs.mkdirSync(dir, { recursive: true });
   // Mismatches in words and layout are collected per step, so one run reports all of them.
   const misses: string[] = [];
@@ -116,12 +118,19 @@ void app.whenReady().then(async () => {
   const rowText = (id: string) => js<string>(`(()=>{const r=document.querySelector('${P} [data-overview-row-item="${id}"]');return r?(${parts})(r):''})()`);
   // A section heading equals the sum of what its top rows say they hold: "2 PRs · …", "1 running", "4 PRs in 2 stacks", "1 failing check, 1 conflict".
   const rowSum = (name: string) => js<number>(`[...document.querySelectorAll('${section(name)} .morning-row:not(.is-nested) .morning-detail')].reduce((t,d)=>{const x=d.textContent;const why=[...x.matchAll(/([0-9]+) (failing check|conflict|restack)/g)];return t+(why.length?why.reduce((n,m)=>n+Number(m[1]),0):Number(x.match(/^[0-9]+/)?.[0] ?? 1))},0)`);
-  // Every PR the page lists, from each row's data-overview-prs: no PR twice.
-  const listed = () => js<string[]>(`[...document.querySelectorAll('${P} [data-overview-prs]')].flatMap(r=>r.dataset.overviewPrs.split(' ').filter(Boolean))`);
+  // Every PR the page lists outside stack chains, from each row's data-overview-prs: no PR twice. A chain shows its
+  // whole stack, so its lines are exempt; each is a full line, and one another section lists links there.
+  const listed = () => js<string[]>(`[...document.querySelectorAll('${P} [data-overview-prs]')].filter(r=>!r.closest('.morning-chain')).flatMap(r=>r.dataset.overviewPrs.split(' ').filter(Boolean))`);
   const noneTwice = async () => {
     const all = await listed();
     softOk(all.length > 0, 'PR lines carry data-overview-prs');
-    soft(all.filter((value, i) => all.indexOf(value) !== i), [], 'no PR appears twice on the page');
+    soft(all.filter((value, i) => all.indexOf(value) !== i), [], 'no PR appears twice on the page outside chains');
+    const chain = await js<{ id: string; title: string; prs: string; also: string | null; listed: string[] }[]>(`[...document.querySelectorAll('${P} .morning-chain > li:not(.is-gap)')].map(r=>{const a=r.querySelector('[data-overview-also]');const prs=r.dataset.overviewPrs ?? '';return {id:r.dataset.overviewRowItem ?? r.textContent,title:r.querySelector('.morning-title-text')?.textContent ?? '',prs,also:a?.dataset.overviewAlso ?? null,listed:a?[...document.querySelectorAll('${P} .morning-section[data-section="'+a.dataset.overviewAlso+'"] [data-overview-prs]')].map(e=>e.dataset.overviewPrs).filter(v=>v.split(' ').includes(prs)):[]}})`);
+    for (const entry of chain) {
+      softOk(entry.title.trim() && entry.prs, `${entry.id}: every chain line is a full line with a title`);
+      if (entry.also) softOk(entry.listed.length === 1, `${entry.id}: its "${entry.also}" link points at the row that lists it there`);
+    }
+    softOk(!(await js<boolean>(`!!document.querySelector('${P} [data-overview-chain-ref], ${P} .morning-chain-where') || [...document.querySelectorAll('${P} .morning-chain')].some(c=>/\bin (Next up|Needs a decision|Waiting on you|another section)\b/.test(c.textContent))`)), 'no "in Next up" placeholders in chains');
   };
   // Every PR line shows a check state, and says it in its description.
   const checksEverywhere = async () => {
@@ -143,6 +152,25 @@ void app.whenReady().then(async () => {
       softOk(/^Waiting since /.test(entry.title), `${entry.id} names the age's source: ${entry.title}`);
       softOk(/waiting (just now|\d+ (minute|hour|day|week)s?)/.test(entry.description), `${entry.id} says its wait: ${entry.description}`);
     }
+  };
+  // Every PR line, chain lines and Needs a decision included, has the row menu's "…" trigger, and the triggers form
+  // one column down the page. Stack headers have it too.
+  const menusEverywhere = async (label: string) => {
+    const rows = await js<{ id: string; right: number | null }[]>(`[...document.querySelectorAll('${P} [data-overview-prs], ${P} .morning-stack-head')].map(r=>{const t=r.querySelector('.morning-actions .entry-menu-trigger');return {id:r.dataset.overviewRowItem,right:t?Math.round(t.getBoundingClientRect().right):null}})`);
+    softOk(rows.length > 0, `${label}: there are PR lines`);
+    for (const entry of rows) softOk(entry.right !== null, `${label}: ${entry.id} has the row menu`);
+    const rights = [...new Set(rows.map((entry) => entry.right).filter((value) => value !== null))];
+    softOk(rights.length === 1, `${label}: the row menus form one column: ${JSON.stringify(rights)}`);
+  };
+  // Shift+F10 on a line opens its menu; the items, in order.
+  const menuItems = async (selector: string) => {
+    await js(`document.querySelector(${JSON.stringify(selector)}).focus()`);
+    await key('F10', 8);
+    await wait("!!document.querySelector('[role=menuitem]')");
+    const items = await js<string[]>("[...document.querySelectorAll('[role=menuitem]')].map(b=>b.textContent)");
+    await key('Escape');
+    await wait("!document.querySelector('[role=menuitem]')");
+    return items;
   };
   // Ages line up: one right edge per section.
   const agesAligned = async (label: string) => {
@@ -505,8 +533,31 @@ void app.whenReady().then(async () => {
     ], 'Waiting on others, screenshot 32');
     soft(await rowSum('others'), Number(await count('others')), 'Waiting on others: heading = rows');
     soft(await rowSum('you'), Number(await count('you')), 'Waiting on you: heading = rows');
-    // The base in Next up or Needs a decision is a reference in its chain, not a second line.
-    soft(await js(`[...document.querySelectorAll('${P} [data-overview-chain-ref]')].map(r=>r.textContent)`), ['#383in Next upNext', '#376in Next upNext', '#380in Needs a decisionNext']);
+    // A base Next up or Needs a decision lists is still a full line in its chain, and ends in a quiet link there.
+    soft(await js(`[...document.querySelectorAll('${P} .morning-chain [data-overview-also]')].map(a=>[a.closest('[data-overview-row-item]').querySelector('.morning-number').textContent, a.textContent, a.getAttribute('aria-label'), [...a.querySelector('svg').classList].find(c=>c.startsWith('lucide-'))])`), [
+      ['#383', 'Next up', 'Also listed in Next up', 'lucide-arrow-up'],
+      ['#376', 'Next up', 'Also listed in Next up', 'lucide-arrow-up'],
+      ['#380', 'Needs a decision', 'Also listed in Needs a decision', 'lucide-arrow-down'],
+    ], 'chain lines listed elsewhere link there');
+    const steam = `others|stacks|stack:klang/service-payment-bridge#383|${url('klang/service-payment-bridge', 383)}`;
+    softOk(/^#383 \| .+ \| Next \| \d+ [mhdw]$/.test(await rowText(steam)), `#383 is a full line in its chain: ${await rowText(steam)}`);
+    softOk(/also listed in Next up\. A goes there$/.test((await description(row(steam))) ?? ''), 'its description says where else it is listed');
+    // The link scrolls to the Next up row that lists #383, and focuses it.
+    await js(`document.querySelector('${P} [data-overview-row-item="${steam}"] [data-overview-also]').scrollIntoView({block:'center'})`);
+    await click(`${P} [data-overview-row-item="${steam}"] [data-overview-also]`);
+    await wait(`document.activeElement?.closest('${section('next')}') !== null && document.activeElement?.closest('[data-overview-prs]')?.dataset.overviewPrs.split(' ').includes('${url('klang/service-payment-bridge', 383)}')`);
+    softOk(await js<boolean>(`(()=>{const r=document.activeElement.getBoundingClientRect();const b=document.querySelector('${P} .overview-body').getBoundingClientRect();return r.top>=b.top&&r.bottom<=b.bottom})()`), 'the Next up row is scrolled into view');
+    // A on a chain line follows its link: #380 goes down to Needs a decision.
+    const i18n380 = `others|stacks|stack:klang/seed-launcher#380|${url('klang/seed-launcher', 380)}`;
+    await js(`document.querySelector('${row(i18n380)}').focus()`);
+    await key('a');
+    await wait(`document.activeElement?.closest('${section('decide')}') !== null && document.activeElement?.closest('[data-overview-prs]')?.dataset.overviewPrs === '${url('klang/seed-launcher', 380)}'`);
+    // The same "…" menu on every PR line, in one column; Shift+F10 opens it on a chain line and a decision alike.
+    await menusEverywhere('real4 1440');
+    const PR_MENU = ['Open', 'Snooze PR…', 'Mark as read', 'Copy link', 'Copy repository', 'Copy PR number', 'Open on GitHub'];
+    soft(await menuItems(row(`others|stacks|stack:klang/service-payment-bridge#383|${url('klang/service-payment-bridge', 384)}`)), PR_MENU, 'Shift+F10 on a chain line');
+    soft(await menuItems(`${section('decide')} [data-overview-prs="${url('klang/seed-launcher', 380)}"] [data-overview-row]`), PR_MENU, 'Shift+F10 on a Needs a decision line');
+    soft(await menuItems(row('others|stacks|stack:klang/service-payment-bridge#383')), ['Open', 'Snooze stack…', 'Mark as read'], 'Shift+F10 on a stack header');
     await noneTwice();
     await checksEverywhere();
     await linesComplete();
@@ -517,6 +568,15 @@ void app.whenReady().then(async () => {
     await js(`document.activeElement?.blur(); document.querySelector('${P} .overview-body').scrollTop = 0`);
     await dismissToasts();
     await both('real4-1440x1000');
+    // The stacks section: every chain line in full, with its link to Next up or Needs a decision.
+    await js(`(()=>{const e=document.querySelector('${P} [data-overview-row="others|stacks"]');const b=e.closest('.overview-body');b.scrollTop+=e.getBoundingClientRect().top-b.getBoundingClientRect().top-60})()`);
+    await both('stacks-real4-1440x1000');
+    // A hovered chain line shows its "…" menu in the same column as every other line's. The pointer rests on its age,
+    // away from the title's PR preview.
+    const [hx, hy] = await js<[number, number]>(`(()=>{const r=document.querySelector('${P} [data-overview-row-item="others|stacks|stack:klang/service-payment-bridge#383|${url('klang/service-payment-bridge', 384)}"] .morning-age').getBoundingClientRect();return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]})()`);
+    await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hx, y: hy });
+    await both('stacks-real4-menu-1440x1000');
+    await unhover();
     await resize(1920, 1080);
     {
       // Wide: the page keeps its reading width and centres; the toolbar shares its edges.
@@ -626,11 +686,11 @@ void app.whenReady().then(async () => {
       '#37578 | feat: one seed-api event pipeline with pluggable kinds and a my_events pull tool | passing | Waiting | 1 h',
     ], 'the chain: Next, then Waiting');
     soft(await js(`[...document.querySelectorAll('${P} [data-overview-stack="stack:klang/seed-launcher#376"] .morning-chain > li')].map(${parts})`), [
-      '#376 | Next',
+      '#376 | refactor: model the store distribution channel instead of Steam-only flags | passing | Next | 2 h',
       '#382 | fix: quit a store-launched launcher when its last window closes | passing | Waiting | 2 h',
       '#378 | feat: log in with Epic on Epic Games Store launches (L3) | passing | Waiting | 2 h',
       '#385 | feat: import Epic purchases after an Epic login, before play (L3b) | passing | Waiting | 2 h',
-    ], 'EPIC: its base in Next up, the rest Waiting');
+    ], 'EPIC: its base a full line (also in Next up), the rest Waiting');
     soft(await description(row(`${market}|${url('klang/seed', 37378)}`)), '#37378, waiting, after #35392, checks passing, waiting 1 hour');
     soft(await rowSum('others'), Number(await count('others')), 'Waiting on others: heading = rows');
     await noneTwice();
@@ -667,7 +727,7 @@ void app.whenReady().then(async () => {
     // Comments: the queue row's badge, above 0 only, and in the description.
     const comments = await js<Record<string, string>>(`Object.fromEntries([...document.querySelectorAll('${P} [data-overview-comments]')].map(e=>[e.closest('[data-overview-row-item]').querySelector('.morning-number')?.textContent ?? e.closest('[data-overview-row-item]').dataset.overviewRowItem, e.textContent]))`);
     soft(comments['#377'], '12', 'the lone re-review has 12 comments');
-    soft(comments['#383'], '3', '#383 shows its 3 comments in Next up; its chain refers to it there');
+    soft(comments['#383'], '3', '#383 shows its 3 comments, in Next up and in its chain');
     softOk(!(await js<boolean>(`[...document.querySelectorAll('${P} [data-overview-comments]')].some(e=>e.textContent==='0')`)), 'no badge reads 0');
     softOk(!(await js<boolean>(`[...document.querySelectorAll('${P} .morning-comments:not([data-overview-comments])')].some(e=>e.textContent.trim()||e.querySelector('svg'))`)), 'a PR with no comments shows nothing');
     soft(await description(row(`next|review|${url('klang/seed-launcher', 377)}`)), 'Re-review, +42 lines since your review, seed-launcher #377, checks passing, 12 comments, waiting 5 hours, about 3 minutes');
