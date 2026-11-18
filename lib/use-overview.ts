@@ -66,7 +66,9 @@ export function useOverview(input: {
   );
   // Visible priority while the Overview is the shown tab; background while it only resolves the queue's lane filter.
   const { values, checking, pending } = useOverviewStatus(scope, requests, live && !!login, visible);
-  const now = useStatusNow() || Date.now();
+  // The clock ticks only while the lanes are shown or kept current. HomePage calls this hook for Group by Action; with the
+  // clock always on, every focus and 30-second tick re-rendered HomePage, and with it an open PR summary.
+  const now = useStatusNow(items.length > 0 && (live || visible)) || Date.now();
   const status = useMemo(
     () => statusFreshness(requests, new Map(values.map((value) => [queueSignalKey(value), value])), pending, now),
     [requests, values, pending, now]

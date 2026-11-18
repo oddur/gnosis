@@ -79,9 +79,12 @@ export const statusClock = createStatusClock();
 /**
  * The shared status time. The component renders again when it ticks, as a transition: a tick on window focus lands
  * just before the click that focused the window, and "2m ago" can wait for that click (#345).
+ *
+ * While `active` is false the component does not listen and keeps the last time it read; it reads the current time
+ * again when it becomes active. A hook a parent page calls for something hidden must not re-render that page on a tick.
  */
-export function useStatusNow() {
-  return useTransitionStore(statusClock.subscribe, statusClock.getSnapshot);
+export function useStatusNow(active = true) {
+  return useTransitionStore(active ? statusClock.subscribe : null, statusClock.getSnapshot);
 }
 
 /**
