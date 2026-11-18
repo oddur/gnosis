@@ -31,8 +31,8 @@
  * `urls` are exactly its lines' PRs.
  *
  * **Waiting on you elsewhere.** A PR waiting on you that Next up or Needs a decision lists is not in Waiting on you,
- * so the section points at where it went, by name and as a link (`waitingOnYouNote`): "#377 and #37286’s stack (6 PRs)
- * are in Next up." "Nobody is waiting on you." only when nobody is.
+ * so the section points at where it went, by name and as a link (`waitingOnYouNote`): "Shown in Next up: #377 and #37286’s
+ * stack (6 PRs)." "Nobody is waiting on you." only when nobody is.
  *
  * **Briefing** (`morningBriefing`): counted from the sections, never apart from them, and each number links to the
  * rows it counts. Reviews and re-reviews apart, with their stacks spelled out ("7 re-reviews (6 in one stack)");
@@ -48,7 +48,7 @@
  *   cheapest first; then the step that unblocks most PRs; then the longest wait. PRs that need a decision (stuck over a
  *   week) come after the rest, so they stay in Needs a decision unless there is nothing else to do.
  * - A stacked PR whose base has not merged is not the next step; its base is. A base's merge says what it unblocks:
- *   "approved by lena · unblocks 3 PRs". Only an approved, passing base is a row, as for any merge. A row never says
+ *   "approved by lena · 3 PRs wait on it". Only an approved, passing base is a row, as for any merge. A row never says
  *   "green": its check state already shows passing.
  * - **One row per stack, with its one next step.** When you owe a review or re-review on any PR of a stack (its base
  *   included), the review is the next step: the base's merge is not offered, and the review row says what follows
@@ -106,6 +106,8 @@ export const QUOTE_LENGTH = 60;
 const same = (a: string | undefined, b: string) => !!a && a.toLowerCase() === b.toLowerCase();
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const prs = (n: number) => plural(n, 'PR', 'PRs');
+/** "3 PRs wait on it": the PRs above a stack's base that merging it lets go ahead. */
+const waitOnIt = (n: number) => `${prs(n)} ${n === 1 ? 'waits' : 'wait'} on it`;
 const time = (value: string | undefined) => {
   const parsed = value ? Date.parse(value) : NaN;
   return Number.isFinite(parsed) ? parsed : undefined;
@@ -161,7 +163,7 @@ export interface NextItem {
   unblocks?: number;
   /** A fix: what is wrong. */
   fix?: FixReason;
-  /** One line: "approved by lena", "approved by lena · unblocks 3 PRs", "1060 lines", "failing checks". */
+  /** One line: "approved by lena", "approved by lena · 3 PRs wait on it", "1060 lines", "failing checks". */
   why: string;
   /** The internal ordering weight (`effortRank`): orders Next up, never shown. */
   rank: number;
@@ -360,7 +362,7 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     if (review.kind !== 'approved' && review.kind !== 'no-review') continue;
     const unblocks = openAbove(row.item.subject, member).length;
     // The check state shows passing on the row: the words do not say "green" again.
-    const why = [review.kind === 'approved' ? review.text.replace(/^Approved/, 'approved') : 'not reviewed', unblocks ? `unblocks ${prs(unblocks)}` : '']
+    const why = [review.kind === 'approved' ? review.text.replace(/^Approved/, 'approved') : 'no review', unblocks ? waitOnIt(unblocks) : '']
       .filter(Boolean)
       .join(' · ');
     add({
@@ -474,7 +476,7 @@ export const PLACE_LABEL: Readonly<Record<Exclude<Place, 'hidden' | 'others'>, s
  * the PR needs you whatever happens below it. "Ready" is not used in chains: no PR above an open base can merge.
  */
 export type ChainStatus = 'next' | 'waiting' | 'conflicts';
-export const CHAIN_STATUS_LABEL: Readonly<Record<ChainStatus, string>> = { next: 'Next', waiting: 'Waiting', conflicts: 'Conflicts' };
+export const CHAIN_STATUS_LABEL: Readonly<Record<ChainStatus, string>> = { next: 'First', waiting: 'Waiting', conflicts: 'Conflicts' };
 
 /** One PR under a group. */
 export interface GroupLine {
@@ -514,12 +516,12 @@ export type ChainNode = { kind: 'line'; line: GroupLine; also?: AlsoPlace };
 /** What a stack waits on, in words, and the action that moves it. */
 export interface StackStep {
   /**
-   * "Merge #376 to unblock 3 PRs", "Merge #376 (not reviewed, no checks) to unblock 3 PRs", "#36948 is waiting on
-   * checks", "#379 waits on review from lena", "#379 has conflicts", "Re-review 6 PRs first, then merge #35392".
+   * "Merge #376; 3 PRs wait on it", "Merge #376 (no review, no checks); 3 PRs wait on it", "#36948 is waiting on
+   * checks", "#379 waits on review from lena", "#379 has conflicts", "Review 6 PRs again first, then merge #35392".
    */
   text: string;
   /**
-   * A merge: what the merge goes ahead without, in Next up's words: "not reviewed", "no checks", "failing checks",
+   * A merge: what the merge goes ahead without, in Next up's words: "no review", "no checks", "failing checks",
    * "checks running". Empty for an approved, passing base. The header and its button's tooltip both say them.
    */
   caveats?: string[];
@@ -542,7 +544,7 @@ export interface PersonGroup {
   /** `person:lena`, `unassigned`, `team`, `team:org/name`, `review`, `ci`, `stack:owner/repo#380`, `stacks`, `you`. */
   key: string;
   kind: 'person' | 'unassigned' | 'team' | 'ci' | 'stack' | 'stacks' | 'you' | 'review';
-  /** "lena", "team", "CI", "Launcher i18n", "Waiting for earlier PRs in a stack to merge", "you". */
+  /** "lena", "Your team", "Checks", "Launcher i18n", "Waiting for earlier PRs in a stack to merge", "you". */
   label: string;
   /** "2 PRs · oldest 4 d", "3 running", "2 failing checks, 1 conflict", "13 PRs in 5 stacks", "4 PRs". */
   detail: string;
@@ -619,7 +621,7 @@ const sortLines = (group: PersonGroup) => {
 
 /**
  * Waiting on you: review requests and re-reviews by author, replies and change requests by who wrote, oldest wait
- * first; then PRs whose requester is not known ("unassigned"), and team requests last: "team · 3 review requests".
+ * first; then PRs whose requester is not known ("Unknown requester"), and team requests last: "Your team · 3 review requests".
  * A PR in two lanes (a reply and a re-review) is listed once, under its oldest wait. PRs in `claimed` are left out.
  */
 export function waitingOnYou(input: Pick<MorningInput, 'model' | 'now' | 'login' | 'signals'>, claimed = new Map<string, Place>()): PersonGroup[] {
@@ -629,9 +631,9 @@ export function waitingOnYou(input: Pick<MorningInput, 'model' | 'now' | 'login'
     const team = row.lane === 'review' && !row.reasons.includes('updated-since-review') && row.entries.every((entry) => reviewRequest(entry.member, input.login) === 'team');
     const person = row.person ?? (row.lane === 'review' && !same(row.focus.author, input.login) ? row.focus.author : undefined);
     for (const { member } of row.entries) {
-      if (team) add('team', () => ({ kind: 'team', label: 'team' }), row, member);
+      if (team) add('team', () => ({ kind: 'team', label: 'Your team' }), row, member);
       else if (person) add(`person:${person.toLowerCase()}`, () => ({ kind: 'person', label: person }), row, member);
-      else add('unassigned', () => ({ kind: 'unassigned', label: 'unassigned' }), row, member);
+      else add('unassigned', () => ({ kind: 'unassigned', label: 'Unknown requester' }), row, member);
     }
   }
   const order: PersonGroup['kind'][] = ['person', 'unassigned', 'team'];
@@ -679,7 +681,7 @@ function openRoot(subject: ReviewSubject, member: ReviewMember): ReviewMember | 
  */
 export function mergeCaveats(row: Pick<OverviewRow, 'merge'>, checks?: Pick<CheckView, 'state'>): string[] {
   const caveats: string[] = [];
-  if (row.merge?.notes[0]?.kind !== 'approved') caveats.push('not reviewed');
+  if (row.merge?.notes[0]?.kind !== 'approved') caveats.push('no review');
   const words: Partial<Record<CheckView['state'], string>> = { neutral: 'no checks', failure: 'failing checks', pending: 'checks running' };
   const word = checks && words[checks.state];
   if (word) caveats.push(word);
@@ -709,16 +711,16 @@ export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
   // You owe a review on a PR of this stack: the review comes first, and the base merges after it.
   const owed = (lanes(model, 'review')?.rows ?? []).find((row) => row.item.subject.members.some((candidate) => candidate.url === member.url));
   if (owed && ((merge && merge.merge?.member.url === member.url) || parked)) {
-    const verb = owed.reasons.includes('updated-since-review') ? 'Re-review' : 'Review';
-    return { member, row: owed, action: 'review', actionable: true, text: `${verb} ${owed.entries.length > 1 ? prs(owed.entries.length) : `#${owed.focus.number}`} first, then merge ${n}` };
+    const again = owed.reasons.includes('updated-since-review') ? ' again' : '';
+    return { member, row: owed, action: 'review', actionable: true, text: `Review ${owed.entries.length > 1 ? prs(owed.entries.length) : `#${owed.focus.number}`}${again} first, then merge ${n}` };
   }
   if (merge && merge.merge?.member.url === member.url) {
     const caveats = mergeCaveats(merge, checks);
     const merging = `Merge ${n}${caveats.length ? ` (${caveats.join(', ')})` : ''}`;
     // Only an approved, passing base gets the Merge button; one nobody reviewed, or without checks, opens the PR.
-    return { member, row: merge, action: caveats.length ? 'open' : 'merge', actionable: true, caveats, text: unblocks ? `${merging} to unblock ${prs(unblocks)}` : merging };
+    return { member, row: merge, action: caveats.length ? 'open' : 'merge', actionable: true, caveats, text: unblocks ? `${merging}; ${waitOnIt(unblocks)}` : merging };
   }
-  if (parked) return { member, row: parked, action: 'open', actionable: true, text: parked.merge?.notes[0]?.kind === 'approved' ? `${n} is approved and can merge` : `${n} can merge, not reviewed` };
+  if (parked) return { member, row: parked, action: 'open', actionable: true, text: parked.merge?.notes[0]?.kind === 'approved' ? `${n} is approved and can merge` : `${n} can merge without review` };
   const waiting = find('waiting');
   if (waiting) {
     const why = reasons(waiting);
@@ -788,7 +790,7 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
       else chain.push({ kind: 'line', line: line(lineRow, member, extra), ...(place && place !== 'others' ? { also: place } : {}) });
     };
     // The base's line is its own row in the lanes, not the review row a `review` step opens.
-    node(root, step.action === 'review' ? row : (step.row ?? row), { status: 'next', description: `#${root.number}, next, merges first. ${step.text}`, ...(label === root.title ? { bare: true } : {}) });
+    node(root, step.action === 'review' ? row : (step.row ?? row), { status: 'next', description: `#${root.number}, merges first. ${step.text}`, ...(label === root.title ? { bare: true } : {}) });
     for (const { member, row: lineRow, reasons } of above) {
       const parent = openParent(subject, member);
       const status: ChainStatus = reasons.has('conflicts') ? 'conflicts' : 'waiting';
@@ -816,7 +818,7 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
       else add('review', () => ({ kind: 'review', label: 'a reviewer' }), row, member, { description: `#${member.number}, waits on a reviewer` });
     }
     for (const entry of row.entries)
-      if (entry.reasons.includes('checks-pending')) add('ci', () => ({ kind: 'ci', label: 'CI' }), row, entry.member, { description: `#${entry.member.number}, checks running` });
+      if (entry.reasons.includes('checks-pending')) add('ci', () => ({ kind: 'ci', label: 'Checks' }), row, entry.member, { description: `#${entry.member.number}, checks running` });
   }
   for (const row of lanes(model, 'fix')?.rows ?? [])
     for (const entry of row.entries) {
@@ -875,7 +877,7 @@ export interface DecisionItem {
   /** The PR Close and Snooze act on. */
   member: ReviewMember;
   reason: DecisionReason;
-  /** "Failing checks", "Never approved", "Idle". The age is its own column (`since`). */
+  /** "Failing checks", "No approval", "No activity". The age is its own column (`since`). */
   label: string;
   /** When the PR started failing, opened, or was last updated, and where that time comes from. */
   since: number;
@@ -903,8 +905,8 @@ export function needsDecision(input: Pick<MorningInput, 'model' | 'now' | 'signa
     const created = time(member.createdAt) ?? now;
     let item: Pick<DecisionItem, 'reason' | 'label' | 'since' | 'source'> | undefined;
     if (row.lane === 'fix' && row.reasons.includes('checks-failed') && now - row.since >= DECISION_MS) item = { reason: 'failing', label: 'Failing checks', since: row.since, source: row.source };
-    else if (row.merge && row.merge.notes[0]?.kind === 'unapproved' && now - created >= DECISION_MS) item = { reason: 'unapproved', label: 'Never approved', since: created, source: 'opened' };
-    else if (now - updated >= DECISION_MS) item = { reason: 'idle', label: 'Idle', since: updated, source: 'updated' };
+    else if (row.merge && row.merge.notes[0]?.kind === 'unapproved' && now - created >= DECISION_MS) item = { reason: 'unapproved', label: 'No approval', since: created, source: 'opened' };
+    else if (now - updated >= DECISION_MS) item = { reason: 'idle', label: 'No activity', since: updated, source: 'updated' };
     if (item) {
       seen.add(member.url);
       const comments = commentsOf(input, [member]);
@@ -947,7 +949,8 @@ export interface PageLink {
 }
 /**
  * What Waiting on you says about the PRs waiting on you that it does not list: where they are, by name, as links.
- * "#377 and #37286’s stack (6 PRs) are in Next up.", "#311 is in Next up, and 2 are in Needs a decision.", and
+ * "Shown in Next up: #377 and #37286’s stack (6 PRs).", "Shown in Next up: #311. Shown in Needs a
+ * decision: 2 PRs.", and
  * "Nobody is waiting on you." when nobody is. Empty when the section lists them all.
  */
 export function waitingOnYouNote(listed: number, elsewhere: YouElsewhere): { parts: (string | PageLink)[]; text: string } {
@@ -962,13 +965,12 @@ export function waitingOnYouNote(listed: number, elsewhere: YouElsewhere): { par
     const shown = names.length > 3 ? [...names.slice(0, 2), `${names.length - 2} more`] : names;
     const list = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0];
     const many = names.length > 1 || elsewhere.next[0].urls.length > 1;
-    parts.push({ text: `${list} ${many ? 'are' : 'is'} in Next up`, urls: elsewhere.next.flatMap((entry) => entry.urls), place: 'next' });
+    parts.push('Shown in Next up: ', { text: list, urls: elsewhere.next.flatMap((entry) => entry.urls), place: 'next' }, '.');
   }
   if (decide) {
-    if (parts.length) parts.push(', and ');
-    parts.push({ text: `${decide} ${decide === 1 ? 'is' : 'are'} in Needs a decision`, urls: elsewhere.decide, place: 'decide' });
+    if (parts.length) parts.push(' ');
+    parts.push('Shown in Needs a decision: ', { text: prs(decide), urls: elsewhere.decide, place: 'decide' }, '.');
   }
-  parts.push('.');
   return { parts, text: parts.map((part) => (typeof part === 'string' ? part : part.text)).join('') };
 }
 
@@ -1002,7 +1004,7 @@ export interface Briefing {
  * The briefing. Every number is counted from the sections below it, never apart from them, and links to the rows it
  * counts. Each PR counts once, under its section's reason.
  * - Who is blocked on you: replies and change requests on your PRs (at most two people named), then reviews and
- *   re-reviews, each saying how many sit in stacks: "7 re-reviews (6 in one stack) are waiting on you."
+ *   re-reviews, each saying how many sit in stacks: "7 updated PRs (6 in one stack) are waiting on your review."
  * - Your PRs: approved merges (Next up's rows, and the quiet line), merges without review (the quiet line), then fixes
  *   by their first reason, as the You group counts them: failing checks, conflicts, rebasing. A fix Needs a decision
  *   lists is counted there instead.
@@ -1053,8 +1055,8 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, p
   const reviewClause: Clause = [];
   let reviews = 0;
   for (const kind of [
-    { key: 'reviews' as const, rows: review.filter(({ row }) => !row.reasons.includes('updated-since-review')), one: 'review', many: 'reviews' },
-    { key: 'rereviews' as const, rows: review.filter(({ row }) => row.reasons.includes('updated-since-review')), one: 're-review', many: 're-reviews' },
+    { key: 'reviews' as const, rows: review.filter(({ row }) => !row.reasons.includes('updated-since-review')), one: 'PR', many: 'PRs' },
+    { key: 'rereviews' as const, rows: review.filter(({ row }) => row.reasons.includes('updated-since-review')), one: 'updated PR', many: 'updated PRs' },
   ]) {
     const value = count(kind.key, kind.rows.flatMap(({ urls }) => urls), (n) => plural(n, kind.one, kind.many));
     if (!value) continue;
@@ -1067,7 +1069,7 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, p
     reviewClause.push(value);
     if (stacked.length) reviewClause.push(inStacks === value.count ? ` (${stacked.length === 1 ? 'one stack' : `in ${where}`})` : ` (${inStacks} in ${where})`);
   }
-  if (reviewClause.length) blocked.push([...reviewClause, ` ${reviews === 1 ? 'is' : 'are'} waiting on you`]);
+  if (reviewClause.length) blocked.push([...reviewClause, ` ${reviews === 1 ? 'is' : 'are'} waiting on your review`]);
   sentence(blocked, true);
 
   // Your PRs: merges, then fixes by their first reason.
@@ -1140,9 +1142,9 @@ export function nudgeConfirmation(group: Pick<PersonGroup, 'nudge'>): { title: s
   const members = group.nudge?.members ?? [];
   const list = members.map((member) => `#${member.number}`).join(', ');
   return {
-    title: `Nudge ${reviewer}?`,
+    title: `Remind ${reviewer}?`,
     body: `Gnosis asks GitHub to request ${reviewer}’s review again on ${members.length === 1 ? 'PR' : 'PRs'} ${list}. GitHub notifies ${reviewer}.`,
-    action: members.length === 1 ? 'Re-request review' : `Re-request ${members.length} reviews`,
+    action: `Remind ${reviewer}`,
   };
 }
 /** Close PR: the request, with the optional comment trimmed (empty means none). */

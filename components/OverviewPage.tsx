@@ -508,7 +508,7 @@ export function OverviewPage(props: OverviewPageProps) {
           next.delete(member.url);
           return next;
         });
-        toast.add({ type: 'error', title: `Could not close #${member.number}`, description: writeErrorDetail(cause) });
+        toast.add({ type: 'error', title: `Could not close #${member.number}`, description: `${writeErrorDetail(cause)} The PR is still open. Try again, or close it on GitHub.` });
       }
     );
   }, []);
@@ -612,10 +612,10 @@ export function OverviewPage(props: OverviewPageProps) {
           if (!value) return;
           if (sent.length) {
             setNudged((current) => new Set([...current, value.key]));
-            toast.add({ type: 'success', title: `Asked ${value.label} to review ${prs(sent.length)} again` });
+            toast.add({ type: 'success', title: `Reminded ${value.label} to review ${prs(sent.length)}` });
             callbacks.current.onRefresh();
           }
-          if (error) toast.add({ type: 'error', title: `Could not nudge ${value.label}`, description: error });
+          if (error) toast.add({ type: 'error', title: `Could not remind ${value.label}`, description: `${error} Try again, or ask for the review on GitHub.` });
         }}
       />
       <ClosePrDialog member={closingPr} onClose={() => setClosingPr(null)} onConfirm={confirmClose} />
@@ -658,7 +658,7 @@ export function OverviewPage(props: OverviewPageProps) {
               </span>
             ) : null}
             {authenticated && view.checking > 0 ? (
-              <span data-overview-checking title={`Reading the status of ${view.checking} PRs from GitHub. Each joins its section when GitHub answers.`}>
+              <span data-overview-checking title={`Reading the status of ${prs(view.checking)} from GitHub. Each PR joins its section when GitHub answers.`}>
                 checking {prs(view.checking)}
               </span>
             ) : authenticated && view.unchecked > 0 ? (
@@ -1126,7 +1126,7 @@ function Words({ text }: { text: string }) {
 
 /** Out of the tab order: Tab moves between sections, and A runs the focused row's action. */
 const SHORTCUT = { 'data-quick-action': true, 'aria-keyshortcuts': 'A', tabIndex: -1 };
-const NEXT_ACTION: Readonly<Record<NextItem['kind'], string>> = { merge: 'Merge', rereview: 'Re-review', reply: 'Reply', changes: 'Open', review: 'Review', fix: 'Open' };
+const NEXT_ACTION: Readonly<Record<NextItem['kind'], string>> = { merge: 'Merge', rereview: 'Review again', reply: 'Reply', changes: 'Open', review: 'Review', fix: 'Open' };
 /** The words a row's description adds for its comments and its wait: ", 3 comments, waiting 4 days". */
 const extrasSpoken = (comments: number | undefined, waited: string) => [commentsSpoken(comments), `waiting ${spokenWaiting(waited)}`].filter(Boolean).join(', ');
 /** Buttons that change something carry their icon (`actionIcons`); buttons that only open a PR carry none. */
@@ -1143,7 +1143,7 @@ const NextRow = memo(
     const repos = [...new Set(members.map((entry) => entry.repo))];
     const single = item.urls.length === 1;
     const failing = item.kind === 'fix' && item.fix === 'failing' ? row.entries.filter((entry) => entry.reasons.includes('checks-failed')).map((entry) => entry.member) : [];
-    const action = failing.length ? 'Rerun failed' : NEXT_ACTION[item.kind];
+    const action = failing.length ? 'Rerun failed checks' : NEXT_ACTION[item.kind];
     // A stack row opens where its row does (the stack's review); a single PR opens that PR.
     const target = !single || member.url === row.focus.url ? row.target : (prTarget(member.url) ?? row.target);
     const quick =
@@ -1205,7 +1205,7 @@ function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMe
       onChanged={onChanged}
       load={load}
       trigger={(open, busy) => (
-        <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title="Re-run failed jobs… · A" disabled={busy} onClick={open}>
+        <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title="Rerun failed checks… · A" disabled={busy} onClick={open}>
           <RerunIcon size={13} aria-hidden="true" />
           {busy ? 'Reading…' : 'Rerun'}
         </Button>
@@ -1354,11 +1354,11 @@ const GroupRows = memo(
     const name = groupLabel(group);
     const quick = group.nudge ? (
       nudged ? (
-        <span className="morning-done">Nudged</span>
+        <span className="morning-done">Reminded</span>
       ) : (
-        <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${group.nudge.reviewer}’s review again… · A`} onClick={() => actions.nudge(group)}>
+        <Button size="xs" variant="outline" {...SHORTCUT} title={`Remind ${group.nudge.reviewer} to review… · A`} onClick={() => actions.nudge(group)}>
           <NudgeIcon size={13} aria-hidden="true" />
-          Nudge
+          Remind
         </Button>
       )
     ) : group.kind === 'you' ? (
@@ -1384,7 +1384,7 @@ const GroupRows = memo(
           check={group.check}
           quick={quick}
           expanded={view.disclosure ? view.expanded : undefined}
-          description={`${spoken}${view.disclosure ? `. ${view.expanded ? 'Expanded' : 'Collapsed'}` : ''}${group.nudge && !nudged ? '. A nudges' : ''}`}
+          description={`${spoken}${view.disclosure ? `. ${view.expanded ? 'Expanded' : 'Collapsed'}` : ''}${group.nudge && !nudged ? `. A reminds ${group.nudge.reviewer}` : ''}`}
           onActivate={() => (view.disclosure ? actions.toggle(id) : first && actions.open(first.row, first.target))}
         />
         {view.lines.map((line) => {
@@ -1472,12 +1472,12 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions, qualify }:
     </Button>
   ) : step.action === 'nudge' && step.reviewer ? (
     nudged ? (
-      <span className="morning-done">Nudged</span>
+      <span className="morning-done">Reminded</span>
     ) : (
-      <Button size="xs" variant="outline" {...SHORTCUT} title={`Request ${step.reviewer}’s review of #${step.member.number} again… · A`}
+      <Button size="xs" variant="outline" {...SHORTCUT} title={`Remind ${step.reviewer} to review #${step.member.number}… · A`}
         onClick={() => actions.nudge({ key: `nudge:${stack.key}`, kind: 'person', label: step.reviewer ?? '', detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer: step.reviewer ?? '', members: [step.member] } })}>
         <NudgeIcon size={13} aria-hidden="true" />
-        Nudge
+        Remind
       </Button>
     )
   ) : (
@@ -1491,7 +1491,7 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions, qualify }:
       <PrStateIcon pr={member} size={14} decorative />
     </span>
   );
-  const what = step.action === 'merge' ? `A merges #${step.member.number}` : step.action === 'review' ? `A opens the ${step.row ? reviewVerb(step.row).toLowerCase() : 'review'}` : step.action === 'nudge' && !nudged ? 'A nudges' : `A opens #${step.member.number}`;
+  const what = step.action === 'merge' ? `A merges #${step.member.number}` : step.action === 'review' ? 'A opens the review' : step.action === 'nudge' && !nudged ? `A reminds ${step.reviewer}` : `A opens #${step.member.number}`;
   return (
     <li className={`morning-stack depth-1${expanded ? ' is-expanded' : ''}`} data-overview-stack={stack.key}>
       <RowShell
@@ -1585,7 +1585,7 @@ declare global {
     __overviewRenderedRows?: string[];
   }
 }
-const reviewVerb = (row: OverviewRow) => (row.reasons.includes('updated-since-review') ? 'Re-review' : 'Review');
+const reviewVerb = (row: OverviewRow) => (row.reasons.includes('updated-since-review') ? 'Review again' : 'Review');
 const menuFor = (row: OverviewRow) => (row.kind === 'stack' ? `stack ${row.title}` : `PR #${row.focus.number}`);
 /**
  * The menu every PR row shares: open, snooze, mark read, copy, Open on GitHub. `members`: the PRs the row stands for,

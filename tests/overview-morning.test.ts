@@ -28,6 +28,8 @@ import {
   chainNumber,
   qualifyChains,
   stackLine,
+  CHAIN_STATUS_LABEL,
+  PLACE_LABEL,
   type GroupLine,
   type PersonGroup,
 } from '../lib/morning';
@@ -315,15 +317,15 @@ void test('a stacked PR waits for its base; the base merge is the next step and 
   status[base.url] = approved(base);
   const model = build([stack([base, ...rest], 'epic', 'STACK: EPIC')], status);
   const result = page(model, status);
-  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.urls.length, entry.unblocks]), [['merge', 'STACK: EPIC', 'approved by lena · unblocks 3 PRs', 1, 3]]);
+  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.urls.length, entry.unblocks]), [['merge', 'STACK: EPIC', 'approved by lena · 3 PRs wait on it', 1, 3]]);
   assert.equal(nextMoreLine(result.next), undefined, 'the stacked PRs above it are not ready on their own');
   const stacks = result.others.find((group) => group.kind === 'stacks');
   const chain = must(stacks?.children?.[0]);
-  assert.equal(must(chain.step).text, 'Merge #376 to unblock 3 PRs');
+  assert.equal(must(chain.step).text, 'Merge #376; 3 PRs wait on it');
   assert.equal(must(chain.step).action, 'merge');
   // The base is in Next up: the chain still shows it as a full line, linked there, and the three PRs above it.
   assert.deepEqual(must(chain.chain).map((node) => `#${node.line.member.number} ${node.line.status} · ${node.line.description}${node.also ? ` · also ${node.also}` : ''}`), [
-    '#376 next · #376, next, merges first. Merge #376 to unblock 3 PRs · also next',
+    '#376 next · #376, merges first. Merge #376; 3 PRs wait on it · also next',
     '#377 waiting · #377, waiting, after #376',
     '#378 waiting · #378, waiting, after #377',
     '#379 waiting · #379, waiting, after #378',
@@ -335,7 +337,7 @@ void test('a stacked PR waits for its base; the base merge is the next step and 
   assert.deepEqual(unreviewed.next.items, []);
   assert.equal(nextMoreLine(unreviewed.next), '1 ready to merge without review');
   const step = must(unreviewed.others.find((group) => group.kind === 'stacks')?.children?.[0]?.step);
-  assert.deepEqual([step.text, step.action, step.caveats], ['Merge #376 (not reviewed) to unblock 3 PRs', 'open', ['not reviewed']]);
+  assert.deepEqual([step.text, step.action, step.caveats], ['Merge #376 (no review); 3 PRs wait on it', 'open', ['no review']]);
 });
 
 void test('merges nobody reviewed are never rows: the quiet line under Next up counts every one', () => {
@@ -421,7 +423,7 @@ void test('waiting on you groups people by their oldest wait, and team requests 
     ['owen', '1 PR · oldest 5 d'],
     ['lena', '2 PRs · oldest 4 d'],
     ['sam', '1 PR · oldest 1 d'],
-    ['team', '1 review request'],
+    ['Your team', '1 review request'],
   ]);
   assert.deepEqual(groups[1].lines.map((line) => line.member.number), [2, 1], 'oldest first');
   // On the page, Next up takes all five (they fit), and Waiting on you lists none of them again. The tab counts each once.
@@ -444,8 +446,8 @@ void test('Waiting on you counts what it lists: a stack is its PRs, and team and
   assert.deepEqual(you.map((group) => [group.label, group.detail]), [
     ['zsolt-klang', '5 PRs · oldest 14 d'],
     ['ivaremilsson', '1 PR · oldest 4 d'],
-    ['unassigned', '1 PR · oldest 1 h'],
-    ['team', '1 review request'],
+    ['Unknown requester', '1 PR · oldest 1 h'],
+    ['Your team', '1 review request'],
   ]);
   assert.equal(sectionCount(you), 8);
   assert.deepEqual(you[0].repos, ['klang/seed']);
@@ -485,7 +487,7 @@ void test('waiting on others: stacks as chains, reviewers with Nudge, teams, CI,
     // #2 waits on lena and sam: it is listed once, under the first reviewer GitHub names.
     ['person', 'lena', '2 PRs · 4 d'],
     ['team', 'klang/web', '1 PR · 1 d'],
-    ['ci', 'CI', '1 running'],
+    ['ci', 'Checks', '1 running'],
     // #6 waits for #5, which is yours and failing: the chain lists both, base first, and says so.
     ['stacks', 'Waiting for earlier PRs in a stack to merge', '2 PRs in 1 stack'],
     ['you', 'you', '1 failing check, 1 conflict'],
@@ -504,11 +506,11 @@ void test('waiting on others: stacks as chains, reviewers with Nudge, teams, CI,
     { prUrl: both.url, action: 'nudge', reviewer: 'lena' },
   ]);
   assert.deepEqual(nudgeConfirmation(groups[0]), {
-    title: 'Nudge lena?',
+    title: 'Remind lena?',
     body: 'Gnosis asks GitHub to request lena’s review again on PRs #1, #2. GitHub notifies lena.',
-    action: 'Re-request 2 reviews',
+    action: 'Remind lena',
   });
-  assert.equal(nudgeConfirmation({ nudge: { reviewer: 'sam', members: [both] } }).action, 'Re-request review');
+  assert.equal(nudgeConfirmation({ nudge: { reviewer: 'sam', members: [both] } }).action, 'Remind sam');
   assert.deepEqual(nudgeRequests(groups[2]), []);
 });
 
@@ -553,7 +555,7 @@ void test('stacks: one chain per stack, keyed by repository and number, the most
   assert.deepEqual(Object.keys(byKey).sort(), ['stack:acme/api#10', 'stack:klang/launcher#380', 'stack:klang/launcher#384', 'stack:klang/web#384']);
   // The base can merge, or needs you, first; then those waiting on others.
   assert.deepEqual(must(stacks.children).map((child) => must(child.step).text), [
-    'Merge #384 to unblock 2 PRs',
+    'Merge #384; 2 PRs wait on it',
     '#380 has failing checks',
     '#384 waits on review from lena',
     '#10 is waiting on checks',
@@ -657,7 +659,7 @@ void test('a stack you owe a re-review on never also offers its base merge, and 
   // Waiting on others names the same single step: the re-review first, then the merge. No Merge button.
   const chain = must(result.others.find((group) => group.kind === 'stacks')?.children?.find((child) => child.key === 'stack:klang/seed#35392'));
   assert.equal(must(chain.step).action, 'review');
-  assert.equal(must(chain.step).text, 'Re-review 6 PRs first, then merge #35392');
+  assert.equal(must(chain.step).text, 'Review 6 PRs again first, then merge #35392');
   assert.deepEqual(must(chain.chain).map((node) => `#${node.line.member.number} ${node.line.status}${node.also ? ` also ${node.also}` : ''}`), ['#35392 next', '#37378 waiting', '#37578 waiting']);
   // A stack with a review request on its base: the same rule.
   const status2: Record<string, QueueSignals> = {};
@@ -688,9 +690,9 @@ void test('Waiting on you says where its PRs went, and agrees with the briefing'
   // All seven reviews are in Next up, so Waiting on you lists none, and says so.
   assert.equal(sectionCount(result.you), 0);
   assert.deepEqual(result.youElsewhere.next.map((entry) => `${entry.label}:${entry.urls.length}`).sort(), ['#37601’s stack (6 PRs):6', '#377:1']);
-  assert.match(waitingOnYouNote(0, result.youElsewhere).text, /^(#377 and #37601’s stack \(6 PRs\)|#37601’s stack \(6 PRs\) and #377) are in Next up\.$/);
+  assert.match(waitingOnYouNote(0, result.youElsewhere).text, /^Shown in Next up: (#377 and #37601’s stack \(6 PRs\)|#37601’s stack \(6 PRs\) and #377)\.$/);
   // The briefing's numbers are the PRs Waiting on you lists plus those listed above and below it.
-  assert.equal(result.briefing.text, '7 re-reviews (6 in one stack) are waiting on you. 8 PRs can merge without review.');
+  assert.equal(result.briefing.text, '7 updated PRs (6 in one stack) are waiting on your review. 8 PRs can merge without review.');
   const reviews = result.briefing.counts.filter((count) => count.key === 'reviews' || count.key === 'rereviews').reduce((total, count) => total + count.count, 0);
   assert.equal(reviews, sectionCount(result.you) + result.youElsewhere.next.reduce((total, entry) => total + entry.urls.length, 0) + result.youElsewhere.decide.length);
   void briefing;
@@ -698,11 +700,11 @@ void test('Waiting on you says where its PRs went, and agrees with the briefing'
   // The words for every case: concrete pointers, never "All 7".
   const at = (label: string, n = 1) => ({ label, urls: Array.from({ length: n }, (_, i) => `${label}/${i}`) });
   assert.equal(waitingOnYouNote(0, { next: [], decide: [] }).text, 'Nobody is waiting on you.');
-  assert.equal(waitingOnYouNote(0, { next: [at('#377')], decide: [] }).text, '#377 is in Next up.');
-  assert.equal(waitingOnYouNote(0, { next: [at('#37286’s stack (6 PRs)', 6)], decide: [] }).text, '#37286’s stack (6 PRs) are in Next up.');
-  assert.equal(waitingOnYouNote(0, { next: [], decide: ['a', 'b'] }).text, '2 are in Needs a decision.');
-  assert.equal(waitingOnYouNote(0, { next: [at('#377'), at('#12')], decide: ['a', 'b'] }).text, '#377 and #12 are in Next up, and 2 are in Needs a decision.');
-  assert.equal(waitingOnYouNote(3, { next: [at('#1'), at('#2'), at('#3'), at('#4')], decide: [] }).text, '#1, #2 and 2 more are in Next up.');
+  assert.equal(waitingOnYouNote(0, { next: [at('#377')], decide: [] }).text, 'Shown in Next up: #377.');
+  assert.equal(waitingOnYouNote(0, { next: [at('#37286’s stack (6 PRs)', 6)], decide: [] }).text, 'Shown in Next up: #37286’s stack (6 PRs).');
+  assert.equal(waitingOnYouNote(0, { next: [], decide: ['a', 'b'] }).text, 'Shown in Needs a decision: 2 PRs.');
+  assert.equal(waitingOnYouNote(0, { next: [at('#377'), at('#12')], decide: ['a', 'b'] }).text, 'Shown in Next up: #377 and #12. Shown in Needs a decision: 2 PRs.');
+  assert.equal(waitingOnYouNote(3, { next: [at('#1'), at('#2'), at('#3'), at('#4')], decide: [] }).text, 'Shown in Next up: #1, #2 and 2 more.');
   assert.equal(waitingOnYouNote(3, { next: [], decide: [] }).text, '');
   // Each pointer is a link to the rows it names.
   const links = waitingOnYouNote(0, { next: [at('#377')], decide: ['x'] }).parts.filter((part) => typeof part !== 'string');
@@ -725,9 +727,9 @@ void test('needs a decision: failing, never approved or idle for over a week, on
   const model = build([item([broken]), item([brokenNew]), item([unapproved]), item([idle]), item([busy])], status);
   const decisions = needsDecision(input(model, status));
   assert.deepEqual(decisions.map((entry) => [entry.member.number, entry.reason, entry.label, entry.check.label]), [
-    [3, 'unapproved', 'Never approved', 'passing'],
+    [3, 'unapproved', 'No approval', 'passing'],
     [1, 'failing', 'Failing checks', 'failing'],
-    [4, 'idle', 'Idle', 'passing'],
+    [4, 'idle', 'No activity', 'passing'],
   ]);
   // On the page: the failing PR that needs a decision ranks after the fresh one in Next up, and stays a decision.
   const result = page(model, status);
@@ -914,8 +916,8 @@ void test('waiting time: each row type waits since its state began, and says whi
   assert.deepEqual([line.source, line.since], ['opened', T0 - 4 * DAY]);
   const decisions = needsDecision(input(model, status));
   assert.deepEqual(decisions.map((entry) => [entry.member.number, entry.label, entry.source, entry.since]), [
-    [56, 'Never approved', 'opened', T0 - 10 * DAY],
-    [55, 'Idle', 'updated', T0 - 9 * DAY],
+    [56, 'No approval', 'opened', T0 - 10 * DAY],
+    [55, 'No activity', 'updated', T0 - 9 * DAY],
   ]);
   // A stack row for several PRs waits since the oldest of them.
   const base = pr('o/r', 57, { author: 'ivar', requestedReviewers: [LOGIN], createdAt: iso(5 * DAY), headBranch: 's57' });
@@ -936,17 +938,17 @@ void test('a stack header’s merge says what it goes ahead without, as Next up 
   };
   const base = mine(61, { headBranch: 's61', additions: 2400, deletions: 300 });
   // Not reviewed, green: Next up lists the base, and the header names what it lacks.
-  assert.equal(header(base, noReview(base)).text, 'Merge #61 (not reviewed) to unblock 1 PR');
+  assert.equal(header(base, noReview(base)).text, 'Merge #61 (no review); 1 PR waits on it');
   // Not reviewed, no checks at all.
   const none = header(base, { ...noReview(base), checks: { state: 'neutral', passed: 0, total: 0 } });
-  assert.equal(none.text, 'Merge #61 (not reviewed, no checks) to unblock 1 PR');
-  assert.deepEqual(none.caveats, ['not reviewed', 'no checks']);
+  assert.equal(none.text, 'Merge #61 (no review, no checks); 1 PR waits on it');
+  assert.deepEqual(none.caveats, ['no review', 'no checks']);
   // Approved and green: nothing to add.
-  assert.equal(header(base, approved(base)).text, 'Merge #61 to unblock 1 PR');
+  assert.equal(header(base, approved(base)).text, 'Merge #61; 1 PR waits on it');
   // Failing and running checks, in Next up's words.
   const row = { merge: { member: base, ready: true, notes: [{ kind: 'no-review' as const, text: 'No review required' }] } };
-  assert.deepEqual(mergeCaveats(row, { state: 'failure' }), ['not reviewed', 'failing checks']);
-  assert.deepEqual(mergeCaveats(row, { state: 'pending' }), ['not reviewed', 'checks running']);
+  assert.deepEqual(mergeCaveats(row, { state: 'failure' }), ['no review', 'failing checks']);
+  assert.deepEqual(mergeCaveats(row, { state: 'pending' }), ['no review', 'checks running']);
   assert.deepEqual(mergeCaveats({ merge: { ...row.merge, notes: [{ kind: 'approved', text: 'Approved' }] } }, { state: 'success' }), []);
   // A failing base is a fix, not a merge: the header says so, with no Merge.
   const red = header(base, failing(base));
@@ -978,7 +980,7 @@ void test('briefing = sections, on every fixture: each number is the PRs the pag
   assert.equal(numbers.rereviews, 7);
   assert.equal(numbers.unreviewed, 10);
   assert.equal(numbers.decide, 7);
-  assert.match(real7.briefing.text, /^7 re-reviews \(6 in one stack\) are waiting on you\./);
+  assert.match(real7.briefing.text, /^7 updated PRs \(6 in one stack\) are waiting on your review\./);
 });
 
 void test('one-line stacks: name, repository, size and step; a step Next up lists is a pointer, not a second Merge', async () => {
@@ -989,7 +991,7 @@ void test('one-line stacks: name, repository, size and step; a step Next up list
   // The unnamed i18n stack is called by its base's title; its base's line shows its number alone.
   assert.equal(stackLine(byBase[379], names), 'feat: move the launcher’s text into translation keys (i18n 1/3) · seed-launcher · 5 PRs · #379 has conflicts');
   assert.equal(must(byBase[379].chain)[0].line.bare, true);
-  assert.equal(stackLine(byBase[376], names), 'STACK: EPIC · seed-launcher · 4 PRs · Merge #376 (not reviewed, no checks) to unblock 3 PRs');
+  assert.equal(stackLine(byBase[376], names), 'STACK: EPIC · seed-launcher · 4 PRs · Merge #376 (no review, no checks); 3 PRs wait on it');
   assert.equal(must(byBase[376].chain)[0].line.bare, undefined, 'a named stack keeps its base’s title on the line');
   // Wallet's base is a Next up row (its failing checks): the stack points there, with no action of its own.
   assert.ok(real7.next.items.some((entry) => entry.member.number === 36100));
@@ -1092,4 +1094,47 @@ void test('no "green" where the check state already shows passing', async () => 
   status[merge.url] = approved(merge);
   const result = page(build([item([merge])], status), status);
   assert.deepEqual([must(result.next.items[0]).why, must(result.next.items[0]).check.label], ['approved by lena', 'passing']);
+});
+
+void test('the page’s words: every visible string on every fixture counts correctly and uses no jargon', async () => {
+  // Words the page used to say, and now says plainly: one term per action and per state.
+  const jargon = /\b(green|restack(ed|ing)?|nudge[ds]?|re-?reviews?|re-request\w*|unblocks?|not reviewed|CI|idle|never approved|base|unassigned)\b/i;
+  // A count must agree with its noun: never "1 PRs" or "1 reviews".
+  const badCount = /(^|[^\d.,])1 (PRs|reviews|stacks|repos|lines|others|requests|review requests|failing checks|conflicts|updated PRs|approved PRs|wait on it)\b/;
+  const plural = /(^|[^\d.,])([02-9]|\d{2,}) (PR|review|stack|repo|line|other|review request|failing check|conflict|updated PR|approved PR) /;
+  for (const name of OVERVIEW_FIXTURES) {
+    const { page: result } = await fixturePage(name);
+    const names = repositoryNames(result.others.flatMap((group) => group.repos));
+    // Builder strings only: PR titles, stack names and people are the reader's own words.
+    const strings: string[] = [result.briefing.text, waitingOnYouNote(sectionCount(result.you), result.youElsewhere).text];
+    const more = nextMoreLine(result.next);
+    if (more) strings.push(more);
+    for (const entry of result.next.items) strings.push(entry.why.replace(/^[^:]+: “.*”$/, ''));
+    for (const entry of result.decide) strings.push(entry.label);
+    const groups = (list: readonly PersonGroup[]) => {
+      for (const group of list) {
+        if (group.kind !== 'person' && group.kind !== 'stack') strings.push(group.label);
+        strings.push(group.detail);
+        for (const line of group.lines) strings.push(line.description ?? '', line.reasonText ?? '');
+        if (group.step) strings.push(group.step.text, ...(group.step.caveats ?? []), stackLine(group, names).slice(group.label.length));
+        for (const node of group.chain ?? []) strings.push(node.line.description ?? '');
+        if (group.nudge) {
+          const words = nudgeConfirmation(group);
+          strings.push(words.title.replace(group.nudge.reviewer, ''), words.action.replace(group.nudge.reviewer, ''));
+        }
+        groups(group.children ?? []);
+      }
+    };
+    groups(result.you);
+    groups(result.others);
+    strings.push(...Object.values(FIX_LABEL), ...Object.values(CHAIN_STATUS_LABEL), ...Object.values(PLACE_LABEL));
+    for (const text of strings.filter(Boolean)) {
+      assert.doesNotMatch(text, jargon, `${name}: "${text}"`);
+      assert.doesNotMatch(text, badCount, `${name}: "${text}"`);
+      assert.doesNotMatch(text, plural, `${name}: "${text}"`);
+    }
+  }
+  // Singular and plural, built directly.
+  assert.equal(waitingOnYouNote(0, { next: [], decide: ['a'] }).text, 'Shown in Needs a decision: 1 PR.');
+  assert.equal(nudgeConfirmation({ nudge: { reviewer: 'sam', members: [] } }).title, 'Remind sam?');
 });
