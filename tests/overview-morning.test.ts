@@ -9,13 +9,10 @@ import {
   commentsOf,
   mergeCaveats,
   closeRequest,
-  effortLabel,
-  effortShort,
+  effortRank,
   morningPage,
   needsDecision,
   nextCount,
-  nextEffort,
-  nextMinutes,
   nextMoreLine,
   nextUp,
   nudgeConfirmation,
@@ -190,43 +187,38 @@ void test('Next up: cheapest first, at most five, with a total; size orders but 
     item([large]),
   ];
   const few = nextUp(input(build(items, status), status, { replies: { [replied.url]: { author: 'owen', text: 'Could we keep the old loading order behind a flag until every plugin has migrated?' } } }));
-  assert.deepEqual(few.items.map((entry) => [entry.kind, entry.member.number, entry.why, effortShort(entry.minutes)]), [
-    ['merge', 1, 'approved by lena · green', '~1 min'],
-    ['reply', 3, 'owen: “Could we keep the old loading order behind a flag until…”', '~3 min'],
-    ['review', 5, '40 lines', '~4 min'],
-    // 700 lines: not quick, but listed, with an honest estimate.
-    ['review', 6, '700 lines', '~20 min'],
+  assert.deepEqual(few.items.map((entry) => [entry.kind, entry.member.number, entry.why, entry.rank]), [
+    ['merge', 1, 'approved by lena · green', 1],
+    ['reply', 3, 'owen: “Could we keep the old loading order behind a flag until…”', 3],
+    ['review', 5, '40 lines', 4],
+    // 700 lines: not quick, but listed, last.
+    ['review', 6, '700 lines', 20],
   ]);
-  assert.equal(effortLabel(nextMinutes(few.items)), '~28 min');
+  assert.ok(!few.items.some((entry) => /\bmin\b|\d h\+/.test(entry.why)), 'no time estimate in what a row says');
   assert.ok(!few.items.some((entry) => entry.member.number === 2), 'checks still running: not a merge yet');
   // More work than fits: five, cheapest first.
   const extra = Array.from({ length: 6 }, (_, i) => member(20 + i, { requestedReviewers: [LOGIN], additions: 10, deletions: 0, createdAt: iso((10 - i) * DAY) }));
   const { items: all } = nextUp(input(build([...items, ...extra.map((m) => item([m]))], status), status));
   assert.equal(all.length, NEXT_LIMIT, 'at most five');
-  for (let i = 1; i < all.length; i++) assert.ok(all[i - 1].minutes <= all[i].minutes, 'cheapest first');
+  for (let i = 1; i < all.length; i++) assert.ok(all[i - 1].rank <= all[i].rank, 'cheapest first');
   assert.equal(all.some((entry) => entry.member.number === 6), false, 'the large review waits for room; it is still in Waiting on you');
   const full = page(build([...items, ...extra.map((m) => item([m]))], status), status);
   assert.ok(full.you.some((group) => group.urls.includes(large.url)));
 });
 
-void test('the effort heuristic, extended for large PRs, and its labels', () => {
-  assert.equal(nextEffort('merge'), 1);
-  assert.equal(nextEffort('reply'), 3);
-  assert.equal(nextEffort('changes'), 15);
-  assert.deepEqual([nextEffort('fix', undefined, false, 'failing'), nextEffort('fix', undefined, false, 'conflicts'), nextEffort('fix', undefined, false, 'restack')], [10, 15, 5]);
-  assert.equal(nextEffort('rereview', undefined), 5, 'unknown size');
-  assert.equal(nextEffort('rereview', 120), 5);
-  assert.equal(nextEffort('review', 40), 4);
-  assert.equal(nextEffort('review', undefined), 8, 'unknown size counts as 200 lines');
-  assert.equal(nextEffort('review', 300, true), 7, 'an explanation takes a third off');
-  assert.equal(nextEffort('review', 1060), 25, 'a large review');
-  assert.equal(nextEffort('review', 2790), 55);
-  assert.equal(nextEffort('review', 4000), 75);
-  assert.equal(effortShort(25), '~25 min');
-  assert.equal(effortShort(75), '1 h+', 'an item caps at an hour');
-  assert.equal(effortLabel(45), '~45 min');
-  assert.equal(effortLabel(80), '~1 h 20 min');
-  assert.equal(effortLabel(60), '~1 h');
+void test('the internal effort rank orders Next up, extended for large PRs', () => {
+  assert.equal(effortRank('merge'), 1);
+  assert.equal(effortRank('reply'), 3);
+  assert.equal(effortRank('changes'), 15);
+  assert.deepEqual([effortRank('fix', undefined, false, 'failing'), effortRank('fix', undefined, false, 'conflicts'), effortRank('fix', undefined, false, 'restack')], [10, 15, 5]);
+  assert.equal(effortRank('rereview', undefined), 5, 'unknown size');
+  assert.equal(effortRank('rereview', 120), 5);
+  assert.equal(effortRank('review', 40), 4);
+  assert.equal(effortRank('review', undefined), 8, 'unknown size counts as 200 lines');
+  assert.equal(effortRank('review', 300, true), 7, 'an explanation takes a third off');
+  assert.equal(effortRank('review', 1060), 25, 'a large review');
+  assert.equal(effortRank('review', 2790), 55);
+  assert.equal(effortRank('review', 4000), 75);
   assert.equal(quote('Short and `plain`.'), 'Short and plain.');
   assert.ok(quote('x '.repeat(100)).endsWith('…'));
   assert.ok(quote('word '.repeat(40)).length <= 61);
@@ -238,17 +230,17 @@ void test('Next up is never empty while there is work, and says so when there is
   const set = <T extends ReviewMember>(m: T, value: (m: T) => QueueSignals) => { status[m.url] = value(m); return m; };
   const broken = set(minePr('o/r', 1), failing);
   const onlyFix = page(build([item([broken])], status), status);
-  assert.deepEqual(onlyFix.next.items.map((entry) => [entry.kind, entry.why, entry.minutes]), [['fix', 'failing checks', 10]]);
+  assert.deepEqual(onlyFix.next.items.map((entry) => [entry.kind, entry.why, entry.rank]), [['fix', 'failing checks', 10]]);
   const huge = set(minePr('o/r', 2, { additions: 3000 }), noReview);
   assert.deepEqual(page(build([item([huge])], status), status).next.items.map((entry) => [entry.kind, entry.why]), [['merge', 'not reviewed · green']]);
   const bigReview = pr('o/r', 3, { author: 'ivaremilsson', requestedReviewers: [LOGIN], additions: 2400, deletions: 300 });
-  assert.deepEqual(page(build([item([bigReview])], status), status).next.items.map((entry) => [entry.kind, effortShort(entry.minutes)]), [['review', '~50 min']]);
+  assert.deepEqual(page(build([item([bigReview])], status), status).next.items.map((entry) => [entry.kind, entry.rank]), [['review', 50]]);
   const changes = set(minePr('o/r', 4), (m) => signals(m, { checks: 'success', decision: 'CHANGES_REQUESTED', opinions: [{ id: '1', author: 'lena', state: 'CHANGES_REQUESTED' }] }));
   assert.deepEqual(page(build([item([changes])], status), status).next.items.map((entry) => [entry.kind, entry.why]), [['changes', 'lena requested changes']]);
   // A restack: one PR of a stack whose parent merged. The item names that PR, not the stack.
   const parent = minePr('o/r', 6, { merged: true, state: 'closed', headBranch: 'p6', title: 'Wallet balance API' });
   const child = set(minePr('o/r', 7, { baseBranch: 'p6', title: 'Wallet balance in the HUD' }), noReview);
-  assert.deepEqual(page(build([item([parent, child])], status), status).next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.minutes]), [['fix', 'Wallet balance in the HUD', 'needs a restack', 5]]);
+  assert.deepEqual(page(build([item([parent, child])], status), status).next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.rank]), [['fix', 'Wallet balance in the HUD', 'needs a restack', 5]]);
   // Nothing in Waiting on you, Fix or Merge: empty, and the page says "Nothing needs you right now."
   const waiting = set(minePr('o/r', 5, { requestedReviewers: ['lena'] }), (m) => signals(m, { checks: 'success' }));
   const idle = page(build([item([waiting])], status), status);
@@ -311,7 +303,7 @@ void test('the oldest review request always gets a slot, whatever its size', () 
   const newer = pr('klang/launcher', 41, { author: 'ivaremilsson', requestedReviewers: [LOGIN], createdAt: iso(4 * DAY), additions: 30, deletions: 5 });
   const result = page(build([...merges.map((m) => item([m])), item([older]), item([newer])], status), status);
   assert.equal(result.next.items.length, NEXT_LIMIT);
-  assert.deepEqual(result.next.items.filter((entry) => entry.kind === 'review').map((entry) => [entry.member.number, effortShort(entry.minutes)]), [[40, '~40 min']], 'the oldest takes the last slot');
+  assert.deepEqual(result.next.items.filter((entry) => entry.kind === 'review').map((entry) => [entry.member.number, entry.rank]), [[40, 40]], 'the oldest takes the last slot');
   assert.equal(result.next.items.filter((entry) => entry.kind === 'merge').length, NEXT_LIMIT - 1);
   // The rest stay in Waiting on you; the one in Next up is not listed there again.
   assert.deepEqual(result.you.map((group) => [group.label, group.detail]), [['ivaremilsson', '1 PR · oldest 4 d']]);

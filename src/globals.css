@@ -5012,7 +5012,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-section-head { display:flex; align-items:baseline; gap:8px; padding-bottom:6px; margin-bottom:4px; border-bottom:1px solid var(--border); }
 .morning-section-head h2 { font-size:var(--type-body); font-weight:650; line-height:1.4; color:var(--foreground); }
 .morning-section-count { font-size:var(--type-control); font-weight:600; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
-.morning-section-summary { margin-left:auto; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .morning-section.is-quiet .morning-section-head h2 { color:var(--muted-foreground); font-weight:600; }
 .morning-empty { padding:8px 0; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
 .morning-rows { display:flex; flex-direction:column; margin:0 -8px 0 -12px; }
@@ -5049,13 +5048,12 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-title:focus-visible { outline:none; }
 /* The ring goes around the whole row, so its actions never cover it. */
 .morning-row:has(.morning-title:focus-visible) { outline:2px solid var(--ring); outline-offset:-2px; }
-/* Right-hand columns, the same width on every row so they line up down the page: comments, check, Next up's effort,
+/* Right-hand columns, the same width on every row so they line up down the page: comments, check,
    then the age (a header's count in the same column), then the actions. */
 .morning-icon { flex:none; width:16px; height:16px; margin-right:6px; display:flex; align-items:center; justify-content:center; color:var(--muted-foreground); }
 .morning-icon.is-avatar .morning-avatar { width:16px; height:16px; }
 .morning-icon.is-avatar [data-slot=avatar-fallback] { font-size:9px; font-weight:600; }
 .morning-comments { flex:none; min-width:3.25em; padding-left:8px; justify-content:flex-end; }
-.morning-effort { flex:none; width:4.75em; padding-left:8px; text-align:right; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .morning-meta, .morning-age { flex:none; width:5em; padding-left:8px; text-align:right; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .morning-age { display:inline-flex; align-items:center; justify-content:flex-end; gap:4px; }
 .morning-age svg { flex:none; opacity:.8; }
@@ -5119,7 +5117,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
   .morning-stack-head .morning-sub { flex:none; flex-wrap:wrap; }
   .morning-stack-head .morning-detail { white-space:normal; }
   .morning-checks, .morning-chain .morning-status, .morning-comments { min-width:0; }
-  .morning-effort { width:auto; }
   .morning-actions { min-width:0; }
   .morning-meta:empty { display:none; }
   .morning-title { flex-direction:column; align-items:stretch; gap:0; }

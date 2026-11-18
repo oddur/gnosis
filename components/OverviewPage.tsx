@@ -3,7 +3,7 @@
  * blocked on you, where your PRs are stuck and on whom, and what to close or park.
  *
  * - The briefing sentence and a "Since yesterday" line (`lib/since-log.ts`).
- * - **Next up:** up to five things to do, cheapest first, each with one action and its effort.
+ * - **Next up:** up to five things to do, cheapest first, each with one action.
  * - **Waiting on you** and **Waiting on others**, full width one above the other: people, and your PRs by blocker,
  *   with Nudge. Stacks are chains in merge order, base first, with the step that moves them.
  * - **Needs a decision:** your PRs failing, never approved or idle for over a week, with Close PR and Snooze.
@@ -13,9 +13,9 @@
  * lists, each PR once: Next up its rows, the others their PRs. Waiting on you says where its PRs went when Next up lists them.
  * Every PR line leads with its state icon (`PrStateIcon`; a row for several PRs of a stack, the stack icon) and its
  * number, shows the queue row's comment badge above 0 and its check state, and how long it has waited, in a column that
- * lines up down the page; the tooltip names the timestamp (`lib/overview.ts`, "Waiting time"). Next up adds the effort,
- * plain, in its own column. It previews the PR on hover or focus with the PR badge's tooltip. Buttons that change
- * something carry their icon (`actionIcons`); buttons that only open a PR carry none. Every PR line, in every section and
+ * lines up down the page; the tooltip names the timestamp (`lib/overview.ts`, "Waiting time"). The page shows no time
+ * estimates: Next up's order (`effortRank`) stays internal. A PR's title previews the PR on hover or focus with the PR
+ * badge's tooltip. Buttons that change something carry their icon (`actionIcons`); buttons that only open a PR carry none. Every PR line, in every section and
  * chain, has the same "…" row menu (`prMenu`), shown on hover and focus, at the end of the action column, so the menus
  * form one column down the page; a stack header has the stack's part of it (`stackMenu`). Shift+F10 opens it. Repositories are plain muted
  * text, with their icon or colour from Settings › Repositories, named once per group when the group has one repository.
@@ -45,11 +45,8 @@ import {
   CHAIN_STATUS_LABEL,
   FIX_LABEL,
   PLACE_LABEL,
-  effortLabel,
-  effortShort,
   morningPage,
   nextCount,
-  nextMinutes,
   nextMoreLine,
   repositoryLabel,
   repositoryNames,
@@ -479,7 +476,7 @@ export function OverviewPage(props: OverviewPageProps) {
         </div>
       )}
       <div className="morning">
-        <MorningSection section="next" count={counts.next} summary={morning.next.items.length ? effortLabel(nextMinutes(morning.next.items)) : undefined}
+        <MorningSection section="next" count={counts.next}
           empty="Nothing needs you right now."
           footer={more && (
             // The rest of the unreviewed merges wait in the queue, grouped by Action at Merge.
@@ -744,10 +741,9 @@ function RepoName({ repos }: { repos: readonly string[] }) {
   );
 }
 
-function MorningSection({ section, count, summary, empty, quiet = false, footer, children }: {
+function MorningSection({ section, count, empty, quiet = false, footer, children }: {
   section: Section;
   count: number;
-  summary?: string;
   empty: string;
   quiet?: boolean;
   /** A quiet line under the rows, such as "2 more ready, not reviewed". */
@@ -761,10 +757,9 @@ function MorningSection({ section, count, summary, empty, quiet = false, footer,
       <div className="morning-section-head">
         <h2 id={`${id}-heading`}>
           {label}
-          <span className="sr-only">{`, ${count}${summary ? `, about ${summary.slice(1)}` : ''}`}</span>
+          <span className="sr-only">{`, ${count}`}</span>
         </h2>
         <span className="morning-section-count" aria-hidden="true" data-section-count>{count}</span>
-        {summary && <span className="morning-section-summary" aria-hidden="true" title="Estimated time for all of them">{summary}</span>}
       </div>
       {count === 0 ? <p className="morning-empty" data-overview-empty>{empty}</p> : <ul className="morning-rows" aria-label={label}>{children}</ul>}
       {footer && <div className="morning-footer">{footer}</div>}
@@ -831,12 +826,12 @@ function Conflicts({ children = 'Conflicts' }: { children?: ReactNode }) {
 
 /**
  * One line: what it is (its icon), the primary button (the PR number, the title, then its repository and detail), the
- * comments, the check state, a status word, Next up's effort, how long it has waited (or a header's count), the
- * actions and the menu. Comments, check, effort, age and actions hold their columns, so they line up down the page.
+ * comments, the check state, a status word, how long it has waited (or a header's count), the actions and the menu.
+ * Comments, check, age and actions hold their columns, so they line up down the page.
  * The number, check and status never truncate; the title truncates first, at its end. A PR's title previews the PR
  * on hover and focus (`PrPreviewTooltip`).
  */
-function RowShell({ id, tabStop, actions, label, title, number, preview, prs: listed, repos, detail, check, comments, status, effort, waited, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, as: Tag = 'li', className = '', icon, onActivate }: {
+function RowShell({ id, tabStop, actions, label, title, number, preview, prs: listed, repos, detail, check, comments, status, waited, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, as: Tag = 'li', className = '', icon, onActivate }: {
   id: string;
   tabStop: boolean;
   actions: RowActions;
@@ -855,8 +850,6 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
   /** Rows with a check state hold the comment column; the badge shows above 0. */
   comments?: number;
   status?: ReactNode;
-  /** Next up: the estimated effort, "~5 min", in its own column left of the age. */
-  effort?: string;
   /** A PR row: how long it has waited. */
   waited?: Waited;
   /** A header row: what it holds, "4 PRs", in the age column. */
@@ -920,7 +913,6 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
       {check && <CommentCount count={comments} />}
       {check && <CheckState check={check} />}
       {status}
-      {effort !== undefined && <span className="morning-effort" data-overview-effort title="Estimated time to do it" aria-hidden="true">{effort}</span>}
       {/* The age (or a header's count) and the actions always hold their columns, so ages line up down the page. */}
       {waited ? <Age waited={waited} /> : <span className="morning-meta">{meta}</span>}
       <span className="morning-actions">{quick}{trigger}</span>
@@ -942,7 +934,6 @@ function RowShell({ id, tabStop, actions, label, title, number, preview, prs: li
 /** Out of the tab order: Tab moves between sections, and A runs the focused row's action. */
 const SHORTCUT = { 'data-quick-action': true, 'aria-keyshortcuts': 'A', tabIndex: -1 };
 const NEXT_ACTION: Readonly<Record<NextItem['kind'], string>> = { merge: 'Merge', rereview: 'Re-review', reply: 'Reply', changes: 'Open', review: 'Review', fix: 'Open' };
-const minutesSpoken = (minutes: number) => (minutes >= 60 ? 'an hour or more' : `about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`);
 /** The words a row's description adds for its comments and its wait: ", 3 comments, waiting 4 days". */
 const extrasSpoken = (comments: number | undefined, waited: string) => [commentsSpoken(comments), `waiting ${spokenWaiting(waited)}`].filter(Boolean).join(', ');
 /** Buttons that change something carry their icon (`actionIcons`); buttons that only open a PR carry none. */
@@ -987,7 +978,6 @@ const NextRow = memo(
         detail={item.fix === 'conflicts' ? <Conflicts>{item.why}</Conflicts> : item.why}
         check={item.check}
         comments={item.comments}
-        effort={effortShort(item.minutes)}
         waited={{ since: item.since, source: item.source, label: waited }}
         quick={quick}
         menu={prMenu(item.id, row, actions, unread, member, members, single ? target : undefined)}
@@ -995,12 +985,12 @@ const NextRow = memo(
         isNew={row.isNew}
         // One PR leads with its state; a row for several PRs of a stack with the stack icon, as in the queue.
         icon={single ? <PrIcon member={member} /> : <GroupIcon group={{ kind: 'stack', label: row.title }} />}
-        description={`${action}, ${item.why}, ${reposSpoken(repos, label)} #${member.number}${single ? '' : ` and ${item.urls.length - 1} more`}, ${item.check.spoken}, ${extrasSpoken(item.comments, waited)}, ${minutesSpoken(item.minutes)}`}
+        description={`${action}, ${item.why}, ${reposSpoken(repos, label)} #${member.number}${single ? '' : ` and ${item.urls.length - 1} more`}, ${item.check.spoken}, ${extrasSpoken(item.comments, waited)}`}
         onActivate={() => actions.open(row, target)}
       />
     );
   },
-  (a, b) => a.item.row.signature === b.item.row.signature && a.item.why === b.item.why && a.item.minutes === b.item.minutes && a.item.kind === b.item.kind &&
+  (a, b) => a.item.row.signature === b.item.row.signature && a.item.why === b.item.why && a.item.kind === b.item.kind &&
     a.item.check.label === b.item.check.label && a.item.title === b.item.title && a.item.member.url === b.item.member.url && a.item.comments === b.item.comments &&
     a.item.since === b.item.since && a.waited === b.waited && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
 );

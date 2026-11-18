@@ -14,7 +14,7 @@
  * "…" row menu in one column, and a stack chain shows every PR of its stack in full, linking to the section that also
  * lists one.
  *
- * Screenshots go to .impeccable/review/overview-morning-7/, light and dark: the default day, the screenshot-32 shape
+ * Screenshots go to .impeccable/review/overview-morning-8/, light and dark: the default day, the screenshot-32 shape
  * at 1440×1000, 1920×1080 and 760 wide, its stacks at 1440×1000, the screenshot-34 chains at 1440 and 760, the screenshot-36 shape at
  * 1440×1000, the screenshot-37 shape at 1440×1000 and 760, a light day, and the PR preview.
  */
@@ -40,7 +40,7 @@ void app.whenReady().then(async () => {
   });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   let step = 'start';
-  const dir = path.resolve('.impeccable/review/overview-morning-7');
+  const dir = path.resolve('.impeccable/review/overview-morning-8');
   fs.mkdirSync(dir, { recursive: true });
   // Mismatches in words and layout are collected per step, so one run reports all of them.
   const misses: string[] = [];
@@ -112,8 +112,8 @@ void app.whenReady().then(async () => {
   const section = (name: string) => `${P} .morning-section[data-section="${name}"]`;
   const count = (name: string) => js<string>(`document.querySelector('${section(name)} [data-section-count]').textContent`);
   const ids = (name: string) => js<string[]>(`[...document.querySelectorAll('${section(name)} [data-overview-row]')].map(b=>b.dataset.overviewRow)`);
-  // Number, title, repository, detail, comments, check, status, effort, age and a header's count, as each row shows them.
-  const parts = `r=>[r.querySelector('.morning-number')?.textContent, r.querySelector('.morning-title-text')?.textContent, r.querySelector('.morning-repo')?.textContent, r.querySelector('.morning-detail')?.textContent, r.querySelector('.morning-comments')?.textContent, r.querySelector('.morning-checks')?.textContent, r.querySelector('.morning-status')?.textContent, r.querySelector('.morning-effort')?.textContent, r.querySelector('.morning-age')?.textContent, r.querySelector('.morning-meta')?.textContent].filter(Boolean).join(' | ')`;
+  // Number, title, repository, detail, comments, check, status, age and a header's count, as each row shows them.
+  const parts = `r=>[r.querySelector('.morning-number')?.textContent, r.querySelector('.morning-title-text')?.textContent, r.querySelector('.morning-repo')?.textContent, r.querySelector('.morning-detail')?.textContent, r.querySelector('.morning-comments')?.textContent, r.querySelector('.morning-checks')?.textContent, r.querySelector('.morning-status')?.textContent, r.querySelector('.morning-age')?.textContent, r.querySelector('.morning-meta')?.textContent].filter(Boolean).join(' | ')`;
   const texts = (name: string) => js<string[]>(`[...document.querySelectorAll('${section(name)} .morning-row')].map(${parts})`);
   const rowText = (id: string) => js<string>(`(()=>{const r=document.querySelector('${P} [data-overview-row-item="${id}"]');return r?(${parts})(r):''})()`);
   // A section heading equals the sum of what its top rows say they hold: "2 PRs · …", "1 running", "4 PRs in 2 stacks", "1 failing check, 1 conflict".
@@ -171,6 +171,13 @@ void app.whenReady().then(async () => {
     await key('Escape');
     await wait("!document.querySelector('[role=menuitem]')");
     return items;
+  };
+  // No time estimates anywhere on the page: no "~5 min" or "1 h+" on a row, no total in a heading, none in a tooltip,
+  // label or description, and no effort column.
+  const noEffort = async (label: string) => {
+    const found = await js<string[]>(`(()=>{const o=document.querySelector('${P} .overview');const texts=[o.textContent,...[...o.querySelectorAll('[title],[aria-label],[aria-description]')].flatMap(e=>[e.getAttribute('title'),e.getAttribute('aria-label'),e.getAttribute('aria-description')])].filter(Boolean);return texts.filter(t=>/\\bmin\\b|\\d h\\+|estimated time|about \\d+ minutes?|an hour or more/i.test(t)).map(t=>t.slice(0,120))})()`);
+    soft(found, [], `${label}: no effort text on the page`);
+    softOk(!(await js<boolean>(`!!document.querySelector('${P} .morning-effort, ${P} .morning-section-summary, ${P} [data-overview-effort]')`)), `${label}: no effort column or total`);
   };
   // Ages line up: one right edge per section.
   const agesAligned = async (label: string) => {
@@ -245,13 +252,13 @@ void app.whenReady().then(async () => {
     await stacked('1280');
     // Next up: approved merges, the merge nobody reviewed, then the explained review and the reply, cheapest first.
     soft(await texts('next'), [
-      '#301 | Cache resolved module paths between builds | engine | approved by lena · green | passing | ~1 min | 2 d',
-      '#302 | Retry flaky uploads with jitter | cli | approved by sam and 1 other · green | passing | ~1 min | 5 h',
-      '#303 | Drop the unused polyfill bundle | web | not reviewed · green | passing | ~1 min | 20 h',
-      '#321 | Stream build logs to the dashboard | engine | 25 lines · explanation ready | passing | ~3 min | 5 d',
-      '#312 | Document the plugin loading order | engine | owen: “Could we keep the old loading order behind a flag until…” | 1 | passing | ~3 min | 3 h',
+      '#301 | Cache resolved module paths between builds | engine | approved by lena · green | passing | 2 d',
+      '#302 | Retry flaky uploads with jitter | cli | approved by sam and 1 other · green | passing | 5 h',
+      '#303 | Drop the unused polyfill bundle | web | not reviewed · green | passing | 20 h',
+      '#321 | Stream build logs to the dashboard | engine | 25 lines · explanation ready | passing | 5 d',
+      '#312 | Document the plugin loading order | engine | owen: “Could we keep the old loading order behind a flag until…” | 1 | passing | 3 h',
     ], 'Next up');
-    soft(await js(`document.querySelector('${section('next')} .morning-section-summary')?.textContent`), '~9 min', 'the total effort');
+    await noEffort('sample');
     soft(await js(`[...document.querySelectorAll('${section('next')} [data-quick-action]')].map(b=>b.textContent)`), ['Merge', 'Merge', 'Merge', 'Review', 'Reply']);
     soft(await js(`document.querySelector('${section('next')} [data-overview-more-unreviewed]')`), null, 'the only unreviewed merge is listed');
     // Waiting on you: by person, oldest wait first; a few PRs are listed inline, number first. A PR in Next up is not here.
@@ -313,8 +320,8 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await js(`[...document.querySelectorAll('${P} [aria-describedby="overview-keyboard-help"]')].map(e=>e.className)`), ['overview']);
     assert.equal(await js(`document.querySelectorAll('${P} [data-overview-row][tabindex="0"]').length`), 4, 'one roving tab stop per section');
     assert.equal(await js(`[...document.querySelectorAll('${P} .morning-actions button')].every(b=>b.tabIndex===-1)`), true, 'actions and menus are out of the tab order');
-    soft(await description(row(`next|merge|${url('klang/engine', 301)}`)), 'Merge, approved by lena · green, engine #301, checks passing, waiting 2 days, about 1 minute');
-    soft(await description(row(`next|answer|${url('klang/engine', 312)}`)), 'Reply, owen: “Could we keep the old loading order behind a flag until…”, engine #312, checks passing, 1 comment, waiting 3 hours, about 3 minutes');
+    soft(await description(row(`next|merge|${url('klang/engine', 301)}`)), 'Merge, approved by lena · green, engine #301, checks passing, waiting 2 days');
+    soft(await description(row(`next|answer|${url('klang/engine', 312)}`)), 'Reply, owen: “Could we keep the old loading order behind a flag until…”, engine #312, checks passing, 1 comment, waiting 3 hours');
     soft(await description(row('others|person:lena')), 'lena, cli, 1 PR · 4 days, checks passing. A nudges');
     soft(await description(row(`others|stacks|stack:acme/web#306|${url('acme/web', 307)}`)), '#307, waiting, after #306, checks passing, waiting 9 hours');
     soft(await description(row(`others|you|${url('acme/web', 333)}`)), '#333, conflicts, checks passing, waiting 9 hours');
@@ -481,10 +488,10 @@ void app.whenReady().then(async () => {
     await wait(`document.querySelectorAll('${section('decide')} .morning-empty').length === 1 && document.querySelectorAll('${section('next')} .morning-row').length === 4`);
     assert.equal(await briefing(), 'lena is waiting on your reply, and 2 reviews are waiting on you. 1 PR is approved and ready to merge.');
     soft(await texts('next'), [
-      '#302 | Retry flaky uploads with jitter | cli | approved by sam and 1 other · green | passing | ~1 min | 5 h',
-      '#321 | Stream build logs to the dashboard | engine | 25 lines · explanation ready | passing | ~3 min | 5 d',
-      '#323 | Batch every telemetry write per request | web | 117 lines | passing | ~6 min | 3 d',
-      '#311 | Move session refresh into the auth worker | web | lena requested changes | passing | ~15 min | 4 d',
+      '#302 | Retry flaky uploads with jitter | cli | approved by sam and 1 other · green | passing | 5 h',
+      '#321 | Stream build logs to the dashboard | engine | 25 lines · explanation ready | passing | 5 d',
+      '#323 | Batch every telemetry write per request | web | 117 lines | passing | 3 d',
+      '#311 | Move session refresh into the auth worker | web | lena requested changes | passing | 4 d',
     ], 'light day');
     // Waiting on you is empty because Next up lists its three PRs, and says so.
     soft(await js(`document.querySelector('${section('you')} .morning-empty')?.textContent`), 'All 3 are in Next up.');
@@ -504,14 +511,14 @@ void app.whenReady().then(async () => {
     await js('document.activeElement?.blur(); window.fixtureOverview.real4()');
     await wait(`document.querySelector('${P} [data-overview-briefing]')?.textContent.startsWith('7 reviews are waiting on you.') && document.querySelectorAll('${section('next')} .morning-row').length === 5 && !document.querySelector('${P} [data-overview-check="unknown"]')`);
     soft(await texts('next'), [
-      '#376 | STACK: EPIC | seed-launcher | not reviewed · green · unblocks 3 PRs | passing | ~1 min | 6 h',
-      '#383 | fix: keep Steam and Epic store orders in step | service-payment-bridge | not reviewed · green · unblocks 3 PRs | passing | ~1 min | 4 h',
-      '#724 | feat: wallet balance in the HUD | seed | needs a restack | passing | ~5 min | 1 d',
-      '#36990 | feat: throttle the chat presence updates | seed | 117 lines | passing | ~6 min | 14 d',
-      '#720 | The whole MCP | seed | failing checks | 2 failed | ~10 min | 1 d',
+      '#376 | STACK: EPIC | seed-launcher | not reviewed · green · unblocks 3 PRs | passing | 6 h',
+      '#383 | fix: keep Steam and Epic store orders in step | service-payment-bridge | not reviewed · green · unblocks 3 PRs | passing | 4 h',
+      '#724 | feat: wallet balance in the HUD | seed | needs a restack | passing | 1 d',
+      '#36990 | feat: throttle the chat presence updates | seed | 117 lines | passing | 14 d',
+      '#720 | The whole MCP | seed | failing checks | 2 failed | 1 d',
     ], 'Next up, screenshot 32');
-    soft(await js(`document.querySelector('${section('next')} .morning-section-summary')?.textContent`), '~23 min');
     soft(await js(`document.querySelector('${section('next')} [data-overview-more-unreviewed]')?.textContent`), '4 more ready, not reviewed');
+    await noEffort('screenshot 32');
     // ivaremilsson's six: one row, behind a chevron; five at a time.
     soft(await texts('you'), ['ivaremilsson | seed | 6 PRs · oldest 4 d | passing'], 'Waiting on you, collapsed');
     soft(await js(`document.querySelector('${row('you|person:ivaremilsson')}').getAttribute('aria-expanded')`), 'false');
@@ -664,12 +671,12 @@ void app.whenReady().then(async () => {
     // The heading is the rows; the stack row says "6 PRs" and leads with its first PR's number.
     soft(await count('next'), '5', 'Next up: heading = rows');
     soft(await texts('next'), [
-      '#376 | refactor: model the store distribution channel instead of Steam-only flags | seed-launcher | not reviewed · green · unblocks 3 PRs | passing | ~1 min | 2 h',
-      '#611 | feat(rust): integrate the Rust worker workspace | seed | not reviewed · green | passing | ~1 min | 1 d',
-      // Equal effort: the longer wait first.
-      '#37601 | feat: add the market and create_seedling mcp tools to seed-api | seed | 6 PRs · +42 lines since your review · then merge #35392 | passing | ~3 min | 5 h',
-      '#377 | feat: block launches until the player accepts the terms in the launcher | seed-launcher | +42 lines since your review | passing | ~3 min | 5 h',
-      '#36990 | feat: throttle the chat presence updates | seed | 117 lines | passing | ~6 min | 6 d',
+      '#376 | refactor: model the store distribution channel instead of Steam-only flags | seed-launcher | not reviewed · green · unblocks 3 PRs | passing | 2 h',
+      '#611 | feat(rust): integrate the Rust worker workspace | seed | not reviewed · green | passing | 1 d',
+      // Equal rank: the longer wait first.
+      '#37601 | feat: add the market and create_seedling mcp tools to seed-api | seed | 6 PRs · +42 lines since your review · then merge #35392 | passing | 5 h',
+      '#377 | feat: block launches until the player accepts the terms in the launcher | seed-launcher | +42 lines since your review | passing | 5 h',
+      '#36990 | feat: throttle the chat presence updates | seed | 117 lines | passing | 6 d',
     ], 'Next up, screenshot 36');
     soft(await js(`[...document.querySelectorAll('${section('next')} [data-quick-action]')].map(b=>b.textContent)`), ['Merge', 'Merge', 'Re-review', 'Re-review', 'Review'], 'one action per stack: no Merge #35392 beside its re-review');
     soft(await js(`document.querySelector('${section('next')} [data-overview-more-unreviewed]')?.textContent`), '5 more ready, not reviewed');
@@ -722,15 +729,15 @@ void app.whenReady().then(async () => {
     // The key phrase of every Next up detail is readable at 1440: the title truncates first.
     soft(await js<string[]>(`[...document.querySelectorAll('${section('next')} .morning-detail')].filter(e=>e.scrollWidth > e.clientWidth + 1).map(e=>e.textContent)`), [], 'Next up details are not cut at 1440');
     softOk(await js<boolean>(`[...document.querySelectorAll('${section('next')} .morning-detail')].some(e=>e.textContent.endsWith('then merge #35392'))`), 'the re-review says what follows it');
-    // Effort and age are distinct columns: "~5 min" plain, the age with the waiting icon.
-    soft(await js(`(()=>{const r=document.querySelector('${section('next')} .morning-row');return [r.querySelector('[data-overview-effort]')?.title, !!r.querySelector('.morning-effort svg'), !!r.querySelector('.morning-age svg.lucide-hourglass')]})()`), ['Estimated time to do it', false, true]);
+    // No effort column: the age, with the waiting icon, sits right before the actions.
+    soft(await js(`(()=>{const r=document.querySelector('${section('next')} .morning-row');const a=r.querySelector('.morning-age');return [!!r.querySelector('.morning-effort'), !!a?.querySelector('svg.lucide-hourglass'), a?.nextElementSibling?.className]})()`), [false, true, 'morning-actions']);
     // Comments: the queue row's badge, above 0 only, and in the description.
     const comments = await js<Record<string, string>>(`Object.fromEntries([...document.querySelectorAll('${P} [data-overview-comments]')].map(e=>[e.closest('[data-overview-row-item]').querySelector('.morning-number')?.textContent ?? e.closest('[data-overview-row-item]').dataset.overviewRowItem, e.textContent]))`);
     soft(comments['#377'], '12', 'the lone re-review has 12 comments');
     soft(comments['#383'], '3', '#383 shows its 3 comments, in Next up and in its chain');
     softOk(!(await js<boolean>(`[...document.querySelectorAll('${P} [data-overview-comments]')].some(e=>e.textContent==='0')`)), 'no badge reads 0');
     softOk(!(await js<boolean>(`[...document.querySelectorAll('${P} .morning-comments:not([data-overview-comments])')].some(e=>e.textContent.trim()||e.querySelector('svg'))`)), 'a PR with no comments shows nothing');
-    soft(await description(row(`next|review|${url('klang/seed-launcher', 377)}`)), 'Re-review, +42 lines since your review, seed-launcher #377, checks passing, 12 comments, waiting 5 hours, about 3 minutes');
+    soft(await description(row(`next|review|${url('klang/seed-launcher', 377)}`)), 'Re-review, +42 lines since your review, seed-launcher #377, checks passing, 12 comments, waiting 5 hours');
     // EPIC: no checks and nobody reviewed it; its header and its Merge button say so, as Next up words it.
     const epic = 'others|stacks|stack:klang/seed-launcher#376';
     soft(await js(`document.querySelector('${P} [data-overview-row-item="${epic}"] .morning-detail')?.textContent`), 'Merge #376 (not reviewed, no checks) to unblock 3 PRs');

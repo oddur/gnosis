@@ -3,7 +3,7 @@
  * model (`lib/overview.ts`) and a few reads the page adds. `morningPage` builds every section at once.
  *
  * 1. **Since yesterday:** `lib/since-log.ts`.
- * 2. **Next up** (`nextUp`): the next few things to do, cheapest first, each with one action and its effort.
+ * 2. **Next up** (`nextUp`): the next few things to do, cheapest first, each with one action.
  * 3. **Needs a decision** (`needsDecision`): your PRs failing, never approved or idle for over a week.
  * 4. **Waiting on you** (`waitingOnYou`): people blocked on you, by person, oldest wait first; then PRs whose
  *    requester is not known ("unassigned") and team requests.
@@ -32,7 +32,7 @@
  * **Next up** (`nextUp`), at most `NEXT_LIMIT` items, whenever there is any work in Waiting on you, Fix or Merge:
  * - Candidates: ready merges (approved, or nobody reviewed and the branch rules require no review), replies, change
  *   requests, re-reviews, reviews of any size, and fixes (failing checks, conflicts, restacks).
- * - Order: estimated effort, cheapest first; then approved before not reviewed; then the merge that unblocks most
+ * - Order: `effortRank`, cheapest first; then approved before not reviewed; then the merge that unblocks most
  *   PRs; then PRs within `QUICK_LINES` changed lines before larger ones; then the longest wait. Size never excludes.
  *   PRs that need a decision (stuck over a week) come after the rest, so they stay in Needs a decision unless there is
  *   nothing else to do.
@@ -47,16 +47,15 @@
  *   review" when none are. It opens the review queue grouped by Action at Merge.
  * - The oldest review request always gets a slot, whatever its size: it replaces the last item when the rest fill
  *   the section.
- * - The heading's hint is the sum of the items' efforts: "~45 min".
  *
- * **Effort** (`nextEffort`), in minutes, rough on purpose. Over 15 minutes it rounds to 5; an item shows "1 h+" from
- * an hour (`effortShort`).
+ * **Effort rank** (`effortRank`): an internal ordering weight, never shown. It counts roughly in minutes, rough on
+ * purpose, and over 15 it rounds to 5. The page shows no time estimates.
  * - Merge a green PR: 1. Reply to a thread: 3. Address requested changes: 15.
  * - Fix: failing checks 10, conflicts 15, a restack 5, per PR.
  * - Re-review: 2, plus 1 for every 50 lines changed since your review up to 400, then 1 for every 80 (5 when the size
  *   is not known yet).
  * - Review: 3, plus 1 for every 40 lines up to 400, then 1 for every 60 lines; `UNKNOWN_REVIEW_LINES` when the size
- *   is not known yet. A ready explanation takes a third off. A 1,060-line review is ~25 min, 2,800 lines ~55 min.
+ *   is not known yet. A ready explanation takes a third off. A 1,060-line review ranks 25, 2,800 lines 55.
  *
  * **Waiting time and comments.** Every PR row says how long it has waited (`since`, `source`): the time its lane entry
  * began, as `lib/overview.ts` documents per reason (a row for several PRs, the oldest of them; a decision, when it
@@ -79,7 +78,7 @@ const DAY_MS = 86_400_000;
 export const NEXT_LIMIT = 5;
 /** Mergeable PRs nobody reviewed, listed at most in Next up. The rest are counted under it. */
 export const UNREVIEWED_LIMIT = 2;
-/** Size only orders Next up: within equal effort, PRs this small (or a stack in total) come first. */
+/** Size only orders Next up: within an equal effort rank, PRs this small (or a stack in total) come first. */
 export const QUICK_LINES = 300;
 /** The size a review is estimated at while GitHub has not reported it. */
 export const UNKNOWN_REVIEW_LINES = 200;
@@ -155,9 +154,9 @@ export interface NextItem {
   fix?: FixReason;
   /** One line: "approved by lena · green", "not reviewed · green · unblocks 3 PRs", "1060 lines", "failing checks". */
   why: string;
-  /** Estimated minutes (`nextEffort`). */
-  minutes: number;
-  /** Changed lines, when known: only orders items of equal effort. */
+  /** The internal ordering weight (`effortRank`): orders Next up, never shown. */
+  rank: number;
+  /** Changed lines, when known: only orders items of an equal rank. */
   lines?: number;
   /** The PRs the item lists: the one a merge merges, else the row's PRs. */
   urls: string[];
@@ -220,26 +219,21 @@ function sinceOf(row: OverviewRow, member?: ReviewMember): { since: number; sour
   return entry ? { since: entry.since, source: entry.source } : { since: row.since, source: row.source };
 }
 
-const roundEffort = (minutes: number) => (minutes > 15 ? Math.round(minutes / 5) * 5 : minutes);
-const FIX_MINUTES: Readonly<Record<FixReason, number>> = { failing: 10, conflicts: 15, restack: 5 };
-/** Minutes an item takes. See "Effort" at the top of this file. */
-export function nextEffort(kind: NextKind, lines?: number, explanation = false, fix: FixReason = 'failing'): number {
+const roundRank = (rank: number) => (rank > 15 ? Math.round(rank / 5) * 5 : rank);
+const FIX_RANK: Readonly<Record<FixReason, number>> = { failing: 10, conflicts: 15, restack: 5 };
+/**
+ * An item's place in Next up, cheapest first: an internal ordering weight, roughly minutes of work, that the page never
+ * shows. See "Effort rank" at the top of this file.
+ */
+export function effortRank(kind: NextKind, lines?: number, explanation = false, fix: FixReason = 'failing'): number {
   if (kind === 'merge') return 1;
   if (kind === 'reply') return 3;
   if (kind === 'changes') return 15;
-  if (kind === 'fix') return FIX_MINUTES[fix];
-  if (kind === 'rereview') return lines === undefined ? 5 : roundEffort(2 + Math.ceil(Math.min(lines, 400) / 50) + Math.ceil(Math.max(0, lines - 400) / 80));
+  if (kind === 'fix') return FIX_RANK[fix];
+  if (kind === 'rereview') return lines === undefined ? 5 : roundRank(2 + Math.ceil(Math.min(lines, 400) / 50) + Math.ceil(Math.max(0, lines - 400) / 80));
   const size = lines ?? UNKNOWN_REVIEW_LINES;
-  const minutes = 3 + Math.ceil(Math.min(size, 400) / 40) + Math.ceil(Math.max(0, size - 400) / 60);
-  return roundEffort(explanation ? Math.max(1, Math.round((minutes * 2) / 3)) : minutes);
-}
-/** An item's effort: "~25 min", and "1 h+" from an hour. */
-export const effortShort = (minutes: number) => (minutes >= 60 ? '1 h+' : `~${minutes} min`);
-/** A total: "~10 min", "~1 h 20 min". */
-export function effortLabel(minutes: number): string {
-  if (minutes < 60) return `~${minutes} min`;
-  const rest = minutes % 60;
-  return `~${Math.floor(minutes / 60)} h${rest ? ` ${rest} min` : ''}`;
+  const rank = 3 + Math.ceil(Math.min(size, 400) / 40) + Math.ceil(Math.max(0, size - 400) / 60);
+  return roundRank(explanation ? Math.max(1, Math.round((rank * 2) / 3)) : rank);
 }
 /** A comment as one quoted line: markdown and whitespace flattened, cut at a word near `QUOTE_LENGTH`. */
 export function quote(text: string): string {
@@ -289,7 +283,7 @@ const nextOrder = (stale: ReadonlySet<string>) => {
   const large = (item: NextItem) => (item.lines !== undefined && item.lines > QUICK_LINES ? 1 : 0);
   return (a: NextItem, b: NextItem) =>
     tier(a) - tier(b) ||
-    a.minutes - b.minutes ||
+    a.rank - b.rank ||
     Number(!!a.unreviewed) - Number(!!b.unreviewed) ||
     (b.unblocks ?? 0) - (a.unblocks ?? 0) ||
     large(a) - large(b) ||
@@ -324,7 +318,7 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
       .filter(Boolean)
       .join(' · ');
     add({
-      kind: 'merge', row, title: member.title, member, why, minutes: nextEffort('merge'), lines: memberLines(member), urls: [member.url],
+      kind: 'merge', row, title: member.title, member, why, rank: effortRank('merge'), lines: memberLines(member), urls: [member.url],
       ...(review.kind === 'no-review' ? { unreviewed: true } : {}),
       ...(unblocks ? { unblocks } : {}),
     });
@@ -337,7 +331,7 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
       add({
         kind: 'rereview', row, title: row.title, member: leadMember(row), urls, lines,
         why: stackPrefix(row) + (lines === undefined ? 'updated since your review' : `+${plural(lines, 'line', 'lines')} since your review`),
-        minutes: nextEffort('rereview', lines),
+        rank: effortRank('rereview', lines),
       });
       continue;
     }
@@ -346,7 +340,7 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     add({
       kind: 'review', row, title: row.title, member: leadMember(row), urls, lines,
       why: stackPrefix(row) + [lines === undefined ? 'size not known yet' : plural(lines, 'line', 'lines'), explanation ? 'explanation ready' : ''].filter(Boolean).join(' · '),
-      minutes: nextEffort('review', lines, explanation),
+      rank: effortRank('review', lines, explanation),
     });
     const item = candidates.at(-1);
     if (item?.row === row && row.reasons.includes('review-requested')) requests.push(item);
@@ -356,16 +350,16 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     if (row.reasons.includes('replies')) {
       const reply = input.replies?.[row.focus.url];
       add({
-        kind: 'reply', row, title: row.title, member: leadMember(row), urls, minutes: nextEffort('reply'),
+        kind: 'reply', row, title: row.title, member: leadMember(row), urls, rank: effortRank('reply'),
         why: reply ? `${reply.author}: “${quote(reply.text)}”` : `${row.person ?? 'Someone'} is waiting on your reply`,
       });
     } else if (row.reasons.includes('changes-requested'))
-      add({ kind: 'changes', row, title: row.title, member: leadMember(row), urls, minutes: nextEffort('changes'), why: `${row.person ? `${row.person} requested` : 'Requested'} changes` });
+      add({ kind: 'changes', row, title: row.title, member: leadMember(row), urls, rank: effortRank('changes'), why: `${row.person ? `${row.person} requested` : 'Requested'} changes` });
   }
   for (const row of lanes(model, 'fix')?.rows ?? []) {
     const fix = fixReason(row.reasons);
-    const minutes = roundEffort(row.entries.reduce((total, entry) => total + nextEffort('fix', undefined, false, fixReason(entry.reasons)), 0));
-    add({ kind: 'fix', row, title: row.title, member: leadMember(row), fix, minutes, urls: entryMembers(row).map((member) => member.url), why: stackPrefix(row) + FIX_WORDS[fix] });
+    const rank = roundRank(row.entries.reduce((total, entry) => total + effortRank('fix', undefined, false, fixReason(entry.reasons)), 0));
+    add({ kind: 'fix', row, title: row.title, member: leadMember(row), fix, rank, urls: entryMembers(row).map((member) => member.url), why: stackPrefix(row) + FIX_WORDS[fix] });
   }
   // A stack you owe a review on: the review is its next step, and its base merges after it.
   const reviewing = new Set(candidates.filter((item) => item.kind === 'review' || item.kind === 'rereview').map(stackKey));
@@ -414,7 +408,6 @@ export function nextMoreLine(next: NextUp): string | undefined {
   if (next.moreUnreviewed <= 0) return undefined;
   return next.items.some((item) => item.unreviewed) ? `${next.moreUnreviewed} more ready, not reviewed` : `${next.moreUnreviewed} ready to merge without review`;
 }
-export const nextMinutes = (items: readonly Pick<NextItem, 'minutes'>[]) => items.reduce((total, item) => total + item.minutes, 0);
 /** Next up's heading: the rows it shows. A row for several PRs says so on the row; the quiet line keeps its own number. */
 export const nextCount = (items: readonly unknown[]) => items.length;
 
