@@ -4995,18 +4995,22 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .overview-body { flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; padding:4px 0 32px; overflow-anchor:auto; }
 .overview-notice { flex-shrink:0; }
 .overview-toolbar { align-items:flex-start; }
-.queue-toolbar > div:first-child > p.overview-briefing { margin-top:8px; max-width:68ch; font-size:var(--type-prose); line-height:1.55; color:var(--foreground); white-space:normal; overflow:visible; text-wrap:balance; }
-/* A briefing number, and Waiting on you's pointer: inline text links to the rows they count. */
-.overview-count-link { display:inline; padding:0; font:inherit; color:inherit; text-align:inherit; text-decoration:underline; text-decoration-color:color-mix(in srgb, currentColor 40%, transparent); text-underline-offset:3px; text-decoration-thickness:1px; border-radius:2px; cursor:pointer; }
-.overview-count-link:hover { text-decoration-color:currentColor; }
+.queue-toolbar > div:first-child > p.overview-briefing { margin-top:8px; max-width:64ch; font-size:var(--type-prose); font-weight:400; line-height:1.6; color:var(--foreground); white-space:normal; overflow:visible; text-wrap:pretty; }
+/* A briefing number, and Waiting on you's pointer: inline text links to the rows they count. Quiet at rest, a
+   faint dotted underline in the text's own ink, so a sentence of six links still reads as a sentence; the link
+   colour and a solid underline come on hover. */
+.overview-count-link { display:inline; padding:0; font:inherit; color:inherit; text-align:inherit; text-decoration:underline dotted; text-decoration-color:color-mix(in srgb, currentColor 45%, transparent); text-underline-offset:4px; text-decoration-thickness:1px; border-radius:2px; cursor:pointer; }
+.overview-count-link:hover { color:var(--primary); text-decoration-style:solid; text-decoration-color:currentColor; }
 .overview-count-link:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+/* A link and the word after it share a line (`Sentence`). */
+.overview-keep { white-space:nowrap; }
 .overview-count-link svg { display:inline; margin-left:2px; vertical-align:-1px; }
 /* The rows a link counts, marked for a moment after it is followed. */
 .morning-row[data-overview-highlight], .morning-more-quiet[data-overview-highlight] { background:var(--accent); transition:background-color 600ms ease-out; }
 .overview-freshness-group { display:flex; align-items:center; gap:8px; margin-top:1px; }
 /* One status line: "Updated 9m ago · checking 28 PRs". */
 .overview-status-line { display:inline-flex; align-items:center; font-size:var(--type-caption); color:var(--muted-foreground); white-space:nowrap; font-variant-numeric:tabular-nums; }
-.overview-status-line > * + *::before { content:"·"; margin:0 4px; opacity:.7; }
+.overview-status-line > * + *::before { content:" · "; white-space:pre; }
 /* The morning page (#390): one lead section, then who waits on you and on whom you wait, full width one above the
    other, and a quiet section of decisions. Sections are headed lists, not cards: a hairline under each heading, rows
    that fill on hover, generous space between sections. At wide widths the page keeps a reading width and centres,
@@ -5020,7 +5024,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* Section titles take DESIGN.md's section step (18px), a real level above the 15px row titles, with the count inline. */
 .morning-section-head { display:flex; align-items:baseline; gap:8px; padding-bottom:8px; margin-bottom:4px; border-bottom:1px solid var(--border); }
 .morning-section-head h2 { display:flex; align-items:baseline; gap:8px; font-size:var(--type-section-title); font-weight:600; line-height:1.35; letter-spacing:-0.01em; color:var(--foreground); text-wrap:balance; }
-.morning-section-count { font-size:var(--type-body); font-weight:500; letter-spacing:0; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.morning-section-count { font-size:var(--type-body); font-weight:400; letter-spacing:0; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .morning-section.is-quiet .morning-section-head h2 { color:var(--muted-foreground); }
 .morning-empty { padding:8px 0; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
 .morning-rows { display:flex; flex-direction:column; margin:0 -8px 0 -12px; }
@@ -5036,22 +5040,31 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* The title takes the space: the repository and detail get what is left, and truncate first. A stack's step is its
    point, so a stack's name keeps at most 40% of the line. */
 .morning-head { flex:0 1 auto; min-width:0; display:flex; align-items:baseline; gap:8px; }
-.morning-title-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-body); font-weight:450; line-height:1.45; }
+/* The type ramp, top down: the 24px page title, the 16px briefing, 18px semibold section titles, 13px semibold group
+   headers (a person, CI, the stacks, You: the queue's group label), 15px regular titles for every PR and stack line,
+   then one 12px muted caption for everything about a line: its number, repository, detail, check, comments, age and
+   status word. Titles and details truncate at a word (`Words`), never inside a number. */
+.morning-title-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-body); font-weight:400; line-height:1.45; }
+/* Inline blocks, so an ellipsis takes a whole word and never cuts "#35390" or "+42"; the hover underline carries over. */
+.morning-word { display:inline-block; text-decoration:inherit; }
 /* The PR number leads, in a fixed column of tabular numerals, so titles start on one edge. */
-.morning-number { flex:none; min-width:6.5ch; font-size:var(--type-control); line-height:1.45; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
-.morning-detail { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-control); line-height:1.45; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
-.morning-row.is-nested .morning-title-text { max-width:none; font-size:var(--type-control); }
+.morning-number { flex:none; min-width:7ch; font-size:var(--type-caption); line-height:1.45; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.morning-detail { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-caption); line-height:1.45; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.morning-row.is-nested .morning-title-text { max-width:none; }
+/* A group's header is a label over its lines, as the queue's group headings are: smaller and heavier than the titles under it. */
+.morning-row.is-group .morning-title-text { font-size:var(--type-control); font-weight:600; }
 .morning-row.depth-2 .morning-row-inner { padding-left:48px; }
 /* The repository, then the detail, after the title: plain muted text, with the repository's icon or colour when set. */
-.morning-sub { flex:1 1 0; min-width:0; display:flex; align-items:baseline; gap:8px; overflow:hidden; }
+.morning-sub { flex:1 1 0; min-width:0; display:flex; align-items:baseline; gap:.3em; overflow:hidden; }
 .morning-sub .morning-detail { flex:0 1 auto; }
 .morning-stack-head .morning-head { max-width:40%; }
 /* Inline, so the name sets the baseline the detail shares; the icon and dot sit on it. */
-.morning-repo { flex:none; max-width:26ch; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-control); line-height:1.45; color:var(--muted-foreground); }
+.morning-repo { flex:none; max-width:26ch; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--type-caption); line-height:1.45; color:var(--muted-foreground); }
 .morning-repo .repository-icon { display:inline-flex; vertical-align:-2px; margin-right:4px; }
-.morning-repo .repository-icon svg { width:13px; height:13px; }
+.morning-repo .repository-icon svg { width:12px; height:12px; }
 .morning-repo-dot { display:inline-block; width:8px; height:8px; margin-right:4px; vertical-align:1px; border-radius:50%; background:var(--repository-color); }
-.morning-repo + .morning-detail::before { content:"·"; margin-right:8px; opacity:.7; }
+/* One separator everywhere: " · ", as the words inside a detail are separated. */
+.morning-repo + .morning-detail::before { content:"· "; white-space:pre; }
 .morning-title:hover .morning-title-text { text-decoration:underline; text-decoration-color:color-mix(in srgb, var(--foreground) 35%, transparent); text-underline-offset:3px; }
 .morning-title:focus-visible { outline:none; }
 /* The ring goes around the whole row, so its actions never cover it. */
@@ -5070,8 +5083,8 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-actions { flex:none; display:flex; align-items:center; justify-content:flex-end; gap:4px; width:7.25rem; padding-left:8px; }
 /* A stack's line has no status cell or age: its pointer ("next step in Next up") may use their room. */
 .morning-stack-head .morning-actions { width:auto; min-width:7.25rem; }
-.morning-conflicts { display:inline-flex; align-items:center; gap:4px; }
-.morning-conflicts svg { flex:none; color:var(--color-danger); }
+.morning-conflicts { display:inline-flex; align-items:center; gap:4px; font-weight:500; color:var(--color-danger); }
+.morning-conflicts svg { flex:none; }
 .morning-actions .pr-actions { margin:0; }
 .morning-actions .entry-menu-trigger { width:24px; height:24px; opacity:0; transition:opacity 120ms ease-out; }
 .morning-row:hover .entry-menu-trigger, .morning-row:focus-within .entry-menu-trigger { opacity:1; }
@@ -5081,20 +5094,23 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-section[data-section=decide] .morning-title-text { color:var(--foreground); }
 .morning-actions [data-reveal] { opacity:0; transition:opacity 120ms ease-out; }
 .morning-row:hover .morning-actions [data-reveal], .morning-row:focus-within .morning-actions [data-reveal] { opacity:1; }
-.morning-done { font-size:var(--type-caption); color:var(--muted-foreground); padding:0 8px; }
+.morning-done { font-size:var(--type-caption); font-weight:500; line-height:1.45; color:var(--muted-foreground); padding:0 8px; }
 /* The check state, as the queue row shows it (.queue-checks); unknown reads "checking…". Never truncated. */
 .morning-checks { flex:none; min-width:0; }
 .morning-checks.is-unknown { font-style:italic; }
 /* A chain's status word: the first PR is Next; colour only supports the word. */
-.morning-status { flex:none; display:inline-flex; align-items:center; gap:4px; padding-left:8px; font-size:var(--type-caption); font-weight:600; line-height:1.45; color:var(--muted-foreground); white-space:nowrap; }
+/* Status words, one style: Next, Waiting, Conflicts and Nudged are 12px medium; muted, the next step in ink,
+   conflicts in red with their icon. */
+.morning-status { flex:none; display:inline-flex; align-items:center; gap:4px; padding-left:8px; font-size:var(--type-caption); font-weight:500; line-height:1.45; color:var(--muted-foreground); white-space:nowrap; }
 .morning-status.is-next { color:var(--foreground); }
 .morning-status.is-conflicts { color:var(--color-danger); }
 /* Stacks: a header with the name, the repository once and the next step, then the chain in merge order on a thin
    connector, as on the stack page (StackDependencyChain). The step and the numbers never truncate; titles do, at
    their end. */
 .morning-stack { --chain-row:28px; }
-/* One line per stack: the step keeps its words until the line runs out, then truncates at its end. */
-.morning-stack-head .morning-detail { color:var(--foreground); font-weight:500; }
+/* One line per stack: the step keeps its words until the line runs out, then truncates at a word. The step is the
+   line's point, so it takes the ink; the count beside it stays a caption. */
+.morning-step { color:var(--foreground); }
 /* "seed-launcher#384": a chain's number with its repository, where numbers repeat across repositories. */
 .morning-number.is-qualified { min-width:0; max-width:34ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .morning-chain .stack-chain-node .pr-state-icon { width:14px; height:14px; }
@@ -5106,7 +5122,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-chain .stack-chain-node { width:18px; height:18px; margin-right:8px; color:var(--muted-foreground); }
 .morning-row.is-chain .morning-title { padding-block:4px; }
 .morning-row.is-chain .morning-title-text { font-size:var(--type-control); color:var(--muted-foreground); }
-.morning-row.is-chain.is-next .morning-title-text { color:var(--foreground); font-weight:550; }
+.morning-row.is-chain.is-next .morning-title-text { color:var(--foreground); font-weight:500; }
 .morning-chain .morning-status { width:4.5rem; }
 .morning-more-quiet.morning-also { margin-left:0; font-size:var(--type-caption); white-space:nowrap; }
 .morning-more-row .morning-more-quiet { margin:4px 0 4px 4px; }

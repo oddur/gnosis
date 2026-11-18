@@ -19,7 +19,7 @@
  * "…" row menu in one column, and a stack chain shows every PR of its stack in full, linking to the section that also
  * lists one.
  *
- * Screenshots go to .impeccable/review/overview-morning-9/, light and dark: the default day, the screenshot-32 shape
+ * Screenshots go to .impeccable/review/overview-typeset/, light and dark: the default day at 1280, 1440×1000 and 760, the screenshot-32 shape
  * at 1440×1000, 1920×1080 and 760 wide, its stacks at 1440×1000, the screenshot-34 chains at 1440 and 760, the screenshot-36 shape at
  * 1440×1000, the screenshot-37 shape at 1440×1000 and 760, the screenshot-39 volume at 1440×1000 and 760 with a stack
  * expanded, a light day, and the PR preview.
@@ -46,7 +46,7 @@ void app.whenReady().then(async () => {
   });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   let step = 'start';
-  const dir = path.resolve('.impeccable/review/overview-morning-9');
+  const dir = path.resolve('.impeccable/review/overview-typeset');
   fs.mkdirSync(dir, { recursive: true });
   // Mismatches in words and layout are collected per step, so one run reports all of them.
   const misses: string[] = [];
@@ -336,8 +336,24 @@ void app.whenReady().then(async () => {
     soft(await js(`[...document.querySelectorAll('${P} [data-briefing-count]')].map(b=>[b.dataset.briefingCount, b.textContent])`), [
       ['replies', 'your replies'], ['reviews', '6 reviews'], ['rereviews', '1 re-review'], ['approved', '2 approved PRs'], ['unreviewed', '1 more'], ['failing', '1'], ['conflicts', '2'], ['decide', '2 PRs'],
     ]);
+    // The type ramp: 15px regular PR titles, 13px semibold group headers over them, and one 12px muted caption for a
+    // line's number, repository, detail, check, comments and age, with tabular numerals; briefing links dotted at rest.
+    const type = (selector: string) => js<string>(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return 'missing';const s=getComputedStyle(e);return [s.fontSize,s.fontWeight,s.fontVariantNumeric].join(' ')})()`);
+    const next321 = row(`next|review|${url('klang/engine', 321)}`);
+    soft(await type(`${next321} .morning-title-text`), '15px 400 normal', 'PR titles: 15px regular');
+    soft(await type(`${row('others|person:lena')} .morning-title-text`), '13px 600 normal', 'group headers: 13px semibold');
+    for (const part of ['.morning-number', '.morning-repo', '.morning-detail'])
+      soft(await type(`${next321} ${part}`), `12px 400 ${part === '.morning-repo' ? 'normal' : 'tabular-nums'}`, `${part} is the caption`);
+    for (const part of ['.morning-checks', '.morning-age'])
+      soft((await type(`${P} [data-overview-row-item="next|review|${url('klang/engine', 321)}"] ${part}`)).replace(/ \S+$/, ''), '12px 400', `${part} is the caption`);
+    soft(await js(`getComputedStyle(document.querySelector('${P} [data-briefing-count]')).textDecorationStyle`), 'dotted', 'briefing links are dotted at rest');
     await js(`document.activeElement?.blur()`);
     await both('default-1280');
+    await resize(1440, 1000);
+    await both('default-1440x1000');
+    await resize(760, 1000);
+    await both('default-760');
+    await resize(1280);
     settle();
 
     step = 'harden';
@@ -897,7 +913,7 @@ void app.whenReady().then(async () => {
     await js('window.fixtureOverview.requestReview()');
     await wait(`!!document.querySelector('${row(`next|review|${url('klang/seed', 36997)}`)}')`);
     soft(await js(`[...document.querySelectorAll('${P} .overview .pr-unread-dot')].map(d=>d.closest('[data-overview-row-item]').dataset.overviewRowItem)`), [`next|review|${url('klang/seed', 36997)}`], 'one dot: the new review request');
-    softOk(await js<boolean>(`getComputedStyle(document.querySelector('${row(`next|review|${url('klang/seed', 36997)}`)} .morning-title-text')).fontWeight === '450'`), 'no bold for unread: the dot only');
+    softOk(await js<boolean>(`getComputedStyle(document.querySelector('${row(`next|review|${url('klang/seed', 36997)}`)} .morning-title-text')).fontWeight === '400'`), 'no bold for unread: the dot only');
     await collapseStacks();
     // A clean page for the screenshots: no marked rows, no PR preview left open by a focused row.
     await js(`document.querySelectorAll('${P} [data-overview-highlight]').forEach(e=>e.removeAttribute('data-overview-highlight'))`);

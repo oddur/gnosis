@@ -740,26 +740,45 @@ const HIGHLIGHT_MS = 2400;
  * scrolls to and focuses the rows it counts; a pointer carries the arrow of where they are.
  */
 function Sentence({ parts, onCount, onLink }: { parts: readonly (string | BriefingCount | PageLink)[]; onCount?: (count: BriefingCount) => void; onLink?: (link: PageLink) => void }) {
-  return (
-    <>
-      {parts.map((part, i) => {
-        if (typeof part === 'string') return <span key={i}>{part}</span>;
-        if ('key' in part)
-          return (
-            <button key={i} type="button" className="overview-count-link" data-briefing-count={part.key} data-count={part.count} title={`Show ${part.count === 1 ? 'it' : `these ${part.count}`} on the page`} onClick={() => onCount?.(part)}>
-              {part.text}
-            </button>
-          );
-        const Arrow = ALSO_UP[part.place] ? ArrowUp : ArrowDown;
-        return (
-          <button key={i} type="button" className="overview-count-link" data-overview-pointer={part.place} onClick={() => onLink?.(part)}>
-            {part.text}
-            <Arrow size={12} aria-hidden="true" />
-          </button>
-        );
-      })}
-    </>
-  );
+  const link = (part: BriefingCount | PageLink, i: number) => {
+    if ('key' in part)
+      return (
+        <button key={i} type="button" className="overview-count-link" data-briefing-count={part.key} data-count={part.count} title={`Show ${part.count === 1 ? 'it' : `these ${part.count}`} on the page`} onClick={() => onCount?.(part)}>
+          {part.text}
+        </button>
+      );
+    const Arrow = ALSO_UP[part.place] ? ArrowUp : ArrowDown;
+    return (
+      <button key={i} type="button" className="overview-count-link" data-overview-pointer={part.place} onClick={() => onLink?.(part)}>
+        {part.text}
+        <Arrow size={12} aria-hidden="true" />
+      </button>
+    );
+  };
+  // A link keeps the word after it on its line, so "14" never ends a line apart from "have failing checks".
+  const out: ReactNode[] = [];
+  let skip = 0;
+  parts.forEach((part, i) => {
+    if (typeof part === 'string') {
+      if (part.length > skip) out.push(<span key={i}>{part.slice(skip)}</span>);
+      skip = 0;
+      return;
+    }
+    const next = parts[i + 1];
+    const glue = typeof next === 'string' ? (/^\s*\S*/.exec(next)?.[0] ?? '') : '';
+    skip = glue.length;
+    out.push(
+      glue ? (
+        <span key={i} className="overview-keep">
+          {link(part, i)}
+          {glue}
+        </span>
+      ) : (
+        link(part, i)
+      )
+    );
+  });
+  return <>{out}</>;
 }
 
 /** Settles this long before a count change is announced, so a burst of sync updates is one announcement. */
@@ -1051,12 +1070,12 @@ function RowShell({ id, tabStop, actions, label, title, number, numberLabel, pre
     >
       <span className="morning-head">
         {number !== undefined && <span className={`morning-number${numberLabel ? ' is-qualified' : ''}`}>{numberLabel ?? `#${number}`}</span>}
-        {title ? <span className="morning-title-text">{title}</span> : null}
+        {title ? <span className="morning-title-text">{typeof title === 'string' ? <Words text={title} /> : title}</span> : null}
       </span>
       {(repos?.length || detail !== undefined) && (
         <span className="morning-sub">
           {repos && <RepoName repos={repos} />}
-          {detail !== undefined && <span className="morning-detail">{detail}</span>}
+          {detail !== undefined && <span className="morning-detail">{typeof detail === 'string' ? <Words text={detail} /> : detail}</span>}
         </span>
       )}
     </button>
@@ -1094,6 +1113,15 @@ function RowShell({ id, tabStop, actions, label, title, number, numberLabel, pre
       )}
     </Tag>
   );
+}
+
+/**
+ * Text whose ellipsis falls between words: each word after the first is an inline block (`.morning-word`), which a
+ * truncated line hides whole, so "#35390" or "+42 lines" is never cut. The first word, and any word too long to hide
+ * whole, stay plain text so a narrow line still shows something.
+ */
+function Words({ text }: { text: string }) {
+  return <>{text.split(/(\s+)/).map((part, i) => (i === 0 || part.length > 24 || !part.trim() ? part : <span key={i} className="morning-word">{part}</span>))}</>;
 }
 
 /** Out of the tab order: Tab moves between sections, and A runs the focused row's action. */
@@ -1349,6 +1377,7 @@ const GroupRows = memo(
           actions={actions}
           label={`${name} · ${group.detail}`}
           title={name}
+          className="is-group"
           icon={<GroupIcon group={group} />}
           repos={group.repos}
           detail={group.detail}
@@ -1391,6 +1420,7 @@ const StacksRows = memo(
           actions={actions}
           label={`${group.label} · ${group.detail}`}
           title={group.label}
+          className="is-group"
           icon={<GroupIcon group={group} />}
           repos={group.repos}
           detail={group.detail}
@@ -1482,7 +1512,7 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions, qualify }:
             <>
               {prs(size)}
               {' · '}
-              {step.conflicts ? <Conflicts>{step.text}</Conflicts> : step.text}
+              {step.conflicts ? <Conflicts>{step.text}</Conflicts> : <span className="morning-step"><Words text={step.text} /></span>}
             </>
           )
         }
