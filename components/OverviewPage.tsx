@@ -3,7 +3,8 @@
  * blocked on you, where your PRs are stuck and on whom, and what to close or park.
  *
  * - The briefing sentence and a "Since yesterday" line (`lib/since-log.ts`).
- * - **Next up:** up to five things to do, cheapest first, each with one action.
+ * - **Next up:** up to five things to do, people blocked on you first, then approved merges, then fixes, each with one
+ *   action. A merge nobody reviewed is never a row: the quiet line under it counts them.
  * - **Waiting on you** and **Waiting on others**, full width one above the other: people, and your PRs by blocker,
  *   with Nudge. Stacks are chains in merge order, base first, with the step that moves them.
  * - **Needs a decision:** your PRs failing, never approved or idle for over a week, with Close PR and Snooze.

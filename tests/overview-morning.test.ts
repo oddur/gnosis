@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { overviewModel, type OverviewModel } from '../lib/overview';
 import {
   NEXT_LIMIT,
-  UNREVIEWED_LIMIT,
+
   QUICK_LINES,
   closeConfirmation,
   commentsOf,
@@ -23,6 +23,7 @@ import {
   sectionCount,
   waitingOnYou,
   type MorningPage,
+  NEXT_TIER,
   type GroupLine,
   type PersonGroup,
 } from '../lib/morning';
@@ -236,12 +237,13 @@ void test('Next up: cheapest first, at most five, with a total; size orders but 
     item([large]),
   ];
   const few = nextUp(input(build(items, status), status, { replies: { [replied.url]: { author: 'owen', text: 'Could we keep the old loading order behind a flag until every plugin has migrated?' } } }));
+  // People blocked on you first, cheapest first; then the approved merge, though it is cheaper.
   assert.deepEqual(few.items.map((entry) => [entry.kind, entry.member.number, entry.why, entry.rank]), [
-    ['merge', 1, 'approved by lena · green', 1],
     ['reply', 3, 'owen: “Could we keep the old loading order behind a flag until…”', 3],
     ['review', 5, '40 lines', 4],
-    // 700 lines: not quick, but listed, last.
+    // 700 lines: not quick, but listed, after the smaller review.
     ['review', 6, '700 lines', 20],
+    ['merge', 1, 'approved by lena · green', 1],
   ]);
   assert.ok(!few.items.some((entry) => /\bmin\b|\d h\+/.test(entry.why)), 'no time estimate in what a row says');
   assert.ok(!few.items.some((entry) => entry.member.number === 2), 'checks still running: not a merge yet');
@@ -249,7 +251,7 @@ void test('Next up: cheapest first, at most five, with a total; size orders but 
   const extra = Array.from({ length: 6 }, (_, i) => member(20 + i, { requestedReviewers: [LOGIN], additions: 10, deletions: 0, createdAt: iso((10 - i) * DAY) }));
   const { items: all } = nextUp(input(build([...items, ...extra.map((m) => item([m]))], status), status));
   assert.equal(all.length, NEXT_LIMIT, 'at most five');
-  for (let i = 1; i < all.length; i++) assert.ok(all[i - 1].rank <= all[i].rank, 'cheapest first');
+  for (let i = 1; i < all.length; i++) assert.ok(NEXT_TIER[all[i - 1].kind] < NEXT_TIER[all[i].kind] || all[i - 1].rank <= all[i].rank, 'by tier, cheapest first within one');
   assert.equal(all.some((entry) => entry.member.number === 6), false, 'the large review waits for room; it is still in Waiting on you');
   const full = page(build([...items, ...extra.map((m) => item([m]))], status), status);
   assert.ok(full.you.some((group) => group.urls.includes(large.url)));
@@ -274,14 +276,17 @@ void test('the internal effort rank orders Next up, extended for large PRs', () 
   assert.deepEqual(checkView([undefined]), { state: 'unknown', label: 'checking…', spoken: 'checks not read yet' });
 });
 
-void test('Next up is never empty while there is work, and says so when there is none', () => {
+void test('Next up is never empty while there is work, a merge nobody reviewed waits on the quiet line, and it says so when there is none', () => {
   const status: Record<string, QueueSignals> = {};
   const set = <T extends ReviewMember>(m: T, value: (m: T) => QueueSignals) => { status[m.url] = value(m); return m; };
   const broken = set(minePr('o/r', 1), failing);
   const onlyFix = page(build([item([broken])], status), status);
   assert.deepEqual(onlyFix.next.items.map((entry) => [entry.kind, entry.why, entry.rank]), [['fix', 'failing checks', 10]]);
   const huge = set(minePr('o/r', 2, { additions: 3000 }), noReview);
-  assert.deepEqual(page(build([item([huge])], status), status).next.items.map((entry) => [entry.kind, entry.why]), [['merge', 'not reviewed · green']]);
+  const unreviewedOnly = page(build([item([huge])], status), status);
+  assert.deepEqual(unreviewedOnly.next.items, [], 'a merge nobody reviewed is never a row');
+  assert.equal(nextMoreLine(unreviewedOnly.next), '1 ready to merge without review');
+  assert.equal(unreviewedOnly.briefing.text, '1 PR can merge without review.');
   const bigReview = pr('o/r', 3, { author: 'ivaremilsson', requestedReviewers: [LOGIN], additions: 2400, deletions: 300 });
   assert.deepEqual(page(build([item([bigReview])], status), status).next.items.map((entry) => [entry.kind, entry.rank]), [['review', 50]]);
   const changes = set(minePr('o/r', 4), (m) => signals(m, { checks: 'success', decision: 'CHANGES_REQUESTED', opinions: [{ id: '1', author: 'lena', state: 'CHANGES_REQUESTED' }] }));
@@ -302,43 +307,78 @@ void test('a stacked PR waits for its base; the base merge is the next step and 
   const base = minePr('klang/launcher', 376, { title: 'STACK: EPIC', additions: 2400, deletions: 300, headBranch: 'epic' });
   const rest = [377, 378, 379].map((n, i) => minePr('klang/launcher', n, { baseBranch: i ? `feature-${n - 1}` : 'epic', additions: 400 }));
   for (const m of [base, ...rest]) status[m.url] = noReview(m);
+  status[base.url] = approved(base);
   const model = build([stack([base, ...rest], 'epic', 'STACK: EPIC')], status);
   const result = page(model, status);
-  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.urls.length, entry.unblocks]), [['merge', 'STACK: EPIC', 'not reviewed · green · unblocks 3 PRs', 1, 3]]);
+  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.urls.length, entry.unblocks]), [['merge', 'STACK: EPIC', 'approved by lena · green · unblocks 3 PRs', 1, 3]]);
   assert.equal(nextMoreLine(result.next), undefined, 'the stacked PRs above it are not ready on their own');
   const stacks = result.others.find((group) => group.kind === 'stacks');
   const chain = must(stacks?.children?.[0]);
-  assert.equal(must(chain.step).text, 'Merge #376 (not reviewed) to unblock 3 PRs');
+  assert.equal(must(chain.step).text, 'Merge #376 to unblock 3 PRs');
   assert.equal(must(chain.step).action, 'merge');
   // The base is in Next up: the chain still shows it as a full line, linked there, and the three PRs above it.
   assert.deepEqual(must(chain.chain).map((node) => `#${node.line.member.number} ${node.line.status} · ${node.line.description}${node.also ? ` · also ${node.also}` : ''}`), [
-    '#376 next · #376, next, merges first. Merge #376 (not reviewed) to unblock 3 PRs · also next',
+    '#376 next · #376, next, merges first. Merge #376 to unblock 3 PRs · also next',
     '#377 waiting · #377, waiting, after #376',
     '#378 waiting · #378, waiting, after #377',
     '#379 waiting · #379, waiting, after #378',
   ]);
   assert.equal(stacks?.detail, '3 PRs in 1 stack');
+  // A base nobody reviewed is no row: the quiet line counts it, and its stack's button opens the PR instead of merging.
+  status[base.url] = noReview(base);
+  const unreviewed = page(build([stack([base, ...rest], 'epic', 'STACK: EPIC')], status), status);
+  assert.deepEqual(unreviewed.next.items, []);
+  assert.equal(nextMoreLine(unreviewed.next), '1 ready to merge without review');
+  const step = must(unreviewed.others.find((group) => group.kind === 'stacks')?.children?.[0]?.step);
+  assert.deepEqual([step.text, step.action, step.caveats], ['Merge #376 (not reviewed) to unblock 3 PRs', 'open', ['not reviewed']]);
 });
 
-void test('merges nobody reviewed: at most two, small before large, and the line under Next up says how many more', () => {
+void test('merges nobody reviewed are never rows: the quiet line under Next up counts every one', () => {
   const status: Record<string, QueueSignals> = {};
   const set = (m: ReviewMember, value: (m: ReviewMember) => QueueSignals) => { status[m.url] = value(m); return m; };
-  // Oldest first, but the large one waits: size orders, it never excludes.
   const big = set(minePr('o/r', 11, { additions: 2000, updatedAt: iso(30 * 3_600_000) }), noReview);
   const small = [12, 13].map((n, i) => set(minePr('o/r', n, { updatedAt: iso((20 - i) * 3_600_000) }), noReview));
   const result = page(build([big, ...small].map((m) => item([m])), status), status);
-  assert.deepEqual(result.next.items.map((entry) => [entry.member.number, entry.why]), [[12, 'not reviewed · green'], [13, 'not reviewed · green']]);
-  assert.equal(result.next.items.filter((entry) => entry.unreviewed).length, UNREVIEWED_LIMIT);
-  assert.equal(result.next.unreviewed.length, 1);
-  assert.equal(nextMoreLine(result.next), '1 more ready, not reviewed', 'some are listed');
+  assert.deepEqual(result.next.items, [], 'the cheapest action is not a recommendation when nobody reviewed it');
+  assert.equal(result.next.unreviewed.length, 3);
+  assert.equal(nextMoreLine(result.next), '3 ready to merge without review');
   assert.ok(big.additions !== undefined && big.additions > QUICK_LINES);
-  // Approved merges come first; when they fill Next up, none of the unreviewed ones is listed.
-  const approvedOnes = [21, 22, 23, 24, 25].map((n) => set(minePr('o/r', n), (m) => approved(m)));
-  const full = page(build([...approvedOnes, big, ...small].map((m) => item([m])), status), status);
+  // Approved, passing merges are rows; the unreviewed ones stay on the quiet line, whatever the room.
+  const approvedOnes = [21, 22].map((n) => set(minePr('o/r', n), (m) => approved(m)));
+  const some = page(build([...approvedOnes, big, ...small].map((m) => item([m])), status), status);
+  assert.deepEqual(some.next.items.map((entry) => [entry.kind, entry.member.number]), [['merge', 21], ['merge', 22]]);
+  assert.equal(nextMoreLine(some.next), '3 ready to merge without review');
+  assert.equal(some.briefing.text, '2 approved PRs can merge and 3 more can merge without review.');
+  // More approved merges than fit: the quiet line counts the rest too.
+  const many = [21, 22, 23, 24, 25, 26].map((n) => set(minePr('o/r', n), (m) => approved(m)));
+  const full = page(build([...many, big, ...small].map((m) => item([m])), status), status);
   assert.equal(full.next.items.length, NEXT_LIMIT);
-  assert.equal(full.next.items.some((entry) => entry.unreviewed), false);
-  assert.equal(nextMoreLine(full.next), '3 ready to merge without review', 'none are listed');
-  assert.equal(nextMoreLine({ items: [], unreviewed: [], moreApproved: [] }), undefined);
+  assert.equal(nextMoreLine(full.next), '3 ready to merge without review · 1 more approved and ready to merge');
+  assert.equal(nextMoreLine({ unreviewed: [], moreApproved: [] }), undefined);
+});
+
+void test('Next up by tier: people blocked on you, then approved merges, then fixes; effort, unblocks and age within one', () => {
+  const status: Record<string, QueueSignals> = {};
+  const set = (m: ReviewMember, value: (m: ReviewMember) => QueueSignals) => { status[m.url] = value(m); return m; };
+  const merge = set(minePr('o/r', 1), (m) => approved(m));
+  const unreviewed = set(minePr('o/r', 2), noReview);
+  const restack = { parent: minePr('o/r', 3, { merged: true, state: 'closed', headBranch: 'p3' }), child: set(minePr('o/r', 4, { baseBranch: 'p3' }), noReview) };
+  const broken = set(minePr('o/r', 5), failing);
+  const review = pr('o/r', 6, { author: 'lena', requestedReviewers: [LOGIN], additions: 1200, createdAt: iso(2 * DAY) });
+  // A failing base that unblocks two, and a lone failing PR that is older: the base comes first.
+  const base = set(minePr('o/s', 7, { headBranch: 'b7', updatedAt: iso(DAY) }), failing);
+  const above = [8, 9].map((n, i) => set(minePr('o/s', n, { baseBranch: i ? 'b8' : 'b7', headBranch: `b${n}` }), noReview));
+  const older = set(minePr('o/r', 10, { updatedAt: iso(3 * DAY) }), failing);
+  const items = [item([merge]), item([unreviewed]), item([restack.parent, restack.child]), item([broken]), item([review]), stack([base, ...above], 'b7'), item([older])];
+  const result = page(build(items, status), status);
+  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.member.number]), [['review', 6], ['merge', 1], ['fix', 4], ['fix', 7], ['fix', 10]]);
+  // The large review (effort 30) still leads the approved merge (effort 1): someone is blocked on you.
+  assert.ok(must(result.next.items[0]).rank > must(result.next.items[1]).rank);
+  // Within fixes: the cheapest first (rebasing), then the base that unblocks two before the older lone PR.
+  assert.deepEqual(result.next.items.slice(2).map((entry) => [entry.rank, entry.unblocks ?? 0]), [[5, 0], [10, 2], [10, 0]]);
+  assert.ok(!result.next.items.some((entry) => entry.urls.includes(unreviewed.url)), 'no unreviewed merge is a row');
+  assert.deepEqual(result.next.unreviewed, [unreviewed.url]);
+  assert.deepEqual(Object.entries(NEXT_TIER).sort(), [['changes', 1], ['fix', 3], ['merge', 2], ['reply', 1], ['rereview', 1], ['review', 1]]);
 });
 
 void test('the oldest review request always gets a slot, whatever its size', () => {
@@ -350,12 +390,15 @@ void test('the oldest review request always gets a slot, whatever its size', () 
   });
   const older = pr('klang/seed', 40, { author: 'zsolt-klang', requestedReviewers: [LOGIN], createdAt: iso(14 * DAY), additions: 1800, deletions: 200 });
   const newer = pr('klang/launcher', 41, { author: 'ivaremilsson', requestedReviewers: [LOGIN], createdAt: iso(4 * DAY), additions: 30, deletions: 5 });
-  const result = page(build([...merges.map((m) => item([m])), item([older]), item([newer])], status), status);
+  // Five small requests that are newer, and cheaper: the oldest, large one still takes the last slot.
+  const newest = [42, 43, 44, 45].map((n) => pr('klang/launcher', n, { author: 'sam', requestedReviewers: [LOGIN], createdAt: iso(DAY), additions: 20, deletions: 2 }));
+  const result = page(build([...merges.map((m) => item([m])), item([older]), item([newer]), ...newest.map((m) => item([m]))], status), status);
   assert.equal(result.next.items.length, NEXT_LIMIT);
-  assert.deepEqual(result.next.items.filter((entry) => entry.kind === 'review').map((entry) => [entry.member.number, entry.rank]), [[40, 40]], 'the oldest takes the last slot');
-  assert.equal(result.next.items.filter((entry) => entry.kind === 'merge').length, NEXT_LIMIT - 1);
-  // The rest stay in Waiting on you; the one in Next up is not listed there again.
-  assert.deepEqual(result.you.map((group) => [group.label, group.detail]), [['ivaremilsson', '1 PR · oldest 4 d']]);
+  assert.ok(result.next.items.some((entry) => entry.member.number === 40), 'the oldest takes the last slot');
+  assert.equal(result.next.items.at(-1)?.member.number, 40, 'and keeps its place by effort');
+  assert.equal(result.next.items.filter((entry) => entry.kind === 'merge').length, 0, 'people blocked on you fill Next up first');
+  // The rest stay in Waiting on you; the ones in Next up are not listed there again.
+  assert.equal(sectionCount(result.you), 1);
 });
 
 void test('waiting on you groups people by their oldest wait, and team requests last', () => {
@@ -402,12 +445,13 @@ void test('Waiting on you counts what it lists: a stack is its PRs, and team and
   assert.equal(sectionCount(you), 8);
   assert.deepEqual(you[0].repos, ['klang/seed']);
   assert.match(overviewBriefing(model), /7 reviews are waiting on you\./, 'five from zsolt-klang, one from ivaremilsson, one team request');
-  // With five merges ahead of them, the oldest request (zsolt-klang's stack) still takes a slot in Next up.
+  // Five approved merges do not push them out: people blocked on you come first, and one merge fills the last slot.
   const filled = build([...fillers(status), ...items], status, T0, true);
   const result = page(filled, status);
   assert.ok(result.next.items.some((entry) => entry.urls.includes(zsolt[0].url) && entry.why.startsWith('5 PRs · ')));
-  assert.deepEqual(result.you.map((group) => group.label), ['ivaremilsson', 'unassigned', 'team']);
-  assert.equal(result.count, result.next.items.reduce((total, entry) => total + entry.urls.length, 0) + 3, 'the tab: the PRs in Next up and Waiting on you, each once');
+  assert.deepEqual(result.next.items.map((entry) => entry.kind), ['reply', 'review', 'review', 'review', 'merge']);
+  assert.deepEqual(result.you, []);
+  assert.equal(result.count, 9, 'the tab: the PRs in Next up and Waiting on you, each once (eight waiting on you, and the merge)');
 });
 
 void test('waiting on others: stacks as chains, reviewers with Nudge, teams, CI, and you, each PR once', () => {
@@ -547,9 +591,8 @@ void test('the screenshot-32 shape: Next up is full, each PR once, and the line 
   const result = page(model, status);
   assert.equal(result.next.items.length, NEXT_LIMIT, 'never empty');
   assert.ok(result.next.items.some((entry) => entry.urls.includes(zsolt.url)), 'the oldest review request has its slot');
-  assert.ok(result.next.items.some((entry) => entry.kind === 'merge' && entry.unblocks === 3 && entry.why.endsWith('unblocks 3 PRs')));
-  assert.ok(result.next.items.filter((entry) => entry.unreviewed).length <= UNREVIEWED_LIMIT);
-  assert.equal(nextMoreLine(result.next), `${result.next.unreviewed.length} more ready, not reviewed`);
+  assert.ok(!result.next.items.some((entry) => entry.kind === 'merge'), 'six merges nobody reviewed: none is a row');
+  assert.equal(nextMoreLine(result.next), '6 ready to merge without review');
   // The decisions are listed once, in Needs a decision, not again under You or in their stack.
   assert.deepEqual(result.decide.map((entry) => entry.member.number).sort(), [379, 700, 701, 702]);
   const you = result.others.find((group) => group.kind === 'you');
@@ -597,9 +640,7 @@ void test('screenshot 36: Next up counts its rows, and a row for a stack says ho
   assert.equal(stackRow.why, '6 PRs · updated since your review · then merge #35392');
   assert.ok(nextCount(result.next.items) < result.next.items.reduce((total, entry) => total + entry.urls.length, 0), 'the heading is not the PRs inside the rows');
   // The quiet line keeps its own number: the merges nobody reviewed that no row lists.
-  const shownMerges = result.next.items.filter((entry) => entry.unreviewed).length;
-  assert.equal(nextMoreLine(result.next), `${result.next.unreviewed.length} more ready, not reviewed`);
-  assert.equal(result.next.unreviewed.length + shownMerges, 8, 'six large merges, #376, and #35392, which waits for the re-review');
+  assert.equal(nextMoreLine(result.next), '8 ready to merge without review', 'six large merges, #376, and #35392, which waits for the re-review');
 });
 
 void test('a stack you owe a re-review on never also offers its base merge, and has one row in Next up', () => {
@@ -624,10 +665,14 @@ void test('a stack you owe a re-review on never also offers its base merge, and 
   const status3: Record<string, QueueSignals> = {};
   const lone = minePr('o/t', 1, { headBranch: 'b1' });
   const child = minePr('o/t', 2, { baseBranch: 'b1' });
-  status3[lone.url] = noReview(lone);
+  status3[lone.url] = approved(lone);
   status3[child.url] = failing(child);
   const three = page(build([stack([lone, child], 'own')], status3), status3);
-  assert.deepEqual(three.next.items.map((entry) => [entry.kind, entry.member.number]), [['merge', 1]], 'one row per stack: its cheapest step');
+  assert.deepEqual(three.next.items.map((entry) => [entry.kind, entry.member.number]), [['merge', 1]], 'one row per stack: its first step');
+  // A base nobody reviewed is no row: the stack's fix is.
+  status3[lone.url] = noReview(lone);
+  const four = page(build([stack([lone, child], 'own')], status3), status3);
+  assert.deepEqual(four.next.items.map((entry) => [entry.kind, entry.member.number]), [['fix', 2]]);
 });
 
 void test('Waiting on you says where its PRs went, and agrees with the briefing', () => {

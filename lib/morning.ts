@@ -34,21 +34,19 @@
  * first reason, as the You group counts them; decisions apart.
  *
  * **Next up** (`nextUp`), at most `NEXT_LIMIT` items, whenever there is any work in Waiting on you, Fix or Merge:
- * - Candidates: ready merges (approved, or nobody reviewed and the branch rules require no review), replies, change
- *   requests, re-reviews, reviews of any size, and fixes (failing checks, conflicts, restacks).
- * - Order: `effortRank`, cheapest first; then approved before not reviewed; then the merge that unblocks most
- *   PRs; then PRs within `QUICK_LINES` changed lines before larger ones; then the longest wait. Size never excludes.
- *   PRs that need a decision (stuck over a week) come after the rest, so they stay in Needs a decision unless there is
- *   nothing else to do.
- * - A stacked PR whose base has not merged is not the next step; its base is. A ready base says what it unblocks:
- *   "not reviewed · green · unblocks 3 PRs".
+ * - Candidates: people blocked on you (replies, change requests, re-reviews, reviews of any size), merges that are
+ *   approved and passing, and fixes on your PRs (failing checks, conflicts, rebasing). A merge nobody reviewed is never
+ *   a row, whatever it costs: it is counted on the quiet line (`nextMoreLine`), "10 ready to merge without review",
+ *   which opens the review queue grouped by Action at Merge.
+ * - Order, by tier (`NEXT_TIER`): people blocked on you, then approved merges, then fixes. Within a tier, `effortRank`,
+ *   cheapest first; then the step that unblocks most PRs; then the longest wait. PRs that need a decision (stuck over a
+ *   week) come after the rest, so they stay in Needs a decision unless there is nothing else to do.
+ * - A stacked PR whose base has not merged is not the next step; its base is. A base's merge says what it unblocks:
+ *   "approved by lena · green · unblocks 3 PRs". Only an approved, passing base is a row, as for any merge.
  * - **One row per stack, with its one next step.** When you owe a review or re-review on any PR of a stack (its base
  *   included), the review is the next step: the base's merge is not offered, and the review row says what follows
- *   ("6 PRs · updated since your review · then merge #35392"). Otherwise the stack's cheapest step is its row. A stack
- *   row leads with the number of its first PR in merge order that needs you, like any other row.
- * - Merges nobody reviewed keep the "not reviewed" label, at most `UNREVIEWED_LIMIT` of them. The rest are counted
- *   on a quiet line (`nextMoreLine`): "N more ready, not reviewed" when some are listed, "N ready to merge without
- *   review" when none are. It opens the review queue grouped by Action at Merge.
+ *   ("6 PRs · updated since your review · then merge #35392"). Otherwise the stack's first step in this order is its
+ *   row. A stack row leads with the number of its first PR in merge order that needs you, like any other row.
  * - The oldest review request always gets a slot, whatever its size: it replaces the last item when the rest fill
  *   the section.
  *
@@ -80,8 +78,6 @@ import type { ReviewMember, ReviewSubject } from './workbench';
 const DAY_MS = 86_400_000;
 /** Next up lists at most this many. */
 export const NEXT_LIMIT = 5;
-/** Mergeable PRs nobody reviewed, listed at most in Next up. The rest are counted under it. */
-export const UNREVIEWED_LIMIT = 2;
 /** Size only orders Next up: within an equal effort rank, PRs this small (or a stack in total) come first. */
 export const QUICK_LINES = 300;
 /** The size a review is estimated at while GitHub has not reported it. */
@@ -150,7 +146,7 @@ export interface NextItem {
   title: string;
   /** The PR the action acts on and the title previews. */
   member: ReviewMember;
-  /** A merge of a PR nobody reviewed: the branch rules require no review. Capped at `UNREVIEWED_LIMIT`. */
+  /** A merge of a PR nobody reviewed: never a row (`NEXT_TIER`), only what follows a stack's review. */
   unreviewed?: boolean;
   /** A merge of a stack's base: the open PRs above it, which can merge once it has. */
   unblocks?: number;
@@ -305,16 +301,19 @@ export function openAbove(subject: Pick<ReviewSubject, 'members' | 'edges'>, mem
   return found;
 }
 
+/**
+ * Next up's tiers, in order: people blocked on you (a reply, a review, a re-review, changes requested), then approved
+ * merges, then fixes on your PRs. Merges nobody reviewed have no tier: they are never a row.
+ */
+export const NEXT_TIER: Readonly<Record<NextKind, number>> = { reply: 1, changes: 1, review: 1, rereview: 1, merge: 2, fix: 3 };
 /** The order of Next up. See the rules at the top of this file. */
 const nextOrder = (stale: ReadonlySet<string>) => {
-  const tier = (item: NextItem) => (item.urls.some((url) => stale.has(url)) ? 1 : 0);
-  const large = (item: NextItem) => (item.lines !== undefined && item.lines > QUICK_LINES ? 1 : 0);
+  const decision = (item: NextItem) => (item.urls.some((url) => stale.has(url)) ? 1 : 0);
   return (a: NextItem, b: NextItem) =>
-    tier(a) - tier(b) ||
+    decision(a) - decision(b) ||
+    NEXT_TIER[a.kind] - NEXT_TIER[b.kind] ||
     a.rank - b.rank ||
-    Number(!!a.unreviewed) - Number(!!b.unreviewed) ||
     (b.unblocks ?? 0) - (a.unblocks ?? 0) ||
-    large(a) - large(b) ||
     a.row.since - b.row.since ||
     a.title.localeCompare(b.title);
 };
@@ -347,6 +346,7 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
       .join(' · ');
     add({
       kind: 'merge', row, title: member.title, member, why, rank: effortRank('merge'), lines: memberLines(member), urls: [member.url],
+      // A merge nobody reviewed is never a row: it only says what a stack's review row is followed by.
       ...(review.kind === 'no-review' ? { unreviewed: true } : {}),
       ...(unblocks ? { unblocks } : {}),
     });
@@ -387,15 +387,18 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
   for (const row of lanes(model, 'fix')?.rows ?? []) {
     const fix = fixReason(row.reasons);
     const rank = roundRank(row.entries.reduce((total, entry) => total + effortRank('fix', undefined, false, fixReason(entry.reasons)), 0));
-    add({ kind: 'fix', row, title: row.title, member: leadMember(row), fix, rank, urls: entryMembers(row).map((member) => member.url), why: stackPrefix(row) + FIX_WORDS[fix] });
+    const lead = leadMember(row);
+    const unblocks = openAbove(row.item.subject, lead).length;
+    add({ kind: 'fix', row, title: row.title, member: lead, fix, rank, urls: entryMembers(row).map((member) => member.url), why: stackPrefix(row) + FIX_WORDS[fix], ...(unblocks ? { unblocks } : {}) });
   }
   // A stack you owe a review on: the review is its next step, and its base merges after it.
   const reviewing = new Set(candidates.filter((item) => item.kind === 'review' || item.kind === 'rereview').map(stackKey));
   const deferred = new Map<string, NextItem>();
   const pool = candidates.filter((item) => {
-    if (item.kind !== 'merge' || !reviewing.has(stackKey(item))) return true;
-    deferred.set(stackKey(item), item);
-    return false;
+    if (item.kind !== 'merge') return true;
+    if (reviewing.has(stackKey(item))) deferred.set(stackKey(item), item);
+    // Only approved, passing merges can be a row: a merge nobody reviewed goes to the quiet line.
+    return !item.unreviewed && !reviewing.has(stackKey(item));
   });
   for (const item of pool) {
     const merge = (item.kind === 'review' || item.kind === 'rereview') && deferred.get(stackKey(item));
@@ -404,13 +407,10 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
   const order = nextOrder(input.stale ?? new Set());
   pool.sort(order);
   const items: NextItem[] = [];
-  let unreviewed = 0;
   for (const item of pool) {
     if (items.length >= NEXT_LIMIT) break;
-    // One row per stack: its cheapest step.
+    // One row per stack: its first step in this order.
     if (items.some((listed) => stackKey(listed) === stackKey(item))) continue;
-    if (item.unreviewed && unreviewed >= UNREVIEWED_LIMIT) continue;
-    if (item.unreviewed) unreviewed++;
     items.push(item);
   }
   // The oldest review request always has a slot: it replaces its own stack's row, else the last item when the rest
@@ -432,15 +432,12 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     moreApproved: [...ready.approved, ...ready.other].filter((url) => !listed.has(url)),
   };
 }
-/**
- * The quiet line under Next up: the ready merges no row lists. "10 ready to merge without review", "2 more ready, not
- * reviewed" when rows list some, "3 more approved and ready to merge".
- */
-export function nextMoreLine(next: Pick<NextUp, 'unreviewed' | 'moreApproved'> & { items: readonly Pick<NextItem, 'unreviewed'>[] }): string | undefined {
+/** The quiet line under Next up: the ready merges no row lists. "10 ready to merge without review", "3 more approved and ready to merge". */
+export function nextMoreLine(next: Pick<NextUp, 'unreviewed' | 'moreApproved'>): string | undefined {
   const unreviewed = next.unreviewed.length;
   const approved = next.moreApproved.length;
   const words = [
-    unreviewed ? (next.items.some((item) => item.unreviewed) ? `${unreviewed} more ready, not reviewed` : `${unreviewed} ready to merge without review`) : '',
+    unreviewed ? `${unreviewed} ready to merge without review` : '',
     approved ? `${approved} more approved and ready to merge` : '',
   ].filter(Boolean);
   return words.length ? words.join(' · ') : undefined;
@@ -675,7 +672,8 @@ export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
   if (merge && merge.merge?.member.url === member.url) {
     const caveats = mergeCaveats(merge, checks);
     const merging = `Merge ${n}${caveats.length ? ` (${caveats.join(', ')})` : ''}`;
-    return { member, row: merge, action: 'merge', actionable: true, caveats, text: unblocks ? `${merging} to unblock ${prs(unblocks)}` : merging };
+    // Only an approved, passing base gets the Merge button; one nobody reviewed, or without checks, opens the PR.
+    return { member, row: merge, action: caveats.length ? 'open' : 'merge', actionable: true, caveats, text: unblocks ? `${merging} to unblock ${prs(unblocks)}` : merging };
   }
   if (parked) return { member, row: parked, action: 'open', actionable: true, text: parked.merge?.notes[0]?.kind === 'approved' ? `${n} is approved and can merge` : `${n} can merge, not reviewed` };
   const waiting = find('waiting');
@@ -798,8 +796,9 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
     }
   }
   if (stackGroups.length) {
-    // The base can merge first, then a base that needs you, then the rest; the oldest first within each.
-    const rank = (group: PersonGroup) => (group.step?.action === 'merge' ? 0 : group.step?.actionable ? 1 : 2);
+    // The base can merge first (approved and passing, then without review), then a base that needs you, then the
+    // rest; the oldest first within each.
+    const rank = (group: PersonGroup) => (group.step?.action === 'merge' ? 0 : group.step?.caveats ? 1 : group.step?.actionable ? 2 : 3);
     stackGroups.sort((a, b) => rank(a) - rank(b) || a.oldest - b.oldest || a.label.localeCompare(b.label));
     const urls = stackGroups.flatMap((group) => group.urls);
     const stacksGroup: PersonGroup = {
@@ -1022,9 +1021,9 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, p
   // Your PRs: merges, then fixes by their first reason.
   const own: Clause[] = [];
   const listed = page.next.items.filter((item) => item.kind === 'merge');
-  const approved = count('approved', [...listed.filter((item) => !item.unreviewed).flatMap((item) => item.urls), ...page.next.moreApproved], (n) => plural(n, 'approved PR', 'approved PRs'), page.next.moreApproved.length ? { line: true } : {});
+  const approved = count('approved', [...listed.flatMap((item) => item.urls), ...page.next.moreApproved], (n) => plural(n, 'approved PR', 'approved PRs'), page.next.moreApproved.length ? { line: true } : {});
   if (approved) own.push([approved, ' can merge']);
-  const unreviewed = count('unreviewed', [...listed.filter((item) => item.unreviewed).flatMap((item) => item.urls), ...page.next.unreviewed], (n) => (approved ? `${n} more` : prs(n)), page.next.unreviewed.length ? { line: true } : {});
+  const unreviewed = count('unreviewed', page.next.unreviewed, (n) => (approved ? `${n} more` : prs(n)), { line: true });
   if (unreviewed) own.push([unreviewed, ' can merge without review']);
   const fixes = (lanes(input.model, 'fix')?.rows ?? []).flatMap((row) => row.entries).filter((entry) => !hidden.has(entry.member.url) && !decided.has(entry.member.url));
   const fixWords: [FixReason, BriefingKey, string, string][] = [
