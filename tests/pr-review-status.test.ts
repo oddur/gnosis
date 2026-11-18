@@ -50,11 +50,38 @@ void test('review decision stays visible independently of conflicts, checks and 
   }
 });
 void test('null and unrecognized decisions are neutral, not inferred approval or waiting', () => {
-  for (const decision of [null, 'NEW_GITHUB_VALUE']) {
+  for (const [decision, label] of [[null, 'Not reviewed'], ['NEW_GITHUB_VALUE', 'Review status unknown']] as const) {
     const status = prReviewStatus(member, signals(decision), false, now);
-    assert.equal(status.label, 'No review decision');
+    assert.equal(status.label, label);
     assert.equal(status.tone, 'muted');
   }
+});
+void test('a null review decision names approvals on the current commit, else what the rules require', () => {
+  // klanggames/seed#35392: rulesets with 0 required approvals, so GitHub reports no review decision; plucked approved.
+  const approval = (author: string, at: string, headSha = member.headSha, state = 'APPROVED') => ({ url: member.url, author, state, submittedAt: at, headSha });
+  const clean = { mergeable: 'MERGEABLE', mergeState: 'CLEAN' };
+  const blocked = { mergeable: 'MERGEABLE', mergeState: 'BLOCKED' };
+  const withOpinions = (opinions: QueueSignals['opinions'], overrides = clean) => ({ ...signals(null, overrides), opinions });
+  const one = prReviewStatus(member, withOpinions([approval('plucked', '2026-11-17T10:00:00Z')], blocked), false, now);
+  assert.equal(one.label, 'Approved by plucked');
+  assert.equal(one.kind, 'approved');
+  assert.equal(one.tone, 'success');
+  assert.doesNotMatch(one.label, /No review decision/);
+  const three = prReviewStatus(
+    member,
+    withOpinions([approval('lena', '2026-11-17T09:00:00Z'), approval('plucked', '2026-11-17T10:00:00Z'), approval('ari', '2026-11-17T08:00:00Z')]),
+    false,
+    now
+  );
+  assert.equal(three.label, 'Approved by plucked and 2 others');
+  assert.equal(prReviewStatus(member, withOpinions([approval('plucked', 'a'), approval('lena', 'b')]), false, now).label, 'Approved by lena and 1 other');
+  // An approval of an older commit, or a request for changes, is not an approval of the current commit.
+  for (const opinions of [[approval('plucked', 'a', 'old')], [approval('plucked', 'a', member.headSha, 'CHANGES_REQUESTED')], []]) {
+    assert.equal(prReviewStatus(member, withOpinions(opinions), false, now).label, 'No review required');
+    assert.equal(prReviewStatus(member, withOpinions(opinions, blocked), false, now).label, 'Not reviewed');
+  }
+  // Older snapshots know only the newest review.
+  assert.equal(prReviewStatus(member, { ...signals(null, clean), latestReview: approval('plucked', 'a') }, false, now).label, 'Approved by plucked');
 });
 void test('new revisions and other PR snapshots cannot carry an old approval', () => {
   for (const changed of [

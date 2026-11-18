@@ -11,6 +11,8 @@ import type { QueueSignals } from '../lib/queue-signals';
 import { mergeReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 import { useStatusNow } from '../lib/status-clock';
+import { useGitHubAccess, requestGitHubSignIn } from '../lib/use-github-access';
+import { GitHubScopePrompt } from './GitHubScopePrompt';
 
 export function PrReadiness({
   member,
@@ -33,7 +35,10 @@ export function PrReadiness({
     signals && (!status?.signals || signals.checkedAt >= status.signals.checkedAt) ? signals : status?.signals;
   // The same clock as the page header, so both agree on whether this status is out of date.
   const now = useStatusNow();
-  const readiness = mergeReadiness(member, currentSignals, now);
+  const access = useGitHubAccess();
+  const readiness = mergeReadiness(member, currentSignals, now, access);
+  // GitHub reports BLOCKED though everything Gnosis can see is met, and the sign-in lacks read:org.
+  const scopePrompt = readiness.signIn && <GitHubScopePrompt onSignIn={requestGitHubSignIn} />;
   const rollup = currentSignals?.headSha === member.headSha ? currentSignals.checks : undefined;
   const checks = rollup
     ? !rollup.total
@@ -92,6 +97,7 @@ export function PrReadiness({
                 ))}
               </ul>
             )}
+            {scopePrompt}
             {(!readiness.ready || readiness.stale) && (
               <a className="pr-merge-requirements" href={member.url} target="_blank" rel="noopener noreferrer">
                 Merge requirements on GitHub
@@ -124,6 +130,7 @@ export function PrReadiness({
             <li key={detail}>{detail}</li>
           ))}
         </ul>
+        {scopePrompt}
         <div className="pr-merge-detail-actions">
           <ReadinessCheckedAt readiness={readiness} updating={!!status?.stale && !error} />
           <a href={member.url} target="_blank" rel="noopener noreferrer">

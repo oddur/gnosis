@@ -28,6 +28,7 @@
  */
 import { ATTENTION_LABEL, ATTENTION_RANK, explanationFor, freshSignals, isOwnPr, memberKinds, reviewRequest, type AttentionKind } from './attention';
 import { changeRequests, type QueueSignals } from './queue-signals';
+import { currentApprovers } from './pr-review-status';
 import { preciseTarget } from './notification-targets';
 import { prTarget, type DeepLinkTarget } from './deep-link';
 import type { NotificationEventType } from './notification-settings';
@@ -461,6 +462,9 @@ export function mergeNotes(item: QueueItem, member: ReviewMember, fresh: QueueSi
   const latest = fresh?.latestReview;
   if (!fresh?.opinions && latest?.state === 'APPROVED' && !same(latest.author, login)) approvers.push(latest.author);
   const decision = fresh?.readiness?.reviewDecision;
+  // With no review decision, only approvals of the current commit count, as on the PR page and in the queue
+  // (`prReviewStatus`). GitHub's APPROVED vouches for older approvals it still counts.
+  if (fresh?.readiness && decision === null) approvers.splice(0, approvers.length, ...currentApprovers(fresh, member.headSha, login));
   if (approvers.length)
     notes.push({ kind: 'approved', text: approvers.length === 1 ? `Approved by ${approvers[0]}` : `Approved by ${approvers[0]} and ${plural(approvers.length - 1, 'other', 'others')}` });
   else if (decision === 'APPROVED') notes.push({ kind: 'approved', text: 'Approved' });

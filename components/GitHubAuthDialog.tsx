@@ -4,6 +4,12 @@ import { Copy, ExternalLink, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
+import { lacksOrgRead } from '../lib/github-access';
+import { refreshGitHubAccess, useGitHubAccess } from '../lib/use-github-access';
+import { GitHubScopePrompt } from './GitHubScopePrompt';
+
+/** "Not now" on the read:org prompt, per account. The prompt in the merge section still appears when it matters. */
+const scopePromptKey = (login: string) => `gnosis:github-scope-prompt-dismissed:${login}`;
 
 function message(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).replace(
@@ -45,6 +51,18 @@ export function GitHubAuthDialog({
   const webPending = useRef(false);
   const locked = phase === 'saving' || phase === 'signing-out' || phase === 'local';
   const busy = phase === 'starting' || locked;
+  const access = useGitHubAccess();
+  const [scopeDismissed, setScopeDismissed] = useState(false);
+  useEffect(() => {
+    if (!open || !login) return;
+    try {
+      setScopeDismissed(localStorage.getItem(scopePromptKey(login)) === '1');
+    } catch {
+      setScopeDismissed(false);
+    }
+  }, [open, login]);
+  // An older sign-in asked only for `repo`. Signing in again asks for `read:org` too; the current token keeps working.
+  const askScopes = !!login && access?.login === login && lacksOrgRead(access.scopes) && !scopeDismissed;
 
   const cancel = () => {
     attempt.current++;
@@ -58,6 +76,7 @@ export function GitHubAuthDialog({
     flow.current = undefined;
     webPending.current = false;
     await onConnected();
+    await refreshGitHubAccess();
     if (id === attempt.current) onOpenChange(false);
   };
   const device = async () => {
@@ -165,6 +184,20 @@ export function GitHubAuthDialog({
           <p className="github-auth-error" role="alert">
             {error}
           </p>
+        )}
+        {askScopes && !prompt && phase === 'idle' && method !== 'token' && web !== undefined && (
+          <GitHubScopePrompt
+            disabled={busy}
+            onSignIn={() => void (web ? browser() : device())}
+            onDismiss={() => {
+              try {
+                if (login) localStorage.setItem(scopePromptKey(login), '1');
+              } catch {
+                /* Storage unavailable: hide it for this opening only. */
+              }
+              setScopeDismissed(true);
+            }}
+          />
         )}
         {web === undefined ? (
           <LoadingState compact title="Checking sign-in options…" />

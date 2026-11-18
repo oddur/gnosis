@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
 import { noteWork } from './perf-trace';
+import { parseOAuthScopes } from './github-access';
 import { normalizePreloadBudgetPercent } from './preload-settings';
 import {
   automaticDeadline,
@@ -128,6 +129,10 @@ export function createGitHubClientPool(options: Options = {}) {
   const states = new Map<string, AccountState>();
   const clients = new Map<string, Octokit>();
   const snapshots = createGitHubCache(now);
+  // The scopes GitHub last reported for each account's token (`X-OAuth-Scopes`). Kept in memory only: every
+  // authenticated response carries the header, so the first request after launch restores it.
+  const oauthScopes = new Map<string, string[] | null>();
+  const scopeListeners = new Set<(key: string) => void>();
   // Prediction spend since launch, per account, resource and destination kind. Logged, never saved.
   const predictedSpend = new Map<string, Partial<Record<string, Record<string, number>>>>();
   const spendFor = (key: string) => {
@@ -240,6 +245,18 @@ export function createGitHubClientPool(options: Options = {}) {
     },
     /** Requests started and GraphQL points spent by predictions since launch, by resource and destination kind. */
     predictedSpend: (token?: string | null) => structuredClone(spendFor(keyFor(token))),
+    /**
+     * The scopes GitHub last reported for this token, from the `X-OAuth-Scopes` header of its responses. Undefined
+     * before the first response; null when GitHub sends no header (fine-grained tokens and GitHub App tokens).
+     */
+    oauthScopes: (token?: string | null): string[] | null | undefined =>
+      token ? structuredClone(oauthScopes.get(keyFor(token))) : undefined,
+    /** Called when a token's reported scopes change. Receives nothing; read them with `oauthScopes`. */
+    onScopesChange(listener: () => void) {
+      const wrapped = () => listener();
+      scopeListeners.add(wrapped);
+      return () => void scopeListeners.delete(wrapped);
+    },
     setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
     trimPrepared: () => snapshots.trimPrepared(),
     onCacheChange: (listener: Parameters<typeof snapshots.onChange>[0]) => snapshots.onChange(listener),
@@ -317,6 +334,7 @@ export function createGitHubClientPool(options: Options = {}) {
     forget(token: string) {
       // Keep the cooldown: signing out and back in must not bypass GitHub's deadline.
       delete stateFor(keyFor(token)).login;
+      oauthScopes.delete(keyFor(token));
       clients.delete(keyFor(token));
       snapshots.scope(keyFor(token)).clear();
       dirty = true;
@@ -352,7 +370,20 @@ export function createGitHubClientPool(options: Options = {}) {
       // An expensive PR can repeatedly return 5xx. Cool down that read only;
       // cached data, other PRs, and explicit writes must stay independent.
       const unavailable = new Map<string, { retryAt: number; failures: number; error: Error }>();
-      const observe = (headers: Headers) => {
+      const observeScopes = (headers: Headers) => {
+        if (!token) return;
+        const reported = parseOAuthScopes(headers['x-oauth-scopes']);
+        const previous = oauthScopes.get(key);
+        // A response without the header only says "not a classic token" before any classic answer arrived.
+        // Some error responses (from proxies or 5xx) may lack it for a classic token.
+        if (reported === undefined && previous !== undefined) return;
+        const next = reported ?? null;
+        if (previous !== undefined && JSON.stringify(previous) === JSON.stringify(next)) return;
+        oauthScopes.set(key, next);
+        for (const listener of scopeListeners) listener(key);
+      };
+      const observe = (headers: Headers, response = true) => {
+        if (response) observeScopes(headers);
         const resource = String(headers['x-ratelimit-resource'] ?? 'core');
         const remaining = Number(headers['x-ratelimit-remaining']);
         const limit = Number(headers['x-ratelimit-limit']);
@@ -623,7 +654,7 @@ export function createGitHubClientPool(options: Options = {}) {
             // Abort is not a server failure and must not poison the endpoint cooldown.
             if (requestOptions.request.signal?.aborted) throw requestOptions.request.signal.reason;
             const e = error as { status?: number; response?: { headers?: Headers } };
-            observe(e.response?.headers ?? {});
+            observe(e.response?.headers ?? {}, !!e.response && (e.status ?? 0) < 500);
             notModified = e.status === 304;
             if (e.status === 304 && cached) {
               unavailable.delete(requestKey);

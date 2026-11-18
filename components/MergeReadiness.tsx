@@ -9,7 +9,9 @@ export function ReadinessBadge({ readiness, reviewStatusShown = false, staleLabe
   const Icon =
     readiness.label === 'Merge conflicts'
       ? conflictIcon
-      : readiness.tone === 'success'
+      : readiness.mismatch
+        ? CircleHelp
+        : readiness.tone === 'success'
         ? CheckCircle2
         : readiness.tone === 'danger'
           ? AlertCircle

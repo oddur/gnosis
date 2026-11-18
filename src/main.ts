@@ -105,6 +105,7 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import { getGitHubClient, githubClients, githubCacheFor, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
+import type { GitHubAccess } from '../lib/github-access';
 import { createGitHubWebAuth } from './github-web-auth';
 import { createGitHubAuthService } from './github-auth-service';
 import { checkGitHubPrAccess, githubAccessMessage, readAccessiblePr } from '../lib/github-auth';
@@ -314,6 +315,19 @@ async function resolveGitHubLogin(token: string): Promise<string> {
   }
 }
 
+// The scopes GitHub reports for the signed-in token (`X-OAuth-Scopes`), so Settings and the merge section can ask for
+// `read:org` when an older sign-in lacks it. Undefined until the first GitHub response; null for tokens without scopes.
+const githubAccess = (): GitHubAccess => ({ login: cachedLogin, scopes: cachedToken ? githubClients.oauthScopes(cachedToken) : undefined });
+let publishedAccess = '';
+function publishGitHubAccess() {
+  const access = githubAccess();
+  const key = JSON.stringify(access);
+  if (key === publishedAccess) return;
+  publishedAccess = key;
+  broadcastToAllWindows('github-access-changed', access);
+}
+githubClients.onScopesChange(publishGitHubAccess);
+
 // Both sign-in flows keep credentials and cancellation in the main process.
 let authRevision = 0;
 const authStorage = {
@@ -327,6 +341,7 @@ const authStorage = {
     cachedToken = token;
     cachedLogin = login;
     loginFailure = undefined;
+    publishGitHubAccess();
   },
 };
 const githubAuth = createGitHubAuthService({ clientId: GITHUB_CLIENT_ID, ...authStorage });
@@ -1802,6 +1817,7 @@ handleInteractive('save-pat', async (_event, token: string, prUrl?: string) => {
   cachedToken = trimmed;
   cachedLogin = login;
   loginFailure = undefined;
+  publishGitHubAccess();
   return login;
 });
 
@@ -1813,6 +1829,7 @@ function handleInteractive(channel: string, listener: Parameters<typeof ipcMain.
 handleInteractive('get-auth-state', async () => {
   const token = getResolvedToken();
   if (!token) return { authenticated: false, login: null };
+  const withScopes = <T extends { authenticated: boolean; login: string | null }>(state: T) => ({ ...state, scopes: githubClients.oauthScopes(token) });
 
   cachedLogin ??= githubClients.savedLogin(token) ?? null;
   if (!cachedLogin) {
@@ -1822,11 +1839,11 @@ handleInteractive('get-auth-state', async () => {
       if ((error as { status?: number }).status === 401) return { authenticated: false, login: null };
       const login = githubClients.savedLogin(token);
       if (login) cachedLogin = login;
-      else return { authenticated: true, login: null };
+      else return withScopes({ authenticated: true, login: null });
     }
   }
 
-  return { authenticated: true, login: cachedLogin };
+  return withScopes({ authenticated: true, login: cachedLogin });
 });
 
 ipcMain.handle('sign-out', () => {
@@ -1841,6 +1858,7 @@ ipcMain.handle('sign-out', () => {
   cachedToken = null;
   cachedLogin = null;
   deleteStoredToken();
+  publishGitHubAccess();
   scheduleMenubar();
 });
 

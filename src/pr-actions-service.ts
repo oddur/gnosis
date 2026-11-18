@@ -29,6 +29,8 @@ interface GraphPr extends GraphMember {
   headRepository: { nameWithOwner: string } | null;
   mergeable: string;
   mergeStateStatus: string;
+  reviewDecision?: string | null;
+  commits?: { nodes: { commit: { statusCheckRollup: { state: string } | null } }[] };
   viewerCanEnableAutoMerge: boolean;
   viewerCanDisableAutoMerge: boolean;
   viewerCanUpdateBranch: boolean;
@@ -90,6 +92,8 @@ function normalize(repo: GraphRepo, checkedAt: number, account: string): PrActio
     canWrite: ['WRITE', 'MAINTAIN', 'ADMIN'].includes(repo.viewerPermission ?? ''),
     mergeable: pr.mergeable,
     mergeState: pr.mergeStateStatus,
+    reviewDecision: pr.reviewDecision,
+    checkState: pr.commits ? (pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null) : undefined,
     methods,
     defaultMethod: methods.includes(repo.viewerDefaultMergeMethod)
       ? repo.viewerDefaultMergeMethod
@@ -156,7 +160,7 @@ export function createPrActionsService(now = Date.now) {
       .graphql<{ viewer: { login: string }; repository: GraphRepo | null }>(
         `query($owner:String!,$repo:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$repo){
       nameWithOwner isArchived viewerPermission viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
-      pullRequest(number:$number){ ${memberFields} id headRepository{nameWithOwner} mergeable mergeStateStatus
+      pullRequest(number:$number){ ${memberFields} id headRepository{nameWithOwner} mergeable mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}
         viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch viewerDidAuthor autoMergeRequest{mergeMethod} mergeQueue{id} isInMergeQueue
         stack{number baseRefName entries(first:100){totalCount nodes{position pullRequest{${memberFields} mergeQueue{id}}}}}
       }}}`,

@@ -1,5 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { GITHUB_OAUTH_SCOPE } from '../lib/github-access';
 
 /** Browser OAuth is optional; device authorization is available without its build-time secret. */
 export function createGitHubWebAuth(io: {
@@ -114,7 +115,7 @@ export function createGitHubWebAuth(io: {
           const params = new URLSearchParams({
             client_id: io.clientId,
             redirect_uri: redirectUri,
-            scope: 'repo',
+            scope: GITHUB_OAUTH_SCOPE,
             state,
             code_challenge: challenge,
             code_challenge_method: 'S256',

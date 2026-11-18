@@ -2,6 +2,7 @@ import type { PrStatus } from './types';
 import { QUEUE_SIGNALS_TTL, type QueueSignals } from './queue-signals';
 import type { ReviewMember, ReviewSubject } from './workbench';
 import { hasMergeConflicts } from './merge-conflicts';
+import { lacksOrgRead } from './github-access';
 
 export interface MergeReadiness {
   label: string;
@@ -11,19 +12,44 @@ export interface MergeReadiness {
   checkedAt?: number;
   stale: boolean;
   blockedCount?: number;
+  /**
+   * GitHub reports BLOCKED, yet every requirement Gnosis can see is met: GitHub evaluates merge rules per account and
+   * token, so its website can show the PR ready while Gnosis's sign-in reads BLOCKED.
+   */
+  mismatch?: boolean;
+  /** The sign-in lacks `read:org`, which GitHub may need to evaluate these rules. Offer "Sign in again". */
+  signIn?: boolean;
 }
+
+/** Wording for a GitHub-blocked PR that meets every requirement Gnosis can see. */
+export const GITHUB_BLOCKED_LABEL = 'GitHub reports this as blocked';
+export const GITHUB_BLOCKED_DETAIL =
+  'Every requirement Gnosis can see is met. GitHub works out merge rules for the account and access asking, so check the PR on GitHub.';
+export const ORG_SCOPE_DETAIL =
+  'Gnosis’s sign-in can’t read your organization’s settings, which GitHub may need for this. Sign in again to allow it.';
+/** GitHub allows the merge in these states, so the branch rules do not require an up-to-date branch. */
+const MERGE_ALLOWED = ['CLEAN', 'UNSTABLE', 'HAS_HOOKS'];
 
 /** GitHub evaluates merge policy. Counts of approvals or passing checks cannot replace that decision. */
 export function mergeReadiness(
   member: Pick<ReviewMember, 'url' | 'headSha' | 'merged' | 'state' | 'isDraft' | 'baseBranch'>,
   signals?: QueueSignals,
-  now = Date.now()
+  now = Date.now(),
+  /** The scopes GitHub reports for Gnosis's sign-in, to explain a BLOCKED answer. See `GitHubAccess`. */
+  access?: { scopes?: readonly string[] | null }
 ): MergeReadiness {
   const snapshot = signals && signals.url === member.url && signals.headSha === member.headSha ? signals : undefined;
   const status = snapshot?.readiness;
   const checkedAt = status ? snapshot.checkedAt : undefined;
   const stale = checkedAt !== undefined && now - checkedAt >= QUEUE_SIGNALS_TTL;
-  const result = (label: string, tone: MergeReadiness['tone'], details: string[], ready = false): MergeReadiness => ({
+  const result = (
+    label: string,
+    tone: MergeReadiness['tone'],
+    details: string[],
+    ready = false,
+    extra: Pick<MergeReadiness, 'mismatch' | 'signIn'> = {}
+  ): MergeReadiness => ({
+    ...extra,
     label: stale && ready ? 'Readiness out of date' : label,
     tone: stale ? 'muted' : tone,
     ready: ready && !stale,
@@ -59,10 +85,12 @@ export function mergeReadiness(
     details.push('Some checks are failing. Open GitHub to see which checks are required for merging.');
   if (snapshot.checks.state === 'pending') details.push('Some checks are still running or waiting to start.');
   if (!conflicts && !updateRequired && status.behindBy && status.behindBy > 0) {
+    const behind = `Behind ${base} by ${status.behindBy} commit${status.behindBy === 1 ? '' : 's'}`;
+    // GitHub reports BEHIND when its rules require an up-to-date branch. A state that allows merging rules that out.
     details.push(
-      status.mergeState === 'CLEAN'
-        ? `Behind ${base} by ${status.behindBy} commit${status.behindBy === 1 ? '' : 's'}; updating is optional for merging.`
-        : `Behind ${base} by ${status.behindBy} commit${status.behindBy === 1 ? '' : 's'}. GitHub has not confirmed whether an update is required.`
+      MERGE_ALLOWED.includes(status.mergeState)
+        ? `${behind}; updating is optional for merging.`
+        : `${behind}. GitHub hasn’t said whether it must be updated.`
     );
   }
   if (conflicts) return result('Merge conflicts', 'danger', details);
@@ -81,6 +109,19 @@ export function mergeReadiness(
       ...details,
       'GitHub blocks merging until required checks finish. Recheck when they complete; other requirements may remain.',
     ]);
+  // Rulesets and organization rules are evaluated for the account and token asking. GitHub's website can show the
+  // PR ready while Gnosis's sign-in reads BLOCKED, so say what is known instead of a flat "Merge blocked".
+  if (
+    status.mergeState === 'BLOCKED' &&
+    status.mergeable === 'MERGEABLE' &&
+    (snapshot.checks.state === 'success' || snapshot.checks.state === 'neutral')
+  ) {
+    const signIn = lacksOrgRead(access?.scopes);
+    return result(GITHUB_BLOCKED_LABEL, 'warning', [...details, GITHUB_BLOCKED_DETAIL, ...(signIn ? [ORG_SCOPE_DETAIL] : [])], false, {
+      mismatch: true,
+      signIn,
+    });
+  }
   if (status.mergeState === 'BLOCKED')
     return result('Merge blocked', 'danger', [
       ...details,

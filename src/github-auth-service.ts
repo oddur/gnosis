@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
+import { GITHUB_OAUTH_SCOPE } from '../lib/github-access';
 
 const cancelledMessage = 'GitHub sign-in was cancelled.';
 const expiredMessage = 'The GitHub sign-in code expired. Start sign-in again for a new code.';
@@ -73,7 +74,7 @@ export function createGitHubAuthService(io: {
       const flow = { id: randomUUID(), controller: new AbortController(), expiresAt: 0, interval: 5000 };
       active = flow;
       try {
-        const result = await post('/login/device/code', { scope: 'repo' }, flow.controller.signal);
+        const result = await post('/login/device/code', { scope: GITHUB_OAUTH_SCOPE }, flow.controller.signal);
         if (active !== flow) throw new Error(cancelledMessage);
         const data = result.data;
         if (!data) throw new Error('GitHub is busy. Wait a moment and try signing in again.');

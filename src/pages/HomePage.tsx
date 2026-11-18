@@ -117,6 +117,7 @@ import {
   AlarmClock,
 } from 'lucide-react';
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
+import { GITHUB_SIGN_IN_EVENT } from '../../lib/use-github-access';
 import { GettingStarted } from '../../components/GettingStarted';
 import { TitlebarScope, WorkspaceMenu } from '../../components/AppTitlebar';
 import type { SettingsSection } from '../../components/SettingsDialog';
@@ -459,6 +460,12 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
   const [showGettingStarted, setShowGettingStarted] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  // "Sign in again" in the merge section opens the GitHub account dialog, which asks for the new scopes.
+  useEffect(() => {
+    const open = () => setAuthOpen(true);
+    window.addEventListener(GITHUB_SIGN_IN_EVENT, open);
+    return () => window.removeEventListener(GITHUB_SIGN_IN_EVENT, open);
+  }, []);
   const connectionRequired = !!auth && !!prefs && prefs.firstRunSeen && !auth.authenticated && !prefs.guestMode && !onboarding.open;
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');

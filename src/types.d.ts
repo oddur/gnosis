@@ -128,7 +128,8 @@ declare global {
       beginGitHubSignIn: () => Promise<GitHubDevicePrompt>;
       completeGitHubSignIn: (id: string) => Promise<string>;
       cancelGitHubSignIn: (id: string) => Promise<void>;
-      getAuthState: () => Promise<{ authenticated: boolean; login: string | null }>;
+      getAuthState: () => Promise<{ authenticated: boolean; login: string | null; scopes?: string[] | null }>;
+      onGitHubAccessChanged?: (callback: (access: { login: string | null; scopes?: string[] | null }) => void) => () => void;
       signOut: () => Promise<void>;
       savePat: (token: string, prUrl?: string) => Promise<string>;
       listReviews: () => Promise<ReviewHistoryEntry[]>;

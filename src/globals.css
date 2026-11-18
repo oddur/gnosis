@@ -4115,6 +4115,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .pr-summary-decision-heading { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; }
 .pr-summary-decision .pr-merge-detail ul { margin:8px 0 0; }
 .pr-merge-requirements { display:inline-block; font-size:var(--type-caption); color:var(--muted-foreground); text-decoration:underline; text-underline-offset:3px; margin-top:8px; }
+.github-scope-prompt { display:grid; grid-template-columns:auto 1fr; gap:6px 8px; align-items:start; margin-top:10px; padding:10px 12px; border:1px solid var(--border); max-width:75ch; font-size:var(--type-control); line-height:1.5; }
+.github-scope-prompt > svg { margin-top:3px; color:var(--muted-foreground); }
+.github-scope-prompt-actions { grid-column:2; display:flex; flex-wrap:wrap; gap:6px; }
+.review-evidence-github-answer ul { list-style:none; padding:0; margin:6px 0 0; display:grid; gap:2px; }
+.review-evidence-github-answer code { font-size:var(--type-caption); overflow-wrap:anywhere; }
 .pr-actions-compact { margin:0; flex:none; max-width:100%; }
 .pr-actions-compact .pr-action-controls { justify-content:flex-start; }
 .pr-actions-compact .pr-action-note { max-width:75ch; font-size:var(--type-caption); }

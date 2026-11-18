@@ -12,6 +12,7 @@ import { StepCard } from './StepCard';
 import { stackMergeSteps, type StackMergePage } from '../lib/action-steps';
 import {
   mergeBlockedReason,
+  blockedButMet,
   draftActionBlockedReason,
   branchUpdateBlockedReason,
   singleMergePlan,
@@ -666,6 +667,12 @@ export function PrActions({
                     <p className="pr-action-note">
                       This will first create a GitHub stack from these branches, then request an atomic merge. If
                       merging is blocked, the GitHub stack remains.
+                    </p>
+                  )}
+                  {kind === 'merge' && members.length === 1 && blockedButMet(plan.target) && (
+                    <p className="pr-action-note" data-github-blocked>
+                      GitHub reports this PR as blocked to Gnosis’s sign-in, though every requirement Gnosis can see is
+                      met. If GitHub refuses the merge, its reason shows here and nothing merges.
                     </p>
                   )}
                   {kind === 'merge' && members.length > 1 && (

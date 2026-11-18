@@ -54,6 +54,8 @@ void test('device sign-in keeps its secret in main, respects polling/slow-down/R
   assert.deepEqual(saved, ['result-token:reviewer']);
   assert.ok(requests.every((r) => !r.has('client_secret')));
   assert.equal(requests[1].get('grant_type'), 'urn:ietf:params:oauth:grant-type:device_code');
+  // Organization reads let GitHub evaluate rulesets and team review requests for Gnosis as it does on github.com.
+  assert.equal(requests[0].get('scope'), 'repo read:org');
 });
 void test('device denial, expiry, and disabled applications offer recovery without saving tokens', async () => {
   for (const error of ['access_denied', 'expired_token', 'device_flow_disabled']) {
@@ -151,6 +153,7 @@ void test('browser OAuth uses state and PKCE, ignores an invalid callback, then 
     const auth = new URL(await opening);
     const callback = auth.searchParams.get('redirect_uri');
     assert.ok(callback);
+    assert.equal(auth.searchParams.get('scope'), 'repo read:org');
     assert.equal((await fetch(callback + '?state=wrong&code=bad')).status, 400);
     const response = await fetch(
       callback + '?' + new URLSearchParams({ state: auth.searchParams.get('state') ?? '', code: 'approved' }).toString()
@@ -285,4 +288,45 @@ void test('cancelling browser OAuth during identity lookup ends its callback and
   await rejected;
   assert.equal((await response).status, 400);
   assert.equal(saves, 0);
+});
+
+void test('scopes come from the X-OAuth-Scopes header of each account’s responses', async () => {
+  const { parseOAuthScopes, lacksOrgRead, accessLabel, GITHUB_OAUTH_SCOPE } = await import('../lib/github-access');
+  assert.equal(GITHUB_OAUTH_SCOPE, 'repo read:org');
+  assert.deepEqual(parseOAuthScopes('repo, read:org, workflow'), ['repo', 'read:org', 'workflow']);
+  assert.deepEqual(parseOAuthScopes('repo'), ['repo']);
+  assert.deepEqual(parseOAuthScopes(''), []);
+  assert.equal(parseOAuthScopes(undefined), undefined);
+  assert.equal(lacksOrgRead(['repo']), true);
+  assert.equal(lacksOrgRead(['repo', 'read:org']), false);
+  assert.equal(lacksOrgRead(['admin:org', 'repo']), false, 'admin:org includes organization reads');
+  assert.equal(lacksOrgRead(null), false, 'Fine-grained tokens report no scopes and never prompt');
+  assert.equal(lacksOrgRead(undefined), false);
+  assert.equal(accessLabel(['repo', 'read:org']), 'repo, read:org');
+
+  const scopes: Record<string, string | undefined> = { old: 'repo', fine: undefined };
+  const pool = createGitHubClientPool({
+    fetch: ((_url: string, init: RequestInit) => {
+      const token = new Headers(init.headers).get('authorization')?.replace(/^token /, '') ?? '';
+      const header = scopes[token];
+      return Promise.resolve(json({ login: token }, 200, header === undefined ? {} : { 'x-oauth-scopes': header }));
+    }) as typeof fetch,
+  });
+  let changes = 0;
+  pool.onScopesChange(() => changes++);
+  assert.equal(pool.oauthScopes('old'), undefined, 'Unknown before the first response');
+  await pool.client('old').request('GET /user', { headers: { 'cache-control': 'no-cache' } });
+  assert.deepEqual(pool.oauthScopes('old'), ['repo']);
+  await pool.client('fine').request('GET /user', { headers: { 'cache-control': 'no-cache' } });
+  assert.equal(pool.oauthScopes('fine'), null, 'No header: not a classic token');
+  assert.equal(changes, 2);
+  // The latest value per account: signing in again with more scopes replaces it.
+  scopes.old = 'repo, read:org';
+  await pool.client('old').request('GET /user', { headers: { 'cache-control': 'no-cache' } });
+  assert.deepEqual(pool.oauthScopes('old'), ['repo', 'read:org']);
+  assert.equal(changes, 3);
+  await pool.client('old').request('GET /user', { headers: { 'cache-control': 'no-cache' } });
+  assert.equal(changes, 3, 'An unchanged header is not a change');
+  pool.forget('old');
+  assert.equal(pool.oauthScopes('old'), undefined);
 });

@@ -95,6 +95,76 @@ void app.whenReady().then(async () => {
     );
     assert.match(await js<string>("document.querySelector('.pr-merge-detail').textContent"), /updating is optional/);
     await capture('optional-update');
+    // klanggames/seed#35392: github.com shows it ready to merge, approved by plucked, checks passed. GitHub answers
+    // Gnosis's repo-only sign-in BLOCKED with no review decision (rulesets with 0 required approvals), 77 behind develop.
+    await js(`(()=>{
+      window.mismatch=true;
+      const signals=window.electronAPI.getQueueSignals;
+      window.electronAPI.getQueueSignals=async(requests,options)=>(await signals(requests,options)).map(s=>window.mismatch&&s.url==='https://github.com/klang/engine/pull/150'?{...s,
+        checks:{state:'success',passed:12,total:12},
+        opinions:[{url:s.url,author:'plucked',state:'APPROVED',submittedAt:'2026-11-17T10:00:00Z',headSha:s.headSha}],
+        readiness:{...s.readiness,mergeState:'BLOCKED',mergeable:'MERGEABLE',reviewDecision:null,behindBy:77,baseBranch:'develop'}}:s);
+      window.mergeWrites=[];
+      window.electronAPI.getPrActionState=async url=>{const q=await window.electronAPI.workbenchQueue();const m=q.items.flatMap(i=>i.subject.members).find(m=>m.url===url);
+        return {...m,account:'oddur',id:'PR_'+m.number,checkedAt:Date.now(),state:'OPEN',headRepo:m.repo,repository:m.repo,archived:false,canWrite:true,mergeable:'MERGEABLE',mergeState:window.mismatch?'BLOCKED':'CLEAN',reviewDecision:window.mismatch?null:'APPROVED',checkState:'SUCCESS',methods:['SQUASH'],defaultMethod:'SQUASH',autoMerge:null,canEnableAuto:false,canDisableAuto:false,canUpdateBranch:true,canChangeDraft:true,mergeQueue:false,inMergeQueue:false,stack:null};};
+      window.electronAPI.performPrAction=async request=>{window.mergeWrites.push(request);throw Error('Repository rule violations found. Review from code owner required.');};
+    })()`);
+    await click('Refresh status');
+    const detail = "document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail')";
+    await wait(`${detail}?.textContent.includes('GitHub reports this as blocked')`);
+    const blockedText = await js<string>(`${detail}.textContent`);
+    assert.match(blockedText, /Every requirement Gnosis can see is met\. GitHub works out merge rules for the account and access asking, so check the PR on GitHub\./);
+    assert.match(blockedText, /Behind develop by 77 commits\. GitHub hasn’t said whether it must be updated\./);
+    assert.doesNotMatch(blockedText, /Merge blocked/);
+    assert.equal(await js(`${detail}.querySelector('.merge-readiness-badge').className`), 'merge-readiness-badge is-warning');
+    assert.equal(await js(`!!${detail}.querySelector('a.pr-merge-requirements[href="https://github.com/klang/engine/pull/150"]')`), true, 'Keeps the GitHub link');
+    assert.equal(await js(`!!${detail}.querySelector('.github-scope-prompt')`), false, 'A sign-in with read:org is not asked again');
+    assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved by plucked');
+    assert.equal(await js("document.body.textContent.includes('No review decision')"), false);
+    // The Merge button stays available; GitHub's refusal reaches the dialog once and nothing merges.
+    await js("document.querySelector('.pr-summary-content[data-state=active] [aria-label=\"Refresh PR actions\"]').click()");
+    await wait("document.querySelector('.pr-summary-content[data-state=active] [data-merge-action]')?.title===''");
+    await wait("document.querySelector('.pr-summary-content[data-state=active] [data-merge-action]')?.disabled===false");
+    await js("document.querySelector('.pr-summary-content[data-state=active] [data-merge-action]').click()");
+    await wait("!!document.querySelector('.pr-action-dialog [data-github-blocked]')");
+    await click('Merge pull request');
+    await wait("document.querySelector('.pr-action-dialog .pr-action-error')?.textContent.includes('Repository rule violations found')");
+    assert.equal(await js('window.mergeWrites.length'), 1);
+    await capture('github-blocked-refused');
+    await click('Cancel');
+    await wait("!document.querySelector('.pr-action-dialog')");
+    // An older sign-in with only `repo` gets the explanation and a way to sign in again. Nothing signs it out.
+    await js("window.setFixtureGitHubScopes(['repo'])");
+    await wait(`!!${detail}.querySelector('.github-scope-prompt')`);
+    assert.match(await js<string>(`${detail}.textContent`), /Gnosis’s sign-in can’t read your organization’s settings, which GitHub may need for this\. Sign in again to allow it\./);
+    assert.match(
+      await js<string>(`${detail}.querySelector('.github-scope-prompt').textContent`),
+      /Gnosis now asks to read your organization membership\. It needs it to check merge rules and team review requests the way GitHub does\./
+    );
+    await capture('github-blocked-sign-in');
+    // GitHub's raw answer and Gnosis's access, in About these results.
+    await js("[...document.querySelectorAll('.pr-summary-content[data-state=active] .review-evidence button')].find(b=>b.textContent.includes('Show details')).click()");
+    await wait("!!document.querySelector('.pr-summary-content[data-state=active] .review-evidence-help')");
+    await js("document.querySelector('.pr-summary-content[data-state=active] .review-evidence-help').open=true");
+    const about = await js<string>("document.querySelector('.pr-summary-content[data-state=active] .review-evidence-github-answer').textContent");
+    assert.match(about, /GitHub merge state: BLOCKED/);
+    assert.match(about, /GitHub mergeable: MERGEABLE/);
+    assert.match(about, /GitHub review decision: none/);
+    assert.match(about, /Gnosis’s GitHub access: repo$/);
+    await js("document.querySelector('.pr-summary-content[data-state=active] .review-evidence-help').scrollIntoView({block:'center'})");
+    await capture('github-answer');
+    await js("[...document.querySelectorAll('.pr-summary-content[data-state=active] .review-evidence button')].find(b=>b.textContent.includes('Hide details')).click()");
+    // "Sign in again" opens the GitHub account dialog, which asks for the new scopes.
+    await js(`${detail}.querySelector('.github-scope-prompt button').click()`);
+    await wait("document.querySelector('.github-auth-dialog .github-scope-prompt')?.textContent.includes('Gnosis now asks to read your organization membership')");
+    await capture('github-account-sign-in');
+    await click('Sign in with a code');
+    await wait("!document.querySelector('.github-auth-dialog')");
+    await wait(`!${detail}.querySelector('.github-scope-prompt')`);
+    assert.equal(await js(`${detail}.querySelector('.merge-readiness-badge').textContent`), 'GitHub reports this as blocked');
+    await js('window.mismatch=false');
+    await click('Refresh status');
+    await wait(`${detail}?.textContent.includes('Ready to merge')`);
     await js('window.failStatus=true;const realNow=Date.now;Date.now=()=>realNow()+6*60*1000;void 0');
     await click('Refresh status');
     await wait(
@@ -137,7 +207,7 @@ void app.whenReady().then(async () => {
     await click('Refresh status');
     await wait("document.querySelector('.stack-overview-member[data-pr-url$=\"/120\"] .pr-review-status')?.textContent==='Changes requested'");
     assert.deepEqual(await js("[...document.querySelectorAll('.stack-overview-member .pr-review-status')].map(s=>s.textContent)"),
-      ['No review decision', 'Awaiting review', 'Changes requested']);
+      ['No review required', 'Awaiting review', 'Changes requested']);
     assert.equal(await js("document.querySelector('.stack-overview-member:first-child .merge-readiness-badge')"), null);
     await capture('stack-review-status');
     win.setSize(640, 800);

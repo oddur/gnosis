@@ -96,10 +96,10 @@ void app.whenReady().then(async () => {
         }
       }
       if (scenario === 'healthy') {
-        // Defaults are quiet: no repeated "No review decision", "Up to date", skipped tallies or optional-update disclosures.
+        // Defaults are quiet: no repeated "No review required", "Up to date", skipped tallies or optional-update disclosures.
         const quiet = await js<Record<string, number>>(`(()=>{const list=document.querySelector('.stack-overview-members');return {
           quietReview:list.querySelectorAll('.pr-review-status.is-quiet').length,
-          visibleNoDecision:[...list.querySelectorAll('.pr-review-status:not(.is-quiet)')].filter(e=>e.textContent.includes('No review decision')).length,
+          visibleNoDecision:[...list.querySelectorAll('.pr-review-status:not(.is-quiet)')].filter(e=>/No review (decision|required)|Not reviewed/.test(e.textContent)).length,
           quietBranch:list.querySelectorAll('.stack-status-quiet').length,
           skipped:[...list.querySelectorAll('.stack-check-result')].filter(e=>e.textContent.includes('skipped')).length,
           disclosures:list.querySelectorAll('.stack-member-disclosure').length,
@@ -109,7 +109,7 @@ void app.whenReady().then(async () => {
           visibleOptional:[...list.querySelectorAll('.stack-status-cell small')].filter(e=>e.textContent.includes('Update optional')).length,
         }})()`);
         assert.deepEqual(quiet, { quietReview: 9, visibleNoDecision: 0, quietBranch: 4, skipped: 0, disclosures: 0, adjacentParents: 0, finished: 3, finishedCells: 3, visibleOptional: 0 }, JSON.stringify(quiet));
-        assert.equal(await js("[...document.querySelectorAll('.pr-review-status.is-quiet')].every(e=>e.textContent==='No review decision')"), true, 'Quiet cells keep their accessible text');
+        assert.equal(await js("[...document.querySelectorAll('.pr-review-status.is-quiet')].every(e=>['No review required','Not reviewed'].includes(e.textContent))"), true, 'Quiet cells keep their accessible text');
         assert.match(await js<string>("document.querySelector('.stack-progress-summary').textContent"), /3 of 12 merged.*No open PR needs attention.*/);
       } else {
         // States that need action keep their words and color.

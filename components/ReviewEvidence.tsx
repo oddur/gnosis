@@ -14,11 +14,61 @@ import {
 import { Button } from './ui/button';
 import { reviewEvidence, type EvidenceRow } from '../lib/review-evidence';
 import { useEvidenceDiscussions } from '../lib/use-evidence-discussions';
-import type { ReviewSubject } from '../lib/workbench';
+import type { ReviewMember, ReviewSubject } from '../lib/workbench';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { PrChecks } from '../lib/pr-checks';
 import { timeAgo } from '../lib/utils';
 import { useStatusNow } from '../lib/status-clock';
+import { useGitHubAccess } from '../lib/use-github-access';
+import { accessLabel } from '../lib/github-access';
+
+/**
+ * GitHub's raw merge answer for each displayed commit, as Gnosis's sign-in receives it, and the access that sign-in
+ * has. GitHub evaluates merge rules per account and token, so these can differ from what github.com shows you.
+ */
+function GitHubAnswer({
+  members,
+  signals,
+  stacked,
+  scopes,
+}: {
+  members: ReviewMember[];
+  signals: QueueSignals[];
+  stacked: boolean;
+  scopes: string[] | null | undefined;
+}) {
+  return (
+    <div className="review-evidence-github-answer" aria-label="GitHub’s answer">
+      <p>GitHub’s answer to Gnosis for the displayed commit:</p>
+      {members.map((member) => {
+        const readiness = signals.find((s) => s.url === member.url && s.headSha === member.headSha)?.readiness;
+        return (
+          <ul key={member.url} data-pr-url={member.url} aria-label={stacked ? `PR #${member.number}` : undefined}>
+            {stacked && <li>PR #{member.number}</li>}
+            {readiness ? (
+              <>
+                <li>
+                  GitHub merge state: <code>{readiness.mergeState}</code>
+                </li>
+                <li>
+                  GitHub mergeable: <code>{readiness.mergeable}</code>
+                </li>
+                <li>
+                  GitHub review decision: <code>{readiness.reviewDecision ?? 'none'}</code>
+                </li>
+              </>
+            ) : (
+              <li>GitHub merge state: not read for this commit yet</li>
+            )}
+          </ul>
+        );
+      })}
+      <p>
+        Gnosis’s GitHub access: <span data-github-scopes>{accessLabel(scopes)}</span>
+      </p>
+    </div>
+  );
+}
 
 export function ReviewEvidence({
   subject,
@@ -46,6 +96,7 @@ export function ReviewEvidence({
   compact?: boolean;
 }) {
   const now = useStatusNow();
+  const access = useGitHubAccess();
   const [expanded, setExpanded] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const focusDetails = useRef(false);
@@ -316,6 +367,14 @@ export function ReviewEvidence({
               included. Passing checks do not establish test coverage or prove that a reported bug is fixed. No AI
               generation is needed to update this information.
             </p>
+            {account && (
+              <GitHubAnswer
+                members={subject.members}
+                signals={signals}
+                stacked={subject.kind === 'stack'}
+                scopes={access?.login === account ? access.scopes : undefined}
+              />
+            )}
           </details>
         </div>
       )}

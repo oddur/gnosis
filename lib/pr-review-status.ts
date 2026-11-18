@@ -90,13 +90,63 @@ export function prReviewStatus(
           ? 'GitHub reports changes requested on this PR.'
           : 'GitHub reports required approvals are missing or no longer apply.'
     );
+  if (status.reviewDecision !== null)
+    return result(
+      'unknown',
+      'Review status unknown',
+      'muted',
+      `GitHub reported a review decision Gnosis does not recognize (${status.reviewDecision}). Check the PR on GitHub.`
+    );
+  // GitHub reports no review decision when no branch-protection review rule applies, as with rulesets that require
+  // no approvals. Say who approved the current commit, else what the rules ask for when GitHub allows the merge.
+  const approvers = currentApprovers(snapshot, member.headSha);
+  if (approvers.length)
+    return result(
+      'approved',
+      approvedBy(approvers),
+      'success',
+      'Approved on the current commit. GitHub reports no review decision, so its rules may not require a review.'
+    );
+  if (MERGE_ALLOWED.includes(status.mergeState))
+    return result(
+      'unknown',
+      'No review required',
+      'muted',
+      'GitHub reports no review decision and allows the merge, so its rules require no review.'
+    );
   return result(
     'unknown',
-    'No review decision',
+    'Not reviewed',
     'muted',
-    'GitHub has not supplied a review decision. This does not mean the PR is approved or awaiting review.'
+    'No approvals on the current commit. GitHub reports no review decision, so it does not say whether a review is required.'
   );
 }
+
+/** GitHub allows the merge in these states. */
+const MERGE_ALLOWED = ['CLEAN', 'UNSTABLE', 'HAS_HOOKS'];
+
+/**
+ * Reviewers whose latest opinion approves the current commit, newest first. Opinions are each reviewer's latest
+ * approval or request for changes, so a later request for changes replaces an approval. `exclude` leaves out a login,
+ * such as your own.
+ */
+export function currentApprovers(signals: QueueSignals | undefined, headSha: string, exclude?: string): string[] {
+  const reviews = signals?.opinions ?? (signals?.latestReview ? [signals.latestReview] : []);
+  return [
+    ...new Set(
+      [...reviews]
+        .filter((review) => review.state === 'APPROVED' && review.headSha === headSha && review.author.toLowerCase() !== exclude?.toLowerCase())
+        .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
+        .map((review) => review.author)
+    ),
+  ];
+}
+
+/** "Approved by plucked", or "Approved by plucked and 2 others". */
+export const approvedBy = (approvers: readonly string[]) =>
+  approvers.length === 1
+    ? `Approved by ${approvers[0]}`
+    : `Approved by ${approvers[0]} and ${approvers.length - 1} ${approvers.length === 2 ? 'other' : 'others'}`;
 
 export interface ReviewStatusGroup {
   status: PrReviewStatus;

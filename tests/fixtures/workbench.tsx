@@ -53,6 +53,14 @@ if (new URLSearchParams(location.search).has('navigation-history') && !savedView
 }
 const onboardingScenario = new URLSearchParams(location.search).has('onboarding') || new URLSearchParams(location.search).has('ftue');
 const detectedTools = new Map<string, { installed: boolean; resolvedPath: string | null }>();
+// The scopes GitHub reports for the fixture's sign-in (`X-OAuth-Scopes`). Browser checks change them with
+// `window.setFixtureGitHubScopes`, as main's `github-access-changed` broadcast does.
+let fixtureScopes: string[] | null = ['repo', 'read:org'];
+const scopeListeners = new Set<(access: { login: string | null; scopes?: string[] | null }) => void>();
+(window as unknown as { setFixtureGitHubScopes: (scopes: string[] | null) => void }).setFixtureGitHubScopes = (scopes) => {
+  fixtureScopes = scopes;
+  for (const listener of scopeListeners) listener({ login: fixtureAuthenticated ? 'oddur' : null, scopes });
+};
 let fixtureAuthenticated = new URLSearchParams(location.search).has('ftue') ? sessionStorage.getItem('ftue-auth') === 'true' : !onboardingScenario;
 let fixtureStarted = false;
 const polishScenario = new URLSearchParams(location.search).has('polish');
@@ -666,15 +674,20 @@ const mocks = {
   detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
   searchRepos: (query: string) => Promise.resolve([{ fullName: 'klang/engine', description: 'Game engine' }, { fullName: 'klang/tools', description: 'Developer tools' }].filter(repo => repo.fullName.includes(query))),
   getAuthState: () =>
-    Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null }),
+    Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null, scopes: fixtureAuthenticated ? fixtureScopes : undefined }),
+  onGitHubAccessChanged: (callback: (access: { login: string | null; scopes?: string[] | null }) => void) => {
+    scopeListeners.add(callback);
+    return () => void scopeListeners.delete(callback);
+  },
   githubAuthOptions: () => Promise.resolve({ web: onboardingScenario }),
   beginGitHubSignIn: () => Promise.resolve({ id: 'fixture-auth', userCode: 'TEST-CODE', verificationUri: 'https://github.com/login/device', expiresAt: Date.now()+900000 }),
-  completeGitHubSignIn: () => { fixtureAuthenticated = true; return Promise.resolve('oddur'); },
+  completeGitHubSignIn: () => { fixtureAuthenticated = true; fixtureScopes = ['repo', 'read:org']; return Promise.resolve('oddur'); },
   cancelGitHubSignIn: () => Promise.resolve(),
   cancelOAuth: () => Promise.resolve(),
   signOut: () => { fixtureAuthenticated = false; return Promise.resolve(); },
   startOAuth: () => {
     fixtureAuthenticated = true;
+    fixtureScopes = ['repo', 'read:org'];
     sessionStorage.setItem('ftue-auth', 'true');
     return Promise.resolve();
   },

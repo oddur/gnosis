@@ -32,6 +32,10 @@ export interface PrActionState extends PrActionMember {
   canWrite: boolean;
   mergeable: string;
   mergeState: string;
+  /** GitHub's review decision for this sign-in. Undefined in states read before it was requested. */
+  reviewDecision?: string | null;
+  /** The head commit's check rollup (`SUCCESS`, `FAILURE`, `PENDING`…); null when no checks are reported. */
+  checkState?: string | null;
   methods: MergeMethod[];
   defaultMethod: MergeMethod;
   autoMerge: MergeMethod | null;
@@ -80,6 +84,22 @@ export const mergeMethodLabels: Record<MergeMethod, string> = {
   MERGE: 'Create a merge commit',
   REBASE: 'Rebase and merge',
 };
+/**
+ * GitHub reports BLOCKED, but every requirement Gnosis can see is met: no review blocker, checks passed or none. GitHub
+ * evaluates rules for the account and token asking, so its website can allow this merge while Gnosis's sign-in reads
+ * BLOCKED. The merge stays available: GitHub refuses a merge it does not allow, and the dialog shows its reason.
+ */
+export function blockedButMet(state: Pick<PrActionState, 'mergeable' | 'mergeState' | 'reviewDecision' | 'checkState'>): boolean {
+  return (
+    state.mergeState === 'BLOCKED' &&
+    state.mergeable === 'MERGEABLE' &&
+    state.reviewDecision !== undefined &&
+    state.reviewDecision !== 'CHANGES_REQUESTED' &&
+    state.reviewDecision !== 'REVIEW_REQUIRED' &&
+    (state.checkState === null || state.checkState === 'SUCCESS')
+  );
+}
+
 export function mergeBlockedReason(state: PrActionState): string | undefined {
   if (state.archived) return 'This repository is archived.';
   if (state.state !== 'OPEN') return state.state === 'MERGED' ? 'This PR is already merged.' : 'This PR is closed.';
@@ -90,7 +110,8 @@ export function mergeBlockedReason(state: PrActionState): string | undefined {
   // Stack policy is evaluated atomically by GitHub, including its ultimate base branch.
   if (
     !state.stack &&
-    (state.mergeable !== 'MERGEABLE' || !['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(state.mergeState))
+    (state.mergeable !== 'MERGEABLE' ||
+      (!['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(state.mergeState) && !blockedButMet(state)))
   )
     return 'GitHub has not confirmed this PR is ready to merge. Refresh its status or inspect the merge requirements.';
 }
