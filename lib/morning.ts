@@ -8,7 +8,7 @@
  * 4. **Waiting on you** (`waitingOnYou`): people blocked on you, by person, oldest wait first; then PRs whose
  *    requester is not known ("unassigned") and team requests.
  * 5. **Waiting on others** (`waitingOnOthers`): your PRs by what blocks them: stacks as chains, each requested
- *    reviewer (with Nudge), teams, CI, and you (failing checks, conflicts, restacks), each PR with its own reason.
+ *    reviewer (with Nudge), teams, CI, and you (failing checks, conflicts, rebasing), each PR with its own reason.
  *
  * Needs a decision is drawn last on the page, but it claims its PRs before the Waiting sections do.
  *
@@ -48,7 +48,8 @@
  *   cheapest first; then the step that unblocks most PRs; then the longest wait. PRs that need a decision (stuck over a
  *   week) come after the rest, so they stay in Needs a decision unless there is nothing else to do.
  * - A stacked PR whose base has not merged is not the next step; its base is. A base's merge says what it unblocks:
- *   "approved by lena · green · unblocks 3 PRs". Only an approved, passing base is a row, as for any merge.
+ *   "approved by lena · unblocks 3 PRs". Only an approved, passing base is a row, as for any merge. A row never says
+ *   "green": its check state already shows passing.
  * - **One row per stack, with its one next step.** When you owe a review or re-review on any PR of a stack (its base
  *   included), the review is the next step: the base's merge is not offered, and the review row says what follows
  *   ("6 PRs · updated since your review · then merge #35392"). Otherwise the stack's first step in this order is its
@@ -58,8 +59,8 @@
  *
  * **Effort rank** (`effortRank`): an internal ordering weight, never shown. It counts roughly in minutes, rough on
  * purpose, and over 15 it rounds to 5. The page shows no time estimates.
- * - Merge a green PR: 1. Reply to a thread: 3. Address requested changes: 15.
- * - Fix: failing checks 10, conflicts 15, a restack 5, per PR.
+ * - Merge a passing PR: 1. Reply to a thread: 3. Address requested changes: 15.
+ * - Fix: failing checks 10, conflicts 15, rebasing 5, per PR.
  * - Re-review: 2, plus 1 for every 50 lines changed since your review up to 400, then 1 for every 80 (5 when the size
  *   is not known yet).
  * - Review: 3, plus 1 for every 40 lines up to 400, then 1 for every 60 lines; `UNKNOWN_REVIEW_LINES` when the size
@@ -160,7 +161,7 @@ export interface NextItem {
   unblocks?: number;
   /** A fix: what is wrong. */
   fix?: FixReason;
-  /** One line: "approved by lena · green", "not reviewed · green · unblocks 3 PRs", "1060 lines", "failing checks". */
+  /** One line: "approved by lena", "approved by lena · unblocks 3 PRs", "1060 lines", "failing checks". */
   why: string;
   /** The internal ordering weight (`effortRank`): orders Next up, never shown. */
   rank: number;
@@ -286,9 +287,17 @@ export function quote(text: string): string {
 const entryMembers = (row: OverviewRow) => row.entries.map((entry) => entry.member);
 /** "3 PRs · " before a stack row's reason, so the row says how many PRs it stands for. */
 const stackPrefix = (row: OverviewRow) => (row.entries.length > 1 ? `${row.entries.length} PRs · ` : '');
-const FIX_WORDS: Readonly<Record<FixReason, string>> = { failing: 'failing checks', conflicts: 'conflicts', restack: 'needs a restack' };
-/** Restack needed, Conflicts, Failing checks: the reason a PR is under You. */
-export const FIX_LABEL: Readonly<Record<FixReason, string>> = { failing: 'Failing checks', conflicts: 'Conflicts', restack: 'Restack needed' };
+const FIX_WORDS: Readonly<Record<FixReason, string>> = { failing: 'failing checks', conflicts: 'conflicts', restack: 'needs rebasing' };
+/** Failing checks, Conflicts, Needs rebasing: the reason a PR is under You. */
+export const FIX_LABEL: Readonly<Record<FixReason, string>> = { failing: 'Failing checks', conflicts: 'Conflicts', restack: 'Needs rebasing' };
+/**
+ * "needs rebasing after #35390 merged": a PR whose parent merged has to be rebased onto its base branch. The plain
+ * words for a restack, the same in Next up, under You and in a stack's step.
+ */
+export function rebaseWords(subject: Pick<ReviewSubject, 'members' | 'edges'>, member: Pick<ReviewMember, 'url'>): string {
+  const parent = subject.edges.filter((edge) => edge.child === member.url).map((edge) => subject.members.find((candidate) => candidate.url === edge.parent)).find((candidate) => candidate?.merged);
+  return parent ? `needs rebasing after #${parent.number} merged` : 'needs rebasing';
+}
 const fixReason = (reasons: readonly string[]): FixReason => (reasons.includes('checks-failed') ? 'failing' : reasons.includes('conflicts') ? 'conflicts' : 'restack');
 
 /** The open PRs above `member` in its stack: what merging it unblocks. */
@@ -350,7 +359,8 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     const review = row.merge.notes[0];
     if (review.kind !== 'approved' && review.kind !== 'no-review') continue;
     const unblocks = openAbove(row.item.subject, member).length;
-    const why = [review.kind === 'approved' ? `${review.text.replace(/^Approved/, 'approved')} · green` : 'not reviewed · green', unblocks ? `unblocks ${prs(unblocks)}` : '']
+    // The check state shows passing on the row: the words do not say "green" again.
+    const why = [review.kind === 'approved' ? review.text.replace(/^Approved/, 'approved') : 'not reviewed', unblocks ? `unblocks ${prs(unblocks)}` : '']
       .filter(Boolean)
       .join(' · ');
     add({
@@ -398,7 +408,8 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     const rank = roundRank(row.entries.reduce((total, entry) => total + effortRank('fix', undefined, false, fixReason(entry.reasons)), 0));
     const lead = leadMember(row);
     const unblocks = openAbove(row.item.subject, lead).length;
-    add({ kind: 'fix', row, title: row.title, member: lead, fix, rank, urls: entryMembers(row).map((member) => member.url), why: stackPrefix(row) + FIX_WORDS[fix], ...(unblocks ? { unblocks } : {}) });
+    const words = fix === 'restack' && row.entries.length === 1 ? rebaseWords(row.item.subject, lead) : FIX_WORDS[fix];
+    add({ kind: 'fix', row, title: row.title, member: lead, fix, rank, urls: entryMembers(row).map((member) => member.url), why: stackPrefix(row) + words, ...(unblocks ? { unblocks } : {}) });
   }
   // A stack you owe a review on: the review is its next step, and its base merges after it.
   const reviewing = new Set(candidates.filter((item) => item.kind === 'review' || item.kind === 'rereview').map(stackKey));
@@ -481,8 +492,9 @@ export interface GroupLine {
   target: DeepLinkTarget;
   /** The PR's check state. */
   check: CheckView;
-  /** Under You: why the PR needs you. */
+  /** Under You: why the PR needs you, and in words: "Failing checks", "Needs rebasing after #35390 merged". */
   reason?: FixReason;
+  reasonText?: string;
   /** In a stack's chain: where the PR stands. */
   status?: ChainStatus;
   /** The accessible description, before the check state: "#377, waiting, after #376". */
@@ -508,7 +520,7 @@ export interface StackStep {
   text: string;
   /**
    * A merge: what the merge goes ahead without, in Next up's words: "not reviewed", "no checks", "failing checks",
-   * "checks running". Empty for an approved, green base. The header and its button's tooltip both say them.
+   * "checks running". Empty for an approved, passing base. The header and its button's tooltip both say them.
    */
   caveats?: string[];
   /** The PR has merge conflicts with its base: shown with the conflict icon. */
@@ -663,7 +675,7 @@ function openRoot(subject: ReviewSubject, member: ReviewMember): ReviewMember | 
 
 /**
  * What a merge goes ahead without, in Next up's words: "not reviewed" unless approved, then "no checks", "failing
- * checks" or "checks running". An approved, green PR has none.
+ * checks" or "checks running". An approved, passing PR has none.
  */
 export function mergeCaveats(row: Pick<OverviewRow, 'merge'>, checks?: Pick<CheckView, 'state'>): string[] {
   const caveats: string[] = [];
@@ -688,7 +700,7 @@ export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
   const fix = find('fix');
   if (fix) {
     const reason = fixReason(reasons(fix));
-    return { member, row: fix, action: 'open', actionable: true, ...(reason === 'conflicts' ? { conflicts: true } : {}), text: `${n} ${{ failing: 'has failing checks', conflicts: 'has conflicts', restack: 'needs a restack' }[reason]}` };
+    return { member, row: fix, action: 'open', actionable: true, ...(reason === 'conflicts' ? { conflicts: true } : {}), text: `${n} ${{ failing: 'has failing checks', conflicts: 'has conflicts', restack: rebaseWords(fix.item.subject, member) }[reason]}` };
   }
   const answer = find('answer');
   if (answer) return { member, row: answer, action: 'open', actionable: true, text: reasons(answer).includes('changes-requested') ? `${n} has changes requested` : `${n} waits on your reply` };
@@ -809,7 +821,8 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
   for (const row of lanes(model, 'fix')?.rows ?? [])
     for (const entry of row.entries) {
       const reason = fixReason(entry.reasons);
-      add('you', () => ({ kind: 'you', label: 'you' }), row, entry.member, { reason, description: `#${entry.member.number}, ${FIX_LABEL[reason].toLowerCase()}` });
+      const text = reason === 'restack' ? rebaseWords(row.item.subject, entry.member) : FIX_LABEL[reason].toLowerCase();
+      add('you', () => ({ kind: 'you', label: 'you' }), row, entry.member, { reason, reasonText: `${text.charAt(0).toUpperCase()}${text.slice(1)}`, description: `#${entry.member.number}, ${text}` });
     }
   const order: PersonGroup['kind'][] = ['person', 'team', 'review', 'ci', 'you'];
   const result = [...groups.values()].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.oldest - b.oldest || a.label.localeCompare(b.label));
@@ -820,9 +833,9 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
     else if (group.kind === 'you') {
       // Each PR under its first reason, so the counts add up to the PRs.
       const count = (reason: FixReason) => group.lines.filter((line) => line.reason === reason).length;
-      const words: [FixReason, string, string][] = [['failing', 'failing check', 'failing checks'], ['conflicts', 'conflict', 'conflicts'], ['restack', 'restack', 'restacks']];
+      const words: [FixReason, string, string][] = [['failing', 'failing check', 'failing checks'], ['conflicts', 'conflict', 'conflicts'], ['restack', 'needs rebasing', 'need rebasing']];
       group.detail = words.filter(([reason]) => count(reason)).map(([reason, one, many]) => plural(count(reason), one, many)).join(', ');
-      // Failing first, then conflicts, then restacks; oldest first within each.
+      // Failing first, then conflicts, then rebasing; oldest first within each.
       const rank = (line: GroupLine) => words.findIndex(([reason]) => reason === line.reason);
       group.lines.sort((a, b) => rank(a) - rank(b) || a.since - b.since);
     } else {
@@ -1011,11 +1024,12 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, p
   };
   type Clause = (string | BriefingCount)[];
   const parts: (string | BriefingCount)[] = [];
-  const sentence = (clauses: Clause[]) => {
+  // Two clauses that each name people or kinds ("lena and owen …, and 7 reviews …") take a comma before "and".
+  const sentence = (clauses: Clause[], comma = false) => {
     if (!clauses.length) return;
     if (parts.length) parts.push(' ');
     clauses.forEach((clause, i) => {
-      if (i) parts.push(i < clauses.length - 1 ? ', ' : clauses.length > 2 ? ', and ' : ' and ');
+      if (i) parts.push(i < clauses.length - 1 ? ', ' : clauses.length > 2 || comma ? ', and ' : ' and ');
       parts.push(...clause);
     });
     parts.push('.');
@@ -1025,12 +1039,15 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, p
   const blocked: Clause[] = [];
   const answer = open(lanes(input.model, 'answer')?.rows ?? []);
   const people = unique(answer.map(({ row }) => row.person).filter((person): person is string => !!person));
-  const replies = count('replies', answer.flatMap(({ urls }) => urls), (n) => (n === 1 && people.length ? 'your reply' : prs(n)));
+  // One PR per person: "lena and owen are waiting on your replies". More PRs than people: "… on your reply on 3 PRs".
+  const perPerson = people.length > 0 && answer.flatMap(({ urls }) => urls).length <= people.length;
+  const replies = count('replies', answer.flatMap(({ urls }) => urls), (n) => (perPerson ? (n === 1 ? 'your reply' : 'your replies') : prs(n)));
   if (replies) {
     const who = people.length > 2 ? `${people[0]}, ${people[1]} and ${plural(people.length - 2, 'other', 'others')}` : people.join(' and ');
+    const are = people.length > 1 ? 'are' : 'is';
     if (!people.length) blocked.push([replies, ` ${replies.count === 1 ? 'is' : 'are'} waiting on your reply`]);
-    else if (replies.count === 1) blocked.push([`${who} is waiting on `, replies]);
-    else blocked.push([`${who} ${people.length > 1 ? 'are' : 'is'} waiting on your reply on `, replies]);
+    else if (perPerson) blocked.push([`${who} ${are} waiting on `, replies]);
+    else blocked.push([`${who} ${are} waiting on your reply on `, replies]);
   }
   const review = open(lanes(input.model, 'review')?.rows ?? []);
   const reviewClause: Clause = [];
@@ -1051,7 +1068,7 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, p
     if (stacked.length) reviewClause.push(inStacks === value.count ? ` (${stacked.length === 1 ? 'one stack' : `in ${where}`})` : ` (${inStacks} in ${where})`);
   }
   if (reviewClause.length) blocked.push([...reviewClause, ` ${reviews === 1 ? 'is' : 'are'} waiting on you`]);
-  sentence(blocked);
+  sentence(blocked, true);
 
   // Your PRs: merges, then fixes by their first reason.
   const own: Clause[] = [];

@@ -5,6 +5,7 @@ import {
   NEXT_LIMIT,
 
   QUICK_LINES,
+  FIX_LABEL,
   closeConfirmation,
   commentsOf,
   mergeCaveats,
@@ -93,7 +94,7 @@ function fillers(status: Record<string, QueueSignals>) {
 /** The number a row shows for its PRs: "5 PRs · …", "3 running", "17 PRs in 6 stacks", "2 failing checks, 1 conflict". */
 const shown = (group: PersonGroup) =>
   group.kind === 'you'
-    ? [...group.detail.matchAll(/(\d+) (failing checks?|conflicts?|restacks?)/g)].reduce((total, match) => total + Number(match[1]), 0)
+    ? [...group.detail.matchAll(/(\d+) (failing checks?|conflicts?|needs? rebasing)/g)].reduce((total, match) => total + Number(match[1]), 0)
     : Number(group.detail.match(/^(\d+) (PRs?|running|review requests?)\b/)?.[1] ?? NaN);
 
 /**
@@ -212,7 +213,8 @@ function assertBriefing(page: MorningPage) {
   }
   for (const count of briefing.counts) {
     // The number in the words is the number of PRs; every PR it counts is on the page, in a row or on the quiet line.
-    assert.ok(count.text === 'your reply' ? count.count === 1 : count.text.startsWith(`${count.count}`), `"${count.text}" says ${count.count}`);
+    // A number, or "your reply" / "your replies" when each person waits on one PR and the names already count them.
+    assert.ok(/^your repl(y|ies)$/.test(count.text) ? count.key === 'replies' : count.text.startsWith(`${count.count}`), `"${count.text}" says ${count.count}`);
     for (const url of count.urls) assert.ok(listed.has(url) || page.next.unreviewed.includes(url) || page.next.moreApproved.includes(url), `${count.key}: ${url} is on the page`);
     assert.ok(briefing.text.includes(count.text));
   }
@@ -246,7 +248,7 @@ void test('Next up: cheapest first, at most five, with a total; size orders but 
     ['review', 5, '40 lines', 4],
     // 700 lines: not quick, but listed, after the smaller review.
     ['review', 6, '700 lines', 20],
-    ['merge', 1, 'approved by lena · green', 1],
+    ['merge', 1, 'approved by lena', 1],
   ]);
   assert.ok(!few.items.some((entry) => /\bmin\b|\d h\+/.test(entry.why)), 'no time estimate in what a row says');
   assert.ok(!few.items.some((entry) => entry.member.number === 2), 'checks still running: not a merge yet');
@@ -297,7 +299,7 @@ void test('Next up is never empty while there is work, a merge nobody reviewed w
   // A restack: one PR of a stack whose parent merged. The item names that PR, not the stack.
   const parent = minePr('o/r', 6, { merged: true, state: 'closed', headBranch: 'p6', title: 'Wallet balance API' });
   const child = set(minePr('o/r', 7, { baseBranch: 'p6', title: 'Wallet balance in the HUD' }), noReview);
-  assert.deepEqual(page(build([item([parent, child])], status), status).next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.rank]), [['fix', 'Wallet balance in the HUD', 'needs a restack', 5]]);
+  assert.deepEqual(page(build([item([parent, child])], status), status).next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.rank]), [['fix', 'Wallet balance in the HUD', 'needs rebasing after #6 merged', 5]]);
   // Nothing in Waiting on you, Fix or Merge: empty, and the page says "Nothing needs you right now."
   const waiting = set(minePr('o/r', 5, { requestedReviewers: ['lena'] }), (m) => signals(m, { checks: 'success' }));
   const idle = page(build([item([waiting])], status), status);
@@ -313,7 +315,7 @@ void test('a stacked PR waits for its base; the base merge is the next step and 
   status[base.url] = approved(base);
   const model = build([stack([base, ...rest], 'epic', 'STACK: EPIC')], status);
   const result = page(model, status);
-  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.urls.length, entry.unblocks]), [['merge', 'STACK: EPIC', 'approved by lena · green · unblocks 3 PRs', 1, 3]]);
+  assert.deepEqual(result.next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.urls.length, entry.unblocks]), [['merge', 'STACK: EPIC', 'approved by lena · unblocks 3 PRs', 1, 3]]);
   assert.equal(nextMoreLine(result.next), undefined, 'the stacked PRs above it are not ready on their own');
   const stacks = result.others.find((group) => group.kind === 'stacks');
   const chain = must(stacks?.children?.[0]);
@@ -521,11 +523,11 @@ void test('You: each PR has its own reason, failing first, then conflicts and re
   status[child.url] = noReview(child);
   const result = page(build([...fillers(status), item([broken]), item([conflict]), item([parent, child])], status), status);
   const you = must(result.others.find((group) => group.kind === 'you'));
-  assert.equal(you.detail, '1 failing check, 1 conflict, 1 restack');
+  assert.equal(you.detail, '1 failing check, 1 conflict, 1 needs rebasing');
   assert.deepEqual(you.lines.map((line) => [line.member.number, line.reason, line.description, line.check.label]), [
     [7, 'failing', '#7, failing checks', 'failing'],
     [8, 'conflicts', '#8, conflicts', 'passing'],
-    [10, 'restack', '#10, restack needed', 'passing'],
+    [10, 'restack', '#10, needs rebasing after #9 merged', 'passing'],
   ]);
 });
 
@@ -1047,4 +1049,47 @@ void test('the unread dot: only a real state change since the last visit, never 
   // Unread activity alone (a PR never opened) is not a dot: the dot reads only the last visit.
   const unread = fixture.items.map((entry) => ({ ...entry, unreadUrls: entry.subject.members.map((m) => m.url) }));
   assert.deepEqual(dots(build7(fixture.signals, nextOverviewVisit(build7(fixture.signals), at), unread)), []);
+});
+
+void test('rebasing in plain words: Next up, the You group and a stack step say "needs rebasing", never "restack"', async () => {
+  assert.equal(FIX_LABEL.restack, 'Needs rebasing');
+  // A PR whose parent merged: its own words name the parent.
+  const status: Record<string, QueueSignals> = {};
+  const parent = minePr('o/r', 9, { merged: true, state: 'closed', headBranch: 'p9' });
+  const child = minePr('o/r', 10, { baseBranch: 'p9', headBranch: 'c10' });
+  const top = minePr('o/r', 11, { baseBranch: 'c10' });
+  status[child.url] = noReview(child);
+  status[top.url] = noReview(top);
+  const alone = page(build([item([parent, child])], status), status);
+  assert.equal(must(alone.next.items[0]).why, 'needs rebasing after #9 merged');
+  const filled = page(build([...fillers(status), item([parent, child, top])], status), status);
+  const step = must(filled.others.find((group) => group.kind === 'stacks')?.children?.[0]?.step);
+  assert.equal(step.text, '#10 needs rebasing after #9 merged');
+  for (const name of OVERVIEW_FIXTURES) {
+    const { page: result } = await fixturePage(name);
+    const words = [
+      result.briefing.text,
+      ...result.next.items.map((entry) => entry.why),
+      ...[...result.you, ...result.others].flatMap((group) => [group.detail, ...group.lines.map((line) => `${line.reasonText ?? ''} ${line.description}`)]),
+      ...result.others.flatMap((group) => group.children ?? []).flatMap((stack) => [stack.step?.text ?? '', ...(stack.chain ?? []).map((node) => node.line.description)]),
+    ];
+    for (const text of words) assert.doesNotMatch(text, /restack/i, `${name}: "${text}"`);
+  }
+  const { page: real7 } = await fixturePage('real7');
+  assert.ok(real7.next.items.some((entry) => entry.why === 'needs rebasing after #35390 merged'));
+  assert.match(real7.briefing.text, /1 needs rebasing\./);
+});
+
+void test('no "green" where the check state already shows passing', async () => {
+  for (const name of OVERVIEW_FIXTURES) {
+    const { page: result } = await fixturePage(name);
+    for (const entry of result.next.items) assert.doesNotMatch(entry.why, /\bgreen\b/, `${name} #${entry.member.number}: "${entry.why}"`);
+    for (const stack of result.others.flatMap((group) => group.children ?? [])) assert.doesNotMatch(stack.step?.text ?? '', /\bgreen\b/);
+    assert.doesNotMatch(result.briefing.text, /\bgreen\b/);
+  }
+  const status: Record<string, QueueSignals> = {};
+  const merge = minePr('o/r', 1);
+  status[merge.url] = approved(merge);
+  const result = page(build([item([merge])], status), status);
+  assert.deepEqual([must(result.next.items[0]).why, must(result.next.items[0]).check.label], ['approved by lena', 'passing']);
 });

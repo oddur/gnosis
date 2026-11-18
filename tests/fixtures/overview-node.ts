@@ -31,7 +31,7 @@ export async function overviewFixture(name: OverviewFixtureName): Promise<{ item
   const members = items.flatMap((item) => item.subject.members);
   const answers = (await (mocks.getQueueSignals as (requests: QueueSignalRequest[]) => Promise<QueueSignals[]>)(
     members.map((member) => ({ url: member.url, headSha: member.headSha }) as QueueSignalRequest)
-  )) ?? [];
+  ));
   const status = new Map(answers.map((value) => [value.url, value]));
   return { items, status, signals: (member) => status.get(member.url) };
 }

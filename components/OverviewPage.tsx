@@ -2,18 +2,22 @@
  * The Overview (#390): the morning page. It answers, in order, what happened since you left, what to do next, who is
  * blocked on you, where your PRs are stuck and on whom, and what to close or park.
  *
- * - The briefing sentence and a "Since yesterday" line (`lib/since-log.ts`).
+ * - The briefing sentence, counted from the sections, each number a link that marks and focuses the rows it counts
+ *   (`morningBriefing`), a "Since yesterday" line (`lib/since-log.ts`), and one status line: "Updated 9m ago ·
+ *   checking 28 PRs".
  * - **Next up:** up to five things to do, people blocked on you first, then approved merges, then fixes, each with one
  *   action. A merge nobody reviewed is never a row: the quiet line under it counts them.
  * - **Waiting on you** and **Waiting on others**, full width one above the other: people, and your PRs by blocker,
- *   with Nudge. Stacks are chains in merge order, base first, with the step that moves them.
- * - **Needs a decision:** your PRs failing, never approved or idle for over a week, with Close PR and Snooze.
+ *   with Nudge. Stacks are one line each, with the step that moves them; Enter or a click expands the chain in merge
+ *   order, base first, and expanded stacks are remembered per account (`overviewStacksKey`).
+ * - **Needs a decision:** your PRs failing, never approved or idle for over a week, with Close PR (Snooze in the menu).
  *
  * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), except in a stack's chain, which shows every PR
  * of the stack as a full line and links to the section that also lists one ("↑ Next up"). Every heading counts what it
- * lists, each PR once: Next up its rows, the others their PRs. Waiting on you says where its PRs went when Next up lists them.
+ * lists, each PR once: Next up its rows, the others their PRs. Waiting on you names the Next up rows that hold its PRs.
  * Every PR line leads with its state icon (`PrStateIcon`; a row for several PRs of a stack, the stack icon) and its
- * number, shows the queue row's comment badge above 0 and its check state, and how long it has waited, in a column that
+ * number, then its title, which takes the room; one compact status cell (check state, then comments above 0) and how
+ * long it has waited sit in fixed columns that
  * lines up down the page; the tooltip names the timestamp (`lib/overview.ts`, "Waiting time"). The page shows no time
  * estimates: Next up's order (`effortRank`) stays internal. A PR's title previews the PR on hover or focus with the PR
  * badge's tooltip. Buttons that change something carry their icon (`actionIcons`); buttons that only open a PR carry none. Every PR line, in every section and
@@ -33,6 +37,7 @@ import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
 import { useMorningExtras } from '../lib/use-morning';
 import { useStatusNow } from '../lib/status-clock';
+import { freshnessLabel } from '../lib/focus-refresh';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import { prTarget, type DeepLinkTarget } from '../lib/deep-link';
@@ -70,14 +75,13 @@ import {
   type PageLink,
   type PersonGroup,
 } from '../lib/morning';
-import { sinceLine, sinceSummary } from '../lib/since-log';
+import { sinceLabel, sinceLine, sinceSummary } from '../lib/since-log';
 import { openSnoozePicker } from '../lib/snooze-picker';
 import { writeErrorDetail } from '../lib/write-failures';
 import type { QueueItem, ReviewMember, WorkbenchQueue } from '../lib/workbench';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrPreviewTooltip } from './EntityBadge';
 import { PrActions } from './PrActions';
-import { PrFreshness } from './PrFreshness';
 import { PrStateIcon } from './PrStateIcon';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { LoadingIndicator, LoadingState } from './LoadingState';
@@ -128,6 +132,8 @@ export interface OverviewPageProps {
 }
 
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+/** "Updated 9m ago": when Gnosis last read the PR list, on the status line. */
+const updatedLabel = (checkedAt: number, now: number) => freshnessLabel(checkedAt, now).replace(/^Checked/, 'Updated');
 /**
  * A last sync older than this is behind: main finishes discovery every 2 to 5 minutes while a window is visible
  * (src/main.ts, `discoveryInterval`). The Overview then asks for a sync, at most once per `SYNC_STALE_MS`.
@@ -143,7 +149,7 @@ const SECTION_LABEL: Readonly<Record<Section, string>> = {
   others: 'Waiting on others',
   decide: 'Needs a decision',
 };
-/** Needs a decision lists this many before "Show all". */
+/** Needs a decision lists this many before "Show N more". */
 const DECIDE_SHOWN = 6;
 /** The section a row id belongs to: ids are `${section}|…`. */
 const sectionOf = (id: string) => id.slice(0, id.indexOf('|')) as Section;
@@ -274,7 +280,7 @@ export function OverviewPage(props: OverviewPageProps) {
                 lines(section, sid, [step.line]);
                 if (step.also) refs.set(`${sid}|${step.line.id}`, { row: step.line.row, members: [step.line.member], also: true });
               }
-              else if (step.kind === 'gap') push(section, `${sid}|more`, { members: [] });
+              else push(section, `${sid}|more`, { members: [] });
             }
           }
           if (stacks.more) push(section, `${id}|more`, { members: [] });
@@ -347,7 +353,9 @@ export function OverviewPage(props: OverviewPageProps) {
   latestMorning.current = morning;
   const marked = useRef<{ timer: number; ids: string[] }>({ timer: 0, ids: [] });
   const showRows = useCallback(
-    (urls: readonly string[], options: { place?: Section; line?: boolean } = {}) => {
+    (urls: readonly string[], given: { place?: Section; line?: boolean } = {}) => {
+      // Merges: Next up's rows and its quiet line count them; a stack's base line that names one is not the count.
+      const options = given.line ? { ...given, place: 'next' as const } : given;
       const wanted = new Set(urls);
       const page = latestMorning.current;
       const holds = (lines: readonly GroupLine[]) => lines.some((line) => wanted.has(line.id));
@@ -362,7 +370,7 @@ export function OverviewPage(props: OverviewPageProps) {
               const holding = children.filter((child) => holds(child.lines));
               if (!holding.length) continue;
               next.delete(id);
-              if (children.findIndex((child) => holds(child.lines)) >= STACKS_SHOWN) next.add(`${id}|more`);
+              if (children.some((child, i) => i >= STACKS_SHOWN && holds(child.lines))) next.add(`${id}|more`);
               // A stack's PRs are its chain's lines: the stacks that hold them expand.
               for (const child of holding) {
                 next.add(`${id}|${child.key}`);
@@ -372,7 +380,7 @@ export function OverviewPage(props: OverviewPageProps) {
             }
             if (!holds(group.lines) || group.lines.length <= INLINE_LIMIT) continue;
             next.add(id);
-            if (group.lines.findIndex((line) => wanted.has(line.id)) >= GROUP_SHOWN) next.add(`${id}|more`);
+            if (group.lines.some((line, i) => i >= GROUP_SHOWN && wanted.has(line.id))) next.add(`${id}|more`);
           }
         }
         return next;
@@ -507,6 +515,7 @@ export function OverviewPage(props: OverviewPageProps) {
 
 
   const sync = queue.sync;
+  const openActivity = navigation?.openTarget;
   // Main is reading the PR list again and the last finished read is behind (`SYNC_STALE_MS`).
   const syncing = authenticated && sync?.status === 'checking' && syncStale(sync.checkedAt);
   const readStates = queue.readStates ?? {};
@@ -584,7 +593,7 @@ export function OverviewPage(props: OverviewPageProps) {
           {morning.decide.length > DECIDE_SHOWN && (
             <li className="morning-more">
               <button type="button" className="overview-tile-all" aria-expanded={allDecisions} data-overview-more onClick={() => setAllDecisions((value) => !value)}>
-                {allDecisions ? 'Show fewer' : `Show all ${morning.decide.length}`}
+                {allDecisions ? 'Show fewer' : `Show ${morning.decide.length - DECIDE_SHOWN} more`}
               </button>
             </li>
           )}
@@ -619,35 +628,45 @@ export function OverviewPage(props: OverviewPageProps) {
       <div className="queue-toolbar overview-toolbar">
         <div>
           <h1 id="overview-title">Overview</h1>
-          {/* A status region that is not live: count changes are announced once, by the region below. */}
-          <p className="overview-briefing" role="status" aria-live="off" data-overview-briefing>
+          {/* Plain text with links: count changes are announced once, by the polite region below. */}
+          <p className="overview-briefing" data-overview-briefing>
             {ready ? (
               <Sentence parts={morning.briefing.parts} onCount={(count) => showRows(count.urls, { line: count.line })} />
             ) : (
               'What you can act on now, across your repositories.'
             )}
           </p>
-          {ready && since && <p className="overview-since" data-overview-since>{since}</p>}
+          {ready && (since || extras.since.from > 0) && (
+            <p className="overview-since" data-overview-since>{since || `Nothing new ${sinceLabel(extras.since.from, now).toLowerCase()}`}</p>
+          )}
         </div>
         <div className="overview-freshness-group">
-          {/* One indicator at a time: while Gnosis reads your PRs again, the status reads still to come are in its tooltip. */}
-          {syncing ? null : authenticated && view.checking > 0 ? (
-            <span className="overview-unchecked" data-overview-checking title={`Reading the status of ${view.checking} PRs from GitHub. Each joins its section when GitHub answers.`}>
-              Checking {view.checking}…
-            </span>
-          ) : authenticated && view.unchecked > 0 ? (
-            <span className="overview-unchecked" data-overview-unchecked title={`Status not checked yet for ${view.unchecked} of your PRs. They join a section when GitHub reports it.`}>
-              {view.unchecked} not checked
-            </span>
-          ) : null}
-          {syncing ? (
-            <span className="queue-freshness is-refreshing" data-overview-syncing
-              title={`Gnosis last finished reading your pull requests from GitHub at ${new Date(sync?.checkedAt ?? 0).toLocaleString()}. It is reading them again now.${view.checking > 0 ? ` The status of ${view.checking} PRs is still to come; each joins its section when GitHub answers.` : ''}`}>
-              <LoadingIndicator announce={false}>Updating…</LoadingIndicator>
-            </span>
-          ) : (
-            <PrFreshness className="queue-freshness" queue checkedAt={sync?.checkedAt} refreshing={refreshing} />
-          )}
+          {/* One status line: when the PR list was last read, and the status reads still to come. */}
+          <span className="overview-status-line" data-overview-status-line>
+            {syncing ? (
+              <span className="is-refreshing" data-overview-syncing
+                title={`Gnosis last finished reading your pull requests from GitHub at ${new Date(sync.checkedAt ?? 0).toLocaleString()}. It is reading them again now.`}>
+                <LoadingIndicator announce={false}>Updating…</LoadingIndicator>
+              </span>
+            ) : refreshing ? (
+              <span className="is-refreshing" title="Showing what Gnosis saved last session while it reads GitHub again.">
+                <LoadingIndicator announce={false}>Refreshing…</LoadingIndicator>
+              </span>
+            ) : sync?.checkedAt !== undefined ? (
+              <span data-overview-updated title={`Gnosis last read your pull requests from GitHub at ${new Date(sync.checkedAt).toLocaleTimeString()}. It reads them again every 2 minutes while this window is visible.`}>
+                <time dateTime={new Date(sync.checkedAt).toISOString()}>{updatedLabel(sync.checkedAt, now)}</time>
+              </span>
+            ) : null}
+            {authenticated && view.checking > 0 ? (
+              <span data-overview-checking title={`Reading the status of ${view.checking} PRs from GitHub. Each joins its section when GitHub answers.`}>
+                checking {prs(view.checking)}
+              </span>
+            ) : authenticated && view.unchecked > 0 ? (
+              <span data-overview-unchecked title={`Status not checked yet for ${view.unchecked} of your PRs. They join a section when GitHub reports it.`}>
+                {view.unchecked} not checked
+              </span>
+            ) : null}
+          </span>
           <button className="workbench-icon" aria-label="Refresh overview" title="Update from GitHub. Follow progress in Activity." onClick={onRefresh}>
             <RefreshCw size={16} />
           </button>
@@ -670,9 +689,15 @@ export function OverviewPage(props: OverviewPageProps) {
           <span>
             {sync.status === 'paused'
               ? `GitHub is rate-limited. Showing saved data${sync.retryAt ? `; updates resume at ${clock(sync.retryAt)}` : ''}.`
-              : 'Could not reach GitHub. Showing saved data.'}
+              : 'Could not reach GitHub, so this page shows saved data.'}
           </span>
           {sync.status === 'error' && <button onClick={onRefresh}>Retry</button>}
+          {/* Reads failing affect this page's data: Activity has the details. Other failures stay in the title bar. */}
+          {sync.status === 'error' && openActivity && (
+            <button data-overview-activity onClick={() => void openActivity({ kind: 'activity' })}>
+              Open Activity
+            </button>
+          )}
         </div>
       )}
       <RepoNames.Provider value={repoNames}>
@@ -891,9 +916,8 @@ function MorningSection({ section, count, empty, quiet = false, footer, children
       <div className="morning-section-head">
         <h2 id={`${id}-heading`}>
           {label}
-          <span className="sr-only">{`, ${count}`}</span>
+          <span className="morning-section-count" data-section-count>{count}</span>
         </h2>
-        <span className="morning-section-count" aria-hidden="true" data-section-count>{count}</span>
       </div>
       {count === 0 ? <p className="morning-empty" data-overview-empty>{empty}</p> : <ul className="morning-rows" aria-label={label}>{children}</ul>}
       {footer && <div className="morning-footer">{footer}</div>}
@@ -1046,8 +1070,13 @@ function RowShell({ id, tabStop, actions, label, title, number, numberLabel, pre
       {icon}
       {preview ? <PrPreviewTooltip url={preview.url} number={preview.number} title={preview.title}>{button}</PrPreviewTooltip> : button}
       <span className="sr-only" id={descriptionId} data-overview-description>{description}</span>
-      {check && <CommentCount count={comments} />}
-      {check && <CheckState check={check} />}
+      {/* One compact status cell: the check state, then the comments. */}
+      {check && (
+        <span className="morning-status-cell">
+          <CheckState check={check} />
+          <CommentCount count={comments} />
+        </span>
+      )}
       {status}
       {/* The age (or a header's count) and the actions always hold their columns, so ages line up down the page. */}
       {waited ? <Age waited={waited} /> : <span className="morning-meta">{meta}</span>}
@@ -1077,7 +1106,6 @@ const MergeIcon = actionIcons.merge;
 const RerunIcon = actionIcons.rerun;
 const NudgeIcon = actionIcons.nudge;
 const CloseIcon = actionIcons.close;
-const SnoozeIcon = actionIcons.snooze;
 
 const NextRow = memo(
   function NextRow({ item, waited, tabStop, unread, actions }: { item: NextItem; waited: string; tabStop: boolean; unread: boolean; actions: RowActions }) {
@@ -1151,7 +1179,7 @@ function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMe
       trigger={(open, busy) => (
         <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title="Re-run failed jobs… · A" disabled={busy} onClick={open}>
           <RerunIcon size={13} aria-hidden="true" />
-          {busy ? 'Reading checks…' : 'Rerun failed'}
+          {busy ? 'Reading…' : 'Rerun'}
         </Button>
       )}
     />
@@ -1228,7 +1256,7 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, qualify = f
       preview={{ url: member.url, number: member.number, title: member.title }}
       prs={[member.url]}
       repos={showRepo ? [member.repo] : undefined}
-      detail={line.reason === 'conflicts' ? <Conflicts>{FIX_LABEL.conflicts}</Conflicts> : line.reason ? FIX_LABEL[line.reason] : undefined}
+      detail={line.reason === 'conflicts' ? <Conflicts>{FIX_LABEL.conflicts}</Conflicts> : line.reason ? (line.reasonText ?? FIX_LABEL[line.reason]) : undefined}
       check={line.check}
       comments={line.comments}
       status={status}
@@ -1260,16 +1288,20 @@ function AlsoLink({ url, place, actions }: { url: string; place: AlsoPlace; acti
   );
 }
 
-/** "3 more", "2 more stacks", "+4 more": shows the rest of a list. A row in the section's keyboard order. */
-function MoreRow({ id, label, spoken, tabStop, actions, depth, chain = false }: { id: string; label: string; spoken: string; tabStop: boolean; actions: RowActions; depth: number; chain?: boolean }) {
+/**
+ * "3 more", "2 more stacks", "+4 more": shows the rest of a list. A row in the section's keyboard order. Its name is
+ * the visible words, then `more` for assistive technology: "+4 more PRs in this stack".
+ */
+function MoreRow({ id, label, more = '', tabStop, actions, depth, chain = false }: { id: string; label: string; more?: string; tabStop: boolean; actions: RowActions; depth: number; chain?: boolean }) {
   return (
     <li className={`morning-row morning-more-row is-nested depth-${depth}${chain ? ' is-chain is-gap' : ''}`} data-overview-row-item={id}>
       <div className="morning-row-inner">
         <span className="overview-row-gutter" />
         {chain && <span className="stack-chain-node" aria-hidden="true" />}
-        <button type="button" className="morning-more-quiet" data-overview-row={id} data-overview-more-row tabIndex={tabStop ? 0 : -1} aria-label={spoken}
+        <button type="button" className="morning-more-quiet" data-overview-row={id} data-overview-more-row tabIndex={tabStop ? 0 : -1}
           onFocus={() => actions.focus(id)} onBlur={actions.blur} onKeyDown={actions.keyDown} onClick={() => actions.toggle(id)}>
           {label}
+          {more && <span className="sr-only">{more}</span>}
           {!chain && <ChevronRight size={13} aria-hidden="true" />}
         </button>
       </div>
@@ -1330,7 +1362,7 @@ const GroupRows = memo(
           const child = `${id}|${line.id}`;
           return <LineRow key={child} id={child} line={line} now={now} depth={1} tabStop={tabStop === child} actions={actions} showRepo={group.repos.length > 1} />;
         })}
-        {view.more > 0 && <MoreRow id={`${id}|more`} label={`${view.more} more`} spoken={`Show ${view.more} more PRs of ${name}`} tabStop={tabStop === `${id}|more`} actions={actions} depth={1} />}
+        {view.more > 0 && <MoreRow id={`${id}|more`} label={`${view.more} more`} more={` PRs of ${name}`} tabStop={tabStop === `${id}|more`} actions={actions} depth={1} />}
       </>
     );
   },
@@ -1370,7 +1402,7 @@ const StacksRows = memo(
           <StackChain key={stack.key} id={`${id}|${stack.key}`} stack={stack} now={now} open={set} tabStop={tabStop} nudged={nudged.has(`nudge:${stack.key}`)} actions={actions} qualify={qualifyChains(group)} />
         ))}
         {view.more > 0 && (
-          <MoreRow id={`${id}|more`} label={`${view.more} more ${view.more === 1 ? 'stack' : 'stacks'}`} spoken={`Show ${view.more} more stacks`} tabStop={tabStop === `${id}|more`} actions={actions} depth={1} />
+          <MoreRow id={`${id}|more`} label={`${view.more} more ${view.more === 1 ? 'stack' : 'stacks'}`} tabStop={tabStop === `${id}|more`} actions={actions} depth={1} />
         )}
       </>
     );
@@ -1465,7 +1497,7 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions, qualify }:
         <ul className="morning-chain" aria-label={spoken}>
           {chainView(stack, id, open).map((entry) => {
             if (entry.kind === 'gap')
-              return <MoreRow key="gap" id={`${id}|more`} label={`+${entry.count} more`} spoken={`Show ${entry.count} more PRs of this stack`} tabStop={tabStop === `${id}|more`} actions={actions} depth={2} chain />;
+              return <MoreRow key="gap" id={`${id}|more`} label={`+${entry.count} more`} more=" PRs in this stack" tabStop={tabStop === `${id}|more`} actions={actions} depth={2} chain />;
             const child = `${id}|${entry.line.id}`;
             return <LineRow key={child} id={child} line={entry.line} now={now} depth={2} tabStop={tabStop === child} actions={actions} showRepo={false} qualify={qualify} chain node={node(entry.line.member)} also={entry.also} />;
           })}
@@ -1501,9 +1533,6 @@ const DecisionRow = memo(
             <Button size="xs" variant="outline" {...SHORTCUT} title="Close this PR… · A" onClick={() => actions.close(member)}>
               <CloseIcon size={13} aria-hidden="true" />
               Close PR
-            </Button>
-            <Button size="icon-xs" variant="ghost" tabIndex={-1} aria-keyshortcuts="Z" aria-label="Snooze" title="Snooze… · Z" onClick={() => actions.snooze(item.id)}>
-              <SnoozeIcon size={13} aria-hidden="true" />
             </Button>
           </>
         }

@@ -289,6 +289,8 @@ export function PrPreviewTooltip({ url, number, title, children }: { url: string
         <TooltipTrigger
           asChild
           onFocusCapture={() => { viaFocus.current = true; }}
+          // Focus that leaves before the delay cancels it: Radix reports no change for a tooltip that never opened.
+          onBlurCapture={() => window.clearTimeout(timer.current)}
           onPointerMove={() => { viaFocus.current = false; }}
           onKeyDown={(event) => { if (event.key === 'Escape') change(false); }}
         >

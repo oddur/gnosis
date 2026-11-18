@@ -746,6 +746,11 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
         items.push(single(member));
         changed();
       },
+      /** Someone asks for your review: a small PR that was not in the queue before, so the next visit sees it as new. */
+      requestReview: (number = 36997, title = 'fix: keep the store webhook idempotent', author = 'lena') => {
+        items.push(single(pr({ number, repo: 'klang/seed', title, author, created: 20 * 60_000, requested: [LOGIN], additions: 18, deletions: 4, files: 1 })));
+        changed();
+      },
       /** A PR's title changes on GitHub; its row changes in place. */
       rename: (number: number, title: string) => {
         const member = members().find((candidate) => candidate.number === number);
