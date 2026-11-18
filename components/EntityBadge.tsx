@@ -133,7 +133,8 @@ export function EntityBadge({
               onContextMenu={(event) => event.stopPropagation()}
             />
           </TooltipTrigger>
-          {tooltipReady && (
+          {/* Mounted only while open, as in PrPreviewTooltip: no exit animation can leave it stranded. */}
+          {tooltipReady && open && !menuOpen && (
             <TooltipContent
               side="top"
               sideOffset={6}
@@ -269,17 +270,63 @@ export function PrPreviewTooltip({ url, number, title, children }: { url: string
   const [open, setOpen] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const viaFocus = useRef(false);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  /** Set by a press on the trigger: the focus a click brings is not keyboard focus, and opens no preview. */
+  const pressed = useRef(false);
+  const trigger = useRef<HTMLElement | null>(null);
+  // A hidden page (another workspace tab, an Activity that hid this view) runs this cleanup: close, so the preview
+  // never stays behind with nothing to anchor to, which drew it in the window's top-left corner.
+  useEffect(
+    () => () => {
+      window.clearTimeout(timer.current);
+      setOpen(false);
+    },
+    []
+  );
+  // While open: a press anywhere outside the preview closes it (pressing a row's action opens the PR, often in another
+  // tab, and Radix only closes on a press of the trigger itself), and so does the trigger leaving the screen (a hidden
+  // workspace tab stays mounted, so nothing else would close it and it was drawn in the window's top-left corner).
+  useEffect(() => {
+    if (!open) return;
+    const element = trigger.current;
+    const onPress = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('.pr-badge-tooltip')) return;
+      close();
+    };
+    window.addEventListener('pointerdown', onPress, true);
+    const watch =
+      element && typeof IntersectionObserver === 'function'
+        ? new IntersectionObserver((entries) => {
+            if (entries.some((entry) => !entry.isIntersecting)) close();
+          })
+        : undefined;
+    if (element) watch?.observe(element);
+    return () => {
+      window.removeEventListener('pointerdown', onPress, true);
+      watch?.disconnect();
+    };
+  }, [open]);
+  /** The trigger is on screen: connected, laid out and in a visible document. */
+  const shown = () => {
+    const element = trigger.current;
+    return !!element && element.isConnected && element.getClientRects().length > 0 && document.visibilityState === 'visible';
+  };
+  const close = () => {
+    window.clearTimeout(timer.current);
+    setOpen(false);
+  };
   const change = (next: boolean) => {
     window.clearTimeout(timer.current);
+    if (next && pressed.current) return;
     if (next && viaFocus.current) {
       // Radix opens at once on focus; keyboard focus waits like hover does.
       timer.current = window.setTimeout(() => {
+        if (!shown()) return;
         setOpen(true);
         preview.onOpenChange(true);
       }, PR_PREVIEW_DELAY);
       return;
     }
+    if (next && !shown()) return;
     setOpen(next);
     preview.onOpenChange(next);
   };
@@ -288,15 +335,31 @@ export function PrPreviewTooltip({ url, number, title, children }: { url: string
       <Tooltip open={open && !menus} onOpenChange={change} disableHoverableContent={!preview.ready}>
         <TooltipTrigger
           asChild
+          ref={(element: HTMLElement | null) => { trigger.current = element; }}
           onFocusCapture={() => { viaFocus.current = true; }}
           // Focus that leaves before the delay cancels it: Radix reports no change for a tooltip that never opened.
-          onBlurCapture={() => window.clearTimeout(timer.current)}
+          onBlurCapture={() => {
+            window.clearTimeout(timer.current);
+            pressed.current = false;
+          }}
+          onPointerDownCapture={() => {
+            // A press opens the PR (often in another tab): no preview for the focus it brings, and none pending.
+            pressed.current = true;
+            close();
+          }}
           onPointerMove={() => { viaFocus.current = false; }}
-          onKeyDown={(event) => { if (event.key === 'Escape') change(false); }}
+          onPointerLeave={() => { pressed.current = false; }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') change(false);
+            // Enter or Space opens the row: drop the preview with it.
+            if (event.key === 'Enter' || event.key === ' ') close();
+          }}
         >
           {children}
         </TooltipTrigger>
-        {preview.ready && (
+        {/* Mounted only while open: a closing preview whose row was just hidden (the PR opened in another tab) never
+            finished its exit animation and stayed on screen, closed, in the window's top-left corner. */}
+        {preview.ready && open && !menus && (
           <TooltipContent side="top" sideOffset={6} collisionPadding={12} hideWhenDetached className="entity-badge-tooltip pr-badge-tooltip">
             <span className="entity-badge-full-value">{preview.heading}</span>
             {preview.content}

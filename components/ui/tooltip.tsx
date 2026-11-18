@@ -13,8 +13,23 @@ function Tooltip({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Root
   return <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
 }
 
-function TooltipTrigger({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+/**
+ * Chromium sends a pointer move with no movement when content changes under a still cursor, such as a new tab or page
+ * opening where the pointer rests. Radix opens a tooltip on any pointer move, so a preview appeared that nobody asked
+ * for (opening a PR from the Overview showed the new page's PR preview in its top-left). Only real movement opens one.
+ */
+function TooltipTrigger({ onPointerMove, ...props }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
+  return (
+    <TooltipPrimitive.Trigger
+      data-slot="tooltip-trigger"
+      onPointerMove={(event) => {
+        // Radix skips its own handler when the event is default-prevented.
+        if (event.pointerType === 'mouse' && event.movementX === 0 && event.movementY === 0) event.preventDefault();
+        onPointerMove?.(event);
+      }}
+      {...props}
+    />
+  );
 }
 
 function TooltipContent({

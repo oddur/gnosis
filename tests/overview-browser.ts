@@ -410,6 +410,25 @@ void app.whenReady().then(async () => {
     await js(`document.querySelector('${P} .overview-body').scrollTop += 40`);
     await wait(`!${tooltip}`);
     await unhover();
+    // Hover a title until its preview opens, then press the row's action button: the PR opens in another tab under the
+    // still pointer. Chromium then sends a move with no movement, and a PR row of the new page used to open its preview
+    // in the window's top-left. No preview may open without real pointer movement.
+    {
+      const item = row(`next|review|${url('klang/engine', 321)}`);
+      await hover(`${item} .morning-title-text`);
+      await wait(`${tooltip}?.textContent.includes('klang/engine #321')`);
+      const box = await js<{ x: number; y: number }>(`(()=>{const it=document.querySelector(${JSON.stringify(item)}).closest('[data-overview-row-item]');const b=it.querySelector('.morning-actions button:not([aria-label^="Actions for"])');const r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+      await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y });
+      await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', x: box.x, y: box.y, button: 'left', clickCount: 1 });
+      await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x, y: box.y, button: 'left', clickCount: 1 });
+      await new Promise((r) => setTimeout(r, 900));
+      assert.equal(await js(`!!${tooltip}`), false, 'no PR preview opens under the still pointer once the PR opens: ' + (await js<string>(`(()=>{const t=${tooltip};const tabs=[...document.querySelectorAll('.workspace-tab-select')].map(b=>(b.getAttribute('aria-selected')==='true'?'*':'')+b.textContent.trim().slice(0,30));const ov=document.querySelector('${section('next')}');return JSON.stringify({text:t?.textContent.slice(0,60),state:t?.getAttribute('data-state'),rect:t?JSON.stringify(t.getBoundingClientRect()):null,tabs,overviewShown:!!ov&&ov.getClientRects().length>0,trigger:document.querySelector('[data-state=delayed-open],[data-state=instant-open]')?.outerHTML.slice(0,160)})})()`)));
+      await unhover();
+      await js("document.querySelector('.workspace-tab-select').click()");
+      await wait(`!!document.querySelector('${section('next')}')`);
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(await js(`!!${tooltip}`), false, 'no PR preview left over on returning to the Overview');
+    }
 
     step = 'keyboard';
     // j/k move within a section; Tab moves to the next section.
