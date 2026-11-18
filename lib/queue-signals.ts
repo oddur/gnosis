@@ -86,6 +86,8 @@ export interface QueueSignals extends QueueSignalRequest {
 }
 export const QUEUE_SIGNALS_TTL = 2 * 60_000;
 export const ACTIVE_SIGNALS_TTL = 25_000;
+/** How often the Overview looks for status past its time-to-live. A local check; only expired PRs are read. */
+export const OVERVIEW_STATUS_SWEEP_MS = 30_000;
 export const queueSignalKey = (request: QueueSignalRequest) => `${request.url}@${request.headSha}`;
 /** Queue check counts from a check list, so rows agree with the Checks tab. */
 export function checkSignals(checks: CiCheck[]): QueueSignals['checks'] {

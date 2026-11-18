@@ -327,8 +327,11 @@ void app.whenReady().then(async () => {
     soft(await js(`['others|person:lena','others|ci','others|stacks','others|stacks|stack:acme/web#306','others|you'].map(id=>document.querySelector('${P} [data-overview-row-item="'+id+'"] [data-overview-icon]')?.dataset.overviewIcon)`), ['person', 'ci', 'stack', 'stack', 'person']);
     // The tab title counts Next up and Waiting on you, each PR once: the 7 reviews and the 2 PRs waiting on your reply.
     await wait("document.querySelector('.workspace-tab .workspace-tab-count')?.textContent === '(9)'");
-    // One status line in the header; the section titles at the section step, with the count inline.
-    softOk(/^Updated (just now|\d+m ago)$/.test(await js<string>(`document.querySelector('${P} [data-overview-status-line]')?.textContent ?? ''`)), 'one status line: Updated …');
+    // One freshness line in the header: every status current and the change signals answering, so "Up to date", quiet,
+    // with no spinner. The section titles at the section step, with the count inline.
+    await wait(`/^Up to date · (just now|\\d+m ago)$/.test(document.querySelector('${P} [data-overview-status-line]')?.textContent ?? '')`);
+    soft(await js(`document.querySelectorAll('${P} [data-overview-status-line] .is-refreshing, ${P} [data-overview-status-line] svg').length`), 0, 'up to date shows no spinner');
+    soft(await js(`document.querySelector('${P} [data-overview-freshness]')?.dataset.overviewFreshness`), 'up-to-date');
     soft(await js(`getComputedStyle(document.querySelector('${section('next')} h2')).fontSize`), '18px', 'section titles use the 18px section step');
     soft(await js(`document.querySelector('${section('next')} h2').textContent`), 'Next up5', 'the count is inline in the heading');
     soft(await js(`document.querySelector('${P} [data-overview-briefing]').getAttribute('role')`), null, 'the briefing is not a status region');
@@ -1030,40 +1033,79 @@ void app.whenReady().then(async () => {
     // itself and says it is checking; rows that need status arrive with the answers, and focus stays put.
     await js('sessionStorage.clear()');
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?overview&overview-status=held`);
-    await wait(`!!document.querySelector('${P} [data-overview-checking]')`, 600);
+    // "Checking status of N PRs" while the reads have just started; "Status not checked for N PRs yet" once they take long.
+    const statusPending = `${P} [data-overview-freshness="checking-status"], ${P} [data-overview-freshness="status-missing"]`;
+    await wait(`!!document.querySelector('${statusPending}')`, 600);
     const own = [301, 302, 303, 304, 305, 306, 307, 311, 312, 331, 332, 333, 341, 342];
     const expected = [...own, ...Array.from({ length: 7 }, (_, i) => 321 + i)].map((n) => `/pull/${n}`);
     await wait(`(()=>{const r=window.fixtureOverview.requested();return ${JSON.stringify(expected)}.every(n=>r.some(u=>u.endsWith(n)))})()`);
-    await wait(`document.querySelector('${P} [data-overview-checking]')?.textContent === 'checking ' + window.fixtureOverview.requested().length + ' PRs'`);
-    assert.equal(await js(`document.querySelector('${P} [data-overview-unchecked]')`), null, 'checking, not "not checked"');
+    const checkingCount = `Number(document.querySelector('${statusPending}')?.textContent.match(/\\d+/)?.[0] ?? 0)`;
+    await wait(`${checkingCount} === window.fixtureOverview.requested().length`);
+    assert.match(await js<string>(`document.querySelector('${statusPending}').textContent`), /^(Checking status of \d+ PRs|Status not checked for \d+ PRs yet)$/);
+    assert.equal(await js(`document.querySelectorAll('${P} [data-overview-status-line] .is-refreshing').length`), 0, 'status reads are not a spinner');
     // Review requests need no status; merges wait for it. Unknown checks read "checking…".
     assert.equal(await js(`[...document.querySelectorAll('${section('next')} [data-quick-action]')].filter(b=>b.textContent==='Merge').length`), 0);
     assert.ok(await js(`[...document.querySelectorAll('${P} [data-overview-check="unknown"]')].some(e=>e.textContent==='checking…')`), 'unknown checks say checking…');
     await js('window.fixtureOverview.real()');
-    const checkingCount = `Number(document.querySelector('${P} [data-overview-checking]')?.textContent.match(/\\d+/)?.[0] ?? 0)`;
     await wait(`${checkingCount} > 21`);
     const review321 = `next|review|${url('klang/engine', 321)}`;
     await wait(`!!document.querySelector('${row(review321)}')`);
     await js(`document.querySelector('${row(review321)}').focus()`);
     await capture('real-checking-1280-light');
     await js('window.fixtureOverview.answerStatus()');
-    await wait(`!document.querySelector('${P} [data-overview-checking]')`);
-    assert.equal(await js(`document.querySelector('${P} [data-overview-unchecked]')`), null);
+    await wait(`!document.querySelector('${statusPending}')`);
+    await wait(`document.querySelector('${P} [data-overview-freshness]')?.dataset.overviewFreshness === 'up-to-date'`);
     await wait(`document.querySelectorAll('${section('next')} .morning-row').length === 5 && [...document.querySelectorAll('${section('next')} [data-quick-action]')].filter(b=>b.textContent==='Merge').length === 2`);
     assert.equal(await focusedRow(), review321, 'focus stays while rows arrive');
     await js('document.activeElement?.blur()');
     await capture('real-filled-1280-light');
 
-    step = 'stale-sync';
-    const before = (await js<boolean[]>('window.fixtureOverview.discoveries')).length;
+    step = 'freshness';
+    const statusLine = `document.querySelector('${P} [data-overview-status-line]')`;
+    const freshnessKind = `document.querySelector('${P} [data-overview-freshness]')?.dataset.overviewFreshness`;
+    const spinners = `document.querySelectorAll('${P} [data-overview-status-line] .is-refreshing').length`;
+    // An old PR list with no pass running is a problem with a fix. (The page no longer asks main for a sync on its own;
+    // this fixture's home screen polls the queue every 4 s, so the request count says nothing here.)
     await js('window.fixtureOverview.setSync(2 * 3600000)');
-    await wait(`window.fixtureOverview.discoveries.length > ${before}`);
-    assert.equal(await js('window.fixtureOverview.discoveries.at(-1)'), false, 'a sync, not a forced refresh');
-    await js("window.fixtureOverview.setSync(2 * 3600000, 'checking')");
-    await wait(`document.querySelector('${P} [data-overview-syncing]')?.textContent === 'Updating…'`);
-    assert.equal(await js(`document.querySelectorAll('${P} [data-overview-status-line]').length`), 1, 'one status line while updating');
+    await wait(`${freshnessKind} === 'list-stale'`);
+    // The status clock ticks on its own schedule, so the hours are not pinned.
+    softOk(/^PR list last fully refreshed \dh ago$/.test(await js<string>(`document.querySelector('${P} [data-overview-freshness]').textContent`)), 'the old PR list says how old');
+    soft(await js(`document.querySelector('${P} [data-overview-freshness-action]')?.textContent`), 'Refresh');
+    // A long background pass: up to date, with a quiet progress note, never "Updating…" or a spinner.
+    await js("window.fixtureOverview.setSync(14 * 60000, 'checking', { progress: { done: 120, total: 273 } })");
+    await wait(`document.querySelector('${P} [data-overview-progress]')?.textContent === 'Refreshing PR list · 120 of 273'`);
+    soft(await js(freshnessKind), 'up-to-date', 'a slow pass leaves the page up to date');
+    soft(await js(spinners), 0, 'the background pass shows no spinner');
+    softOk(!(await js<string>(`${statusLine}.textContent`)).includes('Updating'), 'never "Updating…"');
+    softOk((await js<string>(`document.querySelector('${P} [data-overview-progress]').title`)).includes('re-reads every PR in the background'), 'the note explains itself');
+    await js("window.fixtureOverview.setSync(14 * 60000, 'checking')");
+    await wait(`document.querySelector('${P} [data-overview-progress]')?.textContent === 'Refreshing PR list…'`);
+    await capture('freshness-background-1280-light');
+    // The reader's refresh: a spinner at once, until the pass's first results, then the progress note.
     await js('window.fixtureOverview.setSync(60000)');
-    await wait(`document.querySelector('${P} [data-overview-updated]')?.textContent.startsWith('Updated')`);
+    await wait(`${freshnessKind} === 'up-to-date' && !document.querySelector('${P} [data-overview-progress]')`);
+    const asked = (await js<boolean[]>('window.fixtureOverview.discoveries')).length;
+    await click(`${P} [aria-label="Refresh overview"]`);
+    await wait(`${spinners} === 1 && ${statusLine}.textContent === 'Refreshing…'`);
+    softOk(await js<boolean>(`window.fixtureOverview.discoveries.slice(${asked}).includes(true)`), 'Refresh forces a pass');
+    await js("window.fixtureOverview.setSync(60000, 'checking', { requested: true, progress: { done: 0, total: 273 } })");
+    await new Promise((r) => setTimeout(r, 300));
+    soft(await js(spinners), 1, 'the spinner stays until the first results');
+    await js("window.fixtureOverview.setSync(60000, 'checking', { requested: true, progress: { done: 5, total: 273 } })");
+    await wait(`${spinners} === 0 && document.querySelector('${P} [data-overview-progress]')?.textContent === 'Refreshing PR list · 5 of 273'`);
+    // Rate limit and offline name the problem; offline offers Retry.
+    await js(`window.fixtureOverview.setSync(60000, 'paused', { retryAt: Date.now() + 20 * 60000 })`);
+    await wait(`${freshnessKind} === 'rate-limited'`);
+    softOk((await js<string>(`${statusLine}.textContent`)).startsWith('GitHub rate limit · showing saved data until '), 'the rate limit says until when');
+    await js(`window.fixtureOverview.setSync(60000, 'error', { reason: 'unreachable' })`);
+    await wait(`${freshnessKind} === 'offline'`);
+    soft(await js(`document.querySelector('${P} [data-overview-freshness]').textContent`), 'Could not reach GitHub · showing saved data');
+    soft(await js(`document.querySelector('${P} [data-overview-freshness-action]')?.textContent`), 'Retry');
+    const retries = (await js<boolean[]>('window.fixtureOverview.discoveries')).length;
+    await click(`${P} [data-overview-freshness-action="retry"]`);
+    await wait(`window.fixtureOverview.discoveries.slice(${retries}).includes(true)`);
+    await js('window.fixtureOverview.setSync(60000)');
+    await wait(`${freshnessKind} === 'up-to-date'`);
     settle();
 
     win.destroy();

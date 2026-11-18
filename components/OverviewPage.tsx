@@ -3,8 +3,9 @@
  * blocked on you, where your PRs are stuck and on whom, and what to close or park.
  *
  * - The briefing sentence, counted from the sections, each number a link that marks and focuses the rows it counts
- *   (`morningBriefing`), a "Since yesterday" line (`lib/since-log.ts`), and one status line: "Updated 9m ago ·
- *   checking 28 PRs".
+ *   (`morningBriefing`), a "Since yesterday" line (`lib/since-log.ts`), and one freshness line: "Up to date · 2m ago",
+ *   or the one thing that is not, with a quiet note while the PR list is re-read in the background ("Refreshing PR
+ *   list · 120 of 273"). See lib/overview-freshness.ts.
  * - **Next up:** up to five things to do, people blocked on you first, then approved merges, then fixes, each with one
  *   action. A merge nobody reviewed is never a row: the quiet line under it counts them.
  * - **Waiting on you** and **Waiting on others**, full width one above the other: people, and your PRs by blocker,
@@ -37,7 +38,7 @@ import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
 import { useMorningExtras } from '../lib/use-morning';
 import { useStatusNow } from '../lib/status-clock';
-import { freshnessLabel } from '../lib/focus-refresh';
+import { overviewFreshness, type FreshnessLine, type OverviewFreshness } from '../lib/overview-freshness';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import { prTarget, type DeepLinkTarget } from '../lib/deep-link';
@@ -115,11 +116,6 @@ export interface OverviewPageProps {
   /** Getting started has not been dismissed: offer it, since it lives in the queue. */
   setup?: () => void;
   onRefresh: () => void;
-  /**
-   * Asks main for a queue sync without forcing one: main starts discovery only when its last one is over 2 minutes
-   * old. Called when the Overview shows, or stays shown, with a last sync older than `SYNC_STALE_MS`.
-   */
-  onSync?: () => void;
   /** Opens the queue grouped by Action, at this group. */
   onShowLane: (group: OverviewActionGroup) => void;
   onMarkRead: (urls: string[]) => void;
@@ -131,15 +127,11 @@ export interface OverviewPageProps {
   onModel?: (model: OverviewModel) => void;
 }
 
-const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-/** "Updated 9m ago": when Gnosis last read the PR list, on the status line. */
-const updatedLabel = (checkedAt: number, now: number) => freshnessLabel(checkedAt, now).replace(/^Checked/, 'Updated');
 /**
- * A last sync older than this is behind: main finishes discovery every 2 to 5 minutes while a window is visible
- * (src/main.ts, `discoveryInterval`). The Overview then asks for a sync, at most once per `SYNC_STALE_MS`.
+ * After Refresh, the spinner waits this long at most for main to answer with the pass's state. Main broadcasts the
+ * pass as it starts, so this only bridges the click and that broadcast.
  */
-export const SYNC_STALE_MS = 10 * 60_000;
-const syncStale = (checkedAt: number | undefined) => checkedAt !== undefined && Date.now() - checkedAt > SYNC_STALE_MS;
+const ASKED_MS = 5_000;
 
 type Section = 'next' | 'you' | 'others' | 'decide';
 const SECTIONS: readonly Section[] = ['next', 'you', 'others', 'decide'];
@@ -195,7 +187,7 @@ interface RowRef {
 }
 
 export function OverviewPage(props: OverviewPageProps) {
-  const { queue, login, scope, authenticated, hasRepositories, loading, refreshing, visible, live, keyboard, teamRequests, excluded, error, onDismissError, setup, onRefresh, onRepositories, onConnect, onModel } = props;
+  const { queue, login, scope, authenticated, hasRepositories, loading, refreshing, visible, live, keyboard, teamRequests, excluded, error, onDismissError, setup, onRepositories, onConnect, onModel } = props;
   const view = useOverview({ items: queue.items, login: authenticated ? login : null, scope: authenticated ? scope : null, live, visible, ready: !loading, teamRequests, excluded });
   useEffect(() => { onModel?.(view); }, [view, onModel]);
   const account = authenticated ? login : null;
@@ -206,15 +198,22 @@ export function OverviewPage(props: OverviewPageProps) {
   // never renders the rows again.
   const callbacks = useRef(props);
   callbacks.current = props;
-  // A last sync that is behind asks main for another while the Overview shows: on showing, and as the clock passes.
-  const syncAsked = useRef(0);
+  // The Overview never asks main for a sync on its own: discovery runs on main's schedule (src/main.ts,
+  // `discoveryInterval`, every 2 to 5 minutes after the last pass, and within 10 s of a window showing again). Asking
+  // more often only piled requests onto a pass that is already paced. Refresh is the reader's way to ask.
+  // After Refresh, a spinner until main answers with a new sync state (`ASKED_MS` at most).
+  const syncKey = JSON.stringify(queue.sync ?? null);
+  const [asked, setAsked] = useState<{ at: number; key: string } | null>(null);
   useEffect(() => {
-    const sync = queue.sync;
-    if (!visible || !authenticated || loading || !sync || sync.status === 'checking' || sync.status === 'paused') return;
-    if (!syncStale(sync.checkedAt) || Date.now() - syncAsked.current < SYNC_STALE_MS) return;
-    syncAsked.current = Date.now();
-    callbacks.current.onSync?.();
-  }, [visible, authenticated, loading, queue.sync, now]);
+    if (!asked) return;
+    if (asked.key !== syncKey) { setAsked(null); return; }
+    const timer = setTimeout(() => setAsked(null), Math.max(0, asked.at + ASKED_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [asked, syncKey]);
+  const refreshNow = useCallback(() => {
+    setAsked({ at: Date.now(), key: syncKey });
+    callbacks.current.onRefresh();
+  }, [syncKey]);
 
   // PRs closing on GitHub leave the page at once; a refusal brings them back.
   const [closing, setClosing] = useState<ReadonlySet<string>>(new Set());
@@ -516,8 +515,8 @@ export function OverviewPage(props: OverviewPageProps) {
 
   const sync = queue.sync;
   const openActivity = navigation?.openTarget;
-  // Main is reading the PR list again and the last finished read is behind (`SYNC_STALE_MS`).
-  const syncing = authenticated && sync?.status === 'checking' && syncStale(sync.checkedAt);
+  // Nothing to vouch for while the first snapshot loads: the body says "Loading your work…".
+  const freshness = authenticated && !(loading && !queue.items.length) ? overviewFreshness({ sync, status: view.status, now, asked: !!asked, saved: refreshing }) : {};
   const readStates = queue.readStates ?? {};
   const unread = (members: readonly ReviewMember[]) => members.some((member) => !!readStates[member.url]?.unread.length);
   const unreadOf = useCallback((members: readonly ReviewMember[]) => members.some((member) => !!readStates[member.url]?.unread.length), [readStates]);
@@ -641,33 +640,10 @@ export function OverviewPage(props: OverviewPageProps) {
           )}
         </div>
         <div className="overview-freshness-group">
-          {/* One status line: when the PR list was last read, and the status reads still to come. */}
-          <span className="overview-status-line" data-overview-status-line>
-            {syncing ? (
-              <span className="is-refreshing" data-overview-syncing
-                title={`Gnosis last finished reading your pull requests from GitHub at ${new Date(sync.checkedAt ?? 0).toLocaleString()}. It is reading them again now.`}>
-                <LoadingIndicator announce={false}>Updating…</LoadingIndicator>
-              </span>
-            ) : refreshing ? (
-              <span className="is-refreshing" title="Showing what Gnosis saved last session while it reads GitHub again.">
-                <LoadingIndicator announce={false}>Refreshing…</LoadingIndicator>
-              </span>
-            ) : sync?.checkedAt !== undefined ? (
-              <span data-overview-updated title={`Gnosis last read your pull requests from GitHub at ${new Date(sync.checkedAt).toLocaleTimeString()}. It reads them again every 2 minutes while this window is visible.`}>
-                <time dateTime={new Date(sync.checkedAt).toISOString()}>{updatedLabel(sync.checkedAt, now)}</time>
-              </span>
-            ) : null}
-            {authenticated && view.checking > 0 ? (
-              <span data-overview-checking title={`Reading the status of ${prs(view.checking)} from GitHub. Each PR joins its section when GitHub answers.`}>
-                checking {prs(view.checking)}
-              </span>
-            ) : authenticated && view.unchecked > 0 ? (
-              <span data-overview-unchecked title={`Status not checked yet for ${view.unchecked} of your PRs. They join a section when GitHub reports it.`}>
-                {view.unchecked} not checked
-              </span>
-            ) : null}
-          </span>
-          <button className="workbench-icon" aria-label="Refresh overview" title="Update from GitHub. Follow progress in Activity." onClick={onRefresh}>
+          {/* One freshness line: up to date, or the one thing that is not, and the background refresh as a quiet note
+              (lib/overview-freshness.ts). */}
+          <FreshnessStatus freshness={freshness} now={now} onRetry={refreshNow} onActivity={openActivity && (() => void openActivity({ kind: 'activity' }))} />
+          <button className="workbench-icon" aria-label="Refresh overview" title="Read every pull request from GitHub again now. Follow progress in Activity." onClick={refreshNow}>
             <RefreshCw size={16} />
           </button>
         </div>
@@ -683,23 +659,6 @@ export function OverviewPage(props: OverviewPageProps) {
           )}
         </div>
       )}
-      {authenticated && sync && (sync.status === 'paused' || sync.status === 'error') && (
-        <div className="workbench-notice overview-notice" role="status">
-          <AlertCircle size={16} aria-hidden="true" />
-          <span>
-            {sync.status === 'paused'
-              ? `GitHub is rate-limited. Showing saved data${sync.retryAt ? `; updates resume at ${clock(sync.retryAt)}` : ''}.`
-              : 'Could not reach GitHub, so this page shows saved data.'}
-          </span>
-          {sync.status === 'error' && <button onClick={onRefresh}>Retry</button>}
-          {/* Reads failing affect this page's data: Activity has the details. Other failures stay in the title bar. */}
-          {sync.status === 'error' && openActivity && (
-            <button data-overview-activity onClick={() => void openActivity({ kind: 'activity' })}>
-              Open Activity
-            </button>
-          )}
-        </div>
-      )}
       <RepoNames.Provider value={repoNames}>
         <Viewer.Provider value={account ?? ''}>
           <Unread.Provider value={unreadOf}>
@@ -709,6 +668,38 @@ export function OverviewPage(props: OverviewPageProps) {
       </RepoNames.Provider>
       <p className="sr-only" role="status" aria-live="polite" data-overview-announcement>{announcement}</p>
     </div>
+  );
+}
+
+const FRESHNESS_ACTION: Readonly<Record<NonNullable<FreshnessLine['action']>, string>> = { retry: 'Retry', refresh: 'Refresh', activity: 'Open Activity' };
+/**
+ * The freshness line in the header's caption style: plain text, a spinner only for the reader's own refresh, the
+ * background refresh as a muted note, and a link where one fixes the problem.
+ */
+function FreshnessStatus({ freshness, now, onRetry, onActivity }: { freshness: OverviewFreshness; now: number; onRetry: () => void; onActivity?: () => void }) {
+  const { line, progress } = freshness;
+  const action = line?.action === 'activity' ? onActivity : line?.action ? onRetry : undefined;
+  return (
+    <span className="overview-status-line" data-overview-status-line>
+      {line && (
+        <span className={line.spinner ? 'is-refreshing' : line.problem ? 'is-problem' : undefined} data-overview-freshness={line.kind}
+          title={line.title} {...(line.problem ? { role: 'status' } : {})}>
+          {line.spinner ? (
+            <LoadingIndicator announce={false}>{line.text}</LoadingIndicator>
+          ) : line.at !== undefined ? (
+            <time dateTime={new Date(Math.min(line.at, now)).toISOString()}>{line.text}</time>
+          ) : (
+            line.text
+          )}
+        </span>
+      )}
+      {line?.action && action && (
+        <span>
+          <button type="button" className="overview-status-action" data-overview-freshness-action={line.action} onClick={action}>{FRESHNESS_ACTION[line.action]}</button>
+        </span>
+      )}
+      {progress && <span className="overview-status-note" data-overview-progress title={progress.title}>{progress.text}</span>}
+    </span>
   );
 }
 

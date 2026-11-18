@@ -3,7 +3,7 @@
  * and write is local; nothing reaches GitHub. `window.fixtureOverview` lets the suite change GitHub's side (a new
  * failing PR, a renamed PR) and read the writes the app sent.
  */
-import { groupSubjects, type QueueItem, type ReviewMember, type WorkbenchQueue } from '../../lib/workbench';
+import { groupSubjects, type QueueItem, type ReviewMember, type WorkbenchQueue, type WorkbenchSync } from '../../lib/workbench';
 import type { QueueSignalRequest, QueueSignals } from '../../lib/queue-signals';
 import type { PrActionRequest, PrActionState } from '../../lib/pr-actions';
 import type { PrChecks, CheckSelection } from '../../lib/pr-checks';
@@ -225,8 +225,11 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
       return member && member.headSha === request.headSha ? [signalsFor(member, status.get(member.url) ?? { checks: 'success' })] : [];
     });
   // How long ago the queue last synced, and the discoveries the app asked for (`workbenchQueue(force)`).
-  let syncAge = params.has('overview-sync-age') ? Number(params.get('overview-sync-age')) : 2 * 60_000;
-  let syncStatus: 'idle' | 'checking' = 'idle';
+  // A fixed time, as main's `discoveredAt` is: the snapshot's sync changes only when `setSync` changes it.
+  let syncAt = Date.now() - (params.has('overview-sync-age') ? Number(params.get('overview-sync-age')) : 2 * 60_000);
+  let syncStatus: WorkbenchSync['status'] = 'idle';
+  // The change signals answer, and the pass in progress, as main reports them (lib/workbench.ts, `WorkbenchSync`).
+  let syncExtra: Partial<WorkbenchSync> = { signals: true };
   const discoveries: boolean[] = [];
 
   const queue = mocks.workbenchQueue as () => Promise<WorkbenchQueue>;
@@ -238,7 +241,7 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
         ...value,
         readStates: structuredClone(reads),
         items: value.items.map((item) => ({ ...item, unreadUrls: item.subject.members.filter((member) => reads[member.url]?.unread.length).map((member) => member.url) })),
-        sync: { status: syncStatus, checkedAt: Date.now() - syncAge },
+        sync: { status: syncStatus, checkedAt: syncAt, ...syncExtra },
       };
     },
     workbenchMarkPrRead: (request: MarkPrReadRequest) => {
@@ -733,10 +736,14 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
           window.dispatchEvent(new CustomEvent('gnosis-preferences-changed', { detail: { ...prefs, repositorySettings: { ...prefs.repositorySettings, [launcher]: { icon: 'lucide:rocket', color: 'purple' }, [seed]: { color: 'green' }, [bridge]: { icon: 'lucide:columns-2' } } } })));
         changed();
       },
-      /** The queue last synced `ms` ago; `checking` while a discovery runs. The next snapshot carries it. */
-      setSync: (ms: number, value: 'idle' | 'checking' = 'idle') => {
-        syncAge = ms;
+      /**
+       * The queue last synced `ms` ago; `checking` while a discovery runs, with `extra` such as its progress or
+       * `requested`. The change signals answer unless `extra.signals` says otherwise. The next snapshot carries it.
+       */
+      setSync: (ms: number, value: WorkbenchSync['status'] = 'idle', extra: Partial<WorkbenchSync> = {}) => {
+        syncAt = Date.now() - ms;
         syncStatus = value;
+        syncExtra = { signals: true, ...extra };
         changed();
       },
       discoveries,

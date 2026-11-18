@@ -1,6 +1,6 @@
 import { watchGitHub } from './watch-github';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { QUEUE_SIGNALS_TTL, overviewStatusOptions, overviewStatusPriority, queueSignalKey, type QueueSignalOptions, type QueueSignalRequest, type QueueSignals } from './queue-signals';
+import { OVERVIEW_STATUS_SWEEP_MS, QUEUE_SIGNALS_TTL, overviewStatusOptions, overviewStatusPriority, queueSignalKey, type QueueSignalOptions, type QueueSignalRequest, type QueueSignals } from './queue-signals';
 import {
   publishQueueSignals,
   signalAccount,
@@ -240,8 +240,7 @@ export function useMergeFilter(scope: string | null, requests: readonly QueueSig
   return { states, phase: enabled ? phase : ('done' as const) };
 }
 
-/** How often the Overview looks for status past its time-to-live. A local check; only expired PRs are read. */
-const OVERVIEW_STATUS_SWEEP_MS = 30_000;
+const NO_PENDING: ReadonlyMap<string, number> = new Map();
 const isDue = (scope: string, request: QueueSignalRequest) => {
   const entry = signalAccount(scope).entries.get(queueSignalKey(request));
   return !entry?.value || !!entry.pending || entry.expires <= Date.now();
@@ -258,6 +257,8 @@ const isDue = (scope: string, request: QueueSignalRequest) => {
  * restarting anything; the budget, back-off and batching are the same at both.
  *
  * `checking` is the number of these PRs whose read has not answered yet; it changes once per answered batch.
+ * `pending` names them, by `queueSignalKey`, with when each read started, so the Overview's freshness line can tell
+ * a read that just started from one that is taking long (lib/overview-freshness.ts).
  */
 export function useOverviewStatus(scope: string | null, requests: readonly QueueSignalRequest[], live: boolean, shown = false) {
   const visibleRef = useRef(shown);
@@ -266,15 +267,17 @@ export function useOverviewStatus(scope: string | null, requests: readonly Queue
   const sweep = useRef<(() => void) | undefined>(undefined);
   const key = JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha })));
   const values = useSignalValues(scope, key);
-  const [checking, setChecking] = useState(0);
+  const [inFlight, setInFlight] = useState<ReadonlyMap<string, number>>(NO_PENDING);
   useEffect(() => {
-    setChecking(0);
+    setInFlight(NO_PENDING);
     if (!scope) return;
     const members = JSON.parse(key) as QueueSignalRequest[];
     if (!members.length) return;
     let cancelled = false;
     let stop: (() => void) | undefined;
-    const pending = new Set<string>();
+    const pending = new Map<string, number>();
+    // Counts reads started and answered, so a batch answering as another starts still reports.
+    let changes = 0;
     let reported = -1;
     let scheduled = false;
     // Answers arrive per batch: one count update for each, not one per PR.
@@ -283,9 +286,9 @@ export function useOverviewStatus(scope: string | null, requests: readonly Queue
       scheduled = true;
       queueMicrotask(() => {
         scheduled = false;
-        if (cancelled || reported === pending.size) return;
-        reported = pending.size;
-        setChecking(pending.size);
+        if (cancelled || reported === changes) return;
+        reported = changes;
+        setInFlight(pending.size ? new Map(pending) : NO_PENDING);
       });
     };
     const load = () => {
@@ -296,9 +299,11 @@ export function useOverviewStatus(scope: string | null, requests: readonly Queue
       for (const request of members) {
         const id = queueSignalKey(request);
         if (pending.has(id) || !isDue(scope, request)) continue;
-        pending.add(id);
+        pending.set(id, Date.now());
+        changes++;
         void read(scope, request, options).finally(() => {
           pending.delete(id);
+          changes++;
           report();
         });
       }
@@ -325,5 +330,6 @@ export function useOverviewStatus(scope: string | null, requests: readonly Queue
   useEffect(() => {
     if (shown) sweep.current?.();
   }, [shown]);
-  return { values, checking: live ? checking : 0 };
+  const pending = live ? inFlight : NO_PENDING;
+  return { values, checking: pending.size, pending };
 }

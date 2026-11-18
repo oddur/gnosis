@@ -3308,8 +3308,11 @@ const notifications = createNotificationService({
   count: (kind, field) => { if (cachedLogin && notificationAnalytics()) notificationStore.count(cachedLogin, kind, field); },
   platform: process.platform,
 });
+/** Whether the change signals answer within their normal interval, as the windows last heard (`tickGitHubSync`). */
+let signalsHealth: boolean | undefined;
 const workbench = createWorkbenchService({
   changed: () => { notifyLocalChange('workbench-changed'); notifyLocalChange('activity-changed'); },
+  signalsHealthy: () => signalsHealth,
   storage: appData,
   signals: (client, requests, options) => getQueueSignals(client, requests, options),
   notifications: {
@@ -4716,6 +4719,9 @@ async function tickGitHubSync() {
   watching = false;
   if (!syncWasAvailable) { githubSync.wake(); changeSignals.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); }
   syncWasAvailable = true;
+  // The Overview's "Up to date" needs the change signals answering. Tell the windows when that flips, not each poll.
+  const healthy = changeSignals.healthy();
+  if (healthy !== signalsHealth) { signalsHealth = healthy; notifyLocalChange('workbench-changed'); }
   // Every second: name each loop's synchronous part, so a slow one shows in the diagnostics export (#345).
   timed('sync tick', () => void githubSync.tick());
   timed('change signals tick', () => changeSignals.tick());

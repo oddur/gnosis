@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { nextOverviewVisit, overviewModel, overviewStatusRequests, overviewVisitKey, parseOverviewVisit, type OverviewModel, type OverviewVisit } from './overview';
 import { useOverviewStatus } from './use-queue-signals';
+import { statusFreshness, type StatusFreshness } from './overview-freshness';
+import { queueSignalKey } from './queue-signals';
 import { useStatusNow } from './status-clock';
 import type { QueueItem, ReviewMember } from './workbench';
 import type { QueueSignals } from './queue-signals';
@@ -9,6 +11,8 @@ import type { QueueSignals } from './queue-signals';
 export interface OverviewView extends OverviewModel {
   /** Status reads in flight. */
   checking: number;
+  /** How current the page's status reads are, for the freshness line (lib/overview-freshness.ts). */
+  status: StatusFreshness;
   /** When the last visit started: "Since yesterday" counts from here. Undefined on a first visit. */
   visitAt?: number;
   /** The status the lanes were built from, by PR. */
@@ -61,8 +65,12 @@ export function useOverview(input: {
     [items, login, teamRequests, excluded]
   );
   // Visible priority while the Overview is the shown tab; background while it only resolves the queue's lane filter.
-  const { values, checking } = useOverviewStatus(scope, requests, live && !!login, visible);
+  const { values, checking, pending } = useOverviewStatus(scope, requests, live && !!login, visible);
   const now = useStatusNow() || Date.now();
+  const status = useMemo(
+    () => statusFreshness(requests, new Map(values.map((value) => [queueSignalKey(value), value])), pending, now),
+    [requests, values, pending, now]
+  );
   const visitKey = login ? overviewVisitKey(login) : null;
   const [previous, setPrevious] = useState<{ key: string | null; visit?: OverviewVisit }>(() => ({ key: visitKey, visit: readVisit(visitKey) }));
   const byUrl = useMemo(() => new Map(values.map((value) => [value.url, value])), [values]);
@@ -99,7 +107,7 @@ export function useOverview(input: {
   }, [visible, visitKey]);
   const visitAt = previous.key === visitKey ? previous.visit?.at : undefined;
   return useMemo(
-    () => ({ ...model, checking, visitAt, statusOf: (member: Pick<ReviewMember, 'url'>) => byUrl.get(member.url) }),
-    [model, checking, visitAt, byUrl]
+    () => ({ ...model, checking, status, visitAt, statusOf: (member: Pick<ReviewMember, 'url'>) => byUrl.get(member.url) }),
+    [model, checking, status, visitAt, byUrl]
   );
 }

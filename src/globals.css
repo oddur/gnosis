@@ -5008,8 +5008,13 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* The rows a link counts, marked for a moment after it is followed. */
 .morning-row[data-overview-highlight], .morning-more-quiet[data-overview-highlight] { background:var(--accent); transition:background-color 600ms ease-out; }
 .overview-freshness-group { display:flex; align-items:center; gap:8px; margin-top:1px; }
-/* One status line: "Updated 9m ago · checking 28 PRs". */
+/* One freshness line: "Up to date · 2m ago · Refreshing PR list · 120 of 273" (lib/overview-freshness.ts). A problem
+   reads in the text colour, its fix is a plain underlined link, and the background refresh stays muted. */
 .overview-status-line { display:inline-flex; align-items:center; font-size:var(--type-caption); color:var(--muted-foreground); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.overview-status-line .is-problem { color:var(--foreground); }
+.overview-status-action { padding:0; font:inherit; color:var(--foreground); text-decoration:underline; text-decoration-color:color-mix(in srgb, currentColor 45%, transparent); text-underline-offset:3px; border-radius:2px; cursor:pointer; }
+.overview-status-action:hover { color:var(--primary); text-decoration-color:currentColor; }
+.overview-status-action:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .overview-status-line > * + *::before { content:" · "; white-space:pre; }
 /* The morning page (#390): one lead section, then who waits on you and on whom you wait, full width one above the
    other, and a quiet section of decisions. Sections are headed lists, not cards: a hairline under each heading, rows
@@ -5161,7 +5166,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
   .morning { padding-inline:16px; }
 }
 /* The narrow queue toolbar hides its description; the briefing is the Overview's content, so it stays. */
-@media (max-width:620px) { .queue-toolbar p.overview-briefing { display:block; } .overview-status-line [data-overview-checking], .overview-status-line [data-overview-unchecked] { display:none; } }
+@media (max-width:620px) { .queue-toolbar p.overview-briefing { display:block; } .overview-status-line [data-overview-progress]:not(:first-child) { display:none; } }
 
 /* Group by in the queue: a sticky, collapsible heading per group, in the band of the queue's grouped sections. */
 .queue-group-heading { position:sticky; top:0; z-index:2; }
