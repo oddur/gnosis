@@ -170,9 +170,14 @@ function bufferRows(buffer: Element, split: boolean): [number, number] | undefin
  * buffers between them, so the band reads as one block across the view. Rows of the signature bloom; the rest are the
  * section's body. One query of the diff's rows, and attribute reads alone.
  */
-export function sectionTargets(host: Element, section: HereSection): HereTarget[] {
+export function sectionTargets(host: Element, section: HereSection, rows = Infinity): HereTarget[] {
+  return sectionRows(host, section, rows).targets;
+}
+/** The targets, and how many visual rows of the section they cover. */
+function sectionRows(host: Element, section: HereSection, rows: number): { targets: HereTarget[]; covered: number } {
+  const none = { targets: [], covered: 0 };
   const root = host.shadowRoot;
-  if (!root) return [];
+  if (!root || rows <= 0) return none;
   const split = !!root.querySelector('[data-deletions]');
   let first = Infinity,
     last = -Infinity;
@@ -185,7 +190,9 @@ export function sectionTargets(host: Element, section: HereSection): HereTarget[
     last = Math.max(last, at);
     if (line <= section.signatureEnd) signature.add(at);
   }
-  if (first > last) return [];
+  if (first > last) return none;
+  // Rows past `rows` from the section's first are out of view for as long as the mark lasts.
+  last = Math.min(last, first + rows - 1);
   const targets: HereTarget[] = [];
   for (const element of root.querySelectorAll('[data-line-index]')) {
     if (!element.matches('[data-line], [data-column-number]')) continue;
@@ -198,13 +205,24 @@ export function sectionTargets(host: Element, section: HereSection): HereTarget[
     if (rows && rows[1] >= first && rows[0] <= last)
       targets.push(rows[0] <= Math.max(...signature, -Infinity) && rows[1] >= Math.min(...signature, Infinity) ? { element: buffer } : { element: buffer, part: 'body' });
   }
-  return targets;
+  return { targets, covered: last - first + 1 };
 }
 
 /** Marks a whole section: its rows in every rendered diff under `hosts`, and `bars` (gap bars inside it) as its body. */
-export function markSection(hosts: Iterable<Element>, section: HereSection, bars: readonly Element[] = []): Element[] {
+/**
+ * Each marked row and gutter cell starts an animated pseudo-element, and on a slow machine their first style pass costs
+ * about 0.15 ms each: a 150-row section's 300 cost a 50 ms task on a 4x throttled CPU. So a mark covers the section's
+ * rows from its first down to `rows` of them, enough to fill the view twice over while it lasts; a longer section's
+ * rest, out of view, is left unmarked.
+ */
+export function markSection(hosts: Iterable<Element>, section: HereSection, bars: readonly Element[] = [], rows = Infinity): Element[] {
   const targets: HereTarget[] = [];
-  for (const host of hosts) targets.push(...sectionTargets(host, section));
+  let left = rows;
+  for (const host of hosts) {
+    const found = sectionRows(host, section, left);
+    targets.push(...found.targets);
+    left -= found.covered;
+  }
   for (const element of bars) targets.push({ element, part: 'body' });
   return mark(targets);
 }
