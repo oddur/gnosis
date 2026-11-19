@@ -88,6 +88,57 @@ void test('The palette applies to the bars and file headers of diffs in that the
   };
   assert.equal(
     codePaletteCSS('gnosis-aurora-x', palette),
-    '[data-code-theme="gnosis-aurora-x"] :is(.diff-gap,.changes-file-header){--diff-code-bg:#0d1117;--diff-code-fg:#e6edf3;--diff-code-header:#272a35;--diff-code-line:#010103;--diff-code-muted:#a2a7ad;--diff-keyword:#ff7b72;--diff-code-added:#85cf99;--diff-code-deleted:#ff9ba5;--diff-file-bg:#393f4c;--diff-file-fg:#ffffff;--diff-file-muted:#b0b2b7;--diff-file-control:#8a8f99;--diff-file-added:#9ad8ab;--diff-file-deleted:#ffb0b8}'
+    '[data-code-theme="gnosis-aurora-x"] :is(.diff-gap,.changes-file-header,.diff-outline){--diff-code-bg:#0d1117;--diff-code-fg:#e6edf3;--diff-code-header:#272a35;--diff-code-line:#010103;--diff-code-muted:#a2a7ad;--diff-keyword:#ff7b72;--diff-code-added:#85cf99;--diff-code-deleted:#ff9ba5;--diff-file-bg:#393f4c;--diff-file-fg:#ffffff;--diff-file-muted:#b0b2b7;--diff-file-control:#8a8f99;--diff-file-added:#9ad8ab;--diff-file-deleted:#ffb0b8}'
   );
+});
+
+void test('"You are here" shows on every theme and surface, and the line under it stays readable', async () => {
+  const { HERE_BAND, HERE_SETTLED, HERE_PEAK, HERE_BAR, HERE_SECTION_SETTLED, HERE_SECTION_PEAK, toOklab } = await import('../lib/code-palette');
+  const { HERE_CSS } = await import('../lib/diff-here');
+  const { mixColor } = await import('../lib/code-contrast');
+  const distance = (a: string, b: string) => {
+    const x = toOklab(a),
+      y = toOklab(b);
+    return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+  };
+  // All ten code themes: background and default text.
+  const themes = [
+    ...THEMES.map(([bg, fg]) => [bg, fg]),
+    ['#282a36', '#f8f8f2'],
+    ['#2e3440', '#d8dee9'],
+    ['#1a1b26', '#a9b1d6'],
+    ['#1e1e2e', '#cdd6f4'],
+    ['#07090f', '#bbc3cf'],
+  ];
+  for (const [bg, fg] of themes) {
+    const surfaces = diffSurfaces(bg);
+    for (const [name, surface] of Object.entries(surfaces)) {
+      const settled = mixColor(surface, HERE_BAND, HERE_SETTLED);
+      const peak = mixColor(surface, HERE_BAND, HERE_PEAK);
+      // Visible: well past a just-noticeable difference (about 0.02 in OKLab), on green and red lines too.
+      assert.ok(distance(settled, surface) >= 0.045, `${bg} ${name}: the settled band shows (${distance(settled, surface)})`);
+      assert.ok(distance(peak, surface) > distance(settled, surface), `${bg} ${name}: the bloom is stronger than the band`);
+      // Readable: the settled band keeps at least 80% of the text's contrast.
+      const kept = contrastRatio(fg, settled) / contrastRatio(fg, surface);
+      assert.ok(kept >= 0.8, `${bg} ${name}: text keeps ${kept.toFixed(2)} of its contrast`);
+      // The bar on the gutter's edge reads as a mark: 3:1 against the band it edges.
+      assert.ok(contrastRatio(HERE_BAR, settled) >= 3, `${bg} ${name}: the bar shows on the band`);
+      // The rest of a marked section: softer than the signature, still visible, and its text keeps more of its contrast,
+      // at the section's bloom as well as settled.
+      const body = mixColor(surface, HERE_BAND, HERE_SECTION_SETTLED);
+      const bodyPeak = mixColor(surface, HERE_BAND, HERE_SECTION_PEAK);
+      assert.ok(distance(body, surface) >= 0.025 && distance(body, surface) < distance(settled, surface), `${bg} ${name}: the section's band shows, softer (${distance(body, surface)})`);
+      for (const band of [body, bodyPeak]) {
+        const keptBody = contrastRatio(fg, band) / contrastRatio(fg, surface);
+        assert.ok(keptBody >= 0.85, `${bg} ${name}: the section's text keeps ${keptBody.toFixed(2)} of its contrast`);
+      }
+      assert.ok(contrastRatio(HERE_BAR, body) >= 3, `${bg} ${name}: the bar shows down the section`);
+    }
+  }
+  // The CSS draws the same colours.
+  const rgb = [1, 3, 5].map((i) => parseInt(HERE_BAND.slice(i, i + 2), 16)).join(' ');
+  assert.ok(HERE_CSS.includes(`rgb(${rgb} / ${Math.round(HERE_SETTLED * 100)}%)`), 'the settled band in HERE_CSS');
+  assert.ok(HERE_CSS.includes(`rgb(${rgb} / ${Math.round(HERE_PEAK * 100)}%)`), 'the bloom in HERE_CSS');
+  assert.ok(HERE_CSS.includes(`rgb(${rgb} / ${Math.round(HERE_SECTION_SETTLED * 100)}%)`), 'the section band in HERE_CSS');
+  assert.ok(HERE_CSS.includes(`rgb(${rgb} / ${Math.round(HERE_SECTION_PEAK * 100)}%)`), 'the section bloom in HERE_CSS');
 });

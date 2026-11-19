@@ -49,6 +49,10 @@ interface Props {
   stickyUnder?: RefObject<HTMLElement | null>;
   /** The file is expanded: collapsed files read nothing. */
   active?: boolean;
+  /** The file is marked Viewed: its outline's symbols read as viewed. */
+  fileViewed?: boolean;
+  /** Marks the file Viewed, offered once every symbol of its outline is ticked. */
+  onMarkFileViewed?: () => void;
 }
 
 /** The Pierre theme a topic's code was highlighted in, from its saved HTML: the file header and bars take its palette. */
@@ -56,13 +60,6 @@ export function reviewDiffTheme(hunks: readonly DiffHunk[]): string {
   const classes = extractShikiStyles(hunks[0]?.renderedHtml ?? '').preClass.split(' ');
   return `gnosis-${CODE_THEMES.find((t) => classes.includes(t.id))?.id ?? 'aurora-x'}`;
 }
-
-/** Review checks flash the line they jump to (SlideView). Everything else about the code is Changes' own. */
-const TOPIC_CSS = `
-.check-highlight { animation: check-flash 1.6s ease-out; }
-@keyframes check-flash { from { outline: 2px solid var(--ring); } to { background-color: transparent; } }
-@media (prefers-reduced-motion: reduce) { .check-highlight { animation: none; outline: 2px solid var(--ring); } }
-`;
 
 /**
  * A topic's code for one file, rendered by Changes' own diff (ChangesDiff) through the same model
@@ -88,6 +85,8 @@ export function ReviewDiff({
   source,
   stickyUnder,
   active = true,
+  fileViewed,
+  onMarkFileViewed,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
   // Without the file's status, a topic whose saved hunks add (or delete) the whole file is an added (or deleted) file,
@@ -196,7 +195,6 @@ export function ReviewDiff({
     disableLineNumbers: !appearance.lineNumbers,
     overflow: appearance.wrap ? 'wrap' : 'scroll',
     lineDiffType: appearance.inline,
-    unsafeCSS: TOPIC_CSS,
     enableGutterUtility: !!commentCallbacks,
     onGutterUtilityClick: commentCallbacks
       ? (range) => setActive({ line: range.start, side: range.side === 'deletions' ? 'LEFT' : 'RIGHT' })
@@ -312,6 +310,16 @@ export function ReviewDiff({
           scopeNote={model.scopeNote}
           scopeAt={model.scopeAt}
           onShowDefinition={model.showDefinition}
+          rails={model.rails}
+          onCollapseScope={model.collapseScope}
+          outline={{
+            symbols: model.symbols,
+            pending: model.outlinePending,
+            fileKey,
+            fileName: path.slice(path.lastIndexOf('/') + 1),
+            fileViewed,
+            onMarkFileViewed,
+          }}
           stickyUnder={stickyUnder}
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
           lineCount={model.lineCount}

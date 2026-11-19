@@ -156,7 +156,7 @@ void app.whenReady().then(async () => {
     await js(
       `Array.from(document.querySelectorAll('[data-case=metadata-added] span')).find(b=>b.textContent==='Verify the ready flag' && b.className.includes('cursor-pointer')).click()`
     );
-    await wait(`!!window.diffRoot('metadata-added').querySelector('[data-line-number="1"].check-highlight')`);
+    await wait(`!!window.diffRoot('metadata-added').querySelector('[data-line-number="1"][data-here]')`);
     assert.equal(
       await js("document.querySelector('[data-case=metadata-added] .review-file-content').hidden"),
       false,
