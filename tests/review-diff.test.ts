@@ -1,19 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { prepareReviewHunk, diffContextLines, DEFAULT_DIFF_APPEARANCE, CODE_LINE_HEIGHT } from '../lib/review-diff';
 import {
-  prepareReviewHunk,
-  reviewContextRanges,
-  sliceReviewHunk,
-  diffContextLines,
-  DEFAULT_DIFF_APPEARANCE,
-  CODE_LINE_HEIGHT,
-  HUNK_SLICE_LIMIT,
+  FILE_HEADER,
+  HUNK_BAR,
+  TRAILING_BAR,
   estimateCodeColumnHeight,
   estimateFileBlockHeight,
-  estimateHunkBlockHeight,
-  estimateSlicedBlockHeight,
-  reviewHunkSlices,
-} from '../lib/review-diff';
+  reviewGapHunks,
+} from '../lib/review-gap-hunks';
+import { SLICE_CHROME } from '../lib/diff-gaps';
 import type { DiffHunk } from '../lib/types';
 const hunk = (hunkHeader: string, content: string, filePath = 'src/file.ts'): DiffHunk => ({
   hunkHeader,
@@ -87,40 +83,31 @@ void test('unparseable and contradictory cached content uses the legacy fallback
   assert.equal(prepareReviewHunk(hunk('@@ -1 +1 @@', '-old\n+new'), 'added'), null);
 });
 
-void test('folds unchanged lines around changes and reveals only saved context', () => {
+void test('a topic folds unchanged lines around changes, keeping source numbers (#157 parity)', () => {
   const original = hunk(
     '@@ -50,31 +70,31 @@',
     Array.from({ length: 31 }, (_, i) => (i === 10 ? '-old\n+new' : ` context ${i}`)).join('\n')
   );
-  const data = prepareReviewHunk(original);
-  assert.ok(data);
-  const ranges = reviewContextRanges(data.lines);
-  assert.deepEqual(ranges, [
-    { start: 0, end: 7, hidden: true },
-    { start: 7, end: 15, hidden: false },
-    { start: 15, end: 32, hidden: true },
-  ]);
-  const excerpt = sliceReviewHunk(original, data.lines, 7, 15);
-  assert.equal(excerpt.hunkHeader, '@@ -57,7 +77,7 @@');
-  const parsed = prepareReviewHunk(excerpt);
-  assert.ok(parsed);
-  assert.equal(parsed.lines[3].baseLineNumber, 60);
-  assert.equal(parsed.lines[4].headLineNumber, 80);
-  assert.deepEqual(reviewContextRanges(data.lines, new Set(), new Set(data.lines.map((_, i) => i))), [
-    { start: 0, end: 32, hidden: false },
-  ]);
+  const topic = reviewGapHunks([original]);
+  assert.deepEqual(
+    topic.hunks.map((h) => [h.oldStart, h.newStart, h.rows.length]),
+    [[57, 77, 8]]
+  );
+  assert.equal(topic.hunks[0].rows[3].type, '-');
+  // Every saved new line is known, so the gaps around the change reveal without a read.
+  assert.equal(topic.known[69], ' context 0'.slice(1));
+  assert.equal(topic.known[99], 'context 30');
+  assert.equal(topic.known[68], undefined);
 });
 
 void test('pins commented and referenced context and leaves context-only snippets intact', () => {
-  const data = prepareReviewHunk(
-    hunk('@@ -1,30 +1,30 @@', Array.from({ length: 30 }, (_, i) => (i === 15 ? '+' : ' ') + `line ${i}`).join('\n'))
-  );
-  assert.ok(data);
-  const ranges = reviewContextRanges(data.lines, new Set([1, 28]));
-  for (const line of [1, 15, 28]) assert.ok(ranges.some((r) => !r.hidden && r.start <= line && r.end > line));
-  assert.deepEqual(reviewContextRanges(data.lines.filter((l) => l.type === 'context')), [
-    { start: 0, end: 29, hidden: false },
-  ]);
+  const saved = hunk('@@ -1,30 +1,30 @@', Array.from({ length: 30 }, (_, i) => (i === 15 ? '+' : ' ') + `line ${i}`).join('\n'));
+  const topic = reviewGapHunks([saved], { pins: [{ line: 2 }, { line: 29, side: 'RIGHT' }] });
+  const shown = (line: number) => topic.hunks.some((h) => h.newStart <= line && line < h.newStart + h.rows.filter((r) => r.type !== '-').length);
+  for (const line of [2, 16, 29]) assert.ok(shown(line), `line ${line} shows`);
+  assert.equal(shown(10), false);
+  const context = reviewGapHunks([hunk('@@ -1,29 +1,29 @@', Array.from({ length: 29 }, (_, i) => ` line ${i}`).join('\n'))]);
+  assert.deepEqual(context.hunks.map((h) => h.rows.length), [29]);
 });
 
 void test('surrounding-line preferences preserve source coordinates and pinned review annotations', () => {
@@ -128,93 +115,49 @@ void test('surrounding-line preferences preserve source coordinates and pinned r
     '@@ -50,31 +70,31 @@',
     Array.from({ length: 31 }, (_, i) => (i === 10 ? '-old\n+new' : ` context ${i}`)).join('\n')
   );
-  const prepared = prepareReviewHunk(original);
-  assert.ok(prepared);
   for (const count of [1, 3, 5, 10, 20, 50]) {
-    const ranges = reviewContextRanges(prepared.lines, new Set([0]), new Set(), count);
-    assert.ok(
-      ranges.some((r) => !r.hidden && r.start === 0),
-      'Pinned lines must remain visible'
-    );
-    const visible: ReturnType<typeof reviewContextRanges> = reviewContextRanges(prepared.lines, new Set(), new Set(), count).filter((r) => !r.hidden);
+    const pinned = reviewGapHunks([original], { context: count, pins: [{ line: 70 }] });
+    assert.equal(pinned.hunks[0].newStart, 70, 'Pinned lines must remain visible');
+    const topic = reviewGapHunks([original], { context: count });
     assert.equal(
-      visible.reduce((sum, r) => sum + r.end - r.start, 0),
+      topic.hunks.reduce((sum, h) => sum + h.rows.length, 0),
       Math.min(count, 10) + Math.min(count, 20) + 2
     );
-    const excerpt = sliceReviewHunk(original, prepared.lines, visible[0].start, visible[0].end);
-    const parsed = prepareReviewHunk(excerpt);
-    assert.ok(parsed);
-    assert.equal(parsed.lines.find((l) => l.type === 'add')?.headLineNumber, 80);
-    assert.equal(parsed.lines.find((l) => l.type === 'remove')?.baseLineNumber, 60);
+    const first = topic.hunks[0];
+    let newLine = first.newStart,
+      oldLine = first.oldStart;
+    for (const row of first.rows) {
+      if (row.type === '+') assert.equal(newLine, 80);
+      if (row.type === '-') assert.equal(oldLine, 60);
+      if (row.type !== '+') oldLine++;
+      if (row.type !== '-') newLine++;
+    }
   }
   assert.equal(diffContextLines(), 3);
   assert.equal(diffContextLines({ ...DEFAULT_DIFF_APPEARANCE, contextLines: NaN }), 3);
   assert.equal(diffContextLines({ ...DEFAULT_DIFF_APPEARANCE, contextLines: 10 }), 10);
 });
 
-void test('long visible ranges split into 200-line slices that keep source line numbers', () => {
-  assert.deepEqual(reviewHunkSlices(0, HUNK_SLICE_LIMIT), [[0, HUNK_SLICE_LIMIT]]);
-  assert.deepEqual(reviewHunkSlices(10, 511), [
-    [10, 210],
-    [210, 410],
-    [410, 511],
-  ]);
-  // A 3,000-line added file: each slice is its own diff, numbered from where it starts in the file.
-  const added = hunk('@@ -0,0 +1,3000 @@', Array.from({ length: 3000 }, (_, i) => `+line ${i + 1}`).join('\n'));
-  const prepared = prepareReviewHunk(added, 'added');
-  assert.ok(prepared?.singleSide);
-  const slices = reviewHunkSlices(0, prepared.lines.length).map(([start, end]) =>
-    prepareReviewHunk(sliceReviewHunk(added, prepared.lines, start, end), 'added')
-  );
-  assert.equal(slices.length, 15);
-  assert.equal(slices[0]?.lines[0].headLineNumber, 1);
-  assert.equal(slices[7]?.lines[0].headLineNumber, 1401);
-  assert.equal(slices[7]?.lines[0].text, 'line 1401');
-  assert.equal(slices[14]?.lines.at(-1)?.headLineNumber, 3000);
-  assert.ok(slices.every((slice) => slice?.singleSide && slice.lines.every((l) => l.type === 'add')));
-  assert.match(slices[7]?.patch ?? '', /@@ -0,0 \+1401,200 @@/);
-  // Annotations route by line number, so the slice that owns line 1450 is the one that shows it.
-  const owner = slices.findIndex((slice) => slice?.lines.some((l) => l.headLineNumber === 1450));
-  assert.equal(owner, 7);
-  // A modified hunk keeps both sides' numbers across a slice seam.
-  const modified = hunk(
-    '@@ -100,400 +200,401 @@',
-    Array.from({ length: 400 }, (_, i) => (i === 250 ? '-old\n+new\n+extra' : ` same ${i}`)).join('\n')
-  );
-  const lines = prepareReviewHunk(modified)?.lines ?? [];
-  const second = prepareReviewHunk(sliceReviewHunk(modified, lines, 200, 400));
-  assert.ok(second);
-  assert.equal(second.lines[0].baseLineNumber, 300);
-  assert.equal(second.lines[0].headLineNumber, 400);
-  assert.equal(second.lines.find((l) => l.type === 'add')?.headLineNumber, 450);
-});
-
-void test('placeholder heights follow the shown rows, folded context and collapsed files', () => {
-  assert.equal(estimateHunkBlockHeight(10), 10 * CODE_LINE_HEIGHT + 8);
+void test('placeholder heights follow what Changes renders: rows, slices, bars and collapsed files', () => {
   const added = hunk('@@ -0,0 +1,100 @@', Array.from({ length: 100 }, (_, i) => `+${i}`).join('\n'));
-  assert.equal(estimateFileBlockHeight([added], { status: 'added' }), 48 + 100 * CODE_LINE_HEIGHT + 8);
-  assert.equal(estimateFileBlockHeight([added], { status: 'added', expanded: false }), 48);
-  // One change in 41 lines shows 3 lines either side; the two folded runs count as bars.
+  // An added file is one hunk with no bars, as in Changes.
+  assert.equal(estimateFileBlockHeight([added], { status: 'added' }), FILE_HEADER + 100 * CODE_LINE_HEIGHT + SLICE_CHROME);
+  assert.equal(estimateFileBlockHeight([added], { status: 'added', expanded: false }), FILE_HEADER);
+  // One change in 41 lines shows 3 lines either side under a hunk header, then the trailing bar.
   const folded = hunk(
     '@@ -1,41 +1,41 @@',
     Array.from({ length: 41 }, (_, i) => (i === 20 ? '-a\n+b' : ` c${i}`)).join('\n')
   );
-  assert.equal(estimateFileBlockHeight([folded]), Math.round(48 + (8 + 3) * CODE_LINE_HEIGHT + 8));
+  assert.equal(
+    estimateFileBlockHeight([folded]),
+    Math.round(FILE_HEADER + HUNK_BAR + 8 * CODE_LINE_HEIGHT + SLICE_CHROME + TRAILING_BAR)
+  );
+  // 3,000 lines render as fifteen 200-line slices: about 60,000px, where a fixed placeholder was 400px (#288).
+  const huge = hunk('@@ -0,0 +1,3000 @@', Array.from({ length: 3000 }, (_, i) => `+${i}`).join('\n'));
+  assert.equal(estimateFileBlockHeight([huge], { status: 'added' }), FILE_HEADER + 3000 * CODE_LINE_HEIGHT + 15 * SLICE_CHROME);
   const column = estimateCodeColumnHeight([added, { ...folded, filePath: 'other.ts' }], {
+    status: (path) => (path === 'other.ts' ? 'modified' : 'added'),
     viewed: (path) => path === 'other.ts',
   });
-  assert.equal(column, 80 + 20 + (48 + 100 * CODE_LINE_HEIGHT + 8) + 20 + 48);
-});
-
-void test('a sliced block is estimated from its line count, not a fixed placeholder', () => {
-  // 3,000 lines in fifteen 200-line slices: about 60,000px, where the stylesheet's fallback was 400px (#288).
-  assert.equal(estimateSlicedBlockHeight([{ start: 0, end: 3000, hidden: false }]), 15 * (200 * CODE_LINE_HEIGHT + 8));
-  // Folded ranges count as one bar each.
-  assert.equal(
-    estimateSlicedBlockHeight([
-      { start: 0, end: 10, hidden: true },
-      { start: 10, end: 17, hidden: false },
-    ]),
-    1.5 * CODE_LINE_HEIGHT + 7 * CODE_LINE_HEIGHT + 8
-  );
+  assert.equal(column, 80 + 20 + (FILE_HEADER + 100 * CODE_LINE_HEIGHT + SLICE_CHROME) + 20 + FILE_HEADER);
 });

@@ -1,5 +1,5 @@
-import type { DiffRow, GapHunk } from './diff-gaps';
-import { prepareReviewHunk } from './review-diff';
+import { SLICE_CHROME, estimateSliceHeight, type DiffRow, type GapHunk } from './diff-gaps';
+import { CODE_LINE_HEIGHT, HUNK_SLICE_LIMIT, HUNK_SLICE_SIZE, prepareReviewHunk } from './review-diff';
 import type { DiffHunk, DiffSide, FileMetadata } from './types';
 
 /** A line that stays in view: a review check (either side), a thread, a note or a draft comment. */
@@ -163,3 +163,57 @@ function lastBefore(run: Row[], side: 'old' | 'new'): number {
 }
 
 const headerText = (header: string) => /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/.exec(header)?.[1] ?? '';
+
+/** The code-tier file header (DiffFileHeader) and the topic file's frame. */
+export const FILE_HEADER = 46;
+/** A hunk header or gap bar: 1.75 code lines and its rule (globals.css .diff-gap). */
+export const HUNK_BAR = 1.75 * CODE_LINE_HEIGHT + 1;
+/** The bar below the last hunk: one code line and its rule. */
+export const TRAILING_BAR = CODE_LINE_HEIGHT + 1;
+
+/**
+ * Placeholder height for a topic's file while content-visibility skips it: what ChangesDiff renders for the topic's
+ * hunks (reviewGapHunks), each sliced as hunkSlices does, with a bar above each hunk and one below the last. `auto`
+ * keeps the real height once the file has rendered. A 3,000-line file skipped at a 400px fallback made the document
+ * about 60,000px shorter for a frame, and the browser clamped scrollTop to fit (#288).
+ */
+export function estimateFileBlockHeight(
+  hunks: DiffHunk[],
+  {
+    status,
+    expanded = true,
+    contextLines = 3,
+    lineHeight = CODE_LINE_HEIGHT,
+  }: { status?: FileMetadata['status']; expanded?: boolean; contextLines?: number; lineHeight?: number } = {}
+) {
+  if (!expanded) return FILE_HEADER;
+  const topic = reviewGapHunks(hunks, { status, context: contextLines });
+  let height = FILE_HEADER;
+  for (const hunk of topic.hunks) {
+    const rows = hunk.rows.length;
+    if (rows <= HUNK_SLICE_LIMIT) height += estimateSliceHeight(rows, lineHeight);
+    else for (let from = 0; from < rows; from += HUNK_SLICE_SIZE) height += estimateSliceHeight(Math.min(HUNK_SLICE_SIZE, rows - from), lineHeight);
+  }
+  // Added and deleted files are one hunk with no bars, as in Changes.
+  if (topic.hunks.length && status !== 'added' && status !== 'deleted')
+    height += topic.hunks.length * (lineHeight * 1.75 + 1) + lineHeight + 1;
+  for (const hunk of topic.unreadable) height += hunk.content.split('\n').length * lineHeight + SLICE_CHROME;
+  return Math.round(height);
+}
+
+/** Placeholder height for a section's code before it mounts: each file's estimate, collapsed when viewed, plus the
+ * gaps and padding of the code column. */
+export function estimateCodeColumnHeight(
+  hunks: DiffHunk[],
+  {
+    status,
+    viewed,
+  }: { status?: (filePath: string) => FileMetadata['status'] | undefined; viewed?: (filePath: string) => boolean } = {}
+) {
+  const files = new Map<string, DiffHunk[]>();
+  for (const hunk of hunks) files.set(hunk.filePath, [...(files.get(hunk.filePath) ?? []), hunk]);
+  let height = 80;
+  for (const [filePath, fileHunks] of files)
+    height += 20 + estimateFileBlockHeight(fileHunks, { status: status?.(filePath), expanded: !viewed?.(filePath) });
+  return Math.round(height);
+}

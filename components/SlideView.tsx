@@ -18,12 +18,8 @@ import { findReviewLine, reviewDiffTheme } from './ReviewDiff';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
 import { ReviewFileDiscussion } from './ReviewFileDiscussion';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
-import {
-  DEFAULT_DIFF_APPEARANCE,
-  diffContextLines,
-  estimateFileBlockHeight,
-  type DiffAppearance,
-} from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, type DiffAppearance } from '@/lib/review-diff';
+import { estimateFileBlockHeight } from '@/lib/review-gap-hunks';
 import { ReviewFileHeader } from './ReviewFileHeader';
 import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FileTypeIcon } from './FileTypeIcon';
