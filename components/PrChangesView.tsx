@@ -418,7 +418,7 @@ export function PrChangesView({
   const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideComments]);
   useSyntaxPrefetch(prefetchOwner, scopeFiles, (file) => progress.isFileViewed(file.key), codeSettings, noiseFilter);
   const noiseRevision = useNoiseRevision();
-  const quietFiles = useMemo(() => {
+  const quietScan = useMemo(() => {
     const result = new Map<string, { label: string; lines: number }>();
     if (!noiseFilter.whitespace && !noiseFilter.comments) return result;
     for (const e of visible) {
@@ -429,6 +429,10 @@ export function PrChangesView({
     }
     return result;
   }, [entries, visibleSignature, noiseRevision, noiseFilter]);
+  // Comparisons land for every view's files: the tree changes only when this view's quiet files do, since a new tree
+  // input resets it.
+  const quietSignature = [...quietScan].map(([key, { label, lines }]) => `${key}\u0000${label}\u0000${lines}`).join('\n');
+  const quietFiles = useMemo(() => quietScan, [quietSignature]);
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]
