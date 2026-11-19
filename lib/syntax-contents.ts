@@ -176,6 +176,8 @@ export function createSyntaxContentsScheduler({
   const owners = new Map<string, Set<string>>();
   const started = new Map<string, Set<string>>();
   const failed = new Map<string, { pr: string } & SyntaxContentsFailure>();
+  // When each PR in `started` or `failed` was last touched, so the idle sweep finds PRs only these still hold.
+  const used = new Map<string, number>();
   let pausedUntil = 0,
     prefetchPausedUntil = 0,
     hidden = false,
@@ -260,6 +262,7 @@ export function createSyntaxContentsScheduler({
   }
   function fail(key: string, entry: Entry, failure: SyntaxContentsFailure) {
     failed.set(key, { pr: entry.job.pr, ...failure });
+    used.set(entry.job.pr, now());
     for (const onFail of entry.waiters.values()) onFail?.(failure);
   }
   function pump() {
@@ -286,6 +289,7 @@ export function createSyntaxContentsScheduler({
       let keys = started.get(job.pr);
       if (!keys) started.set(job.pr, (keys = new Set()));
       keys.add(key);
+      used.set(job.pr, now());
       const tier: SyntaxContentsTier = entry.waiters.size ? 'view' : 'prefetch';
       entry.running = true;
       entry.tier = tier;
@@ -351,7 +355,10 @@ export function createSyntaxContentsScheduler({
     if (existing) return existing;
     const refused = refusal(job);
     if (refused) {
-      if (tooLarge(job)) failed.set(job.key, { pr: job.pr, ...refused });
+      if (tooLarge(job)) {
+        failed.set(job.key, { pr: job.pr, ...refused });
+        used.set(job.pr, now());
+      }
       return refused;
     }
     const entry: Entry = {
@@ -442,10 +449,21 @@ export function createSyntaxContentsScheduler({
     stopPrefetch() {
       for (const owner of [...owners.keys()]) release(owner);
     },
-    /** Forgets these PRs' caps and failures, with the rest of their inspection data; every PR's without `prs`. */
+    /**
+     * Forgets these PRs' caps and failures, with the rest of their inspection data; every PR's without `prs`. Their
+     * prefetch reads that have not started are dropped too: run later, they would read the PRs back into the caches
+     * they just left. A read a view waits for stays.
+     */
     forget(prs?: ReadonlySet<string>) {
       for (const pr of [...started.keys()]) if (!prs || prs.has(pr)) started.delete(pr);
+      for (const pr of [...used.keys()]) if (!prs || prs.has(pr)) used.delete(pr);
       for (const [key, failure] of failed) if (!prs || prs.has(failure.pr)) failed.delete(key);
+      for (const [key, entry] of [...entries])
+        if ((!prs || prs.has(entry.job.pr)) && !entry.running && !entry.waiters.size) drop(key, entry);
+    },
+    /** When each PR whose caps or failures are kept was last read, merged into `into` (the latest wins). */
+    lastUses(into: Map<string, number>) {
+      for (const [pr, at] of used) if ((into.get(pr) ?? -Infinity) < at) into.set(pr, at);
     },
     /** For the diagnostics export and the browser checks. */
     stats: () => ({

@@ -735,20 +735,30 @@ void app.whenReady().then(async () => {
       'The whole chain, which fits'
     );
     // The chain shows whole while it fits; a bar too narrow for it folds crumbs from the outside, keeping the innermost.
+    // Widths are set, not taken from the window: a CI desktop can clamp the 1280 px window to its screen (the Windows
+    // runner's is 1024 px wide), and there the bar is too narrow for the whole chain beside its controls, so it folds,
+    // as it should. The chain and the bar's controls take about 850 px; 1,400 px leaves room for wider fonts.
+    const WIDE = '1400px';
     const folds = async (width: string) => {
       await js(`window.row('src/lazy/h003.rs').querySelector('.changes-diff').style.width=${JSON.stringify(width)}`);
       await js(frames);
       await sleep(100);
-      return js<{ folded: string[]; more: boolean; innermost: string; fits: boolean }>(`(()=>{const s=window.row('src/lazy/h003.rs').querySelector('.diff-gap-symbol');
+      return js<{ folded: string[]; more: boolean; innermost: string; fits: boolean; bar: number }>(`(()=>{const s=window.row('src/lazy/h003.rs').querySelector('.diff-gap-symbol');
         return {folded:[...s.querySelectorAll(':scope > [data-collapsed]')].map(g=>g.textContent.replace('›','').trim()),more:getComputedStyle(s.querySelector('.diff-gap-more')).display!=='none',
-          innermost:s.querySelector('[data-innermost]').textContent,fits:s.scrollWidth<=s.clientWidth+1}})()`);
+          innermost:s.querySelector('[data-innermost]').textContent,fits:s.scrollWidth<=s.clientWidth+1,bar:Math.round(s.closest('.diff-gap').getBoundingClientRect().width)}})()`);
     };
-    assert.deepEqual(await folds(''), { folded: [], more: false, innermost: 'fn handler_3', fits: true }, 'Nothing folds while the chain fits');
+    const roomy = await folds(WIDE);
+    assert.deepEqual(
+      { folded: roomy.folded, more: roomy.more, innermost: roomy.innermost, fits: roomy.fits },
+      { folded: [], more: false, innermost: 'fn handler_3', fits: true },
+      `Nothing folds while the chain fits: ${JSON.stringify(roomy)}`
+    );
     const narrow = await folds('520px');
     console.log('Breadcrumb at 520px:', JSON.stringify(narrow));
     assert.equal(narrow.folded[0], 'mod api', 'The outermost crumb folds first');
     assert.ok(narrow.more && narrow.fits && narrow.innermost === 'fn handler_3', `It folds into "…" and the innermost stays whole: ${JSON.stringify(narrow)}`);
-    assert.deepEqual((await folds('')).folded, [], 'Widened again, the whole chain comes back');
+    assert.deepEqual((await folds(WIDE)).folded, [], 'Widened again, the whole chain comes back');
+    await folds('');
     const trail = `${h03}.querySelector('.diff-gap-symbol')`;
     assert.equal(
       await js(`${trail}.getAttribute('title')`),

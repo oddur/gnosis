@@ -15,8 +15,17 @@ export function createPrFileCache(
   const pending = new Map<string, { promise: Promise<PrFileContents>; background: InspectionMode }>();
   let bytes = 0,
     epoch = 0;
-  /** Entries and estimated bytes, for the diagnostics export. */
-  const stats = () => ({ entries: saved.size, bytes });
+  // A read in flight when its PR is forgotten (a closed tab, an idle PR) still answers its caller, but keeps nothing:
+  // otherwise it would put the PR back in the cache after it left. Each forget is numbered; a read stores its result
+  // only when its PR was not forgotten after it started. Cleared whenever no read is in flight.
+  let forgets = 0;
+  const forgottenAt = new Map<string, number>();
+  const keeps = (url: string, since: number) => (forgottenAt.get(url) ?? -1) <= since;
+  const settled = () => {
+    if (!pending.size && !afterPending.size) forgottenAt.clear();
+  };
+  /** Entries and estimated bytes, for the diagnostics export: whole files, and after sides read alone. */
+  const stats = () => ({ entries: saved.size, bytes, afters: { entries: afters.size, bytes: afterBytes } });
   const keyFor = (r: PrFileRequest) =>
     `${r.stackComparison ? `stack:${r.stackComparison}:` : r.comparison ? 'commit:' : ''}${fileRevisionKey(r.url, r.path, r.baseSha, r.headSha)}`;
   const peek = (r: PrFileRequest) => {
@@ -41,7 +50,8 @@ export function createPrFileCache(
       pendingKey = `${key}:${!!r.downloadLfs}`,
       existing = pending.get(pendingKey);
     if (existing && inspectionRank(existing.background) >= inspectionRank(background)) return existing.promise;
-    const generation = epoch;
+    const generation = epoch,
+      since = forgets;
     const promise = load(r, background)
       .then((value) => {
         const current = saved.get(key)?.value;
@@ -57,7 +67,7 @@ export function createPrFileCache(
             n + (side.kind === 'text' ? side.content.length * 2 : side.kind === 'image' ? side.dataUrl.length * 2 : 0),
           0
         );
-        if (generation === epoch && size <= maxBytes) {
+        if (generation === epoch && keeps(r.url, since) && size <= maxBytes) {
           bytes -= saved.get(key)?.bytes ?? 0;
           saved.set(key, { value, bytes: size, url: r.url, at: now() });
           bytes += size;
@@ -77,6 +87,7 @@ export function createPrFileCache(
       })
       .finally(() => {
         if (pending.get(pendingKey)?.promise === promise) pending.delete(pendingKey);
+        settled();
       });
     pending.set(pendingKey, { promise, background });
     return promise;
@@ -103,11 +114,12 @@ export function createPrFileCache(
     if (!loadAfter) return read(r, background).then((value) => value.after);
     const existing = afterPending.get(key);
     if (existing && inspectionRank(existing.background) >= inspectionRank(background)) return existing.promise;
-    const generation = epoch;
+    const generation = epoch,
+      since = forgets;
     const promise = loadAfter(r, background)
       .then((value) => {
         const size = value.kind === 'text' ? value.content.length * 2 : 0;
-        if (generation === epoch && size <= maxBytes / 2) {
+        if (generation === epoch && keeps(r.url, since) && size <= maxBytes / 2) {
           afterBytes -= afters.get(key)?.bytes ?? 0;
           afters.delete(key);
           afters.set(key, { value, bytes: size, url: r.url, at: now() });
@@ -122,6 +134,7 @@ export function createPrFileCache(
       })
       .finally(() => {
         if (afterPending.get(key)?.promise === promise) afterPending.delete(key);
+        settled();
       });
     afterPending.set(key, { promise, background });
     return promise;
@@ -133,8 +146,12 @@ export function createPrFileCache(
       for (const entry of [...saved.values(), ...afters.values()])
         if ((into.get(entry.url) ?? -Infinity) < entry.at) into.set(entry.url, entry.at);
     },
-    /** Drops every saved file of these PRs. Reads in flight still answer their callers. */
+    /** Drops every saved file of these PRs. Reads in flight still answer their callers, and keep nothing. */
     forget(urls: ReadonlySet<string>) {
+      if (pending.size || afterPending.size) {
+        forgets++;
+        for (const url of urls) forgottenAt.set(url, forgets);
+      }
       for (const [key, entry] of saved)
         if (urls.has(entry.url)) {
           saved.delete(key);
@@ -159,6 +176,7 @@ export function createPrFileCache(
       pending.clear();
       afters.clear();
       afterPending.clear();
+      forgottenAt.clear();
       afterBytes = 0;
       priorities.clear();
       bytes = 0;

@@ -293,9 +293,24 @@ void app.whenReady().then(async () => {
         const tab=[...document.querySelectorAll('[data-workspace-active=true] .queue-row-main[aria-current], [data-workspace-active=true] [data-queue-id][aria-selected=true]')].map(e=>e.textContent.slice(0,30));
         return JSON.stringify({files:[...f.keys()],inventories:[...i.keys()],selected:tab})})()`)
     );
-    const idle = await js<string[]>(
-      `(async()=>(await import('/lib/inspection-cache.ts')).sweepIdleInspection(Date.now()+24*3600_000))()`
-    );
+    // The queue keeps predicting and preparing its neighbours, and warms their hunk scopes, at any time: one Windows
+    // run measured the sweep while a prediction read one PR back (#403). Both are turned off here and their work in
+    // flight is let finish, so the sweep is measured alone.
+    await js(`(async()=>{const preferences=await window.electronAPI.loadPreferences();
+      window.dispatchEvent(new CustomEvent('gnosis-preferences-changed',{detail:{...preferences,predictNavigation:false,prepareQueue:false}}))})()`);
+    await wait(`(async()=>{const [{predictor},{syntaxContents},{inspectionData}]=await Promise.all([import('/lib/predictions.ts'),
+        import('/lib/use-syntax-contents.ts'),import('/lib/inspection-cache.ts')]);
+      const s=syntaxContents.stats();return predictor.idle()&&s.running===0&&s.queued===0&&!inspectionData.activity()})()`);
+    await sleep(500);
+    // Read in the same task as the sweep, before anything else can run: every per-PR cache, the inspection caches and
+    // those kept beside them (parsed definitions, the hunk-scope read queue's caps and failures), holds no PR.
+    const { idle, left } = await js<{ idle: string[]; left: Record<string, unknown> }>(`(async()=>{
+      const [inspection,definitions,{syntaxContents}]=await Promise.all([import('/lib/inspection-cache.ts'),import('/lib/syntax-scope-client.ts'),import('/lib/use-syntax-contents.ts')]);
+      const idle=inspection.sweepIdleInspection(Date.now()+24*3600_000);
+      const s=syntaxContents.stats();
+      return {idle,left:{inspection:inspection.inspectionCacheStats().prs,definitions:definitions.definitionStats().prs,
+        scopeReads:Object.keys(s.started).length+s.failed+s.queued}};
+    })()`);
     const swept = await measure();
     samples['idle PRs dropped'] = swept.heapMB;
 
@@ -318,7 +333,9 @@ void app.whenReady().then(async () => {
       closed.heapMB - swept.heapMB < CACHED_AFTER_CLOSE_MB,
       `After the tabs close the inspection caches hold less than ${CACHED_AFTER_CLOSE_MB} MB: ${JSON.stringify(samples)}`
     );
-    assert.equal((swept.caches.inspection as { prs: number }).prs, 0, 'Idle PRs leave every inspection cache');
+    assert.deepEqual(left, { inspection: 0, definitions: 0, scopeReads: 0 }, 'The idle sweep leaves no PR in any cache');
+    // And with nothing reading them, work that was in flight does not bring them back.
+    assert.equal((swept.caches.inspection as { prs: number }).prs, 0, 'Idle PRs stay out of every inspection cache');
     // Structural checks, free of GC timing: the closed tabs' trees are gone, and the caches' own byte counts stay
     // within their bounds. Before #355 the caches still reported about 85 MB here.
     assert.equal(closed.caches.mountedTabs, 1, 'Only the queue tab stays mounted');
