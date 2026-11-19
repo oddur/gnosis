@@ -20,6 +20,7 @@ import {
 } from './code-intelligence';
 import { preferencesReady, startupPreferences } from './startup-preferences';
 import { syntaxLanguage } from './syntax-scope';
+import { traceStructure } from './structure-trace';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 
 /** The page's one queue of contents reads for hunk scopes (#393): view reads first, then prefetch. */
@@ -111,11 +112,17 @@ export function syntaxContentsJob(
     ready: () => (plan.both ? !!inspectionFiles.peek(request) : !!inspectionFiles.peekAfter(request)),
     run: async (tier) => {
       const mode = syntaxReadMode(tier);
+      traceStructure(key, { readStart: performance.now() });
       if (plan.both) {
         const contents = await inspectionFiles.read(request, mode);
+        traceStructure(key, { readEnd: performance.now() });
         parse(`${key}:after`, snapshot.url, file.path, contents.after);
         parse(`${key}:before`, snapshot.url, file.previousPath ?? file.path, contents.before);
-      } else parse(`${key}:after`, snapshot.url, file.path, await inspectionFiles.readAfter(request, mode));
+      } else {
+        const after = await inspectionFiles.readAfter(request, mode);
+        traceStructure(key, { readEnd: performance.now() });
+        parse(`${key}:after`, snapshot.url, file.path, after);
+      }
     },
   };
 }
@@ -247,7 +254,9 @@ export function useSyntaxContents(
     if (!plan) return;
     const { key } = want;
     let cancel = () => {};
+    traceStructure(key, { near: performance.now() });
     const stopWaiting = whenSettled(() => {
+      traceStructure(key, { viewRequest: performance.now() });
       cancel = syntaxContents.request(
         syntaxContentsJob(want, plan),
         () => setResult({ key, state: 'done' }),

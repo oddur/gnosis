@@ -13,6 +13,7 @@ import type { SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
+import { traceStructure } from './structure-trace';
 
 /**
  * The page's side of the tree-sitter worker (#393). Grammars are assets of the renderer build, so they load offline
@@ -108,6 +109,9 @@ export function readDefinitions(request: {
   if (request.text.length > SYNTAX_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to parse'));
   const existing = pending.get(request.key);
   if (existing) return existing.promise;
+  const file = request.key.replace(/:(after|before)$/, '');
+  const after = request.key.endsWith(':after');
+  if (after) traceStructure(file, { parseRequest: performance.now() });
   const promise = start().then(
     (instance) =>
       new Promise<SyntaxDefinition[]>((resolve, reject) => {
@@ -119,6 +123,15 @@ export function readDefinitions(request: {
         waiting.set(id, { resolve, reject });
         timings.set(id, (timing) => {
           timings.delete(id);
+          if (after)
+            traceStructure(file, {
+              parseDone: performance.now(),
+              workerWait: timing.wait,
+              load: timing.load,
+              parse: timing.parse,
+              query: timing.query,
+            });
+          else traceStructure(file, { beforeDone: performance.now() });
           syntaxTimings.push({
             ...timing,
             key: request.key,
@@ -127,6 +140,7 @@ export function readDefinitions(request: {
           });
           if (syntaxTimings.length > 50) syntaxTimings.shift();
         });
+        if (after) traceStructure(file, { parsePosted: performance.now() });
         instance.postMessage({
           type: 'definitions',
           id,

@@ -32,7 +32,7 @@ export type SyntaxResponse =
   | {
       id: number;
       definitions: SyntaxDefinition[];
-      timing: { parse: number; query: number; load?: number; cached: boolean };
+      timing: { parse: number; query: number; load?: number; cached: boolean; wait?: number };
     }
   | { id: number; error: string };
 
@@ -105,7 +105,9 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   }
   runtimeUrl ||= message.runtimeUrl;
   grammarUrls.set(message.language, message.grammarUrl);
+  const received = performance.now();
   queue = queue.then(async () => {
+    const wait = performance.now() - received;
     try {
       const result = await engine.definitions(message.language, message.text);
       cache.set(message.key, { url: message.url, definitions: result.definitions });
@@ -116,7 +118,7 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
       self.postMessage({
         id: message.id,
         definitions: result.definitions,
-        timing: { parse: result.parse, query: result.query, load: result.load, cached: false },
+        timing: { parse: result.parse, query: result.query, load: result.load, cached: false, wait },
       } satisfies SyntaxResponse);
     } catch (error) {
       self.postMessage({

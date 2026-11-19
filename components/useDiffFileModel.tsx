@@ -30,6 +30,7 @@ import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scop
 import { changedSymbols } from '../lib/symbol-outline';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { inspectionFiles } from '../lib/inspection-cache';
+import { traceStructure } from '../lib/structure-trace';
 import type { PrFileContents, PrFileRequest, PrFileSide } from '../lib/pr-changes';
 import { staleAttemptKey, staleStatus, type StaleTarget } from '../lib/stale-diff-refresh';
 import { staleDiffRefresh, useStaleAttempt } from '../lib/use-stale-diff-refresh';
@@ -282,6 +283,9 @@ export function useDiffFileModel({
     [scopes, parts, gaps, scopePlan, expandable, afterMatches, patch]
   );
   const shownScopes: ReadonlyMap<string, HunkScope> | undefined = scopes ?? provisional;
+  useEffect(() => {
+    if (scopes) traceStructure(fileKey, { shown: performance.now() });
+  }, [!!scopes, fileKey]);
   // The symbols the hunks change (#394), for the file's outline, once the file is parsed; a quiet bar until then.
   const symbols = useMemo(
     () => (definitions.after && baseHunks ? changedSymbols(baseHunks, definitions) : undefined),
