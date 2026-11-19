@@ -21,7 +21,8 @@ import { HERE_CSS, clearHere, markHere } from '../lib/diff-here';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
-import { jumpLabel, revealLabel, spokenChain, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
+import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
+import type { ScopeRail } from '../lib/show-scope';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 
@@ -50,8 +51,22 @@ const CHANGES_CSS = `[data-code] {
 [data-line] { scroll-margin-top: var(--diff-sticky-offset, 0px); }
 /* Where a jump or a review check took the reader (lib/diff-here.ts). */
 ${HERE_CSS}
+/* Show scope (lib/show-scope.ts): a definition shown whole because it is short has a quiet rail beside its line
+   numbers, a bracket from its signature to its last line, so its extent reads at a glance while its lines keep their own
+   colours. The rail is a background of the gutter cell, under the numbers, so it costs no element and moves nothing. */
+[data-column-number][data-scope-rail] {
+  --scope-rail: rgb(155 184 255 / 42%);
+  background-repeat: no-repeat;
+  background-image: linear-gradient(var(--scope-rail), var(--scope-rail)), linear-gradient(var(--scope-rail), var(--scope-rail));
+  background-size: 2px 100%, 0 0;
+  background-position: 3px 0, 3px 0;
+}
+[data-column-number][data-scope-rail=start] { background-size: 2px calc(100% - 0.5lh + 1px), 7px 2px; background-position: 3px 100%, 3px calc(0.5lh - 1px); }
+[data-column-number][data-scope-rail=end] { background-size: 2px calc(0.5lh + 1px), 7px 2px; background-position: 3px 0, 3px calc(0.5lh - 1px); }
+[data-column-number][data-scope-rail=only] { background-size: 7px 2px, 0 0; background-position: 3px calc(0.5lh - 1px), 0 0; }
 ${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
+const NO_RAILS: readonly ScopeRail[] = [];
 const diffStyle = {
   '--diffs-font-family': 'var(--font-mono)',
   '--diffs-font-size': 'var(--type-code)',
@@ -252,8 +267,35 @@ function HunkScopeLabel({
   );
 }
 
-/** "Show whole function": the innermost definition, among the bar's controls on the right. */
-function ShowDefinition({ scope, onShow }: { scope?: HunkScope; onShow?: (reveal: DefinitionReveal) => void }) {
+/**
+ * "Show whole function": the innermost definition, right after the breadcrumb. Where show scope showed a definition
+ * whole (lib/show-scope.ts), "Collapse function" takes the hunk back to plain context.
+ */
+function ShowDefinition({
+  scope,
+  onShow,
+  onCollapse,
+}: {
+  scope?: HunkScope;
+  onShow?: (reveal: DefinitionReveal) => void;
+  onCollapse?: (key: string) => void;
+}) {
+  if (!scope?.reveal && scope?.shown && onCollapse) {
+    const { key, definition } = scope.shown;
+    const noun = definitionNoun(definition);
+    return (
+      <button
+        type="button"
+        className="diff-context-button diff-gap-text"
+        data-collapse-scope=""
+        title={`This ${definitionLines(definition).toLocaleString()}-line ${noun} shows whole because it is short. Show only the change and its context.`}
+        onClick={() => onCollapse(key)}
+      >
+        <span className="icon-mask icon-fold-vertical" aria-hidden="true" />
+        <span className="diff-gap-label">Collapse {noun}</span>
+      </button>
+    );
+  }
   if (!scope?.reveal || !onShow) return null;
   const signature = scope.reveal.kind === 'signature';
   return (
@@ -512,6 +554,7 @@ function GapBar({
   range,
   counts,
   onShowDefinition,
+  onCollapseScope,
 }: {
   part: GapBarPart;
   status: GapStatus;
@@ -529,6 +572,7 @@ function GapBar({
   /** What the hunk below changes. */
   counts?: HunkCounts;
   onShowDefinition?: (reveal: DefinitionReveal) => void;
+  onCollapseScope?: (key: string) => void;
 }) {
   const { hidden } = part;
   const known = hidden !== undefined;
@@ -581,7 +625,7 @@ function GapBar({
         range={range}
         counts={counts}
         live
-        action={<ShowDefinition scope={scope} onShow={onShowDefinition} />}
+        action={<ShowDefinition scope={scope} onShow={onShowDefinition} onCollapse={onCollapseScope} />}
       />
     </div>
   );
@@ -716,6 +760,40 @@ const jumpDuration = (distance: number, screen: number) => 250 + 200 * Math.min(
 /** Exponential ease-out, reaching 1 at 1. */
 const easeOut = (t: number) => (t >= 1 ? 1 : 1 - 2 ** (-10 * t));
 
+/**
+ * Marks the rows of each definition shown whole by show scope (lib/show-scope.ts) for its rail: `start` on its first
+ * line, `end` on its last, `mid` between, on the new side's rows and their gutter cells. Deleted rows inside it carry
+ * the rail through. Attributes change only where they differ, so a pass over a diff that is already marked writes
+ * nothing; a diff with no rails and none marked costs one query.
+ */
+function markRails(host: Element, rails: readonly ScopeRail[]) {
+  const root = host.shadowRoot;
+  if (!root) return;
+  if (!rails.length && !root.querySelector('[data-scope-rail]')) return;
+  const gutters = new Map<string, Element>();
+  for (const cell of root.querySelectorAll('[data-column-number]'))
+    if (!cell.closest('[data-deletions]')) gutters.set(cell.getAttribute('data-line-index') ?? '', cell);
+  const write = (element: Element | undefined, value: string | undefined) => {
+    if (!element || element.getAttribute('data-scope-rail') === (value ?? null)) return;
+    if (value) element.setAttribute('data-scope-rail', value);
+    else element.removeAttribute('data-scope-rail');
+  };
+  let open: ScopeRail | undefined;
+  for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
+    if (row.closest('[data-deletions]')) continue;
+    let value: string | undefined;
+    if (row.dataset.lineType === 'change-deletion') value = open ? 'mid' : undefined;
+    else {
+      const line = Number(row.dataset.line);
+      const rail = rails.find((r) => line >= r.start && line <= r.end);
+      value = !rail ? undefined : rail.start === rail.end ? 'only' : line === rail.start ? 'start' : line === rail.end ? 'end' : 'mid';
+      open = rail && line < rail.end ? rail : undefined;
+    }
+    write(row, value);
+    write(gutters.get(row.getAttribute('data-line-index') ?? ''), value);
+  }
+}
+
 /** A definition's signature is marked "here" with its first line, up to this many lines. */
 const MAX_HERE_LINES = 12;
 
@@ -824,6 +902,8 @@ export function ChangesDiff<A>({
   scopeAt,
   canReveal,
   navigator,
+  rails = NO_RAILS,
+  onCollapseScope,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -856,14 +936,25 @@ export function ChangesDiff<A>({
   canReveal?: (gap: GapBarPart['gap']) => boolean;
   /** Set while the diff can take the reader to a line, as its pinned crumbs do: the file's outline uses it. */
   navigator?: RefObject<DiffNavigator | null>;
+  /** Definitions shown whole by show scope (lib/show-scope.ts), for their rails. */
+  rails?: readonly ScopeRail[];
+  /** Takes a definition shown whole by show scope back to plain context. */
+  onCollapseScope?: (key: string) => void;
 }) {
+  const latestRails = useRef(rails);
+  latestRails.current = rails;
   const stableOptions = useStableOptions({
     ...options,
     // One text node per line (lib/diff-token-flatten.ts).
     ...({ [FLAT_TOKENS]: true } as object),
     hunkSeparators: 'simple',
     unsafeCSS: options.unsafeCSS ? `${options.unsafeCSS}\n${CHANGES_CSS}` : CHANGES_CSS,
-  });
+    // Each rendered diff marks its rows for show scope's rails.
+    onPostRender: (node: HTMLElement, ...rest: unknown[]) => {
+      (options.onPostRender as ((node: HTMLElement, ...rest: unknown[]) => void) | undefined)?.(node, ...rest);
+      markRails(node, latestRails.current);
+    },
+  } as FileDiffOptions<A, undefined>);
   const latestRender = useRef(renderAnnotation);
   latestRender.current = renderAnnotation;
   const [stableRender] = useState(() => (annotation: DiffLineAnnotation<A>) => latestRender.current(annotation));
@@ -1235,6 +1326,10 @@ export function ChangesDiff<A>({
       element.removeEventListener('focusout', onFocus);
     };
   }, [stickyUnder]);
+  // New rails mark the diffs already rendered.
+  useEffect(() => {
+    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markRails(host, rails);
+  }, [rails]);
   // New definitions name the reader's place anew.
   useEffect(() => follow.current?.(), [scopeAt]);
   // Breadcrumbs fold to fit their bar: again whenever the bars' width or their crumbs change.
@@ -1297,6 +1392,7 @@ export function ChangesDiff<A>({
           range={next?.kind === 'hunk' && next.changed ? next.range : undefined}
           counts={next?.kind === 'hunk' && next.changed ? next.counts : undefined}
           onShowDefinition={onShowDefinition}
+          onCollapseScope={onCollapseScope}
         />
       ) : (
         <TrailingBar
@@ -1340,7 +1436,7 @@ export function ChangesDiff<A>({
               )
             }
             controls={structure && scopeNote}
-            action={structure && <ShowDefinition scope={scope} onShow={onShowDefinition} />}
+            action={structure && <ShowDefinition scope={scope} onShow={onShowDefinition} onCollapse={onCollapseScope} />}
             range={block.range}
             counts={block.counts}
             live

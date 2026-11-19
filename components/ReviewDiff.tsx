@@ -304,6 +304,8 @@ export function ReviewDiff({
           scopeNote={model.scopeNote}
           scopeAt={model.scopeAt}
           onShowDefinition={model.showDefinition}
+          rails={model.rails}
+          onCollapseScope={model.collapseScope}
           stickyUnder={stickyUnder}
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
           lineCount={model.lineCount}

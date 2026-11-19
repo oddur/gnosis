@@ -23,6 +23,7 @@ import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
 import { useSyntaxContents, type SyntaxFile } from '../lib/use-syntax-contents';
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan } from '../lib/syntax-contents';
+import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { inspectionFiles } from '../lib/inspection-cache';
 import type { PrFileContents, PrFileRequest, PrFileSide } from '../lib/pr-changes';
@@ -31,6 +32,8 @@ import type { GapStatus } from './ChangesDiff';
 
 const NO_REVEALS: GapReveals = {};
 const NO_PINS: readonly (readonly [number, number])[] = [];
+const NO_KEYS: ReadonlySet<string> = new Set();
+const NO_SHOWN: readonly ShownScope[] = [];
 
 /**
  * One file's diff as Changes and Explanation topics show it (#157 parity): hunks with the gaps between them, the
@@ -160,17 +163,6 @@ export function useDiffFileModel({
       return { ...gap, revealDown, revealUp };
     });
   }, [expandable, hunks, afterMatches, after, before, partial, known]);
-  const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
-  const reveals = gapReveals?.key === revealKey ? gapReveals.value : NO_REVEALS;
-  const parts = useMemo(
-    (): GapPart[] | undefined =>
-      hunks &&
-      (gaps
-        ? revealedParts(hunks, gaps, reveals, lines)
-        : hunks.map((hunk, index) => ({ kind: 'hunk' as const, key: `h${index}`, hunk }))),
-    [hunks, gaps, reveals, lines]
-  );
-  const shown = useMemo(() => (parts ? shownLines(parts) : undefined), [parts]);
   // Enclosing definitions (#393), from text this view already has: the after side gaps reveal from, and the before
   // side when both sides are loaded. A file without a grammar, or with a stale after side, shows as before.
   // The old side is parsed only for hunks that delete lines and add none.
@@ -206,10 +198,75 @@ export function useDiffFileModel({
     before: beforeText,
     enabled: structure && expandable && active && !!gaps && afterMatches === true,
   });
-  const scopes = useMemo(
-    () => (parts && shown && definitions.after ? hunkScopes(parts, gaps, definitions, shown.after) : undefined),
-    [parts, gaps, definitions.after, definitions.before, shown]
+  const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
+  // What the reader revealed: chevrons, Show all, Show whole function, crumbs.
+  const userReveals = gapReveals?.key === revealKey ? gapReveals.value : NO_REVEALS;
+  // Show scope (lib/show-scope.ts): a short definition around a change shows whole. The plan is made once per file
+  // revision from what the diff shows before any reveal, so revealing lines never changes it; it is kept apart from
+  // the reader's reveals, so a hunk, or the setting, can collapse it back to plain context.
+  const scopeOn = codeSettings.enabled && codeSettings.showScope;
+  const planned = useMemo(
+    () =>
+      scopeOn && definitions.after && hunks && gaps && lines
+        ? showScopePlan(revealedParts(hunks, gaps, NO_REVEALS, lines), gaps, definitions)
+        : undefined,
+    [scopeOn, definitions.after, definitions.before, hunks, gaps, lines]
   );
+  const [adopted, setAdopted] = useState<{ key: string; value: readonly ShownScope[] }>();
+  const [collapsed, setCollapsed] = useState<{ key: string; value: ReadonlySet<string> }>();
+  // Once the file is parsed, its short definitions show whole, keeping the line at the top of the view in place.
+  useEffect(() => {
+    if (!planned || adopted?.key === revealKey) return;
+    if (planned.length) {
+      // A topic shows lines outside what it saved once both sides say they are unchanged.
+      if (partial) readAfter();
+      if (sectionRef.current) keepDiffLineInView(sectionRef.current);
+    }
+    setAdopted({ key: revealKey, value: planned });
+  }, [planned]);
+  const collapsedKeys = collapsed?.key === revealKey ? collapsed.value : NO_KEYS;
+  const shownScopesPlan = useMemo(
+    () => (scopeOn && adopted?.key === revealKey ? adopted.value.filter((scope) => !collapsedKeys.has(scope.key)) : NO_SHOWN),
+    [scopeOn, adopted, revealKey, collapsedKeys]
+  );
+  const reveals = useMemo(() => {
+    let next = userReveals;
+    if (gaps) for (const scope of shownScopesPlan) for (const [start, end] of scope.spans) next = revealSpan(next, gaps, start, end);
+    return next;
+  }, [userReveals, shownScopesPlan, gaps]);
+  const parts = useMemo(
+    (): GapPart[] | undefined =>
+      hunks &&
+      (gaps
+        ? revealedParts(hunks, gaps, reveals, lines)
+        : hunks.map((hunk, index) => ({ kind: 'hunk' as const, key: `h${index}`, hunk }))),
+    [hunks, gaps, reveals, lines]
+  );
+  const shown = useMemo(() => (parts ? shownLines(parts) : undefined), [parts]);
+  const scopes = useMemo(() => {
+    if (!parts || !shown || !definitions.after) return undefined;
+    const all = hunkScopes(parts, gaps, definitions, shown.after);
+    if (!shownScopesPlan.length) return all;
+    // A hunk whose definition, or one around it, shows whole by the rule can collapse it back.
+    for (const [key, scope] of all) {
+      const auto = [...scope.chain]
+        .reverse()
+        .map((crumb) => shownScopesPlan.find((s) => s.definition.start === crumb.definition.start && s.definition.end === crumb.definition.end))
+        .find((match) => match !== undefined);
+      if (auto) all.set(key, { ...scope, shown: { key: auto.key, definition: auto.definition } });
+    }
+    return all;
+  }, [parts, gaps, definitions.after, definitions.before, shown, shownScopesPlan]);
+  // Each definition shown whole by the rule has a rail beside its line numbers (ChangesDiff).
+  const rails = useMemo(
+    (): readonly ScopeRail[] =>
+      shownScopesPlan.map(({ definition }) => ({ start: definition.start, end: definition.end, signatureEnd: definition.signatureEnd })),
+    [shownScopesPlan]
+  );
+  const collapseScope = (key: string) => {
+    if (sectionRef.current) keepDiffLineInView(sectionRef.current);
+    setCollapsed({ key: revealKey, value: new Set([...collapsedKeys, key]) });
+  };
   // Until the definitions arrive, each hunk's location is its patch header's text, as GitHub shows it, or the file.
   const structurePending =
     structureRead.state === 'loading' || (structureRead.state === 'idle' && !!definitions.parsing);
@@ -244,26 +301,13 @@ export function useDiffFileModel({
     // A topic shows lines outside what it saved once both sides say they are unchanged.
     if (partial) readAfter();
     if (plan.kind === 'whole') {
-      setGapReveals({ key: revealKey, value: revealSpan(reveals, gaps, plan.start, plan.end) });
+      setGapReveals({ key: revealKey, value: revealSpan(userReveals, gaps, plan.start, plan.end) });
       return;
     }
-    const next = pinLines(hunks, gaps, reveals, plan.start, plan.end);
+    const next = pinLines(hunks, gaps, userReveals, plan.start, plan.end);
     if (next.pin) setPinned({ key: revealKey, value: [...pins, next.pin] });
     setGapReveals({ key: revealKey, value: next.reveals });
   };
-  // Short definitions show whole once their scopes are known, keeping the line at the top of the view in place.
-  const autoOpened = useRef<string>(undefined);
-  useEffect(() => {
-    if (!scopes || !gaps || autoOpened.current === revealKey) return;
-    autoOpened.current = revealKey;
-    let next = reveals;
-    for (const scope of scopes.values())
-      if (scope.opens && scope.reveal?.kind === 'whole') next = revealSpan(next, gaps, scope.reveal.start, scope.reveal.end);
-    if (next === reveals) return;
-    if (partial) readAfter();
-    if (sectionRef.current) keepDiffLineInView(sectionRef.current);
-    setGapReveals({ key: revealKey, value: next });
-  }, [scopes]);
   const lineCount = useMemo(
     () =>
       Math.max(
@@ -318,6 +362,8 @@ export function useDiffFileModel({
     scopeNote,
     scopeAt,
     showDefinition,
+    rails,
+    collapseScope,
     gapStatus,
     revealLines,
     canReveal,

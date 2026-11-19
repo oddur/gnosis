@@ -812,6 +812,8 @@ export function PrFileInspection({
                   scopeNote={model.scopeNote}
                   scopeAt={model.scopeAt}
                   onShowDefinition={model.showDefinition}
+                  rails={model.rails}
+                  onCollapseScope={model.collapseScope}
                   stickyUnder={headerRef}
                   onRetry={() => model.readAfter(true)}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}

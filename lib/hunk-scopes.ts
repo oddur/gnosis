@@ -4,7 +4,6 @@ import {
   definitionReveal,
   enclosingDefinition,
   enclosingPoint,
-  opensByDefault,
   type DefinitionKind,
   type DefinitionReveal,
   type SyntaxDefinition,
@@ -21,8 +20,11 @@ export interface HunkScope {
   side: 'after' | 'before';
   /** New lines still hidden that "Show whole function" reveals, or undefined when they all show. */
   reveal?: DefinitionReveal;
-  /** The definition is short enough to show whole without being asked. */
-  opens: boolean;
+  /**
+   * The definition of the chain that shows whole by show scope's rule (lib/show-scope.ts): this one, or one around it.
+   * The hunk's header offers to collapse it back to plain context.
+   */
+  shown?: { key: string; definition: SyntaxDefinition };
   /**
    * Every definition around the hunk, outermost first and ending with `definition`, each with what clicking its crumb
    * reveals (undefined when it all shows). Hunks that only delete use the old file's chain, in new line numbers.
@@ -96,7 +98,6 @@ export function provisionalScopes(parts: GapPart[], patch: string | undefined): 
     scopes.set(part.key, {
       definition,
       side: 'after',
-      opens: false,
       chain: text ? [{ definition, provisional: true }] : [],
       provisional: true,
     });
@@ -197,7 +198,6 @@ export function hunkScopes(
       definition,
       side,
       reveal: crumbs.at(-1)?.reveal,
-      opens: opensByDefault(definition),
       chain: crumbs,
     });
   }
@@ -218,6 +218,8 @@ const NOUNS: Partial<Record<DefinitionKind, string>> = {
   module: 'module',
   key: 'entry',
 };
+/** The kind of a definition in words: "function", "impl block", "class". */
+export const definitionNoun = (definition: Pick<SyntaxDefinition, 'kind'>) => NOUNS[definition.kind] ?? 'definition';
 /** The action's text, such as "Show whole function". */
 export const revealLabel = (scope: Pick<HunkScope, 'definition' | 'reveal'>) =>
   scope.reveal?.kind === 'signature'
