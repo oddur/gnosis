@@ -788,7 +788,8 @@ function PrSummaryContent({
 
 /**
  * Merge readiness in the Conversation band (#418): the verdict and its reasons on one line, so the description and
- * the first feedback start above a laptop's fold. Details opens the full reasons and the PR's merge actions.
+ * the first feedback start above a laptop's fold. The PR's actions stay on that line, never behind a toggle; Details
+ * opens the full reasons and the actions' notes.
  */
 function BandReadiness({ children, reveal }: { children: ReactNode; /** A merge landing shows the actions. */ reveal?: boolean }) {
   const [opened, setOpen] = useState(false);
@@ -797,7 +798,7 @@ function BandReadiness({ children, reveal }: { children: ReactNode; /** A merge 
     <div className="band-readiness" data-open={open || undefined}>
       {children}
       <Button variant="ghost" size="sm" className="band-readiness-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? 'Less' : 'Details and actions'}
+        {open ? 'Less' : 'Details'}
       </Button>
     </div>
   );

@@ -5672,11 +5672,14 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-timeline-workspace[data-page] .feedback-toolbar button[data-size=sm] { padding-inline:8px; }
 @container (min-width:1101px) and (max-width:1400px) { .conversation-grid[data-sidebar] { grid-template-columns:minmax(0,1fr) 260px; gap:0 24px; } }
 
-/* The band's readiness, collapsed: verdict, checked time and reasons in one line; Details opens the rest. */
+/* The band's readiness, collapsed: verdict, checked time and reasons, then the PR's actions, on one line where they fit;
+   at narrower widths the actions wrap under the reasons. Details opens the full reasons and the actions' notes. */
 .band-readiness { display:flex; align-items:flex-start; gap:4px 12px; }
 .band-readiness > :first-child { flex:1; min-width:0; }
-.band-readiness:not([data-open]) .pr-summary-decision > :not(.pr-merge-detail), .band-readiness:not([data-open]) .pr-merge-requirements { display:none; }
-.band-readiness:not([data-open]) .pr-merge-detail { display:flex; align-items:baseline; gap:4px 12px; min-width:0; }
+.band-readiness:not([data-open]) .pr-summary-decision > :not(.pr-merge-detail, .pr-actions), .band-readiness:not([data-open]) .pr-merge-requirements { display:none; }
+.band-readiness:not([data-open]) .pr-merge-detail { display:flex; align-items:baseline; gap:4px 12px; flex:1 1 20rem; min-width:0; }
+.band-readiness:not([data-open]) .pr-actions .pr-action-note:not([role]) { display:none; }
+.band-readiness .pr-action-controls { gap:6px; }
 .band-readiness:not([data-open]) .pr-summary-decision-heading { flex:none; }
 .band-readiness:not([data-open]) .pr-merge-detail ul { display:block; flex:1; min-width:0; margin:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--muted-foreground); }
 .band-readiness:not([data-open]) .pr-merge-detail li { display:inline; }
@@ -5690,7 +5693,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 }
 /* Collapsed readiness never widens the band: its one line shrinks and ellipsizes. */
 .band-readiness .pr-readiness { min-width:0; overflow:hidden; }
-.band-readiness:not([data-open]) .pr-summary-decision { display:block; min-width:0; }
+.band-readiness:not([data-open]) .pr-summary-decision { display:flex; flex-direction:row; flex-wrap:wrap; align-items:center; gap:6px 16px; min-width:0; }
 /* Nothing on the Conversation page scrolls sideways; wide content wraps or scrolls inside its own block. */
 .conversation-page { overflow-x:hidden; }
 .feedback-code-thread .diff-gap :is(.diff-gap-message, .diff-gap-trailing) { white-space:normal; }
