@@ -223,7 +223,7 @@ if (parityScenario) {
 // `?breadcrumb-nav` files, so the matrix's core checks run in a topic as in Changes.
 if (new URLSearchParams(location.search).has('breadcrumb-nav')) {
   const files = breadcrumbNavFiles.filter((file) => NAV_TOPIC_FILES.includes(file.path));
-  review.changedFiles = files.map((file) => ({ filename: prefix + file.path, status: 'modified', additions: file.additions, deletions: file.deletions }));
+  review.changedFiles = files.map((file) => ({ filename: prefix + file.path, status: file.status, additions: file.additions, deletions: file.deletions }));
   review.slides[0] = {
     ...review.slides[0],
     title: 'Schedule steps, show short scopes, outline the changes',

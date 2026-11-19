@@ -138,6 +138,9 @@ void app.whenReady().then(async () => {
           chips:[...o.querySelectorAll('.diff-outline-chip[data-change]')].map(c=>c.dataset.change+':'+c.querySelector('.diff-outline-go').textContent.trim()+(c.dataset.viewed?':viewed':'')),
           rows:[...o.querySelectorAll('.diff-outline-row')].map(r=>r.dataset.change+':'+r.querySelector('.diff-outline-go').textContent.trim()+':'+(r.querySelector('input').checked?'ticked':'open')),
           progress:o.querySelector('.diff-outline-end')?.textContent.trim()??null,height:Math.round(o.querySelector('.diff-outline-bar').getBoundingClientRect().height)}};
+      // Every contents read, by path: added and deleted files read nothing, their patch is the file.
+      if(!window.navReads){window.navReads=[];for(const name of ['getPrChangeFile','getPrChangeFileAfter']){const read=window.electronAPI[name];
+        window.electronAPI[name]=(r,...rest)=>{window.navReads.push(r.path);return read(r,...rest)}}}
       void 0`);
   const select = async (name: string) => {
     await js(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`);
@@ -711,6 +714,39 @@ void app.whenReady().then(async () => {
     await sleep(400);
     await js(`window.q(${JSON.stringify(outline)})?.querySelector('.diff-outline-toggle[aria-expanded=true]')?.click()`);
 
+    // ═══ Added and deleted files (#394): the outline and the pinned breadcrumb, from the patch, with no read ═══
+    const wholeFiles = [
+      {
+        file: 'building_object_position_response.rs',
+        path: 'src/nav/building_object_position_response.rs',
+        summary: 'Adds 1 struct and 1 impl block',
+        pin: 'let value_20 = 20 as f32;',
+        innermost: 'Go to function new',
+      },
+      { file: 'panel.ts', path: 'src/nav/panel.ts', summary: 'Adds 1 class', pin: 'size += 12; // resize', innermost: 'Go to function resize' },
+      { file: 'job_runner.ts', path: 'src/nav/job_runner.ts', summary: 'Removes 2 functions', pin: 'input -= 12; // stop', innermost: 'Go to function stopJob', deleted: true },
+    ];
+    for (const w of wholeFiles) {
+      const root = rowOf(w.path);
+      await select(w.file);
+      await wait(`window.outline(${JSON.stringify(root)})?.chips.length>0`);
+      const bar = await js<{ summary: string; chips: string[] }>(`window.outline(${JSON.stringify(root)})`);
+      console.log(`${w.file}: outline`, JSON.stringify(bar));
+      assert.equal(bar.summary, w.summary, `${w.file}: the outline says what the file adds or removes`);
+      const change = w.deleted ? 'removed' : 'added';
+      assert.ok(bar.chips.every((chip) => chip.startsWith(`${change}:`)), `${w.file}: every symbol is ${change}: ${JSON.stringify(bar.chips)}`);
+      await setWidth(root, '680px');
+      const pinned = await pin(root, STREAM, w.pin, !!w.deleted);
+      console.log(`${w.file}: pinned`, JSON.stringify({ crumbs: pinned.crumbs, live: pinned.live }));
+      assert.ok(pinned.stuck && pinned.live === 'scope', `${w.file}: the one hunk's header pins and follows the reader`);
+      assert.equal(pinned.crumbs.at(-1), w.innermost, `${w.file}: the pinned breadcrumb names where the reader is`);
+    }
+    assert.deepEqual(
+      await js<string[]>(`window.navReads.filter(p=>${JSON.stringify(wholeFiles.map((w) => w.path))}.includes(p))`),
+      [],
+      'Added and deleted files read nothing: the patch is the file'
+    );
+
     // ═══ Performance: scrolling while the pinned header follows the reader, with rails and the outline on the page ═══
     await select('far_mod.rs');
     const scrolling = await js<{ frames: number; p50: number; max: number; longTasks: number[]; places: number }>(`(async()=>{
@@ -749,6 +785,13 @@ void app.whenReady().then(async () => {
     await wait(`window.outline(${JSON.stringify(slideOutline)})?.chips.length===4||window.outline(${JSON.stringify(slideOutline)})?.rows.length===4`, 500);
     const topicOutline = await js<{ summary: string; chips: string[] }>(`window.outline(${JSON.stringify(slideOutline)})`);
     assert.equal(topicOutline.summary, 'Changes 4 functions', 'Topic: the same outline');
+    // An added file in a slide: its outline from the topic's patch, as in Changes.
+    const slidePanel = topicFile('src/nav/panel.ts');
+    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slidePanel)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    await wait(`window.outline(${JSON.stringify(slidePanel)})?.chips.length>0||window.outline(${JSON.stringify(slidePanel)})?.rows.length>0`, 500);
+    assert.equal((await js<{ summary: string }>(`window.outline(${JSON.stringify(slidePanel)})`)).summary, 'Adds 1 class', 'Topic: an added file’s outline');
+    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideOutline)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    await settle();
     clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(slideOutline)},'.diff-outline-chip[data-change=modified] .diff-outline-go','${DOC}')`));
     await landed(slideOutline);
     const topicLanding = await state(slideOutline);
