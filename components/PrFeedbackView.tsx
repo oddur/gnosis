@@ -12,17 +12,27 @@ import {
   ChevronRight,
   CircleAlert,
   CircleCheck,
+  Bot,
+  CalendarDays,
   Copy,
+  Eye,
+  GitCompareArrows,
   GitCommitHorizontal,
+  GitPullRequest,
+  MessageSquareDot,
+  MessageSquareWarning,
+  MessagesSquare,
+  BellDot,
   GitMerge,
   GitPullRequestClosed,
   History,
   MessageSquare,
   RefreshCw,
   Send,
-  UserPlus,
   X,
+  type LucideIcon,
 } from 'lucide-react';
+import { Timeline, TimelineContent, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from './ui/timeline';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from './ui/button';
 import { GitHubAuthor } from './GitHubAuthor';
@@ -63,7 +73,75 @@ import { optimisticWrite } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
 
 type Filter = 'all' | 'unresolved' | 'unread' | 'mentions';
-type Row = TimelineEntry | { type: 'divider'; key: string; at: string };
+type Row =
+  | TimelineEntry
+  | { type: 'divider'; key: string; at: string }
+  | { type: 'day'; key: string; at: string; label: string; gap?: string };
+/** Rows that hold no item: markers on the rail that the keyboard steps over. */
+const isMarker = (row: Row): row is Extract<Row, { type: 'divider' | 'day' }> => row.type === 'divider' || row.type === 'day';
+
+/**
+ * What a rail node says, in words, with its icon and tone. The tone repeats the words for the eye; the label is the
+ * node's accessible name and tooltip, and the title beside it says the same in a sentence.
+ */
+type NodeKind =
+  | 'description' | 'comment' | 'approved' | 'changes-requested' | 'reviewed' | 'dismissed'
+  | 'thread-unresolved' | 'thread-resolved' | 'thread-outdated' | 'commits' | 'force-push'
+  | 'review-requested' | 'merged' | 'closed' | 'reopened' | 'bot' | 'new' | 'day' | 'earlier';
+const NODES: Record<NodeKind, { icon?: LucideIcon; tone: string; label: string }> = {
+  description: { icon: GitPullRequest, tone: 'neutral', label: 'Opened the PR' },
+  comment: { icon: MessageSquare, tone: 'neutral', label: 'Comment' },
+  approved: { icon: CircleCheck, tone: 'success', label: 'Approved' },
+  'changes-requested': { icon: MessageSquareWarning, tone: 'danger', label: 'Changes requested' },
+  reviewed: { icon: MessagesSquare, tone: 'neutral', label: 'Review' },
+  dismissed: { icon: MessagesSquare, tone: 'quiet', label: 'Dismissed review' },
+  'thread-unresolved': { icon: MessageSquareDot, tone: 'review', label: 'Unresolved code thread' },
+  'thread-resolved': { icon: Check, tone: 'success', label: 'Resolved code thread' },
+  'thread-outdated': { icon: History, tone: 'warning', label: 'Outdated code thread' },
+  commits: { icon: GitCommitHorizontal, tone: 'quiet', label: 'Commits pushed' },
+  'force-push': { icon: GitCompareArrows, tone: 'quiet', label: 'Force-pushed' },
+  'review-requested': { icon: Eye, tone: 'quiet', label: 'Review requested' },
+  merged: { icon: GitMerge, tone: 'info', label: 'Merged' },
+  closed: { icon: GitPullRequestClosed, tone: 'danger', label: 'Closed' },
+  reopened: { icon: GitPullRequest, tone: 'success', label: 'Reopened' },
+  bot: { icon: Bot, tone: 'quiet', label: 'Bot comments' },
+  new: { icon: BellDot, tone: 'review', label: 'New since you last looked' },
+  day: { icon: CalendarDays, tone: 'quiet', label: 'Day' },
+  earlier: { icon: History, tone: 'quiet', label: 'Earlier events' },
+};
+/** One row's parts: its node, the sentence beside it, small state badges, quiet meta, actions, and the card below. */
+interface Parts {
+  node: NodeKind;
+  title: ReactNode;
+  badges?: ReactNode;
+  meta?: ReactNode;
+  actions?: ReactNode;
+  body?: ReactNode;
+  /** Bots and events: muted title, no card. */
+  quiet?: boolean;
+  /** Something in it is new to the reader: the node carries a dot. */
+  unread?: boolean;
+}
+const DAY_MS = 86_400_000;
+const dayOf = (at: string) => new Date(at).toDateString();
+function dayLabel(at: string) {
+  const date = new Date(at);
+  return date.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+  });
+}
+/** A state badge: words first, tone second. */
+function Badge({ tone, children }: { tone: 'new' | 'review' | 'success' | 'warning' | 'danger' | 'neutral'; children: ReactNode }) {
+  return (
+    <span className="feedback-badge" data-tone={tone}>
+      {tone === 'new' && <span className="pr-unread-dot" aria-hidden="true" />}
+      {children}
+    </span>
+  );
+}
 
 const excerpt = (item: FeedbackItem) =>
   (item.comments[0]?.isMinimized ? minimizedLabel(item.comments[0]) : plainCommentText(item.comments[0]?.body ?? '')).slice(0, 160) ||
@@ -71,7 +149,6 @@ const excerpt = (item: FeedbackItem) =>
     'Commented on this PR');
 const fileName = (path: string) => path.split('/').at(-1) || path;
 const lineOf = (item: FeedbackItem) => item.thread?.line ?? diffHunkAnchor(item.comments[0]?.diffHunk)?.line;
-const authorOf = (item: FeedbackItem) => item.comments[0]?.author?.login ?? 'Deleted account';
 const isBot = (login?: string, type?: string) => type === 'Bot' || /\[bot\]$/i.test(login ?? '');
 const short = (sha?: string) => sha?.slice(0, 7) ?? '';
 /** How long an item stays mostly on screen before it counts as read. */
@@ -100,9 +177,6 @@ function Source({ member, show }: { member: ReviewMember; show: boolean }) {
       <SubjectIcon kind="pr" pr={member} />#{member.number}
     </span>
   ) : null;
-}
-function UnreadDot({ unread }: { unread: boolean }) {
-  return unread ? <span className="pr-unread-dot" role="img" aria-label="Unread" /> : null;
 }
 
 /**
@@ -217,10 +291,24 @@ export function PrFeedbackView({
     // Only when something before it was read: a first visit has nothing to divide.
     divider.current = first > 0 && full.slice(0, first).some((entry) => entryItems(entry).length > 0) ? full[first].key : null;
   }
-  const rows: Row[] = entries.flatMap((entry): Row[] =>
-    entry.key === divider.current ? [{ type: 'divider', key: 'new-since', at: entry.at }, entry] : [entry]
-  );
-  const navigable = rows.filter((row) => row.type !== 'divider');
+  // Day markers part the rail by day; a jump of two days or more says how long the conversation paused.
+  const dividerKey = divider.current;
+  const rows = useMemo(() => {
+    const result: Row[] = [];
+    let previous: string | undefined;
+    for (const entry of entries) {
+      if (!previous || dayOf(previous) !== dayOf(entry.at)) {
+        const days = previous ? Math.round((new Date(dayOf(entry.at)).getTime() - new Date(dayOf(previous)).getTime()) / DAY_MS) : 0;
+        result.push({ type: 'day', key: `day:${dayOf(entry.at)}`, at: entry.at, label: dayLabel(entry.at), gap: days >= 2 ? `${days} days later` : undefined });
+      }
+      if (entry.key === dividerKey) result.push({ type: 'divider', key: 'new-since', at: entry.at });
+      result.push(entry);
+      previous = entry.at;
+    }
+    return result;
+  }, [entries, dividerKey]);
+  const newFrom = rows.findIndex((row) => row.type === 'divider');
+  const navigable = rows.filter((row) => !isMarker(row));
   const activeIndex = navigable.findIndex((row) => row.key === activeKey);
   const virtual = useVirtualizer({
     count: rows.length,
@@ -228,7 +316,8 @@ export function PrFeedbackView({
     estimateSize: (index) => {
       const row = rows[index];
       if (row.type === 'item') return row.item.thread ? (row.item.thread.isResolved ? 48 : 360) : 140;
-      if (row.type === 'commits') return 40 + row.commits.length * 28;
+      if (row.type === 'commits') return 52 + row.commits.length * 28;
+      if (row.type === 'day') return 56;
       return row.type === 'description' ? 200 : 44;
     },
     overscan: 4,
@@ -266,13 +355,13 @@ export function PrFeedbackView({
   function nextUnresolved(from = activeIndex, skip?: FeedbackItem) {
     const order = [...navigable.slice(from + 1), ...navigable.slice(0, Math.max(0, from + 1))];
     return order
-      .flatMap((row) => entryItems(row))
+      .flatMap((row) => (isMarker(row) ? [] : entryItems(row)))
       .find((item) => needsResponse(item) && (!skip || feedbackKey(item) !== feedbackKey(skip)));
   }
   const latest = useRef({ nextUnresolved, select });
   latest.current = { nextUnresolved, select };
   function resolvedNext(item: FeedbackItem) {
-    const at = navigable.findIndex((row) => entryItems(row).some((i) => feedbackKey(i) === feedbackKey(item)));
+    const at = navigable.findIndex((row) => !isMarker(row) && entryItems(row).some((i) => feedbackKey(i) === feedbackKey(item)));
     const next = latest.current.nextUnresolved(at, item);
     if (next) latest.current.select(next);
     else {
@@ -469,175 +558,318 @@ export function PrFeedbackView({
   };
   const toggle = (key: string) =>
     setExpanded((current) => (current.includes(key) ? current.filter((k) => k !== key) : [...current, key]));
-  const renderRow = (row: Row): ReactNode => {
+  const pr = (member: ReviewMember) => <Source member={member} show={stack} />;
+  const when = (at: string) => <Time at={at} />;
+  const itemBadges = (item: FeedbackItem) => (
+    <>
+      {isUnread(item) && <Badge tone="new">New</Badge>}
+      {mentions(item) && (
+        <Badge tone="review">
+          <AtSign size={11} aria-hidden="true" />
+          Mentions you
+        </Badge>
+      )}
+    </>
+  );
+  const itemActions = (item: FeedbackItem, extra?: ReactNode) => (
+    <>
+      {extra}
+      <Button variant="ghost" size="sm" onClick={() => void markUnread(item)} disabled={isUnread(item)}>
+        Mark unread
+      </Button>
+      {item.comments[0]?.url && (
+        <Button variant="ghost" size="sm" onClick={() => void window.electronAPI.openExternal(item.comments.at(-1)?.url || item.comments[0].url)}>
+          On GitHub
+        </Button>
+      )}
+    </>
+  );
+  const Actor = ({ login, bot }: { login: string; bot?: boolean }) => (
+    <span className="timeline-actor">
+      <GitHubAuthor login={login} bot={bot} />
+    </span>
+  );
+  const renderRow = (row: Row): Parts => {
     switch (row.type) {
+      case 'day':
+        return { node: 'day', title: row.label, meta: row.gap && <span className="feedback-gap-label">{row.gap}</span>, quiet: true };
       case 'divider':
-        return (
-          <div className="feedback-new-since" role="separator" aria-label="New since you last looked">
-            <span>New since you last looked</span>
-          </div>
-        );
+        return { node: 'new', title: 'New since you last looked', quiet: true };
       case 'description':
-        return (
-          <article className="feedback-entry-card feedback-description">
-            <header className="feedback-entry-header">
-              <GitHubAuthor login={row.member.author} />
-              <span>opened this PR</span>
-              <Source member={row.member} show={stack} />
-              <Time at={row.at} />
-            </header>
-            <div className="feedback-entry-body">
-              <Markdown className="github-comment-body" githubSource={{ repo: row.member.repo, ref: row.member.headSha }}>
-                {row.member.description}
-              </Markdown>
+        return {
+          node: 'description',
+          title: (
+            <>
+              <Actor login={row.member.author} /> opened this PR
+            </>
+          ),
+          meta: (
+            <>
+              {pr(row.member)}
+              {when(row.at)}
+            </>
+          ),
+          body: (
+            <div className="feedback-entry-card">
+              <div className="feedback-entry-body">
+                <Markdown className="github-comment-body" githubSource={{ repo: row.member.repo, ref: row.member.headSha }}>
+                  {row.member.description}
+                </Markdown>
+              </div>
             </div>
-          </article>
-        );
+          ),
+        };
       case 'earlier':
-        return (
-          <p className="feedback-event">
-            <History size={14} aria-hidden="true" />
-            Earlier commits and events are on GitHub.
-            <a href={row.member.url} onClick={(e) => { e.preventDefault(); void window.electronAPI.openExternal(row.member.url); }}>
+        return {
+          node: 'earlier',
+          quiet: true,
+          title: 'Earlier commits and events are on GitHub',
+          actions: (
+            <Button variant="ghost" size="sm" onClick={() => void window.electronAPI.openExternal(row.member.url)}>
               Open the PR
-            </a>
-          </p>
-        );
+            </Button>
+          ),
+        };
       case 'commits':
-        return (
-          <div className="feedback-commits">
-            <p className="feedback-event">
-              <GitCommitHorizontal size={14} aria-hidden="true" />
-              <strong>{row.author ?? 'Someone'}</strong>
+        return {
+          node: 'commits',
+          quiet: true,
+          title: (
+            <>
+              <strong className="timeline-actor-name">{row.author ?? 'Someone'}</strong>{' '}
               {row.commits.length === 1 ? 'pushed a commit' : `pushed ${row.commits.length} commits`}
-              <Source member={row.member} show={stack} />
-              <Time at={row.commits.at(-1)?.at ?? row.at} />
-            </p>
-            <ul>
+            </>
+          ),
+          meta: (
+            <>
+              {pr(row.member)}
+              {when(row.commits.at(-1)?.at ?? row.at)}
+            </>
+          ),
+          body: (
+            <ul className="feedback-commits">
               {row.commits.map((commit) => (
                 <li key={commit.id}>
                   <span className="feedback-commit-message" title={commit.message}>{commit.message}</span>
                   <code>{short(commit.sha)}</code>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Copy commit ${short(commit.sha)}`}
-                    title="Copy commit SHA"
-                    onClick={() => void navigator.clipboard.writeText(commit.sha)}
-                  >
+                  <Button variant="ghost" size="icon-sm" aria-label={`Copy commit ${short(commit.sha)}`} title="Copy commit SHA" onClick={() => void navigator.clipboard.writeText(commit.sha)}>
                     <Copy size={13} />
                   </Button>
                 </li>
               ))}
             </ul>
-          </div>
-        );
+          ),
+        };
       case 'event': {
         const { event } = row;
-        const Icon = event.kind === 'merged' ? GitMerge : event.kind === 'closed' ? GitPullRequestClosed : event.kind === 'review-requested' ? UserPlus : History;
-        return (
-          <p className="feedback-event" data-event-kind={event.kind}>
-            <Icon size={14} aria-hidden="true" />
-            <strong>{event.actor ?? 'Someone'}</strong>
-            {event.kind === 'force-push' ? (
-              <span>
-                force-pushed{event.before && event.after ? <> from <code>{short(event.before)}</code> to <code>{short(event.after)}</code></> : ''}
-              </span>
-            ) : event.kind === 'review-requested' ? (
-              <span>requested a review from <strong>{event.reviewer}</strong></span>
-            ) : (
-              <span>{event.kind === 'merged' ? 'merged this PR' : event.kind === 'closed' ? 'closed this PR' : 'reopened this PR'}</span>
-            )}
-            <Source member={row.member} show={stack} />
-            <Time at={event.at} />
-          </p>
-        );
+        return {
+          node: event.kind,
+          quiet: true,
+          title: (
+            <>
+              <strong className="timeline-actor-name">{event.actor ?? 'Someone'}</strong>{' '}
+              {event.kind === 'force-push' ? (
+                <>
+                  force-pushed
+                  {event.before && event.after ? (
+                    <>
+                      {' '}from <code>{short(event.before)}</code> to <code>{short(event.after)}</code>
+                    </>
+                  ) : null}
+                </>
+              ) : event.kind === 'review-requested' ? (
+                <>
+                  requested a review from <strong className="timeline-actor-name">{event.reviewer}</strong>
+                </>
+              ) : event.kind === 'merged' ? (
+                'merged this PR'
+              ) : event.kind === 'closed' ? (
+                'closed this PR'
+              ) : (
+                'reopened this PR'
+              )}
+            </>
+          ),
+          meta: (
+            <>
+              {pr(row.member)}
+              {when(event.at)}
+            </>
+          ),
+        };
       }
       case 'bots': {
         const open = expanded.includes(row.key);
         const unread = row.items.some(isUnread);
-        return (
-          <div className="feedback-bots" data-open={open || undefined}>
-            <button className="feedback-bots-summary" aria-expanded={open} onClick={() => toggle(row.key)}>
-              <ChevronRight size={14} aria-hidden="true" className="feedback-chevron" />
-              <strong>{row.login.replace(/\[bot\]$/i, '')}</strong>
-              <span className="feedback-bot-tag">bot</span>
-              <span>· {row.items.length} comments:</span>
-              <span className="feedback-bots-text">{botSummary(row.items.map((item) => excerpt(item)))}</span>
-              <UnreadDot unread={unread} />
-              <Time at={row.items.at(-1)?.comments[0]?.createdAt ?? row.at} />
-            </button>
-            {open && row.items.map((item) => (
-              <MessageEntry key={item.id} item={item} quiet unread={isUnread(item)} stack={stack} onMarkUnread={() => void markUnread(item)}
-                onReply={(body) => replyToFeedback(item, body)} />
-            ))}
-          </div>
-        );
+        return {
+          node: 'bot',
+          quiet: true,
+          unread,
+          title: (
+            <>
+              <strong className="timeline-actor-name">{row.login.replace(/\[bot\]$/i, '')}</strong>{' '}
+              <span className="feedback-bot-tag">bot</span> · {row.items.length} comments
+            </>
+          ),
+          badges: unread && <Badge tone="new">New</Badge>,
+          meta: when(row.items.at(-1)?.comments[0]?.createdAt ?? row.at),
+          body: (
+            <div className="feedback-bots" data-open={open || undefined}>
+              <button className="feedback-bots-summary" aria-expanded={open} onClick={() => toggle(row.key)}>
+                <ChevronRight size={14} aria-hidden="true" className="feedback-chevron" />
+                <span className="feedback-bots-text">{botSummary(row.items.map((item) => excerpt(item)))}</span>
+                <span className="feedback-bots-hint">{open ? 'Hide' : 'Show all'}</span>
+              </button>
+              {open &&
+                row.items.map((item) => (
+                  <MessageEntry
+                    key={item.id}
+                    item={item}
+                    quiet
+                    header={
+                      <div className="feedback-message-header">
+                        <span>{when(item.comments[0].createdAt)}</span>
+                        {isUnread(item) && <Badge tone="new">New</Badge>}
+                        <span className="timeline-actions">{itemActions(item)}</span>
+                      </div>
+                    }
+                    onReply={(body) => replyToFeedback(item, body)}
+                  />
+                ))}
+            </div>
+          ),
+        };
       }
       case 'item': {
         const { item } = row;
-        if (!item.thread)
-          return (
-            <MessageEntry
-              item={item}
-              quiet={row.bot}
-              unread={isUnread(item)}
-              stack={stack}
-              mention={mentions(item)}
-              onMarkUnread={() => void markUnread(item)}
-              onReply={(body) => replyToFeedback(item, body)}
-              related={item.relatedThreads.flatMap((id) => {
-                const thread = all.find((r) => r.member.url === item.member.url && r.id === id);
-                return thread ? [thread] : [];
-              })}
-              onSelect={select}
-            />
-          );
+        const author = item.comments[0]?.author;
+        const actor = author ? <Actor login={author.login} bot={isBot(author.login, author.__typename)} /> : <strong>Deleted account</strong>;
+        if (!item.thread) {
+          const review = item.kind === 'review';
+          const node: NodeKind = row.bot
+            ? 'bot'
+            : !review
+              ? 'comment'
+              : item.state === 'APPROVED'
+                ? 'approved'
+                : item.state === 'CHANGES_REQUESTED'
+                  ? 'changes-requested'
+                  : item.state === 'DISMISSED'
+                    ? 'dismissed'
+                    : 'reviewed';
+          const verb = !review
+            ? 'commented'
+            : item.state === 'APPROVED'
+              ? 'approved these changes'
+              : item.state === 'CHANGES_REQUESTED'
+                ? 'requested changes'
+                : item.state === 'DISMISSED'
+                  ? 'had a review dismissed'
+                  : 'reviewed';
+          const event = review && !item.comments[0]?.body.trim();
+          return {
+            node,
+            quiet: row.bot,
+            unread: isUnread(item),
+            title: (
+              <>
+                {actor} {verb}
+              </>
+            ),
+            badges: (
+              <>
+                {review && <Verdict state={item.state} />}
+                {itemBadges(item)}
+              </>
+            ),
+            meta: (
+              <>
+                {pr(item.member)}
+                {item.comments[0]?.sending ? <span className="github-sending" role="status">Sending…</span> : when(item.comments[0]?.createdAt ?? row.at)}
+              </>
+            ),
+            actions: !event && itemActions(item),
+            body: event ? undefined : (
+              <MessageEntry
+                item={item}
+                quiet={row.bot}
+                onReply={(body) => replyToFeedback(item, body)}
+                related={item.relatedThreads.flatMap((id) => {
+                  const thread = all.find((r) => r.member.url === item.member.url && r.id === id);
+                  return thread ? [thread] : [];
+                })}
+                onSelect={select}
+              />
+            ),
+          };
+        }
         const thread = chronologicalThread(item.thread);
         const open = !thread.isResolved || !!thread.sending || expanded.includes(row.key);
-        const unread = isUnread(item);
-        if (!open)
-          return (
-            <button className="feedback-resolved-summary" aria-expanded={false} onClick={() => toggle(row.key)}>
-              <ChevronRight size={14} aria-hidden="true" className="feedback-chevron" />
-              <span className="github-thread-resolution">
-                <Check size={13} aria-hidden="true" />
-                Resolved
-              </span>
-              <span>
-                · {authorOf(item)} on <code>{fileName(thread.path)}{lineOf(item) != null ? `:${lineOf(item)}` : ''}</code> ·{' '}
-                {thread.comments.length} {thread.comments.length === 1 ? 'comment' : 'comments'}
-                {thread.resolvedBy ? ` · resolved by ${thread.resolvedBy.login}` : ''}
-              </span>
-              <UnreadDot unread={unread} />
-              <Source member={item.member} show={stack} />
-              <Time at={item.comments.at(-1)?.createdAt ?? row.at} />
-            </button>
-          );
-        return (
-          <ThreadEntry
-            item={item}
-            thread={thread}
-            preferences={preferences}
-            discussion={discussion}
-            unread={unread}
-            mention={mentions(item)}
-            stack={stack}
-            collapsible={thread.isResolved}
-            onCollapse={() => toggle(row.key)}
-            onMarkUnread={() => void markUnread(item)}
-            onSource={() => onSource(item)}
-            onResolvedNext={() => resolvedNext(item)}
-            onResolving={() =>
-              // Resolving here keeps the thread open in place, before GitHub answers; it collapses on the next visit.
-              setExpanded((current) => (current.includes(row.key) ? current : [...current, row.key]))
-            }
-            onResolved={(next) => {
-              if (next.viewerCanUnresolve) setLastResolved(item);
-            }}
-            onReopened={() => setLastResolved((current) => (current?.id === item.id ? undefined : current))}
-          />
+        const location = `${fileName(thread.path)}${lineOf(item) != null ? `:${lineOf(item)}` : ''}`;
+        const toggleButton = thread.isResolved && (
+          <Button variant="ghost" size="sm" className="feedback-resolved-summary" aria-expanded={open} onClick={() => toggle(row.key)}>
+            <ChevronRight size={14} aria-hidden="true" className="feedback-chevron" />
+            {open ? 'Hide conversation' : 'Show conversation'}
+          </Button>
         );
+        return {
+          unread: isUnread(item),
+          node: thread.isResolved ? 'thread-resolved' : thread.isOutdated ? 'thread-outdated' : 'thread-unresolved',
+          title: (
+            <>
+              {actor} commented on <code className="timeline-object" title={thread.path}>{location}</code>
+            </>
+          ),
+          badges: (
+            <>
+              {thread.isResolved ? (
+                <Badge tone="success">
+                  <Check size={11} aria-hidden="true" />
+                  Resolved
+                </Badge>
+              ) : isUnresolvedThread(thread) ? (
+                <Badge tone="review">Unresolved</Badge>
+              ) : (
+                <Badge tone="neutral">Not submitted</Badge>
+              )}
+              {thread.isOutdated && <Badge tone="warning">Outdated</Badge>}
+              {itemBadges(item)}
+              {!open && (
+                <span className="timeline-meta-text">
+                  {thread.comments.length} {thread.comments.length === 1 ? 'comment' : 'comments'}
+                  {thread.resolvedBy ? ` · resolved by ${thread.resolvedBy.login}` : ''}
+                </span>
+              )}
+            </>
+          ),
+          meta: (
+            <>
+              {pr(item.member)}
+              {when(item.comments.at(-1)?.createdAt ?? row.at)}
+            </>
+          ),
+          actions: toggleButton,
+          body: open && (
+            <ThreadEntry
+              item={item}
+              thread={thread}
+              preferences={preferences}
+              discussion={discussion}
+              unread={isUnread(item)}
+              onMarkUnread={() => void markUnread(item)}
+              onSource={() => onSource(item)}
+              onResolvedNext={() => resolvedNext(item)}
+              onResolving={() =>
+                // Resolving here keeps the thread open in place, before GitHub answers; it collapses on the next visit.
+                setExpanded((current) => (current.includes(row.key) ? current : [...current, row.key]))
+              }
+              onResolved={(next) => {
+                if (next.viewerCanUnresolve) setLastResolved(item);
+              }}
+              onReopened={() => setLastResolved((current) => (current?.id === item.id ? undefined : current))}
+            />
+          ),
+        };
       }
     }
   };
@@ -876,7 +1108,7 @@ export function PrFeedbackView({
           data-diff-scroller=""
         >
           {rows.length ? (
-            <div className="feedback-timeline-rail" style={{ height: virtual.getTotalSize(), position: 'relative' }}>
+            <Timeline className="feedback-timeline-rail" style={{ height: virtual.getTotalSize(), position: 'relative' }}>
               {virtual.getVirtualItems().map((v) => {
                 const row = rows[v.index];
                 return (
@@ -886,20 +1118,23 @@ export function PrFeedbackView({
                     start={v.start}
                     row={row}
                     active={row.key === activeKey}
+                    edge={rows.length === 1 ? 'only' : v.index === 0 ? 'first' : v.index === rows.length - 1 ? 'last' : undefined}
+                    tone={newFrom < 0 ? undefined : v.index < newFrom ? 'seen' : 'new'}
+                    gap={row.type === 'day' && !!row.gap}
                     measure={virtual.measureElement}
                     root={timeline}
-                    onRead={() => (row.type === 'divider' ? undefined : entryItems(row).forEach(markRead))}
-                    onActivate={() => row.type !== 'divider' && setActiveKey(row.key)}
+                    onRead={() => (isMarker(row) ? undefined : entryItems(row).forEach(markRead))}
+                    onActivate={() => !isMarker(row) && setActiveKey(row.key)}
                   >
                     <MemoRow
                       row={row}
                       render={renderRow}
-                      state={`${expanded.includes(row.key)}|${row.type === 'divider' ? '' : entryItems(row).map((i) => `${isUnread(i)}${mentions(i)}`).join()}|${stack}|${version}`}
+                      state={`${expanded.includes(row.key)}|${isMarker(row) ? '' : entryItems(row).map((i) => `${isUnread(i)}${mentions(i)}`).join()}|${stack}|${version}`}
                     />
                   </TimelineRowShell>
                 );
               })}
-            </div>
+            </Timeline>
           ) : (
             <div className="feedback-empty">
               {snapshotMissing.length && !failures.length ? (
@@ -947,8 +1182,25 @@ export function PrFeedbackView({
 
 /** A row renders again only when it or its read, mention or expanded state changes, not when the cursor moves. */
 const MemoRow = memo(
-  function MemoRow({ row, render }: { row: Row; render: (row: Row) => ReactNode; state: string }) {
-    return <>{render(row)}</>;
+  function MemoRow({ row, render }: { row: Row; render: (row: Row) => Parts; state: string }) {
+    const parts = render(row);
+    const node = NODES[parts.node];
+    const Icon = node.icon;
+    const label = row.type === 'day' ? `${row.label}${row.gap ? `, ${row.gap}` : ''}` : node.label;
+    return (
+      <>
+        <TimelineIndicator label={parts.unread ? `${label}, new` : label} tone={node.tone} data-node-kind={parts.node} data-unread={parts.unread || undefined}>
+          {Icon && <Icon size={row.type === 'day' ? 12 : 14} aria-hidden="true" />}
+        </TimelineIndicator>
+        <TimelineHeader data-quiet={parts.quiet || undefined}>
+          <TimelineTitle>{parts.title}</TimelineTitle>
+          {parts.badges && <span className="timeline-badges">{parts.badges}</span>}
+          {parts.meta && <span className="timeline-meta">{parts.meta}</span>}
+          {parts.actions && <span className="timeline-actions">{parts.actions}</span>}
+        </TimelineHeader>
+        {parts.body && <TimelineContent>{parts.body}</TimelineContent>}
+      </>
+    );
   },
   (a, b) => a.row === b.row && a.state === b.state
 );
@@ -962,6 +1214,9 @@ function TimelineRowShell({
   start,
   row,
   active,
+  edge,
+  tone,
+  gap,
   measure,
   root,
   onRead,
@@ -972,6 +1227,9 @@ function TimelineRowShell({
   start: number;
   row: Row;
   active: boolean;
+  edge?: 'first' | 'last' | 'only';
+  tone?: 'seen' | 'new';
+  gap: boolean;
   measure: (element: Element | null) => void;
   root: React.RefObject<HTMLDivElement | null>;
   onRead: () => void;
@@ -1003,27 +1261,29 @@ function TimelineRowShell({
   }, [readable, root]);
   const items = row.type === 'item' ? [row.item] : row.type === 'bots' ? row.items : [];
   return (
-    <div
+    <TimelineItem
+      edge={edge}
       ref={(node) => {
         element.current = node;
         measure(node);
       }}
       data-index={index}
-      data-entry-key={row.type === 'divider' ? undefined : row.key}
+      data-entry-key={isMarker(row) ? undefined : row.key}
       data-entry-type={row.type}
       data-feedback-id={items.length === 1 ? items[0].id : undefined}
       data-at={row.at}
       className="feedback-entry"
       aria-current={active || undefined}
-      tabIndex={row.type === 'divider' ? undefined : -1}
+      tabIndex={isMarker(row) ? undefined : -1}
       style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${start}px)` }}
       onPointerDown={() => onActivate()}
       onFocus={(event) => {
         if (event.target === event.currentTarget || !active) onActivate();
       }}
     >
+      <TimelineSeparator tone={gap ? 'gap' : tone} />
       {children}
-    </div>
+    </TimelineItem>
   );
 }
 
@@ -1034,10 +1294,6 @@ function ThreadEntry({
   preferences,
   discussion,
   unread,
-  mention,
-  stack,
-  collapsible,
-  onCollapse,
   onMarkUnread,
   onSource,
   onResolvedNext,
@@ -1050,10 +1306,6 @@ function ThreadEntry({
   preferences?: Preferences;
   discussion: React.ComponentProps<typeof FeedbackCodeThread>['discussion'];
   unread: boolean;
-  mention: boolean;
-  stack: boolean;
-  collapsible: boolean;
-  onCollapse: () => void;
   onMarkUnread: () => void;
   onSource: () => void;
   onResolvedNext: () => void;
@@ -1062,7 +1314,6 @@ function ThreadEntry({
   onReopened: () => void;
 }) {
   const [host, setHost] = useState<HTMLDivElement | null>(null);
-  const state = thread.isResolved ? 'Resolved' : thread.isOutdated ? 'Outdated · Unresolved' : isUnresolvedThread(thread) ? 'Unresolved' : 'Not submitted';
   return (
     <div className="feedback-thread-entry">
       <FeedbackCodeThread
@@ -1071,26 +1322,8 @@ function ThreadEntry({
         preferences={preferences}
         discussion={discussion}
         onSource={onSource}
-        tags={
-          <span className="feedback-thread-tags">
-            <UnreadDot unread={unread} />
-            {mention && (
-              <span className="feedback-row-mention">
-                <AtSign size={12} aria-hidden="true" />
-                Mentions you
-              </span>
-            )}
-            {stack && <span className="feedback-source">#{item.member.number}</span>}
-            <span className="feedback-thread-state-tag" data-resolved={thread.isResolved || undefined}>{state}</span>
-          </span>
-        }
         actions={
           <>
-            {collapsible && (
-              <Button size="sm" variant="outline" onClick={onCollapse}>
-                Collapse
-              </Button>
-            )}
             <Button size="sm" variant="outline" onClick={onMarkUnread} disabled={unread}>
               Mark unread
             </Button>
@@ -1131,22 +1364,17 @@ function ThreadEntry({
 function MessageEntry({
   item,
   quiet,
-  unread,
-  mention,
-  stack,
+  header,
   related = [],
   onSelect,
-  onMarkUnread,
   onReply,
 }: {
   item: FeedbackItem;
   quiet?: boolean;
-  unread: boolean;
-  mention?: boolean;
-  stack: boolean;
+  /** Inside a bot group, each comment names its own time and actions; elsewhere the timeline title does. */
+  header?: ReactNode;
   related?: FeedbackItem[];
   onSelect?: (item: FeedbackItem) => void;
-  onMarkUnread: () => void;
   onReply: (body: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useSessionDraft(`feedback-reply:${feedbackKey(item)}`, '');
@@ -1195,43 +1423,12 @@ function MessageEntry({
   }
   const bot = isBot(comment.author?.login, comment.author?.__typename);
   const unresolvedRelated = related.filter((r) => r.thread && !r.thread.isResolved);
-  const event = item.kind === 'review' && !comment.body.trim();
   return (
-    <article className="feedback-entry-card feedback-message" data-quiet={quiet || bot || undefined} data-sending={comment.sending} data-event={event || undefined}>
-      <header className="feedback-entry-header">
-        <UnreadDot unread={unread} />
-        {comment.author ? <GitHubAuthor login={comment.author.login} bot={bot} /> : 'Deleted account'}
-        {item.kind === 'review' ? <Verdict state={item.state} /> : <span>commented</span>}
-        {mention && (
-          <span className="feedback-row-mention">
-            <AtSign size={12} aria-hidden="true" />
-            Mentions you
-          </span>
-        )}
-        <Source member={item.member} show={stack} />
-        {comment.sending ? (
-          <span className="github-sending" role="status">Sending…</span>
-        ) : (
-          <Time at={comment.createdAt} />
-        )}
-        <span className="feedback-entry-actions">
-          {!event && (
-            <Button variant="ghost" size="sm" onClick={onMarkUnread} disabled={unread}>
-              Mark unread
-            </Button>
-          )}
-          {comment.url && (
-            <Button variant="ghost" size="sm" onClick={() => void window.electronAPI.openExternal(comment.url)}>
-              On GitHub
-            </Button>
-          )}
-        </span>
-      </header>
-      {!event && (
-        <div className="feedback-entry-body">
-          {comment.isMinimized ? <HiddenComment comment={comment} /> : <CommentMarkdown>{comment.body}</CommentMarkdown>}
-        </div>
-      )}
+    <article className="feedback-entry-card feedback-message" data-quiet={quiet || bot || undefined} data-sending={comment.sending}>
+      {header}
+      <div className="feedback-entry-body">
+        {comment.isMinimized ? <HiddenComment comment={comment} /> : <CommentMarkdown>{comment.body}</CommentMarkdown>}
+      </div>
       {related.length > 0 && (
         <nav className="feedback-related" aria-label="Threads in this review">
           <span>

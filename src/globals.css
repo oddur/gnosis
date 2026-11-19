@@ -5362,33 +5362,22 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-timeline-workspace .feedback-pr-filter ~ .feedback-actions-filter, .feedback-timeline-workspace .feedback-thread-navigation + .feedback-actions-filter { margin-left:auto; }
 .feedback-timeline { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-inline:24px; outline:none; }
 .feedback-timeline > .feedback-empty { height:auto; min-height:320px; }
-.feedback-entry { padding-block:6px; outline:none; }
-.feedback-entry > * { border-radius:8px; }
-.feedback-entry[aria-current=true] > * { outline:1px solid var(--ring); outline-offset:3px; }
-.feedback-entry:focus-visible > * { outline:2px solid var(--ring); outline-offset:3px; }
 .feedback-entry-card { border:1px solid var(--border); background:var(--card); color:var(--foreground); overflow:clip; }
-.feedback-entry-header { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; min-height:40px; padding:4px 8px 4px 14px; border-bottom:1px solid var(--border); font-size:var(--type-control); color:var(--muted-foreground); }
-.feedback-entry-header strong, .feedback-entry-header a { color:var(--foreground); }
-.feedback-entry-header time { font-size:var(--type-caption); white-space:nowrap; }
-.feedback-entry-actions { display:inline-flex; align-items:center; gap:2px; margin-left:auto; }
 .feedback-entry-body { padding:12px 14px; }
 .feedback-entry-body .github-comment-body, .feedback-entry-body .markdown-body { max-width:var(--measure-prose); }
-.feedback-message[data-event] .feedback-entry-header { border-bottom:0; }
 .feedback-message .feedback-reply-actions, .feedback-message .feedback-related, .feedback-message > [role=status], .feedback-reply-form { padding:0 14px 12px; }
 .feedback-message .feedback-related { display:flex; align-items:center; flex-wrap:wrap; gap:2px 8px; margin:0; border:0; font-size:var(--type-control); color:var(--muted-foreground); }
 .feedback-reply-form label { display:block; margin-bottom:6px; font-weight:600; font-size:var(--type-control); }
 .feedback-message[data-quiet] { background:transparent; border-style:dashed; }
-.feedback-message[data-quiet] .feedback-entry-header { min-height:34px; border-bottom-style:dashed; }
 .feedback-message[data-quiet] .github-comment-body { font-size:var(--type-control); color:var(--muted-foreground); }
 .feedback-bot-tag { padding:0 5px; border:1px solid var(--border); border-radius:4px; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); }
 .feedback-bots { display:flex; flex-direction:column; gap:8px; }
-.feedback-bots-summary, .feedback-resolved-summary { display:flex; align-items:center; gap:8px; width:100%; min-height:36px; padding:6px 12px; border:1px dashed var(--border); border-radius:8px; background:transparent; color:var(--muted-foreground); font-size:var(--type-control); text-align:left; cursor:pointer; }
-.feedback-resolved-summary { border-style:solid; background:color-mix(in srgb, var(--muted) 45%, var(--background)); }
-.feedback-bots-summary:hover, .feedback-resolved-summary:hover { background:var(--muted); color:var(--foreground); }
+.feedback-bots-summary { display:flex; align-items:center; gap:8px; width:100%; min-height:36px; padding:6px 12px; border:1px dashed var(--border); border-radius:8px; background:transparent; color:var(--muted-foreground); font-size:var(--type-control); text-align:left; cursor:pointer; }
+.feedback-bots-summary:hover { background:var(--muted); color:var(--foreground); }
 .feedback-bots-summary strong { color:var(--foreground); }
-.feedback-bots-text, .feedback-resolved-summary > span:nth-of-type(2) { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.feedback-resolved-summary code, .feedback-event code, .feedback-commits code { font-family:var(--font-mono); font-size:var(--type-caption); }
-.feedback-bots-summary time, .feedback-resolved-summary time { margin-left:auto; flex:none; font-size:var(--type-caption); }
+.feedback-bots-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feedback-commits code, .timeline-title code { font-family:var(--font-mono); font-size:var(--type-caption); }
+.feedback-bots-summary time { margin-left:auto; flex:none; font-size:var(--type-caption); }
 .feedback-chevron { flex:none; transition:transform 150ms ease-out; }
 [aria-expanded=true] > .feedback-chevron, .feedback-bots[data-open] .feedback-chevron { transform:rotate(90deg); }
 .feedback-event { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; min-height:32px; padding:4px 14px; color:var(--muted-foreground); font-size:var(--type-control); }
@@ -5396,16 +5385,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-event strong { color:var(--foreground); font-weight:600; }
 .feedback-event time { font-size:var(--type-caption); }
 .feedback-event a { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
-.feedback-commits ul { display:flex; flex-direction:column; margin:0 0 0 36px; padding:0 14px 0 0; }
-.feedback-commits li { display:flex; align-items:center; gap:8px; min-height:28px; font-size:var(--type-control); }
 .feedback-commit-message { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.feedback-commits li code { color:var(--muted-foreground); }
 .feedback-new-since { display:flex; align-items:center; gap:12px; padding:6px 0; color:var(--ring); font-size:var(--type-caption); font-weight:600; }
 .feedback-new-since::before, .feedback-new-since::after { content:''; flex:1; height:1px; background:currentColor; }
-.feedback-thread-tags { display:inline-flex; align-items:center; gap:8px; flex:none; }
-.feedback-thread-state-tag { padding:0 6px; border:1px solid var(--file-control-line); border-radius:4px; color:var(--file-fg); font-size:var(--type-caption); line-height:1.6; white-space:nowrap; }
-.feedback-thread-tags .feedback-source { color:var(--file-muted); }
-.feedback-thread-tags .feedback-row-mention { color:var(--file-fg); }
 .feedback-thread-entry .review-file-group { background:var(--card); }
 .feedback-inline-thread { padding-bottom:4px; }
 .feedback-thread-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:6px 12px 10px; font-family:var(--font-sans); }
@@ -5430,4 +5412,86 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-timeline-workspace .feedback-toolbar { gap:4px 8px; }
 .feedback-timeline-workspace .feedback-pr-filter { width:150px; min-width:120px; }
 .feedback-message[data-quiet] .feedback-entry-body { padding:6px 14px 8px; }
-.feedback-message[data-quiet] .feedback-entry-header { padding-block:0; }
+
+/* Feedback's rail (round 3): the timeline's structure is a rail of nodes (components/ui/timeline.tsx, adapted from ReUI).
+   Each node names its item's kind with an icon inside a small tinted circle and an accessible label; tone repeats the
+   words. The sentence beside the node says who did what; badges carry state; meta (PR, time) is quietest; the card
+   below holds the body. Rhythm: 8px from title to card, 24px between items, 32px before a day. The line runs behind
+   the nodes, dimmer through what the reader has seen, ring-tinted from "New since you last looked", and dashed where
+   the conversation paused for two days or more. Each virtualized row draws its own full-height segment, so rows placed
+   back to back draw one continuous line. */
+.timeline { --timeline-rail:40px; --timeline-node:24px; --timeline-line:var(--border); }
+.timeline-item { position:relative; padding:0 0 24px var(--timeline-rail); outline:none; }
+.timeline-separator { position:absolute; left:calc(var(--timeline-node) / 2 + 3px); top:0; bottom:0; width:2px; background:var(--timeline-line); }
+.timeline-separator[data-tone=seen] { background:color-mix(in oklab, var(--timeline-line) 70%, transparent); }
+.timeline-separator[data-tone=new] { background:color-mix(in oklab, var(--ring) 45%, var(--timeline-line)); }
+.timeline-separator[data-tone=gap] { width:0; background:none; border-left:2px dashed color-mix(in oklab, var(--muted-foreground) 45%, transparent); }
+.timeline-item[data-edge=first] > .timeline-separator { top:16px; }
+.timeline-item[data-edge=last] > .timeline-separator { bottom:auto; height:16px; }
+.timeline-item[data-edge=only] > .timeline-separator { display:none; }
+.timeline-indicator { --tone:var(--muted-foreground); position:absolute; left:4px; top:4px; z-index:1; display:grid; place-items:center; width:var(--timeline-node); height:var(--timeline-node); border-radius:50%; border:1px solid color-mix(in oklab, var(--tone) 40%, var(--border)); background:color-mix(in oklab, var(--tone) 14%, var(--background)); color:var(--tone); box-shadow:0 0 0 3px var(--background); }
+.timeline-indicator > svg { stroke-width:2; }
+.timeline-indicator[data-tone=neutral] { --tone:var(--foreground); }
+.timeline-indicator[data-tone=quiet] { --tone:var(--muted-foreground); background:var(--background); }
+.timeline-indicator[data-tone=success] { --tone:var(--color-success); }
+.timeline-indicator[data-tone=danger] { --tone:var(--color-danger); }
+.timeline-indicator[data-tone=warning] { --tone:var(--color-warning); }
+.timeline-indicator[data-tone=info] { --tone:var(--color-info); }
+.timeline-indicator[data-tone=review] { --tone:var(--ring); }
+/* Unread: a small filled dot on the node's shoulder. The title's New badge says it in words. */
+.timeline-indicator[data-unread]::after { content:''; position:absolute; top:-2px; right:-2px; width:8px; height:8px; border-radius:50%; background:var(--ring); box-shadow:0 0 0 2px var(--background); }
+/* The keyboard cursor rings its node; keyboard focus also outlines the sentence. */
+.feedback-entry[aria-current=true] > .timeline-indicator { box-shadow:0 0 0 3px var(--background), 0 0 0 5px var(--ring); }
+.feedback-entry:focus-visible > .timeline-header { outline:2px solid var(--ring); outline-offset:3px; border-radius:6px; }
+.timeline-header { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; min-height:32px; }
+.timeline-title { min-width:0; font-size:var(--type-body); font-weight:450; line-height:1.4; color:var(--foreground); text-wrap:pretty; }
+.timeline-title .timeline-actor, .timeline-actor-name { font-weight:650; color:var(--foreground); }
+.timeline-title code, .timeline-object { padding:1px 5px; border-radius:4px; background:var(--muted); font-family:var(--font-mono); font-size:var(--type-code); font-weight:400; }
+.timeline-header[data-quiet] .timeline-title { font-size:var(--type-control); color:var(--muted-foreground); }
+.timeline-badges { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.timeline-meta { display:inline-flex; align-items:center; gap:8px; color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.timeline-meta .feedback-source { font-size:var(--type-caption); }
+.timeline-meta-text { color:var(--muted-foreground); font-size:var(--type-caption); }
+.timeline-actions { display:inline-flex; align-items:center; gap:2px; margin-left:auto; }
+.timeline-actions button { color:var(--muted-foreground); }
+.timeline-actions button:hover { color:var(--foreground); }
+/* Item actions stay out of the way until the item is pointed at, focused or under the cursor. */
+.feedback-entry:not(:hover):not(:focus-within):not([aria-current=true]) > .timeline-header .timeline-actions { opacity:0; }
+.timeline-content { margin-top:8px; min-width:0; }
+.feedback-badge { --tone:var(--muted-foreground); display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 7px; border:1px solid color-mix(in oklab, var(--tone) 40%, var(--border)); border-radius:999px; background:color-mix(in oklab, var(--tone) 10%, var(--background)); color:var(--tone); font-size:var(--type-caption); font-weight:550; line-height:1; white-space:nowrap; }
+.feedback-badge[data-tone=new], .feedback-badge[data-tone=review] { --tone:var(--ring); }
+.feedback-badge[data-tone=success] { --tone:var(--color-success); }
+.feedback-badge[data-tone=warning] { --tone:var(--color-warning); }
+.feedback-badge[data-tone=danger] { --tone:var(--color-danger); }
+.feedback-badge .pr-unread-dot { width:6px; height:6px; }
+.timeline-badges .feedback-verdict { height:20px; padding:0 7px; border:1px solid currentColor; border-radius:999px; font-size:var(--type-caption); font-weight:550; }
+/* Days part the rail with more space above; a long pause says how long. */
+.feedback-entry[data-entry-type=day] { padding-top:16px; padding-bottom:16px; }
+.feedback-entry[data-entry-type=day] .timeline-title { font-size:var(--type-control); font-weight:650; color:var(--foreground); }
+.feedback-entry[data-entry-type=day] .timeline-indicator { top:20px; }
+.feedback-gap-label { padding:0 7px; border:1px dashed var(--border); border-radius:999px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.feedback-entry[data-entry-type=divider] { padding-bottom:16px; }
+.feedback-entry[data-entry-type=divider] .timeline-title { color:var(--ring); font-size:var(--type-control); font-weight:650; }
+/* Pushes are a compact list, not a card. */
+.feedback-commits { display:flex; flex-direction:column; margin:0; padding:0; list-style:none; max-width:min(100%, 960px); }
+.feedback-commits li { display:flex; align-items:center; gap:10px; min-height:28px; font-size:var(--type-control); }
+.feedback-commits li code { color:var(--muted-foreground); }
+.feedback-message-header { display:flex; align-items:center; gap:8px; min-height:32px; padding:4px 8px 0 14px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.feedback-message-header .timeline-actions { opacity:1; }
+.feedback-bots-hint { margin-left:auto; flex:none; font-size:var(--type-caption); }
+.feedback-resolved-summary .feedback-chevron { margin-right:2px; }
+.feedback-entry-body { padding:12px 16px; }
+.feedback-message[data-quiet] .feedback-entry-body { padding:8px 14px; }
+/* The bar is quieter than the content: muted labels until chosen. */
+.feedback-timeline-workspace .feedback-filters button[aria-pressed=false] { color:var(--muted-foreground); }
+.feedback-timeline-workspace .feedback-filters button[aria-pressed=false]:hover { color:var(--foreground); }
+.feedback-timeline-workspace .feedback-toolbar { border-bottom-color:color-mix(in oklab, var(--border) 70%, transparent); }
+.dark .timeline-title { letter-spacing:.002em; }
+@container (max-width:760px) {
+  .timeline { --timeline-rail:34px; }
+  .timeline-actions { margin-left:0; }
+  .feedback-entry:not(:hover):not(:focus-within):not([aria-current=true]) > .timeline-header .timeline-actions { opacity:1; }
+}
+/* Events without a card sit closer together than conversations. */
+.timeline-item:has(> .timeline-header[data-quiet]):not(:has(> .timeline-content)) { padding-bottom:12px; }
+.feedback-message .feedback-related button { display:inline-flex; width:auto; padding:0 4px; border:0; font-family:var(--font-mono); font-size:var(--type-code); }

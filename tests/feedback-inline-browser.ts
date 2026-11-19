@@ -71,6 +71,8 @@ void app.whenReady().then(async () => {
       const long='@@ -38,2 +38,2 @@\n const value37 = 37;\n const value38 = 38; // '+'a retry generation note that runs far past the edge of any laptop window, '.repeat(6);
       const thread=(id,line,comments,extra={})=>({id,path:'src/worker.ts',line,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:false,viewerCanResolve:true,viewerCanUnresolve:false,comments,...extra});
       for(const [index,m] of stack.subject.members.entries()){
+        if(index===1){window.feedbackData.set(m.url,{headSha:m.headSha,baseSha:m.baseSha,checkedAt:Date.now(),threads:[],feedback:{comments:[],reviews:[{...c('r-lee','lee',200,'Read through the queue changes; no blockers from me.'),state:'COMMENTED',submittedAt:at(200)}],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN',earlierEvents:true,
+          events:[{kind:'closed',id:'e-close',at:at(210),actor:'lee'},{kind:'reopened',id:'e-reopen',at:at(211),actor:'oddur'},{kind:'merged',id:'e-merge',at:at(4500),actor:'maya'}]}});continue;}
         if(index>0){window.feedbackData.set(m.url,{headSha:m.headSha,baseSha:m.baseSha,checkedAt:Date.now(),threads:[],feedback:{comments:[],reviews:[],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN',events:[]}});continue;}
         window.feedbackMember=m;
         const threads=[
@@ -123,26 +125,46 @@ void app.whenReady().then(async () => {
     // Hide GitHub Actions stays a toggle; turned off, the three CI comments in a row collapse into one quiet row.
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);
     await js("document.querySelector('.feedback-actions-filter input').click()");
-    await wait("document.querySelector('.feedback-filters button').textContent.trim()==='All 11'");
+    await wait("document.querySelector('.feedback-filters button').textContent.trim()==='All 12'");
 
     // The divider marks the first new conversation, and the timeline opens there.
-    await wait("!!document.querySelector('.feedback-new-since')");
+    await wait("!!document.querySelector('.feedback-entry[data-entry-type=divider]')");
     assert.equal(
-      await js("document.querySelector('.feedback-new-since').closest('.feedback-entry').nextElementSibling?.dataset.feedbackId ?? [...document.querySelectorAll('.feedback-entry')].find(e=>Number(e.dataset.index)===Number(document.querySelector('.feedback-new-since').closest('.feedback-entry').dataset.index)+1)?.dataset.feedbackId"),
+      await js("[...document.querySelectorAll('.feedback-entry')].find(e=>Number(e.dataset.index)===Number(document.querySelector('.feedback-entry[data-entry-type=divider]').dataset.index)+1)?.dataset.feedbackId"),
       't-main',
       'New since you last looked sits right before the first new conversation'
     );
     await capture('new-since');
 
     // Collect the whole timeline by scrolling: one order across every kind of item.
-    const collected = await js<{ index: number; type: string; id?: string; at: string; text: string }[]>(`(async()=>{
-      const t=document.querySelector('.feedback-timeline');const seen=new Map();t.scrollTop=0;
+    const collected = await js<{ index: number; type: string; id?: string; at: string; text: string; node?: string; label?: string; role?: string }[]>(`(async()=>{
+      const t=document.querySelector('.feedback-timeline');const seen=new Map();t.scrollTop=0;window.__railGaps=[];window.__nodeClones={};
       for(let i=0;i<80;i++){await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-        for(const e of document.querySelectorAll('.feedback-entry'))seen.set(Number(e.dataset.index),{index:Number(e.dataset.index),type:e.dataset.entryType,id:e.dataset.feedbackId,at:e.dataset.at,text:e.textContent.slice(0,120)});
+        const mounted=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index);
+        for(const e of mounted){const n=e.querySelector(':scope > .timeline-indicator');
+          if(n&&!window.__nodeClones[n.dataset.nodeKind])window.__nodeClones[n.dataset.nodeKind]=n.cloneNode(true);
+          seen.set(Number(e.dataset.index),{index:Number(e.dataset.index),type:e.dataset.entryType,id:e.dataset.feedbackId,at:e.dataset.at,text:e.textContent.slice(0,300),node:n?.dataset.nodeKind,label:n?.getAttribute('aria-label'),role:n?.getAttribute('role')});}
+        // Each row's line segment ends where the next row's begins.
+        for(let k=0;k+1<mounted.length;k++){const a=mounted[k],b=mounted[k+1];if(Number(b.dataset.index)!==Number(a.dataset.index)+1)continue;
+          const sa=a.querySelector(':scope > .timeline-separator').getBoundingClientRect(),sb=b.querySelector(':scope > .timeline-separator').getBoundingClientRect();
+          window.__railGaps.push(Math.abs(sb.top-sa.bottom)+Math.abs(sb.left-sa.left));}
         if(t.scrollTop+t.clientHeight>=t.scrollHeight-2)break;t.scrollTop+=t.clientHeight*0.8;}
       return [...seen.values()].sort((a,b)=>a.index-b.index)})()`);
+    // Every row has a rail node that names its kind in words, not colour alone.
+    for (const row of collected) assert.ok(row.node && row.label && row.role === 'img', `Row ${row.index} (${row.type}) has a labelled node: ${JSON.stringify(row)}`);
+    const nodeOf = (id: string) => collected.find((row) => row.id === id)?.node;
+    assert.deepEqual(
+      ['t-main', 't-second', 't-resolved', 't-outdated', 'r-maya', 'r-sam', 'r-lee', 'pc-human', 'pc-bot'].map(nodeOf),
+      ['thread-unresolved', 'thread-unresolved', 'thread-resolved', 'thread-outdated', 'changes-requested', 'approved', 'reviewed', 'comment', 'bot'],
+      'Each kind of item has its own node'
+    );
+    for (const kind of ['description', 'commits', 'force-push', 'review-requested', 'closed', 'reopened', 'merged', 'bot', 'new', 'day', 'earlier'])
+      assert.ok(collected.some((row) => row.node === kind), `A ${kind} node is on the rail: ${collected.map((r) => r.node).join(',')}`);
+    const railGaps = await js<number[]>('window.__railGaps');
+    assert.ok(railGaps.length > 10 && Math.max(...railGaps) <= 1, `The rail is continuous across virtualized rows: ${JSON.stringify(railGaps)}`);
+    assert.ok(collected.some((row) => row.type === 'day' && /\d+ days later/.test(row.text)), 'A long pause says how long');
     const kinds = collected.map((row) => row.type);
-    for (const kind of ['description', 'item', 'commits', 'event', 'bots', 'divider'])
+    for (const kind of ['description', 'item', 'commits', 'event', 'bots', 'divider', 'day'])
       assert.ok(kinds.includes(kind), `The timeline shows ${kind}: ${kinds.join(',')}`);
     const times = collected.filter((row) => row.type !== 'divider').map((row) => row.at);
     assert.deepEqual([...times].sort(), times, 'Every kind of item reads oldest first');
@@ -153,10 +175,27 @@ void app.whenReady().then(async () => {
     assert.match(pushed?.text ?? '', /pushed 3 commits/, 'Consecutive commits read as one push');
     const bots = collected.filter((row) => row.type === 'bots');
     assert.equal(bots.length, 1, 'Consecutive CI comments are one row');
-    assert.match(bots[0].text, /github-actions.*3 comments:.*Static Data Validation Passed, .*Update Migration Test Passed/);
+    assert.match(bots[0].text, /github-actions.*3 comments.*Static Data Validation Passed, .*Update Migration Test Passed/);
     assert.ok(collected.some((row) => row.type === 'event' && /force-pushed/.test(row.text)));
     assert.ok(collected.some((row) => row.type === 'event' && /requested a review from maya/.test(row.text)));
     assert.ok(collected.some((row) => row.id === 'pc-bot' && /SEED-412 Confirm uploads once/.test(row.text) && !row.text.includes('<!--')));
+
+    // The node set, close up: every kind cloned from the rail into one legend.
+    if (shots) {
+      await js(`(()=>{const p=document.createElement('div');p.id='node-legend';p.className='timeline';
+        p.style.cssText='position:fixed;top:90px;left:90px;z-index:9999;display:grid;grid-template-columns:repeat(4,auto auto);gap:14px 10px;align-items:center;padding:20px;background:var(--background);color:var(--foreground);border:1px solid var(--border);border-radius:10px;font:13px var(--font-sans)';
+        for(const [kind,node] of Object.entries(window.__nodeClones)){const n=node.cloneNode(true);n.style.cssText='position:relative;left:0;top:0';const l=document.createElement('span');l.textContent=n.getAttribute('aria-label')+' ('+kind+')';p.append(n,l)}
+        document.body.append(p)})()`);
+      for (const dark of [false, true]) {
+        await js(`document.documentElement.classList.toggle('dark',${dark})`);
+        await sleep(300);
+        const r = await js<{ x: number; y: number; width: number; height: number }>("(()=>{const b=document.getElementById('node-legend').getBoundingClientRect();return {x:Math.floor(b.left)-8,y:Math.floor(b.top)-8,width:Math.ceil(b.width)+16,height:Math.ceil(b.height)+16}})()");
+        console.log(`FISHOT nodes-${dark ? 'dark' : 'light'} ${(await win.webContents.capturePage(r)).toPNG().toString('base64')}`);
+      }
+      await js("document.documentElement.classList.remove('dark');document.getElementById('node-legend').remove()");
+    }
+    await capture('long-gap', () => js(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const d=[...document.querySelectorAll('.feedback-entry[data-entry-type=day]')].find(e=>/days later/.test(e.textContent));if(d){d.scrollIntoView({block:'center'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`));
+    await capture('pushes', () => js(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const d=document.querySelector('.feedback-entry[data-entry-type=commits]');if(d){d.scrollIntoView({block:'center'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`));
 
     // Bots: collapsed, then expanded in place.
     const botsKey = await js<string>(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const b=document.querySelector('.feedback-entry[data-entry-type=bots]');if(b){b.scrollIntoView({block:'start'});return b.dataset.entryKey}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
@@ -169,7 +208,7 @@ void app.whenReady().then(async () => {
     // A resolved thread is one line, and opens in place.
     await js(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const e=${entry('t-resolved')};if(e){e.scrollIntoView({block:'start'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
     await wait(`!!${entry('t-resolved')}?.querySelector('.feedback-resolved-summary')`);
-    assert.match(await js<string>(`${entry('t-resolved')}.textContent`), /Resolved.*sam on worker\.ts:34.*2 comments/);
+    assert.match(await js<string>(`${entry('t-resolved')}.textContent`), /sam commented on worker\.ts:34.*Resolved.*2 comments/);
     await capture('resolved-collapsed', () => js(`${entry('t-resolved')}?.scrollIntoView({block:'start'})`));
     await js(`${entry('t-resolved')}.querySelector('.feedback-resolved-summary').click()`);
     await wait(`!!${entry('t-resolved')}?.querySelector('.changes-diff .github-thread[data-resolved=true]')`);
@@ -208,7 +247,7 @@ void app.whenReady().then(async () => {
       const size = await js<{ timeline: number; card: number; workspace: number }>(
         `(()=>{const w=document.querySelector('.feedback-workspace').getBoundingClientRect().width,t=document.querySelector('.feedback-timeline').clientWidth,c=${entry('t-main')}.querySelector('.review-file-group').getBoundingClientRect().width;return {timeline:t,card:c,workspace:w}})()`
       );
-      assert.ok(size.timeline >= size.workspace - 20 && size.card >= size.timeline - 60, `Full width at ${width}px: ${JSON.stringify(size)}`);
+      assert.ok(size.timeline >= size.workspace - 20 && size.card >= size.timeline - 100, `Full width at ${width}px: ${JSON.stringify(size)}`);
     }
     win.setContentSize(1280, 800);
     await sleep(300);
@@ -229,6 +268,7 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('.feedback-position').textContent"), /^\d+ of \d+$/);
     await key('r');
     await wait(`!!${entry('t-main')}.querySelector('.changes-diff .github-thread textarea')`);
+    await capture('focused', () => js(`${entry('t-main')}?.scrollIntoView({block:'start'})`));
     await capture('reply-open', () => js(`${entry('t-main')}.querySelector('textarea')?.scrollIntoView({block:'center'})`));
     await click('Cancel', entry('t-main'));
     await js(`${entry('t-main')}.focus()`);
@@ -247,10 +287,10 @@ void app.whenReady().then(async () => {
     await capture('sticky-bar', () => js("document.querySelector('.feedback-timeline').scrollTop=600"));
     await js(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const e=${entry('r-maya')};if(e){e.scrollIntoView({block:'start'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
     await wait(`/Changes requested/.test(${entry('r-maya')}?.textContent ?? '')`);
-    await capture('review-summary', () => js(`${entry('r-maya')}?.scrollIntoView({block:'start'})`));
+    await capture('review', () => js(`${entry('r-maya')}?.scrollIntoView({block:'start'})`));
     // Filters hide the rest: Mentions shows the PR comment that names the reader.
     await js("[...document.querySelectorAll('.feedback-filters button')].find(b=>b.textContent.startsWith('Mentions')).click()");
-    await wait("!!document.querySelector('.feedback-entry[data-feedback-id=\"pc-human\"]') && [...document.querySelectorAll('.feedback-entry')].every(e=>e.dataset.feedbackId==='pc-human'||e.dataset.entryType==='divider'||e.getAttribute('aria-current')==='true')").catch(async (e) => { throw Error(String(e).slice(0,200) + JSON.stringify(await js("[document.querySelector('.feedback-filters').textContent,...[...document.querySelectorAll('.feedback-entry')].map(e=>[e.dataset.entryType,e.dataset.feedbackId,e.getAttribute('aria-current')])]"))); });
+    await wait("!!document.querySelector('.feedback-entry[data-feedback-id=\"pc-human\"]') && [...document.querySelectorAll('.feedback-entry')].every(e=>e.dataset.feedbackId==='pc-human'||e.dataset.entryType==='divider'||e.dataset.entryType==='day'||e.getAttribute('aria-current')==='true')").catch(async (e) => { throw Error(String(e).slice(0,200) + JSON.stringify(await js("[document.querySelector('.feedback-filters').textContent,...[...document.querySelectorAll('.feedback-entry')].map(e=>[e.dataset.entryType,e.dataset.feedbackId,e.getAttribute('aria-current')])]"))); });
     await js("[...document.querySelectorAll('.feedback-filters button')].find(b=>b.textContent.startsWith('All')).click()");
 
     // A PR with hundreds of items: only what is near the view mounts, and moving stays quick.
