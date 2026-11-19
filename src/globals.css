@@ -4619,18 +4619,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-actions-filter { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); white-space:nowrap; cursor:pointer; }
 .feedback-actions-filter input { accent-color:var(--primary); }
 .feedback-sync { font-size:var(--type-caption); color:var(--muted-foreground); }
-.feedback-list { overflow:auto; border-right:1px solid var(--border); min-width:0; overscroll-behavior:contain; }
-.feedback-row:hover { background:var(--muted); }
-.feedback-row[aria-current=true] { background:var(--accent); color:var(--accent-foreground); }
 .feedback-row:focus-visible { outline:2px solid var(--ring); outline-offset:-3px; }
-.feedback-row-meta { display:flex; align-items:center; gap:8px; font-size:var(--type-caption); color:var(--muted-foreground); }
-.feedback-row-meta time { margin-left:auto; white-space:nowrap; }
 .feedback-row.is-unread .feedback-row-title { font-weight:650; }
-.feedback-row-location svg { flex:none; }
 .feedback-source { display:flex; align-items:center; gap:5px; font-size:var(--type-caption); line-height:1.4; color:var(--muted-foreground); overflow-wrap:anywhere; }
 .feedback-source svg { width:13px; height:13px; flex:none; }
-.feedback-conversation-header h2:focus-visible { outline:2px solid var(--ring); outline-offset:4px; border-radius:2px; }
-.feedback-conversation-header > button { flex:none; }
 .feedback-message { font-size:var(--type-body); line-height:1.6; }
 .feedback-message > header { display:flex; align-items:center; flex-wrap:wrap; gap:10px; font-size:var(--type-caption); margin-bottom:16px; }
 .feedback-message > header time { color:var(--muted-foreground); }
@@ -4652,18 +4644,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-empty p { font-size:var(--type-control); line-height:1.6; color:var(--muted-foreground); max-width:36ch; }
 .feedback-notice { padding:10px 20px; background:var(--muted); border-bottom:1px solid var(--border); font-size:var(--type-control); line-height:1.5; }
 .feedback-notice details p { margin-top:8px; overflow-wrap:anywhere; }
-.feedback-back { display:none; }
 @container (max-width:760px) {
-  .feedback-panes { display:block; position:relative; overflow:hidden; }
-  .feedback-list, .feedback-conversation { height:100%; }
-  .feedback-workspace[data-conversation-open=true] .feedback-list { position:absolute; inset:0; visibility:hidden; pointer-events:none; }
-  .feedback-workspace[data-conversation-open=false] .feedback-conversation { display:none; }
-  .feedback-back { display:inline-flex; }
-  .feedback-workspace[data-conversation-open=true] .feedback-filters, .feedback-workspace[data-conversation-open=true] .feedback-order, .feedback-workspace[data-conversation-open=true] .feedback-pr-filter, .feedback-workspace[data-conversation-open=true] .feedback-actions-filter { display:none; }
-  .feedback-conversation-header { flex-wrap:wrap; padding:12px 16px; }
-  .feedback-conversation-header > div { flex-basis:100%; order:1; }
-  .feedback-conversation-header > button:last-child { margin-left:auto; }
-  .feedback-conversation-body { padding:16px; }
   .feedback-sync { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
   .feedback-pr-filter { max-width:200px; }
 }
@@ -4681,9 +4662,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-sync-error { display:flex; align-items:center; flex-wrap:wrap; gap:2px 8px; padding-block:6px; }
 .feedback-sync-error > span { flex:1; min-width:150px; }
 .feedback-error-details p + p { margin-top:12px; }
-.feedback-row-update { display:flex; align-items:baseline; gap:5px; font-size:var(--type-caption); color:var(--muted-foreground); }
-.feedback-row-update svg, .feedback-row-update > span:last-child { flex:none; }
-.feedback-row-update > span:first-of-type { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .feedback-post-error { padding:10px 0; font-size:var(--type-control); line-height:1.5; color:var(--foreground); }
 .feedback-post-error > p { font-weight:600; }
 .feedback-post-error details { margin-top:4px; color:var(--muted-foreground); }
@@ -4721,8 +4699,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-merge-plan .stack-plan-task[hidden] { display:none; }
 .stack-merge-plan[data-blocked] h2 > svg { color:var(--color-danger); }
 
-.feedback-conversation-header .feedback-source { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
-.feedback-conversation-header .feedback-source svg { display:inline;vertical-align:-2px; }
 .feedback-thread-navigation > button:last-child:not([aria-label]) { margin-left:auto; }
 .feedback-full-file { margin-top:12px;scroll-margin-top:48px; }
 .feedback-full-file > p { font-size:var(--type-caption);line-height:1.5;margin-bottom:8px; }
@@ -4730,8 +4706,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-full-file .commit-stream-file > .changes-file-header { position:static; }
 .feedback-full-file :is(.changes-source, .changes-file-context) { display:none; }
 .feedback-full-file .changes-file-header { padding:8px; }
-.feedback-response-dock .github-thread-actions { margin:0;padding:0;align-items:center;gap:8px; }
-.feedback-response-dock .github-thread-actions > span { color:var(--muted-foreground);font-size:var(--type-caption); }
 .feedback-resolution { display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border);flex-shrink:0;min-width:0;color:var(--muted-foreground);font-size:var(--type-caption); }
 .feedback-resolution > span { white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0; }
 .feedback-resolution > svg,.feedback-resolution > button { flex-shrink:0; }
@@ -4739,99 +4713,49 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-complete { overflow:auto;justify-content:flex-start;padding-top:32px; }
 .feedback-complete h2:focus-visible { outline:2px solid var(--ring);outline-offset:4px; }
 @container (max-width:760px) {
-  .feedback-panes { display:block; }
-  .feedback-conversation-header > div { flex-basis:100%; }
 }
 
 
 .feedback-toolbar { display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;padding:4px 12px;border-bottom:1px solid var(--border);flex-shrink:0; }
 
-.feedback-panes { display:grid;grid-template-columns:clamp(260px,26%,360px) minmax(0,1fr);flex:1;min-height:0; }
 
-.feedback-row { display:flex;flex-direction:column;gap:6px;padding:12px 16px;border-bottom:1px solid var(--border);text-align:left;background:transparent;color:var(--foreground);cursor:pointer;min-width:0; }
 
-.feedback-row-title { font-size:var(--type-body);line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere; }
 
-.feedback-row-location { display:flex;align-items:center;gap:6px;min-width:0;font-size:var(--type-caption);color:var(--muted-foreground); }
 
-.feedback-conversation { display:flex;flex-direction:column;min-width:0;min-height:0;padding-inline:16px; }
 
-.feedback-conversation-header { display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0; }
 
-.feedback-conversation-header h2 { display:flex;align-items:center;gap:8px;max-width:100%;width:fit-content;margin:4px 0 0;font-size:var(--type-body);font-weight:600;min-width:0;overflow-wrap:anywhere; }
 
 .feedback-thread-navigation { display:flex;align-items:center;gap:4px;font-size:var(--type-caption);font-variant-numeric:tabular-nums;flex-shrink:0; }
 
-.feedback-conversation-body { padding:16px;overflow:auto;flex:0 1 auto;min-height:0;overscroll-behavior:contain; }
 
 
 
-.feedback-response-dock { flex-shrink:0;min-height:48px;display:flex;align-items:center;padding:8px 16px;border-top:1px solid var(--border);background:var(--background); }
 
-.feedback-conversation > :is(.feedback-conversation-header,.feedback-conversation-body,.feedback-response-dock,.feedback-resolution) { width:100%;max-width:1040px;align-self:flex-start; }
-.feedback-conversation-header > div { flex:1 1 200px;min-width:0; }
-.feedback-file-directory { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-foreground);font-size:var(--type-caption);line-height:1.5;margin-top:2px; }
-.feedback-row-file { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.feedback-row-state { display:inline-flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;font-size:var(--type-caption); }
-.feedback-row[data-resolved=true]:not(.is-unread) .feedback-row-title { color:var(--muted-foreground); }
-.feedback-row[aria-current=true] .feedback-row-title { color:var(--accent-foreground); }
-.feedback-row[aria-current=true] :is(.feedback-row-meta,.feedback-source,.feedback-file-directory) { color:var(--selection-muted); }
-.feedback-row[data-resolved=true] .feedback-row-state { color:var(--color-success); }
-.feedback-row .feedback-source { min-width:0; }
-.feedback-row .feedback-source > span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.feedback-row[data-event=true] { gap:4px;padding-block:10px; }
-.feedback-row[data-event=true] .feedback-row-title { font-size:var(--type-control);font-weight:500; }
-.feedback-row-meta > span:first-child { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0; }
-.feedback-conversation .github-thread[data-resolved=true] .github-comment-body { color:var(--foreground); }
-.feedback-conversation .github-thread-state { white-space:nowrap; }
 
 /* Feedback reads a code thread where it belongs (FeedbackCodeThread): in the shared diff, framed as an Explanation
    topic's file is, with the thread's card under the line it is anchored to. The conversation reads oldest first: the
    opening comment, then its replies indented on a quiet rail. Other threads on the file show at their lines as one-line
    links, and in a list below the code. */
-.feedback-thread-detail { display:flex; flex-direction:column; gap:20px; }
 .feedback-code-thread { flex:none; }
 .feedback-code-thread .changes-file-stats > [data-earlier] { color:var(--file-fg); font-weight:500; }
 .feedback-code-note { padding:8px 14px; border-bottom:1px solid var(--border); background:var(--card); color:var(--muted-foreground); font-size:var(--type-caption); line-height:1.5; }
 .feedback-code-unplaced { padding:4px 0 8px; }
-.feedback-code-thread .github-thread { margin:10px 12px 12px; max-width:min(100% - 24px, 860px); }
+.feedback-code-thread .github-thread { margin:10px 12px 4px; }
 .feedback-code-thread .github-thread > summary { padding:8px 12px; min-height:36px; }
 .feedback-code-thread .github-thread-comments > article { padding:12px 14px; }
 .feedback-code-thread .github-thread-comments > article + article { margin-left:30px; padding-left:14px; border-top:0; border-left:1px solid var(--border); }
 .feedback-code-thread .github-thread form { padding:4px 14px 12px; }
-.feedback-code-thread .github-thread-actions button, .feedback-code-thread .github-thread-comments header button { min-height:24px; }
-.feedback-sibling-inline { display:flex; align-items:center; gap:8px; width:calc(100% - 24px); max-width:860px; min-height:32px; margin:6px 12px; padding:4px 10px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--foreground); font-family:var(--font-sans); font-size:var(--type-control); line-height:1.4; text-align:left; cursor:pointer; }
-.feedback-sibling-inline:hover { background:var(--muted); }
-.feedback-sibling-inline:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
-.feedback-sibling-inline > svg, .feedback-sibling-inline > strong { flex:none; }
-.feedback-sibling-inline > span:not(.feedback-sibling-state) { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted-foreground); }
-.feedback-sibling-state { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--muted-foreground); font-size:var(--type-caption); white-space:nowrap; }
-.feedback-sibling-threads { margin-top:0; }
-.feedback-sibling-line { flex:none; min-width:7ch; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .feedback-related button > span:last-child { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 .feedback-order { display:flex; align-items:center; gap:2px; padding-left:8px; border-left:1px solid var(--border); }
 .feedback-row-mention { display:inline-flex; align-items:center; gap:3px; flex:none; color:var(--foreground); font-weight:600; white-space:nowrap; }
-.feedback-row-line { flex:none; margin-left:-6px; font-variant-numeric:tabular-nums; }
-.feedback-row-location .feedback-row-file:has(+ .feedback-row-line) { flex:0 1 auto; }
-.feedback-row-location .feedback-row-line + * { margin-left:auto; }
-.feedback-row-outdated { flex:none; padding:0 5px; border:1px solid var(--border); border-radius:4px; color:var(--foreground); font-size:var(--type-caption); line-height:1.5; }
 .feedback-verdict { display:inline-flex; align-items:center; gap:4px; font-weight:600; color:var(--foreground); }
 .feedback-verdict[data-state=CHANGES_REQUESTED] { color:var(--color-danger); }
 .feedback-verdict[data-state=APPROVED] { color:var(--color-success); }
 .feedback-verdict > svg { flex:none; }
-.feedback-row[aria-current=true] .feedback-verdict { color:inherit; }
 .feedback-message > header .feedback-verdict { padding:1px 8px; border:1px solid currentColor; border-radius:999px; font-size:var(--type-caption); }
 @container (max-width:760px) {
-  .feedback-panes { display:block; }
-  .feedback-conversation { padding-inline:0; }
-  .feedback-conversation-header { padding:8px 12px;gap:4px 8px; }
-  .feedback-conversation-header > div { flex-basis:100%;order:1; }
-  .feedback-thread-navigation { order:2;width:100%; }
-  .feedback-conversation-body { padding:12px; }
 }
 
-.feedback-file-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.feedback-conversation-header h2 > svg { flex-shrink:0; }
 /* At extreme zoom, every section scrolls the whole page the same way instead of squeezing its pane to zero. */
 @media(max-height:500px) {
   .pr-summary-page { overflow-y:auto; }
@@ -5212,7 +5136,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .pr-state-icon:is(.is-draft, .is-unknown) { color:var(--muted-foreground); }
 /* Slots that sized the old PR icon keep their size and spacing. */
 .feedback-source > .pr-state-icon { width:13px; height:13px; }
-.feedback-conversation-header .feedback-source > .pr-state-icon { vertical-align:-2px; }
 .global-command [cmdk-item] > .pr-state-icon { margin-top:2px; }
 .app-toast-subtitle > .pr-state-icon { margin-right:4px; vertical-align:-1px; }
 .sync-health-pr { display:inline-flex; align-items:center; gap:4px; }
@@ -5426,3 +5349,85 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* The merge-conflict icon (`conflictIcon`) beside words that name a PR's conflicts with its base. */
 .stack-conflict-icon, .queue-filter-conflict-icon { display:inline; vertical-align:-2px; margin-right:4px; }
 .stack-conflict-icon, .pr-readiness-row .is-conflict { color:var(--color-danger); }
+
+/* Feedback as one timeline (#418): the PR's conversation oldest first across the full width, with a slim bar of counts,
+   filters and next-unresolved navigation above it. People's comments are cards; bots, pushes and events are quieter
+   one-line rows, so they keep their place in time without competing. Prose keeps its measure; code runs wide and
+   wraps. The keyboard cursor (aria-current) and focus use the ring, with the position also in the bar. */
+.feedback-timeline-workspace { display:flex; flex-direction:column; height:100%; min-height:0; }
+.feedback-timeline-workspace .feedback-toolbar { gap:4px 12px; padding:6px 16px; background:var(--background); position:relative; z-index:6; }
+.feedback-timeline-workspace .feedback-thread-navigation { gap:4px; padding-left:12px; border-left:1px solid var(--border); }
+.feedback-position { min-width:8ch; text-align:center; color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+.feedback-timeline-workspace .feedback-pr-filter { margin-left:auto; }
+.feedback-timeline-workspace .feedback-pr-filter ~ .feedback-actions-filter, .feedback-timeline-workspace .feedback-thread-navigation + .feedback-actions-filter { margin-left:auto; }
+.feedback-timeline { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-inline:24px; outline:none; }
+.feedback-timeline > .feedback-empty { height:auto; min-height:320px; }
+.feedback-entry { padding-block:6px; outline:none; }
+.feedback-entry > * { border-radius:8px; }
+.feedback-entry[aria-current=true] > * { outline:1px solid var(--ring); outline-offset:3px; }
+.feedback-entry:focus-visible > * { outline:2px solid var(--ring); outline-offset:3px; }
+.feedback-entry-card { border:1px solid var(--border); background:var(--card); color:var(--foreground); overflow:clip; }
+.feedback-entry-header { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; min-height:40px; padding:4px 8px 4px 14px; border-bottom:1px solid var(--border); font-size:var(--type-control); color:var(--muted-foreground); }
+.feedback-entry-header strong, .feedback-entry-header a { color:var(--foreground); }
+.feedback-entry-header time { font-size:var(--type-caption); white-space:nowrap; }
+.feedback-entry-actions { display:inline-flex; align-items:center; gap:2px; margin-left:auto; }
+.feedback-entry-body { padding:12px 14px; }
+.feedback-entry-body .github-comment-body, .feedback-entry-body .markdown-body { max-width:var(--measure-prose); }
+.feedback-message[data-event] .feedback-entry-header { border-bottom:0; }
+.feedback-message .feedback-reply-actions, .feedback-message .feedback-related, .feedback-message > [role=status], .feedback-reply-form { padding:0 14px 12px; }
+.feedback-message .feedback-related { display:flex; align-items:center; flex-wrap:wrap; gap:2px 8px; margin:0; border:0; font-size:var(--type-control); color:var(--muted-foreground); }
+.feedback-reply-form label { display:block; margin-bottom:6px; font-weight:600; font-size:var(--type-control); }
+.feedback-message[data-quiet] { background:transparent; border-style:dashed; }
+.feedback-message[data-quiet] .feedback-entry-header { min-height:34px; border-bottom-style:dashed; }
+.feedback-message[data-quiet] .github-comment-body { font-size:var(--type-control); color:var(--muted-foreground); }
+.feedback-bot-tag { padding:0 5px; border:1px solid var(--border); border-radius:4px; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); }
+.feedback-bots { display:flex; flex-direction:column; gap:8px; }
+.feedback-bots-summary, .feedback-resolved-summary { display:flex; align-items:center; gap:8px; width:100%; min-height:36px; padding:6px 12px; border:1px dashed var(--border); border-radius:8px; background:transparent; color:var(--muted-foreground); font-size:var(--type-control); text-align:left; cursor:pointer; }
+.feedback-resolved-summary { border-style:solid; background:color-mix(in srgb, var(--muted) 45%, var(--background)); }
+.feedback-bots-summary:hover, .feedback-resolved-summary:hover { background:var(--muted); color:var(--foreground); }
+.feedback-bots-summary strong { color:var(--foreground); }
+.feedback-bots-text, .feedback-resolved-summary > span:nth-of-type(2) { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feedback-resolved-summary code, .feedback-event code, .feedback-commits code { font-family:var(--font-mono); font-size:var(--type-caption); }
+.feedback-bots-summary time, .feedback-resolved-summary time { margin-left:auto; flex:none; font-size:var(--type-caption); }
+.feedback-chevron { flex:none; transition:transform 150ms ease-out; }
+[aria-expanded=true] > .feedback-chevron, .feedback-bots[data-open] .feedback-chevron { transform:rotate(90deg); }
+.feedback-event { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; min-height:32px; padding:4px 14px; color:var(--muted-foreground); font-size:var(--type-control); }
+.feedback-event > svg { flex:none; }
+.feedback-event strong { color:var(--foreground); font-weight:600; }
+.feedback-event time { font-size:var(--type-caption); }
+.feedback-event a { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
+.feedback-commits ul { display:flex; flex-direction:column; margin:0 0 0 36px; padding:0 14px 0 0; }
+.feedback-commits li { display:flex; align-items:center; gap:8px; min-height:28px; font-size:var(--type-control); }
+.feedback-commit-message { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feedback-commits li code { color:var(--muted-foreground); }
+.feedback-new-since { display:flex; align-items:center; gap:12px; padding:6px 0; color:var(--ring); font-size:var(--type-caption); font-weight:600; }
+.feedback-new-since::before, .feedback-new-since::after { content:''; flex:1; height:1px; background:currentColor; }
+.feedback-thread-tags { display:inline-flex; align-items:center; gap:8px; flex:none; }
+.feedback-thread-state-tag { padding:0 6px; border:1px solid var(--file-control-line); border-radius:4px; color:var(--file-fg); font-size:var(--type-caption); line-height:1.6; white-space:nowrap; }
+.feedback-thread-tags .feedback-source { color:var(--file-muted); }
+.feedback-thread-tags .feedback-row-mention { color:var(--file-fg); }
+.feedback-thread-entry .review-file-group { background:var(--card); }
+.feedback-inline-thread { padding-bottom:4px; }
+.feedback-thread-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:6px 12px 10px; font-family:var(--font-sans); }
+.feedback-thread-actions .github-thread-actions { margin:0; padding:0; gap:8px; }
+.feedback-thread-actions:empty { display:none; }
+.feedback-timeline-workspace .feedback-complete { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:12px 24px; border-bottom:1px solid var(--border); background:var(--card); }
+.feedback-timeline-workspace .feedback-complete > svg { flex:none; width:18px; height:18px; color:var(--color-success); }
+.feedback-timeline-workspace .feedback-complete > div { flex:1 1 320px; }
+.feedback-timeline-workspace .feedback-complete h2 { font-size:var(--type-body); font-weight:600; }
+.feedback-timeline-workspace .feedback-complete p { font-size:var(--type-control); color:var(--muted-foreground); }
+.feedback-sent { color:var(--muted-foreground); font-size:var(--type-control); }
+@container (max-width:760px) {
+  .feedback-timeline { padding-inline:12px; }
+  .feedback-timeline-workspace .feedback-toolbar { padding:6px 12px; }
+  .feedback-timeline-workspace .feedback-thread-navigation { border-left:0; padding-left:0; }
+  .feedback-entry-actions { margin-left:0; }
+}
+@media (prefers-reduced-motion: reduce) { .feedback-chevron { transition:none; } }
+/* Timeline excerpts are short and sit in virtualized rows: their file and hunk headers stay in place. */
+.feedback-thread-entry .review-file-group > .changes-file-header, .feedback-thread-entry .diff-hunk > .diff-gap[data-hunk-header] { position:static; }
+.feedback-thread-entry .changes-diff { --diff-sticky-offset:0px; }
+.feedback-timeline-workspace .feedback-toolbar { gap:4px 8px; }
+.feedback-timeline-workspace .feedback-pr-filter { width:150px; min-width:120px; }
+.feedback-message[data-quiet] .feedback-entry-body { padding:6px 14px 8px; }
+.feedback-message[data-quiet] .feedback-entry-header { padding-block:0; }

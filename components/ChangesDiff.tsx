@@ -502,11 +502,14 @@ function GapBar({
   range,
   counts,
   onShowDefinition,
+  plain,
 }: {
   part: GapBarPart;
   status: GapStatus;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
   onRetry?: () => void;
+  /** Name a gap by its hidden lines only, never as changes left out of a topic (Feedback). */
+  plain?: boolean;
   scope?: HunkScope;
   /** The hunk below sits outside every definition of a parsed file: it is at the top level. */
   fileOnly?: boolean;
@@ -525,12 +528,13 @@ function GapBar({
   const busy = status.kind === 'loading';
   const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
   // A topic that leaves out changes between its hunks says so: those lines are not the after side's alone.
-  const label = part.gap.opaque ? OPAQUE : known ? `${lines(hidden)} hidden` : 'More lines may follow';
+  const opaque = plain && part.gap.opaque ? (known ? `${lines(hidden)} hidden` : 'Lines hidden') : OPAQUE;
+  const label = part.gap.opaque ? opaque : known ? `${lines(hidden)} hidden` : 'More lines may follow';
   const { gutter, body } = part.gap.opaque
     ? {
         // Unchanged lines next to the hunks still show; the change between them belongs to another topic.
         gutter: onReveal && gapControls({ ...part, hidden: undefined, above: !!part.more?.down, below: !!part.more?.up }, status, reveal).gutter,
-        body: <span className="diff-gap-count">{OPAQUE}</span>,
+        body: <span className="diff-gap-count">{opaque}</span>,
       }
     : onReveal
       ? gapControls(part, status, reveal, onRetry)
@@ -734,6 +738,7 @@ export function ChangesDiff<A>({
   stickyUnder,
   scopeAt,
   canReveal,
+  plainGaps,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -764,6 +769,8 @@ export function ChangesDiff<A>({
   scopeAt?: (point: LinePoint) => readonly SyntaxDefinition[] | undefined;
   /** Whether a gap can show its lines; by default every gap can when `onReveal` is set. */
   canReveal?: (gap: GapBarPart['gap']) => boolean;
+  /** Gaps name only their hidden lines: Feedback shows a comment's excerpt, not a topic's chosen hunks. */
+  plainGaps?: boolean;
 }) {
   const stableOptions = useStableOptions({
     ...options,
@@ -1030,6 +1037,7 @@ export function ChangesDiff<A>({
           range={next?.kind === 'hunk' && next.changed ? next.range : undefined}
           counts={next?.kind === 'hunk' && next.changed ? next.counts : undefined}
           onShowDefinition={onShowDefinition}
+          plain={plainGaps}
         />
       ) : (
         <TrailingBar

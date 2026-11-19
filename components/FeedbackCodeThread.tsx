@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
 import { DiffFileHeader } from './DiffFileHeader';
@@ -31,58 +31,29 @@ export function FeedbackCodeThread({
   thread,
   preferences,
   discussion,
-  siblings,
   renderThread,
-  renderSibling,
   onSource,
+  tags,
+  actions,
 }: {
   item: FeedbackItem;
   thread: Thread;
   preferences?: Preferences;
   discussion: ReturnType<typeof usePrDiscussions>;
-  /** Other current threads on the same file of the same PR, shown at their lines when the code reaches them. */
-  siblings: Thread[];
   renderThread: (thread: Thread) => ReactNode;
-  renderSibling: (thread: Thread) => ReactNode;
   onSource: () => void;
+  /** After the anchor in the file header: the thread's state and read status. */
+  tags?: ReactNode;
+  /** The item's own actions, before Show full file. */
+  actions?: ReactNode;
 }) {
   const header = useRef<HTMLElement>(null);
-  // Short windows: while the thread starts below the visible code, bring its start into view with a few lines of code
-  // above it, so the conversation shows without scrolling, also after the window narrows. Once the reader scrolls, wheels,
-  // or presses a key in the pane, their position is kept.
-  const revealed = useRef<() => void>(undefined);
-  const reveal = (node: HTMLElement | null) => {
-    revealed.current?.();
-    revealed.current = undefined;
-    const scroller = node?.closest<HTMLElement>('[data-diff-scroller]');
-    if (!node || !scroller) return;
-    let frame = 0;
-    const place = () => {
-      frame = 0;
-      if (!node.isConnected) return;
-      const view = scroller.getBoundingClientRect();
-      const top = node.getBoundingClientRect().top;
-      if (top > view.bottom - 120) scroller.scrollTop += top - view.top - 140;
-    };
-    const schedule = () => {
-      if (!frame) frame = requestAnimationFrame(place);
-    };
-    const observer = new ResizeObserver(schedule);
-    observer.observe(scroller);
-    const stop = () => {
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-      for (const type of ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const) scroller.removeEventListener(type, stop);
-    };
-    for (const type of ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const)
-      scroller.addEventListener(type, stop, { passive: true });
-    revealed.current = stop;
-    schedule();
-  };
   const [fullFile, setFullFile] = useState(false);
   const theme = diffThemeName(preferences?.codeTheme);
   useLayoutEffect(() => applyCodePalette(theme), [theme]);
-  const appearance = useDiffAppearance(preferences?.diffAppearance);
+  const saved_ = useDiffAppearance(preferences?.diffAppearance);
+  // Long lines wrap, as Changes wraps them: a thread never scrolls sideways.
+  const appearance = useMemo(() => ({ ...saved_, wrap: true }), [saved_]);
   const context = feedbackCodeContext(
     thread,
     item.headSha ? { headSha: item.headSha, baseSha: item.baseSha ?? '' } : undefined,
@@ -117,15 +88,8 @@ export function FeedbackCodeThread({
     [current, revision, thread.path, item.baseSha, item.headSha]
   );
   const placed = useMemo<Thread[]>(
-    () =>
-      anchor
-        ? [
-            { ...thread, line: anchor.line, diffSide: anchor.side },
-            // Other threads have current coordinates only when this code is current too.
-            ...(current ? siblings.filter((s) => !s.isOutdated && s.line != null && s.id !== thread.id) : []),
-          ]
-        : [],
-    [thread, anchor?.line, anchor?.side, current, siblings]
+    () => (anchor ? [{ ...thread, line: anchor.line, diffSide: anchor.side }] : []),
+    [thread, anchor?.line, anchor?.side]
   );
   const status = earlier
     ? `Earlier revision${anchor ? ` · line ${anchor.line} when commented` : ''}`
@@ -143,12 +107,16 @@ export function FeedbackCodeThread({
           headerRef={header}
           path={thread.path}
           stats={<span data-earlier={earlier || undefined}>{status}</span>}
+          tags={tags}
           actions={
-            preferences && (
-              <Button size="sm" variant="outline" aria-expanded={fullFile} onClick={() => setFullFile((open) => !open)}>
-                {fullFile ? 'Hide full file' : earlier ? 'View current file' : 'Show full file'}
-              </Button>
-            )
+            <>
+              {actions}
+              {preferences && (
+                <Button size="sm" variant="outline" aria-expanded={fullFile} onClick={() => setFullFile((open) => !open)}>
+                  {fullFile ? 'Hide full file' : earlier ? 'View current file' : 'Show full file'}
+                </Button>
+              )}
+            </>
           }
         />
         {earlier && (
@@ -165,17 +133,9 @@ export function FeedbackCodeThread({
             appearance={appearance}
             slideIndex={-1}
             threads={placed}
-            renderThread={(t) =>
-              t.id === thread.id ? (
-                <div key={t.id} ref={reveal}>
-                  {renderThread(thread)}
-                </div>
-              ) : (
-                renderSibling(t)
-              )
-            }
+            renderThread={() => <Fragment key={thread.id}>{renderThread(thread)}</Fragment>}
+            plainGaps
             source={source}
-            stickyUnder={header}
             theme={theme}
           />
         ) : (

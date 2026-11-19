@@ -466,6 +466,49 @@ void test('the Changes file tree counts conversations open on the current diff',
   assert.equal(isOpenOnCurrentDiff(conversation('draft', by('oddur', 'a', { pullRequestReview: { id: 'p', state: 'PENDING' } }))), false);
 });
 
+void test('the Feedback timeline reads oldest first, groups pushes and repeated bots, and maps GitHub events', async () => {
+  const { buildTimeline, botSummary } = await import('../lib/feedback-timeline');
+  const { feedbackEvents } = await import('../src/review-thread-service');
+  type Item = ReturnType<typeof feedbackItems>[number];
+  const owner = { ...member, description: 'Keep uploads ordered.', createdAt: '2026-11-01T08:00:00Z', author: 'oddur' } as ReviewMember;
+  const say = (id: string, login: string, at: string, bot = false) =>
+    ({ id, member: owner, kind: 'comment', relatedThreads: [], comments: [{ ...comment, id, createdAt: at, updatedAt: at, author: { login, avatarUrl: '', ...(bot ? { __typename: 'Bot' } : {}) } }] }) as Item;
+  const events = feedbackEvents([
+    { __typename: 'PullRequestCommit', id: 'k1', commit: { oid: 'a'.repeat(40), messageHeadline: 'One', committedDate: '2026-11-01T09:00:00Z', author: { name: 'Oddur', user: { login: 'oddur' } } } },
+    { __typename: 'PullRequestCommit', id: 'k2', commit: { oid: 'b'.repeat(40), messageHeadline: 'Two', committedDate: '2026-11-01T09:01:00Z', author: { name: 'Oddur', user: { login: 'oddur' } } } },
+    { __typename: 'HeadRefForcePushedEvent', id: 'f1', createdAt: '2026-11-01T11:00:00Z', actor: { login: 'oddur' }, beforeCommit: { oid: 'b'.repeat(40) }, afterCommit: { oid: 'c'.repeat(40) } },
+    { __typename: 'ReviewRequestedEvent', id: 'q1', createdAt: '2026-11-01T12:00:00Z', actor: { login: 'oddur' }, requestedReviewer: { name: 'core-team' } },
+    { __typename: 'ReviewRequestedEvent', id: 'q2', createdAt: '2026-11-01T12:00:00Z', actor: null, requestedReviewer: null },
+    { __typename: 'MergedEvent', id: 'm1', createdAt: '2026-11-02T08:00:00Z', actor: { login: 'maya' } },
+  ]);
+  assert.deepEqual(events.map((e) => e.kind), ['commit', 'commit', 'force-push', 'review-requested', 'merged'], 'Requests with no reviewer are skipped');
+  const timeline = buildTimeline(
+    [owner],
+    [
+      say('ci-1', 'github-actions[bot]', '2026-11-01T10:00:00Z', true),
+      say('ci-2', 'github-actions[bot]', '2026-11-01T10:01:00Z', true),
+      say('ci-3', 'github-actions[bot]', '2026-11-01T10:02:00Z', true),
+      say('human', 'maya', '2026-11-01T10:30:00Z'),
+      say('lone', 'linear[bot]', '2026-11-01T13:00:00Z'),
+    ],
+    new Map([[owner.url, { events }]])
+  );
+  assert.deepEqual(
+    timeline.map((e) => e.type),
+    ['description', 'commits', 'bots', 'item', 'event', 'event', 'item', 'event'],
+    'Description, one push, one bot row, a person, a force-push, a request, a lone bot, the merge'
+  );
+  assert.equal(timeline[1].type === 'commits' && timeline[1].commits.length, 2);
+  assert.equal(timeline[2].type === 'bots' && timeline[2].items.length, 3);
+  assert.equal(timeline[6].type === 'item' && timeline[6].bot, true, 'A [bot] login is quiet even without its type');
+  assert.deepEqual(
+    buildTimeline([owner], [say('human', 'maya', '2026-11-01T10:30:00Z')], new Map([[owner.url, { events }]]), { conversationOnly: true }).map((e) => e.type),
+    ['item'],
+    'Filtered views show conversations only'
+  );
+  assert.equal(botSummary(['A', 'B', 'C', 'D']), 'A, B, C, …');
+});
+
 void test('Feedback previews read bot HTML as text, and find mentions, anchors and order', async () => {
   const { plainCommentText, mentionsAccount, diffHunkAnchor, sortFeedback, chronologicalThread } = await import('../lib/feedback');
   // klanggames/seed#36138: Linear's link-back comment showed its raw tags in the list.

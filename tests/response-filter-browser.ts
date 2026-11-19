@@ -134,7 +134,7 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('[data-feedback-id=\"r-response\"]')?.getAttribute('aria-current')==='true'");
     assert.match(
-      await js<string>("document.querySelector('.feedback-conversation').textContent"),
+      await js<string>("document.querySelector('.feedback-timeline').textContent"),
       /retain the cancellation guard/
     );
     await capture('review-light');
@@ -145,13 +145,13 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-response-reasons button[aria-label^=Reply]').click()");
     await wait("document.querySelector('[data-feedback-id=\"t-response\"]')?.getAttribute('aria-current')==='true'");
     assert.equal(
-      await js("document.querySelectorAll('.feedback-row').length"),
+      await js("document.querySelectorAll('.feedback-entry[data-feedback-id]').length"),
       2,
       'Only unresolved external threads appear'
     );
     await capture('thread-light');
     for (let n = 0; n < 2; n++) {
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Resolve & next').click()");
+      await js("[...document.querySelectorAll('.feedback-entry[aria-current=true] button')].find(b=>b.textContent.trim()==='Resolve & next').click()");
       await wait(
         n === 0
           ? "document.querySelector('[data-feedback-id=\"t-second\"]')?.getAttribute('aria-current')==='true'"

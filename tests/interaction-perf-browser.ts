@@ -51,7 +51,7 @@ const budgets: Record<string, number> = {
   'expand large file': 450,
   // About 75 ms of it is one style recalculation per keystroke; see the report in #346.
   'comment keystroke': 150,
-  'feedback row': 120,
+  'feedback next item': 120,
   // Keyboard "Viewed & next" on the 600-file PR, pressed about 250 ms apart as a reader moving through files does.
   'viewed next key': 250,
 };
@@ -879,23 +879,22 @@ void app.whenReady().then(async () => {
           await sleep(800);
         }
         if (label === 'Feedback' && round === 0) {
-          await wait("document.querySelectorAll('.feedback-row').length>5");
+          await wait("document.querySelectorAll('.feedback-entry').length>2");
           await sleep(500);
         }
       }
 
-    // ── Feedback: open conversations ──────────────────────────────
+    // ── Feedback: move through the timeline ──────────────────────
     await mouse(tab('Feedback'));
-    await wait("document.querySelectorAll('.feedback-row').length>5");
-    const feedbackRows = await js<number>("document.querySelectorAll('.feedback-row').length");
+    await wait("document.querySelectorAll('.feedback-entry').length>2");
+    const feedbackRows = await js<number>("document.querySelectorAll('.feedback-entry').length");
     assert.ok(feedbackRows < 60, `Feedback with 440 conversations mounts only nearby rows: ${feedbackRows}`);
     for (let i = 0; i < 4; i++) {
-      const row = `document.querySelectorAll('.feedback-row')[${i + 1}]`;
-      const id = await js<string>(`${row}.dataset.feedbackId`);
+      const at = await js<string>("document.querySelector('.feedback-position').textContent");
       await measure(
-        'feedback row',
-        () => mouse(row),
-        `document.querySelector('.feedback-row[aria-current=true]')?.dataset.feedbackId===${JSON.stringify(id)}&&!!document.querySelector('.feedback-conversation')`
+        'feedback next item',
+        () => mouse("document.querySelector('[aria-label=\"Next item\"]')"),
+        `document.querySelector('.feedback-position').textContent!==${JSON.stringify('')}+${JSON.stringify(at)}&&!!document.querySelector('.feedback-entry[aria-current=true]')`
       );
     }
 
