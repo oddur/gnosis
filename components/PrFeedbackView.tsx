@@ -123,8 +123,6 @@ interface Parts {
   quiet?: boolean;
   /** Something in it is new to the reader: the node carries a dot. */
   unread?: boolean;
-  /** The PR description: the page's first and heaviest entry. */
-  lead?: boolean;
 }
 const DAY_MS = 86_400_000;
 const dayOf = (at: string) => new Date(at).toDateString();
@@ -641,61 +639,23 @@ export function PrFeedbackView({
         return { node: 'day', title: row.label, meta: row.gap && <span className="feedback-gap-label">{row.gap}</span>, quiet: true };
       case 'divider':
         return { node: 'new', title: 'New since you last looked', quiet: true };
-      case 'description': {
-        // The PR as it is now: the queue refreshes members, while timeline rows keep the object they were built from.
-        const m = subject.members.find((member) => member.url === row.member.url) ?? row.member;
-        const full = expanded.includes(`${row.key}:full`);
+      case 'description':
+        // The description itself sits at the top of the page (PrDescription); the timeline marks when the PR opened.
         return {
           node: 'description',
-          lead: true,
+          quiet: true,
           title: (
             <>
-              <Actor login={m.author} /> opened this PR
+              <strong className="timeline-actor-name">{row.member.author}</strong> opened this PR
             </>
-          ),
-          badges: onOpenChanges && (
-            <Button variant="outline" size="sm" className="feedback-description-stats" onClick={onOpenChanges} aria-label="View changed files">
-              {m.changedFileCount === undefined ? (
-                `${m.commitCount} ${m.commitCount === 1 ? 'commit' : 'commits'}`
-              ) : (
-                <>
-                  {m.changedFileCount} {m.changedFileCount === 1 ? 'file' : 'files'}
-                  <DiffStats additions={m.additions ?? 0} deletions={m.deletions ?? 0} />
-                </>
-              )}
-            </Button>
           ),
           meta: (
             <>
-              {pr(m)}
+              {pr(row.member)}
               {when(row.at)}
             </>
           ),
-          body: (
-            // The description leads the page, at reading size; a long one shows its start until opened.
-            <div className="feedback-entry-card feedback-description-card" data-clamped={(!full && m.description.trim().length > 400) || undefined}>
-              <div className="feedback-entry-body">
-              <section className="pr-description" aria-label={`Author description for PR #${m.number}`}>
-                {m.description.trim() ? (
-                  <Markdown className="pr-markdown" headingLevel={3} githubSource={{ repo: m.headRepo || m.repo, ref: m.headSha || m.headBranch }}>
-                    {m.description}
-                  </Markdown>
-                ) : (
-                  <p className="feedback-description-empty">
-                    No description provided by <GitHubAuthor login={m.author} />.
-                  </p>
-                )}
-              </section>
-              </div>
-              {m.description.trim().length > 400 && (
-                <Button variant="ghost" size="sm" className="feedback-description-toggle" aria-expanded={full} onClick={() => toggle(`${row.key}:full`)}>
-                  {full ? 'Show less' : 'Show full description'}
-                </Button>
-              )}
-            </div>
-          ),
         };
-      }
       case 'earlier':
         return {
           node: 'earlier',
@@ -963,6 +923,15 @@ export function PrFeedbackView({
         {band && <div className="conversation-band">{band}</div>}
         <div className="conversation-grid" data-sidebar={sidebar ? '' : undefined}>
         <div className="conversation-main">
+        {scroller && (
+          <section className="conversation-description" aria-label="Pull request description">
+            {stack && !prUrl ? (
+              <StackDescriptions members={subject.members} onOpenChanges={onOpenChanges} />
+            ) : (
+              <PrDescription member={subject.members.find((member) => member.url === (prUrl || subject.members[0].url)) ?? subject.members[0]} onOpenChanges={onOpenChanges} stack={stack} />
+            )}
+          </section>
+        )}
         <div className="feedback-toolbar" ref={toolbar} role="toolbar" aria-label="Feedback timeline">
           <div className="feedback-filters" role="group" aria-label="Show in the timeline">
             {(['all', 'unresolved', 'unread', 'mentions'] as const).map((value) => (
@@ -1264,6 +1233,83 @@ export function PrFeedbackView({
   );
 }
 
+/**
+ * The PR's description at the top of the Conversation page (#418): who opened it and when, its change stats into
+ * Changes, and the description at reading size. A long description shows its start until opened. It is not sticky:
+ * a long one would take the view. GitHub holds the text, so editing opens the PR there.
+ */
+function PrDescription({ member: m, onOpenChanges, stack }: { member: ReviewMember; onOpenChanges?: () => void; stack: boolean }) {
+  const [full, setFull] = useSessionDraft(`description-full:${m.url}`, false);
+  const long = m.description.trim().length > 400;
+  return (
+    <div className="conversation-description-pr">
+      <header className="conversation-description-header">
+        <span className="timeline-actor">
+          <GitHubAuthor login={m.author} />
+        </span>
+        <span>opened this PR</span>
+        <Source member={m} show={stack} />
+        <Time at={m.createdAt} />
+        {onOpenChanges && (
+          <Button variant="outline" size="sm" className="feedback-description-stats" onClick={onOpenChanges} aria-label="View changed files">
+            {m.changedFileCount === undefined ? (
+              `${m.commitCount} ${m.commitCount === 1 ? 'commit' : 'commits'}`
+            ) : (
+              <>
+                {m.changedFileCount} {m.changedFileCount === 1 ? 'file' : 'files'}
+                <DiffStats additions={m.additions ?? 0} deletions={m.deletions ?? 0} />
+              </>
+            )}
+          </Button>
+        )}
+        <Button variant="ghost" size="sm" className="conversation-description-edit" onClick={() => void window.electronAPI.openExternal(m.url)}>
+          Edit on GitHub
+        </Button>
+      </header>
+      <div className="feedback-entry-card feedback-description-card" data-clamped={(!full && long) || undefined}>
+        <div className="feedback-entry-body">
+          <section className="pr-description" aria-label={`Author description for PR #${m.number}`}>
+            {m.description.trim() ? (
+              <Markdown className="pr-markdown" headingLevel={3} githubSource={{ repo: m.headRepo || m.repo, ref: m.headSha || m.headBranch }}>
+                {m.description}
+              </Markdown>
+            ) : (
+              <p className="feedback-description-empty">
+                No description provided by <GitHubAuthor login={m.author} />.
+              </p>
+            )}
+          </section>
+        </div>
+        {long && (
+          <Button variant="ghost" size="sm" className="feedback-description-toggle" aria-expanded={full} onClick={() => setFull(!full)}>
+            {full ? 'Show less' : 'Show full description'}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A stack's descriptions: one line per PR, opening in place. The PR picker shows one PR's description in full. */
+function StackDescriptions({ members, onOpenChanges }: { members: ReviewMember[]; onOpenChanges?: () => void }) {
+  return (
+    <div className="conversation-stack-descriptions">
+      {members.map((m) => (
+        <details key={m.url} className="conversation-member-description">
+          <summary>
+            <ChevronRight size={14} aria-hidden="true" className="feedback-chevron" />
+            <SubjectIcon kind="pr" pr={m} />
+            <strong>#{m.number}</strong>
+            <span className="conversation-member-title">{m.title}</span>
+            <span className="conversation-member-excerpt">{plainCommentText(m.description).slice(0, 140) || 'No description'}</span>
+          </summary>
+          <PrDescription member={m} onOpenChanges={onOpenChanges} stack />
+        </details>
+      ))}
+    </div>
+  );
+}
+
 /** A row renders again only when it or its read, mention or expanded state changes, not when the cursor moves. */
 const MemoRow = memo(
   function MemoRow({ row, render }: { row: Row; render: (row: Row) => Parts; state: string }) {
@@ -1276,7 +1322,7 @@ const MemoRow = memo(
         <TimelineIndicator label={parts.unread ? `${label}, new` : label} tone={node.tone} data-node-kind={parts.node} data-unread={parts.unread || undefined}>
           {Icon && <Icon size={row.type === 'day' ? 12 : 14} aria-hidden="true" />}
         </TimelineIndicator>
-        <TimelineHeader data-quiet={parts.quiet || undefined} data-lead={parts.lead || undefined}>
+        <TimelineHeader data-quiet={parts.quiet || undefined}>
           <TimelineTitle>{parts.title}</TimelineTitle>
           {parts.badges && <span className="timeline-badges">{parts.badges}</span>}
           {parts.meta && <span className="timeline-meta">{parts.meta}</span>}

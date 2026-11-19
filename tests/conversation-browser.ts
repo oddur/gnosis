@@ -74,7 +74,13 @@ void app.whenReady().then(async () => {
       console.log(`FISHOT fold-check ${(await win.webContents.capturePage()).toPNG().toString('base64')}`);
       await sleep(1000);
     }
-    assert.equal(first.type, 'description', 'The PR description is the first entry');
+    assert.equal(first.type, 'description', 'The timeline opens with the PR-opened event');
+    // The description is its own section above the timeline's bar; the opened event is one line with no body (#418).
+    const description = await js<{ section: boolean; above: boolean; inTimeline: boolean; body: boolean; text: string }>(`(()=>{const d=document.querySelector('.conversation-description .pr-description'),bar=document.querySelector('.feedback-toolbar');
+      const opened=[...document.querySelectorAll('.feedback-entry[data-entry-type=description]')][0];
+      return {section:!!d,above:!!d&&document.querySelector('.conversation-description').getBoundingClientRect().bottom<=bar.getBoundingClientRect().top+1,inTimeline:!!document.querySelector('.feedback-timeline .pr-description'),body:!!opened?.querySelector('.timeline-content'),text:opened?.querySelector('.timeline-title')?.textContent??''}})()`);
+    assert.ok(description.section && description.above && !description.inTimeline, `The description is a section above the bar: ${JSON.stringify(description)}`);
+    assert.ok(!description.body && /opened this PR/.test(description.text), `The opened event is one line: ${JSON.stringify(description)}`);
     assert.ok(first.feedbackTop < first.height - 40, `The first feedback starts above the fold at 1280×800: ${JSON.stringify(first)}`);
     assert.match(await js<string>("document.querySelector('.conversation-sidebar').textContent"), /Reviewers.*maya.*Changes requested.*sam.*Review requested/s);
     await capture('single-pr', all);

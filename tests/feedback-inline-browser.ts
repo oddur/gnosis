@@ -163,7 +163,10 @@ void app.whenReady().then(async () => {
     const railGaps = await js<number[]>('window.__railGaps');
     assert.ok(railGaps.length > 10 && Math.max(...railGaps) <= 1, `The rail is continuous across virtualized rows: ${JSON.stringify(railGaps)}`);
     assert.ok(collected.some((row) => row.type === 'day' && /\d+ days later/.test(row.text)), 'A long pause says how long');
-    assert.equal(collected.find((row) => row.type !== 'day')?.type, 'description', 'The PR description is the first entry');
+    assert.equal(collected.find((row) => row.type !== 'day')?.type, 'description', 'The timeline opens with the PR-opened event');
+    // On a stack, each PR's description is one line above the timeline that opens in place (#418).
+    assert.equal(await js("document.querySelectorAll('.conversation-description .conversation-member-description').length"), 3);
+    assert.equal(await js("!!document.querySelector('.feedback-timeline .pr-description')"), false, 'No description inside the timeline');
     const kinds = collected.map((row) => row.type);
     for (const kind of ['description', 'item', 'commits', 'event', 'bots', 'divider', 'day'])
       assert.ok(kinds.includes(kind), `The timeline shows ${kind}: ${kinds.join(',')}`);

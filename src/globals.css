@@ -5655,11 +5655,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .conversation-verdict[data-tone=review] { --tone:var(--ring); }
 .conversation-empty-value { font-size:var(--type-control); }
 .conversation-sidebar.is-stack { gap:0; }
-/* The description leads: a larger node, a heavier title, prose at reading size, and its start until opened. */
-.timeline-header[data-lead] .timeline-title { font-size:var(--type-section-title); font-weight:500; }
-.feedback-entry[data-entry-type=description] > .timeline-indicator { width:28px; height:28px; left:2px; top:2px; }
+/* The description reads at prose size, its start shown until opened. */
 .feedback-description-card .pr-markdown { font-size:var(--type-prose); }
-.feedback-description-card[data-clamped] .feedback-entry-body { max-height:144px; overflow:hidden; mask-image:linear-gradient(to bottom, #000 70%, transparent); }
+.feedback-description-card[data-clamped] .feedback-entry-body { max-height:112px; overflow:hidden; mask-image:linear-gradient(to bottom, #000 70%, transparent); }
 .feedback-description-card { position:relative; }
 .feedback-description-toggle { position:absolute; right:8px; bottom:6px; background:var(--card); }
 .feedback-description-card:not([data-clamped]) .feedback-entry-body { padding-bottom:40px; }
@@ -5708,3 +5706,23 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* Nothing on the Conversation page scrolls sideways; wide content wraps or scrolls inside its own block. */
 .conversation-page { overflow-x:hidden; }
 .feedback-code-thread .diff-gap :is(.diff-gap-message, .diff-gap-trailing) { white-space:normal; }
+
+/* The PR description leads the Conversation page (#418, round 5): its own section above the timeline's bar, not an
+   entry in the stream. Who opened the PR and when, the change stats into Changes and Edit on GitHub sit on one line;
+   the description reads at prose size, its start shown until opened. A stack lists each PR's description as one line
+   that opens in place; the PR picker shows one PR's description in full. */
+.conversation-description { display:flex; flex-direction:column; gap:6px; padding-bottom:8px; }
+.conversation-description-pr { display:flex; flex-direction:column; gap:6px; }
+.conversation-description-header { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; min-height:32px; color:var(--muted-foreground); font-size:var(--type-body); }
+.conversation-description-header .timeline-actor { font-weight:650; color:var(--foreground); }
+.conversation-description-header time { font-size:var(--type-caption); }
+.conversation-description-edit { margin-left:auto; color:var(--muted-foreground); }
+.conversation-stack-descriptions { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:8px; background:var(--card); }
+.conversation-member-description + .conversation-member-description { border-top:1px solid var(--border); }
+.conversation-member-description > summary { display:flex; align-items:center; gap:8px; min-height:40px; padding:6px 12px; list-style:none; cursor:pointer; font-size:var(--type-control); }
+.conversation-member-description > summary::-webkit-details-marker { display:none; }
+.conversation-member-description[open] > summary .feedback-chevron { transform:rotate(90deg); }
+.conversation-member-description > summary:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; border-radius:8px; }
+.conversation-member-title { flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+.conversation-member-excerpt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted-foreground); }
+.conversation-member-description > .conversation-description-pr { padding:0 12px 12px; }

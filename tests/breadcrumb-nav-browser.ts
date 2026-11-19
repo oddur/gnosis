@@ -796,7 +796,7 @@ void app.whenReady().then(async () => {
     assert.match(expanded.progress, /^All viewed\s*Mark file viewed$/, 'All ticked, it offers to mark the file');
     assert.equal(await js(`window.q(${JSON.stringify(outline)}).querySelector('.changes-file-actions input[type=checkbox]').checked`), false, 'It does not mark the file by itself');
     // The ticks survive leaving Changes and coming back.
-    await click('Summary');
+    await click('Conversation');
     await sleep(300);
     await click('Changes');
     await wait("window.deepAll('[role=treeitem]').length>0");
