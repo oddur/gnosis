@@ -264,6 +264,14 @@ export function PrChangesView({
           setNewer(true);
           return shown.metadata;
         }
+        // The same files listed again: nothing new to show, so the view keeps its snapshot and its state.
+        const patch = (snapshot: PrChanges, path: string) => snapshot.files.find((file) => file.path === path)?.patch;
+        if (
+          changesRevision(value.metadata) === changesRevision(shown.metadata) &&
+          value.files.length === shown.files.length &&
+          paths.every((path) => patch(value, path) === patch(shown, path))
+        )
+          return shown.metadata;
         registerChangeProgress(value);
         stream.current?.preservePosition();
         setSnapshots((previous) => previous.map((snapshot) => (snapshot.url === url ? value : snapshot)));
