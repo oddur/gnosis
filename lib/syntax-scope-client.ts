@@ -40,14 +40,15 @@ const MEMO_ENTRIES = 512;
 
 type Timing = Extract<SyntaxResponse, { definitions: unknown }>['timing'];
 /**
- * Two workers on a machine with cores to spare: files on screen and near it parse in the front one, prefetched files
- * in the back one, so a file the reader looks at never waits behind a prefetched file's parse that has started. A
- * prefetched file that comes into view while its parse waits moves to the front worker. With fewer cores, one worker
- * does both, in the same order (lib/syntax-parse-queue.ts).
+ * One worker parses every file, nearest the reader first (lib/syntax-parse-queue.ts). It can split in two: files on
+ * screen and near it in a front worker, prefetched files in a back one, so a file the reader looks at never waits
+ * behind a prefetched file's parse that has started; a waiting prefetch parse that comes into view moves to the front.
+ * On the large-PR bench (tests/syntax-scope-browser.ts, GNOSIS_STRUCTURE_WORKERS=1,2) two workers were no faster once
+ * parses were ordered, and each loads its own grammars, so it stays off.
  */
 type Lane = 'front' | 'back';
-let split = typeof navigator !== 'undefined' && navigator.hardwareConcurrency >= 4;
-/** One worker or two, before any starts: for the browser checks, which compare them. */
+let split = false;
+/** One worker or two, before any starts: for the bench, which compares them. */
 export function setSyntaxWorkerSplit(value: boolean) {
   split = value;
 }

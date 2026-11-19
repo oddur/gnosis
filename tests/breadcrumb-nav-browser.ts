@@ -890,7 +890,10 @@ void app.whenReady().then(async () => {
     assert.ok((await js<string[]>(`window.rails(${JSON.stringify(slideScoped)})`)).includes('2:start'), 'Topic: with its rail');
     assert.ok((await js<string[]>(`window.headerActions(${JSON.stringify(slideScoped)})`)).includes('Collapse class'), 'Topic: and Collapse');
     const slideOutline = topicFile('src/nav/outline.ts');
-    await wait(`window.outline(${JSON.stringify(slideOutline)})?.chips.length===4||window.outline(${JSON.stringify(slideOutline)})?.rows.length===4`, 500);
+    await wait(`window.outline(${JSON.stringify(slideOutline)})?.chips.length===4||window.outline(${JSON.stringify(slideOutline)})?.rows.length===4`, 500).catch(async (error: unknown) => {
+      console.log('TOPIC OUTLINE DEBUG', JSON.stringify(await js(`({outline:window.outline(${JSON.stringify(slideOutline)}),groups:[...document.querySelectorAll('.review-file-group')].map(g=>g.dataset.filePath),top:document.querySelector(${JSON.stringify(slideOutline)})?.getBoundingClientRect().top})`)));
+      throw error;
+    });
     const topicOutline = await js<{ summary: string; chips: string[] }>(`window.outline(${JSON.stringify(slideOutline)})`);
     assert.equal(topicOutline.summary, 'Changes 4 functions', 'Topic: the same outline');
     // An added file in a slide: its outline from the topic's patch, as in Changes.
