@@ -675,7 +675,7 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       if (!parser) throw Error('The parser did not start');
       const own = parser;
       own.setLanguage(language);
-      const blocks = classifyNoise({ parse: (text) => own.parse(text) }, id, after, hunks);
+      const blocks = classifyNoise({ parse: (text, previous) => own.parse(text, previous) }, id, after, hunks);
       return { blocks, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
     },
   };

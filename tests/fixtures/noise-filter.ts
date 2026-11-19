@@ -67,7 +67,7 @@ const commentsAfter = [
 ];
 
 // A function whose respaced signature is quiet and whose last line changes code: its breadcrumb jumps into the bar.
-const COMPUTE_BODY = Array.from({ length: 24 }, (_, i) => `  const step${i} = a * ${i} + b;`);
+const COMPUTE_BODY = Array.from({ length: 40 }, (_, i) => `  const step${i} = a * ${i} + b;`);
 const mixedBefore = [
   "import { join } from 'node:path';",
   'export const base = join("a","b");',
@@ -85,7 +85,7 @@ const mixedBefore = [
   ...filler('p', 20),
   '// Rounds down.',
   'export const floor = Math.floor;',
-  ...filler('q', 6),
+  ...filler('q', 20),
   'export function compute(a:number,b:number):number {',
   ...COMPUTE_BODY,
   '  return a + b;',
@@ -108,7 +108,7 @@ const mixedAfter = [
   ...filler('p', 20),
   '// Rounds towards negative infinity.',
   'export const floor = Math.floor;',
-  ...filler('q', 6),
+  ...filler('q', 20),
   'export function compute(a: number, b: number): number {',
   ...COMPUTE_BODY,
   '  return a - b;',

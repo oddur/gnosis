@@ -7,7 +7,7 @@ import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
 import type { NoiseBlock } from '../lib/semantic-noise';
 
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
-const engine = createSyntaxEngine(TreeSitter, {
+export const engineForBench = createSyntaxEngine(TreeSitter, {
   runtime: () => Promise.resolve(new Uint8Array(fs.readFileSync(require.resolve('web-tree-sitter/web-tree-sitter.wasm')))),
   grammar: (language) => Promise.resolve(new Uint8Array(fs.readFileSync(path.join(assets, `${language}.wasm`)))),
   tags: (name) => Promise.resolve(fs.readFileSync(path.join(assets, `${name}-tags.scm`), 'utf8')),
@@ -39,7 +39,7 @@ export async function kinds(language: SyntaxLanguage, before: string, after: str
     rows: hunk.lines.filter((l) => !l.startsWith('\\')).map((l) => ({ type: l[0] as ' ' | '+' | '-', text: l.slice(1) })),
   }));
   if (!hunks.length) return { blocks: [] as NoiseBlock[], ms: 0 };
-  const result = await engine.noise(language, after, hunks);
+  const result = await engineForBench.noise(language, after, hunks);
   return { blocks: result.blocks, ms: result.classify };
 }
 

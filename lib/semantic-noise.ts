@@ -274,6 +274,8 @@ const TRAILING_COMMA: Record<SyntaxLanguage, Set<string>> = {
   // YAML flow collections allow a comma before their closing bracket.
   yaml: new Set(['flow_sequence', 'flow_mapping']),
 };
+/** Nodes this long or longer that lie wholly in unchanged lines are read as one event (see `read`). */
+const SUMMARY_MIN = 32;
 /**
  * Tuples, where a trailing comma is optional once there are two elements: `(a, b,)` is `(a, b)`, but `(a,)` is a tuple
  * and `(a)` is not.
@@ -283,7 +285,12 @@ const CLOSERS = new Set([')', ']', '}', '>']);
 
 /** Comments that tools read: changing one changes the build, the type check or the bundle. */
 const DIRECTIVE =
-  /^\/\/go:|^\/\/\s*\+build\b|^\/\/export\s|^\/\/line\s|@ts-(ignore|expect-error|nocheck|check)\b|^\/\/\/\s*<(reference|amd)|@jsx(Runtime|ImportSource|Frag)?\b|#__PURE__|@__PURE__|webpackChunkName|^#\s*type:|^#\s*-\*-|^#!|^#\s*(pyright|mypy):|^#\s*(noqa|pylint)\b|eslint-disable|prettier-ignore|^#\s*yaml-language-server|#cgo\b|#include\b|sourceMappingURL|@vite-ignore|webpack(Ignore|Mode|Prefetch|Preload)|@flow\b|(istanbul|c8) ignore/;
+  /^\/\/go:|^\/\/\s*\+build\b|^\/\/export\s|^\/\/line\s|@ts-(ignore|expect-error|nocheck|check)\b|^\/\/\/\s*<(reference|amd)|@jsx(Runtime|ImportSource|Frag)?\b|#__PURE__|@__PURE__|webpackChunkName|^#\s*type:|^#\s*-\*-|^#!|^#\s*(pyright|mypy):|^#\s*(noqa|pylint)\b|eslint-disable|prettier-ignore|^#\s*yaml-language-server|#cgo\b|#include\b|sourceMappingURL|@vite-ignore|webpack(Ignore|Mode|Prefetch|Preload)|@flow\b|(istanbul|c8) ignore|\bnolint\b|NOLINT|pragma: ?no ?cover|fmt: ?(off|on|skip)\b|@formatter:(off|on)|biome-ignore|deno-lint-ignore|oxlint-disable|#\s*nosec\b|@(jest|vitest)-environment\b/;
+/**
+ * JSDoc that type-checks JavaScript (`checkJs`): its types are code to the checker, so a change to one is code. Prose
+ * in the same comment is a comment. TypeScript's own JSDoc types are ignored by its checker, so there it is prose.
+ */
+const JSDOC_TYPES = /@(import|type|typedef|callback|template|satisfies|overload|implements|extends|augments|enum|this)\b|@(param|returns?|property|prop|arg|argument)\s*\{/;
 
 /**
  * JSX text as React and every JSX compiler read it (Babel's `cleanJSXElementLiteralChild`): each line is trimmed where
@@ -398,7 +405,21 @@ function segments(rows: number, blocks: readonly { row: number; count: number }[
   return seg;
 }
 
-function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg: Int32Array): Reading {
+function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg: Int32Array, lineStarts: readonly number[]): Reading {
+  // A row from an offset, found here rather than asked of the cursor: each question to the WASM tree costs a call.
+  let hint = 0;
+  const rowOf = (index: number) => {
+    let low = 0,
+      high = lineStarts.length - 1;
+    if (lineStarts[hint] <= index && (hint + 1 >= lineStarts.length || lineStarts[hint + 1] > index)) return hint;
+    while (low < high) {
+      const mid = (low + high + 1) >> 1;
+      if (lineStarts[mid] <= index) low = mid;
+      else high = mid - 1;
+    }
+    hint = low;
+    return low;
+  };
   const atoms = ATOMS[language];
   const trailing = TRAILING_COMMA[language];
   const events: Event[] = [];
@@ -457,14 +478,15 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
     events.push(event);
     return event;
   };
-  const leaf = (type: string, value: string, a: number, b: number, raw = `${type}\u0000${value}`) => {
-    pushStrict(raw, a);
+  const leaf = (type: string, value: string, a: number, b: number, raw?: string) => {
+    const sig = `${type}\u0000${value}`;
+    pushStrict(raw ?? sig, a);
     if (segOf(a) !== segOf(b)) {
       const reached: number[] = [];
       for (let s = segOf(a); s <= segOf(b); s++) if (s % 2) reached.push((s - 1) / 2);
       edges.push({ seg: segOf(a), blocks: reached });
     }
-    push(`${type}\u0000${value}`, a, b, CLOSERS.has(type));
+    push(sig, a, b, CLOSERS.has(type));
     touch(a, b);
   };
   const gap = (from: number, to: number, row: number) => {
@@ -478,6 +500,38 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
     const between = text.slice(from, to);
     if (/\S/.test(between)) leaf('\u0001text', between.replace(/\s+/g, ' ').trim(), row, row);
   };
+  /** Closes a node: text no child covered, a held comma, its exit events, and its rows handed to its parent. */
+  const closeFrame = (frame: Frame) => {
+    gap(frame.covered, frame.end, frame.lastRow < 0 ? 0 : frame.lastRow);
+    if (frame.comma) events.push(frame.comma);
+    if (frame.first < 0) {
+      const index = strict.lastIndexOf(frame.strictEnter);
+      if (index >= 0) strict.splice(index, 1);
+    } else {
+      frame.strictEnter.seg = segOf(frame.first);
+      strict.push({ sig: '<', seg: segOf(frame.lastRow), a: frame.first, b: frame.lastRow });
+    }
+    if (frame.enter) {
+      if (frame.first < 0) {
+        // A node with no tokens (all comments, or empty): no events.
+        const index = events.lastIndexOf(frame.enter);
+        if (index >= 0) events.splice(index, 1);
+      } else {
+        frame.enter.a = frame.first;
+        frame.enter.b = frame.lastRow;
+        frame.enter.seg = segOf(frame.first);
+        events.push({ sig: '<', seg: segOf(frame.lastRow), a: frame.first, b: frame.lastRow });
+      }
+    }
+    const parent = stack.at(-1);
+    if (parent) {
+      parent.afterNamed = true;
+      if (frame.first >= 0) {
+        if (parent.first < 0) parent.first = frame.first;
+        parent.lastRow = frame.lastRow;
+      }
+    }
+  };
   let flat: ReadonlySet<string> | undefined;
   const cursor = tree.walk();
   try {
@@ -485,25 +539,37 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
       const type = cursor.nodeType;
       const start = cursor.startIndex,
         end = cursor.endIndex;
-      const { row: a } = cursor.startPosition;
-      // The last row, read only for tokens: most nodes never need it.
-      let last = -1;
-      const rowsEnd = () => {
-        if (last < 0) {
-          const { row, column } = cursor.endPosition;
-          last = leafEnd(row, column, a);
-        }
-        return last;
-      };
+      const a = rowOf(start);
+      const endRow = rowOf(end);
+      const b = leafEnd(endRow, lineStarts[endRow] === end ? 0 : 1, a);
+      const rowsEnd = () => b;
       const parent = stack.at(-1);
       if (parent) {
         gap(parent.covered, start, a);
         parent.covered = Math.max(parent.covered, end);
       }
       let descend = false;
+      // A node wholly in unchanged lines reads as one event, its type and length: its text is the same on both sides,
+      // so a node there with the same type and length on the other side is the same subtree (as tree-sitter's own
+      // incremental parsing assumes). A difference here still shows: the other side has another node, or none.
+      // Short nodes, such as a closing bracket a trailing comma waits for, are read as usual.
+      if (parent && end - start >= SUMMARY_MIN && seg[Math.min(a, last)] % 2 === 0 && seg[Math.min(a, last)] === seg[Math.min(b, last)] && !COMMENTS.has(type)) {
+        parent.children++;
+        parent.firstChild = false;
+        leaf(`=${type}`, String(end - start), a, b);
+        parent.afterNamed = true;
+        for (;;) {
+          if (cursor.gotoNextSibling()) break;
+          const frame = stack.pop();
+          if (!frame) return { events, strict, comments, edges };
+          closeFrame(frame);
+          if (!cursor.gotoParent()) return { events, strict, comments, edges };
+        }
+        continue;
+      }
       if (parent) {
         parent.children++;
-        if (cursor.nodeIsNamed && !COMMENTS.has(type)) parent.named++;
+        if (TUPLES.has(parent.type) && cursor.nodeIsNamed && !COMMENTS.has(type)) parent.named++;
       }
       const docstring =
         language === 'python' &&
@@ -513,7 +579,8 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
         isDocstring(cursor.currentNode);
       if (COMMENTS.has(type) || docstring) {
         const value = text.slice(start, end);
-        if (!docstring && DIRECTIVE.test(value.trim())) leaf('\u0001directive', value.trim(), a, rowsEnd());
+        if (!docstring && (DIRECTIVE.test(value.trim()) || (language === 'javascript' && JSDOC_TYPES.test(value))))
+          leaf('\u0001directive', value.trim(), a, rowsEnd());
         else comments.push({ a, b: rowsEnd(), start, end, text: value });
       } else {
         if (parent) parent.firstChild = false;
@@ -558,35 +625,7 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
         if (cursor.gotoNextSibling()) break;
         const frame = stack.pop();
         if (!frame) return { events, strict, comments, edges };
-        gap(frame.covered, frame.end, frame.lastRow < 0 ? 0 : frame.lastRow);
-        if (frame.comma) events.push(frame.comma);
-        if (frame.first < 0) {
-          const index = strict.lastIndexOf(frame.strictEnter);
-          if (index >= 0) strict.splice(index, 1);
-        } else {
-          frame.strictEnter.seg = segOf(frame.first);
-          strict.push({ sig: '<', seg: segOf(frame.lastRow), a: frame.first, b: frame.lastRow });
-        }
-        if (frame.enter) {
-          if (frame.first < 0) {
-            // A node with no tokens (all comments, or empty): no events.
-            const index = events.lastIndexOf(frame.enter);
-            if (index >= 0) events.splice(index, 1);
-          } else {
-            frame.enter.a = frame.first;
-            frame.enter.b = frame.lastRow;
-            frame.enter.seg = segOf(frame.first);
-            events.push({ sig: '<', seg: segOf(frame.lastRow), a: frame.first, b: frame.lastRow });
-          }
-        }
-        const parent = stack.at(-1);
-        if (parent) {
-          parent.afterNamed = true;
-          if (frame.first >= 0) {
-            if (parent.first < 0) parent.first = frame.first;
-            parent.lastRow = frame.lastRow;
-          }
-        }
+        closeFrame(frame);
         if (!cursor.gotoParent()) return { events, strict, comments, edges };
       }
     }
@@ -776,7 +815,8 @@ const JOIN_BLOCKS = 48;
 const JOIN_GAP = 40;
 
 export interface NoiseParser {
-  parse: (text: string) => TreeSitter.Tree | null;
+  /** Parses `text`, reusing `previous` (already edited to match) where it can, as tree-sitter's incremental parse. */
+  parse: (text: string, previous?: TreeSitter.Tree) => TreeSitter.Tree | null;
 }
 
 /**
@@ -791,17 +831,39 @@ export function classifyBlocks(
   const { blocks } = texts;
   if (!blocks.length) return [];
   const all = (reason: string) => blocks.map(() => ({ kind: 'code' as const, reason }));
-  const oldTree = parser.parse(texts.before);
-  const newTree = oldTree && parser.parse(texts.after);
+  const oldStarts = starts(texts.before),
+    newStarts = starts(texts.after);
+  // The new side parses whole; the old side reuses it, edited block by block from the last up, since the two texts
+  // differ only in the blocks' lines. Every edit starts and ends at a line start.
+  const newTree = parser.parse(texts.after);
+  let oldTree: TreeSitter.Tree | null = null;
+  if (newTree) {
+    const edited = newTree.copy();
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const block = blocks[i];
+      const startIndex = newStarts[block.newRow] ?? texts.after.length;
+      const oldEndIndex = newStarts[block.newRow + block.newCount] ?? texts.after.length;
+      const length = (oldStarts[block.oldRow + block.oldCount] ?? texts.before.length) - (oldStarts[block.oldRow] ?? texts.before.length);
+      edited.edit({
+        startIndex,
+        oldEndIndex,
+        newEndIndex: startIndex + length,
+        startPosition: { row: block.newRow, column: 0 },
+        oldEndPosition: { row: block.newRow + block.newCount, column: 0 },
+        newEndPosition: { row: block.newRow + block.oldCount, column: 0 },
+        // The runtime reads these six fields; its Edit class adds helpers this does not need.
+      } as unknown as TreeSitter.Edit);
+    }
+    oldTree = parser.parse(texts.before, edited);
+    edited.delete();
+  }
   try {
     if (!oldTree || !newTree) return all('parse-error');
     if (oldTree.rootNode.hasError || newTree.rootNode.hasError) return all('parse-error');
-    const oldStarts = starts(texts.before),
-      newStarts = starts(texts.after);
     const oldSeg = segments(oldStarts.length, blocks.map((b) => ({ row: b.oldRow, count: b.oldCount })));
     const newSeg = segments(newStarts.length, blocks.map((b) => ({ row: b.newRow, count: b.newCount })));
-    const before = read(oldTree, texts.before, language, oldSeg);
-    const after = read(newTree, texts.after, language, newSeg);
+    const before = read(oldTree, texts.before, language, oldSeg, oldStarts);
+    const after = read(newTree, texts.after, language, newSeg, newStarts);
     const count = 2 * blocks.length + 1;
     const oldGroups = bySegment(before.events, count),
       newGroups = bySegment(after.events, count);

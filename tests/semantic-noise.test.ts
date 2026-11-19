@@ -266,6 +266,34 @@ add('python', 'imports reordered', lines('import a', 'import b'), lines('import 
 add('go', 'imports reordered', lines('package a', '', 'import (', '\t"b"', '\t"a"', ')'), lines('package a', '', 'import (', '\t"a"', '\t"b"', ')'), 'code');
 add('python', 'parentheses around a returned value', lines('def f():', '    return a and b'), lines('def f():', '    return (', '        a and b', '    )'), 'formatting');
 
+// ── Comments that tools read are code; prose beside them is a comment ──────
+add('javascript', 'a JSDoc type checks JavaScript', lines('/** @param {string} a */', 'function f(a) {}'), lines('/** @param {number} a */', 'function f(a) {}'), 'code');
+add('javascript', 'a JSDoc @import', lines('/** @import {A} from "a" */', 'f();'), lines('/** @import {A} from "b" */', 'f();'), 'code');
+add('javascript', 'JSDoc prose', lines('/** Adds one. */', 'function f(a) {}'), lines('/** Adds one to a. */', 'function f(a) {}'), 'comments');
+add('typescript', 'JSDoc types in TypeScript are prose', lines('/** @param {string} a */', 'function f(a: string) {}'), lines('/** @param {number} a */', 'function f(a: string) {}'), 'comments');
+add('typescript', 'ts-expect-error', lines('const a: number = b;'), lines('// @ts-expect-error', 'const a: number = b;'), 'code');
+add('typescript', 'eslint-disable', lines('f();'), lines('// eslint-disable-next-line no-console', 'f();'), 'code');
+add('typescript', 'prettier-ignore', lines('const a = [1,2];'), lines('// prettier-ignore', 'const a = [1,2];'), 'code');
+add('typescript', 'istanbul ignore', lines('if (a) f();'), lines('/* istanbul ignore next */', 'if (a) f();'), 'code');
+add('typescript', 'a region comment is prose', lines('f();'), lines('// #region Helpers', 'f();'), 'comments');
+add('go', 'nolint', lines('package a', '', 'func f() {}'), lines('package a', '', '//nolint:unused', 'func f() {}'), 'code');
+add('python', 'fmt: off', lines('x = [1,2]'), lines('# fmt: off', 'x = [1,2]'), 'code');
+add('python', 'pragma: no cover', lines('def f():', '    pass'), lines('def f():  # pragma: no cover', '    pass'), 'code');
+add('csharp', '#pragma', lines('class A { void F() { } }'), lines('#pragma warning disable CS0168', 'class A { void F() { } }'), 'code');
+add('csharp', '#nullable', lines('#nullable enable', 'class A { }'), lines('#nullable disable', 'class A { }'), 'code');
+add('csharp', '#region', lines('class A {', '  void F() { }', '}'), lines('class A {', '  #region Helpers', '  void F() { }', '  #endregion', '}'), 'code');
+add('go', 'an if region of build tags', lines('//go:build linux', '', 'package a'), lines('//go:build linux && amd64', '', 'package a'), 'code');
+add('csharp', '#if regions', lines('class A {', '#if DEBUG', '  void F() { }', '#endif', '}'), lines('class A {', '#if RELEASE', '  void F() { }', '#endif', '}'), 'code');
+// Edge cases.
+add('typescript', 'only the final newline', 'const a = 1;', 'const a = 1;\n', 'whitespace');
+add('typescript', 'tabs to spaces', lines('function f() {', '\treturn 1;', '}'), lines('function f() {', '  return 1;', '}'), 'whitespace');
+add('python', 'tabs to spaces keep the blocks', lines('def f():', '\treturn 1'), lines('def f():', '    return 1'), 'whitespace');
+add('python', 'a backslash continuation', lines('x = 1 + \\', '    2'), lines('x = 1 + 2'), 'whitespace');
+add('yaml', 'an anchor renamed', lines('a: &x 1', 'b: *x'), lines('a: &y 1', 'b: *y'), 'code');
+add('yaml', 'a block scalar’s text', lines('a: |', '  one', '  two'), lines('a: |', '  one', '  three'), 'code');
+add('tsx', 'JSX text that only wraps', lines('const a = <p>Hello world</p>;'), lines('const a = (', '  <p>', '    Hello world', '  </p>', ');'), 'formatting');
+add('typescript', 'a minified line reformatted', lines('function f(a,b){return a+b}'), lines('function f(a, b) {', '  return a + b;', '}'), 'formatting');
+
 void describe('semantic noise corpus', () => {
   for (const [language, name, before, after, expected] of corpus)
     void test(`${language}: ${name}`, async () => {

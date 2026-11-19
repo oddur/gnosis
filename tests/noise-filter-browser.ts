@@ -209,7 +209,7 @@ void app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
     win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
-    await wait(`!document.querySelector(${JSON.stringify(row('src/noise/mixed.ts') + ' [data-noise-bar]')})`);
+    await wait(`![...document.querySelectorAll(${JSON.stringify(row('src/noise/mixed.ts') + ' [data-noise-bar]')})].some(e=>e.getAttribute('data-noise-bar')==='Formatting only')`);
     await settle();
     assert.equal(await shownText('src/noise/mixed.ts', "export const base = join('a', 'b');"), true, 'The shown hunk renders its lines');
     await scrollTo(row('src/noise/mixed.ts') + ' .diff-hunk', 60);
@@ -323,11 +323,22 @@ void app.whenReady().then(async () => {
     await openFile('src/noise/mixed.ts');
     await wait(`document.querySelectorAll(${JSON.stringify(row('src/noise/mixed.ts') + ' [data-noise-bar]')}).length===3`, 500);
     const pin = async () => {
-      await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const l=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row('src/noise/mixed.ts'))})).find(e=>e.textContent.includes('return a - b;')&&e.dataset.lineType!=='change-deletion');s.scrollTop+=l.getBoundingClientRect().top-s.getBoundingClientRect().top-220})()`);
+      await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const l=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row('src/noise/mixed.ts'))})).find(e=>e.textContent.includes('return a - b;')&&e.dataset.lineType!=='change-deletion');s.scrollTop+=l.getBoundingClientRect().top-s.getBoundingClientRect().top-100})()`);
       await settle();
     };
-    await pin();
-    await wait(`!!document.querySelector(${JSON.stringify(row('src/noise/mixed.ts') + ' .diff-gap[data-hunk-header][data-stuck][data-live=scope]')})`, 300);
+    // The stream may still settle on the file it just opened: aim again until the header pins.
+    for (let i = 0; i < 8; i++) {
+      await pin();
+      if (await js<boolean>(`!!document.querySelector(${JSON.stringify(row('src/noise/mixed.ts') + ' .diff-gap[data-hunk-header][data-stuck][data-live=scope]')})`)) break;
+      await sleep(300);
+    }
+    await wait(`!!document.querySelector(${JSON.stringify(row('src/noise/mixed.ts') + ' .diff-gap[data-hunk-header][data-stuck][data-live=scope]')})`, 300).catch(async (error: unknown) => {
+      console.log('PIN DEBUG', JSON.stringify(await js(`(()=>{const r=document.querySelector(${JSON.stringify(row('src/noise/mixed.ts'))});const s=document.querySelector('.commit-diff-stream');
+        const l=window.deepAll('[data-line]',r).find(e=>e.textContent.includes('return a - b;'));
+        return {stream:Math.round(s.getBoundingClientRect().top),file:Math.round(r.querySelector('.changes-file-header').getBoundingClientRect().bottom),line:l?Math.round(l.getBoundingClientRect().top):null,
+          headers:[...r.querySelectorAll('.diff-gap[data-hunk-header]')].map(h=>[Math.round(h.getBoundingClientRect().top),h.hasAttribute('data-stuck'),h.getAttribute('data-live'),h.textContent.slice(0,40)])}})()`)));
+      throw error;
+    });
     const crumb = await js<{ x: number; y: number }>(`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(row('src/noise/mixed.ts') + ' [data-stuck] .diff-gap-live button[data-jump]')})].find(b=>/compute/.test(b.getAttribute('aria-label')));const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`);
     win.webContents.sendInputEvent({ type: 'mouseMove', x: crumb.x, y: crumb.y });
     win.webContents.sendInputEvent({ type: 'mouseDown', x: crumb.x, y: crumb.y, button: 'left', clickCount: 1 });

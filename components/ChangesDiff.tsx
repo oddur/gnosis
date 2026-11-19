@@ -1144,7 +1144,7 @@ export function ChangesDiff<A>({
     });
     cache.current = next;
     return result;
-  }, [parts, file.name, file.prevName, file.status, quietKinds, noise?.filter.whitespace, noise?.filter.comments]);
+  }, [parts, file.name, file.prevName, file.status, quietKinds, noise?.filter.whitespace, noise?.filter.formatting, noise?.filter.comments]);
   // Quiet lines in hunks that also change code: dimmed, not hidden.
   const noiseLines = useMemo(() => {
     const result = new Set<string>();

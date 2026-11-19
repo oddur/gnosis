@@ -276,7 +276,7 @@ export function useDiffFileModel({
       for (let i = 0; i < block.newCount; i++) lines.add(`a${block.newStart + i}`);
     }
     return lines.size ? lines : undefined;
-  }, [noiseOn, noise.blocks, noiseFilter.whitespace, noiseFilter.comments, noiseShown]);
+  }, [noiseOn, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseShown]);
   const diffNoise = useMemo((): DiffNoise | undefined => {
     if (!noiseOn) return undefined;
     const file = noise.blocks ? fileNoise(noise.blocks, noiseFilter) : undefined;
@@ -298,7 +298,7 @@ export function useDiffFileModel({
       file,
       fileHidden: !!file?.all && !noise.blocks?.some((block) => noiseShown.has(blockKey(block))),
     };
-  }, [noiseOn, noise.kinds, noise.blocks, noiseFilter.whitespace, noiseFilter.comments, noiseShown, revealKey]);
+  }, [noiseOn, noise.kinds, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseShown, revealKey]);
   // An added file has no old side, so every symbol in it is added; a deleted file has no new side, so every symbol in
   // it is removed.
   const fileDefinitions = useMemo(
