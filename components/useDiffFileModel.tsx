@@ -25,7 +25,7 @@ import type { DefinitionReveal, SyntaxDefinition } from '../lib/syntax-scope';
 import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
 import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-syntax-contents';
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
-import { syntaxContentsPlan } from '../lib/syntax-contents';
+import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
 import { changedSymbols } from '../lib/symbol-outline';
 import { keepDiffLineInView } from '../lib/diff-layout';
@@ -41,6 +41,7 @@ const NO_REVEALS: GapReveals = {};
 const NO_PINS: readonly (readonly [number, number])[] = [];
 const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_SHOWN: readonly ShownScope[] = [];
+const NO_DEFINITIONS: readonly SyntaxDefinition[] = [];
 
 /**
  * One file's diff as Changes and Explanation topics show it (#157 parity): hunks with the gaps between them, the
@@ -65,6 +66,7 @@ export function useDiffFileModel({
   readStructure,
   codeSettings,
   sectionRef,
+  status,
 }: {
   /** The file's revision key (changeFileKey): reveals, pins and parsed definitions are kept under it. */
   fileKey: string;
@@ -95,6 +97,8 @@ export function useDiffFileModel({
   codeSettings: CodeIntelligenceSettings;
   /** The file's element: its nearness starts the scope read, and opening definitions keeps its top line in place. */
   sectionRef: RefObject<HTMLElement | null>;
+  /** Added and deleted files are one hunk of the whole file: its structure comes from the patch (#394). */
+  status?: string;
 }) {
   const alive = useRef(true);
   const currentFile = useRef(fileKey);
@@ -134,6 +138,10 @@ export function useDiffFileModel({
       }
     );
   }
+  // An added file's new side, or a deleted file's old side, is the whole patch: parsed from it, with no read. A patch
+  // that is not the whole file (left out or cut for a large file, a topic's few lines) reads the side instead.
+  const wholeSide = status === 'added' ? 'after' : status === 'deleted' ? 'before' : undefined;
+  const patchWhole = useMemo(() => (wholeSide && patch ? wholeFileText(patch, wholeSide) : undefined), [wholeSide, patch]);
   const afterText = afterSide?.kind === 'text' ? afterSide.content : undefined;
   const after = useMemo(() => (afterText === undefined ? undefined : afterLines(afterText)), [afterText]);
   const beforeAll = beforeSide?.kind === 'text' ? beforeSide.content : undefined;
@@ -179,8 +187,14 @@ export function useDiffFileModel({
   // removed symbols in it (lib/symbol-outline.ts).
   const deletes = useMemo(() => !!baseHunks?.some((hunk) => hunk.rows.some((row) => row.type === '-')), [baseHunks]);
   const structure = pathEnabled(codeSettings, path);
-  const beforeText =
-    deletes && beforeSide?.kind === 'text' && pathEnabled(codeSettings, previousPath ?? path) ? beforeSide.content : undefined;
+  const beforeWhole =
+    beforeSide?.kind === 'text' ? beforeSide.content : wholeSide === 'before' ? patchWhole : undefined;
+  const beforeText = deletes && pathEnabled(codeSettings, previousPath ?? path) ? beforeWhole : undefined;
+  // What is parsed: the after side the view has, or an added file's patch.
+  const afterParsed = afterText ?? (wholeSide === 'after' ? patchWhole : undefined);
+  const wholeText = wholeSide === 'after' ? afterParsed : wholeSide === 'before' ? beforeText : undefined;
+  // A Git LFS pointer is not the file.
+  const whole = !!wholeSide && !wholeText?.startsWith('version https://git-lfs.github.com/spec/');
   const scopePlan = useMemo(
     () => (scopeFile ? syntaxContentsPlan(scopeFile.snapshot, scopeFile.file, (p) => pathEnabled(codeSettings, p)) : undefined),
     [scopeFile, codeSettings]
@@ -190,11 +204,14 @@ export function useDiffFileModel({
   // reveal reads it, and both sides for hunks that only delete. Contents already cached are not read again.
   const structureRead = useSyntaxContents(
     sectionRef,
-    readStructure && scopePlan && expandable && active && !!gaps && (scopePlan.both ? !contents : !afterSide)
+    readStructure &&
+      scopePlan &&
+      active &&
+      (wholeSide ? wholeText === undefined : expandable && !!gaps && (scopePlan.both ? !contents : !afterSide))
       ? scopeFile
       : undefined
   );
-  const parseable = structure && expandable && active && !!gaps;
+  const parseable = structure && active && (whole ? !!baseHunks : expandable && !!gaps);
   // Files on screen parse first, then files near the view, then the rest (lib/syntax-parse-queue.ts).
   const tier = useViewTier(sectionRef, parseable);
   const definitions = useSyntaxDefinitions({
@@ -202,11 +219,22 @@ export function useDiffFileModel({
     url: request?.url ?? '',
     path,
     previousPath,
-    after: afterText,
+    after: afterParsed,
     before: beforeText,
-    enabled: parseable && afterMatches === true,
+    enabled: parseable && (whole || afterMatches === true),
     priority: tier,
   });
+  // An added file has no old side, so every symbol in it is added; a deleted file has no new side, so every symbol in
+  // it is removed.
+  const fileDefinitions = useMemo(
+    () =>
+      whole && wholeSide === 'after'
+        ? { after: definitions.after, before: definitions.after && NO_DEFINITIONS }
+        : whole && wholeSide === 'before'
+          ? { after: definitions.before && NO_DEFINITIONS, before: definitions.before }
+          : { after: definitions.after, before: definitions.before },
+    [whole, wholeSide, definitions.after, definitions.before]
+  );
   const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
   // What the reader revealed: chevrons, Show all, Show whole function, crumbs.
   const userReveals = gapReveals?.key === revealKey ? gapReveals.value : NO_REVEALS;
@@ -254,8 +282,9 @@ export function useDiffFileModel({
   );
   const shown = useMemo(() => (parts ? shownLines(parts) : undefined), [parts]);
   const scopes = useMemo(() => {
-    if (!parts || !shown || !definitions.after) return undefined;
-    const all = hunkScopes(parts, gaps, definitions, shown.after);
+    if (!parts || !shown || !fileDefinitions.after) return undefined;
+    // An added or deleted file is one hunk with no gaps: its header names the file, or a definition around it all.
+    const all = hunkScopes(parts, gaps ?? (whole ? [] : undefined), fileDefinitions, shown.after);
     if (!shownScopesPlan.length) return all;
     // A hunk whose definition, or one around it, shows whole by the rule can collapse it back.
     for (const [key, scope] of all) {
@@ -266,7 +295,7 @@ export function useDiffFileModel({
       if (auto) all.set(key, { ...scope, shown: { key: auto.key, definition: auto.definition } });
     }
     return all;
-  }, [parts, gaps, definitions.after, definitions.before, shown, shownScopesPlan]);
+  }, [parts, gaps, whole, fileDefinitions, shown, shownScopesPlan]);
   // Each definition shown whole by the rule has a rail beside its line numbers (ChangesDiff).
   const rails = useMemo(
     (): readonly ScopeRail[] =>
@@ -295,17 +324,22 @@ export function useDiffFileModel({
   // the old side is on its way, the outline waits for it, in the same bar, so its removed symbols are not first listed
   // as modified ones: it parses right behind the after side, after the breadcrumbs have shown.
   const symbols = useMemo(
-    () => (definitions.after && !definitions.beforeParsing && baseHunks ? changedSymbols(baseHunks, definitions) : undefined),
-    [baseHunks, definitions.after, definitions.before, definitions.beforeParsing]
+    () => (fileDefinitions.after && !definitions.beforeParsing && baseHunks ? changedSymbols(baseHunks, fileDefinitions) : undefined),
+    [baseHunks, fileDefinitions, definitions.beforeParsing]
   );
-  const outlinePending = !symbols && ((!!provisional && structurePending) || (!!scopes && !!definitions.beforeParsing));
+  // An added or deleted file's bar waits from the first render, as its patch parses, so nothing moves when it lands.
+  const outlinePending =
+    !symbols &&
+    ((!!provisional && structurePending) ||
+      (!!scopes && !!definitions.beforeParsing) ||
+      (whole && parseable && (wholeText === undefined ? structureRead.state === 'loading' : !!(definitions.parsing || definitions.beforeParsing))));
   // "Loading structure…" shows only once a file has waited a moment: one whose structure lands sooner never flickers.
   const loadingShown = useDelayedFlag(structurePending && !!provisional && !scopes, STRUCTURE_NOTE_DELAY_MS);
   // A pinned hunk header names the definitions around the line the reader is at (ChangesDiff).
   const scopeAt = useMemo(
     () =>
-      scopes ? (point: LinePoint): readonly SyntaxDefinition[] | undefined => chainAt(definitions, point) : undefined,
-    [scopes, definitions.after, definitions.before]
+      scopes ? (point: LinePoint): readonly SyntaxDefinition[] | undefined => chainAt(fileDefinitions, point) : undefined,
+    [scopes, fileDefinitions]
   );
   const scopeNote: ReactNode = scopes ? undefined : structureRead.state === 'failed' ? (
     <span className="diff-gap-structure" data-structure="failed">

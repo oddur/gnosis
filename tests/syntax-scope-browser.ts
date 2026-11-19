@@ -306,7 +306,7 @@ void app.whenReady().then(async () => {
    * it jumps to a file mid-PR and times its breadcrumbs from the click on it; and it counts the files whose after side
    * is parsed 2, 5 and 10 s after the click. Each file's steps come from lib/structure-trace.ts.
    */
-  const structureLoad = async (latency: number) => {
+  const structureLoad = async (latency: number, workers?: 1 | 2) => {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-large`);
     await waitForWorkbenchQueue(win.webContents);
     await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
@@ -331,11 +331,13 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
     await click('Open PR overview');
     await sleep(1500);
-    const MID = 'src/large/api/f091.rs';
+    // About the 90th of 168 files in diff order (api, core, server, Services, tools, web): mid-PR, and C#.
+    const MID = 'src/large/Services/f048.cs';
     // Reads refused while the queue prepared (the predicted next PR's warm-up among them) are forgotten, so every
     // large file starts unread and unrefused.
     await js(`(async()=>{(await import('/lib/inspection-cache.ts')).inspectionFiles.clear();(await import('/lib/use-syntax-contents.ts')).syntaxContents.forget();
-      (await import('/lib/structure-trace.ts')).clearStructureTraces()})()`);
+      (await import('/lib/structure-trace.ts')).clearStructureTraces();
+      ${workers ? `(await import('/lib/syntax-scope-client.ts')).setSyntaxWorkerSplit?.(${workers === 2})` : ''}})()`);
     const t0 = await js<number>(`(()=>{window.blockPrepare=false;const t=performance.now();
       const e=[...document.querySelectorAll('button')].find(e=>e.getBoundingClientRect().width&&(e.textContent.trim()==='Changes'||e.getAttribute('aria-label')==='Changes'));
       e.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));e.click();return t})()`);
@@ -360,7 +362,7 @@ void app.whenReady().then(async () => {
       throw error;
     }
     await sleep(Math.max(0, 400 - ((await js<number>('performance.now()')) - t0)));
-    await js(`window.treeClick('f091.rs')`);
+    await js(`window.treeClick('f048.cs')`);
     // From the click on the file in the tree; finding it in the virtualized tree takes the test a few frames before.
     const tJump = await js<number>('window.clickAt');
     try {
@@ -412,6 +414,10 @@ void app.whenReady().then(async () => {
       frames: new Set(doneTimes.map((v) => Math.floor(v / 16))).size,
       loadingFlashes: Object.keys(data.loading).filter((p) => data.appear[p] !== undefined && data.appear[p] - data.loading[p] < 150).length,
       firstPath: FIRST,
+      // The renderer's memory, with its workers, once the PR has loaded.
+      memoryMB: Math.round(
+        (app.getAppMetrics().find((metric) => metric.pid === win.webContents.getOSProcessId())?.memory.workingSetSize ?? 0) / 1024
+      ),
     };
   };
   const percentile = (values: number[], p: number) => {
@@ -423,11 +429,13 @@ void app.whenReady().then(async () => {
     // the numbers, and skips the checks.
     if (process.env.GNOSIS_STRUCTURE_BENCH) {
       const runs = Number(process.env.GNOSIS_STRUCTURE_BENCH) || 5;
-      for (const latency of [200, 5]) {
+      // GNOSIS_STRUCTURE_WORKERS=1,2 compares one parse worker with two.
+      const pools = (process.env.GNOSIS_STRUCTURE_WORKERS ?? '').split(',').filter(Boolean).map(Number) as (1 | 2)[];
+      for (const [latency, workers] of [200, 5].flatMap((latency) => (pools.length ? pools : [undefined]).map((workers) => [latency, workers] as const))) {
         const results: Awaited<ReturnType<typeof structureLoad>>[] = [];
         for (let i = 0; i < runs; i++) {
-          const result = await structureLoad(latency);
-          console.log(`BENCH run latency=${latency} ${JSON.stringify(result)}`);
+          const result = await structureLoad(latency, workers);
+          console.log(`BENCH run latency=${latency} workers=${workers ?? 'default'} ${JSON.stringify(result)}`);
           results.push(result);
         }
         const stat = (pick: (r: (typeof results)[number]) => number | undefined) => {
@@ -435,13 +443,16 @@ void app.whenReady().then(async () => {
           return { p50: percentile(values, 50), p95: percentile(values, 95) };
         };
         console.log(
-          `BENCH summary latency=${latency} ${JSON.stringify({
+          `BENCH summary latency=${latency} workers=${workers ?? 'default'} ${JSON.stringify({
             first: stat((r) => r.first.total),
             mid: stat((r) => r.mid.total),
             resolved2s: stat((r) => r.resolved['2s']),
             resolved5s: stat((r) => r.resolved['5s']),
             resolved10s: stat((r) => r.resolved['10s']),
             lastParse: stat((r) => r.lastParse),
+            firstWorkerQueue: stat((r) => r.first.workerQueue),
+            midWorkerQueue: stat((r) => r.mid.workerQueue),
+            memoryMB: stat((r) => r.memoryMB),
           })}`
         );
       }

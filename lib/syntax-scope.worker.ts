@@ -32,6 +32,8 @@ export type SyntaxRequest =
     }
   /** The view came nearer a file whose parse waits: it moves up to `priority`. */
   | { type: 'priority'; key: string; priority: SyntaxPriority }
+  /** The parse moves to the other worker, if it has not started here: the answer says whether it was taken. */
+  | { type: 'take'; key: string; id: number }
   /** Loads these grammars while no parse waits, so a PR's first parse of each language does not load one. */
   | { type: 'warm'; runtimeUrl: string; grammars: { language: SyntaxLanguage; grammarUrl: string }[] }
   | { type: 'forget'; urls: string[] }
@@ -43,7 +45,8 @@ export type SyntaxResponse =
       /** `wait` is the time in the queue; `priority`, the tier the parse ran at. */
       timing: { parse: number; query: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority };
     }
-  | { id: number; error: string };
+  | { id: number; error: string }
+  | { id: number; taken: boolean };
 
 const TAGS: Record<string, string> = {
   javascript: javascriptTags,
@@ -150,6 +153,11 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   }
   if (message.type === 'priority') {
     queue.raise(message.key, message.priority);
+    return;
+  }
+  if (message.type === 'take') {
+    const taken = queue.remove((job) => job.key === message.key).length > 0;
+    self.postMessage({ id: message.id, taken } satisfies SyntaxResponse);
     return;
   }
   if (message.type === 'warm') {

@@ -106,10 +106,37 @@ export function backoffUntil(error: unknown, now = Date.now()): number | undefin
 }
 
 /**
+ * The whole text of an added file's new side, or of a deleted file's old side, from its patch (#394): every line of
+ * that side is in the patch's one hunk, so nothing needs reading. Undefined when the patch is not the whole side:
+ * GitHub leaves the patch out of large files, and a topic's patch has only some of the lines.
+ */
+export function wholeFileText(patch: string, side: 'after' | 'before'): string | undefined {
+  const lines = patch.split('\n');
+  const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(lines[0] ?? '');
+  if (!header) return;
+  const [start, count, otherCount] = side === 'after' ? [header[3], header[4], header[2]] : [header[1], header[2], header[4]];
+  if (Number(start) !== 1 || otherCount !== '0') return;
+  const sign = side === 'after' ? '+' : '-';
+  const text: string[] = [];
+  let newline = true;
+  for (const [index, line] of lines.slice(1).entries()) {
+    if (line.startsWith(sign)) text.push(line.slice(1));
+    // "\ No newline at end of file"
+    else if (line.startsWith('\\')) newline = false;
+    // A patch that ends in a line break.
+    else if (line === '' && index === lines.length - 2) continue;
+    else return;
+  }
+  if (text.length !== (count === undefined ? 1 : Number(count))) return;
+  return text.join('\n') + (newline ? '\n' : '');
+}
+
+/**
  * What a changed file's scopes need read, from its patch: the after side, or both sides when a hunk only deletes
- * lines (scopes of deleted lines come from the old tree). Undefined for a file whose scopes cannot show or need no
- * read: added or deleted files, files without a patch (the view reads them whole), no grammar, images, generated
- * files, and files the patch alone shows to be too large.
+ * lines (scopes of deleted lines come from the old tree). An added file needs its new side and a deleted file its old
+ * one, which their patch already holds whole: they need a read only when it does not. Undefined for a file whose scopes
+ * cannot show or need no read: added or deleted files with their whole patch, files without a patch (the view reads
+ * them whole), no grammar, images, generated files, and files the patch alone shows to be too large.
  */
 export function syntaxContentsPlan(
   snapshot: Pick<PrChanges, 'fileKinds'>,
@@ -117,9 +144,20 @@ export function syntaxContentsPlan(
   /** Whether a path's language is on in Settings (lib/code-intelligence.ts). */
   allowed: (path: string) => boolean = (path) => !!syntaxLanguage(path)
 ): { both: boolean; characters: number } | undefined {
-  if (file.status === 'added' || file.status === 'deleted' || !file.patch) return;
-  if (!syntaxLanguage(file.path) || !allowed(file.path) || imageMimeType(file.path)) return;
+  if (!file.patch) return;
+  // A deleted file is named by its old path.
+  const path = file.status === 'deleted' ? (file.previousPath ?? file.path) : file.path;
+  if (!syntaxLanguage(path) || !allowed(path) || imageMimeType(path)) return;
   if ((snapshot.fileKinds?.[file.path] ?? pathFileKinds(file.path)).generated.value) return;
+  if (file.status === 'added' || file.status === 'deleted') {
+    const side = file.status === 'added' ? 'after' : 'before';
+    if (wholeFileText(file.patch, side) !== undefined) return;
+    const sign = side === 'after' ? '+' : '-';
+    let characters = 0;
+    for (const line of file.patch.split('\n')) if (line.startsWith(sign) || line.startsWith(' ')) characters += line.length;
+    if (characters > SYNTAX_CONTENTS_MAX_CHARACTERS) return;
+    return { both: side === 'before', characters };
+  }
   let characters = 0;
   // Per hunk: whether it deletes lines and whether it adds any. A hunk that only deletes needs the old side.
   const hunks: { deletes: boolean; adds: boolean }[] = [];
