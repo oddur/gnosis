@@ -145,12 +145,19 @@ export function useDiffFileModel({
     // A topic's gap is unchanged code only where it saved those lines, or where both sides agree on every line.
     return all.map((gap) => {
       const size = gapSize(gap);
-      if (gap.opaque || size === undefined || (known && knownLines(known, gap.newStart, size))) return gap;
-      if (!before || !after || !afterMatches) return gap;
-      if (unchanged(before, after, gap, size)) return gap;
+      if (size === undefined || (!gap.opaque && known && knownLines(known, gap.newStart, size))) return gap;
+      const verified = !!before && !!after && !!afterMatches;
+      if (verified && !gap.opaque && unchanged(before, after, gap, size)) return gap;
       // The hunk below sits this far apart on the two sides; the hunk above, `gap.oldOffset`.
       const next = hunks?.at(gap.index);
-      return { ...gap, opaque: true, ...agreeing(before, after, gap, size, next && next.oldStart - next.newStart) };
+      if (verified) return { ...gap, opaque: true, ...agreeing(before, after, gap, size, next && next.oldStart - next.newStart) };
+      // Until both sides are read, a gap that holds other changes shows the lines the topic saved next to its hunks.
+      if (!gap.opaque) return gap;
+      let revealDown = 0,
+        revealUp = 0;
+      while (revealDown < size && known?.[gap.newStart + revealDown - 1] !== undefined) revealDown++;
+      while (revealUp < size - revealDown && known?.[gap.newStart + size - revealUp - 2] !== undefined) revealUp++;
+      return { ...gap, revealDown, revealUp };
     });
   }, [expandable, hunks, afterMatches, after, before, partial, known]);
   const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
