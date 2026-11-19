@@ -280,5 +280,6 @@ export function breadcrumbNavContents(path: string): PrFileContents | undefined 
   return { before: { kind: 'text', content: text(source[0]) }, after: { kind: 'text', content: text(source[1]) } };
 }
 
-/** The files the first Explanation topic shows whole with `?breadcrumb-nav`: the same checks run in a slide. */
-export const NAV_TOPIC_FILES = ['src/nav/deep.ts', 'src/nav/scoped.ts', 'src/nav/outline.ts'];
+/** The files the first Explanation topic shows whole with `?breadcrumb-nav`: the same checks run in a slide, and
+ * `far_mod.rs`, far down the topic, is arrived at straight in its middle. */
+export const NAV_TOPIC_FILES = ['src/nav/deep.ts', 'src/nav/scoped.ts', 'src/nav/outline.ts', 'src/nav/far_mod.rs'];

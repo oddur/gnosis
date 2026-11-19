@@ -671,6 +671,9 @@ function GapBar({
  */
 export const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
 
+/** The pinned state's thresholds: 0, 5%, 10%… 100% of a header in view (see the observer in ChangesDiff). */
+const STUCK_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i / 20);
+
 /** A probe that finds no line (a slice still mounting, a comment) looks again on this many following frames. */
 const MISSED_PROBES = 30;
 
@@ -1233,24 +1236,48 @@ export function ChangesDiff<A>({
         (entries) => {
           for (const entry of entries) {
             const top = entry.rootBounds?.top ?? 0;
-            const stuckNow = entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top;
-            entry.target.toggleAttribute('data-stuck', stuckNow);
-            if (stuckNow) pinned.add(entry.target as HTMLElement);
-            else {
-              pinned.delete(entry.target as HTMLElement);
-              entry.target.removeAttribute('data-live-focus');
-              closeFolded(entry.target);
-            }
+            mark(entry.target, entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top);
           }
-          for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
-          listen(pinned.size > 0);
-          if (pinned.size) schedule();
+          settled();
         },
-        { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: [0, 1] }
+        // A threshold every 5%: a header is partly in view both while it enters at the bottom and while it is pinned,
+        // so a jump straight from one to the other, such as to a line of a file never shown, crosses one of them.
+        { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: STUCK_THRESHOLDS }
       );
       observeHeaders();
     });
     resize.observe(header);
+    const mark = (target: Element, stuckNow: boolean) => {
+      target.toggleAttribute('data-stuck', stuckNow);
+      if (stuckNow) pinned.add(target as HTMLElement);
+      else {
+        pinned.delete(target as HTMLElement);
+        target.removeAttribute('data-live-focus');
+        closeFolded(target);
+      }
+    };
+    const settled = () => {
+      for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
+      listen(pinned.size > 0);
+      if (pinned.size) schedule();
+    };
+    // Once any scroll ends, however the reader arrived (a jump, a review check, a deep link, the outline), the pinned
+    // state is read from the headers' boxes, for the one case the thresholds cannot see: a header partly in view by
+    // exactly as much before a jump as after it. One read of this diff's box, and of its headers' when it is in view.
+    const recheck = () => {
+      if (height === undefined) return;
+      const view = scroller.getBoundingClientRect();
+      const box = element.getBoundingClientRect();
+      if (box.bottom <= view.top || box.top >= view.bottom) return;
+      const line = view.top + height;
+      for (const bar of element.querySelectorAll('[data-hunk-header]')) {
+        const r = bar.getBoundingClientRect();
+        const stuckNow = r.bottom > line && r.top < view.bottom && r.top < line;
+        if (stuckNow !== bar.hasAttribute('data-stuck')) mark(bar, stuckNow);
+      }
+      settled();
+    };
+    scroller.addEventListener('scrollend', recheck, { passive: true });
 
     // Going to a line (#417): a pinned crumb, or a symbol of the file's outline (#394). Whatever must show is revealed
     // first; then the line scrolls right under the pinned headers, with an eased move. A line that stays hidden (a topic
@@ -1433,6 +1460,7 @@ export function ChangesDiff<A>({
     element.addEventListener('focusout', onFocus);
     return () => {
       resize.disconnect();
+      scroller.removeEventListener('scrollend', recheck);
       stuck.current?.disconnect();
       stuck.current = undefined;
       listen(false);

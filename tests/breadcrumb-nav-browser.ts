@@ -103,6 +103,25 @@ void app.whenReady().then(async () => {
           if(Math.abs(off)>1){s.dispatchEvent(new WheelEvent('wheel'));s.scrollTop+=off;still=0}else still++;
           for(let f=0;f<2;f++)await new Promise(r=>requestAnimationFrame(r));await new Promise(r=>setTimeout(r,40))}
         await new Promise(r=>setTimeout(r,100));return Math.round(s.scrollTop)};
+      // One scroll, as a jump, a review check or a deep link makes: the line straight to right under where the headers pin,
+      // with no stop between. Returns where the file's header and the line ended up.
+      window.arrive=async(root,scroller,text)=>{const s=window.q(scroller);const r=window.q(root);
+        // A file never shown is laid out only once it nears the view: its top just shows at the bottom of the view, so its
+        // hunk header is partly in view there, as when a reader's jump starts.
+        s.scrollTop+=r.getBoundingClientRect().top-(s.getBoundingClientRect().bottom-120);
+        for(let f=0;f<4;f++)await new Promise(q=>requestAnimationFrame(q));await new Promise(q=>setTimeout(q,200));
+        // Its hunk header now only partly in view at the bottom, the hardest start: from there to pinned, it is never wholly in view.
+        for(let i=0,still=0;i<20&&still<3;i++){const h=r.querySelectorAll('[data-hunk-header]');const head=h[h.length-1];
+          const off=head.getBoundingClientRect().top-(s.getBoundingClientRect().bottom-head.offsetHeight/2);if(Math.abs(off)>1){s.scrollTop+=off;still=0}else still++;
+          for(let f=0;f<3;f++)await new Promise(q=>requestAnimationFrame(q))}
+        const l=window.lineRow(root,text,false);
+        const under=s.getBoundingClientRect().top+r.querySelector('.changes-file-header').offsetHeight-1+r.querySelector('[data-hunk-header]').offsetHeight;
+        const before=[...r.querySelectorAll('[data-hunk-header]')].at(-1)?.getBoundingClientRect().top;
+        // Files above may change height as they come near: aim again, in single moves, until the line holds still.
+        for(let i=0,still=0;i<20&&still<3;i++){const off=l.getBoundingClientRect().top-under;if(Math.abs(off)>1){s.scrollTop+=off;still=0}else still++;
+          for(let f=0;f<3;f++)await new Promise(q=>requestAnimationFrame(q))}
+        await new Promise(q=>setTimeout(q,300));
+        return {before:Math.round(before??-1),line:Math.round(l.getBoundingClientRect().top),under:Math.round(under)}};
       window.jumpState=root=>{const r=window.q(root);const h=r.querySelector('[data-hunk-header][data-stuck]');const b=h?.getBoundingClientRect();const a=document.activeElement;
         const slot=h?.querySelector('.diff-gap-live');
         return {stuck:!!h,live:h?.dataset.live??null,bottom:b?Math.round(b.bottom):null,height:b?Math.round(b.height):null,
@@ -358,6 +377,18 @@ void app.whenReady().then(async () => {
       return;
     }
     await open();
+
+    // ═══ Arriving straight in the middle of a file never shown pins its hunk header ═══
+    // The header goes from partly in view at the bottom to pinned at the top in one move, never wholly in view between.
+    {
+      const far = rowOf('src/nav/far_mod.rs');
+      await wait(`!!window.lineRow(${JSON.stringify(far)},'total += 40 * 2;',false)`, 500);
+      console.log('Changes, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(far)},'${STREAM}','total += 40 * 2;')`)));
+      await wait(`window.jumpState(${JSON.stringify(far)}).crumbs.length>0`, 50).catch(() => undefined);
+      const direct = await state(far);
+      assert.ok(direct.stuck && direct.live === 'scope', `Changes: a direct jump into a file never shown pins its header: ${JSON.stringify(direct)}`);
+      assert.deepEqual(direct.crumbs, ['Go to module api', 'Go to impl Client', 'Go to function handle'], 'Changes: and it follows the reader');
+    }
 
     // ═══ Languages: each chain, pinned, and its outermost crumb's jump ═══
     const cases = [
@@ -731,9 +762,18 @@ void app.whenReady().then(async () => {
     await wait(`!!window.q(${JSON.stringify(slideDeep)})&&window.symbols(${JSON.stringify(slideDeep)}).length>=2`, 500);
     // The topic's code column sets its own width: the window is fixed at 1440 px for it (openTopic). The file comes into
     // view first, as a reader scrolls to it.
-    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideDeep)}).getBoundingClientRect().top-s.getBoundingClientRect().top-20})()`);
-    await settle();
-    await sleep(600);
+    // Straight into the middle of a file of the topic never shown, as a review check, the outline or a deep link arrives.
+    const slideFar = topicFile('src/nav/far_mod.rs');
+    await wait(`!!window.lineRow(${JSON.stringify(slideFar)},'total += 40 * 2;',false)`, 500);
+    console.log('Topic, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(slideFar)},'${DOC}','total += 40 * 2;')`)));
+    await wait(`window.jumpState(${JSON.stringify(slideFar)}).crumbs.length>0`, 50).catch(() => undefined);
+    const farDirect = await state(slideFar);
+    assert.ok(farDirect.stuck && farDirect.live === 'scope', `Topic: a direct jump into a file never shown pins its header: ${JSON.stringify(farDirect)}`);
+    assert.deepEqual(farDirect.crumbs, ['Go to module api', 'Go to impl Client', 'Go to function handle'], 'Topic: and it follows the reader');
+    console.log('Topic deep.ts, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(slideDeep)},'${DOC}','next += 30 * 2;')`)));
+    await wait(`window.jumpState(${JSON.stringify(slideDeep)}).crumbs.length>0`, 50).catch(() => undefined);
+    const deepDirect = await state(slideDeep);
+    assert.ok(deepDirect.stuck && deepDirect.live === 'scope', `Topic: arriving straight in deep.ts pins its header: ${JSON.stringify(deepDirect)}`);
     const slidePinned = await pin(slideDeep, DOC, 'next += 30 * 2;');
     assert.deepEqual(slidePinned.crumbs, ['Go to module Engine', 'Go to class Scheduler', 'Go to function run', 'Go to function step'], 'Topic: the same pinned breadcrumb');
     await jump('Topic', slideDeep, 'Go to class Scheduler', 'export class Scheduler {', { above: 'export namespace Engine', revealed: true });
