@@ -1452,6 +1452,24 @@ void app.whenReady().then(async () => {
     await sleep(1700);
     await checkPinned('Stack changes', 'src/sticky.ts', stickyCrumbs);
     await shot('stack-sticky-mid-hunk', '.commit-diff-stream');
+    // A very long path keeps the file header on one row: the path shortens from the left, the actions stay beside it.
+    const longPath = await js<{ before: number; after: number; actionsTop: number; titleTop: number; name: boolean }>(`(()=>{
+      // Set the header's own width: CI desktops (Windows: 1024px) can clamp the window below what this check needs.
+      const head=[...document.querySelectorAll('.changes-file-header')].find(e=>e.getClientRects().length);
+      if(!head) throw Error('Missing a file header');
+      head.style.width='1100px'; head.style.maxWidth='none';
+      const before=head.getBoundingClientRect().height;
+      const dir=head.querySelector('.changes-file-dir'), name=head.querySelector('.changes-file-name');
+      if(dir) dir.textContent='project/workers/SimulationWorkers.Domains/AI/Agents/Activities/Conditions/Agent/Deeply/Nested/Folder/';
+      name.textContent='CanLearnSchematicBinaryConsiderationCondition.cs';
+      const after=head.getBoundingClientRect().height;
+      const actions=head.querySelector('.changes-file-actions').getBoundingClientRect(), title=head.querySelector('.changes-file-title').getBoundingClientRect();
+      const n=name.getBoundingClientRect();
+      return {before,after,actionsTop:Math.round(actions.top),titleTop:Math.round(title.top),name:n.width>=40&&n.right<=title.right+1};
+    })()`);
+    assert.ok(Math.abs(longPath.after - longPath.before) <= 1, `A long path keeps the file header one row tall: ${JSON.stringify(longPath)}`);
+    assert.ok(Math.abs(longPath.actionsTop - longPath.titleTop) <= 12, `The actions stay beside a long path: ${JSON.stringify(longPath)}`);
+    assert.ok(longPath.name, `The file name stays visible inside the title: ${JSON.stringify(longPath)}`);
     assert.deepEqual(errors, [], 'No console errors');
     console.log(
       'Syntax scope browser checks passed: breadcrumbs, crumb reveals, Show whole function, default open, fallback, worker parsing, loading on view, prefetch, the read bound, the language setting and pinned hunk headers.'
