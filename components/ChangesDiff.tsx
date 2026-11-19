@@ -1392,7 +1392,9 @@ export function ChangesDiff<A>({
             const bar = element.querySelector(`[data-gap="${part.gap.index}"]`);
             return bar ? [bar] : [];
           });
-          markSection(element.querySelectorAll('diffs-container'), { side, start: first, end: last, signatureEnd: here[1] }, bars);
+          // As many rows as fill the view twice: the rest of a long section is out of view while the mark lasts.
+          const rows = Math.ceil((2 * scroller.clientHeight) / CODE_LINE_HEIGHT);
+          markSection(element.querySelectorAll('diffs-container'), { side, start: first, end: last, signatureEnd: here[1] }, bars, rows);
         } else if (landed?.isConnected) {
           // A line is marked with the rest of `here` on its side, such as a definition's whole signature; a bar alone.
           const rows: HTMLElement[] = [landed];
