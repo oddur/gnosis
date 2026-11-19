@@ -3,7 +3,7 @@ import {
   Clock3, Copy, FileDiff, FileText, FolderGit2, GitBranch, GitCommitHorizontal, GitPullRequest,
   History, Inbox, Layers, LayoutList, Lightbulb, ListChecks, MessageSquare,
   MessageSquarePlus, MessagesSquare, Network, NotebookPen, RefreshCw, RotateCcw, Settings, Star, UserRound, VolumeX, AlarmClock,
-  CircleX, Eye, GitCompareArrows, GitMerge, GitMergeConflict, LayoutDashboard, MessageSquareWarning, Sparkles,
+  CircleX, Eye, GitCompareArrows, GitMerge, GitMergeConflict, LayoutDashboard, MessageSquareWarning, Bot,
   BellRing, GitPullRequestClosed, Hourglass,
   type LucideIcon,
 } from 'lucide-react';
@@ -62,7 +62,7 @@ export const attentionIcons: Record<AttentionKind, { icon: LucideIcon; tone: 're
   replies: { icon: MessagesSquare, tone: 'warning' },
   restack: { icon: Layers, tone: 'warning' },
   'ready-to-merge': { icon: GitMerge, tone: 'success' },
-  'explanation-ready': { icon: Sparkles, tone: 'info' },
+  'explanation-ready': { icon: Bot, tone: 'info' },
 };
 
 /**

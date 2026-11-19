@@ -11,7 +11,7 @@ import { CommitBadge } from './EntityBadge';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { File } from '@pierre/diffs/react';
 import { parseDiffFromFile, type DiffFileInput, type FileDiffMetadata, type FileDiffOptions, type SelectedLineRange } from '@pierre/diffs';
-import { CheckCheck, MessageSquare, ExternalLink, Sparkles } from 'lucide-react';
+import { Bot, CheckCheck, MessageSquare, ExternalLink } from 'lucide-react';
 import { inspectionFiles as fileCache, previewFor } from '../lib/inspection-cache';
 import {
   isUnchangedMove,
@@ -866,9 +866,15 @@ export function PrFileInspection({
               Comment in Changes
             </Button>
           )}
-          <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
-            <Sparkles size={14} aria-hidden="true" />
-            <span className="changes-file-action-label">Ask about this</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="changes-file-ask"
+            aria-label="Ask about this"
+            title="Ask about this file or selection in chat"
+            onClick={() => ask(selectedCode())}
+          >
+            <Bot size={16} aria-hidden="true" />
           </Button>
           {classificationControl}
         </div>

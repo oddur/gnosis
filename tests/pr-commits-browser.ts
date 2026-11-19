@@ -185,7 +185,7 @@ void app.whenReady().then(async () => {
       'One scroll surface contains multiple file diffs'
     );
     await js(
-      "[...document.querySelectorAll('.commit-stream-row[data-active=true] button')].find(b=>b.textContent.trim()==='Ask about this').click()"
+      "[...document.querySelectorAll('.commit-stream-row[data-active=true] button')].find(b=>b.getAttribute('aria-label')==='Ask about this').click()"
     );
     await input('.changes-chat textarea', 'What is preserved here?');
     await js("document.querySelector('.changes-chat form').requestSubmit()");

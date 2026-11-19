@@ -354,10 +354,10 @@ void app.whenReady().then(async () => {
     await click('Changes');
     await viewport(1280, 720);
     await wait(
-      "[...document.querySelectorAll('.changes-file-header button')].some(b=>b.textContent.trim()==='Ask about this')"
+      "[...document.querySelectorAll('.changes-file-header button')].some(b=>b.getAttribute('aria-label')==='Ask about this')"
     );
     await js(
-      "window.askOrigin=[...document.querySelectorAll('.changes-file-header button')].find(b=>b.textContent.trim()==='Ask about this');window.askOrigin.focus();window.askOrigin.click()"
+      "window.askOrigin=[...document.querySelectorAll('.changes-file-header button')].find(b=>b.getAttribute('aria-label')==='Ask about this');window.askOrigin.focus();window.askOrigin.click()"
     );
     await wait("document.activeElement?.id==='changes-question'");
     await fill('How does this file change?');

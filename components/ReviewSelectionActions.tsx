@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { PopoverManager, setPopoverPositionStyles } from '@pierre/diffs/edit';
-import { Copy, Sparkles } from 'lucide-react';
+import { Bot, Copy } from 'lucide-react';
 import { reviewCodeSelection } from './ReviewDiff';
 
 interface CodeSelection {
@@ -239,7 +239,7 @@ export function ReviewSelectionActions({
           setSelection(null);
         }}
       >
-        <Sparkles size={14} aria-hidden="true" /> Ask about this
+        <Bot size={14} aria-hidden="true" /> Ask about this
       </button>
       <button
         onClick={() => {
