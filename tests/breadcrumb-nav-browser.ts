@@ -157,7 +157,9 @@ void app.whenReady().then(async () => {
             if(split)(e.closest('[data-deletions]')?out.del:out.add).push(at);
             if(e.getAttribute('data-here-part')==='body'){out.body++;out.bodyTexts.push(e.textContent.trim())}else out.sig.push(e.textContent.trim())}}
         out.del=[...new Set(out.del)].sort((a,b)=>a-b);out.add=[...new Set(out.add)].sort((a,b)=>a-b);out.bodyTexts=out.bodyTexts.slice(0,400);return out};
-      window.sampleScroll=scroller=>{const s=window.q(scroller);const v=[];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
+      // The scroller's scrollTop from now (the first sample is taken at once, so a jump that lands before the next frame
+      // still shows as a move) and on each of the next 90 frames, into window.__samples.
+      window.sampleScroll=scroller=>{const s=window.q(scroller);const v=[Math.round(s.scrollTop)];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
       // Show scope's rails: the gutter cells marked, by their line number.
       window.rails=root=>window.deepAll('[data-column-number][data-scope-rail]',window.q(root)).filter(c=>!c.closest('[data-deletions]')).map(c=>c.getAttribute('data-column-number')+':'+c.getAttribute('data-scope-rail'));
       window.headerActions=root=>[...window.q(root).querySelectorAll('.diff-gap-act > button')].map(b=>b.textContent.trim());
@@ -632,14 +634,18 @@ void app.whenReady().then(async () => {
     // Reduced motion: the jump lands in one frame, and the band is still.
     await reducedMotion(true);
     await pin(far, STREAM, 'total += 50 * 2;');
+    // Recording starts, and settles a frame, before the click: a reduced-motion jump lands within the click itself.
+    const point = await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(far)},'Go to impl Client')`);
     await js(`window.sampleScroll('${STREAM}')`);
-    clickPoint(await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(far)},'Go to impl Client')`));
+    await js(frames);
+    clickPoint(point);
     await landed(far);
     await wait('window.__samples.length>=90');
     const instant = await js<number[]>('window.__samples');
     const moves = instant.filter((v, i) => i > 0 && v !== instant[i - 1]);
     const still = await here(far);
-    console.log('Reduced motion:', JSON.stringify({ moves, still }));
+    console.log('Reduced motion:', JSON.stringify({ start: instant[0], moves, still }));
+    assert.ok(Math.abs(instant[0] - (instant.at(-1) ?? 0)) > 40, `Reduced motion: the jump starts away from its target: ${instant[0]} → ${instant.at(-1)}`);
     assert.ok(moves.length >= 1 && Math.abs(moves[0] - (instant.at(-1) ?? 0)) <= 2, `Reduced motion: the first move lands: ${JSON.stringify(moves)}`);
     assert.deepEqual(still.map((m) => [m.anim, m.band]), [['none', 'rgba(47, 85, 212, 0.22)']], 'Reduced motion: the band is still');
     assert.equal(
