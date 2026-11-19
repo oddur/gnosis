@@ -101,7 +101,7 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 1500));
     const huge = 'document.querySelector(\'[data-explanation-section="9"] [data-file-path$="huge.ts"]\')';
     assert.ok(
-      (await js<number>(`${huge}.querySelectorAll('diffs-container').length`)) >= 15,
+      (await js<number>(`${huge}.querySelectorAll('.changes-slice').length`)) >= 15,
       'A 3,000-line file renders as 200-line slices'
     );
     // Skipped blocks hold their place with estimates. One far too small made the document shrink by most of the
