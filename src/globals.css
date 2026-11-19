@@ -5723,3 +5723,17 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .conversation-member-title { flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
 .conversation-member-excerpt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted-foreground); }
 .conversation-member-description > .conversation-description-pr { padding:0 12px 12px; }
+
+/* Big groups (#418): a push of more than BIG_GROUP commits, a long bot run or a run of events shows what is in it,
+   a short preview and Show all, which opens it in place. Merges inside an opened push read as one line per branch. */
+.feedback-group { display:flex; flex-direction:column; gap:4px; }
+.feedback-group-summary { color:var(--muted-foreground); font-size:var(--type-control); line-height:1.5; font-variant-numeric:tabular-nums; }
+.feedback-group-toggle { align-self:flex-start; margin-left:-8px; color:var(--ring); }
+.feedback-group-toggle:hover { color:var(--foreground); }
+.feedback-group .feedback-commits li > time { flex:none; color:var(--muted-foreground); font-size:var(--type-caption); }
+.feedback-merge-group { flex-direction:column; align-items:stretch !important; }
+.feedback-merge-toggle { display:inline-flex; align-items:center; gap:6px; min-height:28px; color:var(--muted-foreground); font-size:var(--type-control); text-align:left; cursor:pointer; }
+.feedback-merge-toggle:hover { color:var(--foreground); }
+.feedback-merge-toggle:focus-visible { outline:2px solid var(--ring); outline-offset:2px; border-radius:4px; }
+.feedback-merge-toggle code { font-family:var(--font-mono); font-size:var(--type-caption); }
+.feedback-merge-group > .feedback-commits { margin-left:20px; }

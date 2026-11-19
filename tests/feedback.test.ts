@@ -509,6 +509,39 @@ void test('the Feedback timeline reads oldest first, groups pushes and repeated 
   assert.equal(botSummary(['A', 'B', 'C', 'D']), 'A, B, C, …');
 });
 
+void test('a big push is summarized by prefix, its merges grouped by branch, with a few meaningful subjects', async () => {
+  const { summarizeCommits, commitLines, mergeSource, commitKind, BIG_GROUP } = await import('../lib/feedback-timeline');
+  assert.equal(mergeSource("Merge branch 'local/cv2-scope' into local/cv3-filters"), 'local/cv2-scope');
+  assert.equal(mergeSource('Merge pull request #12 from klang/retry'), 'klang/retry');
+  assert.equal(mergeSource("Merge remote-tracking branch 'origin/main'"), 'origin/main');
+  assert.equal(mergeSource('Merged the docs'), undefined);
+  assert.equal(commitKind('feat(queue)!: bound the queue'), 'feat');
+  assert.equal(commitKind('Refactor: move filters'), 'refactor');
+  assert.equal(commitKind('Update README'), 'other');
+  assert.equal(commitKind('wip: try'), 'other', 'Unknown prefixes count as other');
+  let n = 0;
+  const commit = (message: string) => ({ kind: 'commit' as const, id: `k${++n}`, at: `2026-11-01T10:${String(n).padStart(2, '0')}:00Z`, sha: `${n}`.padStart(40, '0'), message, author: 'marijnz' });
+  const push = [
+    commit('fixup! refactor: x'),
+    ...Array.from({ length: 31 }, (_, i) => commit(`refactor: move filter ${i}`)),
+    ...Array.from({ length: 6 }, (_, i) => commit(`fix: guard ${i}`)),
+    ...Array.from({ length: 11 }, () => commit("Merge branch 'local/cv2-scope' into local/cv3-filters")),
+    ...Array.from({ length: 8 }, (_, i) => commit(`content: copy ${i}`)),
+    ...Array.from({ length: 3 }, (_, i) => commit(`docs: note ${i}`)),
+    commit('test: cover filters'),
+  ];
+  assert.ok(push.length > BIG_GROUP);
+  const summary = summarizeCommits(push);
+  assert.equal(summary.line, '31 refactor · 8 content · 6 fix · 3 docs · 1 test · 1 other · 11 merges from local/cv2-scope');
+  assert.deepEqual(summary.preview.map((c) => c.message), ['refactor: move filter 0', 'refactor: move filter 1', 'refactor: move filter 2', 'refactor: move filter 3'], 'Fixups and merges are not previewed');
+  const lines = commitLines(push);
+  assert.equal(lines.filter((l) => l.type === 'merges').length, 1, 'One line per merged branch');
+  const merges = lines.find((l) => l.type === 'merges');
+  assert.equal(merges?.type === 'merges' && merges.commits.length, 11);
+  assert.equal(lines.findIndex((l) => l.type === 'merges'), 38, 'The merge line sits where the first merge was');
+  assert.equal(lines.length, push.length - 10);
+});
+
 void test('Feedback previews read bot HTML as text, and find mentions, anchors and order', async () => {
   const { plainCommentText, mentionsAccount, diffHunkAnchor, sortFeedback, chronologicalThread } = await import('../lib/feedback');
   // klanggames/seed#36138: Linear's link-back comment showed its raw tags in the list.

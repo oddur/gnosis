@@ -26,6 +26,9 @@ void app.whenReady().then(async () => {
     }
     throw Error(`Timeout: ${code}\n${errors.join('\n')}\n${await js<string>('document.body.innerText.slice(-3000)')}`);
   };
+  /** A PR tab by its label: the breadcrumb's picker shows the same word. */
+  const tab = (label: string) =>
+    js(`(()=>{const b=[...document.querySelectorAll('.workspace-panel[data-workspace-active=true] .pr-overview-tabs [role=tab], .pr-overview-tabs [role=tab]')].find(b=>b.getBoundingClientRect().width&&b.querySelector('.pr-tab-label')?.dataset.label===${JSON.stringify(label)});if(!b)throw Error('Missing tab '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`);
   const click = (label: string, scope = 'document') =>
     js(`(()=>{const b=[...${scope}.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`);
   const key = async (k: string) => {
@@ -44,6 +47,8 @@ void app.whenReady().then(async () => {
       win.setContentSize(width, 800);
       await sleep(250);
       await prepare?.();
+      // scrollIntoView can scroll the app's own frames; put them back so shots show the whole window.
+      await js("(()=>{let e=document.querySelector('[data-feedback-scroller]')?.parentElement;while(e){if(e.scrollTop)e.scrollTop=0;e=e.parentElement}})()");
       for (const dark of [false, true]) {
         await js(`document.documentElement.classList.toggle('dark',${dark})`);
         await js('document.fonts.ready');
@@ -105,6 +110,12 @@ void app.whenReady().then(async () => {
             {kind:'force-push',id:'f1',at:at(-50),actor:'oddur',before:'c3d4e5f6a1b2',after:'d4e5f6a1b2c3'},
             {kind:'review-requested',id:'q1',at:at(-40),actor:'oddur',reviewer:'maya'},
             {kind:'commit',id:'k4',at:at(40),sha:'e5f6a1b2c3d4',message:'Add a retry test',author:'oddur'},
+            // A big push (klanggames/seed): 60 commits, a third of them merges of one branch.
+            ...(()=>{const kinds=[...Array(31).fill('refactor'),...Array(8).fill('content'),...Array(6).fill('fix'),...Array(3).fill('docs'),'test'];const out=[];let m=0;
+              kinds.forEach((k,i)=>{out.push({kind:'commit',id:'big-push-'+i,at:at(-200+i*0.1),sha:(i.toString(16)+'b'.repeat(40)).slice(0,40),message:k+': '+(k==='refactor'?'move filter step '+i:'update '+k+' '+i),author:'marijnz'});
+                if(i%4===3&&m<11){m++;out.push({kind:'commit',id:'big-merge-'+m,at:at(-200+i*0.1+0.05),sha:('c'+m+'d'.repeat(40)).slice(0,40),message:"Merge branch 'local/cv2-scope' into local/cv3-filters",author:'marijnz'})}});
+              while(m<11){m++;out.push({kind:'commit',id:'big-merge-'+m,at:at(-194+m*0.01),sha:('e'+m+'f'.repeat(40)).slice(0,40),message:"Merge branch 'local/cv2-scope' into local/cv3-filters",author:'marijnz'})}
+              return out})(),
           ],
           requestedReviewers:[],viewerCanUpdate:true,state:'OPEN'}});
       }
@@ -120,7 +131,7 @@ void app.whenReady().then(async () => {
     })()`);
     await js("document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await wait("!!document.querySelector('.stack-overview')");
-    await click('Summary');
+    await tab('Summary');
     await wait("!!document.querySelector('.feedback-timeline .feedback-entry')");
     // Hide GitHub Actions stays a toggle; turned off, the three CI comments in a row collapse into one quiet row.
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);
@@ -200,6 +211,28 @@ void app.whenReady().then(async () => {
     }
     await capture('long-gap', () => js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const d=[...document.querySelectorAll('.feedback-entry[data-entry-type=day]')].find(e=>/days later/.test(e.textContent));if(d){d.scrollIntoView({block:'center'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`));
     await capture('pushes', () => js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const d=document.querySelector('.feedback-entry[data-entry-type=commits]');if(d){d.scrollIntoView({block:'center'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`));
+
+    // A 60-commit push collapses to a summary, a preview and Show all; opened, its merges read as one line.
+    const push = await js<string>(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const b=[...document.querySelectorAll('.feedback-entry[data-entry-type=commits]')].find(e=>/pushed 60 commits/.test(e.textContent));if(b){t.scrollTop+=b.getBoundingClientRect().top-t.getBoundingClientRect().top-60;return b.dataset.entryKey}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
+    const big = `document.querySelector('[data-entry-key="${push}"]')`;
+    assert.match(await js<string>(`${big}.querySelector('.feedback-group-summary').textContent`), /^31 refactor · 8 content · 6 fix · 3 docs · 1 test · 11 merges from local\/cv2-scope$/);
+    assert.equal(await js(`${big}.querySelectorAll('.feedback-commits > li').length`), 4, 'A collapsed push previews four subjects');
+    assert.equal(await js(`${big}.querySelector('.feedback-group-toggle').getAttribute('aria-expanded')`), 'false');
+    assert.equal(await js(`${big}.querySelector('.feedback-group-toggle').textContent`), 'Show all 60 commits');
+    await capture('big-push-collapsed', () => js(`(()=>{const p=document.querySelector('[data-feedback-scroller]');const e=${big};if(e)p.scrollTop+=e.getBoundingClientRect().top-p.getBoundingClientRect().top-60})()`));
+    await js(`${big}.querySelector('.feedback-group-toggle').click()`);
+    await wait(`${big}?.querySelectorAll(':scope .feedback-group > .feedback-commits > li').length===50`);
+    assert.match(await js<string>(`${big}.querySelector('.feedback-merge-toggle').textContent`), /11 merges from local\/cv2-scope/);
+    await js(`${big}.querySelector('.feedback-merge-toggle').click()`);
+    await wait(`${big}?.querySelectorAll('.feedback-merge-group .feedback-commits > li').length===11`);
+    // The row grew: the virtualizer measures it, and the rail runs on without a gap.
+    await sleep(300);
+    const grown = await js<number[]>(`(()=>{const rows=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index);const out=[];
+      for(let k=0;k+1<rows.length;k++){const a=rows[k],b=rows[k+1];if(Number(b.dataset.index)!==Number(a.dataset.index)+1)continue;const sa=a.querySelector(':scope > .timeline-separator').getBoundingClientRect(),sb=b.querySelector(':scope > .timeline-separator').getBoundingClientRect();out.push(Math.abs(sb.top-sa.bottom))}return out})()`);
+    assert.ok(grown.length > 0 && Math.max(...grown) <= 1, `The rail stays continuous after a push opens: ${JSON.stringify(grown)}`);
+    await capture('big-push-expanded', () => js(`(()=>{const p=document.querySelector('[data-feedback-scroller]');const e=${big};if(e)p.scrollTop+=e.getBoundingClientRect().top-p.getBoundingClientRect().top-60})()`));
+    await js(`${big}.querySelector('.feedback-group-toggle').click()`);
+    await wait(`${big}?.querySelector('.feedback-group-toggle')?.textContent==='Show all 60 commits'`);
 
     // Bots: collapsed, then expanded in place.
     const botsKey = await js<string>(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const b=document.querySelector('.feedback-entry[data-entry-type=bots]');if(b){b.scrollIntoView({block:'start'});return b.dataset.entryKey}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);

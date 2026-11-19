@@ -31,6 +31,9 @@ void app.whenReady().then(async () => {
     }
     throw Error(`Timeout: ${code}\n${errors.join('\n')}\n${await js<string>('document.body.innerText.slice(-6000)')}`);
   };
+  /** A PR tab by its label: the breadcrumb's picker shows the same word. */
+  const tab = (label: string) =>
+    js(`(()=>{const b=[...document.querySelectorAll('.workspace-panel[data-workspace-active=true] .pr-overview-tabs [role=tab], .pr-overview-tabs [role=tab]')].find(b=>b.getBoundingClientRect().width&&b.querySelector('.pr-tab-label')?.dataset.label===${JSON.stringify(label)});if(!b)throw Error('Missing tab '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`);
   const click = (label: string, scope = 'document') =>
     js(
       `(()=>{const b=[...${scope}.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
@@ -75,7 +78,7 @@ void app.whenReady().then(async () => {
       "document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))"
     );
     await wait("!!document.querySelector('.stack-overview')");
-    await click('Summary');
+    await tab('Summary');
     await wait(
       "document.querySelectorAll('.feedback-entry').length>2 && document.querySelector('.feedback-sync')?.textContent==='Updates automatically'"
     );
@@ -89,8 +92,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);
     await js("document.querySelector('.feedback-actions-filter input').click()");
     await wait("document.querySelector('.feedback-filters button').textContent.trim()==='All 12'");
-    await click('Summary');
-    await click('Summary');
+    await tab('Commits');
+    await tab('Summary');
     await wait("document.querySelector('.feedback-actions-filter input')?.checked===false");
     await show('actions-c-120');
     assert.match(await js<string>(`${entry('actions-c-120')}.textContent`), /Client\/server tests passed/);
@@ -185,8 +188,8 @@ void app.whenReady().then(async () => {
     await capture('narrow-conversation-dark');
     win.setContentSize(1280, 800);
     await js("document.documentElement.classList.remove('dark');window.failFeedback=false");
-    await click('Summary');
-    await click('Summary');
+    await tab('Commits');
+    await tab('Summary');
     await wait("document.querySelectorAll('.feedback-entry').length>0");
     await show('r-120');
     assert.equal(await js(`!!${entry('r-120')}.querySelector('.pr-unread-dot')`), false, 'Read status survives tab navigation');
@@ -285,7 +288,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[aria-label=\"Close review requests\"]').click()");
 
     // A stack review blocker opens the PR's review summary in Feedback.
-    await click('Summary');
+    await tab('Summary');
     await js(`(async()=>{
       const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');
       const read=window.electronAPI.getQueueSignals;

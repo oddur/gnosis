@@ -62,7 +62,7 @@ import {
   plainCommentText,
   type FeedbackItem,
 } from '../lib/feedback';
-import { botSummary, buildTimeline, entryItems, type TimelineEntry } from '../lib/feedback-timeline';
+import { BIG_GROUP, GROUP_PREVIEW, botSummary, buildTimeline, commitLines, entryItems, summarizeCommits, type TimelineEntry } from '../lib/feedback-timeline';
 import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
 import { replaceDiscussionThread, refreshDiscussion } from '../lib/review-discussion-cache';
 import { useSessionDraft, ReviewDraftBoundary } from '../lib/session-drafts';
@@ -358,7 +358,7 @@ export function PrFeedbackView({
     estimateSize: (index) => {
       const row = rows[index];
       if (row.type === 'item') return row.item.thread ? (row.item.thread.isResolved ? 48 : 360) : 140;
-      if (row.type === 'commits') return 52 + row.commits.length * 28;
+      if (row.type === 'commits') return 52 + Math.min(row.commits.length, BIG_GROUP) * 28;
       if (row.type === 'day') return 56;
       return row.type === 'description' ? 200 : 44;
     },
@@ -667,14 +667,28 @@ export function PrFeedbackView({
             </Button>
           ),
         };
-      case 'commits':
+      case 'commits': {
+        // A big push shows what is in it and a few subjects; Show all opens it in place (BIG_GROUP).
+        const total = row.commits.length;
+        const big = total > BIG_GROUP;
+        const open = !big || expanded.includes(row.key);
+        const summary = big ? summarizeCommits(row.commits) : undefined;
+        const commitItem = (commit: (typeof row.commits)[number]) => (
+          <li key={commit.id}>
+            <span className="feedback-commit-message" title={commit.message}>{commit.message}</span>
+            <code>{short(commit.sha)}</code>
+            <Button variant="ghost" size="icon-sm" aria-label={`Copy commit ${short(commit.sha)}`} title="Copy commit SHA" onClick={() => void navigator.clipboard.writeText(commit.sha)}>
+              <Copy size={13} />
+            </Button>
+          </li>
+        );
         return {
           node: 'commits',
           quiet: true,
           title: (
             <>
               <strong className="timeline-actor-name">{row.author ?? 'Someone'}</strong>{' '}
-              {row.commits.length === 1 ? 'pushed a commit' : `pushed ${row.commits.length} commits`}
+              {total === 1 ? 'pushed a commit' : `pushed ${total} commits`}
             </>
           ),
           meta: (
@@ -684,19 +698,86 @@ export function PrFeedbackView({
             </>
           ),
           body: (
-            <ul className="feedback-commits">
-              {row.commits.map((commit) => (
-                <li key={commit.id}>
-                  <span className="feedback-commit-message" title={commit.message}>{commit.message}</span>
-                  <code>{short(commit.sha)}</code>
-                  <Button variant="ghost" size="icon-sm" aria-label={`Copy commit ${short(commit.sha)}`} title="Copy commit SHA" onClick={() => void navigator.clipboard.writeText(commit.sha)}>
-                    <Copy size={13} />
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <div className="feedback-group" data-collapsed={!open || undefined}>
+              {summary && <p className="feedback-group-summary">{summary.line}</p>}
+              <ul className="feedback-commits">
+                {!open && summary
+                  ? summary.preview.map(commitItem)
+                  : commitLines(row.commits).map((line) => {
+                      if (line.type === 'commit') return commitItem(line.commit);
+                      const key = `${row.key}:merges:${line.source}`;
+                      const shown = expanded.includes(key);
+                      return (
+                        <li key={key} className="feedback-merge-group">
+                          <button className="feedback-merge-toggle" aria-expanded={shown} onClick={() => toggle(key)}>
+                            <ChevronRight size={13} aria-hidden="true" className="feedback-chevron" />
+                            {line.commits.length} {line.commits.length === 1 ? 'merge' : 'merges'} from <code>{line.source}</code>
+                          </button>
+                          {shown && <ul className="feedback-commits">{line.commits.map(commitItem)}</ul>}
+                        </li>
+                      );
+                    })}
+              </ul>
+              {big && (
+                <Button variant="ghost" size="sm" className="feedback-group-toggle" aria-expanded={open} onClick={() => toggle(row.key)}>
+                  {open ? 'Show less' : `Show all ${total} commits`}
+                </Button>
+              )}
+            </div>
           ),
         };
+      }
+      case 'events': {
+        // Several force-pushes or review requests in a row: one row, its first few lines, then Show all.
+        const total = row.events.length;
+        const big = total > GROUP_PREVIEW;
+        const open = !big || expanded.includes(row.key);
+        return {
+          node: row.kind,
+          quiet: true,
+          title: (
+            <>
+              <strong className="timeline-actor-name">{row.actor ?? 'Someone'}</strong>{' '}
+              {row.kind === 'force-push' ? `force-pushed ${total} times` : `requested ${total} reviews`}
+            </>
+          ),
+          meta: (
+            <>
+              {pr(row.member)}
+              {when(row.events.at(-1)?.at ?? row.at)}
+            </>
+          ),
+          body: (
+            <div className="feedback-group" data-collapsed={!open || undefined}>
+              <ul className="feedback-commits">
+                {(open ? row.events : row.events.slice(0, GROUP_PREVIEW)).map((event) => (
+                  <li key={event.id}>
+                    <span className="feedback-commit-message">
+                      {event.kind === 'force-push' ? (
+                        event.before && event.after ? (
+                          <>
+                            from <code>{short(event.before)}</code> to <code>{short(event.after)}</code>
+                          </>
+                        ) : (
+                          'force-pushed'
+                        )
+                      ) : event.kind === 'review-requested' ? (
+                        <>from {event.reviewer}</>
+                      ) : null}
+                    </span>
+                    <Time at={event.at} />
+                  </li>
+                ))}
+              </ul>
+              {big && (
+                <Button variant="ghost" size="sm" className="feedback-group-toggle" aria-expanded={open} onClick={() => toggle(row.key)}>
+                  {open ? 'Show less' : `Show all ${total}`}
+                </Button>
+              )}
+            </div>
+          ),
+        };
+      }
       case 'event': {
         const { event } = row;
         return {
@@ -755,7 +836,7 @@ export function PrFeedbackView({
               <button className="feedback-bots-summary" aria-expanded={open} onClick={() => toggle(row.key)}>
                 <ChevronRight size={14} aria-hidden="true" className="feedback-chevron" />
                 <span className="feedback-bots-text">{botSummary(row.items.map((item) => excerpt(item)))}</span>
-                <span className="feedback-bots-hint">{open ? 'Hide' : 'Show all'}</span>
+                <span className="feedback-bots-hint">{open ? 'Show less' : `Show all ${row.items.length} comments`}</span>
               </button>
               {open &&
                 row.items.map((item) => (
@@ -1179,7 +1260,7 @@ export function PrFeedbackView({
                     <MemoRow
                       row={row}
                       render={renderRow}
-                      state={`${expanded.includes(row.key)}|${isMarker(row) ? '' : entryItems(row).map((i) => `${isUnread(i)}${mentions(i)}`).join()}|${stack}|${version}|${row.type === "description" ? `${expanded.includes(`${row.key}:full`)}${row.member.description}${row.member.changedFileCount ?? ""}` : ""}`}
+                      state={`${expanded.filter((k) => k === row.key || k.startsWith(`${row.key}:`)).join()}|${isMarker(row) ? '' : entryItems(row).map((i) => `${isUnread(i)}${mentions(i)}`).join()}|${stack}|${version}|${row.type === "description" ? `${expanded.includes(`${row.key}:full`)}${row.member.description}${row.member.changedFileCount ?? ""}` : ""}`}
                     />
                   </TimelineRowShell>
                 );
