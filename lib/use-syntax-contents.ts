@@ -39,8 +39,9 @@ export function applyCodeIntelligence(settings: CodeIntelligenceSettings) {
   codeSettings = settings;
   setSyntaxLanguages((language) => languageEnabled(settings, language));
 }
-// From the saved preferences too, so warming the predicted next PR respects the setting before any diff shows.
-if (typeof window !== 'undefined') {
+// From the saved preferences too, so warming the predicted next PR respects the setting before any diff shows. Some
+// fixtures render diffs without the app's API.
+if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).electronAPI) {
   const fromPreferences = (preferences: unknown) => {
     if (preferences) applyCodeIntelligence(codeIntelligenceSettings(preferences));
   };

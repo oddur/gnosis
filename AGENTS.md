@@ -14,3 +14,8 @@ npm run test:browser:docker                             # full suite, as on Linu
 - Run only the checks that cover your change. The full suite takes about 15 minutes.
 - Never set `GNOSIS_BROWSER_ON_HOST=1` unless the user asks for a check on the host, such as the macOS-only `--navigation-swipe` check.
 - If Docker isn't running, tell the user. Don't fall back to running the checks on the host.
+
+## Diff presentation
+
+- Diff presentation is shared: Changes (PrFileInspection/ChangesDiff) and Explanation slides (SlideView/ReviewDiff) must render diffs through the same components; any change to diff presentation must land in both, and both must be checked in screenshots and tests.
+- The shared pieces are `components/ChangesDiff.tsx`, `components/DiffFileHeader.tsx`, `components/useDiffFileModel.tsx` and `lib/diff-gaps.ts`. Topic-only features (inline explanations, review-check pins, the topic's hunk subset) ride on top through props and annotations. `--explanation-parity` checks that both surfaces render the same hunk headers and palette.

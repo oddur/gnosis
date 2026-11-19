@@ -53,6 +53,24 @@ void app.whenReady().then(async () => {
     await js(frames);
   };
   const shots = !!process.env.GNOSIS_PARITY_SHOTS;
+  const images = new Map<string, string>();
+  /** Each Changes shot beside the topic's, labelled, drawn on a canvas in the page. */
+  const sideBySide = async () => {
+    for (const kind of ['unpinned', 'pinned', 'comment'])
+      for (const theme of ['light', 'dark']) {
+        const left = images.get(`changes-${kind}-${theme}`),
+          right = images.get(`explanation-${kind}-${theme}`);
+        if (!left || !right) continue;
+        const png = await js<string>(`(async()=>{const load=s=>new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src='data:image/png;base64,'+s});
+          const [a,b]=await Promise.all([load(${JSON.stringify(left)}),load(${JSON.stringify(right)})]);const gap=24,top=32;
+          const c=document.createElement('canvas');c.width=a.width+b.width+gap;c.height=Math.max(a.height,b.height)+top;const x=c.getContext('2d');
+          x.fillStyle=${JSON.stringify(theme === 'dark' ? '#0d1117' : '#ffffff')};x.fillRect(0,0,c.width,c.height);
+          x.fillStyle=${JSON.stringify(theme === 'dark' ? '#c9d1d9' : '#24292f')};x.font='600 14px system-ui, sans-serif';
+          x.fillText('Changes',10,21);x.fillText('Explanation topic',a.width+gap+10,21);x.drawImage(a,0,top);x.drawImage(b,a.width+gap,top);
+          return c.toDataURL('image/png').split(',')[1]})()`);
+        console.log(`PARITYSHOT side-by-side-${kind}-${theme} ${png}`);
+      }
+  };
   /** Prints the region of `rect` (an expression) in light and dark. */
   const capture = async (name: string, rect: string) => {
     if (!shots) return;
@@ -60,7 +78,9 @@ void app.whenReady().then(async () => {
       await js(`document.documentElement.classList.toggle('dark',${dark})`);
       await settle();
       const r = await js<{ x: number; y: number; width: number; height: number }>(rect);
-      console.log(`PARITYSHOT ${name}-${dark ? 'dark' : 'light'} ${(await win.webContents.capturePage(r)).toPNG().toString('base64')}`);
+      const png = (await win.webContents.capturePage(r)).toPNG().toString('base64');
+      images.set(`${name}-${dark ? 'dark' : 'light'}`, png);
+      console.log(`PARITYSHOT ${name}-${dark ? 'dark' : 'light'} ${png}`);
     }
     await js(`document.documentElement.classList.toggle('dark',false)`);
     await settle();
@@ -189,6 +209,7 @@ void app.whenReady().then(async () => {
     assert.ok(Math.abs(pinned.hunk - pinned.file + 1) <= 1, `The hunk header pins right under the file header: ${JSON.stringify(pinned)}`);
     await capture('explanation-pinned', region('.explanation-document', 0, 260));
     assert.deepEqual(errors, []);
+    if (shots) await sideBySide();
     console.log('Explanation parity checks passed');
     app.exit(0);
   } catch (error) {
