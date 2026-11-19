@@ -116,7 +116,17 @@ void app.whenReady().then(async () => {
    * the definition's first line (`text`) lands right under the pinned header, or, hidden in a gap, its gap's bar
    * pinned in place; that nothing was revealed; and that the header kept its height.
    */
-  const checkJump = async (surface: string, root: string, label: string, text: string, keyboard: boolean) => {
+  const shown = (root: string, text: string) =>
+    js<boolean>(`window.deepAll('[data-line]',document.querySelector(${JSON.stringify(root)})).some(e=>e.textContent.includes(${JSON.stringify(text)})&&e.getBoundingClientRect().height>0)`);
+  /** `reveal`: the definition's first line starts hidden; `between` must show after the jump and `above` must not. */
+  const checkJump = async (
+    surface: string,
+    root: string,
+    label: string,
+    text: string,
+    keyboard: boolean,
+    reveal?: { between: string; above: string }
+  ) => {
     const before = await jumpState(root, text);
     assert.ok(before.crumbs.includes(label), `${surface}: the pinned header has the crumb ${label}: ${JSON.stringify(before.crumbs)}`);
     if (keyboard) {
@@ -131,15 +141,22 @@ void app.whenReady().then(async () => {
       win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
       win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     }
-    await sleep(350);
+    await sleep(100);
+    await wait(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).length>0`, 60);
     await settle();
     const after = await jumpState(root, text);
     console.log(`${surface}: ${label}`, JSON.stringify({ before: { ...before, crumbs: undefined }, after: { ...after, crumbs: undefined } }));
-    if (after.line !== null)
-      assert.ok(after.bottom !== null && Math.abs(after.line - after.bottom) <= 2, `${surface}: the definition's first line sits right under the pinned header`);
-    else assert.ok(after.section !== null && Math.abs(after.section - (after.file - 1)) <= 1, `${surface}: the gap bar that hides it sits right under the file header`);
-    assert.equal(after.lines, before.lines, `${surface}: nothing was revealed`);
-    assert.equal(after.hidden, before.hidden, `${surface}: every gap still hides what it hid`);
+    assert.ok(after.line !== null && after.bottom !== null && Math.abs(after.line - after.bottom) <= 2, `${surface}: the definition's first line sits right under the pinned header`);
+    if (reveal) {
+      // Every line from the definition's first line down to the reader shows; nothing above it does.
+      assert.equal(before.line, null, `${surface}: the definition's first line started hidden`);
+      assert.ok(after.lines > before.lines, `${surface}: the lines down to the reader were revealed`);
+      assert.equal(await shown(root, reveal.between), true, `${surface}: the lines between the definition and the hunk show`);
+      assert.equal(await shown(root, reveal.above), false, `${surface}: nothing above the definition shows`);
+    } else {
+      assert.equal(after.lines, before.lines, `${surface}: nothing was revealed`);
+      assert.equal(after.hidden, before.hidden, `${surface}: every gap still hides what it hid`);
+    }
     assert.equal(after.height, before.height, `${surface}: the header keeps its height`);
     if (keyboard) assert.equal(after.active, label, `${surface}: focus stays on the pinned crumb`);
     // Where it landed flashes, as a review check's line does: the line, or the gap bar standing in for it.
@@ -149,7 +166,7 @@ void app.whenReady().then(async () => {
     console.log(`${surface}: flash`, JSON.stringify(flashed));
     assert.deepEqual(
       flashed.map((f) => [f.kind, f.anim, ...(still ? [f.outline] : [])]),
-      [[after.line !== null ? 'line' : 'bar', still ? 'none' : 'check-flash', ...(still ? ['solid'] : [])]],
+      [['line', still ? 'none' : 'check-flash', ...(still ? ['solid'] : [])]],
       `${surface}: where the jump landed flashes${still ? ', still under reduced motion' : ''}`
     );
     await sleep(1700);
@@ -216,7 +233,7 @@ void app.whenReady().then(async () => {
       await wait(`!!document.querySelector(${JSON.stringify(changesRow)}+' .diff-gap[data-hunk-header][data-stuck][data-live=scope]')`);
     };
     await pinChanges();
-    await checkJump('Changes', changesRow, 'Go to class StoreBridge', 'export class StoreBridge {', false);
+    await checkJump('Changes', changesRow, 'Go to class StoreBridge', 'export class StoreBridge {', false, { between: 'private items = new Map', above: 'export const before29' });
     await pinChanges();
     await checkJump('Changes', changesRow, 'Go to function flush', 'flush(): number {', true);
     await js('document.activeElement?.blur()');
@@ -286,7 +303,7 @@ void app.whenReady().then(async () => {
       await wait(`!!document.querySelector(${JSON.stringify(topic)}+' .diff-gap[data-hunk-header][data-stuck][data-live=scope]')`);
     };
     await pinTopic();
-    await checkJump('Topic', topic, 'Go to class StoreBridge', 'export class StoreBridge {', false);
+    await checkJump('Topic', topic, 'Go to class StoreBridge', 'export class StoreBridge {', false, { between: 'private items = new Map', above: 'export const before29' });
     await capture('explanation-crumb-jump', region('.explanation-document', 0, 260));
     // With reduced motion, the flash is a still outline.
     await pinTopic();

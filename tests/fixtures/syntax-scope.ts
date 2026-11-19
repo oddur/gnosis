@@ -318,10 +318,24 @@ const prunerBefore = [
   '}',
 ];
 const prunerAfter = prunerBefore.filter((line) => !/^ {4}n \+= \d*[02468];$/.test(line));
+/** And a class whose first line is 230 hidden lines above its changed method, for the cost of a large reveal. */
+const farBefore = [
+  '// Pinned crumb fixture: a class line far above its change.',
+  'export class FarRunner {',
+  ...Array.from({ length: 230 }, (_, i) => `  readonly far${i} = ${i};`),
+  '  work(input: number): number {',
+  '    let total = input;',
+  ...Array.from({ length: 60 }, (_, i) => `    total += ${i};`),
+  '    return total;',
+  '  }',
+  '}',
+];
+const farAfter = farBefore.map((line) => line.replace(/^ {4}total \+= (\d+);$/, '    total += $1 * 2;'));
 const SPAN: Record<string, [string[], string[]]> = {
   'src/span.ts': [spanBefore, spanAfter],
   'src/runner.ts': [runnerBefore, runnerAfter],
   'src/pruner.ts': [prunerBefore, prunerAfter],
+  'src/far.ts': [farBefore, farAfter],
 };
 export const syntaxSpanFiles: PrChangeFile[] = changeFiles(SPAN, 'span');
 

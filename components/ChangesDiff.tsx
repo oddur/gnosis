@@ -9,6 +9,8 @@ import {
   hunkCounts,
   hunkRange,
   placeOfLine,
+  newLineAt,
+  hiddenBetween,
   type GapDirection,
   type GapPart,
   type HunkCounts,
@@ -707,6 +709,14 @@ function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side'])
   return [decorative(make('span', 'diff-gap-more', '…')), ...groups];
 }
 
+/** Frames a pinned crumb's jump waits at most for its reveal to render before it scrolls: a reveal the view cannot
+ * make (a topic without those lines) changes nothing. */
+const REVEAL_WAIT_FRAMES = 10;
+/** A jump's scroll: 250 ms for a short way, up to 450 ms for a screen or more (it never animates more than a screen). */
+const jumpDuration = (distance: number, screen: number) => 250 + 200 * Math.min(1, distance / Math.max(1, screen));
+/** Exponential ease-out, reaching 1 at 1. */
+const easeOut = (t: number) => (t >= 1 ? 1 : 1 - 2 ** (-10 * t));
+
 /** A jumped-to line flashes for as long as a review check's line does (ReviewDiff); still, under reduced motion. */
 const JUMP_FLASH_MS = 1600;
 const JUMP_FLASH_STILL_MS = 1500;
@@ -961,6 +971,8 @@ export function ChangesDiff<A>({
   latestParts.current = parts;
   const latestBlocks = useRef(blocks);
   latestBlocks.current = blocks;
+  const latestShow = useRef(onShowDefinition);
+  latestShow.current = onShowDefinition;
   const latestName = useRef('');
   latestName.current = file.name.slice(file.name.lastIndexOf('/') + 1);
   const follow = useRef<() => void>(undefined);
@@ -1038,10 +1050,11 @@ export function ChangesDiff<A>({
     });
     resize.observe(header);
 
-    // A pinned crumb scrolls to its definition's first line, right under the pinned headers, and reveals nothing
-    // (#417). A line hidden in a gap is stood in for by its gap's bar. A line in a slice not laid out yet is scrolled
-    // to by its estimated place first, then corrected each frame until it holds still, MISSED_PROBES frames at most,
-    // unless the reader scrolls first. The pinned breadcrumb then follows the reader as after any scroll.
+    // A pinned crumb goes to its definition's first line (#417): it reveals the lines between that line and the reader,
+    // then scrolls the line right under the pinned headers. A line that stays hidden (a topic without it) is stood in
+    // for by its gap's bar. A line in a slice not laid out yet is aimed at by its estimated place until it mounts. The
+    // reader's wheel, touch, pointer or key stops the scroll. The pinned breadcrumb then follows the reader as after
+    // any scroll.
     let jumpFrame = 0;
     const stopJump = () => {
       cancelAnimationFrame(jumpFrame);
@@ -1066,18 +1079,31 @@ export function ChangesDiff<A>({
     const jump = (crumb: HTMLElement, keyboard: boolean) => {
       stopJump();
       unflash();
-      // What the jump lands on, for the flash.
-      let landed: HTMLElement | undefined;
       const bar = crumb.closest<HTMLElement>('[data-hunk-header]');
       const start = Number(crumb.dataset.start);
       if (!bar || !start) return;
       const side: LinePoint['side'] = crumb.dataset.side === 'before' ? 'before' : 'after';
-      const place = placeOfLine(latestParts.current, side, start);
-      // Where the place is (`y`) and where it should be (`to`), in viewport pixels.
+      // Every bar has the same height; the clicked one may go when the reveal joins its hunk to the one above.
+      const barHeight = bar.offsetHeight;
+      // Reveal first: every hidden line from the definition's first line down to where the reader is, as Show whole
+      // function does, and nothing above it. Reveals are in new numbers.
+      const [readerSide, readerLine] = (bar.getAttribute('data-live-key') ?? '').split(':');
+      const parts = latestParts.current;
+      const from = newLineAt(parts, side, start);
+      const to = newLineAt(parts, readerSide === 'before' ? 'before' : 'after', Number(readerLine));
+      const revealing =
+        from !== undefined && to !== undefined && from < to && hiddenBetween(parts, from, to - 1) ? parts : undefined;
+      if (revealing && from !== undefined && to !== undefined) latestShow.current?.({ kind: 'whole', start: from, end: to - 1 });
+      // What the jump lands on, for the flash.
+      let landed: HTMLElement | undefined;
+      // Where the place is (`y`) and where it should be (`to`), in viewport pixels, found anew each frame: the reveal
+      // and late slices move it.
       const where = (): { y: number; to: number; exact: boolean } | undefined => {
+        const place = placeOfLine(latestParts.current, side, start);
         // A pinned hunk header's top: 1 px under the file header, which covers its top border.
         const top = header.getBoundingClientRect().bottom - 1;
-        const under = top + bar.offsetHeight;
+        const under = top + barHeight;
+        landed = undefined;
         if (place.kind === 'top') return { y: element.getBoundingClientRect().top, to: top + 1, exact: true };
         if (place.kind === 'gap') {
           const gapBar = element.querySelector<HTMLElement>(`[data-gap="${place.gap}"]`);
@@ -1103,22 +1129,48 @@ export function ChangesDiff<A>({
         const row = block.slices.length > 1 ? place.row - index * HUNK_SLICE_SIZE : place.row;
         return { y: holder.getBoundingClientRect().top + SLICE_CHROME / 2 + row * CODE_LINE_HEIGHT, to: under, exact: false };
       };
-      let frames = 0;
+      // Then scroll there: an eased move that aims anew each frame, so a target that moves while it runs is followed,
+      // not fought. Past three screens it starts a screen short, so long jumps don't drag. Reduced motion jumps.
+      const instant = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let waited = 0;
+      let origin: number | undefined;
+      let began = 0;
+      let duration = 0;
+      let settling = 0;
       let still = 0;
-      const step = () => {
+      const step = (now: number) => {
         jumpFrame = 0;
-        const at = where();
-        if (at) {
-          const from = scroller.scrollTop;
-          if (Math.abs(at.y - at.to) > 1) scroller.scrollTo({ top: from + at.y - at.to, behavior: 'instant' });
-          // Still: in place, or as far as the view scrolls.
-          still = at.exact && Math.abs(scroller.scrollTop - from) < 1 ? still + 1 : 0;
+        // The revealed lines render first; scroll anchoring keeps the reader's lines in place meanwhile.
+        if (revealing && latestParts.current === revealing && waited++ < REVEAL_WAIT_FRAMES) {
+          jumpFrame = requestAnimationFrame(step);
+          return;
         }
-        if (still < 2 && frames++ < MISSED_PROBES) {
+        const at = where();
+        let moving = false;
+        if (at) {
+          const current = scroller.scrollTop;
+          const max = scroller.scrollHeight - scroller.clientHeight;
+          const target = Math.max(0, Math.min(max, current + at.y - at.to));
+          if (origin === undefined) {
+            const screen = scroller.clientHeight;
+            const distance = target - current;
+            origin = Math.abs(distance) > 3 * screen ? target - Math.sign(distance) * screen : current;
+            duration = instant || Math.abs(target - origin) < 1 ? 0 : jumpDuration(Math.abs(target - origin), screen);
+            began = now;
+          }
+          const progress = duration ? Math.min(1, (now - began) / duration) : 1;
+          moving = progress < 1;
+          const next = moving ? origin + (target - origin) * easeOut(progress) : target;
+          if (Math.abs(next - current) > 0.5) scroller.scrollTo({ top: next, behavior: 'instant' });
+          // Settled: on target, or as far as the view scrolls, two frames running.
+          still = !moving && at.exact && Math.abs(target - current) < 1 ? still + 1 : 0;
+        }
+        if (moving || (still < 2 && settling++ < MISSED_PROBES)) {
           jumpFrame = requestAnimationFrame(step);
           return;
         }
         stopJump();
+        where();
         if (landed?.isConnected) flash(landed);
         // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
         if (!keyboard) return;
@@ -1126,7 +1178,7 @@ export function ChangesDiff<A>({
         if (slot && !slot.contains(document.activeElement)) focusCrumb(slot, String(start));
       };
       for (const type of READER_SCROLLS) scroller.addEventListener(type, stopJump, { passive: true });
-      step();
+      step(performance.now());
     };
     const onClick = (event: MouseEvent) => {
       const crumb = (event.target as Element | null)?.closest<HTMLElement>('.diff-gap-live button[data-jump]');
