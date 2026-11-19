@@ -10,6 +10,9 @@ import type { PrChangeFile, PrFileContents } from '../../lib/pr-changes';
  * Old line 152, in the second hunk's context, is longer than the diff is wide.
  *
  * `zz/huge.ts` is a 3,000-line added file.
+ *
+ * With `?stale-diff`, `src/stale-a.ts` and `src/stale-b.ts` have the same patch and contents as `src/gaps.ts`; the
+ * suite serves their after sides out of step with the patch to check that a stale diff refreshes by itself.
  */
 const before = Array.from({ length: 200 }, (_, i) => `export const g${i + 1} = ${i + 1};`);
 // Line 152 is long enough to scroll sideways, so only the second hunk overflows.
@@ -57,8 +60,17 @@ export const diffGapFiles: PrChangeFile[] = [
   },
 ];
 
+export const staleDiffFiles: PrChangeFile[] = ['a', 'b'].map((name) => ({
+  path: `src/stale-${name}.ts`,
+  status: 'modified',
+  additions: 3,
+  deletions: 2,
+  changeId: `stale-${name}-v1`,
+  patch: gapsPatch,
+}));
+
 export function diffGapContents(path: string): PrFileContents | undefined {
-  if (path === 'src/gaps.ts')
+  if (path === 'src/gaps.ts' || path === 'src/stale-a.ts' || path === 'src/stale-b.ts')
     return { before: { kind: 'text', content: diffGapsBefore }, after: { kind: 'text', content: diffGapsAfter } };
   if (path === 'zz/huge.ts') return { before: { kind: 'absent' }, after: { kind: 'text', content: huge } };
 }

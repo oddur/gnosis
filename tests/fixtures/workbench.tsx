@@ -7,7 +7,7 @@ import { checksMocks } from './pr-checks';
 import { markdownBefore, markdownAfter, markdownFiles } from './markdown-review';
 import { prBadgePreview } from '../../lib/pr-badge-preview';
 import { fileFilterMocks, filterFixtureFiles } from './file-filters';
-import { diffGapContents, diffGapFiles } from './diff-gaps';
+import { diffGapContents, diffGapFiles, staleDiffFiles } from './diff-gaps';
 import { scopeAfter, syntaxLazyFiles, syntaxScopeContents, syntaxScopeFiles, syntaxSpanFiles } from './syntax-scope';
 import { NAV_TOPIC_FILES, breadcrumbNavContents, breadcrumbNavFiles } from './breadcrumb-nav';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
@@ -673,6 +673,7 @@ const mocks = {
     const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];
     return Promise.resolve({version:1 as const,url,metadata:member,comparisonBase:member.baseSha,fetchedAt:Date.now(),files: new URLSearchParams(location.search).has('markdown-review') ? markdownFiles : new URLSearchParams(location.search).has('file-filters') ? filterFixtureFiles(url) : [
       ...(new URLSearchParams(location.search).has('diff-gaps') ? diffGapFiles : []),
+      ...(new URLSearchParams(location.search).has('stale-diff') ? staleDiffFiles : []),
       // klanggames/seed#35392: the PR changes two GitHub Actions workflows.
       ...(new URLSearchParams(location.search).has('workflow-files') && url.endsWith('/150') ? [
         {path:'.github/workflows/seed_job_seed-api-portal-tests.yaml',status:'modified' as const,additions:3,deletions:1,changeId:'workflow-portal-v1'},

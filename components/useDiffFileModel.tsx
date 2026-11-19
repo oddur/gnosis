@@ -2,9 +2,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } 
 import {
   afterLines,
   diffGaps,
+  firstMismatch,
   gapSize,
+  lineEndings,
   knownLines,
   matchesAfter,
+  patchLineEndings,
   pinLines,
   revealGap,
   revealSpan,
@@ -28,6 +31,8 @@ import { changedSymbols } from '../lib/symbol-outline';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { inspectionFiles } from '../lib/inspection-cache';
 import type { PrFileContents, PrFileRequest, PrFileSide } from '../lib/pr-changes';
+import { staleAttemptKey, staleStatus, type StaleTarget } from '../lib/stale-diff-refresh';
+import { staleDiffRefresh, useStaleAttempt } from '../lib/use-stale-diff-refresh';
 import { LoadingIndicator } from './LoadingState';
 import type { GapStatus } from './ChangesDiff';
 
@@ -108,8 +113,11 @@ export function useDiffFileModel({
     contents?.after ?? both?.after ?? (request ? inspectionFiles.peekAfter(request) : undefined) ?? currentAfter?.side;
   const beforeSide = contents?.before ?? both?.before ?? currentAfter?.before;
   const ready = partial ? !!afterSide && !!beforeSide : !!afterSide;
+  // A file whose contents do not match its patch refreshes by itself, once (lib/stale-diff-refresh.ts).
+  const attemptKey = request ? staleAttemptKey({ request, fileKey }) : undefined;
+  const attempt = useStaleAttempt(attemptKey);
   function readAfter(retry = false) {
-    if (!request || ready || (currentAfter && !currentAfter.error && !retry)) return;
+    if (!request || ready || attempt === 'refreshing' || (currentAfter && !currentAfter.error && !retry)) return;
     const key = fileKey;
     setAfterRead({ key });
     const read: Promise<{ key: string; side?: PrFileSide; before?: PrFileSide }> = partial
@@ -318,10 +326,39 @@ export function useDiffFileModel({
       ),
     [after, baseHunks]
   );
-  const gapStatus: GapStatus =
-    after && afterMatches === false
-      ? { kind: 'stale' }
-      : currentAfter?.error
+  const stale = !!after && afterMatches === false;
+  const staleTarget = useMemo(
+    (): StaleTarget | undefined =>
+      request && stale ? { request, fileKey, both: partial || !!contents, pinned: partial } : undefined,
+    [request, stale, fileKey, partial, !!contents]
+  );
+  useEffect(() => {
+    if (staleTarget && !attempt) staleDiffRefresh.report(staleTarget);
+  }, [staleTarget, attempt]);
+  // Still stale once the refresh and the read after it are done: the contents and the patch disagree at this
+  // revision. The diagnostics export keeps where, and how the two end their lines.
+  const mismatched = staleStatus(stale, !!request, attempt) === 'mismatch';
+  useEffect(() => {
+    if (!mismatched || !request || !attemptKey || !after || !baseHunks || afterText === undefined) return;
+    const patch = patchLineEndings(baseHunks),
+      file = lineEndings(afterText);
+    staleDiffRefresh.mismatch(attemptKey, {
+      url: request.url,
+      path: request.path,
+      headSha: request.headSha,
+      line: firstMismatch(baseHunks, after),
+      patch,
+      file,
+      lineEndingsDiffer:
+        (patch.endings !== 'none' && file.endings !== 'none' && patch.endings !== file.endings) ||
+        patch.bom !== file.bom ||
+        (!patch.finalNewline && file.finalNewline),
+    });
+  }, [mismatched, attemptKey]);
+  const contentsStatus = staleStatus(stale, !!request, attempt);
+  const gapStatus: GapStatus = contentsStatus
+    ? { kind: contentsStatus }
+    : currentAfter?.error
         ? { kind: 'error', message: `Could not load more lines. ${currentAfter.error}` }
         : afterSide && afterSide.kind !== 'text'
           ? { kind: 'error', message: 'More lines are not available for this file.' }
@@ -344,6 +381,11 @@ export function useDiffFileModel({
   };
   const canReveal = (gap: DiffGap) =>
     gap.opaque ? !!(gap.revealDown || gap.revealUp) : !!request || nextToHunk(gap);
+  /** A gap bar's Retry, or after a refresh that did not help, the reader's own Refresh. */
+  const retry = () => {
+    if (mismatched && staleTarget) staleDiffRefresh.retry(staleTarget);
+    else readAfter(true);
+  };
   const revealLines = (gap: DiffGap, direction: GapDirection) => {
     if (!hunks || !canReveal(gap)) return;
     const key = revealKey,
@@ -372,6 +414,7 @@ export function useDiffFileModel({
     revealLines,
     canReveal,
     readAfter,
+    retry,
     lineCount,
     afterSide,
   };

@@ -172,3 +172,42 @@ void test('A reveal does not wait behind a background after-side read; a backgro
   await first;
   assert.deepEqual(modes, [true, false, false]);
 });
+
+void test('a dropped file reads again, and a read in flight before the drop keeps nothing', async () => {
+  const stale: PrFileContents = { before: { kind: 'text', content: 'old' }, after: { kind: 'text', content: 'stale' } };
+  let next = stale;
+  const releases: (() => void)[] = [];
+  const reads: string[] = [];
+  const cache = createPrFileCache(
+    () => {
+      reads.push('both');
+      return Promise.resolve(next);
+    },
+    32_000_000,
+    async () => {
+      reads.push('after');
+      const answer = next.after;
+      await new Promise<void>((resolve) => releases.push(resolve));
+      return answer;
+    }
+  );
+  await cache.read(request);
+  assert.equal(cache.peekAfter(request), stale.after);
+  cache.drop(request);
+  assert.equal(cache.peek(request), undefined);
+  assert.equal(cache.peekAfter(request), undefined);
+  // A read that started before a second drop answers its caller, and is not saved.
+  const pending = cache.readAfter(request, 'view');
+  cache.drop(request);
+  // A read after the drop does not join it.
+  next = { ...stale, after: { kind: 'text', content: 'fresh' } };
+  const fresh = cache.readAfter(request, 'view');
+  assert.notEqual(fresh, pending);
+  // The fresh read lands first; the older one, answering later, must not replace it.
+  releases[1]();
+  assert.deepEqual(await fresh, { kind: 'text', content: 'fresh' });
+  releases[0]();
+  assert.deepEqual(await pending, stale.after);
+  assert.deepEqual(cache.peekAfter(request), { kind: 'text', content: 'fresh' });
+  assert.deepEqual(reads, ['both', 'after', 'after']);
+});

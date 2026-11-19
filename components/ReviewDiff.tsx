@@ -304,7 +304,7 @@ export function ReviewDiff({
           status={model.gapStatus}
           onReveal={model.gaps ? (part, direction) => model.revealLines(part.gap, direction) : undefined}
           canReveal={model.canReveal}
-          onRetry={() => model.readAfter(true)}
+          onRetry={model.retry}
           scopes={model.scopes}
           structure={model.structure}
           scopeNote={model.scopeNote}

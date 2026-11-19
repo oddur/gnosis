@@ -240,6 +240,16 @@ void app.whenReady().then(async () => {
     await checkJump('Changes', changesRow, 'Go to function flush', 'flush(): number {', true);
     await js('document.activeElement?.blur()');
 
+    // ── A stale topic diff refreshes by itself, through the same model as Changes ──
+    // The topic's first read of src/scope.ts (both sides) disagrees with its saved hunks on the line it explains. The PR's changes
+    // refresh once at the view tier, the file reads again, and the topic then shows as in Changes. Queue preparation
+    // does not read the file, so the first read is the topic's.
+    await js(`(async()=>{window.changeReads=[];window.scopeReads=0;window.corruptScope=1;
+      const corrupt=(path,side)=>{if(path!=='src/scope.ts'||side?.kind!=='text')return side;window.scopeReads++;if(window.corruptScope<1)return side;window.corruptScope--;return {...side,content:side.content.replace('total += 30 * 2','total += 30 * 3')}};
+      {const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=async(r,...rest)=>{if(rest[0]===true&&r.path==='src/scope.ts')throw Error('Not prepared in this check');const v=await read(r,...rest);return {...v,after:corrupt(r.path,v.after)}};}
+      {const read=window.electronAPI.getPrChanges;window.electronAPI.getPrChanges=(url,refresh,options)=>{if(refresh)window.changeReads.push({view:!!options?.view,recheck:options?.recheck?.paths??null});return read(url,refresh,options)};}
+      (await import('/lib/inspection-cache.ts')).inspectionFiles.clear()})()`);
+
     // ── The topic: the same file, two of its hunks ──
     await click('Review queue');
     await wait("!!document.querySelector('.queue-row-main')");
@@ -253,6 +263,8 @@ void app.whenReady().then(async () => {
     // The parity this suite guards: the topic renders Changes' diff, not a diff of its own.
     assert.equal(await js(`!!document.querySelector(${JSON.stringify(topic)}+' .changes-file-header')`), true, 'The topic uses the code-tier file header');
     assert.equal(await js(`document.querySelectorAll(${JSON.stringify(topic)}+' :is(.review-context-hunk,.diff-context-gap,.review-file-context)').length`), 0, 'No topic-only diff chrome');
+    // The topic read the file out of step, refreshed once, and is done refreshing.
+    await wait(`window.corruptScope===0&&window.changeReads.length===1&&!document.querySelector(${JSON.stringify(topic)}).textContent.includes('Updating to the latest version')`, 500);
     await wait(`window.headers(document.querySelector(${JSON.stringify(topic)})).filter(h=>h.crumbs).length>=2`, 500);
     await settle();
     const slide = await js<Header[]>(`window.headers(document.querySelector(${JSON.stringify(topic)}))`);
@@ -267,6 +279,9 @@ void app.whenReady().then(async () => {
       assert.equal(header.show, twin.show, `The same definition action: ${header.crumbs}`);
     }
     assert.match(slide.map((h) => h.crumbs).join('\n'), /StoreBridge › .*flush/, 'Breadcrumbs reach the method');
+    assert.equal(await js('window.corruptScope'), 0, 'The topic read the file out of step with its hunks');
+    assert.deepEqual(await js('window.changeReads'), [{ view: true, recheck: ['src/scope.ts'] }], 'One automatic refresh at the view tier');
+    assert.ok(await js<boolean>(`!document.querySelector(${JSON.stringify(topic)}).textContent.match(/Couldn’t match|Updating to the latest|changed on GitHub/)`), 'The topic recovered');
     // Between the topic's hunks: a gap bar, as in Changes.
     assert.ok(await js(`!!document.querySelector(${JSON.stringify(topic)}+' .diff-gap[data-gap]')`), 'Gap bars between hunks');
     const slidePalette = await js<Palette>(`window.palette(document.querySelector(${JSON.stringify(topic)}))`);

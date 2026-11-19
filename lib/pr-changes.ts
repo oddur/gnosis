@@ -67,6 +67,24 @@ export interface InspectionLoadOptions {
   /** A view read: foreground, never interactive, charged to the user like hover intent. */
   view?: boolean;
   revision?: Pick<InspectionRevision, 'baseSha' | 'headSha'>;
+  /**
+   * Files whose contents did not match their patch at this revision (a diff's gaps went stale): the read lists the
+   * PR's files again even when the revision's inventory is saved, and drops these files' saved contents.
+   */
+  recheck?: InspectionRecheck;
+}
+export interface InspectionRecheck {
+  baseSha: string;
+  headSha: string;
+  paths: string[];
+}
+/** A recheck from the renderer, or undefined when it is not one: revision SHAs and at most 300 paths. */
+export function validRecheck(value: unknown): InspectionRecheck | undefined {
+  if (!value || typeof value !== 'object') return;
+  const { baseSha, headSha, paths } = value as Partial<InspectionRecheck>;
+  if (typeof baseSha !== 'string' || typeof headSha !== 'string' || !Array.isArray(paths)) return;
+  const clean = paths.filter((path): path is string => typeof path === 'string' && !!path && path.length < 4096).slice(0, 300);
+  return clean.length ? { baseSha, headSha, paths: clean } : undefined;
 }
 export type PrFileSide =
   | { kind: 'absent' }

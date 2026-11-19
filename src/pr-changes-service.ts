@@ -4,12 +4,12 @@ import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limi
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { getChangedFiles, getMergeBase, wholeDiffFiles, getPrMetadata, getPrMetadataForClone, knownMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
-import { preparedDiff, preparedDiffKey } from '../lib/prepared-pr';
+import { preparedDiff, preparedDiffKey, preparedFileKey } from '../lib/prepared-pr';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import { localClones } from '../lib/local-clone';
 import { createSnapshotFileLoader } from './snapshot-file-loader';
-import { changesRevision, type PrChanges, type PrFileRequest, type InspectionLoadOptions } from '../lib/pr-changes';
+import { changesRevision, validRecheck, type PrChanges, type PrFileRequest, type InspectionLoadOptions } from '../lib/pr-changes';
 import type { ChangedFile, PrMetadata } from '../lib/types';
 import { lifecycleOf, withLifecycle } from '../lib/pr-lifecycle';
 
@@ -81,13 +81,21 @@ export function createPrChangesService(clones = localClones) {
   }
   async function manifest(client: Octokit, url: string, refresh = false, options: InspectionLoadOptions = {}, signal?: AbortSignal): Promise<PrChanges> {
     const { owner, repo, pullNumber } = validateURL(url);
-    return share(client, `manifest:${url}:${refresh}:${options.revision ? changesRevision(options.revision) : ''}`, async () => {
-      const cache = githubCacheFor(client),
-        version = cache?.version();
+    // A diff whose contents did not match its patch: its revision's saved inventory and those files' contents are
+    // not trusted. GitHub can list a PR's files from before a push for a short while after it.
+    const recheck = validRecheck(options.recheck);
+    const suspect = recheck && changesRevision(recheck);
+    const shared = `manifest:${url}:${refresh}:${options.revision ? changesRevision(options.revision) : ''}${recheck ? `:recheck:${suspect}:${JSON.stringify(recheck.paths)}` : ''}`;
+    return share(client, shared, async () => {
+      const cache = githubCacheFor(client);
+      if (recheck)
+        for (const path of recheck.paths) cache?.delete(preparedFileKey({ url, path, baseSha: recheck.baseSha, headSha: recheck.headSha }));
+      const version = cache?.version();
       const latestKey = snapshotKey(url, 'latest');
-      const exact = options.revision && await cache?.getPrepared(snapshotKey(url, changesRevision(options.revision)), isSnapshot);
-      const saved = exact ?? snapshots.get(client)?.get(latestKey) ?? cache?.get(latestKey, isSnapshot)?.value;
-      if (saved && !refresh && (!options.revision || changesRevision(saved.metadata) === changesRevision(options.revision))) {
+      const exact = options.revision && changesRevision(options.revision) !== suspect &&
+        await cache?.getPrepared(snapshotKey(url, changesRevision(options.revision)), isSnapshot);
+      const saved = exact || (snapshots.get(client)?.get(latestKey) ?? cache?.get(latestKey, isSnapshot)?.value);
+      if (saved && !refresh && !recheck && (!options.revision || changesRevision(saved.metadata) === changesRevision(options.revision))) {
         const current = withKnownLifecycle(saved, options.revision);
         remember(client, current);
         return current;
@@ -115,7 +123,7 @@ export function createPrChangesService(clones = localClones) {
         }
       } else metadata = await getPrMetadataForClone(client, owner, repo, pullNumber, revision, clones);
       const key = snapshotKey(url, changesRevision(metadata));
-      const existing = snapshots.get(client)?.get(key) ?? await cache?.getPrepared(key, isSnapshot);
+      const existing = changesRevision(metadata) === suspect ? undefined : snapshots.get(client)?.get(key) ?? await cache?.getPrepared(key, isSnapshot);
       if (existing) {
         // File content is immutable at these SHAs; PR state and branch names are not.
         const refreshed = { ...existing, metadata, fetchedAt: Date.now() };
