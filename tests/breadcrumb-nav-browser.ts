@@ -836,14 +836,14 @@ void app.whenReady().then(async () => {
     // ═══ Added and deleted files (#394): the outline and the pinned breadcrumb, from the patch, with no read ═══
     const wholeFiles = [
       {
-        file: 'building_object_position_response.rs',
-        path: 'src/nav/whole/building_object_position_response.rs',
+        file: 'wire_response.rs',
+        path: 'src/nav/wire_response.rs',
         summary: 'Adds 1 struct and 1 impl block',
         pin: 'let value_20 = 20 as f32;',
         innermost: 'Go to function new',
       },
-      { file: 'panel.ts', path: 'src/nav/whole/panel.ts', summary: 'Adds 1 class', pin: 'size += 12; // resize', innermost: 'Go to function resize' },
-      { file: 'job_runner.ts', path: 'src/nav/whole/job_runner.ts', summary: 'Removes 2 functions', pin: 'input -= 12; // stop', innermost: 'Go to function stopJob', deleted: true },
+      { file: 'widget_panel.ts', path: 'src/nav/widget_panel.ts', summary: 'Adds 1 class', pin: 'size += 12; // resize', innermost: 'Go to function resize' },
+      { file: 'worker_job.ts', path: 'src/nav/worker_job.ts', summary: 'Removes 2 functions', pin: 'input -= 12; // stop', innermost: 'Go to function stopJob', deleted: true },
     ];
     for (const w of wholeFiles) {
       const root = rowOf(w.path);
@@ -944,7 +944,7 @@ void app.whenReady().then(async () => {
     const topicOutline = await js<{ summary: string; chips: string[] }>(`window.outline(${JSON.stringify(slideOutline)})`);
     assert.equal(topicOutline.summary, 'Changes 4 functions', 'Topic: the same outline');
     // An added file in a slide: its outline from the topic's patch, as in Changes.
-    const slidePanel = topicFile('src/nav/whole/panel.ts');
+    const slidePanel = topicFile('src/nav/widget_panel.ts');
     await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slidePanel)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
     await wait(`window.outline(${JSON.stringify(slidePanel)})?.chips.length>0||window.outline(${JSON.stringify(slidePanel)})?.rows.length>0`, 500);
     assert.equal((await js<{ summary: string }>(`window.outline(${JSON.stringify(slidePanel)})`)).summary, 'Adds 1 class', 'Topic: an added file’s outline');
