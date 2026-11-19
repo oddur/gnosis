@@ -27,6 +27,8 @@ const option = (name: string, fallback: number) => {
 const FILES = option('files', 40);
 const PER_FILE = option('mutations', 50);
 const SHOW = option('show', 3);
+const dumpAt = args.indexOf('--dump');
+const dump = dumpAt >= 0 ? args[dumpAt + 1] : undefined;
 let seed = option('seed', 396);
 const random = () => {
   seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -282,6 +284,13 @@ async function roundtrip(dirs: string[]) {
         const { blocks } = await kinds(language, before, after);
         const code = blocks.filter((b) => b.kind === 'code');
         record(`${language} ${name}`, !code.length, code[0]?.reason ?? '', `${file} ${JSON.stringify(code.slice(0, 2))}`);
+        // `--dump <dir>`: each pair that is not quiet, as two files, for scripts/noise-explain.ts.
+        if (code.length && dump) {
+          const base = path.join(dump, `${language}-${name}-${path.basename(file)}`.replace(/[^\w.()-]/g, '_'));
+          fs.mkdirSync(dump, { recursive: true });
+          fs.writeFileSync(`${base}.before${path.extname(file)}`, before);
+          fs.writeFileSync(`${base}.after${path.extname(file)}`, after);
+        }
         // Blocks, by kind. A code block whose lines include an import moved by the formatter (rustfmt and gofmt sort
         // them) is counted apart: import order is code by design.
         const group = `${language} ${/^(prettier|gofmt|rustfmt)/.test(name) ? 'formatter' : 'synthetic'}`;

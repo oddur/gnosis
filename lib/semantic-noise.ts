@@ -274,6 +274,59 @@ const TRAILING_COMMA: Record<SyntaxLanguage, Set<string>> = {
   // YAML flow collections allow a comma before their closing bracket.
   yaml: new Set(['flow_sequence', 'flow_mapping']),
 };
+/**
+ * Rows a node read as one event must keep clear of, as running counts (`count[row]` rows guarded before `row`): next to
+ * each block, the unchanged lines that repeat one of the block's lines, and one more. A line diff may pair such a line
+ * with either copy, so the two sides could read the same node once whole and once token by token. Reading every node
+ * there token by token keeps the two readings comparable.
+ */
+function guards(
+  texts: { before: string; after: string },
+  blocks: readonly SideBlock[],
+  oldRows: number,
+  newRows: number
+): [Int32Array, Int32Array] {
+  const oldLines = texts.before.split('\n'),
+    newLines = texts.after.split('\n');
+  const oldMark = new Uint8Array(oldRows + 1),
+    newMark = new Uint8Array(newRows + 1);
+  for (const block of blocks) {
+    const own = new Set<string>();
+    for (let r = block.oldRow; r < block.oldRow + block.oldCount; r++) own.add((oldLines[r] ?? '').trim());
+    for (let r = block.newRow; r < block.newRow + block.newCount; r++) own.add((newLines[r] ?? '').trim());
+    const mark = (lines: string[], marks: Uint8Array, from: number, step: 1 | -1) => {
+      let r = from;
+      while (r >= 0 && r < lines.length && own.has((lines[r] ?? '').trim())) {
+        marks[r] = 1;
+        r += step;
+      }
+      if (r >= 0 && r < marks.length) marks[r] = 1;
+    };
+    mark(oldLines, oldMark, block.oldRow - 1, -1);
+    mark(oldLines, oldMark, block.oldRow + block.oldCount, 1);
+    mark(newLines, newMark, block.newRow - 1, -1);
+    mark(newLines, newMark, block.newRow + block.newCount, 1);
+  }
+  const counts = (marks: Uint8Array) => {
+    const result = new Int32Array(marks.length + 1);
+    for (let r = 0; r < marks.length; r++) result[r + 1] = result[r] + marks[r];
+    return result;
+  };
+  return [counts(oldMark), counts(newMark)];
+}
+
+/**
+ * Whether a node's text may start or end with a comment: a node read whole stands for its rows, while one read token
+ * by token stands for its first and last code tokens' rows, and a comment at its edge would set the two apart. Any
+ * comment marker on its first or last line counts.
+ */
+function commentAtEdge(text: string, start: number, end: number): boolean {
+  const head = text.slice(start, Math.min(end, text.indexOf('\n', start) < 0 ? end : text.indexOf('\n', start)));
+  const lastBreak = text.lastIndexOf('\n', end - 1);
+  const tail = text.slice(Math.max(start, lastBreak + 1), end);
+  return COMMENT_MARKER.test(head) || COMMENT_MARKER.test(tail);
+}
+const COMMENT_MARKER = /\/\/|\/\*|\*\/|#|<!--|-->/;
 /** Nodes this long or longer that lie wholly in unchanged lines are read as one event (see `read`). */
 const SUMMARY_MIN = 32;
 /**
@@ -405,7 +458,15 @@ function segments(rows: number, blocks: readonly { row: number; count: number }[
   return seg;
 }
 
-function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg: Int32Array, lineStarts: readonly number[]): Reading {
+function read(
+  tree: TreeSitter.Tree,
+  text: string,
+  language: SyntaxLanguage,
+  seg: Int32Array,
+  lineStarts: readonly number[],
+  /** Rows near a block a line diff could have paired either way: a node there is always read token by token. */
+  guarded: Int32Array
+): Reading {
   // A row from an offset, found here rather than asked of the cursor: each question to the WASM tree costs a call.
   let hint = 0;
   const rowOf = (index: number) => {
@@ -552,8 +613,18 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
       // A node wholly in unchanged lines reads as one event, its type and length: its text is the same on both sides,
       // so a node there with the same type and length on the other side is the same subtree (as tree-sitter's own
       // incremental parsing assumes). A difference here still shows: the other side has another node, or none.
-      // Short nodes, such as a closing bracket a trailing comma waits for, are read as usual.
-      if (parent && end - start >= SUMMARY_MIN && seg[Math.min(a, last)] % 2 === 0 && seg[Math.min(a, last)] === seg[Math.min(b, last)] && !COMMENTS.has(type)) {
+      // Short nodes, such as a closing bracket a trailing comma waits for, are read as usual. The node's last offset,
+      // not its last line, decides: a node whose text ends with a line break (Go's statements and their blank lines)
+      // touches the next line, which may be a block's.
+      if (
+        parent &&
+        end - start >= SUMMARY_MIN &&
+        seg[Math.min(a, last)] % 2 === 0 &&
+        seg[Math.min(a, last)] === seg[Math.min(endRow, last)] &&
+        !COMMENTS.has(type) &&
+        !commentAtEdge(text, start, end) &&
+        guarded[Math.min(endRow + 1, guarded.length - 1)] === guarded[Math.min(a, guarded.length - 1)]
+      ) {
         parent.children++;
         parent.firstChild = false;
         leaf(`=${type}`, String(end - start), a, b);
@@ -862,8 +933,9 @@ export function classifyBlocks(
     if (oldTree.rootNode.hasError || newTree.rootNode.hasError) return all('parse-error');
     const oldSeg = segments(oldStarts.length, blocks.map((b) => ({ row: b.oldRow, count: b.oldCount })));
     const newSeg = segments(newStarts.length, blocks.map((b) => ({ row: b.newRow, count: b.newCount })));
-    const before = read(oldTree, texts.before, language, oldSeg, oldStarts);
-    const after = read(newTree, texts.after, language, newSeg, newStarts);
+    const [oldGuard, newGuard] = guards(texts, blocks, oldStarts.length, newStarts.length);
+    const before = read(oldTree, texts.before, language, oldSeg, oldStarts, oldGuard);
+    const after = read(newTree, texts.after, language, newSeg, newStarts, newGuard);
     const count = 2 * blocks.length + 1;
     const oldGroups = bySegment(before.events, count),
       newGroups = bySegment(after.events, count);
