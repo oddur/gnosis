@@ -18,6 +18,7 @@ import {
   type GapPart,
 } from '../lib/diff-gaps';
 import { diffGapFiles, diffGapsAfter, diffGapsBefore, hugeLines } from './fixtures/diff-gaps';
+import { reviewGapHunks } from '../lib/review-gap-hunks';
 
 // Pierre is ESM only; this suite runs as CommonJS.
 let pierre: typeof import('@pierre/diffs');
@@ -256,4 +257,58 @@ test('a hunk names its lines for a pinned header without structure (#395)', () =
   assert.deepEqual(hunkRange({ oldStart: 4, newStart: 4, rows: rows(' ++ ') }), { label: 'L4–7', spoken: 'Lines 4 to 7' });
   assert.deepEqual(hunkCounts({ rows: rows(' ++-+ ') }), { added: 3, deleted: 1 });
   assert.deepEqual(hunkCounts({ rows: rows('  ') }), { added: 0, deleted: 0 });
+});
+
+/** A topic's saved hunk, as an explanation stores it: its header and its lines with +, - or a space. */
+const saved = (hunkHeader: string, content: string) => ({
+  filePath: 'src/topic.ts',
+  hunkHeader,
+  content,
+  language: 'typescript',
+  renderedHtml: '',
+});
+
+void test('a topic keeps its saved changes with Changes’ context, and gaps reveal from what it saved (#157 parity)', () => {
+  // One saved hunk with 20 lines of context around one change, as a topic expands it.
+  const body = Array.from({ length: 41 }, (_, i) => (i === 20 ? '-old\n+new' : ` line${i + 1}`)).join('\n');
+  const topic = reviewGapHunks([saved('@@ -1,41 +1,41 @@', body)], { context: 3 });
+  assert.equal(topic.hunks.length, 1);
+  assert.deepEqual(
+    { oldStart: topic.hunks[0].oldStart, newStart: topic.hunks[0].newStart, rows: topic.hunks[0].rows.length },
+    { oldStart: 18, newStart: 18, rows: 8 }
+  );
+  const gaps = must(diffGaps(topic.hunks, undefined, { partial: true }));
+  assert.ok(gaps.every((gap) => !gap.opaque));
+  // The saved lines above the change reveal without a read; the file's end is not known.
+  const parts = revealedParts(topic.hunks, gaps, { 0: { down: 0, up: 5 } }, topic.known);
+  const first = parts.find((part) => part.kind === 'hunk');
+  assert.equal(first?.kind === 'hunk' && first.hunk.newStart, 13);
+  assert.equal(first?.kind === 'hunk' && first.hunk.rows[0].text, 'line13');
+  const last = parts.at(-1);
+  assert.ok(last?.kind === 'gap' && last.hidden === undefined, 'the file’s end is unknown without the after side');
+  // A pinned line far from the change stays in view with its own context.
+  const pinned = reviewGapHunks([saved('@@ -1,41 +1,41 @@', body)], { context: 3, pins: [{ line: 3 }] });
+  assert.deepEqual(pinned.hunks.map((hunk) => [hunk.newStart, hunk.rows.length]), [[1, 6], [18, 8]]);
+  assert.equal(pinned.headers.get('RIGHT:21'), '@@ -1,41 +1,41 @@');
+});
+
+void test('a topic that leaves out changes between its hunks shows that gap without revealing it', () => {
+  // Lines 10–12 changed in the file too, adding a line, but the topic left that hunk out.
+  const topic = reviewGapHunks([
+    saved('@@ -1,3 +1,3 @@', ' a\n-b\n+B'),
+    saved('@@ -30,2 +31,2 @@', '-c\n+C\n d'),
+  ]);
+  assert.equal(diffGaps(topic.hunks), undefined, 'a whole file’s gaps must agree');
+  const gaps = must(diffGaps(topic.hunks, undefined, { partial: true }));
+  assert.equal(gaps[1].opaque, true);
+  const parts = revealedParts(topic.hunks, gaps, { 1: { down: 20, up: 20 } }, topic.known);
+  const between = parts.find((part) => part.kind === 'gap' && part.gap.index === 1);
+  assert.ok(between?.kind === 'gap' && between.gap.opaque && between.hidden === 28);
+  assert.equal(gapContaining(gaps, 'after', 20), undefined);
+  // Overlapping saved hunks keep each line once.
+  const overlap = reviewGapHunks([saved('@@ -1,3 +1,3 @@', ' a\n-b\n+B\n c'), saved('@@ -3,2 +3,2 @@', ' c\n-d\n+D')]);
+  assert.deepEqual(overlap.hunks.map((hunk) => hunk.rows.map((row) => row.type + row.text).join('|')), [' a|-b|+B| c|-d|+D']);
+  // Added files show whole, as in Changes.
+  const added = reviewGapHunks([saved('@@ -0,0 +1,12 @@', Array.from({ length: 12 }, (_, i) => `+l${i}`).join('\n'))], { status: 'added' });
+  assert.deepEqual(added.hunks.map((hunk) => [hunk.oldStart, hunk.newStart, hunk.rows.length]), [[1, 1, 12]]);
 });

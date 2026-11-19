@@ -25,31 +25,11 @@ import { useFileProgress } from '../lib/file-view-progress';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { useDiffLayout } from '../lib/use-diff-layout';
 import { diffContextLines } from '../lib/review-diff';
-import {
-  afterLines,
-  diffGaps,
-  gapContaining,
-  hunksFromDiff,
-  matchesAfter,
-  pinLines,
-  revealGap,
-  revealSpan,
-  revealedParts,
-  shownLines,
-  shownSelection,
-  withPins,
-  type GapDirection,
-  type GapPart,
-  type GapReveals,
-} from '../lib/diff-gaps';
-import { ChangesDiff, type GapStatus } from './ChangesDiff';
-import { chainAt, hunkScopes, provisionalScopes, type LinePoint } from '../lib/hunk-scopes';
-import type { DefinitionReveal } from '../lib/syntax-scope';
-import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
-import { applyCodeIntelligence, useSyntaxContents } from '../lib/use-syntax-contents';
-import { codeIntelligenceSettings, pathEnabled } from '../lib/code-intelligence';
-import { syntaxContentsPlan } from '../lib/syntax-contents';
-import { keepDiffLineInView } from '../lib/diff-layout';
+import { gapContaining, hunksFromDiff, shownSelection } from '../lib/diff-gaps';
+import { ChangesDiff } from './ChangesDiff';
+import { useDiffFileModel } from './useDiffFileModel';
+import { applyCodeIntelligence } from '../lib/use-syntax-contents';
+import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import { diffThemeName } from '../lib/diff-worker-pool';
 import { applyCodePalette } from '../lib/diff-code-palette';
 import type { Preferences } from '../lib/types';
@@ -58,7 +38,7 @@ import type { ReviewImageSide } from '../lib/review-images';
 import { briefCode, briefPin, type AgentBriefLocation } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
 import { useChangesComments } from './useChangesComments';
-import { DiffStats } from './DiffStats';
+import { DiffFileHeader } from './DiffFileHeader';
 import { LfsDownload } from './LfsDownload';
 import { ReviewImageDiff } from './ReviewImageDiff';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
@@ -77,8 +57,6 @@ export const changeFileKey = (entry: ChangeFileEntry) =>
 const isUnsupportedPreview = (message: string) =>
   /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
 
-const NO_REVEALS: GapReveals = {};
-const NO_PINS: readonly (readonly [number, number])[] = [];
 
 function isBeforeDiffLine(line: HTMLElement) {
   if (line.dataset.lineType === 'change-addition') return false;
@@ -221,165 +199,29 @@ export function PrFileInspection({
   }, [preview, contents, unchangedMove, entry.file.path, entry.file.previousPath, parseDiffOptions]);
   const diffBase = preview ?? wholeDiff;
   const gapHunks = useMemo(() => (diffBase ? hunksFromDiff(diffBase) : undefined), [diffBase]);
-  const [afterRead, setAfterRead] = useState<{ key: string; side?: PrFileSide; error?: string }>();
-  const currentAfter = afterRead?.key === activeKey ? afterRead : undefined;
-  const afterSide = contents?.after ?? fileCache.peekAfter(request) ?? currentAfter?.side;
-  function readAfter(retry = false) {
-    if (afterSide || (currentAfter && !currentAfter.error && !retry)) return;
-    const key = activeKey;
-    setAfterRead({ key });
-    fileCache.readAfter(request).then(
-      (side) => {
-        if (alive.current && currentFile.current === key) setAfterRead({ key, side });
-      },
-      (error: unknown) => {
-        if (alive.current && currentFile.current === key)
-          setAfterRead({ key, error: error instanceof Error ? error.message : String(error) });
-      }
-    );
-  }
-  const afterText = afterSide?.kind === 'text' ? afterSide.content : undefined;
-  const after = useMemo(() => (afterText === undefined ? undefined : afterLines(afterText)), [afterText]);
-  const afterMatches = useMemo(() => (after && gapHunks ? matchesAfter(gapHunks, after) : undefined), [after, gapHunks]);
   const expandable = entry.file.status !== 'added' && entry.file.status !== 'deleted' && !contents?.lfs;
-  // A long definition's signature, shown above its hunk, is a hunk of unchanged lines inside a gap (#393).
-  const [pinned, setPinned] = useState<{ key: string; value: readonly (readonly [number, number])[] }>();
-  const pins = pinned?.key === activeKey ? pinned.value : NO_PINS;
-  const hunks = useMemo(
-    () => (gapHunks && after && afterMatches && pins.length ? withPins(gapHunks, pins, after) : gapHunks),
-    [gapHunks, after, afterMatches, pins]
-  );
-  const gaps = useMemo(
-    () => (expandable && hunks ? diffGaps(hunks, afterMatches && after ? after.length : undefined) : undefined),
-    [expandable, hunks, afterMatches, after]
-  );
-  const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
-  const reveals = gapReveals?.key === activeKey ? gapReveals.value : NO_REVEALS;
-  const parts = useMemo(
-    (): GapPart[] | undefined =>
-      hunks &&
-      (gaps
-        ? revealedParts(hunks, gaps, reveals, afterMatches ? after : undefined)
-        : hunks.map((hunk, index) => ({ kind: 'hunk' as const, key: `h${index}`, hunk }))),
-    [hunks, gaps, reveals, afterMatches, after]
-  );
-  const shown = useMemo(() => (parts ? shownLines(parts) : undefined), [parts]);
-  // Enclosing definitions (#393), from text this view already has: the after side gaps reveal from, and the before
-  // side when both sides are loaded. A file without a grammar, or with a stale after side, shows as before.
-  // The old side is parsed only for hunks that delete lines and add none.
-  const onlyDeletes = useMemo(
-    () => !!gapHunks?.some((hunk) => hunk.rows.some((row) => row.type === '-') && !hunk.rows.some((row) => row.type === '+')),
-    [gapHunks]
-  );
   // Settings › Appearance › Code intelligence: a language that is off shows as a file without a grammar.
   const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
   useEffect(() => applyCodeIntelligence(codeSettings), [codeSettings]);
-  const structure = pathEnabled(codeSettings, entry.file.path);
-  const beforeText =
-    onlyDeletes && contents?.before.kind === 'text' && pathEnabled(codeSettings, entry.file.previousPath ?? entry.file.path)
-      ? contents.before.content
-      : undefined;
-  // Most files of a large PR have only their patch here. Once the diff is near the view, its contents load in the
-  // background for its scopes, ahead of the PR's prefetch (lib/use-syntax-contents.ts): the after side, as a gap
-  // reveal reads it, and both sides for hunks that only delete. Contents already cached are not read again.
-  const scopePlan = useMemo(
-    () => syntaxContentsPlan(entry.snapshot, entry.file, (path) => pathEnabled(codeSettings, path)),
-    [entry.snapshot, entry.file, codeSettings]
-  );
   const scopeFile = useMemo(() => ({ key: activeKey, snapshot: entry.snapshot, file: entry.file }), [activeKey, entry.snapshot, entry.file]);
-  const structureRead = useSyntaxContents(
-    sectionRef,
-    scopePlan && expandable && !collapsed && !!preview && !!gaps && !unchangedMove && (scopePlan.both ? !contents : !afterSide)
-      ? scopeFile
-      : undefined
-  );
-  const definitions = useSyntaxDefinitions({
-    key: activeKey,
-    url: entry.snapshot.url,
+  // Gaps, reveals, scopes and structure loading are shared with Explanation topics (components/useDiffFileModel.tsx).
+  const model = useDiffFileModel({
+    fileKey: activeKey,
     path: entry.file.path,
     previousPath: entry.file.previousPath,
-    after: afterText,
-    before: beforeText,
-    enabled: structure && expandable && !collapsed && !!gaps && afterMatches === true,
+    patch: entry.file.patch,
+    hunks: gapHunks,
+    request,
+    contents,
+    expandable,
+    active: !collapsed,
+    scopeFile,
+    readStructure: !!preview && !unchangedMove,
+    codeSettings,
+    sectionRef,
   });
-  const scopes = useMemo(
-    () => (parts && shown && definitions.after ? hunkScopes(parts, gaps, definitions, shown.after) : undefined),
-    [parts, gaps, definitions.after, definitions.before, shown]
-  );
-  // Until the definitions arrive, each hunk's location is its patch header's text, as GitHub shows it, or the file.
-  const structurePending =
-    structureRead.state === 'loading' || (structureRead.state === 'idle' && !!definitions.parsing);
-  const provisional = useMemo(
-    () =>
-      !scopes && parts && gaps && scopePlan && expandable && !unchangedMove && afterMatches !== false
-        ? provisionalScopes(parts, entry.file.patch)
-        : undefined,
-    [scopes, parts, gaps, scopePlan, expandable, unchangedMove, afterMatches, entry.file.patch]
-  );
-  const shownScopes = scopes ?? provisional;
-  // A pinned hunk header names the definitions around the line the reader is at (ChangesDiff).
-  const scopeAt = useMemo(
-    () => (scopes ? (point: LinePoint) => chainAt(definitions, point) : undefined),
-    [scopes, definitions.after, definitions.before]
-  );
-  const scopeNote = scopes ? undefined : structureRead.state === 'failed' ? (
-    <span className="diff-gap-structure" data-structure="failed">
-      <span className="diff-gap-message">Couldn’t load structure.</span>
-      <button type="button" className="diff-context-button diff-gap-text" onClick={structureRead.retry}>
-        Try again
-      </button>
-    </span>
-  ) : structurePending && provisional ? (
-    <span className="diff-gap-structure" data-structure="loading">
-      <LoadingIndicator announce={false}>Loading structure…</LoadingIndicator>
-    </span>
-  ) : undefined;
-  const showDefinition = (plan: DefinitionReveal) => {
-    if (!gaps || !hunks) return;
-    if (plan.kind === 'whole') {
-      setGapReveals({ key: activeKey, value: revealSpan(reveals, gaps, plan.start, plan.end) });
-      return;
-    }
-    const next = pinLines(hunks, gaps, reveals, plan.start, plan.end);
-    if (next.pin) setPinned({ key: activeKey, value: [...pins, next.pin] });
-    setGapReveals({ key: activeKey, value: next.reveals });
-  };
-  // Short definitions show whole once their scopes are known, keeping the line at the top of the view in place.
-  const autoOpened = useRef<string>(undefined);
-  useEffect(() => {
-    if (!scopes || !gaps || autoOpened.current === activeKey) return;
-    autoOpened.current = activeKey;
-    let next = reveals;
-    for (const scope of scopes.values())
-      if (scope.opens && scope.reveal?.kind === 'whole') next = revealSpan(next, gaps, scope.reveal.start, scope.reveal.end);
-    if (next === reveals) return;
-    if (sectionRef.current) keepDiffLineInView(sectionRef.current);
-    setGapReveals({ key: activeKey, value: next });
-  }, [scopes]);
-  const lineCount = useMemo(
-    () => Math.max(after?.length ?? 0, ...(gapHunks ?? []).map((hunk) => Math.max(hunk.oldStart, hunk.newStart) + hunk.rows.length)),
-    [after, gapHunks]
-  );
-  const gapStatus: GapStatus =
-    after && afterMatches === false
-      ? { kind: 'stale' }
-      : currentAfter?.error
-        ? { kind: 'error', message: `Could not load more lines. ${currentAfter.error}` }
-        : afterSide && afterSide.kind !== 'text'
-          ? { kind: 'error', message: 'More lines are not available for this file.' }
-          : currentAfter && !afterSide
-            ? { kind: 'loading' }
-            : { kind: 'idle' };
-  const revealLines = (gap: NonNullable<typeof gaps>[number], direction: GapDirection) => {
-    if (!hunks) return;
-    const key = activeKey,
-      count = hunks.length;
-    setGapReveals((previous) => ({
-      key,
-      value: revealGap(previous?.key === key ? previous.value : NO_REVEALS, gap, count, direction),
-    }));
-    readAfter();
-  };
+  const { parts, gaps, shown, lineCount } = model;
+  const revealLines = model.revealLines;
   const wantsPreview = !compactMove && markdown && markdownView.mode === 'preview' && sourceOverride !== activeKey;
   const markdownKey = activeKey + (contents?.lfs ? ':lfs' : '');
   const renderedMarkdown =
@@ -764,35 +606,20 @@ export function PrFileInspection({
       })}
     </span>
   ) : undefined;
-  const fullPath = entry.file.previousPath ? `${entry.file.previousPath} → ${entry.file.path}` : entry.file.path;
   const fileHeader = (
     <>
       {fileContext && <div className="changes-file-context">{fileContext}</div>}
-      <header ref={headerRef} className="changes-file-header" data-status={unchangedMove ? 'renamed' : entry.file.status}>
-        <div className="changes-file-title">
-          <h2 title={fullPath} data-renamed={entry.file.previousPath ? '' : undefined}>
-            {entry.file.previousPath && (
-              <>
-                <FilePath path={entry.file.previousPath} old />
-                <span className="changes-file-arrow"> → </span>
-              </>
-            )}
-            <FilePath path={entry.file.path} />
-          </h2>
-          <span className="changes-file-stats">
-            {unchangedMove ? (
-              'Moved · contents unchanged'
-            ) : (
-              <>
-                {entry.file.status}
-                <span className="changes-file-sep"> · </span>
-                <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
-              </>
-            )}
-          </span>
-          {classificationTags}
-        </div>
-        <div className="changes-file-actions">
+      <DiffFileHeader
+        headerRef={headerRef}
+        path={entry.file.path}
+        previousPath={entry.file.previousPath}
+        status={unchangedMove ? 'renamed' : entry.file.status}
+        stats={unchangedMove ? 'Moved · contents unchanged' : undefined}
+        additions={entry.file.additions}
+        deletions={entry.file.deletions}
+        tags={classificationTags}
+        actions={
+          <>
           {compactMove && !viewed && (
             <Button variant="ghost" size="sm" onClick={() => setRevealedMove(activeKey)}>
               Show file
@@ -877,8 +704,9 @@ export function PrFileInspection({
             <Bot size={16} aria-hidden="true" />
           </Button>
           {classificationControl}
-        </div>
-      </header>
+          </>
+        }
+      />
     </>
   );
   const unavailableFocus = focusThreadId && !preview && !files
@@ -977,15 +805,15 @@ export function PrFileInspection({
                   options={options}
                   annotations={annotations}
                   renderAnnotation={comments.renderAnnotation}
-                  status={gapStatus}
+                  status={model.gapStatus}
                   onReveal={gaps ? (part, direction) => revealLines(part.gap, direction) : undefined}
-                  scopes={shownScopes}
-                  structure={!!shownScopes}
-                  scopeNote={scopeNote}
-                  scopeAt={scopeAt}
-                  onShowDefinition={showDefinition}
+                  scopes={model.scopes}
+                  structure={model.structure}
+                  scopeNote={model.scopeNote}
+                  scopeAt={model.scopeAt}
+                  onShowDefinition={model.showDefinition}
                   stickyUnder={headerRef}
-                  onRetry={() => readAfter(true)}
+                  onRetry={() => model.readAfter(true)}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}
                 />
@@ -1083,23 +911,5 @@ export function PrFileInspection({
         {opened.current && fileContent}
       </div>
     </section>
-  );
-}
-
-/**
- * A file's path in the code's type: folders muted, the name in the text colour. A long path gives way from the left,
- * `…/Core/ECONemoConnector.cs`, keeping its name; the text stays whole for selection and copying.
- */
-function FilePath({ path, old }: { path: string; old?: boolean }) {
-  const slash = path.lastIndexOf('/');
-  return (
-    <span className="changes-file-path" data-old={old || undefined}>
-      {slash >= 0 && (
-        <span className="changes-file-dir">
-          <span>{path.slice(0, slash + 1)}</span>
-        </span>
-      )}
-      <span className="changes-file-name">{path.slice(slash + 1)}</span>
-    </span>
   );
 }

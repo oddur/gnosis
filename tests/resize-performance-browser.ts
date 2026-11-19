@@ -101,14 +101,14 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 1500));
     const huge = 'document.querySelector(\'[data-explanation-section="9"] [data-file-path$="huge.ts"]\')';
     assert.ok(
-      (await js<number>(`${huge}.querySelectorAll('diffs-container').length`)) >= 15,
+      (await js<number>(`${huge}.querySelectorAll('.changes-slice').length`)) >= 15,
       'A 3,000-line file renders as 200-line slices'
     );
     // Skipped blocks hold their place with estimates. One far too small made the document shrink by most of the
     // file for a frame when the block was skipped again, and the browser clamped scrollTop (#288).
     const estimates = await js<{ name: string; estimate: number; height: number }[]>(`(()=>{
       const estimate=e=>parseFloat(getComputedStyle(e).containIntrinsicBlockSize.replace('auto',''));
-      const blocks=[['section',document.querySelector('[data-explanation-section="9"]')],['file',${huge}],['slices',${huge}.querySelector('.review-context-hunk')],['slice',${huge}.querySelector('diffs-container')]];
+      const blocks=[['section',document.querySelector('[data-explanation-section="9"]')],['file',${huge}],['slice',${huge}.querySelector('.changes-slice')]];
       return blocks.map(([name,e])=>({name,estimate:estimate(e),height:e.getBoundingClientRect().height}));
     })()`);
     console.log('Skipped-block estimates:', JSON.stringify(estimates));
@@ -245,7 +245,7 @@ void app.whenReady().then(async () => {
     // Mask icons keep the controls' names and focus.
     const icons = await js<{ svgs: number; masks: number; unnamed: number; badges: number; badgeSvgs: number }>(`(()=>{
       const controls=[...document.querySelectorAll('.diff-context-button,.review-file-expand')];
-      return {svgs:controls.filter(c=>c.querySelector('svg')).length,masks:controls.filter(c=>c.querySelector('.icon-mask')).length,unnamed:controls.filter(c=>!c.getAttribute('aria-label')).length,badges:document.querySelectorAll('.entity-badge[aria-label]').length,badgeSvgs:document.querySelectorAll('.entity-badge:not(.entity-badge-repository) .entity-badge-icon svg').length};
+      return {svgs:controls.filter(c=>c.querySelector('svg')).length,masks:controls.filter(c=>c.querySelector('.icon-mask')).length,unnamed:controls.filter(c=>!c.getAttribute('aria-label')&&!c.textContent.trim()).length,badges:document.querySelectorAll('.entity-badge[aria-label]').length,badgeSvgs:document.querySelectorAll('.entity-badge:not(.entity-badge-repository) .entity-badge-icon svg').length};
     })()`);
     assert.equal(icons.svgs, 0, 'Context and expand buttons draw no SVG');
     assert.ok(icons.masks > 0, 'Context and expand buttons draw a mask icon');
@@ -304,7 +304,7 @@ void app.whenReady().then(async () => {
     {
       const place = `Math.round(document.querySelector('[data-explanation-section="10"]').getBoundingClientRect().top)`;
       const before = await js<number>(place);
-      await js(`(()=>{const b=${huge}.querySelector('.review-context-hunk');const copy=b.cloneNode(false);
+      await js(`(()=>{const b=${huge};const copy=b.cloneNode(false);
         copy.style.contentVisibility='hidden';window.__skippedBlock=[b,copy];b.replaceWith(copy)})()`);
       await js(frames);
       const skipped = await js<number>(place);

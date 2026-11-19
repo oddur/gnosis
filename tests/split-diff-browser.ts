@@ -90,13 +90,15 @@ void app.whenReady().then(async () => {
       );
       assert.ok(comments.some((c) => c.filePath === name + '.ts' && c.side === side && c.line === 1));
     }
-    // Fold saved context, preserving real source coordinates and pending comments.
+    // A topic folds saved context as Changes does (#157 parity): Changes' context around each change, gap bars between,
+    // real source coordinates, and pending comments kept in view.
     await js(
       `void (window.contextLines = () => Array.from(document.querySelectorAll('[data-case=context] diffs-container')).flatMap(h=>Array.from(h.shadowRoot.querySelectorAll('[data-line]'))))`
     );
     assert.equal(await js(`window.contextLines().filter(l=>l.dataset.lineType!=='context').length`), 4);
     assert.equal(await js(`window.contextLines().some(l=>l.textContent.includes('const context0 '))`), false);
-    assert.equal(await js(`document.querySelectorAll('[data-case=context] .diff-context-gap').length`), 3);
+    assert.equal(await js(`document.querySelectorAll('[data-case=context] .changes-diff .diff-gap[data-gap]').length`), 3);
+    assert.equal(await js(`document.querySelectorAll('[data-case=context] .diff-context-gap, [data-case=context] .review-context-hunk').length`), 0);
     await js(`document.querySelector('[data-case=context]').scrollIntoView({block:'start'})`);
     if (process.platform === 'darwin') app.show();
     window.show();
@@ -107,7 +109,10 @@ void app.whenReady().then(async () => {
       path.join(os.tmpdir(), 'gnosis-folded-context.png'),
       (await window.webContents.capturePage()).toPNG()
     );
-    await js(`document.querySelector('[data-case=context] .diff-context-gap button').click()`);
+    // Above the first change, the saved lines show from the topic itself: no revision to read here.
+    await js(
+      `Array.from(document.querySelectorAll('[data-case=context] .diff-gap-gutter button')).find(b=>b.getAttribute('aria-label')?.startsWith('Show 20 lines above')).click()`
+    );
     await wait(`window.contextLines().some(l=>l.dataset.lineNumber==='60')`);
     await js(
       `(() => { const line=window.contextLines().find(l=>l.dataset.lineNumber==='60'); line.closest('[data-code]').querySelector('[data-column-number="60"]').click(); })()`
@@ -119,16 +124,10 @@ void app.whenReady().then(async () => {
       field.dispatchEvent(new Event('input',{bubbles:true}));
     })()`);
     await js(
-      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.getAttribute('aria-label')==='Hide extra context').click()`
-    );
-    assert.equal(await js(`document.querySelector('[data-case=context] textarea').value`), 'Keep this source context');
-    await js(
       `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.textContent==='Add comment').click()`
     );
     await wait(`JSON.parse(document.querySelector('#comments').textContent).some(c=>c.filePath==='context.ts')`);
-    await js(
-      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.getAttribute('aria-label')==='Hide extra context').click()`
-    );
+    // The comment's line stays in view with its context.
     await wait(`window.contextLines().some(l=>l.dataset.lineNumber==='60')`);
     assert.ok(
       await js(`document.querySelector('[data-case=context]').textContent.includes('Keep this source context')`)
@@ -139,8 +138,9 @@ void app.whenReady().then(async () => {
     assert.equal(savedComment.line, 60);
     assert.equal(savedComment.side, 'RIGHT');
     assert.equal(savedComment.hunkHeader, '@@ -40,61 +60,61 @@');
+    // Show all, and Show below the last change, reveal every saved line.
     await js(
-      `Array.from(document.querySelectorAll('[data-case=context] .diff-context-gap button')).filter(b=>b.getAttribute('aria-label')?.startsWith('Show all')).forEach(b=>b.click())`
+      `Array.from(document.querySelectorAll('[data-case=context] .diff-gap button')).filter(b=>b.textContent.trim()==='Show all'||b.textContent.trim()==='Show').forEach(b=>b.click())`
     );
     await wait(`window.contextLines().some(l=>l.textContent.includes('const context60 '))`);
     await js(

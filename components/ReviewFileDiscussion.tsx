@@ -10,7 +10,8 @@ import {
   subscribeDiscussions,
   replaceDiscussionThread,
 } from '../lib/review-discussion-cache';
-import { useEffect, useId, useRef, useState, type ComponentProps } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { sourceForPath } from '../lib/workbench';
 import { ReviewDiff } from './ReviewDiff';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import {
@@ -50,6 +51,22 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
   }
   const source = review ? threadSource(review, diff.filePath) : null;
   const prUrl = source?.prUrl;
+  // The revision the topic was written against: its gaps and structure read the after side Changes reads.
+  const previous = review?.changedFiles?.find((f) => f.filename === diff.filePath)?.previousFilename;
+  const baseSha = source?.baseSha ?? review?.baseSha;
+  const diffSource = useMemo(
+    () =>
+      source && baseSha && source.headSha
+        ? {
+            url: source.prUrl,
+            path: source.path,
+            previousPath: previous ? sourceForPath(review, previous).path : undefined,
+            baseSha,
+            headSha: source.headSha,
+          }
+        : undefined,
+    [source?.prUrl, source?.path, source?.headSha, baseSha, previous]
+  );
   const [data, setData] = useState<GitHubReviewThreads | null>(() => (prUrl ? (peekDiscussion(prUrl) ?? null) : null));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -189,6 +206,8 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
       {!preview && (
         <ReviewDiff
           {...diff}
+          source={diffSource}
+          active={enabled}
           sourceLocation={sourceLocation}
           onSourceLocationShown={() => setSourceLocation(undefined)}
           pinnedLines={[...(diff.pinnedLines ?? []), ...(sourcePinnedLine !== undefined ? [sourcePinnedLine] : [])]}

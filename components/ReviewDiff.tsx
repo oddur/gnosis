@@ -1,34 +1,33 @@
 import type { MarkdownLocation } from '../lib/markdown-review';
 import { useSessionDraft } from '../lib/session-drafts';
-import { useMemo, useState, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode, type RefObject } from 'react';
 import type { GitHubReviewThread } from '../lib/review-threads';
-import { FileDiff } from '@pierre/diffs/react';
-import { bundledLanguages } from 'shiki/langs';
-import { processFile } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
 import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
-import {
-  DEFAULT_DIFF_APPEARANCE,
-  HUNK_SLICE_LIMIT,
-  diffContextLines,
-  CODE_LINE_HEIGHT,
-  estimateHunkBlockHeight,
-  estimateSlicedBlockHeight,
-  prepareReviewHunk,
-  reviewContextRanges,
-  reviewHunkSlices,
-  sliceReviewHunk,
-  type DiffAppearance,
-} from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
+import { reviewGapHunks, type ReviewPin } from '@/lib/review-gap-hunks';
+import { fileRevisionKey, type PrChangeFile, type PrChanges, type PrFileRequest } from '@/lib/pr-changes';
+import { currentCodeIntelligence } from '@/lib/use-syntax-contents';
+import { LFS_VERSION } from '@/lib/git-lfs';
 import type { DiffHunk, DiffSide, FileMetadata, InlineExplanation, PendingReviewComment } from '@/lib/types';
 import { InlineCodeExplanation } from './InlineCodeExplanation';
-import { DiffHunkGroup } from './DiffHunk';
-import { InteractiveDiffHunkGroup } from './InteractiveDiffHunk';
-import { SplitDiffHunkGroup } from './SplitDiffHunk';
+import { ChangesDiff } from './ChangesDiff';
+import { useDiffFileModel } from './useDiffFileModel';
 import { CommentBubble, InlineCommentForm, extractShikiStyles, type CommentCallbacks } from './shared-diff-utils';
 
 type Location = { line: number; side: DiffSide };
+
+/** Where a topic's file is on GitHub, so its gaps and structure read the same after side as Changes. */
+export interface ReviewDiffSource {
+  url: string;
+  /** The file's path in its PR: a stack topic's paths carry their PR as a prefix. */
+  path: string;
+  previousPath?: string;
+  baseSha: string;
+  headSha: string;
+}
+
 interface Props {
   sourceLocation?: MarkdownLocation;
   onSourceLocationShown?: () => void;
@@ -44,432 +43,285 @@ interface Props {
   threads?: GitHubReviewThread[];
   inlineExplanations?: InlineExplanation[];
   renderThread?: (thread: GitHubReviewThread) => ReactNode;
+  /** The PR revision the topic was written against; without it, gaps reveal only lines the topic saved. */
+  source?: ReviewDiffSource;
+  /** The file's header: hunk headers pin right below it, as in Changes. */
+  stickyUnder?: RefObject<HTMLElement | null>;
+  /** The file is expanded: collapsed files read nothing. */
+  active?: boolean;
 }
 
-const shadowCSS = `
-:host {
-  --diffs-bg-context-override: var(--diffs-bg);
-  --diffs-bg-context-gutter-override: var(--diffs-bg);
-  --diffs-fg-number-override: var(--diffs-fg);
-  --diffs-bg-addition-number-override: var(--diffs-bg-addition-override);
-  --diffs-bg-deletion-number-override: var(--diffs-bg-deletion-override);
-  --diffs-bg-addition-override: color-mix(in srgb, var(--diffs-bg) 90%, #5ecc71);
-  --diffs-bg-deletion-override: color-mix(in srgb, var(--diffs-bg) 90%, #ff6762);
-  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--diffs-bg) 80%, #5ecc71);
-  --diffs-bg-deletion-emphasis-override: color-mix(in srgb, var(--diffs-bg) 80%, #ff6762);
+/** The Pierre theme a topic's code was highlighted in, from its saved HTML: the file header and bars take its palette. */
+export function reviewDiffTheme(hunks: readonly DiffHunk[]): string {
+  const classes = extractShikiStyles(hunks[0]?.renderedHtml ?? '').preClass.split(' ');
+  return `gnosis-${CODE_THEMES.find((t) => classes.includes(t.id))?.id ?? 'aurora-x'}`;
 }
 
-[data-line] { scroll-margin-block: 4rem; }
+/** Review checks flash the line they jump to (SlideView). Everything else about the code is Changes' own. */
+const TOPIC_CSS = `
 .check-highlight { animation: check-flash 1.6s ease-out; }
 @keyframes check-flash { from { outline: 2px solid var(--ring); } to { background-color: transparent; } }
 @media (prefers-reduced-motion: reduce) { .check-highlight { animation: none; outline: 2px solid var(--ring); } }
-::selection { background: var(--accent); color: var(--accent-foreground); }
 `;
 
-function ReviewHunk({
-  hunk,
-  sourceHeader,
-  ...props
-}: Omit<Props, 'hunks'> & { hunk: DiffHunk; sourceHeader?: string }) {
-  const {
-    sourceLocation,
-    onSourceLocationShown,
-    filePath,
-    fileStatus,
-    diffLayout,
-    slideIndex,
-    commentCallbacks,
-    pendingComments = [],
-    threads = [],
-    inlineExplanations = [],
-    renderThread,
-    appearance = DEFAULT_DIFF_APPEARANCE,
-  } = props;
-  const prepared = useMemo(() => {
-    const data = prepareReviewHunk(hunk, fileStatus);
-    if (!data) return null;
-    try {
-      const file = processFile(data.patch, { throwOnError: true });
-      if (!file) return null;
-      file.name = filePath;
-      if (hunk.language in bundledLanguages) file.lang = hunk.language as keyof typeof bundledLanguages;
-      return { ...data, file };
-    } catch {
-      return null;
-    }
-  }, [hunk, fileStatus, filePath]);
-  const lineMaps = useMemo(
-    () => ({
-      old: new Map(prepared?.lines.filter((l) => l.baseLineNumber != null).map((l) => [l.baseLineNumber, l])),
-      head: new Map(prepared?.lines.filter((l) => l.headLineNumber != null).map((l) => [l.headLineNumber, l])),
-    }),
-    [prepared]
-  );
-  const [active, setActive] = useSessionDraft<Location | null>(
-    `comment-location:${slideIndex}:${filePath}:${hunk.hunkHeader}`,
-    null
-  );
-  const theme = useMemo(() => {
-    const classes = extractShikiStyles(hunk.renderedHtml).preClass.split(' ');
-    return CODE_THEMES.find((t) => classes.includes(t.id))?.id ?? 'aurora-x';
-  }, [hunk.renderedHtml]);
-  const options = useMemo<FileDiffOptions<Location, undefined>>(
-    () => ({
-      theme: `gnosis-${theme}`,
-      preferredHighlighter: DIFF_HIGHLIGHTER,
-      themeType: 'dark',
-      diffStyle: prepared?.singleSide ? 'unified' : diffLayout,
-      disableFileHeader: true,
-      hunkSeparators: sourceHeader ? 'simple' : 'metadata',
-      diffIndicators: appearance.indicators,
-      disableBackground: !appearance.backgrounds,
-      disableLineNumbers: !appearance.lineNumbers,
-      overflow: appearance.wrap ? 'wrap' : 'scroll',
-      lineDiffType: appearance.inline,
-      unsafeCSS: shadowCSS,
-      enableGutterUtility: !!commentCallbacks,
-      onGutterUtilityClick: commentCallbacks
-        ? (range) => setActive({ line: range.start, side: range.side === 'deletions' ? 'LEFT' : 'RIGHT' })
-        : undefined,
-      onLineNumberClick: commentCallbacks
-        ? (event) =>
-            setActive({ line: event.lineNumber, side: event.annotationSide === 'deletions' ? 'LEFT' : 'RIGHT' })
-        : undefined,
-      onPostRender(node) {
-        for (const el of node.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? []) {
-          const old =
-            el.dataset.lineType === 'change-addition'
-              ? false
-              : el.dataset.lineType === 'change-deletion' || !!el.closest('[data-deletions]');
-          const n = Number(el.dataset.line);
-          const info = (old ? lineMaps.old : lineMaps.head).get(n);
-          el.dataset.filePath = filePath;
-          delete el.dataset.lineNumber;
-          delete el.dataset.baseLine;
-          if (info?.headLineNumber != null && !old) el.dataset.lineNumber = String(info.headLineNumber);
-          if (info?.baseLineNumber != null && (old || diffLayout === 'unified'))
-            el.dataset.baseLine = String(info.baseLineNumber);
-        }
-        if (sourceLocation)
-          requestAnimationFrame(() => {
-            if (!node.isConnected) return;
-            const target = node.shadowRoot?.querySelector<HTMLElement>(
-              `[${sourceLocation.side === 'before' ? 'data-base-line' : 'data-line-number'}="${sourceLocation.start}"]`
-            );
-            if (!target) return;
-            target.scrollIntoView({ block: 'center', behavior: 'instant' });
-            node.tabIndex = -1;
-            node.setAttribute(
-              'aria-label',
-              `Source at ${sourceLocation.side === 'before' ? 'old' : 'new'} line ${sourceLocation.start}`
-            );
-            node.focus({ preventScroll: true });
-            onSourceLocationShown?.();
-          });
-      },
-    }),
-    [
-      theme,
-      prepared,
-      diffLayout,
-      appearance,
-      commentCallbacks,
-      filePath,
-      lineMaps,
-      sourceHeader,
-      sourceLocation,
-      onSourceLocationShown,
-    ]
-  );
-  const annotations = useMemo<DiffLineAnnotation<Location>[]>(() => {
-    const locations = [
-      ...pendingComments.filter((c) => c.filePath === filePath),
-      ...(active ? [active] : []),
+/**
+ * A topic's code for one file, rendered by Changes' own diff (ChangesDiff) through the same model
+ * (useDiffFileModel): hunk headers with tree-sitter breadcrumbs and Show whole function, gap bars, the trailing bar,
+ * pinned headers and the code palette. What only topics have rides on top: the topic's subset of hunks, inline
+ * explanations, review-check pins, comments, drafts and GitHub threads.
+ */
+export function ReviewDiff({
+  sourceLocation,
+  onSourceLocationShown,
+  filePath,
+  hunks,
+  pinnedLines,
+  fileStatus: knownStatus,
+  diffLayout,
+  appearance = DEFAULT_DIFF_APPEARANCE,
+  pendingComments = [],
+  slideIndex,
+  commentCallbacks,
+  threads = [],
+  inlineExplanations = [],
+  renderThread,
+  source,
+  stickyUnder,
+  active = true,
+}: Props) {
+  const root = useRef<HTMLDivElement>(null);
+  // Without the file's status, a topic whose saved hunks add (or delete) the whole file is an added (or deleted) file,
+  // shown as Changes shows one: unified, and whole.
+  const fileStatus = useMemo(() => {
+    if (knownStatus || !hunks.length) return knownStatus;
+    const prepared = hunks.map((hunk) => prepareReviewHunk(hunk));
+    if (!prepared.every((p) => p?.singleSide)) return undefined;
+    return prepared.every((p) => p?.lines.every((line) => line.type === 'add')) ? 'added' : 'deleted';
+  }, [knownStatus, hunks]);
+  const fileComments = useMemo(() => pendingComments.filter((c) => c.filePath === filePath), [pendingComments, filePath]);
+  const notes = useMemo(() => inlineExplanations.filter((note) => note.filePath === filePath), [inlineExplanations, filePath]);
+  // Lines the topic points at stay in view, with context around them: checks, threads, notes and drafts.
+  const pins = useMemo<ReviewPin[]>(
+    () => [
+      ...(pinnedLines ?? []).map((line) => ({ line })),
       ...threads.flatMap((t) => (t.line == null ? [] : [{ line: t.line, side: t.diffSide }])),
-      ...inlineExplanations,
+      ...notes.map((note) => ({ line: note.line, side: note.side })),
+      ...fileComments.map((c) => ({ line: c.line, side: c.side })),
+    ],
+    [pinnedLines, threads, notes, fileComments]
+  );
+  const pinKey = pins.map((pin) => `${pin.side ?? ''}${pin.line}`).join(',');
+  const context = diffContextLines(appearance);
+  const saved = useMemo(
+    () => reviewGapHunks(hunks, { status: fileStatus, context, pins }),
+    [hunks, fileStatus, context, pinKey]
+  );
+  const lfs = hunks.some((hunk) => hunk.content.includes(LFS_VERSION));
+  const path = source?.path ?? filePath;
+  const request = useMemo<PrFileRequest | undefined>(
+    () => (source ? { url: source.url, path: source.path, baseSha: source.baseSha, headSha: source.headSha } : undefined),
+    [source?.url, source?.path, source?.baseSha, source?.headSha]
+  );
+  // The revision key Changes uses for the same file, so both read and parse it once.
+  const fileKey = source
+    ? fileRevisionKey(source.url, source.path, source.baseSha, source.headSha)
+    : `topic:${slideIndex}:${filePath}`;
+  const revealKey = `${fileKey}|${saved.hunks.map((h) => `${h.oldStart},${h.newStart},${h.rows.length}`).join(';')}`;
+  const scopeFile = useMemo(() => {
+    if (!source) return undefined;
+    // The scope read needs only the revision and the file's patch (lib/syntax-contents.ts).
+    const snapshot = {
+      version: 1,
+      url: source.url,
+      metadata: { baseSha: source.baseSha, headSha: source.headSha },
+      comparisonBase: source.baseSha,
+      files: [],
+      fetchedAt: 0,
+    } as unknown as PrChanges;
+    const file: PrChangeFile = {
+      path: source.path,
+      previousPath: source.previousPath,
+      status: fileStatus ?? 'modified',
+      additions: 0,
+      deletions: 0,
+      changeId: '',
+      patch: saved.patch,
+    };
+    return { key: fileKey, snapshot, file };
+  }, [fileKey, source?.previousPath, fileStatus, saved.patch]);
+  const model = useDiffFileModel({
+    fileKey,
+    revealKey,
+    path,
+    previousPath: source?.previousPath,
+    patch: saved.patch,
+    hunks: saved.hunks,
+    known: saved.known,
+    partial: true,
+    request,
+    expandable: fileStatus !== 'added' && fileStatus !== 'deleted' && !lfs,
+    active,
+    scopeFile,
+    readStructure: !!source,
+    codeSettings: currentCodeIntelligence(),
+    sectionRef: root,
+  });
+  // Unified context lines name their old line too, for review checks and jumps (findReviewLine).
+  const oldOf = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const part of model.parts ?? []) {
+      if (part.kind !== 'hunk') continue;
+      let oldLine = part.hunk.oldStart,
+        newLine = part.hunk.newStart;
+      for (const row of part.hunk.rows) {
+        if (row.type === ' ') map.set(newLine, oldLine);
+        if (row.type !== '+') oldLine++;
+        if (row.type !== '-') newLine++;
+      }
+    }
+    return map;
+  }, [model.parts]);
+  const [active_, setActive] = useSessionDraft<Location | null>(`comment-location:${slideIndex}:${filePath}`, null);
+  const single = fileStatus === 'added' || fileStatus === 'deleted';
+  const unified = single || diffLayout === 'unified';
+  const options: FileDiffOptions<Location, undefined> = {
+    theme: reviewDiffTheme(hunks),
+    preferredHighlighter: DIFF_HIGHLIGHTER,
+    themeType: 'dark',
+    diffStyle: single ? 'unified' : diffLayout,
+    disableFileHeader: true,
+    hunkSeparators: 'simple',
+    diffIndicators: appearance.indicators,
+    disableBackground: !appearance.backgrounds,
+    disableLineNumbers: !appearance.lineNumbers,
+    overflow: appearance.wrap ? 'wrap' : 'scroll',
+    lineDiffType: appearance.inline,
+    unsafeCSS: TOPIC_CSS,
+    enableGutterUtility: !!commentCallbacks,
+    onGutterUtilityClick: commentCallbacks
+      ? (range) => setActive({ line: range.start, side: range.side === 'deletions' ? 'LEFT' : 'RIGHT' })
+      : undefined,
+    onLineNumberClick: commentCallbacks
+      ? (event) => setActive({ line: event.lineNumber, side: event.annotationSide === 'deletions' ? 'LEFT' : 'RIGHT' })
+      : undefined,
+    onPostRender(node) {
+      // Review checks jump to a line by these (findReviewLine): `data-file-path` is the topic's path, `data-line-number`
+      // the new line where the row has one, and `data-base-line` the old line: on deleted rows, on the old column of a
+      // split diff, and on unified context rows.
+      for (const el of node.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? []) {
+        const type = el.dataset.lineType;
+        const old = type === 'change-addition' ? false : type === 'change-deletion' || !!el.closest('[data-deletions]');
+        const n = Number(el.dataset.line);
+        el.dataset.filePath = filePath;
+        delete el.dataset.lineNumber;
+        delete el.dataset.baseLine;
+        if (!old) el.dataset.lineNumber = String(n);
+        if (old) el.dataset.baseLine = String(n);
+        else if (unified && oldOf.has(n)) el.dataset.baseLine = String(oldOf.get(n));
+      }
+      if (sourceLocation)
+        requestAnimationFrame(() => {
+          if (!node.isConnected) return;
+          const target = node.shadowRoot?.querySelector<HTMLElement>(
+            `[${sourceLocation.side === 'before' ? 'data-base-line' : 'data-line-number'}="${sourceLocation.start}"]`
+          );
+          if (!target) return;
+          target.scrollIntoView({ block: 'center', behavior: 'instant' });
+          node.tabIndex = -1;
+          node.setAttribute(
+            'aria-label',
+            `Source at ${sourceLocation.side === 'before' ? 'old' : 'new'} line ${sourceLocation.start}`
+          );
+          node.focus({ preventScroll: true });
+          onSourceLocationShown?.();
+        });
+    },
+  };
+  const shownAt = (location: Location) =>
+    (location.side === 'LEFT' ? model.shown?.before : model.shown?.after)?.has(location.line) ?? false;
+  const annotations = useMemo<DiffLineAnnotation<Location>[]>(() => {
+    const locations: Location[] = [
+      ...fileComments,
+      ...(active_ ? [active_] : []),
+      ...threads.flatMap((t) => (t.line == null ? [] : [{ line: t.line, side: t.diffSide }])),
+      ...notes,
     ];
     const seen = new Set<string>();
     return locations.flatMap((location) => {
       const key = `${location.side}:${location.line}`;
-      if (
-        seen.has(key) ||
-        !prepared?.lines.some((l) => (location.side === 'LEFT' ? l.baseLineNumber : l.headLineNumber) === location.line)
-      )
-        return [];
+      if (seen.has(key) || !shownAt(location)) return [];
       seen.add(key);
-      return [
-        { lineNumber: location.line, side: location.side === 'LEFT' ? 'deletions' : 'additions', metadata: location },
-      ];
+      return [{ lineNumber: location.line, side: location.side === 'LEFT' ? 'deletions' : 'additions', metadata: location }];
     });
-  }, [pendingComments, filePath, active, prepared, threads, inlineExplanations]);
-  if (!prepared) {
-    if (diffLayout === 'split') return <SplitDiffHunkGroup {...props} hunks={[hunk]} showFileHeader={false} />;
-    if (commentCallbacks)
-      return (
-        <InteractiveDiffHunkGroup
-          {...props}
-          {...commentCallbacks}
-          pendingComments={pendingComments}
-          hunks={[hunk]}
-          showFileHeader={false}
-        />
-      );
-    return <DiffHunkGroup filePath={filePath} hunks={[hunk]} showFileHeader={false} />;
-  }
-  return (
-    <FileDiff
-      fileDiff={prepared.file}
-      options={options}
-      lineAnnotations={annotations}
-      style={
-        {
-          '--diffs-font-family': 'var(--font-mono)',
-          '--diffs-font-size': 'var(--type-code)',
-          '--diffs-line-height': 'var(--leading-code)',
-          // Used only while the diff is skipped by content-visibility; `auto` keeps its real height once seen.
-          containIntrinsicBlockSize: `auto ${estimateHunkBlockHeight(prepared.lines.length)}px`,
-        } as CSSProperties
-      }
-      renderAnnotation={({ metadata: location }) => (
-        <div className="font-sans text-foreground text-sm">
-          {inlineExplanations
-            .filter((note) => note.line === location.line && note.side === location.side)
-            .map((note) => (
-              <InlineCodeExplanation key={`${note.side}:${note.line}:${note.text}`} explanation={note} />
-            ))}
-          {commentCallbacks && active?.line === location.line && active.side === location.side && (
-            <InlineCommentForm
-              draftKey={`${filePath}:${slideIndex}:${location.side}:${location.line}`}
-              onCancel={() => setActive(null)}
-              onSubmit={async (body) => {
-                const info = prepared.lines.find(
-                  (l) => (location.side === 'LEFT' ? l.baseLineNumber : l.headLineNumber) === location.line
-                );
-                await commentCallbacks.onAddComment({
-                  filePath,
-                  ...location,
-                  body,
-                  slideIndex,
-                  hunkHeader: sourceHeader ?? hunk.hunkHeader,
-                  codeSnippet: info?.text ?? '',
-                });
-                setActive(null);
-              }}
-            />
-          )}
-          {commentCallbacks &&
-            pendingComments
-              .filter((c) => c.filePath === filePath && c.line === location.line && c.side === location.side)
-              .map((c) => (
-                <CommentBubble
-                  key={c.id}
-                  comment={c}
-                  onEdit={commentCallbacks.onEditComment}
-                  onRemove={commentCallbacks.onRemoveComment}
-                />
-              ))}
-          {threads
-            .filter((t) => t.line === location.line && t.diffSide === location.side)
-            .map((t) => renderThread?.(t))}
-        </div>
-      )}
-    />
-  );
-}
-
-function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: DiffHunk }) {
-  const prepared = useMemo(() => prepareReviewHunk(hunk, props.fileStatus), [hunk, props.fileStatus]);
-  const [revealed, setRevealed] = useState<ReadonlySet<number>>(() => new Set());
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [draftNotice, setDraftNotice] = useState(false);
-  function changeContext(change: () => void) {
-    const draft = rootRef.current?.querySelector('textarea');
-    if (draft) {
-      setDraftNotice(true);
-      draft.focus();
-      return;
-    }
-    setDraftNotice(false);
-    change();
-  }
-  const pinned = useMemo(() => {
-    const result = new Set<number>();
-    prepared?.lines.forEach((line, index) => {
-      if (
-        props.pinnedLines?.some((n) => line.headLineNumber === n || line.baseLineNumber === n) ||
-        props.threads?.some((t) => (t.diffSide === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === t.line) ||
-        props.inlineExplanations?.some(
-          (note) => (note.side === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === note.line
-        ) ||
-        props.pendingComments?.some(
-          (c) =>
-            c.filePath === props.filePath && (c.side === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === c.line
-        )
-      )
-        result.add(index);
-    });
-    return result;
-  }, [prepared, props.pinnedLines, props.pendingComments, props.filePath, props.threads, props.inlineExplanations]);
-  const ranges = useMemo(
-    () => (prepared ? reviewContextRanges(prepared.lines, pinned, revealed, diffContextLines(props.appearance)) : []),
-    [prepared, pinned, revealed, props.appearance?.contextLines]
-  );
-  // New/deleted files contain changes on every line; never fold their content.
-  const unfolded = !prepared || prepared.singleSide || (!ranges.some((range) => range.hidden) && !revealed.size);
-  // A long visible range renders as several diffs, so slices outside the viewport skip style and layout.
-  const slices = useMemo(() => {
-    const result = new Map<number, { start: number; hunk: DiffHunk }[]>();
-    if (!prepared) return result;
-    for (const range of unfolded ? [{ start: 0, end: prepared.lines.length, hidden: false }] : ranges) {
-      if (range.hidden) continue;
-      result.set(
-        range.start,
-        reviewHunkSlices(range.start, range.end).map(([start, end]) => ({
-          start,
-          hunk: sliceReviewHunk(hunk, prepared.lines, start, end),
-        }))
-      );
-    }
-    return result;
-  }, [hunk, prepared, ranges, unfolded]);
-  // Used only while the block is skipped by content-visibility; `auto` keeps its real height once seen.
-  const estimate = useMemo(
-    () =>
-      ({
-        containIntrinsicBlockSize: `auto ${
-          estimateSlicedBlockHeight(
-            unfolded ? [{ start: 0, end: prepared?.lines.length ?? 0, hidden: false }] : ranges
-          ) + (revealed.size > 0 ? 1.5 * CODE_LINE_HEIGHT : 0)
-        }px`,
-      }) as CSSProperties,
-    [prepared, ranges, unfolded, revealed.size]
-  );
-  if (unfolded) {
-    if (!prepared || prepared.lines.length <= HUNK_SLICE_LIMIT) return <ReviewHunk hunk={hunk} {...props} />;
-    return (
-      <div className="review-context-hunk" style={estimate}>
-        {slices.get(0)?.map((slice) => (
-          <ReviewHunk key={`slice-${slice.start}`} {...props} hunk={slice.hunk} sourceHeader={hunk.hunkHeader} />
+  }, [fileComments, active_, threads, notes, model.shown]);
+  const renderAnnotation = ({ metadata: location }: DiffLineAnnotation<Location>) => (
+    <div className="font-sans text-foreground text-sm">
+      {notes
+        .filter((note) => note.line === location.line && note.side === location.side)
+        .map((note) => (
+          <InlineCodeExplanation key={`${note.side}:${note.line}:${note.text}`} explanation={note} />
         ))}
-      </div>
-    );
-  }
-  return (
-    <div ref={rootRef} className="review-context-hunk" style={estimate}>
-      {draftNotice && (
-        <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
-          Finish or cancel your comment before changing the visible context.
-        </p>
+      {commentCallbacks && active_?.line === location.line && active_.side === location.side && (
+        <InlineCommentForm
+          draftKey={`${filePath}:${slideIndex}:${location.side}:${location.line}`}
+          onCancel={() => setActive(null)}
+          onSubmit={async (body) => {
+            const lines = location.side === 'LEFT' ? model.shown?.before : model.shown?.after;
+            await commentCallbacks.onAddComment({
+              filePath,
+              ...location,
+              body,
+              slideIndex,
+              hunkHeader: saved.headers.get(`${location.side}:${location.line}`) ?? (hunks.at(0)?.hunkHeader ?? ''),
+              codeSnippet: lines?.get(location.line)?.replace(/\r$/, '') ?? '',
+            });
+            setActive(null);
+          }}
+        />
       )}
-      {revealed.size > 0 && (
-        <div className="flex justify-end border-b bg-muted/20 px-2 py-0.5">
-          <button
-            type="button"
-            className="diff-context-button"
-            aria-label="Hide extra context"
-            title="Hide extra context"
-            onClick={() => changeContext(() => setRevealed(new Set()))}
-          >
-            <span className="icon-mask icon-fold-vertical" aria-hidden="true" />
-          </button>
-        </div>
-      )}
-      {ranges.map((range) => {
-        if (!range.hidden)
-          return slices
-            .get(range.start)
-            ?.map((slice) => (
-              <ReviewHunk key={`code-${slice.start}`} {...props} hunk={slice.hunk} sourceHeader={hunk.hunkHeader} />
-            ));
-        const count = range.end - range.start;
-        const reveal = (all: boolean) =>
-          setRevealed((current) => {
-            const next = new Set(current);
-            const amount = all ? count : Math.min(count, 10);
-            // Reveal nearest the change: upwards above it, downwards below it,
-            // and from both ends when the hidden region lies between changes.
-            for (let i = 0; i < amount; i++) {
-              const index =
-                range.start === 0
-                  ? range.end - 1 - i
-                  : range.end === prepared.lines.length
-                    ? range.start + i
-                    : i % 2 === 0
-                      ? range.start + Math.floor(i / 2)
-                      : range.end - 1 - Math.floor(i / 2);
-              next.add(index);
-            }
-            return next;
-          });
-        return (
-          <div
-            key={`gap-${range.start}`}
-            className="diff-context-gap flex items-center gap-1 border-y bg-muted/20 px-2 py-0.5 text-xs"
-          >
-            <button
-              type="button"
-              className="diff-context-button"
-              aria-label={`Show ${Math.min(count, 10)} more unchanged ${count === 1 ? 'line' : 'lines'} (${count} hidden)`}
-              title={`Show ${Math.min(count, 10)} of ${count} hidden unchanged ${count === 1 ? 'line' : 'lines'}`}
-              onClick={() => changeContext(() => reveal(false))}
-            >
-              <span className="icon-mask icon-chevrons-up-down" aria-hidden="true" />
-              <span aria-hidden="true">{count} hidden</span>
-            </button>
-            {count > 10 && (
-              <button
-                type="button"
-                className="diff-context-button"
-                aria-label={`Show all ${count} unchanged lines`}
-                title={`Show all ${count} unchanged lines`}
-                onClick={() => changeContext(() => reveal(true))}
-              >
-                <span className="icon-mask icon-unfold-vertical" aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        );
-      })}
+      {commentCallbacks &&
+        fileComments
+          .filter((c) => c.line === location.line && c.side === location.side)
+          .map((c) => (
+            <CommentBubble
+              key={c.id}
+              comment={c}
+              onEdit={commentCallbacks.onEditComment}
+              onRemove={commentCallbacks.onRemoveComment}
+            />
+          ))}
+      {threads.filter((t) => t.line === location.line && t.diffSide === location.side).map((t) => renderThread?.(t))}
     </div>
   );
-}
-
-export function ReviewDiff({ hunks, ...props }: Props) {
-  const annotationsByHunk = useMemo(() => {
-    const owners = new Map<string, number>();
-    hunks.forEach((hunk, index) => {
-      for (const line of prepareReviewHunk(hunk, props.fileStatus)?.lines ?? []) {
-        for (const [side, number] of [
-          ['LEFT', line.baseLineNumber],
-          ['RIGHT', line.headLineNumber],
-        ] as const) {
-          const key = `${side}:${number}`;
-          if (number != null && !owners.has(key)) owners.set(key, index);
-        }
-      }
-    });
-    const result = hunks.map(() => ({ threads: [] as GitHubReviewThread[], explanations: [] as InlineExplanation[] }));
-    for (const thread of props.threads ?? []) {
-      const owner = owners.get(`${thread.diffSide}:${thread.line}`);
-      if (owner !== undefined) result[owner].threads.push(thread);
-    }
-    for (const note of props.inlineExplanations ?? []) {
-      if (note.filePath !== props.filePath) continue;
-      const owner = owners.get(`${note.side}:${note.line}`);
-      if (owner !== undefined) result[owner].explanations.push(note);
-    }
-    return result;
-  }, [hunks, props.fileStatus, props.filePath, props.threads, props.inlineExplanations]);
   return (
-    <div className="review-diff select-text min-w-0 overflow-hidden rounded-md border">
-      {hunks.map((hunk, i) => (
-        <FoldableReviewHunk
-          key={`${props.slideIndex}:${i}:${hunk.hunkHeader}`}
-          hunk={hunk}
-          {...props}
-          threads={annotationsByHunk[i].threads}
-          inlineExplanations={annotationsByHunk[i].explanations}
+    <div ref={root} className="review-diff select-text min-w-0">
+      {model.parts && model.parts.length > 0 && (
+        <ChangesDiff
+          parts={model.parts}
+          file={{ name: path, prevName: source?.previousPath, status: fileStatus }}
+          layout={diffLayout}
+          options={options}
+          annotations={annotations}
+          renderAnnotation={renderAnnotation}
+          status={model.gapStatus}
+          onReveal={model.gaps ? (part, direction) => model.revealLines(part.gap, direction) : undefined}
+          canReveal={model.canReveal}
+          onRetry={() => model.readAfter(true)}
+          scopes={model.scopes}
+          structure={model.structure}
+          scopeNote={model.scopeNote}
+          scopeAt={model.scopeAt}
+          onShowDefinition={model.showDefinition}
+          stickyUnder={stickyUnder}
+          target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
+          lineCount={model.lineCount}
         />
+      )}
+      {saved.unreadable.map((hunk) => (
+        <div key={hunk.hunkHeader} className="review-diff-unreadable" role="note">
+          <p>This saved change could not be read as a diff. Its text is below.</p>
+          <pre>{hunk.content}</pre>
+        </div>
       ))}
     </div>
   );

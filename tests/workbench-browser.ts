@@ -152,11 +152,12 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.review-narrative')");
     assert.equal(await js("document.querySelectorAll('.source-attribution').length"), 1);
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
-    assert.equal(await js("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context').length"), 1);
+    // A topic's file header is Changes' code-tier header (#157 parity).
+    assert.equal(await js("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-group > .changes-file-header').length"), 1);
     match(await js("document.querySelector('.review-file-summary').textContent"), /Limits pending commands/);
-    match(await js("document.querySelector('.review-file-details').textContent"), /Modified/);
+    match(await js("document.querySelector('.review-file-group .changes-file-stats').textContent"), /modified/);
     match(
-      await js("document.querySelector('.review-file-counts').getAttribute('aria-label')"),
+      await js("document.querySelector('.review-file-group .changes-file-counts').getAttribute('aria-label')"),
       /6 added lines, 1 removed line/
     );
     await capture('review-dark');
@@ -230,7 +231,7 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('.submission-destination a').getAttribute('href')"),
       'https://github.com/klang/engine/pull/122'
     );
-    assert.ok(await js("document.querySelector('.review-file-context').textContent.includes('#121')"));
+    assert.ok(await js("document.querySelector('.review-file-group .source-attribution').textContent.includes('#121')"));
     await capture('submission-target-light');
     await js("document.documentElement.classList.add('dark')");
     window.setSize(800, 700);
@@ -268,7 +269,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.review-code').getBoundingClientRect().width > 600");
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 600"), true);
     assert.equal(
-      await js("[...document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context')].every(h=>h.scrollWidth <= h.clientWidth)"),
+      await js("[...document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-group > .changes-file-header')].every(h=>h.scrollWidth <= h.clientWidth)"),
       true
     );
     await capture('review-narrow');
@@ -364,31 +365,33 @@ void app.whenReady().then(async () => {
     await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.explanation-reader')");
     await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
-    await wait("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context').length === 2");
+    await wait("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-group > .changes-file-header').length === 2");
     assert.equal(
       await js("document.querySelector('.staleBanner-unknown')"),
       null,
       'Embedded explanations use the PR workspace status instead of duplicating the standalone freshness banner'
     );
     await js("document.documentElement.classList.add('dark')");
-    await wait("!!document.querySelector('.diff-context-gap')");
+    await wait("!!document.querySelector('.review-diff .diff-gap[data-gap]')");
     await js(
-      "[...document.querySelectorAll('.review-context-hunk button')].filter(b=>b.getAttribute('aria-label')?.startsWith('Show all')).forEach(b=>b.click())"
+      "[...document.querySelectorAll('.review-diff .diff-gap button')].filter(b=>['Show all','Show'].includes(b.textContent.trim())).forEach(b=>b.click())"
     );
     await wait("document.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]').length > 60");
-    await js("(()=>{const pane=document.querySelector('.explanation-document');const header=document.querySelector('.review-file-context');pane.scrollTop+=header.getBoundingClientRect().top-pane.getBoundingClientRect().top+100})()");
+    await js("(()=>{const pane=document.querySelector('.explanation-document');const header=document.querySelector('.review-file-group > .changes-file-header');pane.scrollTop+=header.getBoundingClientRect().top-pane.getBoundingClientRect().top+100})()");
     await new Promise(r=>setTimeout(r,100));
     const sticky = await js<{ offset: number; text: string }>(`(() => {
       const pane = document.querySelector('.explanation-document');
-      const header = document.querySelector('.review-file-context');
+      const header = document.querySelector('.review-file-group > .changes-file-header');
       return { offset: header.getBoundingClientRect().top - pane.getBoundingClientRect().top, text: header.textContent, top: pane.scrollTop, max: pane.scrollHeight - pane.clientHeight, group: header.parentElement.getBoundingClientRect().bottom - pane.getBoundingClientRect().top };
     })()`);
     assert.ok(Math.abs(sticky.offset) < 2, `Source header must stay pinned during diff scroll: ${JSON.stringify({ ...sticky, text: undefined })}`);
-    assert.equal(await js("document.querySelector('.review-file-context .source-attribution .entity-badge')?.textContent"), '#121');
+    // The stack PR sits above the header, as in Changes' stack view; the topic's summary reads below it. Only the
+    // code-tier header pins, so the hunk headers pinned under it keep the code in view.
+    assert.equal(await js("document.querySelector('.review-file-group > .changes-file-context .source-attribution .entity-badge')?.textContent"), '#121');
     assert.match(sticky.text, /command-queue.ts/);
-    assert.match(sticky.text, /Limits pending commands/);
+    assert.match(await js<string>("document.querySelector('.review-file-group > .review-file-notes').textContent"), /Limits pending commands/);
     assert.equal(
-      await js("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context')[1].querySelector('.review-file-summary') === null"),
+      await js("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-group')[1].querySelector('.review-file-summary') === null"),
       true
     );
     const commentColors = await js<{ foreground: string; background: string }>(`(() => {
@@ -404,14 +407,14 @@ void app.whenReady().then(async () => {
     await capture('sticky-source-dark');
     await js(`(() => {
       const pane = document.querySelector('.explanation-document');
-      const next = document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context')[1];
+      const next = document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-group > .changes-file-header')[1];
       pane.scrollTop += next.getBoundingClientRect().top - pane.getBoundingClientRect().top + 100;
     })()`);
     assert.ok(
       await js(`(() => {
       const pane = document.querySelector('.explanation-document');
-      const header = document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context')[1];
-      return Math.abs(header.getBoundingClientRect().top - pane.getBoundingClientRect().top) < 2 && header.querySelector('.source-attribution .entity-badge')?.textContent === '#122';
+      const header = document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-group > .changes-file-header')[1];
+      return Math.abs(header.getBoundingClientRect().top - pane.getBoundingClientRect().top) < 2 && header.parentElement.querySelector('.source-attribution .entity-badge')?.textContent === '#122';
     })()`),
       'Pinned source must follow the next stack member'
     );

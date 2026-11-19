@@ -15,7 +15,7 @@ import { Button } from './ui/button';
 import { explanationPositionKey, useExplanationScroll } from '../lib/use-explanation-scroll';
 import { useBeforeDiffLayoutChange } from '../lib/use-diff-layout';
 import { createColumnLayout, type ColumnLayout } from '../lib/explanation-column-layout';
-import { estimateCodeColumnHeight } from '../lib/review-diff';
+import { estimateCodeColumnHeight } from '../lib/review-gap-hunks';
 import { scrollToMovingTarget } from '../lib/diff-layout';
 import type { ReviewGuide, Slide } from '../lib/types';
 
@@ -200,6 +200,7 @@ export function ExplanationReader({
   const document = (
     <div
       className="explanation-document"
+      data-diff-scroller=""
       ref={documentRef}
       onScroll={trackReading}
       onWheelCapture={() => {

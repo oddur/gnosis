@@ -226,7 +226,7 @@ export function scrollToMovingTarget(
  * number, type and column, since the diff they are in may grow above them.
  */
 export function keepDiffLineInView(block: HTMLElement) {
-  const scroller = block.closest<HTMLElement>('.commit-diff-stream');
+  const scroller = block.closest<HTMLElement>('.commit-diff-stream, [data-diff-scroller]');
   if (!scroller?.clientHeight) return;
   const top = scroller.getBoundingClientRect().top;
   const bounds = block.getBoundingClientRect();

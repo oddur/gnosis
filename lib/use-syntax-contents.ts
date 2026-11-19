@@ -32,13 +32,16 @@ addDiagnosticsSource('syntaxContents', () => syntaxContentsDiagnostics(syntaxCon
 // Settings › Appearance › Code intelligence. A language that is off is not read, prefetched or parsed.
 let codeSettings: CodeIntelligenceSettings = DEFAULT_CODE_INTELLIGENCE;
 const allowed = (path: string) => pathEnabled(codeSettings, path);
+/** The setting as last applied, for views without the preferences at hand (Explanation topics). */
+export const currentCodeIntelligence = (): CodeIntelligenceSettings => codeSettings;
 /** Applies the setting to reads and parses; diffs pass it to their hooks too, so a change shows at once. */
 export function applyCodeIntelligence(settings: CodeIntelligenceSettings) {
   codeSettings = settings;
   setSyntaxLanguages((language) => languageEnabled(settings, language));
 }
-// From the saved preferences too, so warming the predicted next PR respects the setting before any diff shows.
-if (typeof window !== 'undefined') {
+// From the saved preferences too, so warming the predicted next PR respects the setting before any diff shows. Some
+// fixtures render diffs without the app's API.
+if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).electronAPI) {
   const fromPreferences = (preferences: unknown) => {
     if (preferences) applyCodeIntelligence(codeIntelligenceSettings(preferences));
   };
@@ -227,7 +230,7 @@ export function useSyntaxContents(
     const target = element.current;
     if (!active || !target || typeof IntersectionObserver === 'undefined') return;
     const observer = new IntersectionObserver((entries) => setNear(entries[entries.length - 1].isIntersecting), {
-      root: target.closest('.commit-diff-stream'),
+      root: target.closest('.commit-diff-stream, [data-diff-scroller]'),
       rootMargin: NEAR,
     });
     observer.observe(target);
