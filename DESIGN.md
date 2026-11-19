@@ -389,6 +389,7 @@ Sidecar snippets illustrate the primitives without a React or Tailwind runtime; 
 - Don't turn dense queue rows into a grid of large cards.
 - Don't confuse source attribution with the review submission destination.
 - Don't rely on animation or color alone to explain status.
+- Don't use the Sparkles icon, or any sparkle variant (WandSparkles, Sparkle). It is banned: tests/banned-icons.test.ts and the lint rule enforce it ([lib/banned-icons.mjs](lib/banned-icons.mjs)). AI actions use Lucide Bot. Asking about a file or selection opens chat from a Bot icon button labelled "Ask about this", with no visible text in the file header.
 
 Bulk check reruns are available in the stack overview and Checks toolbar. Group by workflow run; failed workflows rerun failed jobs and dependents, while any cancelled job makes the run use all jobs. Confirm the affected PRs and workflow scope. Exclude running workflows and external providers; retain accepted requests after partial failure so Retry only submits remaining workflows.
 

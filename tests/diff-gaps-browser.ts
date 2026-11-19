@@ -282,7 +282,7 @@ void app.whenReady().then(async () => {
       window.lines=p=>[...(window.row(p)?.querySelectorAll('diffs-container')??[])].reduce((n,h)=>n+(h.shadowRoot?.querySelectorAll('[data-line]').length??0),0);
       window.firstLineInView=top=>{
         const view=document.querySelector('.commit-diff-stream').getBoundingClientRect();
-        for(const box of document.querySelectorAll('.commit-stream-row .changes-slice, .commit-stream-row .changes-code > diffs-container, .commit-stream-row .changes-diff > diffs-container')){
+        for(const box of document.querySelectorAll('.commit-stream-row .changes-slice, .commit-stream-row .changes-code > diffs-container, .commit-stream-row .changes-diff .diff-hunk > diffs-container')){
           const b=box.getBoundingClientRect();if(b.bottom<top||b.top>view.bottom||!b.height)continue;
           const host=box.matches('diffs-container')?box:box.querySelector('diffs-container');
           const line=[...(host?.shadowRoot?.querySelectorAll('[data-line]')??[])].find(e=>{const r=e.getBoundingClientRect();return r.height>0&&r.top>=top});
@@ -295,6 +295,11 @@ void app.whenReady().then(async () => {
       {const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=async(r,...rest)=>{if(rest[0]&&r.path==='src/gaps.ts')throw Error('Not prepared in this suite');if(!rest[0])window.reads.push(r.path);return read(r,...rest)};}
       if(window.electronAPI.getPrChangeFileAfter){const read=window.electronAPI.getPrChangeFileAfter;window.electronAPI.getPrChangeFileAfter=async(r,...rest)=>{window.afterReads.push(r.path);await new Promise(x=>setTimeout(x,150));return read(r,...rest)};}
       void 0;`);
+    // This suite checks that reveals read the after side. Code structure would load it as soon as a file shows (#393,
+    // checked in --syntax-scope), so it is off here.
+    await js(`(async()=>{const prefs=await window.electronAPI.loadPreferences();const next={...prefs,codeIntelligence:{enabled:false}};
+      await window.electronAPI.savePreferences(next);window.dispatchEvent(new CustomEvent('gnosis-preferences-changed',{detail:next}));
+      (await import('/lib/use-syntax-contents.ts')).applyCodeIntelligence({enabled:false,disabled:[]})})()`);
     // Preparation may already have read the gap file's both sides; start with a cold renderer cache.
     await js("(async()=>{(await import('/lib/inspection-cache.ts')).inspectionFiles.clear()})()");
     await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
@@ -435,7 +440,7 @@ void app.whenReady().then(async () => {
     await shot('gaps-initial', '.commit-stream-row[data-file="src/gaps.ts"]');
     // Selected text in a line colored by a gradient stays readable.
     if (process.env.GNOSIS_DIFF_GAPS_SHOT) {
-      await js(`(()=>{const lines=[...${gapsRow}.querySelector('.changes-diff > diffs-container').shadowRoot.querySelectorAll('[data-code] [data-line]')];
+      await js(`(()=>{const lines=[...${gapsRow}.querySelector('.changes-diff .diff-hunk > diffs-container').shadowRoot.querySelectorAll('[data-code] [data-line]')];
         const text=l=>{const w=document.createTreeWalker(l,NodeFilter.SHOW_TEXT);return w.nextNode()};
         const range=document.createRange();range.setStart(text(lines[0]),7);range.setEnd(text(lines[2]),12);
         getSelection().removeAllRanges();getSelection().addRange(range)})()`);
@@ -444,7 +449,7 @@ void app.whenReady().then(async () => {
     }
     // Only a hunk whose lines overflow scrolls sideways and shows a scrollbar; the others end flush (no gutter).
     const scrollers = () =>
-      js<{ overflows: boolean; bar: number; bottom: number }[]>(`[...${gapsRow}.querySelectorAll('.changes-diff > diffs-container')].map(h=>{
+      js<{ overflows: boolean; bar: number; bottom: number }[]>(`[...${gapsRow}.querySelectorAll('.changes-diff .diff-hunk > diffs-container')].map(h=>{
         const c=h.shadowRoot.querySelector('[data-code]');return {overflows:c.scrollWidth>c.clientWidth,bar:c.offsetHeight-c.clientHeight,bottom:parseFloat(getComputedStyle(c).paddingBottom)}})`);
     const nowrap = await scrollers();
     assert.deepEqual(nowrap.map((s) => s.overflows), [false, true], JSON.stringify(nowrap));
@@ -452,9 +457,9 @@ void app.whenReady().then(async () => {
     assert.ok(nowrap[1].bar > 0 && nowrap[1].bar <= 12, `The long hunk has a thin scrollbar: ${nowrap[1].bar}px`);
     assert.equal(nowrap[0].bottom, 8);
     // It scrolls sideways, and the page still scrolls from the keyboard.
-    assert.ok(await js<boolean>(`(()=>{const c=${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1].shadowRoot.querySelector('[data-code]');c.scrollLeft=200;const moved=c.scrollLeft>0;c.scrollLeft=0;return moved})()`));
-    await js(`${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1].scrollIntoView({block:'start'})`);
-    await shot('gaps-overflow', '.commit-stream-row[data-file="src/gaps.ts"] .changes-diff > diffs-container:nth-of-type(2)');
+    assert.ok(await js<boolean>(`(()=>{const c=${gapsRow}.querySelectorAll('.changes-diff .diff-hunk > diffs-container')[1].shadowRoot.querySelector('[data-code]');c.scrollLeft=200;const moved=c.scrollLeft>0;c.scrollLeft=0;return moved})()`));
+    await js(`${gapsRow}.querySelectorAll('.changes-diff .diff-hunk > diffs-container')[1].scrollIntoView({block:'start'})`);
+    await shot('gaps-overflow', '.commit-stream-row[data-file="src/gaps.ts"] .changes-diff .diff-hunk:nth-of-type(2) > diffs-container');
     const before = await js<number>("document.querySelector('.commit-diff-stream').scrollTop");
     await js("document.querySelector('.commit-diff-stream').focus()");
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'PageDown' });
@@ -469,11 +474,11 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     };
     await setWrap(true);
-    await wait(`(()=>{const h=${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1];const c=h?.shadowRoot.querySelector('[data-code]');return !!c&&c.scrollWidth<=c.clientWidth&&c.offsetHeight===c.clientHeight})()`);
-    await js(`${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1].scrollIntoView({block:'start'})`);
-    await shot('gaps-wrapped', '.commit-stream-row[data-file="src/gaps.ts"] .changes-diff > diffs-container:nth-of-type(2)');
+    await wait(`(()=>{const h=${gapsRow}.querySelectorAll('.changes-diff .diff-hunk > diffs-container')[1];const c=h?.shadowRoot.querySelector('[data-code]');return !!c&&c.scrollWidth<=c.clientWidth&&c.offsetHeight===c.clientHeight})()`);
+    await js(`${gapsRow}.querySelectorAll('.changes-diff .diff-hunk > diffs-container')[1].scrollIntoView({block:'start'})`);
+    await shot('gaps-wrapped', '.commit-stream-row[data-file="src/gaps.ts"] .changes-diff .diff-hunk:nth-of-type(2) > diffs-container');
     await setWrap(false);
-    await wait(`(()=>{const c=${gapsRow}.querySelectorAll('.changes-diff > diffs-container')[1]?.shadowRoot.querySelector('[data-code]');return !!c&&c.scrollWidth>c.clientWidth})()`);
+    await wait(`(()=>{const c=${gapsRow}.querySelectorAll('.changes-diff .diff-hunk > diffs-container')[1]?.shadowRoot.querySelector('[data-code]');return !!c&&c.scrollWidth>c.clientWidth})()`);
     const press = (gap: number, label: string) =>
       js(`(()=>{const b=[...${gapsRow}.querySelectorAll('.diff-gap[data-gap="${gap}"] button')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)}||b.textContent.trim()===${JSON.stringify(label)});if(!b)throw Error('Missing ${label}');b.click()})()`);
     // A line's numbers on each side it shows on: the new number in Unified, both in Split.
@@ -499,7 +504,8 @@ void app.whenReady().then(async () => {
     await wait(`${gapsRow}.querySelector('.diff-gap[data-gap="0"]')?.getAttribute('aria-label')==='26 lines hidden'`);
     assert.equal(await lineAt('export const g27 = 27;'), '27');
     assert.deepEqual(await bars(), ['0: 26 lines hidden', '2: 47 lines hidden'], 'The after side gives the last gap its size');
-    await press(2, 'Show all');
+    // The bar below the last hunk is one quiet row: "47 more lines · Show".
+    await press(2, 'Show');
     await wait(`!${gapsRow}.querySelector('.diff-gap[data-gap="2"]')`);
     assert.match(String(await lineAt('export const g200 = 200;')), /^(201|200,201)$/);
     assert.deepEqual(await js('window.afterReads'), ['src/gaps.ts'], 'Every reveal used the one after-side read');

@@ -7,11 +7,11 @@ import { isMarkdownFile, type MarkdownReview, type MarkdownLocation } from '../l
 import { useMarkdownView } from '../lib/use-markdown-view';
 import { peekMarkdownReview, prepareMarkdownReview } from '../lib/markdown-review-cache';
 import { MarkdownReviewPreview } from './MarkdownReviewPreview';
-import { RepositoryBadge, PrBadge, CommitBadge } from './EntityBadge';
-import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import { CommitBadge } from './EntityBadge';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { File } from '@pierre/diffs/react';
 import { parseDiffFromFile, type DiffFileInput, type FileDiffMetadata, type FileDiffOptions, type SelectedLineRange } from '@pierre/diffs';
-import { MessageSquare, ExternalLink } from 'lucide-react';
+import { Bot, CheckCheck, MessageSquare, ExternalLink } from 'lucide-react';
 import { inspectionFiles as fileCache, previewFor } from '../lib/inspection-cache';
 import {
   isUnchangedMove,
@@ -31,16 +31,27 @@ import {
   gapContaining,
   hunksFromDiff,
   matchesAfter,
+  pinLines,
   revealGap,
+  revealSpan,
   revealedParts,
   shownLines,
   shownSelection,
+  withPins,
   type GapDirection,
   type GapPart,
   type GapReveals,
 } from '../lib/diff-gaps';
 import { ChangesDiff, type GapStatus } from './ChangesDiff';
+import { chainAt, hunkScopes, provisionalScopes, type LinePoint } from '../lib/hunk-scopes';
+import type { DefinitionReveal } from '../lib/syntax-scope';
+import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
+import { applyCodeIntelligence, useSyntaxContents } from '../lib/use-syntax-contents';
+import { codeIntelligenceSettings, pathEnabled } from '../lib/code-intelligence';
+import { syntaxContentsPlan } from '../lib/syntax-contents';
+import { keepDiffLineInView } from '../lib/diff-layout';
 import { diffThemeName } from '../lib/diff-worker-pool';
+import { applyCodePalette } from '../lib/diff-code-palette';
 import type { Preferences } from '../lib/types';
 import type { usePrDiscussions } from '../lib/use-pr-discussions';
 import type { ReviewImageSide } from '../lib/review-images';
@@ -67,6 +78,7 @@ const isUnsupportedPreview = (message: string) =>
   /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
 
 const NO_REVEALS: GapReveals = {};
+const NO_PINS: readonly (readonly [number, number])[] = [];
 
 function isBeforeDiffLine(line: HTMLElement) {
   if (line.dataset.lineType === 'change-addition') return false;
@@ -83,6 +95,7 @@ export function PrFileInspection({
   onAsk,
   onOpenCurrentFile,
   classificationControl,
+  classificationTags,
   sourceLine,
   sourceEndLine,
   renderFeedbackThread,
@@ -106,6 +119,8 @@ export function PrFileInspection({
   onOpenFeedback?: (url: string, threadId: string) => void;
   onOpenSource?: (url: string, path: string) => void;
   classificationControl?: ReactNode;
+  /** The file's kind tags, such as Test, beside its path and status. */
+  classificationTags?: ReactNode;
   preferences: Preferences;
   discussion: ReturnType<typeof usePrDiscussions>;
   onViewedNext?: () => void;
@@ -131,6 +146,7 @@ export function PrFileInspection({
   const sourceJump = useRef<MarkdownLocation | undefined>(undefined);
   const previewJump = useRef<MarkdownLocation | undefined>(undefined);
   const sectionRef = useRef<HTMLElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
   const [markdownResult, setMarkdownResult] = useState<{ key: string; value: MarkdownReview }>();
   const [markdownError, setMarkdownError] = useState<{ key: string; message: string }>();
   const [markdownAttempt, setMarkdownAttempt] = useState(0);
@@ -226,21 +242,120 @@ export function PrFileInspection({
   const after = useMemo(() => (afterText === undefined ? undefined : afterLines(afterText)), [afterText]);
   const afterMatches = useMemo(() => (after && gapHunks ? matchesAfter(gapHunks, after) : undefined), [after, gapHunks]);
   const expandable = entry.file.status !== 'added' && entry.file.status !== 'deleted' && !contents?.lfs;
+  // A long definition's signature, shown above its hunk, is a hunk of unchanged lines inside a gap (#393).
+  const [pinned, setPinned] = useState<{ key: string; value: readonly (readonly [number, number])[] }>();
+  const pins = pinned?.key === activeKey ? pinned.value : NO_PINS;
+  const hunks = useMemo(
+    () => (gapHunks && after && afterMatches && pins.length ? withPins(gapHunks, pins, after) : gapHunks),
+    [gapHunks, after, afterMatches, pins]
+  );
   const gaps = useMemo(
-    () => (expandable && gapHunks ? diffGaps(gapHunks, afterMatches && after ? after.length : undefined) : undefined),
-    [expandable, gapHunks, afterMatches, after]
+    () => (expandable && hunks ? diffGaps(hunks, afterMatches && after ? after.length : undefined) : undefined),
+    [expandable, hunks, afterMatches, after]
   );
   const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
   const reveals = gapReveals?.key === activeKey ? gapReveals.value : NO_REVEALS;
   const parts = useMemo(
     (): GapPart[] | undefined =>
-      gapHunks &&
+      hunks &&
       (gaps
-        ? revealedParts(gapHunks, gaps, reveals, afterMatches ? after : undefined)
-        : gapHunks.map((hunk, index) => ({ kind: 'hunk' as const, key: `h${index}`, hunk }))),
-    [gapHunks, gaps, reveals, afterMatches, after]
+        ? revealedParts(hunks, gaps, reveals, afterMatches ? after : undefined)
+        : hunks.map((hunk, index) => ({ kind: 'hunk' as const, key: `h${index}`, hunk }))),
+    [hunks, gaps, reveals, afterMatches, after]
   );
   const shown = useMemo(() => (parts ? shownLines(parts) : undefined), [parts]);
+  // Enclosing definitions (#393), from text this view already has: the after side gaps reveal from, and the before
+  // side when both sides are loaded. A file without a grammar, or with a stale after side, shows as before.
+  // The old side is parsed only for hunks that delete lines and add none.
+  const onlyDeletes = useMemo(
+    () => !!gapHunks?.some((hunk) => hunk.rows.some((row) => row.type === '-') && !hunk.rows.some((row) => row.type === '+')),
+    [gapHunks]
+  );
+  // Settings › Appearance › Code intelligence: a language that is off shows as a file without a grammar.
+  const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
+  useEffect(() => applyCodeIntelligence(codeSettings), [codeSettings]);
+  const structure = pathEnabled(codeSettings, entry.file.path);
+  const beforeText =
+    onlyDeletes && contents?.before.kind === 'text' && pathEnabled(codeSettings, entry.file.previousPath ?? entry.file.path)
+      ? contents.before.content
+      : undefined;
+  // Most files of a large PR have only their patch here. Once the diff is near the view, its contents load in the
+  // background for its scopes, ahead of the PR's prefetch (lib/use-syntax-contents.ts): the after side, as a gap
+  // reveal reads it, and both sides for hunks that only delete. Contents already cached are not read again.
+  const scopePlan = useMemo(
+    () => syntaxContentsPlan(entry.snapshot, entry.file, (path) => pathEnabled(codeSettings, path)),
+    [entry.snapshot, entry.file, codeSettings]
+  );
+  const scopeFile = useMemo(() => ({ key: activeKey, snapshot: entry.snapshot, file: entry.file }), [activeKey, entry.snapshot, entry.file]);
+  const structureRead = useSyntaxContents(
+    sectionRef,
+    scopePlan && expandable && !collapsed && !!preview && !!gaps && !unchangedMove && (scopePlan.both ? !contents : !afterSide)
+      ? scopeFile
+      : undefined
+  );
+  const definitions = useSyntaxDefinitions({
+    key: activeKey,
+    url: entry.snapshot.url,
+    path: entry.file.path,
+    previousPath: entry.file.previousPath,
+    after: afterText,
+    before: beforeText,
+    enabled: structure && expandable && !collapsed && !!gaps && afterMatches === true,
+  });
+  const scopes = useMemo(
+    () => (parts && shown && definitions.after ? hunkScopes(parts, gaps, definitions, shown.after) : undefined),
+    [parts, gaps, definitions.after, definitions.before, shown]
+  );
+  // Until the definitions arrive, each hunk's location is its patch header's text, as GitHub shows it, or the file.
+  const structurePending =
+    structureRead.state === 'loading' || (structureRead.state === 'idle' && !!definitions.parsing);
+  const provisional = useMemo(
+    () =>
+      !scopes && parts && gaps && scopePlan && expandable && !unchangedMove && afterMatches !== false
+        ? provisionalScopes(parts, entry.file.patch)
+        : undefined,
+    [scopes, parts, gaps, scopePlan, expandable, unchangedMove, afterMatches, entry.file.patch]
+  );
+  const shownScopes = scopes ?? provisional;
+  // A pinned hunk header names the definitions around the line the reader is at (ChangesDiff).
+  const scopeAt = useMemo(
+    () => (scopes ? (point: LinePoint) => chainAt(definitions, point) : undefined),
+    [scopes, definitions.after, definitions.before]
+  );
+  const scopeNote = scopes ? undefined : structureRead.state === 'failed' ? (
+    <span className="diff-gap-structure" data-structure="failed">
+      <span className="diff-gap-message">Couldn’t load structure.</span>
+      <button type="button" className="diff-context-button diff-gap-text" onClick={structureRead.retry}>
+        Try again
+      </button>
+    </span>
+  ) : structurePending && provisional ? (
+    <span className="diff-gap-structure" data-structure="loading">
+      <LoadingIndicator announce={false}>Loading structure…</LoadingIndicator>
+    </span>
+  ) : undefined;
+  const showDefinition = (plan: DefinitionReveal) => {
+    if (!gaps || !hunks) return;
+    if (plan.kind === 'whole') {
+      setGapReveals({ key: activeKey, value: revealSpan(reveals, gaps, plan.start, plan.end) });
+      return;
+    }
+    const next = pinLines(hunks, gaps, reveals, plan.start, plan.end);
+    if (next.pin) setPinned({ key: activeKey, value: [...pins, next.pin] });
+    setGapReveals({ key: activeKey, value: next.reveals });
+  };
+  // Short definitions show whole once their scopes are known, keeping the line at the top of the view in place.
+  const autoOpened = useRef<string>(undefined);
+  useEffect(() => {
+    if (!scopes || !gaps || autoOpened.current === activeKey) return;
+    autoOpened.current = activeKey;
+    let next = reveals;
+    for (const scope of scopes.values())
+      if (scope.opens && scope.reveal?.kind === 'whole') next = revealSpan(next, gaps, scope.reveal.start, scope.reveal.end);
+    if (next === reveals) return;
+    if (sectionRef.current) keepDiffLineInView(sectionRef.current);
+    setGapReveals({ key: activeKey, value: next });
+  }, [scopes]);
   const lineCount = useMemo(
     () => Math.max(after?.length ?? 0, ...(gapHunks ?? []).map((hunk) => Math.max(hunk.oldStart, hunk.newStart) + hunk.rows.length)),
     [after, gapHunks]
@@ -256,9 +371,9 @@ export function PrFileInspection({
             ? { kind: 'loading' }
             : { kind: 'idle' };
   const revealLines = (gap: NonNullable<typeof gaps>[number], direction: GapDirection) => {
-    if (!gapHunks) return;
+    if (!hunks) return;
     const key = activeKey,
-      count = gapHunks.length;
+      count = hunks.length;
     setGapReveals((previous) => ({
       key,
       value: revealGap(previous?.key === key ? previous.value : NO_REVEALS, gap, count, direction),
@@ -512,6 +627,8 @@ export function PrFileInspection({
     onLineSelected: setRange,
     onPostRender: revealSource,
   };
+  // The file header is code-tier too: its colours come from the diff's theme (lib/code-palette.ts).
+  useLayoutEffect(() => applyCodePalette(options.theme as string), [options.theme]);
   const files: DiffFileInput | undefined = useMemo(
     () =>
       contents &&
@@ -618,124 +735,151 @@ export function PrFileInspection({
     setRange(null);
     changeMarkdownView({ mode });
   }
+  // In a stack's combined view, the PRs that changed this file and their commits, in the flow above the file's sticky
+  // header: they scroll away, so the pinned header is always the one row it is in the flow. A single PR's views name
+  // their PR already.
+  const fileContext = combined && sourceOptions.length ? (
+    <span className="changes-source">
+      {sourceOptions.map((source) => {
+        const number = source.metadata.url.split('/').pop();
+        return (
+          <span key={source.metadata.url} className="entity-badge-group">
+            <button
+              type="button"
+              className="entity-badge entity-badge-pr changes-source-pr"
+              data-entity-kind="pr"
+              title={`Open #${number} · ${source.metadata.title}`}
+              onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}
+            >
+              <span className="entity-badge-identity" aria-hidden="true">
+                <span className="icon-mask" />
+              </span>
+              <span className="entity-badge-value">
+                <span className="entity-badge-start">#{number}</span>
+              </span>
+            </button>
+            <CommitBadge sha={source.metadata.headSha} repo={source.metadata.headRepo} />
+          </span>
+        );
+      })}
+    </span>
+  ) : undefined;
+  const fullPath = entry.file.previousPath ? `${entry.file.previousPath} → ${entry.file.path}` : entry.file.path;
   const fileHeader = (
-    <header className="changes-file-header">
-      <div>
-        {!commit && !combined && (
-          <span className="changes-source">
-            <RepositoryBadge repo={entry.snapshot.metadata.baseRepo} />{' '}
-            <PrBadge url={entry.snapshot.url} title={entry.snapshot.metadata.title} />{' '}
-            <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
+    <>
+      {fileContext && <div className="changes-file-context">{fileContext}</div>}
+      <header ref={headerRef} className="changes-file-header" data-status={unchangedMove ? 'renamed' : entry.file.status}>
+        <div className="changes-file-title">
+          <h2 title={fullPath} data-renamed={entry.file.previousPath ? '' : undefined}>
+            {entry.file.previousPath && (
+              <>
+                <FilePath path={entry.file.previousPath} old />
+                <span className="changes-file-arrow"> → </span>
+              </>
+            )}
+            <FilePath path={entry.file.path} />
+          </h2>
+          <span className="changes-file-stats">
+            {unchangedMove ? (
+              'Moved · contents unchanged'
+            ) : (
+              <>
+                {entry.file.status}
+                <span className="changes-file-sep"> · </span>
+                <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
+              </>
+            )}
           </span>
-        )}
-        {combined && (
-          <span className="changes-source">
-            <span>Combined changes</span>
-            {sourceOptions.slice(0, 3).map((source) => (
-              <Button
-                key={source.metadata.url}
-                size="sm"
-                variant="link"
-                onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}
-              >
-                #{source.metadata.url.split('/').pop()}
-              </Button>
-            ))}
-            {sourceOptions.length > 3 && <span>+{sourceOptions.length - 3} PRs</span>}
-          </span>
-        )}
-        <h2 title={entry.file.path}>
-          {entry.file.previousPath && <span>{entry.file.previousPath} → </span>}
-          {entry.file.path}
-        </h2>
-        <span className="changes-file-stats">
-          {unchangedMove ? (
-            'Moved · contents unchanged'
-          ) : (
-            <>
-              {entry.file.status} · <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
-            </>
+          {classificationTags}
+        </div>
+        <div className="changes-file-actions">
+          {compactMove && !viewed && (
+            <Button variant="ghost" size="sm" onClick={() => setRevealedMove(activeKey)}>
+              Show file
+            </Button>
           )}
-        </span>
-      </div>
-      <div className="changes-file-actions">
-        {compactMove && !viewed && (
-          <Button variant="ghost" size="sm" onClick={() => setRevealedMove(activeKey)}>
-            Show file
-          </Button>
-        )}
-        {markdown && !compactMove && (
-          <div className="markdown-view-switch" role="group" aria-label="Markdown view">
-            <Button
-              variant={!wantsPreview ? 'secondary' : 'ghost'}
-              size="sm"
-              aria-pressed={!wantsPreview}
-              onClick={() => chooseMarkdownMode('source')}
-            >
-              Source
+          {markdown && !compactMove && (
+            <div className="markdown-view-switch" role="group" aria-label="Markdown view">
+              <Button
+                variant={!wantsPreview ? 'secondary' : 'ghost'}
+                size="sm"
+                aria-pressed={!wantsPreview}
+                onClick={() => chooseMarkdownMode('source')}
+              >
+                Source
+              </Button>
+              <Button
+                variant={wantsPreview ? 'secondary' : 'ghost'}
+                size="sm"
+                aria-pressed={wantsPreview}
+                onClick={() => chooseMarkdownMode('preview')}
+              >
+                Preview
+              </Button>
+            </div>
+          )}
+          <label>
+            <input
+              type="checkbox"
+              checked={viewed}
+              onChange={(e) => (e.target.checked ? mark(false) : void progress.markFileViewed(activeKey, false))}
+            />
+            Viewed
+          </label>
+          {onViewedNext && (
+            <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
+              <CheckCheck size={14} aria-hidden="true" />
+              <span className="changes-file-action-label">Viewed & next</span>
             </Button>
+          )}
+          {!commit && !showingPreview && !compactMove && (
             <Button
-              variant={wantsPreview ? 'secondary' : 'ghost'}
+              variant="ghost"
               size="sm"
-              aria-pressed={wantsPreview}
-              onClick={() => chooseMarkdownMode('preview')}
+              disabled={!range || !comments.canComment || contents?.lfs}
+              onClick={() => range && !contents?.lfs && comments.begin(range)}
+              title="Select lines in the diff to comment"
             >
-              Preview
+              <MessageSquare size={14} /> <span className="changes-file-action-label">Comment</span>
             </Button>
-          </div>
-        )}
-        {classificationControl}
-        <label>
-          <input
-            type="checkbox"
-            checked={viewed}
-            onChange={(e) => (e.target.checked ? mark(false) : void progress.markFileViewed(activeKey, false))}
-          />
-          Viewed
-        </label>
-        {onViewedNext && <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
-          Viewed & next
-        </Button>}
-        {!commit && !showingPreview && !compactMove && (
+          )}
+          {combined && (
+            <SearchableSelect
+              label="Comment in source PR"
+              value=""
+              triggerLabel="Comment in PR…"
+              popupBoundary="viewport"
+              options={commentSources.map((s) => ({
+                value: s.metadata.url, kind: 'pr' as const, pr: s.metadata,
+                label: `#${s.metadata.url.split('/').pop()} · ${s.metadata.title}`,
+              }))}
+              onValueChange={(url) => onOpenSource?.(url, combinedSourcePath(url))}
+            />
+          )}
+          {commit && (
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Open current file in Changes to comment"
+              onClick={() => onOpenCurrentFile(entry.snapshot.url, entry.file.path)}
+            >
+              Comment in Changes
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
-            disabled={!range || !comments.canComment || contents?.lfs}
-            onClick={() => range && !contents?.lfs && comments.begin(range)}
-            title="Select lines in the diff to comment"
+            className="changes-file-ask"
+            aria-label="Ask about this"
+            title="Ask about this file or selection in chat"
+            onClick={() => ask(selectedCode())}
           >
-            <MessageSquare size={14} /> Comment
+            <Bot size={16} aria-hidden="true" />
           </Button>
-        )}
-        {combined && (
-          <SearchableSelect
-            label="Comment in source PR"
-            value=""
-            triggerLabel="Comment in PR…"
-            popupBoundary="viewport"
-            options={commentSources.map((s) => ({
-              value: s.metadata.url, kind: 'pr' as const, pr: s.metadata,
-              label: `#${s.metadata.url.split('/').pop()} · ${s.metadata.title}`,
-            }))}
-            onValueChange={(url) => onOpenSource?.(url, combinedSourcePath(url))}
-          />
-        )}
-        {commit && (
-          <Button
-            variant="ghost"
-            size="sm"
-            title="Open current file in Changes to comment"
-            onClick={() => onOpenCurrentFile(entry.snapshot.url, entry.file.path)}
-          >
-            Comment in Changes
-          </Button>
-        )}
-        <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
-          <MessageSquare size={14} />
-          Ask about this
-        </Button>
-      </div>
-    </header>
+          {classificationControl}
+        </div>
+      </header>
+    </>
   );
   const unavailableFocus = focusThreadId && !preview && !files
     ? matching.find(thread => thread.id === focusThreadId && !visibleDiscussions.includes(thread))
@@ -835,6 +979,12 @@ export function PrFileInspection({
                   renderAnnotation={comments.renderAnnotation}
                   status={gapStatus}
                   onReveal={gaps ? (part, direction) => revealLines(part.gap, direction) : undefined}
+                  scopes={shownScopes}
+                  structure={!!shownScopes}
+                  scopeNote={scopeNote}
+                  scopeAt={scopeAt}
+                  onShowDefinition={showDefinition}
+                  stickyUnder={headerRef}
                   onRetry={() => readAfter(true)}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}
@@ -923,6 +1073,7 @@ export function PrFileInspection({
       ref={sectionRef}
       className="commit-stream-file"
       aria-label={entry.file.path}
+      data-code-theme={options.theme as string}
       data-markdown-switch={markdown && !compactMove ? '' : undefined}
     >
       {fileHeader}
@@ -932,5 +1083,23 @@ export function PrFileInspection({
         {opened.current && fileContent}
       </div>
     </section>
+  );
+}
+
+/**
+ * A file's path in the code's type: folders muted, the name in the text colour. A long path gives way from the left,
+ * `…/Core/ECONemoConnector.cs`, keeping its name; the text stays whole for selection and copying.
+ */
+function FilePath({ path, old }: { path: string; old?: boolean }) {
+  const slash = path.lastIndexOf('/');
+  return (
+    <span className="changes-file-path" data-old={old || undefined}>
+      {slash >= 0 && (
+        <span className="changes-file-dir">
+          <span>{path.slice(0, slash + 1)}</span>
+        </span>
+      )}
+      <span className="changes-file-name">{path.slice(slash + 1)}</span>
+    </span>
   );
 }

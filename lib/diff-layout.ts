@@ -219,3 +219,36 @@ export function scrollToMovingTarget(
   timer = setTimeout(stop, limit);
   return stop;
 }
+
+/**
+ * Before a file shows more lines on its own, such as a short function opening whole once its scope is known (#393):
+ * keeps the first line in view where it is, when the top of the view is inside `block`. Lines are found again by
+ * number, type and column, since the diff they are in may grow above them.
+ */
+export function keepDiffLineInView(block: HTMLElement) {
+  const scroller = block.closest<HTMLElement>('.commit-diff-stream');
+  if (!scroller?.clientHeight) return;
+  const top = scroller.getBoundingClientRect().top;
+  const bounds = block.getBoundingClientRect();
+  // A file that starts at the top of the view, as after a jump to it, keeps its start there instead.
+  if (bounds.top >= top - 1 || bounds.bottom <= top) return;
+  const column = (element: HTMLElement) => (element.closest('[data-deletions]') && !element.closest('[data-additions]') ? 'before' : 'after');
+  const find = (match: (element: HTMLElement) => boolean) => {
+    for (const host of block.querySelectorAll<HTMLElement>('diffs-container')) {
+      if (host.getBoundingClientRect().bottom <= top) continue;
+      for (const element of host.shadowRoot?.querySelectorAll<HTMLElement>('[data-line]') ?? []) if (match(element)) return element;
+    }
+  };
+  const line = find((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.height > 0 && rect.top >= top;
+  });
+  if (!line) return;
+  const key = { line: line.dataset.line, type: line.dataset.lineType, column: column(line) };
+  const offset = line.getBoundingClientRect().top - top;
+  followScrollAnchor(scroller, () => {
+    const current = line.isConnected ? line : find((e) => e.dataset.line === key.line && e.dataset.lineType === key.type && column(e) === key.column);
+    const rect = current?.getBoundingClientRect();
+    return rect?.height ? scroller.scrollTop + rect.top - scroller.getBoundingClientRect().top - offset : undefined;
+  });
+}

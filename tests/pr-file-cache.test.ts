@@ -126,3 +126,25 @@ void test('files remember their PR’s last use and leave with their PR (#355)',
   assert.equal(cache.peek(request), value);
   assert.equal(cache.stats().entries, 1);
 });
+
+void test('A reveal does not wait behind a background after-side read; a background read joins a reveal', async () => {
+  const modes: unknown[] = [];
+  const cache = createPrFileCache(
+    () => Promise.resolve(value),
+    32_000_000,
+    async (_request, background) => {
+      modes.push(background);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return value.after;
+    }
+  );
+  const scope = cache.readAfter(request, true);
+  const reveal = cache.readAfter(request);
+  assert.notEqual(scope, reveal, 'The reveal sends its own read; main joins the two');
+  await Promise.all([scope, reveal]);
+  const other = { ...request, path: 'src/other.ts' };
+  const first = cache.readAfter(other);
+  assert.equal(cache.readAfter(other, true), first, 'A background read joins a pending reveal');
+  await first;
+  assert.deepEqual(modes, [true, false, false]);
+});

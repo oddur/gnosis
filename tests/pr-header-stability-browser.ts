@@ -290,12 +290,12 @@ void app.whenReady().then(async () => {
     await pointerTab('Changes');
     if (
       await wait(
-        "[...document.querySelectorAll('.changes-file-header button')].some(b=>b.textContent.trim()==='Ask about this')",
+        "[...document.querySelectorAll('.changes-file-header button')].some(b=>b.getAttribute('aria-label')==='Ask about this')",
         100
       )
     ) {
       await js(
-        "[...document.querySelectorAll('.changes-file-header button')].find(b=>b.textContent.trim()==='Ask about this').click()"
+        "[...document.querySelectorAll('.changes-file-header button')].find(b=>b.getAttribute('aria-label')==='Ask about this').click()"
       );
       await must("!!document.querySelector('.changes-chat')");
       await pause(300);

@@ -1,5 +1,5 @@
 import { createElement, type ComponentType, type SVGProps } from 'react';
-import { Blocks, Sparkles, RefreshCw, Bug, TestTube2, Settings, FileText } from 'lucide-react';
+import { Blocks, Lightbulb, RefreshCw, Bug, TestTube2, Settings, FileText } from 'lucide-react';
 
 
 export const CODE_THEMES = [
@@ -47,7 +47,7 @@ export const slideTypeConfig: Record<
   { label: string; className: string; icon: ComponentType<{ className?: string }> }
 > = {
   foundation: { label: 'Foundation', className: 'text-foreground/85', icon: Blocks },
-  feature: { label: 'Feature', className: 'text-foreground/85', icon: Sparkles },
+  feature: { label: 'Feature', className: 'text-foreground/85', icon: Lightbulb },
   refactor: { label: 'Refactor', className: 'text-foreground/85', icon: RefreshCw },
   bugfix: { label: 'Bug Fix', className: 'text-foreground/85', icon: Bug },
   test: { label: 'Test', className: 'text-foreground/85', icon: TestTube2 },

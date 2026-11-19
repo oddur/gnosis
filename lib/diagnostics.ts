@@ -1,4 +1,5 @@
 import { approximateBytes } from './byte-cache';
+import { diagnosticsSources } from './diagnostics-sources';
 import { slowestInteractions, type InteractionScript, type LongFrame, type SlowInteraction } from './interaction-latency';
 
 /** What the renderer adds to a diagnostics export. */
@@ -159,6 +160,7 @@ async function rendererCaches(): Promise<Record<string, unknown>> {
       const queue = workbenchStore.getQueue();
       return { items: queue.items.length, bytes: approximateBytes(queue) };
     }],
+    ...diagnosticsSources().map(([name, read]): [string, () => Promise<unknown>] => [name, async () => read()]),
   ];
   for (const [name, read] of parts) {
     try {

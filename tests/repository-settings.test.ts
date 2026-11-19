@@ -53,8 +53,11 @@ void test('all installed Lucide icons are valid repository choices; legacy choic
   const path = await import('node:path');
   const require = createRequire(import.meta.url);
   const manifest = readFileSync(path.join(path.dirname(require.resolve('lucide-react/package.json')), 'dist/esm/dynamicIconImports.js'), 'utf8');
-  const installed = [...manifest.matchAll(/"([a-z0-9-]+)":/g)].map(match => match[1]).sort();
+  const { bannedIconName } = await import('../lib/banned-icons.mjs');
+  // Banned icons (lib/banned-icons.mjs) are left out of the picker.
+  const installed = [...manifest.matchAll(/"([a-z0-9-]+)":/g)].map(match => match[1]).filter(name => !bannedIconName(name)).sort();
   assert.deepEqual(names, installed, 'Run node scripts/sync-lucide-icons.mjs after updating Lucide');
+  assert.equal(validRepositoryIcon('lucide:wand-sparkles'), false, 'Sparkles icons are banned');
   assert.ok(names.length > 1900);
   for (const name of names) assert.equal(validRepositoryIcon(`lucide:${name}`), true);
   assert.equal(repositoryLucideName('book'), 'book-marked');

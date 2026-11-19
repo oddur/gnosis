@@ -3,6 +3,7 @@ import { inspectionData, loadChangePreview, predictedFiles } from './inspection-
 import { loadExplanation, peekExplanation } from './explanation-workspace';
 import { PrSummary, ReviewPage, WorkflowGraphView } from '../src/lazy-screens';
 import type { OpenTarget } from './pr-open-targets';
+import { fileRevisionKey } from './pr-changes';
 import { preloadSettings, type PreloadSettings } from './preload-settings';
 
 // Loaded on every screen, including fixtures and windows whose preload exposes only part of the API (or none).
@@ -25,6 +26,17 @@ const reads: PredictorReads = {
     // Patch previews make a file ready without a request, so load the parser first.
     await loadChangePreview().catch(() => {});
     await inspectionData.prepareCommitted(member, { files, label, choose: (snapshot, count) => predictedFiles(snapshot, subjectId, count) });
+    // Patches need no contents, but hunk scopes do (#393): the first supported files, after the open PR's prefetch.
+    const snapshot = inspectionData.peekChanges(member);
+    if (snapshot && !snapshot.comparison && !snapshot.stackComparison)
+      void import('./use-syntax-contents').then(({ warmPredictedSyntax }) =>
+        warmPredictedSyntax(
+          predictedFiles(snapshot, subjectId, snapshot.files.length).map((file) => ({
+            key: fileRevisionKey(snapshot.url, file.path, snapshot.metadata.baseSha, snapshot.metadata.headSha),
+            snapshot,
+            file,
+          }))
+        ), () => {});
   },
   changesReady: (member, subjectId, files) =>
     inspectionData.committedReady(member, files, (snapshot, count) => predictedFiles(snapshot, subjectId, count)),

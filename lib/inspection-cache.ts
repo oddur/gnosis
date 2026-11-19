@@ -20,7 +20,8 @@ import { isMarkdownFile } from './markdown-review';
 import { imageMimeType } from './review-images';
 
 /** IPC options for a read mode: queue preparation is `background`, a prediction carries its destination kind. */
-const loadMode = (mode: InspectionMode) => (typeof mode === 'object' ? { predicted: mode.predicted } : { background: mode });
+const loadMode = (mode: InspectionMode) =>
+  typeof mode === 'object' ? { predicted: mode.predicted } : mode === 'view' ? { view: true } : { background: mode };
 async function inventory<T>(signal: AbortSignal | undefined, read: (requestId: string) => Promise<T>): Promise<T> {
   signal?.throwIfAborted();
   const requestId = crypto.randomUUID();
@@ -65,6 +66,7 @@ export const inspectionData = createPrInspectionCache({
     inspectionEpoch++;
     clearStackChanges();
     clearMarkdownReviews();
+    for (const listener of forgetListeners) listener(undefined);
     inspectionFiles.clear();
     previews.clear();
     comparisons.clear();
@@ -157,6 +159,17 @@ export const inspectionCacheStats = () => ({
   prs: inspectionLastUses().size,
 });
 
+const forgetListeners = new Set<(urls: ReadonlySet<string> | undefined) => void>();
+/**
+ * Calls `listener` when PRs leave the inspection caches, with their URLs, or with undefined when every PR does. Caches
+ * kept beside these, such as parsed definitions (lib/syntax-scope-client.ts), leave with them. Main bundles this
+ * module through the diagnostics export, so it imports none of them.
+ */
+export function onInspectionForget(listener: (urls: ReadonlySet<string> | undefined) => void) {
+  forgetListeners.add(listener);
+  return () => forgetListeners.delete(listener);
+}
+
 /** When each PR in the inspection caches was last read. */
 function inspectionLastUses() {
   const uses = new Map<string, number>();
@@ -179,6 +192,7 @@ export function forgetInspection(urls: Iterable<string>) {
   inspectionData.forget(set);
   inspectionFiles.forget(set);
   forgetStackChanges(set);
+  for (const listener of forgetListeners) listener(set);
   comparisons.prune((snapshot) => set.has(snapshot.url));
   previews.prune((preview) => set.has(preview.url));
 }

@@ -6,6 +6,8 @@ import {
   diffGaps,
   gapContaining,
   gapSize,
+  hunkRange,
+  hunkCounts,
   hunkSlices,
   hunksFromDiff,
   matchesAfter,
@@ -235,4 +237,23 @@ void test('a selection across hidden lines numbers each shown line', () => {
   const shown = shownLines(revealedParts(hunks, gaps, {}, lines));
   assert.equal(shownSelection(shown.after, 47, 49), 'export const g47 = 47;\nexport const g48 = 48;\nexport const g49 = 49;');
   assert.equal(shownSelection(shown.after, 54, 56), '54: export const g53 = 53;');
+});
+
+test('a hunk names its lines for a pinned header without structure (#395)', () => {
+  const rows = (types: string) => [...types].map((type) => ({ type: type as ' ' | '+' | '-', text: '' }));
+  assert.deepEqual(hunkRange({ oldStart: 120, newStart: 120, rows: rows(' -+-+ ') }), { label: 'L120–123', spoken: 'Lines 120 to 123' });
+  assert.deepEqual(hunkRange({ oldStart: 4, newStart: 4, rows: rows('+') }), { label: 'L4', spoken: 'Line 4' });
+  assert.deepEqual(hunkRange({ oldStart: 9, newStart: 9, rows: rows('---') }), { label: 'old L9–11', spoken: 'Old lines 9 to 11' });
+  // A hunk that only deletes is where its deleted lines were, on the old side, context and all.
+  assert.deepEqual(hunkRange({ oldStart: 9, newStart: 7, rows: rows(' -- ') }), { label: 'old L9–12', spoken: 'Old lines 9 to 12' });
+  assert.deepEqual(hunkRange({ oldStart: 1200, newStart: 1201, rows: rows(' '.repeat(10)) }), { label: 'L1201–1210', spoken: 'Lines 1201 to 1210' });
+  // The header shows the new lines; old lines that differ are in the words, for the tooltip and screen readers.
+  assert.deepEqual(hunkRange({ oldStart: 9, newStart: 12, rows: rows(' -+ ') }), {
+    label: 'L12–14',
+    spoken: 'Lines 12 to 14 (old lines 9 to 11)',
+  });
+  assert.deepEqual(hunkRange({ oldStart: 120, newStart: 120, rows: rows(' -+ ') }), { label: 'L120–122', spoken: 'Lines 120 to 122' });
+  assert.deepEqual(hunkRange({ oldStart: 4, newStart: 4, rows: rows(' ++ ') }), { label: 'L4–7', spoken: 'Lines 4 to 7' });
+  assert.deepEqual(hunkCounts({ rows: rows(' ++-+ ') }), { added: 3, deleted: 1 });
+  assert.deepEqual(hunkCounts({ rows: rows('  ') }), { added: 0, deleted: 0 });
 });

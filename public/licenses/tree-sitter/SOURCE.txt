@@ -1,0 +1,15 @@
+Tree-sitter, for the enclosing function or class of each diff hunk (#393).
+web-tree-sitter 0.27.2 (MIT): unmodified distribution from https://www.npmjs.com/package/web-tree-sitter/v/0.27.2
+
+Grammars: the unmodified prebuilt .wasm file and queries/tags.scm of each official npm package.
+tree-sitter-typescript 0.23.2 (MIT): https://www.npmjs.com/package/tree-sitter-typescript/v/0.23.2
+tree-sitter-javascript 0.25.0 (MIT): https://www.npmjs.com/package/tree-sitter-javascript/v/0.25.0
+tree-sitter-rust 0.24.0 (MIT): https://www.npmjs.com/package/tree-sitter-rust/v/0.24.0
+tree-sitter-go 0.25.0 (MIT): https://www.npmjs.com/package/tree-sitter-go/v/0.25.0
+tree-sitter-python 0.25.0 (MIT): https://www.npmjs.com/package/tree-sitter-python/v/0.25.0
+tree-sitter-java 0.23.5 (MIT): https://www.npmjs.com/package/tree-sitter-java/v/0.23.5
+tree-sitter-c-sharp 0.24.0 (MIT): https://www.npmjs.com/package/tree-sitter-c-sharp/v/0.24.0
+tree-sitter-json 0.24.8 (MIT): https://www.npmjs.com/package/tree-sitter-json/v/0.24.8
+@tree-sitter-grammars/tree-sitter-yaml 0.7.1 (MIT): https://www.npmjs.com/package/@tree-sitter-grammars/tree-sitter-yaml/v/0.7.1
+
+Each licence is in this directory. Checksums are in src/assets/tree-sitter/manifest.json in https://github.com/oddur/gnosis.

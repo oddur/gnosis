@@ -54,6 +54,52 @@ const oldEnd = (hunk: GapHunk) => hunk.oldStart + oldCount(hunk) - 1;
 const newEnd = (hunk: GapHunk) => hunk.newStart + newCount(hunk) - 1;
 const stripFeed = (line: string | undefined) => (line ?? '').replace(/\n$/, '');
 
+export interface HunkRange {
+  /** As the hunk header shows it: `L120–148`, or `old L9–11` for a hunk that only deletes. */
+  label: string;
+  /**
+   * In words, for the tooltip and screen readers: "Lines 120 to 148", "Old lines 9 to 11", and the old lines too where
+   * they differ: "Lines 12 to 14 (old lines 9 to 11)".
+   */
+  spoken: string;
+}
+/** One side's lines in a hunk: `L4`, `L120–148`, with `prefix` before the L. */
+function sideRange(start: number, count: number, prefix: string, words: string): HunkRange {
+  const end = start + Math.max(count, 1) - 1;
+  if (end <= start) return { label: `${prefix}L${start}`, spoken: `${words} ${start}` };
+  return { label: `${prefix}L${start}–${end}`, spoken: `${words}s ${start} to ${end}` };
+}
+/**
+ * Where a hunk is, by its new lines, or by its old lines when it only deletes: its deleted lines have no new numbers.
+ * Every hunk header shows it (#395). Where the old lines differ, they are in the words alone, for the tooltip and
+ * screen readers: the header shows one range.
+ */
+export function hunkRange(hunk: Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>): HunkRange {
+  const adds = hunk.rows.some((row) => row.type === '+');
+  const deletes = hunk.rows.some((row) => row.type === '-');
+  if (!adds && deletes) return sideRange(hunk.oldStart, oldCount(hunk), 'old ', 'Old line');
+  const after = sideRange(hunk.newStart, newCount(hunk), '', 'Line');
+  if (!deletes) return after;
+  const before = sideRange(hunk.oldStart, oldCount(hunk), 'old ', 'Old line');
+  if (before.label === `old ${after.label}`) return after;
+  return { label: after.label, spoken: `${after.spoken} (${before.spoken.toLowerCase()})` };
+}
+
+/** How many lines a hunk adds and deletes. */
+export interface HunkCounts {
+  added: number;
+  deleted: number;
+}
+export function hunkCounts(hunk: Pick<GapHunk, 'rows'>): HunkCounts {
+  let added = 0,
+    deleted = 0;
+  for (const row of hunk.rows) {
+    if (row.type === '+') added++;
+    else if (row.type === '-') deleted++;
+  }
+  return { added, deleted };
+}
+
 /** The hunks of a parsed diff as rows. Works for a patch preview and for a diff of two whole files. */
 export function hunksFromDiff(diff: FileDiffMetadata): GapHunk[] {
   return diff.hunks.map((hunk) => {
@@ -327,4 +373,93 @@ export function shownSelection(lines: Map<number, string>, start: number, end: n
   }
   const complete = selected.length === to - from + 1;
   return selected.map(([line, text]) => (complete || !numbered ? text : `${line}: ${text}`)).join('\n');
+}
+
+/**
+ * Reveals new lines `start`–`end` where they continue a hunk: the top of a gap continues the hunk above it, and the
+ * bottom continues the hunk below. A span that touches no hunk in a gap leaves that gap alone; `pinLines` shows such
+ * lines. Reveals only grow, so applying the same span twice changes nothing (#393).
+ */
+export function revealSpan(reveals: GapReveals, gaps: DiffGap[], start: number, end: number): GapReveals {
+  let next = reveals;
+  for (const gap of gaps) {
+    const gapEnd = gap.newEnd;
+    if (gapEnd === undefined || end < gap.newStart || start > gapEnd) continue;
+    const current = next[gap.index] ?? { down: 0, up: 0 };
+    const down = start <= gap.newStart ? Math.max(current.down, Math.min(end, gapEnd) - gap.newStart + 1) : current.down;
+    const up = end >= gapEnd ? Math.max(current.up, gapEnd - Math.max(start, gap.newStart) + 1) : current.up;
+    if (down !== current.down || up !== current.up) next = { ...next, [gap.index]: { down, up } };
+  }
+  return next;
+}
+
+/**
+ * Shows new lines `start`–`end` in the middle of a gap, such as a long function's signature far above its change
+ * (#393). Lines that touch what a gap already shows extend that reveal. The rest are returned as a pin: `withPins`
+ * makes it a hunk of unchanged lines, which splits the gap in two. Reveals are by gap index, so the reveals of the
+ * gaps after the pin move up one.
+ */
+export function pinLines(
+  hunks: GapHunk[],
+  gaps: DiffGap[],
+  reveals: GapReveals,
+  start: number,
+  end: number
+): { pin?: [number, number]; reveals: GapReveals } {
+  const gap = gaps.find((g) => g.newEnd !== undefined && start >= g.newStart && start <= g.newEnd);
+  if (!gap || gap.newEnd === undefined) return { reveals };
+  const current = reveals[gap.index] ?? { down: 0, up: 0 };
+  const above = gap.index > 0,
+    below = gap.index < hunks.length;
+  const shownTop = above ? gap.newStart + current.down : gap.newStart;
+  const shownBottom = below ? gap.newEnd - current.up : gap.newEnd;
+  const from = Math.max(start, shownTop),
+    to = Math.min(end, shownBottom);
+  if (from > to) return { reveals };
+  if (above && from === shownTop) return { reveals: revealSpan(reveals, gaps, gap.newStart, to) };
+  if (below && to === shownBottom) return { reveals: revealSpan(reveals, gaps, from, gap.newEnd) };
+  const shifted: Record<number, GapReveal> = {};
+  for (const [key, value] of Object.entries(reveals)) {
+    const index = Number(key);
+    if (index < gap.index) shifted[index] = value;
+    else if (index > gap.index) shifted[index + 1] = value;
+  }
+  shifted[gap.index] = { down: current.down, up: 0 };
+  shifted[gap.index + 1] = { down: 0, up: current.up };
+  return { pin: [from, to], reveals: shifted };
+}
+
+/** The hunks with each pinned span of new lines as a hunk of unchanged lines, in order. A pin that is not inside a
+ * gap is left out. */
+export function withPins(hunks: GapHunk[], pins: readonly (readonly [number, number])[], lines: string[]): GapHunk[] {
+  if (!pins.length) return hunks;
+  const result: GapHunk[] = [];
+  const sorted = [...pins].sort((a, b) => a[0] - b[0]);
+  let p = 0;
+  let previousOld = 0,
+    previousNew = 0;
+  const pinUntil = (next: number) => {
+    for (; p < sorted.length && sorted[p][0] < next; p++) {
+      const [from, to] = sorted[p];
+      if (from <= previousNew || to >= next || to > lines.length) continue;
+      const offset = previousOld - previousNew;
+      result.push({
+        oldStart: from + offset,
+        newStart: from,
+        rows: lines.slice(from - 1, to).map((text) => ({ type: ' ' as const, text })),
+        noEofOld: false,
+        noEofNew: false,
+      });
+      previousOld = to + offset;
+      previousNew = to;
+    }
+  };
+  for (const hunk of hunks) {
+    pinUntil(hunk.newStart);
+    result.push(hunk);
+    previousOld = oldEnd(hunk);
+    previousNew = newEnd(hunk);
+  }
+  pinUntil(Infinity);
+  return result;
 }

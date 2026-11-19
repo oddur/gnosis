@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { Toast } from '@base-ui/react/toast';
-import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Sparkles, Inbox, BellRing, AlarmClock, AtSign, MessageSquareReply, GitCompareArrows, type LucideIcon } from 'lucide-react';
+import { CheckCircle2, Info, AlertCircle, X, GitPullRequest, MessageSquareWarning, CircleX, GitMerge, Bot, Inbox, BellRing, AlarmClock, AtSign, MessageSquareReply, GitCompareArrows, type LucideIcon } from 'lucide-react';
 import type { NotificationKind } from '../../lib/notification-routing';
 import { NOTIFICATION_ICONS, type NotificationIconName } from '../../lib/notification-icons';
 import { PrStateIcon } from '../PrStateIcon';
@@ -57,7 +57,7 @@ const GLYPHS: Record<NotificationIconName, LucideIcon> = {
   'at-sign': AtSign,
   'message-square-reply': MessageSquareReply,
   'alarm-clock': AlarmClock,
-  sparkles: Sparkles,
+  bot: Bot,
   info: Info,
   inbox: Inbox,
   'bell-ring': BellRing,

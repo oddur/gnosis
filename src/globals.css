@@ -1783,13 +1783,127 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .diff-context-button:disabled { opacity:.55; cursor:default; background:none; }
 .diff-context-button:focus-visible { outline:2px solid var(--ring); outline-offset:-1px; }
 /* Changes: a gap between hunks reveals 20 lines next to either hunk, or all of it (#299). */
-.diff-gap { display:flex; align-items:center; flex-wrap:wrap; gap:2px 4px; min-height:32px; padding:3px 8px; border-block:1px solid var(--border); background:var(--muted); color:var(--muted-foreground); font-size:var(--type-caption); line-height:1.4; }
-.diff-gap[data-static] { min-height:0; height:8px; padding:0; }
-.diff-gap-count { padding-inline:6px 2px; font-variant-numeric:tabular-nums; }
-.diff-gap-text { padding-inline:6px 8px; color:var(--foreground); }
-.diff-gap-message { padding-inline:4px; color:var(--foreground); overflow-wrap:anywhere; }
-.diff-gap-loading { margin-left:auto; padding-right:4px; }
-.changes-diff > diffs-container { display:block; }
+/* Gap bars and hunk headers (#299, #393, #395) belong to the code, not the chrome around it: a surface raised from the
+   code's background toward its text and tinted cool, so it parts from the code and its green and red lines by lightness
+   and hue, with a darker line where it meets the code; the code's type, with the breadcrumb starting at the code's
+   text column. ChangesDiff writes the theme's colours as --diff-code-* and --diff-keyword on the bars alone
+   (lib/code-palette.ts); the fallbacks, mixed in OKLab as the palette is, hold until the theme resolves. */
+.diff-gap {
+  --diff-header-bg:var(--diff-code-header, color-mix(in oklab, color-mix(in oklab, var(--diff-code-bg, #22272e) 88%, var(--diff-code-fg, #c5ccd6)) 92%, var(--code-ring)));
+  --diff-header-fg:var(--diff-code-fg, #c5ccd6);
+  --diff-header-muted:var(--diff-code-muted, color-mix(in oklab, var(--diff-header-fg) 80%, var(--diff-header-bg)));
+  --diff-header-line:var(--diff-code-line, color-mix(in oklab, var(--diff-code-bg, #22272e) 55%, #000));
+  --diff-header-hover:color-mix(in oklab, var(--diff-header-fg) 12%, var(--diff-header-bg));
+  --diff-header-height:calc(var(--leading-code) * 1.75);
+  --diff-header-shadow:0 6px 10px -6px rgb(0 0 0 / 55%);
+  /* Pierre's unified and split gutters: the number column (2ch, the digits, 1ch, a 2px rule), then the line's own
+     padding, 2ch with classic +/− signs and 1ch without. */
+  --diff-number-inset:calc(var(--diff-number-width, 3ch) + 3ch + 2px);
+  --diff-code-inset:calc(var(--diff-number-inset) + 2ch);
+  container:diff-gap / inline-size;
+  display:flex; align-items:center; gap:0 12px; min-height:var(--diff-header-height); padding:0 12px 0 0;
+  border-bottom:1px solid var(--diff-header-line); background:var(--diff-header-bg); color:var(--diff-header-muted);
+  font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code);
+}
+.changes-diff:is([data-indicators=bars], [data-indicators=none]) .diff-gap { --diff-code-inset:calc(var(--diff-number-inset) + 1ch); }
+.changes-diff[data-line-numbers=off] .diff-gap { --diff-number-inset:6px; }
+/* The hunk's change on the bar's edge: added, deleted, or both. The diff's own +/− say the same in text. */
+.diff-gap[data-static] { min-height:0; height:8px; padding:0; container-type:normal; }
+/* The expand chevrons, in the line-number column, ending where the numbers end. */
+.diff-gap-gutter { display:flex; flex:none; align-items:center; justify-content:flex-end; gap:2px; width:var(--diff-code-inset); margin-right:-12px; padding-right:calc(var(--diff-code-inset) - var(--diff-number-inset)); }
+.diff-gap .diff-context-button { color:var(--diff-header-muted); }
+.diff-gap .diff-context-button:hover { color:var(--diff-header-fg); background:var(--diff-header-hover); }
+.diff-gap .diff-context-button:focus-visible, .diff-gap button.diff-gap-crumb:focus-visible { outline:2px solid var(--code-ring); outline-offset:-2px; }
+.diff-gap-gutter .diff-context-button { position:relative; min-width:22px; min-height:22px; padding:0; }
+/* Targets reach 24px past their drawn size, so they fit the gutter and the bar's height stays. */
+.diff-gap-gutter .diff-context-button::after { content:''; position:absolute; inset:-1px; }
+.diff-gap-controls { display:flex; flex:none; align-items:center; gap:4px; margin-left:auto; white-space:nowrap; }
+/* "Show whole function" sits right after the breadcrumb it acts on. */
+.diff-gap-act { display:flex; flex:none; align-items:center; white-space:nowrap; }
+.diff-gap-controls:empty { display:none; }
+.diff-gap-count { font-variant-numeric:tabular-nums; }
+.diff-gap-text { padding-inline:4px 6px; }
+.diff-gap-message { color:var(--diff-header-fg); white-space:normal; overflow-wrap:anywhere; }
+.diff-gap-loading, .diff-gap .loading-indicator { color:var(--diff-header-muted); }
+/* The breadcrumb: the file and the definitions around the hunk, kind words in the theme's keyword colour, names in
+   the code's text colour, the innermost semibold. A crumb that reveals its definition is a button that reads as text
+   until hovered. */
+/* The location: the hunk's own, and over it in the same cell the reader's while the bar is pinned (HeaderRow). */
+.diff-gap-where { display:grid; flex:0 1 auto; align-items:center; min-width:0; }
+.diff-gap-where > * { grid-area:1 / 1; min-width:0; }
+.diff-gap-live { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; visibility:hidden; }
+.diff-gap-scope { display:flex; flex:1 1 auto; align-items:center; min-width:0; }
+.diff-gap-symbol { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; }
+/* The whole chain shows while it fits. When the bar is too narrow, ChangesDiff (fitCrumbs) folds crumbs from the
+   outside into "…", outermost first; the innermost stays whole, and gives way only once it is alone. */
+.diff-gap-crumb-group { display:inline-flex; align-items:baseline; flex:none; min-width:0; }
+.diff-gap-crumb-group[data-last] { flex-shrink:1; }
+.diff-gap-crumb-group[data-collapsed] { display:none; }
+.diff-gap-more { display:none; flex:none; color:var(--diff-header-muted); }
+[data-collapsed] > .diff-gap-more { display:inline; }
+.diff-gap-crumb-separator { padding-inline:1ch; color:var(--diff-header-muted); }
+.diff-gap-crumb { min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--diff-header-fg); font:inherit; }
+.diff-gap-crumb code { font:inherit; }
+.diff-gap-crumb[data-innermost] { font-weight:600; }
+.diff-gap-kind { color:var(--diff-keyword, inherit); }
+button.diff-gap-crumb { position:relative; padding:0; border:0; border-radius:3px; background:none; cursor:pointer; overflow:visible; }
+button.diff-gap-crumb::after { content:''; position:absolute; inset:-2px 0; }
+/* Outside every definition: "top level", quiet. */
+.diff-gap-crumb[data-top-level] { color:var(--diff-header-muted); }
+button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:var(--diff-header-muted); text-underline-offset:3px; }
+/* Until the file's definitions arrive, the hunk header's text from the patch: quieter, as a guess, in the same place. */
+.diff-gap-scope[data-provisional] .diff-gap-crumb { color:var(--diff-header-muted); }
+/* Beside the location: the structure is loading, or failed to load. */
+.diff-gap-structure { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+.diff-gap-structure .loading-indicator { font-size:inherit; }
+/* Where the hunk is by its lines, always at the end: the only label of a file with no structure. */
+.diff-gap-range { flex:none; white-space:nowrap; font-variant-numeric:tabular-nums; color:var(--diff-header-muted); }
+/* At the end: what the hunk changes, then its lines (or, pinned, the reader's line). */
+.diff-gap-end { display:flex; flex:none; align-items:baseline; gap:10px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.diff-gap-counts > span { display:inline-flex; gap:.5ch; }
+.diff-gap-added { color:var(--diff-code-added, var(--code-added)); }
+.diff-gap-deleted { color:var(--diff-code-deleted, var(--code-deleted)); }
+.diff-gap-lines { display:grid; justify-items:end; }
+.diff-gap-lines > * { grid-area:1 / 1; }
+.diff-gap-live-line { color:var(--diff-header-muted); visibility:hidden; }
+.diff-gap[data-stuck][data-live]:not(:focus-within) .diff-gap-lines > .diff-gap-range { visibility:hidden; }
+.diff-gap[data-stuck][data-live]:not(:focus-within) .diff-gap-live-line { visibility:visible; }
+.diff-gap[data-stuck][data-live=scope]:not(:focus-within) .diff-gap-where > .diff-gap-scope { visibility:hidden; }
+.diff-gap[data-stuck][data-live=scope]:not(:focus-within) .diff-gap-where > .diff-gap-live { visibility:visible; }
+/* The lines after a file's last hunk: one code line, on the code's background under a hairline, the action at the
+   code's text column. */
+.diff-gap[data-trailing] { min-height:var(--leading-code); padding:0; background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }
+.diff-gap-trailing { display:flex; align-items:center; gap:1ch; min-width:0; padding-left:var(--diff-code-inset); font-size:var(--type-caption); }
+.diff-gap-trailing .diff-context-button { min-height:20px; padding-block:0; }
+.diff-gap-trailing .diff-gap-text { padding-inline:4px; color:var(--diff-header-fg); text-decoration:underline; text-decoration-color:var(--diff-header-muted); text-underline-offset:3px; }
+.diff-gap-trailing .diff-context-button { position:relative; }
+.diff-gap-trailing .diff-context-button::after { content:''; position:absolute; inset:-2px 0; }
+/* Narrow, the bar gives way before the breadcrumb does: the count goes, the actions keep their icons and their names
+   for screen readers, and below that the file's own name, which the file header above already shows. */
+@container diff-gap (width < 640px) {
+  .diff-gap-count { display:none; }
+  .diff-gap-text { padding-inline:5px; }
+  .diff-gap-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+}
+
+
+/* Each hunk's header pins under the file header while its hunk is on screen, and the next hunk's header pushes it
+   away (#395). ChangesDiff sets --diff-file-header-height from a ResizeObserver; the header sits 1 px higher, under
+   the file header's bottom border, so it crosses the line that marks it pinned. Pinned, it casts a soft shadow onto the
+   code scrolling under it. Lines and controls scrolled to land below both headers. */
+.changes-diff { --diff-sticky-offset:calc(var(--diff-file-header-height, 0px) + 40px); }
+.diff-hunk > .diff-gap[data-hunk-header] { position:sticky; top:calc(var(--diff-file-header-height, 0px) - 1px); z-index:1; }
+/* Pinned, a header shows only where the reader is: expanding from it would move the lines under the reader. The
+   controls keep their space, so pinning changes nothing's size, stay in the tab order, and come back while focus is
+   inside the bar. */
+.diff-gap[data-stuck] { box-shadow:var(--diff-header-shadow); }
+.diff-gap[data-stuck]:not(:focus-within) :is(.diff-gap-gutter > *, .diff-gap-act > *, .diff-gap-controls > :not(.diff-gap-structure)) { opacity:0; pointer-events:none; }
+.diff-gap[data-stuck]:not(:focus-within) button.diff-gap-crumb { pointer-events:none; }
+.changes-diff :is(button, a, input, textarea, select, [tabindex]) { scroll-margin-top:var(--diff-sticky-offset); }
+.changes-diff .diff-gap[data-hunk-header] :is(button, a, [tabindex]) { scroll-margin-top:var(--diff-file-header-height, 0px); }
+.feedback-full-file .diff-hunk > .diff-gap[data-hunk-header] { position:static; }
+.feedback-full-file .changes-diff { --diff-sticky-offset:0px; }
+.diff-hunk > diffs-container { display:block; }
 /* Slices of a long hunk outside the viewport skip style, layout and paint, and stay in the DOM for find in page
    (#353). Each holds its estimated height until it is first laid out; `auto` then keeps its real one. */
 .changes-slice { content-visibility:auto; overflow-clip-margin:8px; }
@@ -2366,11 +2480,91 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-resize { width:5px;flex-shrink:0;cursor:col-resize;border-left:1px solid var(--border);touch-action:none; }
 .changes-resize:hover,.changes-resize:focus-visible { background:var(--accent);outline:1px solid var(--ring); }
 .changes-diff-pane { flex:1;min-width:0;display:flex;flex-direction:column; }
-.changes-file-header { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0; }
-.changes-file-header>div:first-child { min-width:0;flex:1 1 200px; }
-.changes-file-header h2 { font-size:var(--type-control);font-weight:600;overflow-wrap:anywhere; }
-.changes-file-header h2>span { font-weight:400;color:var(--muted-foreground); }
-.changes-file-actions { display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:var(--type-caption); }
+/* The file's header is code-tier, a step above its hunks' headers (lib/code-palette.ts): file header, hunk header and
+   code read as three steps, each edged with the same dark line. It is one row, in the flow and pinned alike; the
+   repository, PR and commit sit above it in the flow (.changes-file-context) and scroll away, so pinning never changes
+   its height. The path is in the code's type and gives way from the left; the rule on its edge is the file's status,
+   which the status word also names. Controls are drawn for the dark surface in both app themes. */
+.changes-file-context { display:flex; align-items:center; min-width:0; padding:10px 14px 8px; }
+/* A source PR opens in Gnosis; its commit copies, as other badges do. The commit matches the repo and PR chips here. */
+.changes-file-context .entity-badge-commit { background:var(--secondary); color:var(--foreground); }
+.changes-file-context .entity-badge-commit:hover { border-color:var(--input); background:var(--accent); color:var(--accent-foreground); }
+.changes-source-pr { cursor:pointer; }
+.changes-source-pr:hover .entity-badge-identity, .changes-source-pr:focus-visible .entity-badge-identity { opacity:1; }
+.changes-file-context .changes-source { display:flex; flex-wrap:wrap; align-items:center; gap:4px; min-width:0; }
+.changes-file-header {
+  --file-bg:var(--diff-file-bg, color-mix(in oklab, color-mix(in oklab, var(--diff-code-bg, #22272e) 80%, var(--diff-code-fg, #c5ccd6)) 87%, var(--code-ring)));
+  --file-fg:var(--diff-file-fg, #e3e7ef);
+  --file-muted:var(--diff-file-muted, color-mix(in oklab, var(--file-fg) 82%, var(--file-bg)));
+  --file-hover:color-mix(in oklab, var(--file-fg) 13%, var(--file-bg));
+  --file-pressed:color-mix(in oklab, var(--file-fg) 20%, var(--file-bg));
+  --file-control-line:var(--diff-file-control, color-mix(in oklab, var(--file-fg) 55%, var(--file-bg)));
+  --file-status:var(--code-modified);
+  /* The +N −M counts (DiffStats) take the code tier's inks, raised to read on this surface (lib/code-palette.ts). */
+  --color-success:var(--diff-file-added, color-mix(in oklab, var(--code-added) 70%, #fff));
+  --color-danger:var(--diff-file-deleted, color-mix(in oklab, var(--code-deleted) 70%, #fff));
+  container:file-header / inline-size;
+  color-scheme:dark;
+  display:flex; align-items:center; flex-wrap:wrap; gap:4px 12px; flex-shrink:0;
+  min-height:44px; padding:6px 10px 6px 14px;
+  background:var(--file-bg); color:var(--file-fg);
+  border-bottom:1px solid var(--diff-code-line, color-mix(in oklab, var(--diff-code-bg, #22272e) 55%, #000));
+  box-shadow:inset 3px 0 0 var(--file-status);
+}
+.changes-file-header[data-status=added] { --file-status:var(--code-added); }
+.changes-file-header[data-status=deleted] { --file-status:var(--code-deleted); }
+.changes-file-header[data-status=renamed] { --file-status:var(--code-renamed); }
+/* The path keeps room to name the file: when the actions leave it less than this (a narrow Commits pane with the
+   Markdown switch), they wrap to a second row instead of squeezing the path to nothing. */
+.changes-file-title { display:flex; align-items:baseline; gap:12px; flex:1 1 auto; min-width:min(100%, 260px); }
+.changes-file-header h2 { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); font-weight:400; }
+/* The path's parts are the heading's own flex items, so they give way in order: the old folders, the new folders,
+   the old name, and the new name last. */
+.changes-file-path { display:contents; }
+/* Folders give way from the left, keeping the file's name: rtl clips the start, the isolated path keeps its order. */
+.changes-file-dir { min-width:0; flex:0 100 auto; overflow:hidden; text-overflow:ellipsis; direction:rtl; color:var(--file-muted); }
+.changes-file-path[data-old] > .changes-file-dir { flex-shrink:1000; }
+.changes-file-dir > span { direction:ltr; unicode-bidi:isolate; }
+.changes-file-name { flex:none; max-width:100%; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
+.changes-file-header h2[data-renamed] > .changes-file-path:not([data-old]) > .changes-file-name { max-width:calc(100% - 13ch); }
+.changes-file-path[data-old] > .changes-file-name { flex:0 10 auto; min-width:10ch; font-weight:400; color:var(--file-muted); }
+.changes-file-arrow { flex:none; white-space:pre; color:var(--file-muted); }
+.changes-file-header .changes-file-stats { flex:none; color:var(--file-muted); font-size:var(--type-caption); white-space:nowrap; }
+.changes-file-sep { white-space:pre; }
+.changes-file-actions { display:flex; flex:none; align-items:center; gap:4px; flex-wrap:nowrap; font-size:var(--type-caption); }
+/* Controls on the dark surface: text-coloured, a hairline for outlined ones, a lifted fill on hover and when pressed,
+   and the code's focus ring. */
+.changes-file-header .changes-file-actions :is(button, [role=combobox]) { color:var(--file-fg); background:transparent; border-color:var(--file-control-line); box-shadow:none; }
+.changes-file-header .changes-file-actions :is(button, [role=combobox]):hover:not(:disabled) { color:var(--file-fg); background:var(--file-hover); }
+.changes-file-header .changes-file-actions :is(button[aria-pressed=true], button[aria-expanded=true], button[data-state=open]) { background:var(--file-pressed); }
+.changes-file-header .changes-file-actions :is(button, [role=combobox]):focus-visible { outline:2px solid var(--code-ring); outline-offset:1px; box-shadow:none; }
+.changes-file-header .changes-file-actions button:disabled { opacity:1; color:var(--file-muted); border-color:transparent; }
+.changes-file-header .changes-file-actions button:disabled svg { opacity:.7; }
+.changes-file-header .markdown-view-switch { border-color:var(--file-control-line); }
+.changes-file-header .file-kind-tag { border-color:var(--file-control-line); color:var(--file-muted); }
+/* "Viewed": a 32px row like the buttons beside it, its box drawn for the dark surface: a 3:1 outline unchecked, the
+   ring's blue with a dark check when checked. */
+.changes-file-actions label { display:inline-flex; align-items:center; gap:6px; height:32px; padding-inline:6px; border-radius:6px; color:var(--file-fg); line-height:1; white-space:nowrap; cursor:pointer; }
+.changes-file-actions label:hover { background:var(--file-hover); }
+.changes-file-actions input[type=checkbox] { appearance:none; display:inline-grid; place-content:center; flex:none; width:15px; height:15px; margin:0; border:1.5px solid var(--file-control-line); border-radius:4px; background:transparent; cursor:pointer; }
+.changes-file-actions input[type=checkbox]::before { content:''; width:9px; height:9px; background:var(--file-bg); clip-path:polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%); transform:scale(0); }
+.changes-file-actions input[type=checkbox]:checked { border-color:var(--code-ring); background:var(--code-ring); }
+.changes-file-actions input[type=checkbox]:checked::before { transform:scale(1); }
+.changes-file-actions input[type=checkbox]:focus-visible { outline:2px solid var(--code-ring); outline-offset:2px; }
+.changes-file-header .file-kind-tags { display:inline-flex; flex:none; gap:4px; }
+.changes-file-header .file-kind-tag { padding:0 5px; line-height:18px; }
+/* Narrow, the path keeps its room: the actions keep their icons and their names for screen readers, then the counts go
+   to the status word, and a rename keeps its new path (the status word, the blue rule and the tooltip still say where
+   it came from). */
+@container file-header (width < 720px) {
+  .changes-file-actions { gap:2px; }
+  .changes-file-action-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+}
+@container file-header (width < 520px) {
+  .changes-file-header :is(.changes-file-sep, .diff-stats) { display:none; }
+  .changes-file-header h2 > :is(.changes-file-path[data-old], .changes-file-arrow) { display:none; }
+  .changes-file-header h2[data-renamed] > .changes-file-path:not([data-old]) > .changes-file-name { max-width:100%; }
+}
 .changes-code-scroll { overflow:auto;flex:1;min-height:0;scrollbar-gutter:stable; }
 .changes-code { min-width:0; }
 .changes-empty,.changes-loading { padding:24px;font-size:var(--type-control); }
@@ -2522,15 +2716,8 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .commit-metadata p { overflow-wrap:anywhere;margin-top:8px;line-height:1.6; }
 @media(max-width:700px) { .commit-detail { padding:16px; } }
 
-.pr-commits .changes-file-header { gap:6px 12px; }
-.pr-commits .changes-file-header>div:first-child { flex-basis:140px; }
 .commit-detail-title button { height:26px;padding:4px 6px; }
 
-
-.pr-commits .changes-file-header { display:grid;grid-template-columns:minmax(0,1fr) auto; }
-.pr-commits .changes-file-header h2 { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-@media(max-width:700px) { .pr-commits .changes-file-header { display:flex; } }
-.pr-commits .changes-workspace.chat-open .changes-file-header { display:flex; }
 
 /* Explanation is a peer of Changes, inside the same persistent PR frame. */
 .pr-explanation-workspace { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; overflow:hidden; }
@@ -2789,8 +2976,9 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .commit-source-links button { color:var(--primary);text-decoration:underline;text-underline-offset:3px; }
 .commit-diff-stream { position:relative;overflow-anchor:none; }
 .commit-stream-content { position:relative;width:100%; }
-.commit-stream-file { min-width:0;border-bottom:8px solid var(--muted);background:var(--background); }
-.commit-stream-file > .changes-file-header { position:sticky;top:0;z-index:2;background:var(--background);border-bottom:1px solid var(--border); }
+/* Files are the stream's strongest break: 20px between them, wider than anything between hunks. */
+.commit-stream-file { min-width:0;border-bottom:20px solid var(--muted);background:var(--background); }
+.commit-stream-file > .changes-file-header { position:sticky;top:0;z-index:2; }
 .commit-stream-file-body > .changes-code-scroll { overflow:visible;flex:none;scrollbar-gutter:auto; }
 .commit-diff-stream:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
 .commit-viewed-complete { border-top:1px solid var(--border); }
@@ -3181,7 +3369,6 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .markdown-media-label { font-size:var(--type-caption); font-weight:600; margin-bottom:6px; }
 @media(max-width:700px) { .markdown-media-change { max-width:100%; } }
 /* An attribute, not :has(): typing in a comment re-checked :has() on its file section (#346). */
-.pr-commits .commit-stream-file[data-markdown-switch] > .changes-file-header { display:flex; }
 .commit-stream-file[data-markdown-switch] .changes-file-actions { min-width:0; }
 
 /* Quiet disclosure between rendered Markdown change hunks. */
@@ -4025,6 +4212,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .settings-group { display:flex; flex-direction:column; gap:16px; }
 .settings-group + .settings-group { border-top:1px solid var(--border); padding-top:20px; }
 .settings-group h2 { font-size:var(--type-section-title); font-weight:650; line-height:1.4; margin:0 0 4px; }
+/* Settings › Appearance › Code intelligence: one row per bundled language, its grammar size beside its name. */
+.settings-code-languages ul { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:2px 24px; margin:6px 0 0; padding:0; list-style:none; }
+.settings-code-language { display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:12px; min-height:32px; }
+.settings-code-language .settings-description { font-variant-numeric:tabular-nums; }
+.settings-code-languages[data-disabled] ul { opacity:.55; }
 .settings-repositories { overflow: hidden; gap: 16px; }
 .repository-panel-heading { display: flex; align-items: flex-start; gap: 16px; justify-content: space-between; }
 .repository-panel-heading h2 { font-size: var(--type-section-title); font-weight: 650; margin-bottom: 4px; }
@@ -4532,7 +4724,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-full-file > p { font-size:var(--type-caption);line-height:1.5;margin-bottom:8px; }
 .feedback-full-file > p[role=status] { display:flex;align-items:center;gap:8px; }
 .feedback-full-file .commit-stream-file > .changes-file-header { position:static; }
-.feedback-full-file .changes-source { display:none; }
+.feedback-full-file :is(.changes-source, .changes-file-context) { display:none; }
 .feedback-full-file .changes-file-header { padding:8px; }
 .feedback-response-dock .github-thread-actions { margin:0;padding:0;align-items:center;gap:8px; }
 .feedback-response-dock .github-thread-actions > span { color:var(--muted-foreground);font-size:var(--type-caption); }

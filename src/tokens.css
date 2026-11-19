@@ -207,6 +207,9 @@
   --color-warning: #855900; --status-warning-bg: #fbf3df;
   --color-info: #6941a5; --status-info-bg: #f2edfa;
   --selection-muted: #45609b;
+  /* The code surface is a dark syntax theme in both app themes (CODE_THEMES), so the inks drawn on it are the dark
+     theme's: what a hunk or file changes, and the focus ring. */
+  --code-added: #85cf99; --code-deleted: #ff9ba5; --code-modified: #e9c46a; --code-renamed: #8fc4ff; --code-ring: #9bb8ff;
 }
 .dark {
   --background: #171a20; --foreground: #e3e7ef; --card: #1d2129; --card-foreground: #e3e7ef;

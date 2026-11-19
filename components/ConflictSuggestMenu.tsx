@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { Popover } from 'radix-ui';
-import { ArrowLeft, ChevronDown, Files, MessageSquareText, Sparkles, Workflow } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Files, MessageSquareText, Bot, Workflow } from 'lucide-react';
 import { Button } from './ui/button';
 import { PROVIDERS } from '../lib/models';
 
@@ -65,7 +65,7 @@ export function ConflictSuggestMenu({
     >
       <Popover.Trigger asChild>
         <Button size="sm" variant="outline" disabled={disabled} className="conflict-suggest-trigger">
-          <Sparkles aria-hidden="true" />
+          <Bot aria-hidden="true" />
           Suggest a resolution
           <ChevronDown aria-hidden="true" />
         </Button>

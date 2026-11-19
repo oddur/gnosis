@@ -18,7 +18,7 @@ export type NotificationIconName =
   | 'at-sign'
   | 'message-square-reply'
   | 'alarm-clock'
-  | 'sparkles'
+  | 'bot'
   | 'info'
   | 'inbox'
   | 'bell-ring';
@@ -34,7 +34,7 @@ export const NOTIFICATION_ICONS: Record<NotificationKind, { icon: NotificationIc
   mention: { icon: 'at-sign', tone: 'attention' },
   reply: { icon: 'message-square-reply', tone: 'attention' },
   'snooze-ended': { icon: 'alarm-clock', tone: 'neutral' },
-  'explanation-ready': { icon: 'sparkles', tone: 'done' },
+  'explanation-ready': { icon: 'bot', tone: 'done' },
   'update-ready': { icon: 'info', tone: 'neutral' },
   summary: { icon: 'inbox', tone: 'neutral' },
   test: { icon: 'bell-ring', tone: 'attention' },
@@ -65,11 +65,13 @@ export const ICON_SHAPES: Record<NotificationIconName, Shape[]> = {
   'at-sign': [['circle', 12, 12, 4], ['path', 'M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8']],
   'message-square-reply': [['path', SQUARE], ['path', 'm10 8-3 3 3 3'], ['path', 'M17 14v-1a2 2 0 0 0-2-2H7']],
   'alarm-clock': [['circle', 12, 13, 8], ['path', 'M12 9v4l2 2'], ['path', 'M5 3 2 6'], ['path', 'm22 6-3-3'], ['path', 'M6.38 18.7 4 21'], ['path', 'M17.64 18.67 20 21']],
-  sparkles: [
-    ['path', 'M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z'],
-    ['path', 'M20 2v4'],
-    ['path', 'M22 4h-4'],
-    ['circle', 4, 20, 2],
+  bot: [
+    ['path', 'M12 8V4H8'],
+    ['path', 'M6 8h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z'],
+    ['path', 'M2 14h2'],
+    ['path', 'M20 14h2'],
+    ['path', 'M15 13v2'],
+    ['path', 'M9 13v2'],
   ],
   info: [['circle', 12, 12, 10], ['path', 'M12 16v-4'], ['path', 'M12 8h.01']],
   inbox: [['polyline', '22 12 16 12 14 15 10 15 8 12 2 12'], ['path', 'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z']],
