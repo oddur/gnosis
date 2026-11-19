@@ -46,6 +46,14 @@ export interface QueueSignals extends QueueSignalRequest {
    * Undefined for older cache entries.
    */
   opinions?: SignalReview[];
+  /**
+   * GitHub's `viewerLatestReview`: the reader's own latest review, of any state and however old, with its commit.
+   * Null when the reader has no submitted review, or the latest is still pending. Undefined for older cache entries; then `viewerReview` reads
+   * `opinions` and `latestReview` instead.
+   */
+  mine?: SignalReview | null;
+  /** When the head commit was committed. Absent in older cache entries. */
+  headCommittedAt?: string;
   activity?: {
     comment?: { id: string; at: string; author: string };
     review?: { id: string; at: string; author: string; state?: string };
@@ -128,6 +136,18 @@ export function decidingReview(signals: QueueSignals): SignalReview | null | und
     opinions.find((review) => review.state === 'APPROVED') ??
     signals.latestReview
   );
+}
+const SUBMITTED = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED']);
+/**
+ * The reader's latest submitted review on GitHub (approval, request for changes or comment), with the commit it was
+ * made on: `mine`, else the reader's newest of `opinions` and `latestReview`. Pending and dismissed reviews do not count.
+ */
+export function viewerReview(signals: Pick<QueueSignals, 'mine' | 'opinions' | 'latestReview'> | undefined, login: string): SignalReview | undefined {
+  const reviews = [...(signals?.mine ? [signals.mine] : []), ...(signals?.opinions ?? []), ...(signals?.latestReview ? [signals.latestReview] : [])];
+  return reviews
+    .filter((review) => SUBMITTED.has(review.state) && review.author.toLowerCase() === login.toLowerCase() && Number.isFinite(Date.parse(review.submittedAt)))
+    .sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt))
+    .at(0);
 }
 /** GitHub's PR list count: saved signals first, then the REST metadata's conversation and inline counts. */
 export function prCommentTotal(
