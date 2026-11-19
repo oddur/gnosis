@@ -6,6 +6,8 @@ import {
   snapshot,
   fingerprint,
   attentionFor,
+  updatedSinceReview,
+  type GitHubOwnReview,
   coverageKey,
   sourceForPath,
   memberPrefix,
@@ -228,4 +230,85 @@ void test('briefing effort is independent of explanation effort and normalized f
   assert.equal(briefingModel({ ...p, proactiveEffort: 'medium' }).effort, 'medium');
   assert.equal(briefingModel({ ...p, proactiveEffort: 'ultra', proactiveReviewOverrides: true,
     proactiveProvider: 'claude', proactiveModel: 'claude-sonnet-5-5' }).effort, 'max');
+});
+
+// "Updated since your review": your latest review is the newer of the saved Gnosis review and your GitHub review.
+const savedAt = (members: ReviewMember[], capturedAt: string) => {
+  const saved = reviewFor(members).snapshot;
+  assert.ok(saved);
+  return { snapshot: { ...saved, capturedAt } };
+};
+const moved = (m: ReviewMember, headSha: string): ReviewMember => ({ ...m, headSha });
+const onGitHub = (reviews: Record<string, GitHubOwnReview>) => (m: ReviewMember) => reviews[m.url];
+
+void test('an approval on GitHub at the current head clears "updated" from an older Gnosis review', () => {
+  // The Gnosis review predates a push; the GitHub approval came later, at the head the PR still has.
+  const review = savedAt([member(1)], '2026-11-10T09:00:00Z');
+  const subject = groupSubjects([moved(member(1), 'sha-merge')])[0];
+  assert.deepEqual(Object.keys(updatedSinceReview(subject, review)), [member(1).url], 'Without the GitHub review, as before');
+  const github = onGitHub({ [member(1).url]: { submittedAt: '2026-11-19T12:47:19Z', headSha: 'sha-merge' } });
+  const since = updatedSinceReview(subject, review, github);
+  assert.deepEqual(since, {});
+  assert.equal(attentionFor(subject, { id: 'x', prTitle: '', prUrl: member(1).url, author: '', riskLevel: 'low', savedAt: '', ...review }, since), 'requested');
+});
+
+void test('an approval on GitHub at an older head keeps "updated" once new commits arrive, counting from that commit', () => {
+  const subject = groupSubjects([moved(member(1), 'sha-new')])[0];
+  const github = onGitHub({ [member(1).url]: { submittedAt: '2026-11-19T12:47:19Z', headSha: 'sha-approved' } });
+  assert.deepEqual(updatedSinceReview(subject, undefined, github), { [member(1).url]: { from: 'sha-approved' } });
+  // Newer than an older Gnosis review too: the count starts at the approval.
+  const review = savedAt([member(1)], '2026-11-10T09:00:00Z');
+  assert.deepEqual(updatedSinceReview(subject, review, github), { [member(1).url]: { from: 'sha-approved' } });
+  // A review whose commit is unknown is current when submitted after the head was committed.
+  const unknown = (headCommittedAt?: string) =>
+    onGitHub({ [member(1).url]: { submittedAt: '2026-11-19T12:47:19Z', headSha: null, ...(headCommittedAt ? { headCommittedAt } : {}) } });
+  assert.deepEqual(updatedSinceReview(subject, undefined, unknown('2026-11-16T08:59:59Z')), {});
+  assert.deepEqual(updatedSinceReview(subject, undefined, unknown('2026-11-19T13:00:00Z')), { [member(1).url]: { from: null } });
+  assert.deepEqual(updatedSinceReview(subject, undefined, unknown()), { [member(1).url]: { from: null } });
+});
+
+void test('a Gnosis review newer than the GitHub review decides as before', () => {
+  const review = savedAt([member(1)], '2026-11-20T09:00:00Z');
+  // GitHub's older approval was at the current head; the Gnosis review still sees the description change.
+  const github = onGitHub({ [member(1).url]: { submittedAt: '2026-11-19T12:47:19Z', headSha: 'sha-1' } });
+  const edited = groupSubjects([{ ...member(1), description: 'New intent' }])[0];
+  assert.deepEqual(updatedSinceReview(edited, review, github), { [member(1).url]: { from: 'sha-1' } });
+  const pushed = groupSubjects([moved(member(1), 'sha-new')])[0];
+  assert.deepEqual(updatedSinceReview(pushed, review, github), { [member(1).url]: { from: 'sha-1' } });
+  // Unchanged since the Gnosis review: not updated, whatever the older GitHub review was on.
+  const same = groupSubjects([member(1)])[0];
+  assert.deepEqual(updatedSinceReview(same, review, onGitHub({ [member(1).url]: { submittedAt: '2026-11-19T12:47:19Z', headSha: 'sha-0' } })), {});
+  // No GitHub review at all: exactly the fingerprint, as before.
+  for (const subject of [edited, pushed, same])
+    assert.equal(Object.keys(updatedSinceReview(subject, review)).length > 0, review.snapshot.fingerprint !== fingerprint(subject));
+});
+
+void test('in a stack, each PR is updated since your own latest review of it', () => {
+  const parent = member(1);
+  const child = member(2, 'branch-1');
+  // Gnosis explained the whole stack; then both PRs got new commits.
+  const review = savedAt([parent, child], '2026-11-10T09:00:00Z');
+  const subject = groupSubjects([moved(parent, 'sha-1b'), moved(child, 'sha-2b')])[0];
+  assert.equal(subject.kind, 'stack');
+  assert.deepEqual(Object.keys(updatedSinceReview(subject, review)).sort(), [parent.url, child.url].sort());
+  // You approved the parent on GitHub at its new head; the child moved past your Gnosis review.
+  const github = onGitHub({ [parent.url]: { submittedAt: '2026-11-19T12:47:19Z', headSha: 'sha-1b' } });
+  assert.deepEqual(updatedSinceReview(subject, review, github), { [child.url]: { from: 'sha-2' } });
+  // Approve the child at its head too, and nothing in the stack changed since your review.
+  const both = onGitHub({
+    [parent.url]: { submittedAt: '2026-11-19T12:47:19Z', headSha: 'sha-1b' },
+    [child.url]: { submittedAt: '2026-11-19T12:50:00Z', headSha: 'sha-2b' },
+  });
+  assert.deepEqual(updatedSinceReview(subject, review, both), {});
+  // The child then moves again: only the child.
+  const again = groupSubjects([moved(parent, 'sha-1b'), moved(child, 'sha-2c')])[0];
+  assert.deepEqual(updatedSinceReview(again, review, both), { [child.url]: { from: 'sha-2b' } });
+  // Only the parent moved, and you approved it at its head: the child the Gnosis review covers is unchanged.
+  const parentOnly = groupSubjects([moved(parent, 'sha-1b'), child])[0];
+  assert.deepEqual(updatedSinceReview(parentOnly, review, github), {});
+  // Without that approval, the saved review covers the whole stack, as its fingerprint does: both PRs.
+  assert.deepEqual(updatedSinceReview(parentOnly, review), { [parent.url]: { from: 'sha-1' }, [child.url]: { from: 'sha-2' } });
+  // The parent moved past your GitHub approval: it is updated, and so is the child the older Gnosis review decides.
+  const past = onGitHub({ [parent.url]: { submittedAt: '2026-11-19T12:47:19Z', headSha: 'sha-1a' } });
+  assert.deepEqual(updatedSinceReview(parentOnly, review, past), { [parent.url]: { from: 'sha-1a' }, [child.url]: { from: 'sha-2' } });
 });

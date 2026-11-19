@@ -115,6 +115,20 @@ void test('an unread explanation folds into a review request and points it at th
   assert.deepEqual(outdated[0].kinds, ['updated-since-review']);
   // A generating or failed explanation is not ready.
   assert.deepEqual(rows([item([member(3)], { review: review(member(3).url, { status: 'generating' }) })]), []);
+  // An outdated explanation stays not ready after a GitHub review at the head ends "updated".
+  assert.deepEqual(rows([item([requested], { attention: 'requested', reviewOutdated: true, review: review(requested.url) })])[0].kinds, ['review-requested']);
+});
+
+void test('in a stack, only the PRs that changed since your review of them are "updated since your review"', () => {
+  const approved = member(1);
+  const moved = member(2);
+  const stack = (extra: Partial<QueueItem>) => rows([item([approved, moved], { attention: 'updated', review: review(moved.url, { unread: false }), ...extra })]);
+  assert.deepEqual(stack({ sinceReview: { [moved.url]: { from: 'sha-old' } } }).map((row) => [row.number, row.kinds]), [[2, ['updated-since-review']]]);
+  // Older queues without the per-PR list: every PR of the entry, as before.
+  assert.deepEqual(stack({}).map((row) => row.number).sort(), [1, 2]);
+  // Your own PR is never "updated since your review".
+  const own = mine(3);
+  assert.deepEqual(rows([item([own], { attention: 'updated', sinceReview: { [own.url]: { from: null } } })]), []);
 });
 
 void test('a stack explanation belongs to the member it was made for', () => {

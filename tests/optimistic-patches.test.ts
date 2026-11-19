@@ -339,6 +339,8 @@ void test('a review shows the decision, the reviewer list, the queue role and it
   const shownSignals = layer.signals(signals());
   assert.equal(shownSignals.readiness?.reviewDecision, 'APPROVED');
   assert.deepEqual([shownSignals.latestReview?.author, shownSignals.latestReview?.state], ['oddur', 'APPROVED']);
+  // Your own latest review, at the head you approved: the PR is no longer "updated since your review".
+  assert.deepEqual([shownSignals.mine?.author, shownSignals.mine?.state, shownSignals.mine?.headSha], ['oddur', 'APPROVED', 'head']);
   const shown = layer.discussion(url, discussion([], { requestedReviewers: ['oddur'] }));
   assert.deepEqual(
     shown.feedback?.reviews.map((r) => [r.state, !!r.sending]),
