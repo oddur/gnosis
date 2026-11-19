@@ -14,6 +14,9 @@ import {
   lineEndings,
   matchesAfter,
   patchLineEndings,
+  placeOfLine,
+  newLineAt,
+  hiddenBetween,
   revealGap,
   revealedParts,
   shownLines,
@@ -257,6 +260,45 @@ void test('a jump finds the gap that hides its line on either side', () => {
   assert.equal(gapContaining(gaps, 'after', 147)?.index, 1);
   assert.equal(gapContaining(gaps, 'after', 50), undefined);
   assert.equal(gapContaining(gaps, 'after', 201)?.index, 2);
+});
+
+void test('a pinned crumb finds its line without revealing anything: a row, or the gap that hides it (#417)', () => {
+  const two = hunksFromDiff(parse('@@ -5,3 +5,4 @@\n a\n-b\n+B\n+B2\n c\n@@ -20,2 +21,1 @@\n-x\n y'));
+  const gaps = must(diffGaps(two, 25));
+  const parts = revealedParts(two, gaps, {});
+  assert.deepEqual(parts.map(range), ['gap 1-4 (4)', 'hunk +5-8 -5', 'gap 9-20 (12)', 'hunk +21-21 -20', 'gap 22-25 (4)']);
+  // Shown rows, on each side in its own numbers.
+  assert.deepEqual(placeOfLine(parts, 'after', 6), { kind: 'row', key: 'h0', row: 2, line: 6 });
+  assert.deepEqual(placeOfLine(parts, 'before', 6), { kind: 'row', key: 'h0', row: 1, line: 6 });
+  assert.deepEqual(placeOfLine(parts, 'after', 8), { kind: 'row', key: 'h0', row: 4, line: 8 });
+  assert.deepEqual(placeOfLine(parts, 'before', 20), { kind: 'row', key: 'h1', row: 0, line: 20 });
+  assert.deepEqual(placeOfLine(parts, 'after', 21), { kind: 'row', key: 'h1', row: 1, line: 21 });
+  // Hidden lines: the bar of their gap. Old lines map through the gap's offset.
+  assert.deepEqual(placeOfLine(parts, 'after', 2), { kind: 'gap', gap: 0 });
+  assert.deepEqual(placeOfLine(parts, 'after', 15), { kind: 'gap', gap: 1 });
+  assert.deepEqual(placeOfLine(parts, 'before', 19), { kind: 'gap', gap: 1 });
+  assert.deepEqual(placeOfLine(parts, 'before', 8), { kind: 'gap', gap: 1 });
+  assert.deepEqual(placeOfLine(parts, 'after', 24), { kind: 'gap', gap: 2 });
+  // Past everything: the nearest place above. Before everything: the top.
+  assert.deepEqual(placeOfLine(parts, 'after', 90), { kind: 'gap', gap: 2 });
+  assert.deepEqual(placeOfLine(parts, 'after', 0), { kind: 'top' });
+  // Revealed lines are rows of the hunk they joined; nothing else changes.
+  const text = Array.from({ length: 25 }, (_, i) => `l${i + 1}`);
+  const opened = revealedParts(two, gaps, revealGap({}, gaps[1], two.length, 'down'), text);
+  assert.deepEqual(placeOfLine(opened, 'after', 15), { kind: 'row', key: 'h0', row: 11, line: 15 });
+  assert.deepEqual(placeOfLine(opened, 'before', 6), { kind: 'row', key: 'h0', row: 1, line: 6 });
+  // Reveals are in new numbers: old lines map through their gap, a deleted row to the new line where it sits.
+  assert.equal(newLineAt(parts, 'after', 15), 15);
+  assert.equal(newLineAt(parts, 'before', 19), 20);
+  assert.equal(newLineAt(parts, 'before', 6), 6);
+  assert.equal(newLineAt(parts, 'before', 7), 8);
+  assert.equal(newLineAt(parts, 'before', 20), 21);
+  assert.equal(newLineAt(parts, 'before', 2), 2);
+  // A jump reveals only when a line between the definition and the reader is hidden.
+  assert.equal(hiddenBetween(parts, 2, 6), true);
+  assert.equal(hiddenBetween(parts, 5, 8), false);
+  assert.equal(hiddenBetween(parts, 15, 21), true);
+  assert.equal(hiddenBetween(revealedParts(two, gaps, revealGap({}, gaps[1], two.length, 'all'), text), 9, 21), false);
 });
 
 void test('long hunks render as 200-row slices that keep their source numbers', () => {

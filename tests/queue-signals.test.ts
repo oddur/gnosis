@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGitHubClientPool } from '../lib/github-client';
 import { createQueueSignalsService } from '../src/queue-signals-service';
-import { QUEUE_SIGNALS_TTL, overviewStatusOptions, overviewStatusPriority } from '../lib/queue-signals';
+import { QUEUE_SIGNALS_TTL, overviewStatusOptions, overviewStatusPriority, viewerReview } from '../lib/queue-signals';
 const request = { url: 'https://github.com/example/repo/pull/1', headSha: 'abc123' };
 function harness() {
   let now = 1_000_000,
@@ -310,6 +310,40 @@ void test('signals carry GitHub’s comment total, recent authors, the head auth
   const [fallback] = await h.get(h.client, [request], { force: true });
   assert.equal(fallback.comments, 4);
   assert.equal(fallback.threads?.complete, false, 'Past the first 100 threads');
+});
+void test('signals carry your own latest review with its commit, and when the head was committed', async () => {
+  const h = harness();
+  const base = (await h.get(h.client, [request]))[0];
+  assert.equal(base.mine, undefined, 'A response without it claims nothing');
+  // One object field and one scalar: no connection, so no added rate-limit cost.
+  assert.match(h.queries[0], /viewerLatestReview \{ url submittedAt state author \{ login \} commit \{ oid \} \}/);
+  assert.match(h.queries[0], /commits\(last:1\) \{ nodes \{ commit \{(\\n|\s)+committedDate/);
+  const pr = (patch: Record<string, unknown>) => ({
+    headRefOid: 'abc123', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN',
+    reviewDecision: 'APPROVED', baseRefName: 'main', baseRefOid: 'base', baseRef: null, mergeQueue: null, mergeQueueEntry: null,
+    comments: { totalCount: 0, nodes: [] },
+    // Someone else reviewed after you: `latestReview` is theirs.
+    reviews: { nodes: [{ id: 'R9', url: `${request.url}#pullrequestreview-9`, submittedAt: '2026-11-19T13:00:00Z', state: 'COMMENTED', author: { login: 'other' }, commit: { oid: 'abc123' } }] },
+    commits: { nodes: [{ commit: { committedDate: '2026-11-16T08:59:59Z', statusCheckRollup: null } }] },
+    ...patch,
+  });
+  h.respond({ p0: { pullRequest: pr({
+    viewerLatestReview: { url: `${request.url}#pullrequestreview-5`, submittedAt: '2026-11-19T12:47:19Z', state: 'APPROVED', author: { login: 'me' }, commit: { oid: 'abc123' } },
+  }) } });
+  const [value] = await h.get(h.client, [request], { force: true });
+  assert.deepEqual(value.mine, { url: `${request.url}#pullrequestreview-5`, author: 'me', state: 'APPROVED', submittedAt: '2026-11-19T12:47:19Z', headSha: 'abc123' });
+  assert.equal(value.headCommittedAt, '2026-11-16T08:59:59Z');
+  assert.equal(viewerReview(value, 'ME')?.headSha, 'abc123');
+  assert.equal(viewerReview(value, 'other')?.state, 'COMMENTED');
+  // A pending review is not submitted: none to compare with.
+  h.respond({ p0: { pullRequest: pr({ viewerLatestReview: { url: `${request.url}#pullrequestreview-6`, submittedAt: null, state: 'PENDING', author: { login: 'me' }, commit: { oid: 'abc123' } } }) } });
+  const [pending] = await h.get(h.client, [request], { force: true });
+  assert.equal(pending.mine, null);
+  assert.equal(viewerReview(pending, 'me'), undefined);
+  // Without `mine` (older saved status), your newest opinion or latest review still counts. Dismissed ones do not.
+  const opinion = { url: 'u1', author: 'me', state: 'APPROVED', submittedAt: '2026-11-18T10:00:00Z', headSha: 'old' };
+  assert.equal(viewerReview({ opinions: [opinion], latestReview: { ...opinion, url: 'u2', state: 'COMMENTED', submittedAt: '2026-11-19T10:00:00Z', headSha: 'new' } }, 'me')?.url, 'u2');
+  assert.equal(viewerReview({ opinions: [{ ...opinion, state: 'DISMISSED' }] }, 'me'), undefined);
 });
 
 void test('the Overview reads status at visible priority while shown in a visible window, and at background priority otherwise', () => {

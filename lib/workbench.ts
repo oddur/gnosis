@@ -67,6 +67,16 @@ export interface QueueItem {
   briefing?: Briefing;
   review?: ReviewHistoryEntry;
   attention: 'updated' | 'requested' | 'other';
+  /**
+   * The PRs that changed since your latest review of them (`updatedSinceReview`), with the commit that review was
+   * on. Absent in older queues: then `attention: 'updated'` covers every PR of the entry.
+   */
+  sinceReview?: Record<string, { from: string | null }>;
+  /**
+   * The saved Gnosis review is for an older version of the subject, even when a newer GitHub review means nothing
+   * changed since your review. Its explanation is not "ready".
+   */
+  reviewOutdated?: boolean;
   /** Content hash from `stampQueue`; equal revisions mean equal content. */
   revision?: string;
 }
@@ -136,21 +146,23 @@ export interface GroupingOverride {
 }
 
 // Stable content identity; timestamps and CI do not invalidate generated text.
+/** The member fields a saved review's fingerprint covers. */
+const fingerprintFields = (m: ReviewMember) => [
+  m.url,
+  m.baseRepo,
+  m.baseBranch,
+  m.baseSha,
+  m.headRepo,
+  m.headBranch,
+  m.headSha,
+  m.title,
+  m.description,
+  m.state,
+  m.merged,
+];
 export function fingerprint(subject: ReviewSubject): string {
   return JSON.stringify({
-    members: subject.members.map((m) => [
-      m.url,
-      m.baseRepo,
-      m.baseBranch,
-      m.baseSha,
-      m.headRepo,
-      m.headBranch,
-      m.headSha,
-      m.title,
-      m.description,
-      m.state,
-      m.merged,
-    ]),
+    members: subject.members.map(fingerprintFields),
     edges: subject.edges,
   });
 }
@@ -351,8 +363,72 @@ function reachOrder(start: string, edges: readonly StackEdge[]): Set<string> {
 export function subjectForReview(review: ReviewGuide): string {
   return review.snapshot?.subject.id ?? review.prUrl;
 }
-export function attentionFor(subject: ReviewSubject, review?: ReviewHistoryEntry): QueueItem['attention'] {
-  if (review?.snapshot && review.snapshot.fingerprint !== fingerprint(subject)) return 'updated';
+/** Your latest review of one PR on GitHub: when you submitted it and the commit it was on (null when unknown). */
+export interface GitHubOwnReview {
+  submittedAt: string;
+  headSha: string | null;
+  /** When the PR's current head was committed, if known. Decides a review whose commit is unknown. */
+  headCommittedAt?: string;
+}
+/**
+ * The PRs of a subject that changed since your latest review of them, each with the commit that review was on (null
+ * when unknown). Your latest review of a PR is the newer of the saved Gnosis review (its snapshot) and your latest
+ * review on GitHub (`github`; approval, request for changes or comment).
+ *
+ * - The GitHub review is newer: the PR changed only when its head moved past the reviewed commit. A review at the
+ *   current head, or one with an unknown commit submitted after the head was committed, is current.
+ * - Otherwise the saved review decides, as before: like its fingerprint, it covers the whole subject. Every PR it
+ *   decides changed when a stack's members or edges changed, or a PR changed that no current GitHub review covers.
+ *   With no GitHub review newer than the snapshot, this is exactly "the fingerprint differs".
+ */
+export function updatedSinceReview(
+  subject: ReviewSubject,
+  review?: Pick<ReviewHistoryEntry, 'snapshot'>,
+  github?: (member: ReviewMember) => GitHubOwnReview | undefined
+): Record<string, { from: string | null }> {
+  const snapshot = review?.snapshot;
+  const capturedAt = snapshot ? Date.parse(snapshot.capturedAt) : NaN;
+  const before = new Map(snapshot?.subject.members.map((m) => [m.url, m]) ?? []);
+  const result: Record<string, { from: string | null }> = {};
+  const fromSnapshot: ReviewMember[] = [];
+  let changed = false;
+  for (const member of subject.members) {
+    const mine = github?.(member);
+    const at = mine ? Date.parse(mine.submittedAt) : NaN;
+    if (mine && Number.isFinite(at) && !(at <= capturedAt)) {
+      const current = mine.headSha
+        ? mine.headSha === member.headSha
+        : !!mine.headCommittedAt && at >= Date.parse(mine.headCommittedAt);
+      if (!current) {
+        result[member.url] = { from: mine.headSha };
+        changed = true;
+      }
+      continue;
+    }
+    if (!snapshot) continue;
+    fromSnapshot.push(member);
+    const old = before.get(member.url);
+    if (!old || JSON.stringify(fingerprintFields(old)) !== JSON.stringify(fingerprintFields(member))) changed = true;
+  }
+  if (!snapshot || !fromSnapshot.length) return result;
+  const reshaped =
+    JSON.stringify(snapshot.subject.edges) !== JSON.stringify(subject.edges) ||
+    snapshot.subject.members.map((m) => m.url).join('\n') !== subject.members.map((m) => m.url).join('\n');
+  // Only the saved review decides: exactly its fingerprint.
+  const outdated = fromSnapshot.length === subject.members.length ? snapshot.fingerprint !== fingerprint(subject) : changed || reshaped;
+  if (outdated) for (const member of fromSnapshot) result[member.url] = { from: before.get(member.url)?.headSha ?? null };
+  return result;
+}
+/**
+ * `updated` when a PR changed since your latest review (`updatedSinceReview`; pass it as `updated` when already
+ * known). Without `github`, only the saved Gnosis review counts.
+ */
+export function attentionFor(
+  subject: ReviewSubject,
+  review?: ReviewHistoryEntry,
+  updated: Record<string, unknown> = updatedSinceReview(subject, review)
+): QueueItem['attention'] {
+  if (Object.keys(updated).length) return 'updated';
   if (subject.members.some((m) => m.role === 'review-requested' && !m.merged && m.state === 'open')) return 'requested';
   return 'other';
 }

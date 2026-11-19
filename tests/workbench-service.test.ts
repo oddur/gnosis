@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { Octokit } from '@octokit/rest';
 import { groupSubjects, snapshot, type ReviewMember } from '../lib/workbench';
 import type { ReviewHistoryEntry } from '../lib/types';
+import type { QueueSignals } from '../lib/queue-signals';
 import { createMutedPrStore, type MutedPrStore } from '../src/muted-pr-store';
 import { createMemoryStorage } from '../src/app-data-store';
 import { createWorkbenchService } from '../src/workbench-service';
@@ -2524,6 +2525,58 @@ void test('a review submitted from Gnosis ends Review requested at once', async 
     service.reviewSubmitted('reviewer', s.pr.html_url);
     assert.equal(roleOf(service, s.pr.html_url), 'watched');
     assert.equal(service.snapshot().items[0].attention, 'other');
+  } finally { s.cleanup(); }
+});
+
+void test('your GitHub review at the current head ends "updated since your review" from an older Gnosis review', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const history: ReviewHistoryEntry[] = [];
+  let signals: QueueSignals[] = [];
+  const service = createWorkbenchService({
+    ...s.deps,
+    now: () => Date.parse('2026-11-19T13:00:00Z'),
+    history: () => history,
+    cachedSignals: requests => signals.filter(value => requests.some(request => request.url === value.url && request.headSha === value.headSha)),
+  });
+  try {
+    const subject = (await service.queue(true)).items[0].subject;
+    // Gnosis explained the PR before its last push.
+    const old = { ...subject, members: subject.members.map(member => ({ ...member, headSha: 'old-head' })) };
+    history.push({ id: 'saved', prTitle: s.pr.title, prUrl: s.pr.html_url, author: 'author', riskLevel: 'low', savedAt: '2026-11-10T09:00:00Z', snapshot: { ...snapshot(old), capturedAt: '2026-11-10T09:00:00Z' } });
+    let item = service.snapshot().items[0];
+    assert.equal(item.attention, 'updated');
+    assert.deepEqual(item.sinceReview, { [s.pr.html_url]: { from: 'old-head' } });
+    assert.equal(item.reviewOutdated, true);
+    // Status read for the head shows your approval on GitHub at that head: the queue is told to rebuild.
+    const review = { url: `${s.pr.html_url}#pullrequestreview-1`, author: 'reviewer', state: 'APPROVED', submittedAt: '2026-11-19T12:47:19Z', headSha: 'head' };
+    const fresh: QueueSignals = { url: s.pr.html_url, headSha: 'head', checkedAt: 0, comments: 0, checks: { state: 'neutral', passed: 0, total: 0 }, mine: review, opinions: [review] };
+    assert.equal(service.ownReviewsChanged('reviewer', [fresh]), true);
+    signals = [fresh];
+    item = service.snapshot().items[0];
+    assert.notEqual(item.attention, 'updated');
+    assert.equal(item.sinceReview, undefined);
+    assert.equal(item.reviewOutdated, true, 'The saved explanation is still for the old head');
+    assert.equal(service.ownReviewsChanged('reviewer', [fresh]), false, 'Nothing new once the queue used it');
+    // An approval at an older head keeps the PR updated, counting from that commit.
+    signals = [{ ...fresh, mine: { ...review, headSha: 'approved-head' }, opinions: [] }];
+    item = service.snapshot().items[0];
+    assert.equal(item.attention, 'updated');
+    assert.deepEqual(item.sinceReview, { [s.pr.html_url]: { from: 'approved-head' } });
+  } finally { s.cleanup(); }
+});
+
+void test('a review submitted from Gnosis at the head ends "updated since your review" at once', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const history: ReviewHistoryEntry[] = [];
+  const service = createWorkbenchService({ ...s.deps, now: () => Date.parse('2026-11-19T13:00:00Z'), history: () => history, cachedSignals: () => [] });
+  try {
+    const subject = (await service.queue(true)).items[0].subject;
+    const old = { ...subject, members: subject.members.map(member => ({ ...member, headSha: 'old-head' })) };
+    history.push({ id: 'saved', prTitle: s.pr.title, prUrl: s.pr.html_url, author: 'author', riskLevel: 'low', savedAt: '2026-11-10T09:00:00Z', snapshot: { ...snapshot(old), capturedAt: '2026-11-10T09:00:00Z' } });
+    assert.equal(service.snapshot().items[0].attention, 'updated');
+    // No status saved yet: the submitted review itself counts.
+    service.reviewSubmitted('reviewer', s.pr.html_url, 'head');
+    assert.notEqual(service.snapshot().items[0].attention, 'updated');
   } finally { s.cleanup(); }
 });
 

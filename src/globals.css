@@ -1872,10 +1872,22 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-gap-lines { display:grid; justify-items:end; }
 .diff-gap-lines > * { grid-area:1 / 1; }
 .diff-gap-live-line { color:var(--diff-header-muted); visibility:hidden; }
-.diff-gap[data-stuck][data-live]:not(:focus-within) .diff-gap-lines > .diff-gap-range { visibility:hidden; }
-.diff-gap[data-stuck][data-live]:not(:focus-within) .diff-gap-live-line { visibility:visible; }
-.diff-gap[data-stuck][data-live=scope]:not(:focus-within) .diff-gap-where > .diff-gap-scope { visibility:hidden; }
-.diff-gap[data-stuck][data-live=scope]:not(:focus-within) .diff-gap-where > .diff-gap-live { visibility:visible; }
+/* Focus on one of the reader's crumbs (data-live-focus, ChangesDiff) keeps the reader's place; focus elsewhere in the
+   bar brings back the hunk's own, which its controls act on. */
+.diff-gap[data-stuck][data-live]:is(:not(:focus-within), [data-live-focus]) .diff-gap-lines > .diff-gap-range { visibility:hidden; }
+.diff-gap[data-stuck][data-live]:is(:not(:focus-within), [data-live-focus]) .diff-gap-live-line { visibility:visible; }
+.diff-gap[data-stuck][data-live=scope]:is(:not(:focus-within), [data-live-focus]) .diff-gap-where > .diff-gap-scope { visibility:hidden; }
+.diff-gap[data-stuck][data-live=scope]:is(:not(:focus-within), [data-live-focus]) .diff-gap-where > .diff-gap-live { visibility:visible; }
+/* The reader's crumbs scroll to their definitions (#417). The slot spans the bar's height, which pinning never
+   changes, so each crumb's target reaches 24px tall without being clipped. */
+.diff-gap-where { align-self:stretch; }
+.diff-gap-live { align-self:stretch; align-items:center; }
+.diff-gap-live button.diff-gap-crumb::after { inset:50% 0 auto; height:24px; translate:0 -50%; }
+/* A jump whose line is hidden lands on its gap's bar, which flashes as a jumped-to line does (ChangesDiff's
+   check-flash), with an outline inside its box so nothing moves. */
+.diff-gap[data-jumped] { animation:check-flash 1.6s ease-out; outline-offset:-2px; }
+@keyframes check-flash { from { outline:2px solid var(--ring); } to { background-color:var(--diff-header-bg); } }
+@media (prefers-reduced-motion: reduce) { .diff-gap[data-jumped] { animation:none; outline:2px solid var(--ring); } }
 /* The lines after a file's last hunk: one code line, on the code's background under a hairline, the action at the
    code's text column. */
 .diff-gap[data-trailing] { min-height:var(--leading-code); padding:0; background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }
@@ -1903,8 +1915,9 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    controls keep their space, so pinning changes nothing's size, stay in the tab order, and come back while focus is
    inside the bar. */
 .diff-gap[data-stuck] { box-shadow:var(--diff-header-shadow); }
-.diff-gap[data-stuck]:not(:focus-within) :is(.diff-gap-gutter > *, .diff-gap-act > *, .diff-gap-controls > :not(.diff-gap-structure)) { opacity:0; pointer-events:none; }
-.diff-gap[data-stuck]:not(:focus-within) button.diff-gap-crumb { pointer-events:none; }
+.diff-gap[data-stuck]:is(:not(:focus-within), [data-live-focus]) :is(.diff-gap-gutter > *, .diff-gap-act > *, .diff-gap-controls > :not(.diff-gap-structure)) { opacity:0; pointer-events:none; }
+/* The hunk's own crumbs reveal; pinned, only the reader's crumbs act, and they only scroll. */
+.diff-gap[data-stuck]:not(:focus-within) .diff-gap-scope button.diff-gap-crumb { pointer-events:none; }
 .changes-diff :is(button, a, input, textarea, select, [tabindex]) { scroll-margin-top:var(--diff-sticky-offset); }
 .changes-diff .diff-gap[data-hunk-header] :is(button, a, [tabindex]) { scroll-margin-top:var(--diff-file-header-height, 0px); }
 .feedback-full-file .diff-hunk > .diff-gap[data-hunk-header] { position:static; }
