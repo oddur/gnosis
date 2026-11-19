@@ -2455,11 +2455,76 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-resize { width:5px;flex-shrink:0;cursor:col-resize;border-left:1px solid var(--border);touch-action:none; }
 .changes-resize:hover,.changes-resize:focus-visible { background:var(--accent);outline:1px solid var(--ring); }
 .changes-diff-pane { flex:1;min-width:0;display:flex;flex-direction:column; }
-.changes-file-header { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0; }
-.changes-file-header>div:first-child { min-width:0;flex:1 1 200px; }
-.changes-file-header h2 { font-size:var(--type-control);font-weight:600;overflow-wrap:anywhere; }
-.changes-file-header h2>span { font-weight:400;color:var(--muted-foreground); }
-.changes-file-actions { display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:var(--type-caption); }
+/* The file's header is code-tier, a step above its hunks' headers (lib/code-palette.ts): file header, hunk header and
+   code read as three steps, each edged with the same dark line. It is one row, in the flow and pinned alike; the
+   repository, PR and commit sit above it in the flow (.changes-file-context) and scroll away, so pinning never changes
+   its height. The path is in the code's type and gives way from the left; the rule on its edge is the file's status,
+   which the status word also names. Controls are drawn for the dark surface in both app themes. */
+.changes-file-context { display:flex; align-items:center; min-width:0; padding:10px 14px 8px; }
+.changes-file-context .changes-source { display:flex; flex-wrap:wrap; align-items:center; gap:4px; min-width:0; }
+.changes-file-header {
+  --file-bg:var(--diff-file-bg, color-mix(in oklab, color-mix(in oklab, var(--diff-code-bg, #22272e) 80%, var(--diff-code-fg, #c5ccd6)) 87%, var(--code-ring)));
+  --file-fg:var(--diff-file-fg, #e3e7ef);
+  --file-muted:var(--diff-file-muted, color-mix(in oklab, var(--file-fg) 82%, var(--file-bg)));
+  --file-hover:color-mix(in oklab, var(--file-fg) 13%, var(--file-bg));
+  --file-pressed:color-mix(in oklab, var(--file-fg) 20%, var(--file-bg));
+  --file-control-line:color-mix(in oklab, var(--file-fg) 30%, var(--file-bg));
+  --file-status:var(--code-modified);
+  /* The +N −M counts (DiffStats) take the code tier's inks, raised to read on this surface (lib/code-palette.ts). */
+  --color-success:var(--diff-file-added, color-mix(in oklab, var(--code-added) 70%, #fff));
+  --color-danger:var(--diff-file-deleted, color-mix(in oklab, var(--code-deleted) 70%, #fff));
+  container:file-header / inline-size;
+  color-scheme:dark;
+  display:flex; align-items:center; flex-wrap:nowrap; gap:12px; flex-shrink:0;
+  min-height:44px; padding:6px 10px 6px 14px;
+  background:var(--file-bg); color:var(--file-fg);
+  border-bottom:1px solid var(--diff-code-line, color-mix(in oklab, var(--diff-code-bg, #22272e) 55%, #000));
+  box-shadow:inset 3px 0 0 var(--file-status);
+}
+.changes-file-header[data-status=added] { --file-status:var(--code-added); }
+.changes-file-header[data-status=deleted] { --file-status:var(--code-deleted); }
+.changes-file-header[data-status=renamed] { --file-status:var(--code-renamed); }
+.changes-file-title { display:flex; align-items:baseline; gap:12px; flex:1 1 auto; min-width:0; }
+.changes-file-header h2 { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); font-weight:400; }
+/* The path's parts are the heading's own flex items, so they give way in order: the old folders, the new folders,
+   the old name, and the new name last. */
+.changes-file-path { display:contents; }
+/* Folders give way from the left, keeping the file's name: rtl clips the start, the isolated path keeps its order. */
+.changes-file-dir { min-width:0; flex:0 100 auto; overflow:hidden; text-overflow:ellipsis; direction:rtl; color:var(--file-muted); }
+.changes-file-path[data-old] > .changes-file-dir { flex-shrink:1000; }
+.changes-file-dir > span { direction:ltr; unicode-bidi:isolate; }
+.changes-file-name { flex:none; max-width:100%; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
+.changes-file-header h2[data-renamed] > .changes-file-path:not([data-old]) > .changes-file-name { max-width:calc(100% - 13ch); }
+.changes-file-path[data-old] > .changes-file-name { flex:0 10 auto; min-width:10ch; font-weight:400; color:var(--file-muted); }
+.changes-file-arrow { flex:none; white-space:pre; color:var(--file-muted); }
+.changes-file-header .changes-file-stats { flex:none; color:var(--file-muted); font-size:var(--type-caption); white-space:nowrap; }
+.changes-file-sep { white-space:pre; }
+.changes-file-actions { display:flex; flex:none; align-items:center; gap:4px; flex-wrap:nowrap; font-size:var(--type-caption); }
+/* Controls on the dark surface: text-coloured, a hairline for outlined ones, a lifted fill on hover and when pressed,
+   and the code's focus ring. */
+.changes-file-header .changes-file-actions :is(button, [role=combobox]) { color:var(--file-fg); background:transparent; border-color:var(--file-control-line); box-shadow:none; }
+.changes-file-header .changes-file-actions :is(button, [role=combobox]):hover:not(:disabled) { color:var(--file-fg); background:var(--file-hover); }
+.changes-file-header .changes-file-actions :is(button[aria-pressed=true], button[aria-expanded=true], button[data-state=open]) { background:var(--file-pressed); }
+.changes-file-header .changes-file-actions :is(button, [role=combobox]):focus-visible { outline:2px solid var(--code-ring); outline-offset:1px; box-shadow:none; }
+.changes-file-header .changes-file-actions button:disabled { opacity:1; color:var(--file-muted); border-color:transparent; }
+.changes-file-header .changes-file-actions button:disabled svg { opacity:.7; }
+.changes-file-header .markdown-view-switch { border-color:var(--file-control-line); }
+.changes-file-header .file-kind-tag { border-color:var(--file-control-line); color:var(--file-muted); }
+.changes-file-actions label { color:var(--file-fg); white-space:nowrap; padding-inline:4px; cursor:pointer; }
+.changes-file-actions input[type=checkbox] { width:14px; height:14px; accent-color:var(--code-ring); cursor:pointer; }
+.changes-file-actions input[type=checkbox]:focus-visible { outline:2px solid var(--code-ring); outline-offset:2px; }
+/* Narrow, the path keeps its room: the actions keep their icons and their names for screen readers, then the counts go
+   to the status word, and a rename keeps its new path (the status word, the blue rule and the tooltip still say where
+   it came from). */
+@container file-header (width < 720px) {
+  .changes-file-actions { gap:2px; }
+  .changes-file-action-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+}
+@container file-header (width < 520px) {
+  .changes-file-header :is(.changes-file-sep, .diff-stats) { display:none; }
+  .changes-file-header h2 > :is(.changes-file-path[data-old], .changes-file-arrow) { display:none; }
+  .changes-file-header h2[data-renamed] > .changes-file-path:not([data-old]) > .changes-file-name { max-width:100%; }
+}
 .changes-code-scroll { overflow:auto;flex:1;min-height:0;scrollbar-gutter:stable; }
 .changes-code { min-width:0; }
 .changes-empty,.changes-loading { padding:24px;font-size:var(--type-control); }
@@ -2611,15 +2676,8 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .commit-metadata p { overflow-wrap:anywhere;margin-top:8px;line-height:1.6; }
 @media(max-width:700px) { .commit-detail { padding:16px; } }
 
-.pr-commits .changes-file-header { gap:6px 12px; }
-.pr-commits .changes-file-header>div:first-child { flex-basis:140px; }
 .commit-detail-title button { height:26px;padding:4px 6px; }
 
-
-.pr-commits .changes-file-header { display:grid;grid-template-columns:minmax(0,1fr) auto; }
-.pr-commits .changes-file-header h2 { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-@media(max-width:700px) { .pr-commits .changes-file-header { display:flex; } }
-.pr-commits .changes-workspace.chat-open .changes-file-header { display:flex; }
 
 /* Explanation is a peer of Changes, inside the same persistent PR frame. */
 .pr-explanation-workspace { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; overflow:hidden; }
@@ -2879,7 +2937,7 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .commit-diff-stream { position:relative;overflow-anchor:none; }
 .commit-stream-content { position:relative;width:100%; }
 .commit-stream-file { min-width:0;border-bottom:8px solid var(--muted);background:var(--background); }
-.commit-stream-file > .changes-file-header { position:sticky;top:0;z-index:2;background:var(--background);border-bottom:1px solid var(--border); }
+.commit-stream-file > .changes-file-header { position:sticky;top:0;z-index:2; }
 .commit-stream-file-body > .changes-code-scroll { overflow:visible;flex:none;scrollbar-gutter:auto; }
 .commit-diff-stream:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
 .commit-viewed-complete { border-top:1px solid var(--border); }
@@ -3270,7 +3328,6 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .markdown-media-label { font-size:var(--type-caption); font-weight:600; margin-bottom:6px; }
 @media(max-width:700px) { .markdown-media-change { max-width:100%; } }
 /* An attribute, not :has(): typing in a comment re-checked :has() on its file section (#346). */
-.pr-commits .commit-stream-file[data-markdown-switch] > .changes-file-header { display:flex; }
 .commit-stream-file[data-markdown-switch] .changes-file-actions { min-width:0; }
 
 /* Quiet disclosure between rendered Markdown change hunks. */
@@ -4626,7 +4683,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-full-file > p { font-size:var(--type-caption);line-height:1.5;margin-bottom:8px; }
 .feedback-full-file > p[role=status] { display:flex;align-items:center;gap:8px; }
 .feedback-full-file .commit-stream-file > .changes-file-header { position:static; }
-.feedback-full-file .changes-source { display:none; }
+.feedback-full-file :is(.changes-source, .changes-file-context) { display:none; }
 .feedback-full-file .changes-file-header { padding:8px; }
 .feedback-response-dock .github-thread-actions { margin:0;padding:0;align-items:center;gap:8px; }
 .feedback-response-dock .github-thread-actions > span { color:var(--muted-foreground);font-size:var(--type-caption); }

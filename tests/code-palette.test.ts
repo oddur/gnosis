@@ -53,9 +53,37 @@ void test('Text on the header reads: names, muted text and kind words', () => {
   }
 });
 
-void test('The palette applies to the bars of diffs in that theme alone', () => {
+void test('The file header is a step above the hunk header, and its text reads', () => {
+  for (const [bg, fg] of THEMES) {
+    const palette = codePalette({ bg, fg });
+    const step = contrastRatio(palette.file, palette.header);
+    assert.ok(step >= 1.25, `${palette.file} over ${palette.header}: ${step}`);
+    for (const color of [palette.fileText, palette.fileMuted, palette.fileAdded, palette.fileDeleted]) {
+      const ratio = contrastRatio(color, palette.file);
+      assert.ok(ratio >= TEXT_CONTRAST, `${color} on ${palette.file}: ${ratio}`);
+    }
+    // The status rules (tokens.css --code-added, --code-deleted, --code-modified, --code-renamed).
+    for (const rule of ['#85cf99', '#ff9ba5', '#e9c46a', '#8fc4ff'])
+      assert.ok(contrastRatio(rule, palette.file) >= 3, `${rule} on ${palette.file}`);
+  }
+});
+
+void test('The palette applies to the bars and file headers of diffs in that theme alone', () => {
+  const palette = {
+    background: '#0d1117',
+    foreground: '#e6edf3',
+    header: '#272a35',
+    line: '#010103',
+    muted: '#a2a7ad',
+    keyword: '#ff7b72',
+    file: '#393f4c',
+    fileText: '#ffffff',
+    fileMuted: '#b0b2b7',
+    fileAdded: '#9ad8ab',
+    fileDeleted: '#ffb0b8',
+  };
   assert.equal(
-    codePaletteCSS('gnosis-aurora-x', { background: '#0d1117', foreground: '#e6edf3', header: '#272a35', line: '#010103', muted: '#a2a7ad', keyword: '#ff7b72' }),
-    '.changes-diff[data-code-theme="gnosis-aurora-x"] .diff-gap{--diff-code-bg:#0d1117;--diff-code-fg:#e6edf3;--diff-code-header:#272a35;--diff-code-line:#010103;--diff-code-muted:#a2a7ad;--diff-keyword:#ff7b72}'
+    codePaletteCSS('gnosis-aurora-x', palette),
+    '[data-code-theme="gnosis-aurora-x"] :is(.diff-gap,.changes-file-header){--diff-code-bg:#0d1117;--diff-code-fg:#e6edf3;--diff-code-header:#272a35;--diff-code-line:#010103;--diff-code-muted:#a2a7ad;--diff-keyword:#ff7b72;--diff-file-bg:#393f4c;--diff-file-fg:#ffffff;--diff-file-muted:#b0b2b7;--diff-file-added:#9ad8ab;--diff-file-deleted:#ffb0b8}'
   );
 });

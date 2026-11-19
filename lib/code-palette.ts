@@ -5,7 +5,7 @@ import { contrastRatio, mixColor } from './code-contrast';
  * the code rather than around it. A hunk's header is code-tier: a surface lifted from the code's background toward its
  * text and tinted cool, so it separates from the code (and its green and red lines) by lightness and hue, edged with a
  * darker line where it meets the code, in the code's type, with kind words such as `fn` and `class` in the theme's
- * keyword colour.
+ * keyword colour. The file's header above it is one step further: file header, hunk header and code read as three steps.
  */
 export interface CodePalette {
   background: string;
@@ -18,6 +18,15 @@ export interface CodePalette {
   muted: string;
   /** The colour the theme gives the `keyword` scope, raised to TEXT_CONTRAST on the header; undefined without one. */
   keyword?: string;
+  /** The file header's surface, a step above the hunk header's (FILE_LIFT, FILE_TINT). */
+  file: string;
+  /** Text on the file header: the foreground, raised where it would not read (TEXT_CONTRAST). */
+  fileText: string;
+  /** Secondary text on the file header, such as folders and the status word. */
+  fileMuted: string;
+  /** The +N and −M counts on the file header: the code tier's green and red, raised to TEXT_CONTRAST. */
+  fileAdded: string;
+  fileDeleted: string;
 }
 
 /** A resolved theme as Pierre holds it: TextMate settings for Shiki, a Zed style for Highlights. */
@@ -40,6 +49,12 @@ export const HEADER_LIFT = 0.12;
 /** …then this far toward the code focus ring's blue (--code-ring in tokens.css), to part from the code by hue too. */
 export const HEADER_TINT = 0.08;
 const CODE_RING = '#9bb8ff';
+/** The code tier's change inks, as --code-added and --code-deleted in tokens.css. */
+const CODE_ADDED = '#85cf99';
+const CODE_DELETED = '#ff9ba5';
+/** The file header's surface: a step further toward the text and the blue than the hunk header's. */
+export const FILE_LIFT = 0.2;
+export const FILE_TINT = 0.13;
 /** The line under the header: the code's background this far toward black. */
 const LINE_DARKEN = 0.45;
 /** Text on the header keeps this contrast: WCAG's 4.5:1, with a margin for rounding. */
@@ -52,8 +67,22 @@ export function codePalette(theme: PaletteTheme): CodePalette {
   const foreground = theme.fg;
   const keyword = keywordColor(theme);
   if (!HEX.test(background) || !HEX.test(foreground))
-    return { background, foreground, header: background, line: background, muted: foreground, keyword };
+    return {
+      background,
+      foreground,
+      header: background,
+      line: background,
+      muted: foreground,
+      keyword,
+      file: background,
+      fileText: foreground,
+      fileMuted: foreground,
+      fileAdded: CODE_ADDED,
+      fileDeleted: CODE_DELETED,
+    };
   const header = mixOklab(mixOklab(background, foreground, HEADER_LIFT), CODE_RING, HEADER_TINT);
+  const file = mixOklab(mixOklab(background, foreground, FILE_LIFT), CODE_RING, FILE_TINT);
+  const fileText = readable(foreground, file);
   return {
     background,
     foreground,
@@ -61,6 +90,11 @@ export function codePalette(theme: PaletteTheme): CodePalette {
     line: mixOklab(background, '#000000', LINE_DARKEN),
     muted: mutedColor(header, foreground),
     keyword: keyword && HEX.test(keyword) ? readable(keyword, header) : keyword,
+    file,
+    fileText,
+    fileMuted: mutedColor(file, fileText),
+    fileAdded: readable(CODE_ADDED, file),
+    fileDeleted: readable(CODE_DELETED, file),
   };
 }
 
@@ -144,7 +178,13 @@ export function codePaletteCSS(theme: string, palette: CodePalette): string {
     `--diff-code-line:${palette.line}`,
     `--diff-code-muted:${palette.muted}`,
     ...(palette.keyword ? [`--diff-keyword:${palette.keyword}`] : []),
+    `--diff-file-bg:${palette.file}`,
+    `--diff-file-fg:${palette.fileText}`,
+    `--diff-file-muted:${palette.fileMuted}`,
+    `--diff-file-added:${palette.fileAdded}`,
+    `--diff-file-deleted:${palette.fileDeleted}`,
   ];
-  // Only the bars take the properties: set on .changes-diff, they would restyle every line of the diff (#366).
-  return `.changes-diff[data-code-theme="${name}"] .diff-gap{${declarations.join(';')}}`;
+  // Only the bars and the file headers take the properties: set on .changes-diff or the file's section, they would
+  // restyle every line of the diff (#366).
+  return `[data-code-theme="${name}"] :is(.diff-gap,.changes-file-header){${declarations.join(';')}}`;
 }

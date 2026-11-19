@@ -8,10 +8,10 @@ import { useMarkdownView } from '../lib/use-markdown-view';
 import { peekMarkdownReview, prepareMarkdownReview } from '../lib/markdown-review-cache';
 import { MarkdownReviewPreview } from './MarkdownReviewPreview';
 import { RepositoryBadge, PrBadge, CommitBadge } from './EntityBadge';
-import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { File } from '@pierre/diffs/react';
 import { parseDiffFromFile, type DiffFileInput, type FileDiffMetadata, type FileDiffOptions, type SelectedLineRange } from '@pierre/diffs';
-import { MessageSquare, ExternalLink } from 'lucide-react';
+import { CheckCheck, MessageSquare, ExternalLink } from 'lucide-react';
 import { inspectionFiles as fileCache, previewFor } from '../lib/inspection-cache';
 import {
   isUnchangedMove,
@@ -51,6 +51,7 @@ import { codeIntelligenceSettings, pathEnabled } from '../lib/code-intelligence'
 import { syntaxContentsPlan } from '../lib/syntax-contents';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { diffThemeName } from '../lib/diff-worker-pool';
+import { applyCodePalette } from '../lib/diff-code-palette';
 import type { Preferences } from '../lib/types';
 import type { usePrDiscussions } from '../lib/use-pr-discussions';
 import type { ReviewImageSide } from '../lib/review-images';
@@ -618,6 +619,8 @@ export function PrFileInspection({
     onLineSelected: setRange,
     onPostRender: revealSource,
   };
+  // The file header is code-tier too: its colours come from the diff's theme (lib/code-palette.ts).
+  useLayoutEffect(() => applyCodePalette(options.theme as string), [options.theme]);
   const files: DiffFileInput | undefined = useMemo(
     () =>
       contents &&
@@ -724,124 +727,139 @@ export function PrFileInspection({
     setRange(null);
     changeMarkdownView({ mode });
   }
-  const fileHeader = (
-    <header ref={headerRef} className="changes-file-header">
-      <div>
-        {!commit && !combined && (
-          <span className="changes-source">
-            <RepositoryBadge repo={entry.snapshot.metadata.baseRepo} />{' '}
-            <PrBadge url={entry.snapshot.url} title={entry.snapshot.metadata.title} />{' '}
-            <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
-          </span>
-        )}
-        {combined && (
-          <span className="changes-source">
-            <span>Combined changes</span>
-            {sourceOptions.slice(0, 3).map((source) => (
-              <Button
-                key={source.metadata.url}
-                size="sm"
-                variant="link"
-                onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}
-              >
-                #{source.metadata.url.split('/').pop()}
-              </Button>
-            ))}
-            {sourceOptions.length > 3 && <span>+{sourceOptions.length - 3} PRs</span>}
-          </span>
-        )}
-        <h2 title={entry.file.path}>
-          {entry.file.previousPath && <span>{entry.file.previousPath} → </span>}
-          {entry.file.path}
-        </h2>
-        <span className="changes-file-stats">
-          {unchangedMove ? (
-            'Moved · contents unchanged'
-          ) : (
-            <>
-              {entry.file.status} · <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
-            </>
-          )}
-        </span>
-      </div>
-      <div className="changes-file-actions">
-        {compactMove && !viewed && (
-          <Button variant="ghost" size="sm" onClick={() => setRevealedMove(activeKey)}>
-            Show file
-          </Button>
-        )}
-        {markdown && !compactMove && (
-          <div className="markdown-view-switch" role="group" aria-label="Markdown view">
-            <Button
-              variant={!wantsPreview ? 'secondary' : 'ghost'}
-              size="sm"
-              aria-pressed={!wantsPreview}
-              onClick={() => chooseMarkdownMode('source')}
-            >
-              Source
-            </Button>
-            <Button
-              variant={wantsPreview ? 'secondary' : 'ghost'}
-              size="sm"
-              aria-pressed={wantsPreview}
-              onClick={() => chooseMarkdownMode('preview')}
-            >
-              Preview
-            </Button>
-          </div>
-        )}
-        {classificationControl}
-        <label>
-          <input
-            type="checkbox"
-            checked={viewed}
-            onChange={(e) => (e.target.checked ? mark(false) : void progress.markFileViewed(activeKey, false))}
-          />
-          Viewed
-        </label>
-        {onViewedNext && <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
-          Viewed & next
-        </Button>}
-        {!commit && !showingPreview && !compactMove && (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!range || !comments.canComment || contents?.lfs}
-            onClick={() => range && !contents?.lfs && comments.begin(range)}
-            title="Select lines in the diff to comment"
-          >
-            <MessageSquare size={14} /> Comment
-          </Button>
-        )}
-        {combined && (
-          <SearchableSelect
-            label="Comment in source PR"
-            value=""
-            triggerLabel="Comment in PR…"
-            popupBoundary="viewport"
-            options={commentSources.map((s) => ({
-              value: s.metadata.url, kind: 'pr' as const, pr: s.metadata,
-              label: `#${s.metadata.url.split('/').pop()} · ${s.metadata.title}`,
-            }))}
-            onValueChange={(url) => onOpenSource?.(url, combinedSourcePath(url))}
-          />
-        )}
-        {commit && (
-          <Button
-            variant="ghost"
-            size="sm"
-            title="Open current file in Changes to comment"
-            onClick={() => onOpenCurrentFile(entry.snapshot.url, entry.file.path)}
-          >
-            Comment in Changes
-          </Button>
-        )}
-        <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
-          <MessageSquare size={14} />
-          Ask about this
+  // The repository, PR and commit, in the flow above the file's sticky header: they scroll away, so the pinned header
+  // is always the one row it is in the flow, and pinning never changes its height.
+  const fileContext = !commit && !combined ? (
+    <span className="changes-source">
+      <RepositoryBadge repo={entry.snapshot.metadata.baseRepo} />{' '}
+      <PrBadge url={entry.snapshot.url} title={entry.snapshot.metadata.title} />{' '}
+      <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
+    </span>
+  ) : combined ? (
+    <span className="changes-source">
+      <span>Combined changes</span>
+      {sourceOptions.slice(0, 3).map((source) => (
+        <Button
+          key={source.metadata.url}
+          size="sm"
+          variant="link"
+          onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}
+        >
+          #{source.metadata.url.split('/').pop()}
         </Button>
-      </div>
-    </header>
+      ))}
+      {sourceOptions.length > 3 && <span>+{sourceOptions.length - 3} PRs</span>}
+    </span>
+  ) : undefined;
+  const fullPath = entry.file.previousPath ? `${entry.file.previousPath} → ${entry.file.path}` : entry.file.path;
+  const fileHeader = (
+    <>
+      {fileContext && <div className="changes-file-context">{fileContext}</div>}
+      <header ref={headerRef} className="changes-file-header" data-status={unchangedMove ? 'renamed' : entry.file.status}>
+        <div className="changes-file-title">
+          <h2 title={fullPath} data-renamed={entry.file.previousPath ? '' : undefined}>
+            {entry.file.previousPath && (
+              <>
+                <FilePath path={entry.file.previousPath} old />
+                <span className="changes-file-arrow"> → </span>
+              </>
+            )}
+            <FilePath path={entry.file.path} />
+          </h2>
+          <span className="changes-file-stats">
+            {unchangedMove ? (
+              'Moved · contents unchanged'
+            ) : (
+              <>
+                {entry.file.status}
+                <span className="changes-file-sep"> · </span>
+                <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
+              </>
+            )}
+          </span>
+        </div>
+        <div className="changes-file-actions">
+          {compactMove && !viewed && (
+            <Button variant="ghost" size="sm" onClick={() => setRevealedMove(activeKey)}>
+              Show file
+            </Button>
+          )}
+          {markdown && !compactMove && (
+            <div className="markdown-view-switch" role="group" aria-label="Markdown view">
+              <Button
+                variant={!wantsPreview ? 'secondary' : 'ghost'}
+                size="sm"
+                aria-pressed={!wantsPreview}
+                onClick={() => chooseMarkdownMode('source')}
+              >
+                Source
+              </Button>
+              <Button
+                variant={wantsPreview ? 'secondary' : 'ghost'}
+                size="sm"
+                aria-pressed={wantsPreview}
+                onClick={() => chooseMarkdownMode('preview')}
+              >
+                Preview
+              </Button>
+            </div>
+          )}
+          {classificationControl}
+          <label>
+            <input
+              type="checkbox"
+              checked={viewed}
+              onChange={(e) => (e.target.checked ? mark(false) : void progress.markFileViewed(activeKey, false))}
+            />
+            Viewed
+          </label>
+          {onViewedNext && (
+            <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
+              <CheckCheck size={14} aria-hidden="true" />
+              <span className="changes-file-action-label">Viewed & next</span>
+            </Button>
+          )}
+          {!commit && !showingPreview && !compactMove && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!range || !comments.canComment || contents?.lfs}
+              onClick={() => range && !contents?.lfs && comments.begin(range)}
+              title="Select lines in the diff to comment"
+            >
+              <MessageSquare size={14} /> <span className="changes-file-action-label">Comment</span>
+            </Button>
+          )}
+          {combined && (
+            <SearchableSelect
+              label="Comment in source PR"
+              value=""
+              triggerLabel="Comment in PR…"
+              popupBoundary="viewport"
+              options={commentSources.map((s) => ({
+                value: s.metadata.url, kind: 'pr' as const, pr: s.metadata,
+                label: `#${s.metadata.url.split('/').pop()} · ${s.metadata.title}`,
+              }))}
+              onValueChange={(url) => onOpenSource?.(url, combinedSourcePath(url))}
+            />
+          )}
+          {commit && (
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Open current file in Changes to comment"
+              onClick={() => onOpenCurrentFile(entry.snapshot.url, entry.file.path)}
+            >
+              Comment in Changes
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
+            <MessageSquare size={14} />
+            <span className="changes-file-action-label">Ask about this</span>
+          </Button>
+        </div>
+      </header>
+    </>
   );
   const unavailableFocus = focusThreadId && !preview && !files
     ? matching.find(thread => thread.id === focusThreadId && !visibleDiscussions.includes(thread))
@@ -1034,6 +1052,7 @@ export function PrFileInspection({
       ref={sectionRef}
       className="commit-stream-file"
       aria-label={entry.file.path}
+      data-code-theme={options.theme as string}
       data-markdown-switch={markdown && !compactMove ? '' : undefined}
     >
       {fileHeader}
@@ -1043,5 +1062,23 @@ export function PrFileInspection({
         {opened.current && fileContent}
       </div>
     </section>
+  );
+}
+
+/**
+ * A file's path in the code's type: folders muted, the name in the text colour. A long path gives way from the left,
+ * `…/Core/ECONemoConnector.cs`, keeping its name; the text stays whole for selection and copying.
+ */
+function FilePath({ path, old }: { path: string; old?: boolean }) {
+  const slash = path.lastIndexOf('/');
+  return (
+    <span className="changes-file-path" data-old={old || undefined}>
+      {slash >= 0 && (
+        <span className="changes-file-dir">
+          <span>{path.slice(0, slash + 1)}</span>
+        </span>
+      )}
+      <span className="changes-file-name">{path.slice(slash + 1)}</span>
+    </span>
   );
 }

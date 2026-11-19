@@ -271,9 +271,119 @@ void app.whenReady().then(async () => {
     }
     await js(`document.documentElement.classList.toggle('dark',false)`);
   };
+  /**
+   * File header review: with GNOSIS_FILE_HEADER_SHOTS=1, renders the sticky file header's cases in light and dark as
+   * `FHSHOT <name> <base64 PNG>` lines, and its colours as `FHMETRIC <json>`, and skips the checks.
+   */
+  const fileHeaderShots = async () => {
+    const capture = async (name: string, rect: string) => {
+      for (const dark of [false, true]) {
+        await js(`document.documentElement.classList.toggle('dark',${dark})`);
+        await js(frames);
+        await sleep(250);
+        const r = await js<{ x: number; y: number; width: number; height: number }>(rect);
+        console.log(`FHSHOT ${name}-${dark ? 'dark' : 'light'} ${(await win.webContents.capturePage(r)).toPNG().toString('base64')}`);
+      }
+    };
+    const streamTop = (height: number) =>
+      `(()=>{const b=document.querySelector('.commit-diff-stream').getBoundingClientRect();return {x:Math.round(b.left),y:Math.round(b.top),width:Math.round(b.width),height:${height}}})()`;
+    const select = async (name: string) => {
+      await js(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`);
+      await sleep(1700);
+    };
+    // The file's section at the top of the stream: its chips, then its header.
+    const toRow = (path: string) =>
+      js(`(()=>{const s=document.querySelector('.commit-diff-stream');const r=window.stickyRow(${JSON.stringify(path)});s.scrollTop+=r.getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    const metrics = (path: string) =>
+      js<Record<string, unknown>>(`(()=>{const row=window.stickyRow(${JSON.stringify(path)});const h=row.querySelector('.changes-file-header');const c=document.createElement('canvas').getContext('2d',{willReadFrequently:true});
+        const rgb=v=>{if(!v)return null;c.clearRect(0,0,1,1);c.fillStyle='#000';c.fillStyle=v;c.fillRect(0,0,1,1);const d=c.getImageData(0,0,1,1).data;return '#'+[d[0],d[1],d[2]].map(n=>n.toString(16).padStart(2,'0')).join('')};
+        const color=sel=>{const e=h.querySelector(sel);return e?rgb(getComputedStyle(e).color):null};
+        const hunk=row.querySelector('.diff-gap[data-hunk-header]');
+        return {file:rgb(getComputedStyle(h).backgroundColor),hunk:hunk?rgb(getComputedStyle(hunk).backgroundColor):null,line:rgb(getComputedStyle(h).borderBottomColor),
+          name:color('.changes-file-name'),dir:color('.changes-file-dir'),stats:color('.changes-file-stats'),added:color('.diff-stats > :first-child'),deleted:color('.diff-stats > :last-child'),
+          button:color('[data-viewed-next]'),label:color('.changes-file-actions label'),rule:rgb(getComputedStyle(h).getPropertyValue('--file-status').trim()),status:h.dataset.status,height:Math.round(h.getBoundingClientRect().height)}})()`);
+    const metric = async (name: string, path: string) => {
+      for (const dark of [false, true]) {
+        await js(`document.documentElement.classList.toggle('dark',${dark})`);
+        await js(frames);
+        console.log(`FHMETRIC ${JSON.stringify({ case: name, theme: dark ? 'dark' : 'light', ...(await metrics(path)) })}`);
+      }
+    };
+    win.setContentSize(1280, 800);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope&renamed-file`);
+    await waitForWorkbenchQueue(win.webContents);
+    await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];void 0`);
+    await installSticky();
+    await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
+    await click('Open PR overview');
+    await click('Changes');
+    await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='sticky.ts')");
+    // Pinned, mid-file, with the hunk's header pinned under it.
+    await select('sticky.ts');
+    await js(`window.toMiddle('src/sticky.ts',1)`);
+    await settle();
+    await capture('pinned', streamTop(260));
+    await metric('pinned', 'src/sticky.ts');
+    // In the flow: the chips above the header.
+    await select('store.rs');
+    await toRow('src/store.rs');
+    await settle();
+    await capture('flow', streamTop(200));
+    await metric('flow', 'src/store.rs');
+    // Renamed, with a long path.
+    await select('ECONemoConnector.cs');
+    await toRow('src/transport/ECORuntime/Core/ECONemoConnector.cs');
+    await settle();
+    await capture('renamed', streamTop(160));
+    await metric('renamed', 'src/transport/ECORuntime/Core/ECONemoConnector.cs');
+    // Added and deleted.
+    for (const [name, path] of [['added', 'src/new.ts'], ['deleted', 'src/old.ts']]) {
+      await select(path.slice(4));
+      await toRow(path);
+      await settle();
+      await capture(name, streamTop(160));
+      await metric(name, path);
+    }
+    // Keyboard focus: a key press makes focus visible, as Tab would.
+    const keyboardFocus = async (selector: string) => {
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Shift' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Shift' });
+      await sleep(50);
+      await js(`window.stickyRow('src/old.ts').querySelector(${JSON.stringify(selector)}).focus({preventScroll:true})`);
+    };
+    await keyboardFocus('.changes-file-actions input[type=checkbox]');
+    await capture('focus-viewed', streamTop(160));
+    await keyboardFocus('[data-viewed-next]');
+    await capture('focus-viewed-next', streamTop(160));
+    await js('document.activeElement.blur()');
+    // Narrow, pinned.
+    win.setContentSize(760, 800);
+    await sleep(400);
+    await select('sticky.ts');
+    await js(`window.toMiddle('src/sticky.ts',1)`);
+    await settle();
+    await capture('narrow-pinned', streamTop(260));
+    await select('ECONemoConnector.cs');
+    await toRow('src/transport/ECORuntime/Core/ECONemoConnector.cs');
+    await settle();
+    await capture('narrow-renamed', streamTop(160));
+    win.setContentSize(1280, 800);
+    await sleep(400);
+    // The Commits tab.
+    await click('Commits');
+    await wait("!!document.querySelector('.pr-commits .changes-file-header')", 500);
+    await sleep(1700);
+    await capture('commits', `(()=>{const h=document.querySelector('.pr-commits .changes-file-header');const s=h.closest('.commit-diff-stream')??h.parentElement;const b=s.getBoundingClientRect();const t=h.getBoundingClientRect();
+      const y=Math.max(0,Math.round(t.top-60));return {x:Math.round(b.left),y,width:Math.round(b.width),height:220}})()`);
+    await js(`document.documentElement.classList.toggle('dark',false)`);
+  };
   try {
     if (process.env.GNOSIS_HUNK_HEADER_SHOTS) {
       await hunkHeaderShots();
+      return;
+    }
+    if (process.env.GNOSIS_FILE_HEADER_SHOTS) {
+      await fileHeaderShots();
       return;
     }
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
