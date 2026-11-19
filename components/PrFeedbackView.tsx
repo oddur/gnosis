@@ -29,6 +29,7 @@ import {
   History,
   MessageSquare,
   RefreshCw,
+  Reply,
   Send,
   X,
   type LucideIcon,
@@ -36,6 +37,7 @@ import {
 import { Timeline, TimelineContent, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from './ui/timeline';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from './ui/button';
+import { FileTypeIcon } from './FileTypeIcon';
 import { GitHubAuthor } from './GitHubAuthor';
 import { SubjectIcon } from './SubjectIcon';
 import { GitHubReviewThread, HiddenComment, inFrontPanel } from './GitHubReviewThread';
@@ -62,7 +64,7 @@ import {
   plainCommentText,
   type FeedbackItem,
 } from '../lib/feedback';
-import { BIG_GROUP, GROUP_PREVIEW, botSummary, buildTimeline, commitLines, entryItems, summarizeCommits, type TimelineEntry } from '../lib/feedback-timeline';
+import { BIG_GROUP, GROUP_PREVIEW, INDEX_FILES, botSummary, buildTimeline, commitLines, entryItems, summarizeCommits, threadIndex, type TimelineEntry } from '../lib/feedback-timeline';
 import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
 import { replaceDiscussionThread, refreshDiscussion } from '../lib/review-discussion-cache';
 import { useSessionDraft, ReviewDraftBoundary } from '../lib/session-drafts';
@@ -1565,6 +1567,88 @@ function ThreadEntry({
   );
 }
 
+/**
+ * A review's code threads as an index under its text: a heading with how many still need a response, then one row per
+ * file (its type icon, name and folder) with a chip per thread line. A chip goes to that thread in the timeline. Six or
+ * more files show the first few and Show all.
+ */
+function ReviewThreadIndex({ item, threads, onSelect }: { item: FeedbackItem; threads: FeedbackItem[]; onSelect?: (item: FeedbackItem) => void }) {
+  const [all, setAll] = useSessionDraft(`feedback-review-files:${feedbackKey(item)}`, false);
+  const files = threadIndex(threads, (t) => t.thread?.path ?? '', lineOf);
+  const unresolved = threads.filter((t) => t.thread && !t.thread.isResolved).length;
+  const collapsible = files.length > INDEX_FILES + 1;
+  const shown = collapsible && !all ? files.slice(0, INDEX_FILES) : files;
+  const id = `review-index-${item.id}`;
+  return (
+    <nav className="feedback-review-index" aria-labelledby={id}>
+      <h3 className="feedback-review-index-head" id={id}>
+        <span>
+          {threads.length} {threads.length === 1 ? 'comment' : 'comments'} on code
+        </span>
+        {unresolved ? (
+          <Badge tone="review">
+            <MessageSquareDot size={11} aria-hidden="true" />
+            {unresolved} unresolved
+          </Badge>
+        ) : (
+          <Badge tone="success">
+            <Check size={11} aria-hidden="true" />
+            All resolved
+          </Badge>
+        )}
+      </h3>
+      <ul className="feedback-review-files">
+        {shown.map((file) => {
+          const name = fileName(file.path);
+          const folder = file.path.slice(0, file.path.length - name.length).replace(/\/$/, '');
+          return (
+            <li key={file.path} className="feedback-review-file">
+              <span className="feedback-review-path" title={file.path}>
+                <FileTypeIcon filePath={file.path} />
+                <span className="feedback-review-name">{name}</span>
+                {folder && (
+                  <span className="feedback-review-folder">
+                    {/* Long folders lose their start, not the part beside the file. */}
+                    <bdi dir="ltr">{folder}</bdi>
+                  </span>
+                )}
+              </span>
+              <span className="feedback-review-lines">
+                {file.lines.map(({ thread, line }) => {
+                  const resolved = !!thread.thread?.isResolved;
+                  const state = resolved ? 'resolved' : 'unresolved';
+                  const Icon = resolved ? Check : MessageSquareDot;
+                  return (
+                    <button
+                      key={thread.id}
+                      type="button"
+                      className="feedback-line-chip"
+                      data-state={state}
+                      title={`${line != null ? `Line ${line}` : 'File comment'}, ${state}`}
+                      onClick={() => onSelect?.(thread)}
+                    >
+                      <Icon size={12} aria-hidden="true" />
+                      {line != null ? `L${line}` : 'File'}
+                      <span className="sr-only">
+                        {` in ${name}, ${state}`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {collapsible && (
+        <Button variant="ghost" size="sm" className="feedback-review-more" aria-expanded={all} onClick={() => setAll(!all)}>
+          {all ? 'Show fewer files' : `Show all ${files.length} files`}
+        </Button>
+      )}
+    </nav>
+  );
+}
+
 /** A PR comment or review: quiet for bots, with its verdict, and a reply that posts a PR comment linked to it. */
 function MessageEntry({
   item,
@@ -1630,27 +1714,13 @@ function MessageEntry({
     }).finally(() => setSending(false));
   }
   const bot = isBot(comment.author?.login, comment.author?.__typename);
-  const unresolvedRelated = related.filter((r) => r.thread && !r.thread.isResolved);
   return (
     <article ref={card} className="feedback-entry-card feedback-message" data-quiet={quiet || bot || undefined} data-sending={comment.sending}>
       {header}
       <div className="feedback-entry-body">
         {comment.isMinimized ? <HiddenComment comment={comment} /> : <CommentMarkdown>{comment.body}</CommentMarkdown>}
       </div>
-      {related.length > 0 && (
-        <nav className="feedback-related" aria-label="Threads in this review">
-          <span>
-            {related.length} code {related.length === 1 ? 'thread' : 'threads'} in this review
-            {unresolvedRelated.length ? ` · ${unresolvedRelated.length} unresolved` : ''}
-          </span>
-          {related.map((thread) => (
-            <Button key={thread.id} variant="link" size="sm" onClick={() => onSelect?.(thread)}>
-              {fileName(thread.thread?.path ?? '')}
-              {lineOf(thread) != null ? `:${lineOf(thread)}` : ''}
-            </Button>
-          ))}
-        </nav>
-      )}
+      {related.length > 0 && <ReviewThreadIndex item={item} threads={related} onSelect={onSelect} />}
       {sending ? (
         <p role="status" className="github-sending">Sending reply…</p>
       ) : (
@@ -1680,18 +1750,19 @@ function MessageEntry({
         </form>
       ) : (
         !quiet && (
-          <div className="feedback-reply-actions">
+          <footer className="feedback-message-footer">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => {
                 setReplying(true);
                 setSent(false);
               }}
             >
+              <Reply size={14} aria-hidden="true" />
               Reply
             </Button>
-          </div>
+          </footer>
         )
       )}
     </article>

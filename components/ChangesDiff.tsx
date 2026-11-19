@@ -520,7 +520,8 @@ function gapControls(part: GapBarPart, status: GapStatus, reveal: (direction: Ga
 
 /**
  * The lines after a file's last hunk: one quiet code-line row, on the code's background under a hairline, with what it
- * holds and the action at the code's text column ("82 more lines · Show"). It heads nothing, so it never pins.
+ * holds and the action at the code's text column ("82 more lines · Show", or "More lines · Show" when the length is
+ * unknown). It heads nothing, so it never pins; with nothing to show and no length it is left out.
  */
 function TrailingBar({
   part,
@@ -536,8 +537,10 @@ function TrailingBar({
   const { hidden } = part;
   const known = hidden !== undefined;
   const busy = status.kind === 'loading' || status.kind === 'refreshing';
+  // An excerpt that cannot load more (GitHub's saved hunk on Feedback) and does not know what follows says nothing.
+  if (!known && !onReveal) return null;
   const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
-  const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines may follow';
+  const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines';
   let body: ReactNode;
   if (onReveal && blocked(status)) body = gapControls(part, status, () => () => {}, onRetry).body;
   else

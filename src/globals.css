@@ -4760,12 +4760,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-message form label { display:block; margin-bottom:8px; font-weight:600; font-size:var(--type-control); }
 .feedback-reply-hint, .feedback-context-unavailable { color:var(--muted-foreground); font-size:var(--type-control); margin:8px 0 16px; }
 .feedback-reply-actions { display:flex; gap:8px; }
-.feedback-related { margin-top:28px; padding-top:20px; border-top:1px solid var(--border); }
-.feedback-related h3 { font-size:var(--type-control); font-weight:600; margin-bottom:8px; }
-.feedback-related button { display:flex; align-items:baseline; gap:8px; width:100%; padding:10px 0; text-align:left; font-size:var(--type-control); border-bottom:1px solid var(--border); cursor:pointer; }
-.feedback-related button > span:first-of-type { flex:1; overflow-wrap:anywhere; }
-.feedback-related button > span:last-child { color:var(--muted-foreground); font-size:var(--type-caption); }
-.feedback-related button svg { flex:none; }
 .feedback-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:32px 24px; min-height:220px; height:100%; text-align:center; }
 .feedback-empty > svg { width:24px; height:24px; color:var(--muted-foreground); }
 .feedback-empty h2 { font-size:16px; font-weight:600; }
@@ -4873,7 +4867,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-code-thread .github-thread-comments > article { padding:12px 14px; }
 .feedback-code-thread .github-thread-comments > article + article { margin-left:30px; padding-left:14px; border-top:0; border-left:1px solid var(--border); }
 .feedback-code-thread .github-thread form { padding:4px 14px 12px; }
-.feedback-related button > span:last-child { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 .feedback-order { display:flex; align-items:center; gap:2px; padding-left:8px; border-left:1px solid var(--border); }
 .feedback-row-mention { display:inline-flex; align-items:center; gap:3px; flex:none; color:var(--foreground); font-weight:600; white-space:nowrap; }
 .feedback-verdict { display:inline-flex; align-items:center; gap:4px; font-weight:600; color:var(--foreground); }
@@ -5493,8 +5486,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-entry-card { border:1px solid var(--border); background:var(--card); color:var(--foreground); overflow:clip; }
 .feedback-entry-body { padding:12px 14px; }
 .feedback-entry-body .github-comment-body, .feedback-entry-body .markdown-body { max-width:var(--measure-prose); }
-.feedback-message .feedback-reply-actions, .feedback-message .feedback-related, .feedback-message > [role=status], .feedback-reply-form { padding:0 14px 12px; }
-.feedback-message .feedback-related { display:flex; align-items:center; flex-wrap:wrap; gap:2px 8px; margin:0; border:0; font-size:var(--type-control); color:var(--muted-foreground); }
+.feedback-message .feedback-reply-actions, .feedback-message > [role=status], .feedback-reply-form { padding:0 14px 12px; }
 .feedback-reply-form label { display:block; margin-bottom:6px; font-weight:600; font-size:var(--type-control); }
 .feedback-message[data-quiet] { background:transparent; border-style:dashed; }
 .feedback-message[data-quiet] .github-comment-body { font-size:var(--type-control); color:var(--muted-foreground); }
@@ -5622,7 +5614,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 }
 /* Events without a card sit closer together than conversations. */
 .timeline-item:has(> .timeline-header[data-quiet]):not(:has(> .timeline-content)) { padding-bottom:12px; }
-.feedback-message .feedback-related button { display:inline-flex; width:auto; padding:0 4px; border:0; font-family:var(--font-mono); font-size:var(--type-code); }
 
 /* The Conversation page (#418): the PR header, then a band with the briefing and merge readiness that scrolls away,
    then the timeline beside the PR's details. The page scrolls as one; the timeline's bar and the details column stay
@@ -5737,3 +5728,27 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-merge-toggle:focus-visible { outline:2px solid var(--ring); outline-offset:2px; border-radius:4px; }
 .feedback-merge-toggle code { font-family:var(--font-mono); font-size:var(--type-caption); }
 .feedback-merge-group > .feedback-commits { margin-left:20px; }
+
+/* A review's code threads: a heading, one row per file, a chip per line. The review's own text stays prose above it. */
+.feedback-review-index { margin:0 16px 4px; padding-top:10px; border-top:1px solid var(--border); }
+/* Rows stay a reading width, so a file's lines sit near its name on a wide page. */
+.feedback-review-files, .feedback-review-index-head { max-width:52rem; }
+.feedback-review-index-head { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 6px; font-size:var(--type-control); font-weight:600; color:var(--foreground); }
+.feedback-review-files { display:grid; gap:2px; margin:0; padding:0; list-style:none; }
+.feedback-review-file { display:flex; align-items:center; flex-wrap:wrap; gap:4px 12px; min-height:28px; min-width:0; }
+.feedback-review-path { display:flex; align-items:center; gap:8px; flex:1 1 16rem; min-width:0; font-size:var(--type-control); }
+.feedback-review-name { flex:none; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:550; }
+.feedback-review-folder { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; color:var(--muted-foreground); font-size:var(--type-caption); }
+.feedback-review-lines { display:flex; flex-wrap:wrap; gap:4px; flex:0 1 auto; max-width:100%; }
+.feedback-line-chip { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px; border:1px solid var(--border); border-radius:6px; background:var(--background); color:var(--foreground); font-family:var(--font-mono); font-size:var(--type-code); font-variant-numeric:tabular-nums; cursor:pointer; }
+.feedback-line-chip svg { flex:none; }
+.feedback-line-chip[data-state=unresolved] svg { color:var(--ring); }
+.feedback-line-chip[data-state=resolved] { color:var(--muted-foreground); }
+.feedback-line-chip[data-state=resolved] svg { color:var(--color-success); }
+.feedback-line-chip:hover { border-color:color-mix(in oklab, var(--ring) 50%, var(--border)); background:var(--accent); }
+.feedback-line-chip:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+.feedback-review-more { margin:2px 0 0 -8px; color:var(--muted-foreground); }
+.feedback-message-footer { display:flex; align-items:center; gap:4px; padding:0 8px 6px; }
+.feedback-message-footer button { color:var(--muted-foreground); }
+.feedback-message-footer button:hover { color:var(--foreground); }
+.feedback-message .feedback-review-index + .feedback-message-footer { padding-top:4px; }

@@ -577,3 +577,23 @@ void test('Feedback previews read bot HTML as text, and find mentions, anchors a
   const out = chronologicalThread({ comments: [{ createdAt: '2026-11-02' }, { createdAt: '2026-11-01' }] });
   assert.deepEqual(out.comments.map((c) => c.createdAt), ['2026-11-01', '2026-11-02']);
 });
+
+test('a review indexes its code threads by file path, then line, with line-less threads last', async () => {
+  const { threadIndex } = await import('../lib/feedback-timeline');
+  const threads = [
+    { id: 'a', path: 'src/b.ts', line: 39 },
+    { id: 'b', path: 'CLAUDE.md', line: 21 },
+    { id: 'c', path: 'src/b.ts', line: undefined },
+    { id: 'd', path: 'src/a.ts', line: 14 },
+    { id: 'e', path: 'src/b.ts', line: 15 },
+  ];
+  const files = threadIndex(threads, (t) => t.path, (t) => t.line);
+  assert.deepEqual(
+    files.map((f) => [f.path, f.lines.map((l) => l.thread.id)]),
+    [
+      ['CLAUDE.md', ['b']],
+      ['src/a.ts', ['d']],
+      ['src/b.ts', ['e', 'a', 'c']],
+    ]
+  );
+});

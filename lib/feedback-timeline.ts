@@ -162,3 +162,18 @@ export function botSummary(texts: string[], limit = 3): string {
   const shown = texts.filter(Boolean).slice(0, limit);
   return shown.join(', ') + (texts.length > limit ? ', …' : '');
 }
+
+/** A review's code threads, one row per file: files by path, each file's threads by line, threads with no line last. */
+export function threadIndex<T>(threads: T[], path: (thread: T) => string, line: (thread: T) => number | null | undefined) {
+  const files = new Map<string, { thread: T; line: number | undefined }[]>();
+  for (const thread of threads) {
+    const key = path(thread);
+    files.set(key, [...(files.get(key) ?? []), { thread, line: line(thread) ?? undefined }]);
+  }
+  return [...files]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([path, lines]) => ({ path, lines: lines.sort((a, b) => (a.line ?? Infinity) - (b.line ?? Infinity)) }));
+}
+
+/** A review lists this many files before Show all; a list one file longer shows whole. */
+export const INDEX_FILES = 4;

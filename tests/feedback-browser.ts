@@ -141,7 +141,7 @@ void app.whenReady().then(async () => {
     // A review: its verdict, related threads, and a reply that fails and then posts.
     await show('r-120');
     assert.match(await js<string>(`${entry('r-120')}.textContent`), /Changes requested/);
-    assert.ok(await js(`!!${entry('r-120')}.querySelector('.feedback-related')`));
+    assert.ok(await js(`!!${entry('r-120')}.querySelector('.feedback-review-index')`));
     await capture('review-light');
     await click('Reply', entry('r-120'));
     await wait(`!!${entry('r-120')}.querySelector('textarea')`);

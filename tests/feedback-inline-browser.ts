@@ -76,7 +76,12 @@ void app.whenReady().then(async () => {
       const long='@@ -38,2 +38,2 @@\n const value37 = 37;\n const value38 = 38; // '+'a retry generation note that runs far past the edge of any laptop window, '.repeat(6);
       const thread=(id,line,comments,extra={})=>({id,path:'src/worker.ts',line,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:false,viewerCanResolve:true,viewerCanUnresolve:false,comments,...extra});
       for(const [index,m] of stack.subject.members.entries()){
-        if(index===1){window.feedbackData.set(m.url,{headSha:m.headSha,baseSha:m.baseSha,checkedAt:Date.now(),threads:[],feedback:{comments:[],reviews:[{...c('r-lee','lee',200,'Read through the queue changes; no blockers from me.'),state:'COMMENTED',submittedAt:at(200)}],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN',earlierEvents:true,
+        // An approval of "nits" with nine code comments across seven files (klanggames/seed): one index row per file.
+        const conditions='Assets/Scripts/Access/Conditions/';
+        const nits=[[conditions+'AgentHasHaulAccessCondition.cs',15],[conditions+'AgentHasHaulAccessCondition.cs',14],[conditions+'AgentHasIssuerAccessCondition.cs',22],[conditions+'IssuerIsConsciousCondition.cs',21],
+          [conditions+'IssuerHasReservationCapacityCondition.cs',13],['CLAUDE.md',21],['Assets/Scripts/Access/PhysicalAccessControl.cs',62],['Assets/Scripts/Access/PhysicalAccessControl.cs',70],[conditions+'AgentIsOnShiftCondition.cs',8]]
+          .map(([path,line],i)=>thread('t-nit-'+i,line,[c('nit-'+i,'EmmetOT',218+i*0.1,'Nit: name this for what it checks.',{diffHunk:'@@ -'+line+',2 +'+line+',2 @@\n context\n-old line\n+new line',pullRequestReview:{id:'r-emmet'}})],{path,...(i===7?{isResolved:true,viewerCanResolve:false,viewerCanUnresolve:true,resolvedBy:{login:'oddur'}}:{})}));
+        if(index===1){window.feedbackData.set(m.url,{headSha:m.headSha,baseSha:m.baseSha,checkedAt:Date.now(),threads:nits,feedback:{comments:[],reviews:[{...c('r-lee','lee',200,'Read through the queue changes; no blockers from me.'),state:'COMMENTED',submittedAt:at(200)},{...c('r-emmet','EmmetOT',220,'nits'),state:'APPROVED',submittedAt:at(220)}],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN',earlierEvents:true,
           events:[{kind:'closed',id:'e-close',at:at(210),actor:'lee'},{kind:'reopened',id:'e-reopen',at:at(211),actor:'oddur'},{kind:'merged',id:'e-merge',at:at(4500),actor:'maya'}]}});continue;}
         if(index>0){window.feedbackData.set(m.url,{headSha:m.headSha,baseSha:m.baseSha,checkedAt:Date.now(),threads:[],feedback:{comments:[],reviews:[],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN',events:[]}});continue;}
         window.feedbackMember=m;
@@ -136,7 +141,7 @@ void app.whenReady().then(async () => {
     // Hide GitHub Actions stays a toggle; turned off, the three CI comments in a row collapse into one quiet row.
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);
     await js("document.querySelector('.feedback-actions-filter input').click()");
-    await wait("document.querySelector('.feedback-filters button').textContent.trim()==='All 12'");
+    await wait("document.querySelector('.feedback-filters button').textContent.trim()==='All 22'");
 
     // The divider marks the first new conversation, and the timeline opens there.
     await wait("!!document.querySelector('.feedback-entry[data-entry-type=divider]')");
@@ -233,6 +238,35 @@ void app.whenReady().then(async () => {
     await capture('big-push-expanded', () => js(`(()=>{const p=document.querySelector('[data-feedback-scroller]');const e=${big};if(e)p.scrollTop+=e.getBoundingClientRect().top-p.getBoundingClientRect().top-60})()`));
     await js(`${big}.querySelector('.feedback-group-toggle').click()`);
     await wait(`${big}?.querySelector('.feedback-group-toggle')?.textContent==='Show all 60 commits'`);
+
+    // A review's code comments: a heading, one row per file by path, a chip per line; six or more files show four.
+    await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<120;i++){const e=${entry('r-emmet')};if(e){t.scrollTop+=e.getBoundingClientRect().top-t.getBoundingClientRect().top-60;return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
+    await wait(`!!${entry('r-emmet')}?.querySelector('.feedback-review-index')`);
+    const review = entry('r-emmet');
+    assert.match(await js<string>(`${review}.querySelector('.feedback-review-index-head').textContent`), /^9 comments on code8 unresolved$/);
+    const rowsOf = () => js<string[]>(`[...${review}.querySelectorAll('.feedback-review-file')].map(r=>r.querySelector('.feedback-review-name').textContent+' '+[...r.querySelectorAll('.feedback-line-chip')].map(b=>b.dataset.state[0]+b.firstChild.nextSibling.textContent).join(','))`);
+    assert.deepEqual(await rowsOf(), ['AgentHasHaulAccessCondition.cs uL14,uL15', 'AgentHasIssuerAccessCondition.cs uL22', 'AgentIsOnShiftCondition.cs uL8', 'IssuerHasReservationCapacityCondition.cs uL13'], 'Files by path, lines in order');
+    assert.equal(await js(`${review}.querySelector('.feedback-review-more').getAttribute('aria-expanded')`), 'false');
+    assert.equal(await js(`${review}.querySelector('.feedback-review-more').textContent`), 'Show all 7 files');
+    assert.equal(await js(`${review}.querySelector('.feedback-review-folder').textContent`), 'Assets/Scripts/Access/Conditions');
+    assert.equal(await js(`${review}.querySelector('.feedback-message-footer button').textContent`), 'Reply', 'Reply is a quiet footer action');
+    await capture('review-index', () => js(`(()=>{const t=document.querySelector('[data-feedback-scroller]'),e=${review};if(e)t.scrollTop+=e.getBoundingClientRect().top-document.querySelector('.feedback-toolbar').getBoundingClientRect().bottom-12})()`));
+    await js(`${review}.querySelector('.feedback-review-more').click()`);
+    await wait(`${review}?.querySelectorAll('.feedback-review-file').length===7`);
+    assert.deepEqual((await rowsOf()).slice(4), ['IssuerIsConsciousCondition.cs uL21', 'PhysicalAccessControl.cs uL62,rL70', 'CLAUDE.md uL21']);
+    assert.match(await js<string>(`[...${review}.querySelectorAll('.feedback-line-chip')].find(b=>b.dataset.state==='resolved').textContent`), /L70 in PhysicalAccessControl\.cs, resolved/, 'A chip names its state in words, not colour alone');
+    for (const width of [760, 1280]) {
+      win.setContentSize(width, 800);
+      await sleep(300);
+      const spill = await js<string[]>(`(()=>{const card=${review}.querySelector('.feedback-entry-card').getBoundingClientRect();return [...${review}.querySelectorAll('.feedback-review-file, .feedback-line-chip, .feedback-review-path')].filter(e=>{const r=e.getBoundingClientRect();return r.right>card.right+0.5||r.left<card.left-0.5}).map(e=>e.className)})()`);
+      assert.deepEqual(spill, [], `Nothing in the review index spills out at ${width}px`);
+      assert.ok(await js(`${review}.scrollWidth<=${review}.clientWidth+1`), `The review does not scroll sideways at ${width}px`);
+    }
+    await capture('review-index-all', () => js(`(()=>{const t=document.querySelector('[data-feedback-scroller]'),e=${review};if(e)t.scrollTop+=e.getBoundingClientRect().top-document.querySelector('.feedback-toolbar').getBoundingClientRect().bottom-12})()`));
+    // A chip goes to its thread, which becomes the current item.
+    await js(`[...${review}.querySelectorAll('.feedback-line-chip')].find(b=>b.textContent.startsWith('L62')).click()`);
+    await wait(`document.querySelector('.feedback-entry[aria-current=true]')?.dataset.feedbackId==='t-nit-6'`);
+    await wait(`(()=>{const e=${entry('t-nit-6')};return !!e&&Math.abs(e.getBoundingClientRect().top-document.querySelector('.feedback-toolbar').getBoundingClientRect().bottom)<40})()`);
 
     // Bots: collapsed, then expanded in place.
     const botsKey = await js<string>(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const b=document.querySelector('.feedback-entry[data-entry-type=bots]');if(b){b.scrollIntoView({block:'start'});return b.dataset.entryKey}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
