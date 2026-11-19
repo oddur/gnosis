@@ -4631,10 +4631,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-source svg { width:13px; height:13px; flex:none; }
 .feedback-conversation-header h2:focus-visible { outline:2px solid var(--ring); outline-offset:4px; border-radius:2px; }
 .feedback-conversation-header > button { flex:none; }
-.feedback-code { margin:0 0 20px; padding:12px 0; border:1px solid var(--border); border-radius:6px; background:var(--muted); overflow:auto; font-size:var(--type-control); line-height:1.6; tab-size:4; }
-.feedback-code > span { display:block; padding:0 12px; white-space:pre; min-width:max-content; }
-.feedback-code > span[data-change=added] { background:var(--status-success-bg); }
-.feedback-code > span[data-change=removed] { background:var(--status-danger-bg); }
 .feedback-message { font-size:var(--type-body); line-height:1.6; }
 .feedback-message > header { display:flex; align-items:center; flex-wrap:wrap; gap:10px; font-size:var(--type-caption); margin-bottom:16px; }
 .feedback-message > header time { color:var(--muted-foreground); }
@@ -4663,7 +4659,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .feedback-workspace[data-conversation-open=true] .feedback-list { position:absolute; inset:0; visibility:hidden; pointer-events:none; }
   .feedback-workspace[data-conversation-open=false] .feedback-conversation { display:none; }
   .feedback-back { display:inline-flex; }
-  .feedback-workspace[data-conversation-open=true] .feedback-filters, .feedback-workspace[data-conversation-open=true] .feedback-pr-filter, .feedback-workspace[data-conversation-open=true] .feedback-actions-filter { display:none; }
+  .feedback-workspace[data-conversation-open=true] .feedback-filters, .feedback-workspace[data-conversation-open=true] .feedback-order, .feedback-workspace[data-conversation-open=true] .feedback-pr-filter, .feedback-workspace[data-conversation-open=true] .feedback-actions-filter { display:none; }
   .feedback-conversation-header { flex-wrap:wrap; padding:12px 16px; }
   .feedback-conversation-header > div { flex-basis:100%; order:1; }
   .feedback-conversation-header > button:last-child { margin-left:auto; }
@@ -4728,8 +4724,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-conversation-header .feedback-source { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
 .feedback-conversation-header .feedback-source svg { display:inline;vertical-align:-2px; }
 .feedback-thread-navigation > button:last-child:not([aria-label]) { margin-left:auto; }
-.feedback-thread-detail { display:flex; flex-direction:column; gap:16px; }
-.feedback-code-context .feedback-code { margin-bottom:0;padding-block:6px;line-height:1.5; }
 .feedback-full-file { margin-top:12px;scroll-margin-top:48px; }
 .feedback-full-file > p { font-size:var(--type-caption);line-height:1.5;margin-bottom:8px; }
 .feedback-full-file > p[role=status] { display:flex;align-items:center;gap:8px; }
@@ -4770,13 +4764,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 .feedback-conversation-body { padding:16px;overflow:auto;flex:0 1 auto;min-height:0;overscroll-behavior:contain; }
 
-.feedback-code-context { min-width:0;margin:0;border-top:1px solid var(--border);padding-top:12px; }
 
-.feedback-code-heading { display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--type-control);font-weight:500;line-height:1.5;list-style:none;padding-block:4px; }
 
 .feedback-response-dock { flex-shrink:0;min-height:48px;display:flex;align-items:center;padding:8px 16px;border-top:1px solid var(--border);background:var(--background); }
 
-.feedback-conversation > :is(.feedback-conversation-header,.feedback-conversation-body,.feedback-response-dock,.feedback-resolution) { width:100%;max-width:880px;align-self:flex-start; }
+.feedback-conversation > :is(.feedback-conversation-header,.feedback-conversation-body,.feedback-response-dock,.feedback-resolution) { width:100%;max-width:1040px;align-self:flex-start; }
 .feedback-conversation-header > div { flex:1 1 200px;min-width:0; }
 .feedback-file-directory { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-foreground);font-size:var(--type-caption);line-height:1.5;margin-top:2px; }
 .feedback-row-file { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
@@ -4790,16 +4782,45 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-row[data-event=true] { gap:4px;padding-block:10px; }
 .feedback-row[data-event=true] .feedback-row-title { font-size:var(--type-control);font-weight:500; }
 .feedback-row-meta > span:first-child { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0; }
-.feedback-code-heading::-webkit-details-marker { display:none; }
-.feedback-code-heading > svg { flex-shrink:0; }
-.feedback-code-context[open] > .feedback-code-heading > svg { transform:rotate(90deg); }
-.feedback-code-tools { display:flex;justify-content:flex-end;margin-bottom:4px; }
-.feedback-conversation .github-thread { margin:0;border:0;background:transparent; }
-.feedback-conversation .github-thread > summary { padding:0 0 12px; }
-.feedback-conversation .github-thread-comments article { padding:16px 0; }
 .feedback-conversation .github-thread[data-resolved=true] .github-comment-body { color:var(--foreground); }
-.feedback-conversation .github-thread form { padding-inline:0; }
 .feedback-conversation .github-thread-state { white-space:nowrap; }
+
+/* Feedback reads a code thread where it belongs (FeedbackCodeThread): in the shared diff, framed as an Explanation
+   topic's file is, with the thread's card under the line it is anchored to. The conversation reads oldest first: the
+   opening comment, then its replies indented on a quiet rail. Other threads on the file show at their lines as one-line
+   links, and in a list below the code. */
+.feedback-thread-detail { display:flex; flex-direction:column; gap:20px; }
+.feedback-code-thread { flex:none; }
+.feedback-code-thread .changes-file-stats > [data-earlier] { color:var(--file-fg); font-weight:500; }
+.feedback-code-note { padding:8px 14px; border-bottom:1px solid var(--border); background:var(--card); color:var(--muted-foreground); font-size:var(--type-caption); line-height:1.5; }
+.feedback-code-unplaced { padding:4px 0 8px; }
+.feedback-code-thread .github-thread { margin:10px 12px 12px; max-width:min(100% - 24px, 860px); }
+.feedback-code-thread .github-thread > summary { padding:8px 12px; min-height:36px; }
+.feedback-code-thread .github-thread-comments > article { padding:12px 14px; }
+.feedback-code-thread .github-thread-comments > article + article { margin-left:30px; padding-left:14px; border-top:0; border-left:1px solid var(--border); }
+.feedback-code-thread .github-thread form { padding:4px 14px 12px; }
+.feedback-code-thread .github-thread-actions button, .feedback-code-thread .github-thread-comments header button { min-height:24px; }
+.feedback-sibling-inline { display:flex; align-items:center; gap:8px; width:calc(100% - 24px); max-width:860px; min-height:32px; margin:6px 12px; padding:4px 10px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--foreground); font-family:var(--font-sans); font-size:var(--type-control); line-height:1.4; text-align:left; cursor:pointer; }
+.feedback-sibling-inline:hover { background:var(--muted); }
+.feedback-sibling-inline:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+.feedback-sibling-inline > svg, .feedback-sibling-inline > strong { flex:none; }
+.feedback-sibling-inline > span:not(.feedback-sibling-state) { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted-foreground); }
+.feedback-sibling-state { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--muted-foreground); font-size:var(--type-caption); white-space:nowrap; }
+.feedback-sibling-threads { margin-top:0; }
+.feedback-sibling-line { flex:none; min-width:7ch; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.feedback-related button > span:last-child { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.feedback-order { display:flex; align-items:center; gap:2px; padding-left:8px; border-left:1px solid var(--border); }
+.feedback-row-mention { display:inline-flex; align-items:center; gap:3px; flex:none; color:var(--foreground); font-weight:600; white-space:nowrap; }
+.feedback-row-line { flex:none; margin-left:-6px; font-variant-numeric:tabular-nums; }
+.feedback-row-location .feedback-row-file:has(+ .feedback-row-line) { flex:0 1 auto; }
+.feedback-row-location .feedback-row-line + * { margin-left:auto; }
+.feedback-row-outdated { flex:none; padding:0 5px; border:1px solid var(--border); border-radius:4px; color:var(--foreground); font-size:var(--type-caption); line-height:1.5; }
+.feedback-verdict { display:inline-flex; align-items:center; gap:4px; font-weight:600; color:var(--foreground); }
+.feedback-verdict[data-state=CHANGES_REQUESTED] { color:var(--color-danger); }
+.feedback-verdict[data-state=APPROVED] { color:var(--color-success); }
+.feedback-verdict > svg { flex:none; }
+.feedback-row[aria-current=true] .feedback-verdict { color:inherit; }
+.feedback-message > header .feedback-verdict { padding:1px 8px; border:1px solid currentColor; border-radius:999px; font-size:var(--type-caption); }
 @container (max-width:760px) {
   .feedback-panes { display:block; }
   .feedback-conversation { padding-inline:0; }

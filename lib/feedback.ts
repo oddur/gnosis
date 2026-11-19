@@ -162,3 +162,83 @@ export function responseFeedbackTarget(
       ? reviews[0]
       : (reviews[0] ?? threads[0]);
 }
+
+/**
+ * A comment as one line of plain text, for list previews: GitHub renders HTML in comments, so HTML comments such as
+ * `<!-- linear-linkback -->` and tags such as `<details>` never show as text, and link text stands for its link.
+ */
+export function plainCommentText(body: string): string {
+  return body
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, ' ')
+    .replace(/<\/?[a-zA-Z][^>]*>/g, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\*\*|__|~~|`/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/^[\s#>*-]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Someone else's comment in the conversation names the reader with an @-mention. */
+export function mentionsAccount(item: FeedbackItem, account: string): boolean {
+  const name = account.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const mention = new RegExp(`(^|[^\\w/-])@${name}(?![\\w-])`, 'i');
+  return item.comments.some(
+    (c) => c.author?.login.toLowerCase() !== account.toLowerCase() && !c.isMinimized && mention.test(c.body)
+  );
+}
+
+/**
+ * The line a GitHub diff hunk ends on. GitHub saves each review comment's hunk from its header to the commented
+ * line, so its last line is where the comment was anchored, even after the thread became outdated.
+ */
+export function diffHunkAnchor(hunk: string | undefined): { line: number; side: 'LEFT' | 'RIGHT' } | undefined {
+  const lines = hunk?.replace(/\n$/, '').split('\n') ?? [];
+  const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(lines[0] ?? '');
+  if (!match || lines.length < 2) return undefined;
+  let old = Number(match[1]),
+    next = Number(match[2]);
+  let anchor: { line: number; side: 'LEFT' | 'RIGHT' } | undefined;
+  for (const line of lines.slice(1)) {
+    if (line.startsWith('\\')) continue;
+    if (line.startsWith('-')) anchor = { line: old++, side: 'LEFT' };
+    else if (line.startsWith('+')) anchor = { line: next++, side: 'RIGHT' };
+    else {
+      anchor = { line: next++, side: 'RIGHT' };
+      old++;
+    }
+  }
+  return anchor;
+}
+
+export type FeedbackOrder = 'activity' | 'file';
+/**
+ * Latest activity first, as an inbox: new replies and edits rise to the top. File order walks the code: the PR's own
+ * conversation first, oldest first, then code threads by PR, path and line, so Resolve & next moves down the code.
+ */
+export function sortFeedback(items: FeedbackItem[], order: FeedbackOrder): FeedbackItem[] {
+  if (order === 'activity') return [...items].sort((a, b) => feedbackActivity(b).localeCompare(feedbackActivity(a)));
+  const line = (item: FeedbackItem) =>
+    item.thread?.line ?? item.thread?.startLine ?? diffHunkAnchor(item.comments[0]?.diffHunk)?.line ?? 0;
+  return [...items].sort(
+    (a, b) =>
+      Number(!!a.thread) - Number(!!b.thread) ||
+      a.member.number - b.member.number ||
+      (a.thread && b.thread
+        ? a.thread.path.localeCompare(b.thread.path) || line(a) - line(b)
+        : (a.comments[0]?.createdAt ?? '').localeCompare(b.comments[0]?.createdAt ?? ''))
+  );
+}
+
+/** A thread's comments oldest first. GitHub sends them in order; saved and optimistic copies may not be. */
+export function chronologicalThread<T extends { comments: { createdAt: string }[] }>(thread: T): T {
+  const sorted = thread.comments.every((c, i, all) => !i || all[i - 1].createdAt <= c.createdAt);
+  return sorted
+    ? thread
+    : { ...thread, comments: [...thread.comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) };
+}

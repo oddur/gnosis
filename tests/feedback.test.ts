@@ -465,3 +465,39 @@ void test('the Changes file tree counts conversations open on the current diff',
   assert.equal(isOpenOnCurrentDiff({ ...conversation('done', by('jan', 'a')), isResolved: true }), false);
   assert.equal(isOpenOnCurrentDiff(conversation('draft', by('oddur', 'a', { pullRequestReview: { id: 'p', state: 'PENDING' } }))), false);
 });
+
+void test('Feedback previews read bot HTML as text, and find mentions, anchors and order', async () => {
+  const { plainCommentText, mentionsAccount, diffHunkAnchor, sortFeedback, chronologicalThread } = await import('../lib/feedback');
+  // klanggames/seed#36138: Linear's link-back comment showed its raw tags in the list.
+  assert.equal(
+    plainCommentText('<!-- linear-linkback -->\n<details>\n<summary><a href="https://linear.app/x">SEED-412 Confirm uploads</a></summary>\n<p>Linked &amp; tracked.</p>\n</details>'),
+    'SEED-412 Confirm uploads Linked & tracked.'
+  );
+  assert.equal(plainCommentText('## Keep [the guard](https://x) on **`retries`**'), 'Keep the guard on retries');
+  type Item = Parameters<typeof mentionsAccount>[0];
+  const item = (body: string, login = 'sam') =>
+    ({ id: 'i', member, kind: 'comment', comments: [{ ...comment, body, author: { login, avatarUrl: '' } }], relatedThreads: [] }) as Item;
+  assert.equal(mentionsAccount(item('@Oddur can you check?'), 'oddur'), true);
+  assert.equal(mentionsAccount(item('cc @oddur-bot'), 'oddur'), false);
+  assert.equal(mentionsAccount(item('see org/@oddur'), 'oddur'), false);
+  assert.equal(mentionsAccount(item('@oddur note to self', 'oddur'), 'oddur'), false, 'Your own comments do not mention you');
+  // GitHub's hunk ends on the commented line, on either side.
+  assert.deepEqual(diffHunkAnchor('@@ -33,7 +33,7 @@\n a\n b\n-c\n+d'), { line: 35, side: 'RIGHT' });
+  assert.deepEqual(diffHunkAnchor('@@ -10,3 +10,2 @@ fn()\n a\n-b'), { line: 11, side: 'LEFT' });
+  assert.equal(diffHunkAnchor('not a hunk'), undefined);
+  const thread = (id: string, path: string, line: number | null, at: string) =>
+    ({
+      id,
+      member,
+      kind: 'thread',
+      comments: [{ ...comment, createdAt: at, updatedAt: at, diffHunk: '@@ -1,1 +1,2 @@\n a\n+b' }],
+      relatedThreads: [],
+      thread: { id, path, line, startLine: null, diffSide: 'RIGHT', isResolved: false, isOutdated: line === null, viewerCanResolve: true, viewerCanUnresolve: false, comments: [] },
+    }) as Item;
+  const general = { ...item('Looks good'), id: 'g', comments: [{ ...comment, createdAt: '2026-11-01T09:00:00Z', updatedAt: '2026-11-01T09:00:00Z' }] };
+  const items = [thread('b20', 'b.ts', 20, '2026-11-05T00:00:00Z'), thread('a9', 'a.ts', 9, '2026-11-02T00:00:00Z'), general, thread('b-old', 'b.ts', null, '2026-11-04T00:00:00Z')];
+  assert.deepEqual(sortFeedback(items, 'file').map((i) => i.id), ['g', 'a9', 'b-old', 'b20'], 'PR conversation first, then path and line');
+  assert.deepEqual(sortFeedback(items, 'activity').map((i) => i.id), ['b20', 'b-old', 'a9', 'g']);
+  const out = chronologicalThread({ comments: [{ createdAt: '2026-11-02' }, { createdAt: '2026-11-01' }] });
+  assert.deepEqual(out.comments.map((c) => c.createdAt), ['2026-11-01', '2026-11-02']);
+});

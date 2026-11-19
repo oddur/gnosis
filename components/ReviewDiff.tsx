@@ -49,6 +49,8 @@ interface Props {
   stickyUnder?: RefObject<HTMLElement | null>;
   /** The file is expanded: collapsed files read nothing. */
   active?: boolean;
+  /** The Pierre theme, when the hunks carry no saved highlighting: Feedback's GitHub hunks use the reader's code theme. */
+  theme?: string;
 }
 
 /** The Pierre theme a topic's code was highlighted in, from its saved HTML: the file header and bars take its palette. */
@@ -88,6 +90,7 @@ export function ReviewDiff({
   source,
   stickyUnder,
   active = true,
+  theme,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
   // Without the file's status, a topic whose saved hunks add (or delete) the whole file is an added (or deleted) file,
@@ -185,7 +188,7 @@ export function ReviewDiff({
   const single = fileStatus === 'added' || fileStatus === 'deleted';
   const unified = single || diffLayout === 'unified';
   const options: FileDiffOptions<Location, undefined> = {
-    theme: reviewDiffTheme(hunks),
+    theme: theme ?? reviewDiffTheme(hunks),
     preferredHighlighter: DIFF_HIGHLIGHTER,
     themeType: 'dark',
     diffStyle: single ? 'unified' : diffLayout,

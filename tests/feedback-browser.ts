@@ -81,7 +81,7 @@ void app.whenReady().then(async () => {
     await capture('stack-list-light');
     await js('document.querySelector(\'[data-feedback-id="t-120"]\').click()');
     await wait(
-      "!!document.querySelector('.feedback-code') && !document.querySelector('[data-feedback-id=\"t-120\"]').classList.contains('is-unread')"
+      "!!document.querySelector('.feedback-code-thread .changes-diff .github-thread') && !document.querySelector('[data-feedback-id=\"t-120\"]').classList.contains('is-unread')"
     );
     assert.match(await js<string>("document.querySelector('.feedback-conversation').textContent"), /pending owner/);
     await capture('thread-light');
@@ -174,7 +174,7 @@ void app.whenReady().then(async () => {
     );
     await capture('review-dark');
     await js('document.querySelector(\'[data-feedback-id="t-121"]\').click()');
-    await wait("document.querySelector('.feedback-code-heading').textContent.includes('earlier revision')");
+    await wait("document.querySelector('.feedback-code-thread .changes-file-header')?.textContent.includes('Earlier revision')");
     assert.equal(
       await js(
         "[...document.querySelectorAll('.feedback-conversation button')].some(b=>b.textContent==='Open in Changes')"
@@ -186,7 +186,7 @@ void app.whenReady().then(async () => {
     await js('window.failFeedback=true');
     await js('document.querySelector(\'[aria-label="Refresh feedback"]\').click()');
     await wait("document.querySelector('.feedback-notice')?.textContent.includes('Could not refresh')");
-    assert.ok(await js("!!document.querySelector('.feedback-code')"), 'Refresh failure keeps selected cached context');
+    assert.ok(await js("!!document.querySelector('.feedback-code-thread .changes-diff')"), 'Refresh failure keeps selected cached context');
     await capture('cached-error-dark');
     win.setContentSize(640, 800);
     await new Promise((r) => setTimeout(r, 200));
@@ -299,7 +299,7 @@ void app.whenReady().then(async () => {
     await click('Reply');
     await js("(()=>{const input=document.querySelector('.feedback-conversation textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Keep this reply while browsing.');input.dispatchEvent(new Event('input',{bubbles:true}));})()");
     await js("document.querySelector('[data-feedback-id=\"t-121\"]').click()");
-    await wait("document.querySelector('.feedback-code-heading')?.textContent.includes('earlier revision')");
+    await wait("document.querySelector('.feedback-code-thread .changes-file-header')?.textContent.includes('Earlier revision')");
     await js("document.querySelector('[data-feedback-id=\"t-120\"]').click()");
     await wait("document.querySelector('.feedback-conversation textarea')?.value==='Keep this reply while browsing.'");
     await js('window.failFeedbackWrite=true');
@@ -378,8 +378,11 @@ void app.whenReady().then(async () => {
     win.setContentSize(1920,1100);
     await new Promise(r=>setTimeout(r,150));
     assert.ok(await js("document.querySelector('.feedback-list').getBoundingClientRect().width<=360"),'Wide windows keep the list bounded');
-    assert.equal(await js("document.querySelector('.feedback-code-context').open"),false,'Earlier resolved code starts collapsed');
-    assert.ok(await js("document.querySelector('.feedback-response-dock').getBoundingClientRect().bottom<innerHeight-200"),'Short conversations keep response controls nearby');
+    assert.ok(await js("!!document.querySelector('.feedback-code-thread .changes-diff .github-thread[data-resolved=true]')"),'A resolved earlier thread still reads in its code');
+    // The code now reads above the thread, so the conversation is taller than before: the dock still follows it
+    // directly instead of sitting at the bottom of the window.
+    const dock = await js<{gap:number;scrolls:boolean}>("(()=>{const d=document.querySelector('.feedback-response-dock').getBoundingClientRect(),b=document.querySelector('.feedback-conversation-body');return {gap:d.top-b.getBoundingClientRect().bottom,scrolls:b.scrollHeight>b.clientHeight+1}})()");
+    assert.ok(Math.abs(dock.gap)<2 && !dock.scrolls,'Short conversations keep response controls nearby: '+JSON.stringify(dock));
     assert.ok(await js("[...document.querySelectorAll('.feedback-row-state')].every(el=>el.getBoundingClientRect().height<24)"),'Resolution labels stay on one line');
     assert.equal(await js("document.querySelector('[data-feedback-id=\"t-120\"] .feedback-row-file').textContent"),'ClientLocalizationCompilation.asset');
     await capture('refined-long-path-wide-dark');

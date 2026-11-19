@@ -2,12 +2,16 @@ import { markdownHeadings } from './MarkdownHeadings';
 import { Children, isValidElement, memo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
 import { MarkdownImage } from './Markdown';
 import { nameMarkdownTasks } from '../lib/markdown-tasks';
 import { countRender } from '../lib/render-count';
 
 const REMARK = [remarkGfm];
-const REHYPE = [nameMarkdownTasks];
+// GitHub renders the HTML comments carry, such as a bot's <details> disclosure, and drops what is unsafe. The same
+// policy as PR descriptions (Markdown.tsx): raw HTML, then GitHub's sanitize schema. HTML comments are dropped.
+const REHYPE = [rehypeRaw, rehypeSanitize, nameMarkdownTasks];
 
 const commentComponents: Components = {
   ...markdownHeadings,
@@ -49,7 +53,6 @@ export const CommentMarkdown = memo(function CommentMarkdown({ children }: { chi
       <ReactMarkdown
         remarkPlugins={REMARK}
         rehypePlugins={REHYPE}
-        skipHtml
         components={commentComponents}
       >
         {children}

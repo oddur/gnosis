@@ -1,12 +1,12 @@
 import { isResponseThread, isUnresolvedThread } from '../lib/response-needed';
 import { createPortal } from 'react-dom';
-import { FeedbackCodeContext } from './FeedbackCodeContext';
+import { FeedbackCodeThread } from './FeedbackCodeThread';
 import type { Preferences } from '../lib/types';
 import { Popover } from 'radix-ui';
 import { SearchableSelect } from './SearchableSelect';
 import { FileTypeIcon } from './FileTypeIcon';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, FileCode, MessageSquare, RefreshCw, Send, X, Reply } from 'lucide-react';
+import { ArrowLeft, ArrowRight, AtSign, Check, CircleAlert, CircleCheck, FileCode, MessageSquare, RefreshCw, Send, X, Reply } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from './ui/button';
 import { GitHubAuthor } from './GitHubAuthor';
@@ -27,7 +27,12 @@ import {
   feedbackFingerprint,
   feedbackReviewers,
   feedbackStateLabel,
-  feedbackActivity,
+  chronologicalThread,
+  diffHunkAnchor,
+  mentionsAccount,
+  plainCommentText,
+  sortFeedback,
+  type FeedbackOrder,
   type FeedbackItem,
 } from '../lib/feedback';
 import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
@@ -41,15 +46,24 @@ import { optimisticWrite } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
 
 const excerpt = (item: FeedbackItem) =>
-  (item.comments[0]?.isMinimized ? minimizedLabel(item.comments[0]) : item.comments[0]?.body)
-    .replace(/^[#>*\s]+/, '')
-    .replace(/\s+/g, ' ')
-    .slice(0, 180) ||
+  (item.comments[0]?.isMinimized ? minimizedLabel(item.comments[0]) : plainCommentText(item.comments[0]?.body ?? '')).slice(0, 180) ||
   ({ APPROVED: 'Approved this PR', CHANGES_REQUESTED: 'Requested changes', DISMISSED: 'Review dismissed' }[
     item.state ?? ''
   ] ??
     'Commented on this PR');
 const fileName = (path: string) => path.split('/').at(-1) || path;
+/** A review's verdict in words and a symbol, never colour alone. */
+function Verdict({ state }: { state?: string }) {
+  const Icon = state === 'APPROVED' ? CircleCheck : state === 'CHANGES_REQUESTED' ? CircleAlert : MessageSquare;
+  return (
+    <span className="feedback-verdict" data-state={state}>
+      <Icon size={13} aria-hidden="true" />
+      {feedbackStateLabel(state)}
+    </span>
+  );
+}
+const lineOf = (item: FeedbackItem) =>
+  item.thread?.line ?? diffHunkAnchor(item.comments[0]?.diffHunk)?.line;
 const kindLabel = (item: FeedbackItem) =>
   item.thread
     ? item.thread.isResolved
@@ -97,6 +111,7 @@ export function PrFeedbackView({
   const [filter, setFilter] = useSessionDraft<'all' | 'unread' | 'unresolved'>(`feedback-filter:${scope}`, 'all');
   const [selectedKey, setSelectedKey] = useSessionDraft<string | undefined>(`feedback-selection:${scope}`, undefined);
   const [prUrl, setPrUrl] = useState(initialPrUrl ?? '');
+  const [order, setOrder] = useSessionDraft<FeedbackOrder>(`feedback-order:${account}`, 'activity');
   const [, rerender] = useState(0);
   const [savingOptions, setSavingOptions] = useState(false);
   const [optionsError, setOptionsError] = useState('');
@@ -119,9 +134,10 @@ export function PrFeedbackView({
   const returnFocusKey = useRef<string | undefined>(undefined);
   const writeLock = useRef(false);
   const readPending = useRef(new Set<string>());
-  const all = subject.members
-    .flatMap((member) => feedbackItems(member, discussions.values[member.url]))
-    .sort((a, b) => feedbackActivity(b).localeCompare(feedbackActivity(a)));
+  const all = sortFeedback(
+    subject.members.flatMap((member) => feedbackItems(member, discussions.values[member.url])),
+    order
+  );
   const scoped = all.filter(
     (item) => (!prUrl || item.member.url === prUrl) && (!hideGitHubActions || !isGitHubActionsFeedback(item))
   );
@@ -168,6 +184,20 @@ export function PrFeedbackView({
     onIntentHandled?.();
   }, [intent, initialThreadId, scoped]);
   const selected = scoped.find((item) => feedbackKey(item) === selectedKey);
+  // Other conversations on the selected thread's file, in code order: they show at their lines when the code
+  // reaches them, and are listed below it.
+  const siblings = selected?.thread
+    ? sortFeedback(
+        scoped.filter(
+          (item) =>
+            item.thread &&
+            item.id !== selected.id &&
+            item.member.url === selected.member.url &&
+            item.thread.path === selected.thread?.path
+        ),
+        'file'
+      )
+    : [];
   const currentSelection = useRef(selectedKey);
   currentSelection.current = selectedKey;
   const latestScoped = useRef(scoped);
@@ -357,6 +387,24 @@ export function PrFeedbackView({
               >
                 {value === 'all' ? 'All' : value === 'unread' ? 'Unread' : 'Unresolved'}{' '}
                 <span>{value === 'all' ? scoped.length : value === 'unread' ? unread : unresolved}</span>
+              </Button>
+            ))}
+          </div>
+          <div className="feedback-order" role="group" aria-label="Order conversations">
+            {(['activity', 'file'] as const).map((value) => (
+              <Button
+                key={value}
+                variant={order === value ? 'secondary' : 'ghost'}
+                size="sm"
+                aria-pressed={order === value}
+                title={
+                  value === 'activity'
+                    ? 'Newest activity first, including replies and edits'
+                    : 'PR conversation first, then code threads by file and line'
+                }
+                onClick={() => setOrder(value)}
+              >
+                {value === 'activity' ? 'Latest' : 'By file'}
               </Button>
             ))}
           </div>
@@ -581,6 +629,12 @@ export function PrFeedbackView({
                     >
                       <span className="feedback-row-meta">
                         <span>{author}</span>
+                        {mentionsAccount(item, account) && (
+                          <span className="feedback-row-mention">
+                            <AtSign size={12} aria-hidden="true" />
+                            Mentions you
+                          </span>
+                        )}
                         <time title={new Date(last.createdAt).toLocaleString()}>{timeAgo(last.createdAt)}</time>
                         {isUnread(item) && <span className="pr-unread-dot" aria-label="Unread" />}
                       </span>
@@ -591,17 +645,33 @@ export function PrFeedbackView({
                           <span>
                             {last.author?.login ?? 'Deleted account'}
                             {isPendingComment(last) ? ' (pending)' : ''}:{' '}
-                            {last.isMinimized ? minimizedLabel(last) : last.body.replace(/\s+/g, ' ').slice(0, 120)}
+                            {last.isMinimized ? minimizedLabel(last) : plainCommentText(last.body).slice(0, 120)}
                           </span>
                           <span>{item.comments.length} comments</span>
                         </span>
                       )}
                       {(item.thread || item.comments[0]?.body.trim()) && (
                         <span className="feedback-row-location">
-                          {item.thread ? <FileTypeIcon filePath={item.thread.path} /> : <MessageSquare size={13} />}
+                          {item.thread ? (
+                            <FileTypeIcon filePath={item.thread.path} />
+                          ) : item.kind === 'review' ? null : (
+                            <MessageSquare size={13} aria-hidden="true" />
+                          )}
                           <span className="feedback-row-file" title={item.thread?.path}>
-                            {item.thread ? fileName(item.thread.path) : kindLabel(item)}
+                            {item.thread ? (
+                              fileName(item.thread.path)
+                            ) : item.kind === 'review' ? (
+                              <Verdict state={item.state} />
+                            ) : (
+                              kindLabel(item)
+                            )}
                           </span>
+                          {item.thread && lineOf(item) != null && (
+                            <span className="feedback-row-line" aria-label={`line ${lineOf(item)}`}>
+                              :{lineOf(item)}
+                            </span>
+                          )}
+                          {item.thread?.isOutdated && <span className="feedback-row-outdated">Outdated</span>}
                           {item.thread && (
                             <span className="feedback-row-state">
                               {item.thread.isResolved && <Check size={12} aria-hidden="true" />}
@@ -739,41 +809,66 @@ export function PrFeedbackView({
                     )}
                   </nav>
                 </header>
-                <div className="feedback-conversation-body" key={feedbackKey(selected)}>
+                <div className="feedback-conversation-body" key={feedbackKey(selected)} data-diff-scroller="">
                   {selected.thread && (
                     <div className="feedback-thread-detail">
-                      <GitHubReviewThread
-                        thread={selected.thread}
-                        actionContainer={actionHost}
-                        onResolvedNext={nextAfterResolve}
-                        expanded
-                        onAction={async (action, body) => {
-                          const next = await window.electronAPI.reviewThreadAction({
-                            prUrl: selected.member.url,
-                            threadId: selected.id,
-                            action,
-                            body,
-                          });
-                          replaceDiscussionThread(selected.member.url, next);
-                          if (action === 'resolve' && next.viewerCanUnresolve) setLastResolved(selected);
-                          if (action === 'unresolve')
-                            setLastResolved((current) => (current?.id === selected.id ? undefined : current));
-                        }}
-                        onCommentAction={async (commentId, action, body) => {
-                          const next = await window.electronAPI.reviewCommentAction({
-                            prUrl: selected.member.url,
-                            threadId: selected.id,
-                            commentId,
-                            action,
-                            body,
-                          });
-                          replaceDiscussionThread(selected.member.url, next);
-                        }}
-                      />
-                      <FeedbackCodeContext
+                      <FeedbackCodeThread
                         item={selected}
-                        thread={selected.thread}
+                        thread={chronologicalThread(selected.thread)}
                         preferences={preferences}
+                        siblings={siblings.flatMap((item) => (item.thread ? [item.thread] : []))}
+                        renderThread={(thread) => (
+                          <GitHubReviewThread
+                            key={thread.id}
+                            thread={thread}
+                            actionContainer={actionHost}
+                            onResolvedNext={nextAfterResolve}
+                            expanded
+                            onAction={async (action, body) => {
+                              const next = await window.electronAPI.reviewThreadAction({
+                                prUrl: selected.member.url,
+                                threadId: selected.id,
+                                action,
+                                body,
+                              });
+                              replaceDiscussionThread(selected.member.url, next);
+                              if (action === 'resolve' && next.viewerCanUnresolve) setLastResolved(selected);
+                              if (action === 'unresolve')
+                                setLastResolved((current) => (current?.id === selected.id ? undefined : current));
+                            }}
+                            onCommentAction={async (commentId, action, body) => {
+                              const next = await window.electronAPI.reviewCommentAction({
+                                prUrl: selected.member.url,
+                                threadId: selected.id,
+                                commentId,
+                                action,
+                                body,
+                              });
+                              replaceDiscussionThread(selected.member.url, next);
+                            }}
+                          />
+                        )}
+                        renderSibling={(thread) => {
+                          const item = siblings.find((row) => row.id === thread.id);
+                          return item ? (
+                            <button
+                              key={thread.id}
+                              className="feedback-sibling-inline"
+                              data-sibling-inline={thread.id}
+                              data-resolved={thread.isResolved || undefined}
+                              onClick={() => select(item)}
+                            >
+                              <MessageSquare size={13} aria-hidden="true" />
+                              <strong>{item.comments[0]?.author?.login ?? 'Deleted account'}</strong>
+                              <span>{excerpt(item)}</span>
+                              <span className="feedback-sibling-state">
+                                {item.comments.length > 1 && `${item.comments.length} comments · `}
+                                {kindLabel(item)}
+                                {isUnread(item) && <span className="pr-unread-dot" aria-label="Unread" />}
+                              </span>
+                            </button>
+                          ) : null;
+                        }}
                         discussion={{
                           discussions: Object.fromEntries(
                             Object.entries(discussions.values).map(([url, data]) => [
@@ -788,6 +883,29 @@ export function PrFeedbackView({
                         }}
                         onSource={() => onSource(selected)}
                       />
+                      {siblings.length > 0 && (
+                        <nav className="feedback-related feedback-sibling-threads" aria-label="Other conversations on this file">
+                          <h3>
+                            {siblings.length} other {siblings.length === 1 ? 'conversation' : 'conversations'} on{' '}
+                            {fileName(selected.thread.path)}
+                          </h3>
+                          {siblings.map((item) => (
+                            <button key={item.id} data-sibling-thread={item.id} onClick={() => select(item)}>
+                              <span className="feedback-sibling-line">
+                                {lineOf(item) != null ? `Line ${lineOf(item)}` : 'No line'}
+                              </span>
+                              <span>
+                                {item.comments[0]?.author?.login ?? 'Deleted account'}: {excerpt(item)}
+                              </span>
+                              <span>
+                                {isUnread(item) && <span className="pr-unread-dot" aria-label="Unread" />}
+                                {item.thread?.isOutdated ? 'Outdated · ' : ''}
+                                {kindLabel(item)}
+                              </span>
+                            </button>
+                          ))}
+                        </nav>
+                      )}
                     </div>
                   )}
                   {!selected.thread && (
@@ -954,7 +1072,12 @@ function FeedbackMessage({
   return (
     <article className="feedback-message" data-sending={comment.sending}>
       <header>
-        {comment.author ? <GitHubAuthor login={comment.author.login} /> : 'Deleted account'}
+        {comment.author ? (
+          <GitHubAuthor login={comment.author.login} bot={comment.author.__typename === 'Bot'} />
+        ) : (
+          'Deleted account'
+        )}
+        {item.kind === 'review' && <Verdict state={item.state} />}
         {comment.sending ? (
           <span className="github-sending" role="status">
             Sending…
