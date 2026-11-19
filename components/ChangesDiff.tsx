@@ -17,7 +17,7 @@ import {
   type HunkRange,
 } from '../lib/diff-gaps';
 import { applyCodePalette } from '../lib/diff-code-palette';
-import { HERE_CSS, clearHere, markHere } from '../lib/diff-here';
+import { HERE_CSS, clearHere, markHere, markSection } from '../lib/diff-here';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
@@ -771,6 +771,7 @@ function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side'])
     crumb.dataset.side = side;
     crumb.dataset.start = String(definition.start);
     crumb.dataset.signatureEnd = String(definition.signatureEnd);
+    crumb.dataset.end = String(definition.end);
     crumb.setAttribute('aria-label', jumpLabel(definition));
     crumb.title = jumpLabel(definition);
     const code = make('code', '');
@@ -851,6 +852,8 @@ export interface DiffDestination {
   reveal?: readonly [number, number];
   /** The lines to mark "here", on `side`: by default the line alone, a definition's whole signature for a crumb. */
   here?: readonly [number, number];
+  /** The definition the line starts, on `side`: the whole of it is marked, its signature (`here`) most. */
+  section?: readonly [number, number];
 }
 /** What a view holds to take the reader to a line of the file's diff, as a pinned crumb does. */
 export interface DiffNavigator {
@@ -1178,6 +1181,7 @@ export function ChangesDiff<A>({
       line: definition.start,
       reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
       here: [definition.start, Math.max(definition.start, definition.signatureEnd)],
+      section: [definition.start, definition.end],
     });
   };
   const observeHeaders = () => {
@@ -1291,7 +1295,7 @@ export function ChangesDiff<A>({
       jumpFrame = 0;
       for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
     };
-    const goTo = ({ side, line: start, reveal, here = [start, start], onLanded }: DiffDestination & { onLanded?: () => void }) => {
+    const goTo = ({ side, line: start, reveal, here = [start, start], section, onLanded }: DiffDestination & { onLanded?: () => void }) => {
       stopJump();
       clearHere();
       const id = ++jumpId;
@@ -1378,7 +1382,18 @@ export function ChangesDiff<A>({
         }
         stopJump();
         where();
-        if (landed?.isConnected) {
+        if (landed?.isConnected && section && landed.matches('[data-line]')) {
+          // A definition is marked whole, in both columns of a split diff, with the gap bars inside it.
+          const [first, last] = section;
+          const bars = latestParts.current.flatMap((part) => {
+            if (part.kind !== 'gap' || part.end === undefined) return [];
+            const offset = side === 'before' ? part.gap.oldOffset : 0;
+            if (part.start + offset <= first || part.end + offset >= last) return [];
+            const bar = element.querySelector(`[data-gap="${part.gap.index}"]`);
+            return bar ? [bar] : [];
+          });
+          markSection(element.querySelectorAll('diffs-container'), { side, start: first, end: last, signatureEnd: here[1] }, bars);
+        } else if (landed?.isConnected) {
           // A line is marked with the rest of `here` on its side, such as a definition's whole signature; a bar alone.
           const rows: HTMLElement[] = [landed];
           if (landed.matches('[data-line]'))
@@ -1410,6 +1425,7 @@ export function ChangesDiff<A>({
         line: start,
         reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
         here: [start, Math.max(start, Number(crumb.dataset.signatureEnd) || start)],
+        section: [start, Math.max(start, Number(crumb.dataset.end) || start)],
         // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
         onLanded: keyboard
           ? () => {

@@ -145,9 +145,18 @@ void app.whenReady().then(async () => {
           if(Math.abs(off)>1){s.scrollTop+=off;still=0}else still++;for(let f=0;f<2;f++)await new Promise(r=>requestAnimationFrame(r))}
         const b=window.q(root).querySelector(selector);if(!b)throw Error('Missing '+selector);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};
       // Where the reader was taken (lib/diff-here.ts): marked lines and bars, with their band and gutter.
-      window.hereMarks=root=>window.deepAll('[data-here]',window.q(root)).filter(e=>!e.matches('[data-column-number]')).map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');
+      window.hereMarks=root=>window.deepAll('[data-here]',window.q(root)).filter(e=>!e.matches('[data-column-number],[data-gutter-buffer]')&&e.getAttribute('data-here-part')!=='body').map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');
         const i=e.getAttribute('data-line-index');const col=e.closest('[data-deletions],[data-additions]')??e.closest('[data-code]');const g=i!==null&&col?col.querySelector('[data-column-number][data-line-index="'+i+'"]'):null;
         return {kind:e.matches('[data-line]')?'line':bar?'bar':'other',text:e.textContent.trim().slice(0,48),anim:c.animationName.replace(/-[ab]$/,''),band:c.backgroundColor,gutter:g?g.hasAttribute('data-here'):null,top:Math.round(e.getBoundingClientRect().top)}});
+      // A section's mark (lib/diff-here.ts): its signature rows, how many rows its body has, which visual rows each column
+      // of a split diff marks, its empty-row buffers, and its gap bars.
+      window.sectionMarks=root=>{const r=window.q(root);const out={sig:[],body:0,bodyTexts:[],del:[],add:[],buffers:0,bars:r.querySelectorAll('.diff-gap[data-here]').length,parts:[]};
+        for(const host of r.querySelectorAll('diffs-container')){const sr=host.shadowRoot;if(!sr)continue;const split=!!sr.querySelector('[data-deletions]');
+          for(const e of sr.querySelectorAll('[data-here]')){if(e.matches('[data-content-buffer],[data-gutter-buffer]')){out.buffers++;continue}
+            if(!e.matches('[data-line]'))continue;const parts=(e.getAttribute('data-line-index')??'').split(',');const at=Number(split&&parts.length>1?parts[1]:parts[0]);
+            if(split)(e.closest('[data-deletions]')?out.del:out.add).push(at);
+            if(e.getAttribute('data-here-part')==='body'){out.body++;out.bodyTexts.push(e.textContent.trim())}else out.sig.push(e.textContent.trim())}}
+        out.del=[...new Set(out.del)].sort((a,b)=>a-b);out.add=[...new Set(out.add)].sort((a,b)=>a-b);out.bodyTexts=out.bodyTexts.slice(0,400);return out};
       window.sampleScroll=scroller=>{const s=window.q(scroller);const v=[];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
       // Show scope's rails: the gutter cells marked, by their line number.
       window.rails=root=>window.deepAll('[data-column-number][data-scope-rail]',window.q(root)).filter(c=>!c.closest('[data-deletions]')).map(c=>c.getAttribute('data-column-number')+':'+c.getAttribute('data-scope-rail'));
@@ -184,6 +193,7 @@ void app.whenReady().then(async () => {
     slotLabel: string | null;
     active: string | null;
   };
+  type Section = { sig: string[]; body: number; bodyTexts: string[]; del: number[]; add: number[]; buffers: number; bars: number };
   type Here = { kind: string; text: string; anim: string; band: string; gutter: boolean | null; top: number };
   const state = (root: string) => js<Jump>(`window.jumpState(${JSON.stringify(root)})`);
   const here = (root: string) => js<Here[]>(`window.hereMarks(${JSON.stringify(root)})`);
@@ -321,6 +331,22 @@ void app.whenReady().then(async () => {
           await wait(`window.hereMarks(${JSON.stringify(deep)}).length>0`, 80);
           await sleep(delay);
         });
+      // The same in split view: both columns in sync.
+      const layoutKey = `window.q('${STREAM}').dispatchEvent(new KeyboardEvent('keydown',{key:'d',bubbles:true,cancelable:true,composed:true}))`;
+      await js(layoutKey);
+      await wait("document.querySelector('.pr-changes')?.dataset.diffLayout==='split'");
+      await sleep(600);
+      for (const [name, delay] of [['here-split-bloom', 120], ['here-split-settled', 900]] as const)
+        await capture(`${name}-${width}`, area(STREAM, 0, 300), async () => {
+          await js(`window.pinAt(${JSON.stringify(deep)},${JSON.stringify(STREAM)},'next += 30 * 2;',false)`);
+          await wait(`window.jumpState(${JSON.stringify(deep)}).crumbs.length===4`);
+          await clickCrumb(deep, 'Go to function step');
+          await wait(`window.hereMarks(${JSON.stringify(deep)}).length>0`, 80);
+          await sleep(delay);
+        });
+      await js(layoutKey);
+      await wait("document.querySelector('.pr-changes')?.dataset.diffLayout==='unified'");
+      await sleep(600);
       // Show scope: a short class shown whole with its rail, and a function too long to.
       const scoped = rowOf('src/nav/scoped.ts');
       await select('scoped.ts');
@@ -463,6 +489,14 @@ void app.whenReady().then(async () => {
     await pin(deep, STREAM, 'next += 40 * 2;');
     // The namespace's first line is hidden too; going there shows only from it down.
     let after = await jump('deep.ts', deep, 'Go to module Engine', 'export namespace Engine {', { above: 'export const lead19 = 19;' });
+    {
+      const section = await js<Section>(`window.sectionMarks(${JSON.stringify(deep)})`);
+      console.log('Section mark, unified:', JSON.stringify({ ...section, bodyTexts: section.bodyTexts.length }));
+      assert.deepEqual(section.sig, ['export namespace Engine {'], 'Unified: the signature blooms');
+      for (const text of ['export class Scheduler {', 'readonly slot10 = 10;', 'next += 59 * 2;', 'return total;'])
+        assert.ok(section.bodyTexts.includes(text), `Unified: the rest of the namespace is marked: ${text}`);
+      assert.ok(!section.bodyTexts.includes('export const lead19 = 19;'), 'Unified: nothing outside it is');
+    }
     assert.deepEqual(after.crumbs, ['Go to module Engine'], 'Landed on the namespace line, the pinned breadcrumb names where the reader is');
     await pin(deep, STREAM, 'next += 40 * 2;');
     // run() shows whole by show scope; its first line is on screen: nothing is revealed.
@@ -608,6 +642,11 @@ void app.whenReady().then(async () => {
     console.log('Reduced motion:', JSON.stringify({ moves, still }));
     assert.ok(moves.length >= 1 && Math.abs(moves[0] - (instant.at(-1) ?? 0)) <= 2, `Reduced motion: the first move lands: ${JSON.stringify(moves)}`);
     assert.deepEqual(still.map((m) => [m.anim, m.band]), [['none', 'rgba(47, 85, 212, 0.22)']], 'Reduced motion: the band is still');
+    assert.equal(
+      await js<string>(`(()=>{const e=window.deepAll('[data-line][data-here][data-here-part=body]',window.q(${JSON.stringify(far)}))[0];return e?getComputedStyle(e,'::after').animationName+' '+getComputedStyle(e,'::after').backgroundColor:''})()`),
+      'none rgba(47, 85, 212, 0.12)',
+      'Reduced motion: the rest of the section has its softer band, still'
+    );
     await reducedMotion(false);
     // The reader is followed after a jump: Landed on impl Client, the pinned breadcrumb names it.
     assert.deepEqual((await state(far)).crumbs, ['Go to module api', 'Go to impl Client'], 'After a jump, the breadcrumb names the definitions around the line landed on');
@@ -635,6 +674,29 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.pr-changes')?.dataset.diffLayout==='split'");
     await sleep(600);
     await deleted('split', false);
+    {
+      const section = await js<Section>(`window.sectionMarks(${JSON.stringify(ledger)})`);
+      console.log('Section mark, split:', JSON.stringify({ ...section, bodyTexts: section.bodyTexts.length }));
+      assert.ok(section.del.length > 20, `Split: the old column marks the class: ${section.del.length} rows`);
+      const shared = section.add.filter((at) => section.del.includes(at));
+      assert.ok(shared.length > 20, 'Split: both columns mark the same rows');
+      assert.ok(section.add.every((at) => at >= section.del[0] && at <= (section.del.at(-1) ?? 0)), 'Split: in sync, one block across the view');
+      assert.ok(section.buffers > 0, 'Split: the empty rows across from deleted lines are marked too');
+    }
+    // A removed function: its old rows, and the empty rows across from them, as one block.
+    const removedIn = rowOf('src/nav/outline.ts');
+    await select('outline.ts');
+    await wait(`window.outline(${JSON.stringify(removedIn)})?.chips.length===4`);
+    clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(removedIn)},'.diff-outline-chip[data-change=removed] .diff-outline-go','${STREAM}')`));
+    await landed(removedIn);
+    {
+      const section = await js<Section>(`window.sectionMarks(${JSON.stringify(removedIn)})`);
+      console.log('Section mark, split, removed:', JSON.stringify(section));
+      assert.deepEqual(section.sig, ['export function rebase(list: number[]): number[] {'], 'Split: the removed signature blooms');
+      assert.ok(section.bodyTexts.includes('return list.slice(1);') && section.bodyTexts.includes('}'), 'Split: the rest of it is marked');
+      assert.equal(section.add.length, 0, 'Split: the new column has no rows of it');
+      assert.ok(section.buffers >= 2, `Split: its empty rows across, row and gutter, are marked: ${section.buffers}`);
+    }
     const store = rowOf('src/nav/Store.java');
     await select('Store.java');
     await setWidth(store, '680px');

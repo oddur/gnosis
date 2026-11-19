@@ -1922,8 +1922,22 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
   72% { animation-timing-function:cubic-bezier(0.4, 0, 0.6, 1); }
   100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
 }
+/* Inside a marked section, a gap bar takes the section's softer band, with the bar running through it. */
+.diff-gap[data-here][data-here-part=body]::before { animation-name:gnosis-here-bar-body; }
+.diff-gap[data-here=b][data-here-part=body]::before { animation-name:gnosis-here-bar-body-b; }
+@keyframes gnosis-here-bar-body {
+  0%, 14% { background-color:rgb(47 85 212 / 18%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  38%, 72% { background-color:rgb(47 85 212 / 12%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
+}
+@keyframes gnosis-here-bar-body-b {
+  0%, 14% { background-color:rgb(47 85 212 / 18%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  38%, 72% { background-color:rgb(47 85 212 / 12%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
+}
 @media (prefers-reduced-motion: reduce) {
   .diff-gap[data-here]::before { animation:none; background-color:rgb(47 85 212 / 22%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  .diff-gap[data-here][data-here][data-here-part=body]::before { animation:none; background-color:rgb(47 85 212 / 12%); }
 }
 /* The lines after a file's last hunk: one code line, on the code's background under a hairline, the action at the
    code's text column. */
