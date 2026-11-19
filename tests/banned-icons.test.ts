@@ -10,8 +10,9 @@ const DIRS = ['components', 'lib', 'src', 'extensions'];
 const SKIP = new Set(['lib/banned-icons.mjs', 'src/assets']);
 
 function* sources(dir: string): Generator<string> {
-  for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
-    const rel = path.join(dir, entry.name);
+  for (const entry of fs.readdirSync(path.join(root, ...dir.split('/')), { withFileTypes: true })) {
+    // Forward slashes on every platform, so SKIP matches on Windows too.
+    const rel = path.posix.join(dir, entry.name);
     if (SKIP.has(rel) || entry.name === 'node_modules') continue;
     if (entry.isDirectory()) yield* sources(rel);
     else if (/\.(tsx?|mjs|js|css|json|html)$/.test(entry.name)) yield rel;
@@ -23,7 +24,7 @@ void test('no source uses a Sparkles icon; AI actions use Bot', () => {
   for (const dir of DIRS) {
     if (!fs.existsSync(path.join(root, dir))) continue;
     for (const file of sources(dir)) {
-      const text = fs.readFileSync(path.join(root, file), 'utf8');
+      const text = fs.readFileSync(path.join(root, ...file.split('/')), 'utf8');
       text.split('\n').forEach((line, i) => {
         if (BANNED_ICON_PATTERN.test(line)) offenders.push(`${file}:${i + 1}: ${line.trim().slice(0, 100)}`);
       });

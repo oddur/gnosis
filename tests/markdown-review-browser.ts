@@ -174,9 +174,9 @@ void app.whenReady().then(async () => {
     await capture('commits');
     assert.ok(
       await js(
-        "(()=>{const h=[...document.querySelectorAll('.commit-stream-row .changes-file-header h2')].find(e=>e.getClientRects().length);const r=h.getBoundingClientRect();return r.width>=100 && r.height>=16})()"
+        "(()=>{const h=[...document.querySelectorAll('.commit-stream-row .changes-file-header h2')].find(e=>e.getClientRects().length);const r=h.getBoundingClientRect();return r.width>=40 && r.height>=16 && h.scrollWidth<=h.clientWidth+1 && h.textContent==='docs/new.md'})()"
       ),
-      'Markdown commit header preserves file identity'
+      'Markdown commit header preserves file identity: the whole path shows, even beside the Markdown switch'
     );
     const first = "document.querySelector('.commit-stream-row .markdown-review')";
     await js(`${first}.querySelector('.markdown-review-toolbar input').click()`);
