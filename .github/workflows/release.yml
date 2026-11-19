@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to build (for example v0.30.0)
+        description: Existing release tag to build (for example v0.30.0 or v0.42.0-beta.1)
         required: true
         type: string
       platform:
@@ -58,11 +58,19 @@ jobs:
         with:
           ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
+      # Two kinds of tag (docs/releasing.md). lib/version.ts holds the same patterns; tests/version.test.ts compares them.
+      # RELEASE_KIND decides the GitHub prerelease flag (forge.config.ts), the release guard and the Homebrew update.
       - name: Validate release tag
         shell: bash
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Expected a stable release tag such as v0.30.0"
+          STABLE_TAG='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          PRERELEASE_TAG='^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]{0,2}$'
+          if [[ "$RELEASE_TAG" =~ $STABLE_TAG ]]; then
+            echo "RELEASE_KIND=stable" >> "$GITHUB_ENV"
+          elif [[ "$RELEASE_TAG" =~ $PRERELEASE_TAG ]]; then
+            echo "RELEASE_KIND=prerelease" >> "$GITHUB_ENV"
+          else
+            echo "Expected a stable tag such as v0.42.0 or a pre-release tag such as v0.42.0-beta.1"
             exit 1
           fi
 
@@ -135,7 +143,45 @@ jobs:
           APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
           APPLE_ID_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_ID_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+          # forge.config.ts fails before publishing if this disagrees with package.json's version.
+          GNOSIS_RELEASE_KIND: ${{ env.RELEASE_KIND }}
         run: npm run publish
+
+      # A stable user must never be offered a prerelease, and update.electronjs.org serves every release that is not
+      # flagged prerelease. Check the flag every job published under; if a pre-release tag is not flagged, flag it and fail.
+      - name: Check the release's prerelease flag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          IS_PRERELEASE="$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease)"
+          EXPECTED=false
+          if [ "$RELEASE_KIND" = prerelease ]; then EXPECTED=true; fi
+          if [ "$IS_PRERELEASE" != "$EXPECTED" ]; then
+            echo "::error::$RELEASE_TAG is a $RELEASE_KIND tag, but its GitHub release has isPrerelease=$IS_PRERELEASE."
+            if [ "$RELEASE_KIND" = prerelease ]; then gh release edit "$RELEASE_TAG" --prerelease; fi
+            exit 1
+          fi
+
+      # Squirrel.Mac on the Pre-release channel reads this manifest (lib/updater.ts, macUpdateManifestName). Stable users
+      # read update.electronjs.org and never see it.
+      - name: Upload the macOS update manifest
+        if: runner.os == 'macOS' && env.RELEASE_KIND == 'prerelease'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          ARCH="$(node -p process.arch)"
+          ZIP="Gnosis-darwin-${ARCH}-${VERSION}.zip"
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fx "$ZIP"
+          MANIFEST="$RUNNER_TEMP/Gnosis-darwin-${ARCH}-update.json"
+          URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/${ZIP}"
+          node -e 'const [url, name, file] = process.argv.slice(1); require("fs").writeFileSync(file, JSON.stringify({ url, name, notes: "", pub_date: new Date().toISOString() }))' "$URL" "Gnosis $VERSION" "$MANIFEST"
+          cat "$MANIFEST"
+          gh release upload "$RELEASE_TAG" "$MANIFEST" --clobber
 
       - name: Cleanup Apple certificate
         if: runner.os == 'macOS' && always()
@@ -145,8 +191,9 @@ jobs:
             security delete-keychain "$KEYCHAIN_PATH"
           fi
 
+      # Homebrew only ever receives stable versions.
       - name: Update Homebrew tap
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && env.RELEASE_KIND == 'stable'
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         shell: bash

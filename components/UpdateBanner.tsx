@@ -46,7 +46,8 @@ export function UpdateBanner() {
         ) : (
           <div className="flex items-center gap-3">
             <span>
-              Gnosis <strong className="font-semibold">v{view.version}</strong>{' '}
+              Gnosis <strong className="font-semibold">v{view.version}</strong>
+              {view.prerelease && <span className="updateBanner-channel"> (pre-release)</span>}{' '}
               {view.kind === 'installing' ? 'is installing. Gnosis will reopen when it is done.' : 'is ready to install.'}
             </span>
             {view.kind === 'ready' && (
@@ -67,7 +68,7 @@ export function UpdateBanner() {
   // Linux: show banner when a new version is available for manual download
   if (!update || supportsAutoUpdate) return null;
 
-  const { version, releaseUrl } = update;
+  const { version, releaseUrl, prerelease } = update;
 
   function handleDismiss() {
     void window.electronAPI.dismissUpdate(version);
@@ -78,7 +79,8 @@ export function UpdateBanner() {
     <div className="updateBanner flex items-center justify-between gap-3 px-6 py-1.5 text-xs">
       <div className="flex items-center gap-3">
         <span>
-          Gnosis <strong className="font-semibold">v{version}</strong> is available
+          Gnosis <strong className="font-semibold">v{version}</strong>
+          {prerelease && <span className="updateBanner-channel"> (pre-release)</span>} is available
         </span>
         <button
           onClick={() => void window.electronAPI.openExternal(releaseUrl)}

@@ -63,9 +63,11 @@ import type {
   FreshnessResult,
   RepoSearchResult,
   UpdateInfo,
+  UpdateChannelInfo,
   GenerateExplainerRequest,
   InteractiveExplainer,
 } from '../lib/types';
+import type { UpdateChannel } from '../lib/update-channel';
 
 // Main asks every window to save pending review state before it closes saved data at quit. The listener
 // lives here, so a page that has not registered a flush yet still answers at once.
@@ -529,6 +531,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dismissUpdate: (version: string): Promise<void> => ipcRenderer.invoke('dismiss-update', version),
   getUpdateStatus: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('get-update-status'),
   installUpdate: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('install-update'),
+  getUpdateChannel: (): Promise<UpdateChannelInfo> => ipcRenderer.invoke('get-update-channel'),
+  setUpdateChannel: (channel: UpdateChannel): Promise<UpdateChannelInfo> => ipcRenderer.invoke('set-update-channel', channel),
+  checkForUpdateNow: (): Promise<UpdateChannelInfo> => ipcRenderer.invoke('check-for-update-now'),
+  onUpdateChannelChanged: (callback: (info: UpdateChannelInfo) => void): (() => void) => {
+    const listener = (_event: unknown, info: UpdateChannelInfo) => callback(info);
+    ipcRenderer.on('update-channel-changed', listener);
+    return () => ipcRenderer.removeListener('update-channel-changed', listener);
+  },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('open-external', url),
   openLogsDirectory: (): Promise<void> => ipcRenderer.invoke('open-logs-directory'),
   openReviewPrompt: (id: string): Promise<void> => ipcRenderer.invoke('open-review-prompt', id),

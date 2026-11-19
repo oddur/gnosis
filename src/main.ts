@@ -144,7 +144,11 @@ import { normalizeInlineExplanations, resolveGeneratedInlineExplanations } from 
 import { captureExplainerContext, normalizeExplainerIdea, parseExplainer } from '../lib/explainer';
 import { createExplainerService } from './explainer-service';
 import { protectExplainerFrames, validateExplainerInBrowser, validateSvgIllustrationInBrowser } from './explainer-validation';
-import { checkForUpdate } from '../lib/updater';
+import { checkForUpdate, listReleases, normalizeUpdateChannel, type UpdateChannel } from '../lib/updater';
+import { isPrereleaseVersion } from '../lib/version';
+import { upToDateMessage } from '../lib/update-channel';
+import { createUpdateChecks, type UpdateChecks } from './update-checks';
+import type { UpdateChannelInfo, UpdateCheckResult } from '../lib/types';
 import { renderDiffHunk, reRenderAllHunks } from '../lib/highlight';
 import { parseDiffLines } from '../lib/diff-lines';
 import { setBinaryOverride, detectBinaryPath, checkCliInstalled } from '../lib/providers/shared';
@@ -503,15 +507,52 @@ function createWindow() {
 // ── Update check helpers ─────────────────────────────────────
 
 let dismissedUpdateVersion: string | null = null;
+/** Linux: the last check, for Settings › Updates. */
+let downloadCheck: UpdateCheckResult | null = null;
 
-async function runUpdateCheck() {
-  const update = await checkForUpdate(app.getVersion(), getResolvedToken() ?? undefined);
-  if (!update) return;
-  if (dismissedUpdateVersion === update.version) return;
+function updateChannel(): UpdateChannel {
+  return normalizeUpdateChannel(loadPreferences().updateChannel);
+}
+
+/** Linux (no auto-update): offer a newer release on the chosen channel as a download. */
+async function runUpdateCheck(): Promise<UpdateCheckResult> {
+  const channel = updateChannel();
+  const update = await withGitHubPriority('background', () => checkForUpdate(app.getVersion(), getResolvedToken() ?? undefined, channel));
+  downloadCheck = update
+    ? { at: Date.now(), outcome: 'available', version: update.version, prerelease: update.prerelease, releaseUrl: update.releaseUrl, message: `v${update.version}${update.prerelease ? ' (pre-release)' : ''} is available. Download it from GitHub.` }
+    : { at: Date.now(), outcome: 'up-to-date', message: upToDateMessage(channel, app.getVersion()) };
+  broadcastUpdateChannel();
+  if (!update) return downloadCheck;
+  if (dismissedUpdateVersion === update.version) return downloadCheck;
 
   for (const win of appWindows()) {
     win.webContents.send('update-available', update);
   }
+  return downloadCheck;
+}
+
+function updateChannelInfo(): UpdateChannelInfo {
+  return {
+    version: app.getVersion(),
+    prerelease: isPrereleaseVersion(app.getVersion()),
+    channel: updateChannel(),
+    autoUpdate: !!updateChecks,
+    lastCheck: updateChecks?.lastCheck() ?? downloadCheck,
+  };
+}
+
+function broadcastUpdateChannel() {
+  const info = updateChannelInfo();
+  for (const win of appWindows()) {
+    if (!win.webContents.isDestroyed()) win.webContents.send('update-channel-changed', info);
+  }
+}
+
+/** Settings › Updates › Check now, and a channel change. */
+function checkForUpdatesNow(): Promise<UpdateCheckResult> {
+  if (updateChecks) return updateChecks.check();
+  if (process.platform === 'linux') return runUpdateCheck();
+  return Promise.resolve({ at: Date.now(), outcome: 'up-to-date', message: 'Development builds do not update.' });
 }
 
 let updateInterval: ReturnType<typeof setInterval> | null = null;
@@ -771,6 +812,8 @@ function stopProactivePolling() {
 // See src/update-state.ts for why a natural quit-and-reopen often fails to install.
 // GNOSIS_FAKE_UPDATE_READY=<version> surfaces the "ready to install" banner in dev.
 let updateController: UpdateController | null = null;
+/** Points Squirrel at the chosen channel's feed (#404). Null on Linux and in development. */
+let updateChecks: UpdateChecks | null = null;
 let notifiedUpdateVersion: string | null = null;
 
 function sendUpdateStatus(status: AppUpdateStatus) {
@@ -821,14 +864,6 @@ function setupAutoUpdater() {
     return;
   }
 
-  const feedURL = `https://update.electronjs.org/oddur/gnosis/${process.platform}-${process.arch}/${app.getVersion()}`;
-  try {
-    autoUpdater.setFeedURL({ url: feedURL });
-  } catch (err) {
-    console.warn('[main] Failed to set autoUpdater feed URL:', err);
-    return;
-  }
-
   autoUpdater.on('checking-for-update', () => {
     console.log('[main] Auto-updater: checking for update');
   });
@@ -857,7 +892,7 @@ function setupAutoUpdater() {
       notifications.local({
         type: 'update-ready',
         key: `update|${status.version}`,
-        title: `Restart Gnosis to install${status.version ? ` v${status.version}` : ' it'}.`,
+        title: `Restart Gnosis to install${status.version ? ` v${status.version}${isPrereleaseVersion(status.version) ? ' (pre-release)' : ''}` : ' it'}.`,
         at: Date.now(),
       });
     },
@@ -878,9 +913,22 @@ function setupAutoUpdater() {
   });
   sendUpdateStatus(updateController.status());
 
+  // Stable reads update.electronjs.org as it always has. Pre-release lists GitHub releases first. See src/update-checks.ts.
+  const controller = updateController;
+  updateChecks = createUpdateChecks({
+    updater: autoUpdater,
+    platform: process.platform,
+    arch: process.arch,
+    currentVersion: app.getVersion(),
+    channel: updateChannel,
+    listReleases: () => withGitHubPriority('background', () => listReleases(getResolvedToken() ?? undefined)),
+    status: () => controller.status(),
+    onResult: () => broadcastUpdateChannel(),
+    log: message => console.log(`[main] Auto-updater: ${message}`),
+  });
   // Check for updates automatically — download happens silently
-  autoUpdater.checkForUpdates();
-  setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1_000);
+  void updateChecks.check();
+  setInterval(() => void updateChecks?.check(), 4 * 60 * 60 * 1_000);
 }
 
 let harnessEnvironments: ReturnType<typeof createHarnessEnvironmentStore>;
@@ -960,7 +1008,7 @@ void app.whenReady().then(async () => {
   startup.resolveAll();
   mark('all-ready');
 
-  if (prefs.analytics) void trackEvent('app_started');
+  if (prefs.analytics) void trackEvent('app_started', { channel: normalizeUpdateChannel(prefs.updateChannel), prerelease: isPrereleaseVersion(app.getVersion()) });
   menubarStartupDone = true;
   timed('startup tray', initTrayIfEnabled);
   mark('tray');
@@ -1642,6 +1690,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   maxPrsPerRepo: 10,
   parallelReview: true,
   analytics: true,
+  updateChannel: 'stable',
   proactiveReviewOverrides: false,
   proactiveProvider: 'claude',
   proactiveModel: DEFAULT_FAST_CLAUDE_MODEL,
@@ -1680,6 +1729,7 @@ function readPreferencesFile(): Preferences {
     stored.githubCacheSizeMB = normalizeGitHubCacheMB(stored.githubCacheSizeMB);
     stored.prInactivityDays = normalizePrInactivityDays(stored.prInactivityDays);
     stored.codeIntelligence = codeIntelligenceSettings(stored);
+    stored.updateChannel = normalizeUpdateChannel(stored.updateChannel);
     Object.assign(stored, normalizePreloadPreferences(stored));
     const selection = normalizeModelSelection(stored.provider, stored.model);
     const proactive = normalizeModelSelection(stored.proactiveProvider, stored.proactiveModel, true);
@@ -1699,7 +1749,7 @@ function readPreferencesFile(): Preferences {
 function savePreferences(prefs: Preferences): void {
   const file = getPreferencesPath(), temporary = file + '.tmp';
   try {
-  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), menubarSettings: menubarSettings(prefs), codeIntelligence: codeIntelligenceSettings(prefs), ...normalizePreloadPreferences(prefs) }, null, 2));
+  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), menubarSettings: menubarSettings(prefs), codeIntelligence: codeIntelligenceSettings(prefs), updateChannel: normalizeUpdateChannel(prefs.updateChannel), ...normalizePreloadPreferences(prefs) }, null, 2));
     fs.renameSync(temporary, file);
   } finally { fs.rmSync(temporary, { force: true }); preferencesFile.clear(); }
 }
@@ -1757,6 +1807,23 @@ ipcMain.handle('dismiss-update', (_event, version: string) => {
 });
 
 ipcMain.handle('get-update-status', (): AppUpdateStatus => updateController?.status() ?? { state: 'idle' });
+// Settings › Updates (#404).
+ipcMain.handle('get-update-channel', (): UpdateChannelInfo => updateChannelInfo());
+ipcMain.handle('set-update-channel', (_event, value: unknown): UpdateChannelInfo => {
+  const channel = normalizeUpdateChannel(value);
+  if (channel !== updateChannel()) {
+    savePreferences({ ...loadPreferences(), updateChannel: channel });
+    broadcastToAllWindows('preferences-changed', loadPreferences());
+    console.log(`[main] Update channel: ${channel}`);
+    // Stable → Pre-release checks at once. Pre-release → Stable checks the stable feed, which never offers an older build.
+    void checkForUpdatesNow().catch((error: unknown) => console.warn('[main] Update check failed:', error));
+  }
+  return updateChannelInfo();
+});
+ipcMain.handle('check-for-update-now', async (): Promise<UpdateChannelInfo> => {
+  await checkForUpdatesNow();
+  return updateChannelInfo();
+});
 ipcMain.handle('install-update', (): Promise<AppUpdateStatus> => updateController?.restartNow() ?? Promise.resolve({ state: 'idle' }));
 
 ipcMain.handle('open-external', (_event, url: string) => {
@@ -4623,7 +4690,7 @@ const syncHealth = createSyncHealthService({
   // Switching to a queue view or section: its first screenful of rows' signals, unless read within 30 s.
   refreshRows: urls => { if (githubSync.refreshRows(urls, ['signals']).length) void githubSync.tick(); },
   notify: () => notifyLocalChange('sync-health-changed'),
-  appInfo: () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron }),
+  appInfo: () => ({ version: app.getVersion(), prerelease: isPrereleaseVersion(app.getVersion()), updateChannel: updateChannel(), platform: process.platform, arch: process.arch, electron: process.versions.electron }),
   // The same file carries system and startup details and the exporting window's slow interactions (#345).
   extendReport: renderer => {
     const sections = diagnosticsSections(renderer, {

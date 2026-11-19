@@ -1945,6 +1945,18 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diagnostics-settings { display:flex; flex-direction:column; gap:28px; }
 .diagnostics-section { display:flex; flex-direction:column; align-items:stretch; gap:10px; }
 .diagnostics-section .numeric, .diagnostics-saved { font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+/* Settings › Updates (#404). */
+.update-settings { display:flex; flex-direction:column; gap:28px; }
+.update-version { display:flex; align-items:center; gap:8px; font-size:var(--type-control); }
+.update-version-tag { padding:1px 8px; border:1px solid var(--border); border-radius:999px; color:var(--muted-foreground); font-size:var(--type-caption); line-height:1.6; white-space:nowrap; }
+.update-channel-options { display:grid; gap:8px; min-width:0; }
+.update-channel-options label { display:flex; align-items:flex-start; gap:8px; padding-block:4px; cursor:pointer; }
+.update-channel-options input { margin-top:4px; accent-color:var(--ring); }
+.update-channel-options strong { display:block; font-size:var(--type-control); font-weight:600; }
+.update-channel-options small { display:block; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); margin-top:3px; }
+.update-channel-options:disabled label { cursor:default; opacity:.7; }
+.update-check-actions { display:flex; gap:8px; }
+.update-check-time { color:var(--muted-foreground); }
 .sync-health { display:flex; flex-direction:column; align-items:stretch; gap:10px; }
 .sync-health-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .sync-health-heading { margin-top:10px; font-size:var(--type-control); font-weight:600; }

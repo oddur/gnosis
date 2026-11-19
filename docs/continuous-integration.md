@@ -41,6 +41,10 @@ Every run builds with `npm run make` and uploads `gnosis-unsigned-<OS>-<architec
 
 These preview builds are unsigned and do not use signing, notarization, publishing, or GitHub OAuth secrets. OS security prompts can differ from released builds; GitHub's device login remains available. The workflow does not publish a release or update the Homebrew tap. Signing and publishing stay in the Release workflow.
 
+## Releases
+
+A pushed tag starts the Release workflow. `vX.Y.Z` publishes a stable release and `vX.Y.Z-beta.N` publishes a GitHub prerelease for the Pre-release update channel. See [Releasing](releasing.md).
+
 ## Local checks
 
 ```sh

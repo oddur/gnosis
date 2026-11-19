@@ -58,7 +58,7 @@ void test('promises an install only after the update has downloaded', () => {
   assert.equal(updateBannerView(controller.status(), 'darwin'), null);
   updater.emit('update-downloaded', {}, '', 'Gnosis 0.38.0');
   assert.deepEqual(controller.status(), { state: 'ready', version: '0.38.0' });
-  assert.deepEqual(updateBannerView(controller.status(), 'darwin'), { kind: 'ready', version: '0.38.0' });
+  assert.deepEqual(updateBannerView(controller.status(), 'darwin'), { kind: 'ready', version: '0.38.0', prerelease: false });
 });
 
 void test('reads the version from GitHub tags and update.electronjs.org release names', () => {
@@ -185,4 +185,46 @@ void test('compares versions numerically', () => {
   assert.equal(isNewerVersion('0.10.0', '0.9.9'), true);
   assert.equal(isNewerVersion('0.37.0', '0.37.0'), false);
   assert.equal(isNewerVersion('0.36.5', '0.37.0'), false);
+});
+
+// #404: pre-release versions.
+void test('compares pre-release versions by semver precedence', () => {
+  assert.equal(isNewerVersion('0.42.0-beta.10', '0.42.0-beta.2'), true);
+  assert.equal(isNewerVersion('0.42.0', '0.42.0-beta.10'), true);
+  assert.equal(isNewerVersion('0.42.0-beta.2', '0.42.0'), false);
+  assert.equal(isNewerVersion('0.42.0-beta.2', '0.42.0-beta.2'), false);
+});
+
+void test('says so when a pre-release did not install over an older pre-release', () => {
+  const { controller, stored } = setup({ current: '0.42.0-beta.1', marker: '0.42.0-beta.2' });
+  const status = controller.status();
+  assert.ok(status.state === 'failed' && /v0\.42\.0-beta\.2 did not install/.test(status.message));
+  assert.equal(status.releaseUrl, 'https://github.com/oddur/gnosis/releases/tag/v0.42.0-beta.2');
+  assert.equal(stored.version, '0.42.0-beta.2');
+});
+
+void test('says so when stable did not install over its pre-release', () => {
+  const { controller } = setup({ current: '0.42.0-beta.10', marker: '0.42.0' });
+  assert.equal(controller.status().state, 'failed');
+});
+
+void test('clears the marker once the pre-release is running, or a newer one is', () => {
+  for (const current of ['0.42.0-beta.2', '0.42.0-beta.10', '0.42.0']) {
+    const { controller, stored } = setup({ current, marker: '0.42.0-beta.2' });
+    assert.deepEqual(controller.status(), { state: 'idle' }, current);
+    assert.equal(stored.version, null, current);
+  }
+});
+
+void test('records the semver version when Squirrel.Windows reports its NuGet version', () => {
+  const { updater, controller, stored } = setup({ current: '0.42.0-beta.9' });
+  updater.emit('update-downloaded', {}, '', '0.42.0-beta10');
+  assert.deepEqual(controller.status(), { state: 'ready', version: '0.42.0-beta.10' });
+  assert.equal(stored.version, '0.42.0-beta.10');
+});
+
+void test('the banner marks a pre-release', () => {
+  assert.deepEqual(updateBannerView({ state: 'ready', version: '0.42.0-beta.2' }, 'darwin'), { kind: 'ready', version: '0.42.0-beta.2', prerelease: true });
+  assert.deepEqual(updateBannerView({ state: 'installing', version: '0.42.0-beta.2' }, 'win32'), { kind: 'installing', version: '0.42.0-beta.2', prerelease: true });
+  assert.deepEqual(updateBannerView({ state: 'ready', version: '0.42.0' }, 'darwin'), { kind: 'ready', version: '0.42.0', prerelease: false });
 });

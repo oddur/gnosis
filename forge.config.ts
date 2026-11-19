@@ -9,6 +9,11 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import path from 'path';
+import fs from 'fs';
+import { publishAsPrerelease } from './lib/release-guard';
+
+// The Release workflow writes the tag's version into package.json before it publishes (docs/releasing.md).
+const version = (JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')) as { version: string }).version;
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -53,7 +58,9 @@ const config: ForgeConfig = {
     new PublisherGithub({
       repository: { owner: 'oddur', name: 'gnosis' },
       draft: false,
-      prerelease: false,
+      // vX.Y.Z-beta.N publishes as a GitHub prerelease, which update.electronjs.org and GitHub's "latest" skip (#404).
+      // Throws when the workflow's GNOSIS_RELEASE_KIND disagrees with the version, so a beta never publishes as stable.
+      prerelease: publishAsPrerelease(version, process.env.GNOSIS_RELEASE_KIND),
     }),
   ],
   plugins: [

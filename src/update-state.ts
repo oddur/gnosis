@@ -8,8 +8,11 @@
  * makes ShipIt relaunch Gnosis itself after the install, so the user never has to reopen it.
  *
  * Squirrel does not tell the next launch that the install was aborted. A marker file records the
- * downloaded version, so the next launch can say that the update did not install.
+ * downloaded version, so the next launch can say that the update did not install. Versions compare by semver
+ * precedence, so a pre-release that failed to install over an older pre-release is reported too (#404).
  */
+
+import { isNewerVersion, isPrereleaseVersion, normalizeReleaseVersion } from '../lib/version';
 
 export const RELEASES_URL = 'https://github.com/oddur/gnosis/releases';
 
@@ -42,22 +45,15 @@ export function releaseUrlFor(version: string | null): string {
   return version ? `${RELEASES_URL}/tag/v${version}` : `${RELEASES_URL}/latest`;
 }
 
-/** True when `a` is a newer x.y.z version than `b`. */
-export function isNewerVersion(a: string, b: string): boolean {
-  const left = a.split('.').map(Number);
-  const right = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    const l = left[i] || 0;
-    const r = right[i] || 0;
-    if (l !== r) return l > r;
-  }
-  return false;
-}
+// One semver comparison everywhere (#404): 0.42.0-beta.2 < 0.42.0-beta.10 < 0.42.0.
+export { isNewerVersion };
 
-function versionFromReleaseName(releaseName: string | undefined): string {
-  // update.electronjs.org names releases "Gnosis 0.38.0"; GitHub tags are "v0.38.0".
-  const match = /(\d+\.\d+\.\d+[\w.-]*)/.exec(releaseName ?? '');
-  return match ? match[1] : (releaseName ?? '').replace(/^v/, '').trim();
+/**
+ * update.electronjs.org names releases "Gnosis 0.38.0", GitHub tags are "v0.38.0", and Squirrel.Windows reports the
+ * NuGet version, which drops the dots in a prerelease part ("0.42.0-beta10" for 0.42.0-beta.10).
+ */
+export function versionFromReleaseName(releaseName: string | undefined): string {
+  return normalizeReleaseVersion(releaseName);
 }
 
 export interface UpdateControllerOptions {
@@ -161,8 +157,8 @@ export function createUpdateController(options: UpdateControllerOptions) {
 export type UpdateController = ReturnType<typeof createUpdateController>;
 
 export type UpdateBannerView =
-  | { kind: 'ready'; version: string }
-  | { kind: 'installing'; version: string }
+  | { kind: 'ready'; version: string; prerelease: boolean }
+  | { kind: 'installing'; version: string; prerelease: boolean }
   | { kind: 'failed'; message: string; releaseUrl: string }
   | null;
 
@@ -174,9 +170,9 @@ export function updateBannerView(status: AppUpdateStatus, platform: string): Upd
   if (platform === 'linux') return null;
   switch (status.state) {
     case 'ready':
-      return { kind: 'ready', version: status.version };
+      return { kind: 'ready', version: status.version, prerelease: isPrereleaseVersion(status.version) };
     case 'installing':
-      return { kind: 'installing', version: status.version };
+      return { kind: 'installing', version: status.version, prerelease: isPrereleaseVersion(status.version) };
     case 'failed':
       return { kind: 'failed', message: status.message, releaseUrl: status.releaseUrl };
     default:
