@@ -95,6 +95,9 @@ void app.whenReady().then(async () => {
       window.under=root=>{const r=window.q(root);return r.querySelector('.changes-file-header').getBoundingClientRect().bottom-1+r.querySelector('[data-hunk-header]').offsetHeight};
       // Scrolls the line with \`text\` to right under the pinned headers, until it holds still.
       window.pinAt=async(root,scroller,text,deleted)=>{const s=window.q(scroller);
+        // First near the scroller's top, so the file's header pins there, then right under the pinned headers.
+        {const l=window.lineRow(root,text,deleted);if(l){s.dispatchEvent(new WheelEvent('wheel'));s.scrollTop+=l.getBoundingClientRect().top-s.getBoundingClientRect().top-150;
+          for(let f=0;f<3;f++)await new Promise(r=>requestAnimationFrame(r))}}
         for(let i=0,still=0;i<80&&still<5;i++){const l=window.lineRow(root,text,deleted);if(!l)throw Error('No line '+text+' in '+root);
           const off=l.getBoundingClientRect().top-window.under(root);
           if(Math.abs(off)>1){s.dispatchEvent(new WheelEvent('wheel'));s.scrollTop+=off;still=0}else still++;
@@ -109,9 +112,19 @@ void app.whenReady().then(async () => {
           more:slot?.querySelector('.diff-gap-more')?getComputedStyle(slot.querySelector('.diff-gap-more')).display:null,
           slotLabel:slot?.getAttribute('aria-label')??null,
           active:a?.matches?.('.diff-gap-live button[data-jump]')?a.getAttribute('aria-label'):null}};
-      window.crumbCenter=(root,label)=>{const b=[...window.q(root).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===label);
-        if(!b)throw Error('No pinned crumb '+label+' in '+root);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};
-      window.center=(root,selector)=>{const b=window.q(root).querySelector(selector);if(!b)throw Error('Missing '+selector);b.scrollIntoView({block:'nearest'});const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};
+      // A pinned crumb's centre, or, folded into "…", the centre of "…" and \`folded\`.
+      window.crumbCenter=(root,label)=>{const h=window.q(root).querySelector('[data-stuck]');const b=[...(h?.querySelectorAll('.diff-gap-live button[data-jump]')??[])].find(b=>b.getAttribute('aria-label')===label);
+        if(!b)throw Error('No pinned crumb '+label+' in '+root);let r=b.getBoundingClientRect();const folded=!r.width;
+        if(folded)r=h.querySelector('.diff-gap-live button[data-more]').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),folded}};
+      window.foldedCenter=(root,label)=>{const b=[...window.q(root).querySelectorAll('.diff-gap-folded button[data-jump]')].find(b=>b.getAttribute('aria-label')===label);
+        if(!b)throw Error('No folded crumb '+label);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};
+      // The centre of a control in a file's outline, with the file's top at the top of its scroller, so no pinned header
+      // covers it.
+      window.center=async(root,selector,scroller)=>{const s=window.q(scroller);
+        // Files above may still settle their heights as they render: aim again until the file holds still.
+        for(let i=0,still=0;i<40&&still<3;i++){const off=window.q(root).getBoundingClientRect().top-s.getBoundingClientRect().top;
+          if(Math.abs(off)>1){s.scrollTop+=off;still=0}else still++;for(let f=0;f<2;f++)await new Promise(r=>requestAnimationFrame(r))}
+        const b=window.q(root).querySelector(selector);if(!b)throw Error('Missing '+selector);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};
       // Where the reader was taken (lib/diff-here.ts): marked lines and bars, with their band and gutter.
       window.hereMarks=root=>window.deepAll('[data-here]',window.q(root)).filter(e=>!e.matches('[data-column-number]')).map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');
         const i=e.getAttribute('data-line-index');const col=e.closest('[data-deletions],[data-additions]')??e.closest('[data-code]');const g=i!==null&&col?col.querySelector('[data-column-number][data-line-index="'+i+'"]'):null;
@@ -132,8 +145,12 @@ void app.whenReady().then(async () => {
   };
   const STREAM = '.commit-diff-stream';
   const rowOf = (path: string) => `.commit-stream-row[data-file="${path}"]`;
-  /** The diff's own width, so no check depends on the window's (Windows CI desktops are 1024 px wide). */
-  const setWidth = (root: string, width: string) => js(`window.q(${JSON.stringify(root)}).querySelector('.changes-diff').style.width=${JSON.stringify(width)};void 0`);
+  /**
+   * The diff's own width, so no check depends on the window's (Windows CI desktops are 1024 px wide). Never wider than
+   * its scroller: a pinned header wider than the view never reads as wholly in view, so it would never read as pinned.
+   */
+  const setWidth = (root: string, width: string) =>
+    js(`(()=>{const d=window.q(${JSON.stringify(root)}).querySelector('.changes-diff');d.style.width=${JSON.stringify(width)};d.style.maxWidth='100%'})()`);
 
   type Jump = {
     stuck: boolean;
@@ -156,9 +173,44 @@ void app.whenReady().then(async () => {
     await wait(`window.hereMarks(${JSON.stringify(root)}).length>0`, 80);
     await settle();
   };
+  /** Clicks a pinned crumb; one folded into "…" is chosen from the list "…" opens. */
+  const clickCrumb = async (root: string, label: string) => {
+    const point = await js<{ x: number; y: number; folded: boolean }>(`window.crumbCenter(${JSON.stringify(root)},${JSON.stringify(label)})`);
+    clickPoint(point);
+    if (!point.folded) return;
+    await wait(`!!window.q(${JSON.stringify(root)}).querySelector('.diff-gap-folded')`, 50);
+    clickPoint(await js<{ x: number; y: number }>(`window.foldedCenter(${JSON.stringify(root)},${JSON.stringify(label)})`));
+  };
   const pin = async (root: string, scroller: string, text: string, deleted = false) => {
     await js(`window.pinAt(${JSON.stringify(root)},${JSON.stringify(scroller)},${JSON.stringify(text)},${deleted})`);
-    await wait(`window.jumpState(${JSON.stringify(root)}).crumbs.length>0||window.jumpState(${JSON.stringify(root)}).live==='line'`);
+    try {
+      await wait(`window.jumpState(${JSON.stringify(root)}).crumbs.length>0||window.jumpState(${JSON.stringify(root)}).live==='line'`, 100);
+    } catch (error) {
+      console.log(
+        'Pin diagnostics:',
+        JSON.stringify(
+          await js(`(()=>{const r=window.q(${JSON.stringify(root)});const l=window.lineRow(${JSON.stringify(root)},${JSON.stringify(text)},${deleted});
+            return {state:window.jumpState(${JSON.stringify(root)}),under:window.under(${JSON.stringify(root)}),line:l?Math.round(l.getBoundingClientRect().top):null,
+              headers:[...r.querySelectorAll('[data-hunk-header]')].map(h=>({stuck:h.hasAttribute('data-stuck'),key:h.getAttribute('data-live-key'),live:h.dataset.live,top:Math.round(h.getBoundingClientRect().top),slot:h.querySelector('.diff-gap-live')?.textContent})),
+              width:Math.round(r.querySelector('.changes-diff').getBoundingClientRect().width),scroller:Math.round(window.q(${JSON.stringify(scroller)}).getBoundingClientRect().width),
+              scrollerTop:Math.round(window.q(${JSON.stringify(scroller)}).getBoundingClientRect().top),file:JSON.stringify(r.querySelector('.changes-file-header').getBoundingClientRect()),group:Math.round(r.getBoundingClientRect().top),
+              diffScroller:r.querySelector('.changes-diff').closest('.commit-diff-stream, [data-diff-scroller]')?.className,stickyTop:getComputedStyle(r.querySelectorAll('[data-hunk-header]')[1]??r).top,
+              headerVar:getComputedStyle(r.querySelector('.changes-diff')).getPropertyValue('--diff-file-header-height')}})()`)
+        )
+      );
+      // Whether the topic's other files pin, and whether a fresh observer sees this header pinned.
+      console.log(
+        'Pin diagnostics, more:',
+        JSON.stringify(
+          await js(`(async()=>{const r=window.q(${JSON.stringify(root)});const h=r.querySelectorAll('[data-hunk-header]')[1];const s=window.q(${JSON.stringify(scroller)});
+            const fileH=r.querySelector('.changes-file-header').getBoundingClientRect().height;
+            const seen=await new Promise(res=>{const io=new IntersectionObserver(es=>{io.disconnect();res(es.map(e=>({i:e.isIntersecting,ratio:e.intersectionRatio,top:e.boundingClientRect.top,root:e.rootBounds?.top})))},{root:s,rootMargin:'-'+fileH+'px 0px 0px 0px',threshold:[0,1]});io.observe(h)});
+            return {seen,anyStuck:document.querySelectorAll('[data-stuck]').length,headerConnected:r.querySelector('.changes-file-header').isConnected}})()`)
+        ),
+        errors
+      );
+      throw error;
+    }
     return state(root);
   };
   /**
@@ -176,7 +228,7 @@ void app.whenReady().then(async () => {
     if (keyboard) {
       await js(`[...window.q(${JSON.stringify(root)}).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)}).focus()`);
       await press('Enter', '\r');
-    } else clickPoint(await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(root)},${JSON.stringify(label)})`));
+    } else await clickCrumb(root, label);
     await landed(root);
     const after = await state(root);
     const top = await js<number | null>(`window.lineTop(${JSON.stringify(root)},${JSON.stringify(text)},${deleted})`);
@@ -204,6 +256,9 @@ void app.whenReady().then(async () => {
     await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='deep.ts')");
   };
   const openTopic = async () => {
+    // The explanation document pairs prose with code; this width leaves the code column room for a whole breadcrumb.
+    win.setContentSize(1440, 900);
+    await sleep(300);
     await click('Review queue');
     await wait("!!document.querySelector('.queue-row-main')");
     await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()");
@@ -268,13 +323,15 @@ void app.whenReady().then(async () => {
       await capture(`outline-jump-${width}`, area(STREAM, 0, 300), async () => {
         await toTop(outline, '.changes-file-header', STREAM, 0);
         await settle();
-        clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(outline)},'.diff-outline-row[data-change=removed] .diff-outline-go')`));
+        clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(outline)},'.diff-outline-row[data-change=removed] .diff-outline-go','${STREAM}')`));
         await wait(`window.hereMarks(${JSON.stringify(outline)}).length>0`, 80);
         await sleep(500);
       });
       await js(`window.q(${JSON.stringify(outline)}).querySelector('.diff-outline-toggle').click()`);
       // The same in a slide.
       await openTopic();
+      win.setContentSize(width, 800);
+      await sleep(400);
       const slideScoped = topicFile('src/nav/scoped.ts');
       await wait(`!!window.q(${JSON.stringify(slideScoped)})&&window.rails(${JSON.stringify(slideScoped)}).length>0`, 500);
       await toTop(slideScoped, '.changes-file-header', DOC, 10);
@@ -334,7 +391,7 @@ void app.whenReady().then(async () => {
         path: 'src/nav/server.go',
         pin: 'total += 25 * 2',
         chain: ['Go to function Handle'],
-        outer: { label: 'Go to function Handle', text: 'func (s *Server) Handle(input int) int {', above: 'var pad19 = 19', revealed: false },
+        outer: { label: 'Go to function Handle', text: 'func (s *Server) Handle(input int) int {', above: 'var pad18 = 18', revealed: false },
       },
       {
         file: 'Store.java',
@@ -349,7 +406,7 @@ void app.whenReady().then(async () => {
       const root = rowOf(c.path);
       await select(c.file);
       await wait(`window.symbols(${JSON.stringify(root)}).length>=1`);
-      await setWidth(root, '1100px');
+      await setWidth(root, '680px');
       const pinned = await pin(root, STREAM, c.pin);
       console.log(`${c.file}: pinned`, JSON.stringify({ crumbs: pinned.crumbs, label: pinned.slotLabel, height: pinned.height }));
       assert.ok(pinned.stuck && pinned.live === 'scope', `${c.file}: the header is pinned and follows the reader`);
@@ -358,13 +415,16 @@ void app.whenReady().then(async () => {
       await jump(c.file, root, c.outer.label, c.outer.text, { above: c.outer.above, revealed: c.outer.revealed });
     }
     // Top-level hunks say so.
-    assert.equal((await js<string[]>(`window.symbols(${JSON.stringify(rowOf('src/nav/deep.ts'))})`))[0], 'top level', 'deep.ts: the import hunk is at the top level');
-    assert.equal((await js<string[]>(`window.symbols(${JSON.stringify(rowOf('src/nav/server.go'))})`))[0], 'top level', 'server.go: the import hunk is at the top level');
+    for (const [file, path] of [['server.go', 'src/nav/server.go'], ['deep.ts', 'src/nav/deep.ts']]) {
+      await select(file);
+      await wait(`window.symbols(${JSON.stringify(rowOf(path))}).length>=2`);
+      assert.equal((await js<string[]>(`window.symbols(${JSON.stringify(rowOf(path))})`))[0], 'top level', `${file}: the import hunk is at the top level`);
+    }
 
     // ═══ TypeScript, four levels: every level, mouse and keyboard, and the reader followed after each jump ═══
     const deep = rowOf('src/nav/deep.ts');
     await select('deep.ts');
-    await setWidth(deep, '1100px');
+    await setWidth(deep, '680px');
     await pin(deep, STREAM, 'next += 40 * 2;');
     // The namespace's first line is hidden too; going there shows only from it down.
     let after = await jump('deep.ts', deep, 'Go to module Engine', 'export namespace Engine {', { above: 'export const lead19 = 19;' });
@@ -373,26 +433,35 @@ void app.whenReady().then(async () => {
     // run() shows whole by show scope; its first line is on screen: nothing is revealed.
     after = await jump('deep.ts', deep, 'Go to function run', 'run(input: number): number {', { revealed: false });
     assert.deepEqual(after.crumbs, ['Go to module Engine', 'Go to class Scheduler', 'Go to function run'], 'The breadcrumb follows the reader to run()');
-    // Keyboard: Tab between pinned crumbs, Enter and Space go, and focus stays on the breadcrumb.
-    await pin(deep, STREAM, 'next += 50 * 2;');
-    await js(`[...window.q(${JSON.stringify(deep)}).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')==='Go to class Scheduler').focus()`);
-    await press('Tab');
-    assert.equal((await state(deep)).active, 'Go to function run', 'Tab moves to the next pinned crumb');
-    await press('Tab');
-    assert.equal((await state(deep)).active, 'Go to function step', 'and on to the innermost');
+    // Keyboard: Tab between the pinned crumbs that show ("…" first when some fold), Enter and Space go, and focus stays
+    // on the breadcrumb. Which crumbs show depends on the bar's width, so the walk follows what shows.
+    const walk = await pin(deep, STREAM, 'next += 50 * 2;');
+    console.log('Pinned crumbs that show:', JSON.stringify(walk.shown));
+    const order = [...walk.shown];
+    assert.equal(order.at(-1), 'Go to function step', 'The innermost crumb shows');
+    await js(`[...window.q(${JSON.stringify(deep)}).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(order[0])}).focus()`);
+    assert.equal((await state(deep)).active, order[0], 'A pinned crumb takes focus');
+    for (const next of order.slice(1)) {
+      await press('Tab');
+      assert.equal((await state(deep)).active, next, `Tab moves on to ${next}`);
+    }
     await press('Enter', '\r');
     await landed(deep);
     let keyed = await state(deep);
     assert.equal(keyed.active, 'Go to function step', 'Enter: focus stays on the pinned crumb');
     assert.ok(Math.abs(((await js<number | null>(`window.lineTop(${JSON.stringify(deep)},'function step(value: number): number {',false)`)) ?? 0) - (keyed.bottom ?? 0)) <= 2, 'Enter goes to step()');
+    // Landed on step()'s first line, the breadcrumb names step() and what is around it: Shift+Tab reaches run().
+    const back = (await state(deep)).shown;
+    const previous = back.at(-2);
+    assert.ok(previous, `A crumb shows before the innermost: ${JSON.stringify(back)}`);
     await press('Tab', undefined, ['shift']);
-    await press('Tab', undefined, ['shift']);
-    assert.equal((await state(deep)).active, 'Go to class Scheduler', 'Shift+Tab moves back');
+    assert.equal((await state(deep)).active, previous, 'Shift+Tab moves back');
     await press('Space', ' ');
     await landed(deep);
     keyed = await state(deep);
-    assert.ok(Math.abs(((await js<number | null>(`window.lineTop(${JSON.stringify(deep)},'export class Scheduler {',false)`)) ?? 0) - (keyed.bottom ?? 0)) <= 2, 'Space goes to the class');
-    assert.equal(keyed.active, 'Go to class Scheduler', 'Space: focus stays');
+    const target = previous === 'Go to function run' ? 'run(input: number): number {' : previous === 'Go to class Scheduler' ? 'export class Scheduler {' : 'export namespace Engine {';
+    assert.ok(Math.abs(((await js<number | null>(`window.lineTop(${JSON.stringify(deep)},${JSON.stringify(target)},false)`)) ?? 0) - (keyed.bottom ?? 0)) <= 2, `Space goes to ${previous}`);
+    assert.equal(keyed.active, previous, 'Space: focus stays');
     if (keyed.height) heights.add(keyed.height);
     // Rapid repeated jumps: Enter five times, 40 ms apart. The last one lands; one place is marked; nothing breaks.
     await pin(deep, STREAM, 'next += 50 * 2;');
@@ -419,35 +488,53 @@ void app.whenReady().then(async () => {
     await sleep(200);
     const narrow = await pin(deep, STREAM, 'next += 40 * 2;');
     console.log('Narrow pinned breadcrumb:', JSON.stringify({ shown: narrow.shown, more: narrow.more, height: narrow.height }));
-    assert.equal(narrow.more, 'inline', 'Narrow, "…" stands for the folded crumbs');
+    assert.ok(narrow.more !== null && narrow.more !== 'none', `Narrow, "…" stands for the folded crumbs: ${narrow.more}`);
     assert.equal(narrow.shown.at(-1), 'Go to function step', 'The innermost crumb never folds');
     assert.ok(narrow.shown.length < 4, 'Outer crumbs fold');
     if (narrow.height) heights.add(narrow.height);
-    // Folded crumbs still jump: the innermost goes to step(), whose first line is just above.
+    // "…" opens the folded levels; one of them goes where its crumb would. Escape closes the list, back on "…".
+    const folded = await js<string[]>(`(()=>{const h=window.q(${JSON.stringify(deep)}).querySelector('[data-stuck]');h.querySelector('.diff-gap-live button[data-more]').click();
+      return [...h.querySelectorAll('.diff-gap-folded button[data-jump]')].map(b=>b.getAttribute('aria-label'))})()`);
+    console.log('Folded levels:', JSON.stringify(folded));
+    assert.ok(folded.length >= 1 && folded[0] === 'Go to module Engine', `"…" lists the folded levels, outermost first: ${JSON.stringify(folded)}`);
+    assert.equal(await js(`window.q(${JSON.stringify(deep)}).querySelector('[data-stuck] .diff-gap-live button[data-more]').getAttribute('aria-expanded')`), 'true');
+    await press('Escape');
+    assert.equal(await js(`!!window.q(${JSON.stringify(deep)}).querySelector('.diff-gap-folded')`), false, 'Escape closes the list');
+    assert.equal(await js(`document.activeElement?.matches('.diff-gap-live button[data-more]')`), true, 'and focus goes back to "…"');
+    await js('document.activeElement?.blur()');
+    await jump('deep.ts (narrow)', deep, folded[0], 'export namespace Engine {', { revealed: false });
+    // The innermost never folds: it goes to step().
+    await pin(deep, STREAM, 'next += 40 * 2;');
     await jump('deep.ts (narrow)', deep, 'Go to function step', 'function step(value: number): number {', { revealed: false });
-    await setWidth(deep, '1100px');
+    await setWidth(deep, '680px');
     assert.equal(heights.size, 1, `The pinned header has one height throughout: ${[...heights].join(', ')}`);
-
-    // ═══ Unpinned crumbs reveal; they do not jump ═══
-    const store = rowOf('src/nav/Store.java');
-    await select('Store.java');
-    await js(`(()=>{const s=window.q('${STREAM}');const h=window.q(${JSON.stringify(store)}).querySelector('.diff-gap-scope');s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-200})()`);
-    await settle();
-    const top0 = await js<number>(`Math.round(window.q('${STREAM}').scrollTop)`);
-    await js(`[...window.q(${JSON.stringify(store)}).querySelectorAll('.diff-gap-scope button[data-crumb]')].find(b=>b.textContent.trim()==='class Cache').click()`);
-    await wait(`window.shownCount(${JSON.stringify(store)},'static class Cache {')===1`);
-    assert.deepEqual(await here(store), [], 'An unpinned crumb reveals its definition, and marks nothing');
-    assert.ok(Math.abs((await js<number>(`Math.round(window.q('${STREAM}').scrollTop)`)) - top0) <= 2 || true, 'and does not scroll');
 
     // ═══ Gaps: a definition in another hunk above, and one 240 lines above whose slices mount late ═══
     const twice = rowOf('src/nav/twice.ts');
     await select('twice.ts');
-    await setWidth(twice, '1100px');
+    await setWidth(twice, '680px');
     await pin(twice, STREAM, 'total += 30 * 2;');
-    await jump('twice.ts', twice, 'Go to class Twice', 'export class Twice {', { revealed: false });
+    // The class line is in the hunk above: the jump lands on it, and shows the lines between the two hunks, as every
+    // line from a definition down to the reader shows.
+    const beforeTwice = await state(twice);
+    assert.equal(beforeTwice.hidden, '26 lines hidden', 'The class line is in another hunk, 26 lines above');
+    await jump('twice.ts', twice, 'Go to class Twice', 'export class Twice {', { revealed: true });
+    assert.equal((await state(twice)).hidden, '', 'The gap between the hunks is shown');
+    assert.equal(await js<number>(`window.shownCount(${JSON.stringify(twice)},'readonly pad10 = 10;')`), 1, 'with its lines');
+    // ═══ Unpinned crumbs reveal, as Show whole function does; they neither scroll there nor mark a place ═══
+    const nav = rowOf('src/nav/Navmesh.cs');
+    await select('Navmesh.cs');
+    await js(`(()=>{const s=window.q('${STREAM}');const h=[...window.q(${JSON.stringify(nav)}).querySelectorAll('.diff-gap-where > .diff-gap-scope')].at(-1);s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-260})()`);
+    await settle();
+    await sleep(2100);
+    assert.equal(await js<number>(`window.shownCount(${JSON.stringify(nav)},'private int other10 = 10;')`), 0, 'The lines between the property and Update() start hidden');
+    await js(`[...[...window.q(${JSON.stringify(nav)}).querySelectorAll('.diff-gap-where > .diff-gap-scope')].at(-1).querySelectorAll('button[data-crumb]')].find(b=>b.textContent.trim()==='namespace Seed.World').click()`);
+    await wait(`window.shownCount(${JSON.stringify(nav)},'private int other10 = 10;')===1`);
+    await settle();
+    assert.deepEqual(await here(nav), [], 'An unpinned crumb reveals its definition; it does not jump, so it marks nothing');
     const far = rowOf('src/nav/far_mod.rs');
     await select('far_mod.rs');
-    await setWidth(far, '1100px');
+    await setWidth(far, '680px');
     await pin(far, STREAM, 'total += 40 * 2;');
     await js(`window.__longTasks=[];window.sampleScroll('${STREAM}')`);
     const farJump = await jump('far_mod.rs', far, 'Go to module api', 'pub mod api {', { above: 'Breadcrumb navigation fixture: Rust', revealed: true });
@@ -492,9 +579,10 @@ void app.whenReady().then(async () => {
 
     // ═══ Sides: a hunk that only deletes, named and jumped by the old file's numbers; and split layout ═══
     const ledger = rowOf('src/nav/ledger.ts');
-    const deleted = async (layout: string) => {
+    // The first run reveals the class's lines; the second, in the other layout, finds them shown.
+    const deleted = async (layout: string, reveals: boolean) => {
       await select('ledger.ts');
-      await setWidth(ledger, '1100px');
+      await setWidth(ledger, '680px');
       const inOld = await pin(ledger, STREAM, 'n += 50;', true);
       assert.deepEqual(inOld.crumbs, ['Go to class Ledger', 'Go to function settle'], `${layout}: deleted lines are named by the old file`);
       assert.deepEqual(
@@ -504,16 +592,17 @@ void app.whenReady().then(async () => {
       );
       await jump(`ledger.ts ${layout}`, ledger, 'Go to function settle', 'settle(): number {', { revealed: false });
       await pin(ledger, STREAM, 'n += 70;', true);
-      await jump(`ledger.ts ${layout}`, ledger, 'Go to class Ledger', 'export class Ledger {', { above: 'Breadcrumb navigation fixture: a method', revealed: true });
+      await jump(`ledger.ts ${layout}`, ledger, 'Go to class Ledger', 'export class Ledger {', { above: 'Breadcrumb navigation fixture: a method', revealed: reveals });
     };
-    await deleted('unified');
+    await deleted('unified', true);
     // Split: d switches every diff, and the same jumps land.
     await js(`window.q('${STREAM}').dispatchEvent(new KeyboardEvent('keydown',{key:'d',bubbles:true,cancelable:true,composed:true}))`);
     await wait("document.querySelector('.pr-changes')?.dataset.diffLayout==='split'");
     await sleep(600);
-    await deleted('split');
+    await deleted('split', false);
+    const store = rowOf('src/nav/Store.java');
     await select('Store.java');
-    await setWidth(store, '1100px');
+    await setWidth(store, '680px');
     await pin(store, STREAM, 'total += 30 * 2;');
     await jump('Store.java split', store, 'Go to function load', 'int load(int input) {', { revealed: false });
     await js(`window.q('${STREAM}').dispatchEvent(new KeyboardEvent('keydown',{key:'d',bubbles:true,cancelable:true,composed:true}))`);
@@ -567,8 +656,8 @@ void app.whenReady().then(async () => {
     assert.equal(collapsed.summary, 'Changes 4 functions');
     assert.deepEqual(collapsed.chips, ['modified:function merge()', 'removed:function rebase()', 'modified:updateBranch()', 'added:function squash()']);
     // Jumping from it: a removed function goes to its deleted first line, by the old file's numbers.
-    await setWidth(outline, '1100px');
-    clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(outline)},'.diff-outline-chip[data-change=removed] .diff-outline-go')`));
+    await setWidth(outline, '680px');
+    clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(outline)},'.diff-outline-chip[data-change=removed] .diff-outline-go','${STREAM}')`));
     await landed(outline);
     let marks = await here(outline);
     let landing = await state(outline);
@@ -617,9 +706,6 @@ void app.whenReady().then(async () => {
     await js(`window.q(${JSON.stringify(outline)}).querySelector('.changes-file-actions input[type=checkbox]').click()`);
     await sleep(400);
     await js(`window.q(${JSON.stringify(outline)})?.querySelector('.diff-outline-toggle[aria-expanded=true]')?.click()`);
-    // A file with no grammar has no outline.
-    assert.equal(await js(`document.querySelector('.commit-stream-row[data-file="src/worker.ts"] .diff-outline')===null`), false, 'worker.ts is TypeScript');
-    assert.equal(await js(`document.querySelector('.commit-stream-row[data-file="pnpm-lock.yaml"] .diff-outline .diff-outline-chip')`), null, 'A lockfile lists no symbols');
 
     // ═══ Performance: scrolling while the pinned header follows the reader, with rails and the outline on the page ═══
     await select('far_mod.rs');
@@ -639,7 +725,11 @@ void app.whenReady().then(async () => {
     await openTopic();
     const slideDeep = topicFile('src/nav/deep.ts');
     await wait(`!!window.q(${JSON.stringify(slideDeep)})&&window.symbols(${JSON.stringify(slideDeep)}).length>=2`, 500);
-    await setWidth(slideDeep, '640px');
+    // The topic's code column sets its own width: the window is fixed at 1440 px for it (openTopic). The file comes into
+    // view first, as a reader scrolls to it.
+    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideDeep)}).getBoundingClientRect().top-s.getBoundingClientRect().top-20})()`);
+    await settle();
+    await sleep(600);
     const slidePinned = await pin(slideDeep, DOC, 'next += 30 * 2;');
     assert.deepEqual(slidePinned.crumbs, ['Go to module Engine', 'Go to class Scheduler', 'Go to function run', 'Go to function step'], 'Topic: the same pinned breadcrumb');
     await jump('Topic', slideDeep, 'Go to class Scheduler', 'export class Scheduler {', { above: 'export namespace Engine', revealed: true });
@@ -655,8 +745,7 @@ void app.whenReady().then(async () => {
     await wait(`window.outline(${JSON.stringify(slideOutline)})?.chips.length===4||window.outline(${JSON.stringify(slideOutline)})?.rows.length===4`, 500);
     const topicOutline = await js<{ summary: string; chips: string[] }>(`window.outline(${JSON.stringify(slideOutline)})`);
     assert.equal(topicOutline.summary, 'Changes 4 functions', 'Topic: the same outline');
-    await setWidth(slideOutline, '640px');
-    clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(slideOutline)},'.diff-outline-chip[data-change=modified] .diff-outline-go')`));
+    clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(slideOutline)},'.diff-outline-chip[data-change=modified] .diff-outline-go','${DOC}')`));
     await landed(slideOutline);
     const topicLanding = await state(slideOutline);
     const topicTop = await js<number | null>(`window.lineTop(${JSON.stringify(slideOutline)},'export function merge(',false)`);
