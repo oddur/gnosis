@@ -239,15 +239,16 @@ export function warmPredictedSyntax(files: readonly SyntaxFile[]) {
 /**
  * Where a file's diff is, for the order of parses (lib/syntax-parse-queue.ts): on screen (`view`), within a viewport
  * of it (`near`), or further (`prefetch`). Until the first observation it is `near`: it was just mounted, so close.
- * The place is kept in a ref and `onChange` hears of each change, so a file crossing the view while the reader scrolls
- * renders nothing: only a parse that still waits is told to move.
+ * The place is kept in `tier` and `onChange` hears of each change, so a file crossing the view while the reader
+ * scrolls renders nothing: only a parse that still waits is told to move. Watched only while `enabled`, which a file
+ * whose structure is parsed is not; it is `near` again while not watched.
  */
 export function useViewTier(
   element: RefObject<HTMLElement | null>,
   enabled: boolean,
+  tier: { current: SyntaxPriority },
   onChange: (tier: SyntaxPriority) => void
-): RefObject<SyntaxPriority> {
-  const tier = useRef<SyntaxPriority>('near');
+) {
   const changed = useRef(onChange);
   changed.current = onChange;
   useEffect(() => {
@@ -281,9 +282,9 @@ export function useViewTier(
     return () => {
       screen.disconnect();
       around.disconnect();
+      tier.current = 'near';
     };
   }, [enabled]);
-  return tier;
 }
 
 /** Where a file's scope contents are: being read, read, or not readable; `retry` asks again after a failure. */

@@ -22,6 +22,7 @@ import {
 } from '../lib/diff-gaps';
 import { chainAt, hunkScopes, provisionalScopes, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
 import type { DefinitionReveal, SyntaxDefinition } from '../lib/syntax-scope';
+import type { SyntaxPriority } from '../lib/syntax-parse-queue';
 import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
 import { raiseDefinitions } from '../lib/syntax-scope-client';
 import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-syntax-contents';
@@ -216,10 +217,7 @@ export function useDiffFileModel({
   );
   const parseable = structure && active && (whole ? !!baseHunks : expandable && !!gaps);
   // Files on screen parse first, then files near the view, then the rest (lib/syntax-parse-queue.ts).
-  const tier = useViewTier(sectionRef, parseable, (place) => {
-    raiseDefinitions(`${fileKey}:after`, place);
-    raiseDefinitions(`${fileKey}:before`, place);
-  });
+  const tier = useRef<SyntaxPriority>('near');
   const definitions = useSyntaxDefinitions({
     key: fileKey,
     url: request?.url ?? '',
@@ -229,6 +227,11 @@ export function useDiffFileModel({
     before: beforeText,
     enabled: parseable && (whole || afterMatches === true),
     priority: tier,
+  });
+  // Where the file is matters only while a side of it waits to be parsed: then it is watched, and a move raises it.
+  useViewTier(sectionRef, parseable && !!(definitions.parsing || definitions.beforeParsing), tier, (place) => {
+    raiseDefinitions(`${fileKey}:after`, place);
+    raiseDefinitions(`${fileKey}:before`, place);
   });
   // An added file has no old side, so every symbol in it is added; a deleted file has no new side, so every symbol in
   // it is removed.
