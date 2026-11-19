@@ -683,7 +683,7 @@ const mocks = {
       ...(new URLSearchParams(location.search).has('syntax-scope') ? syntaxScopeFiles : []),
       ...(new URLSearchParams(location.search).has('syntax-lazy') ? syntaxLazyFiles : []),
       ...(new URLSearchParams(location.search).has('syntax-span') ? syntaxSpanFiles : []),
-      ...(new URLSearchParams(location.search).has('syntax-large') ? syntaxLargeFiles : []),
+      ...(new URLSearchParams(location.search).has('syntax-large') ? syntaxLargeFiles() : []),
       ...(new URLSearchParams(location.search).has('breadcrumb-nav') ? breadcrumbNavFiles : []),
       // A file renamed into a long path, for the file header's left-collapsing path and its rename display.
       ...(new URLSearchParams(location.search).has('renamed-file') ? [{path:'src/transport/ECORuntime/Core/ECONemoConnector.cs',previousPath:'src/transport/Legacy/NemoConnector.cs',status:'renamed' as const,additions:1,deletions:1,changeId:'renamed-v1'}] : []),
