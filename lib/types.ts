@@ -445,6 +445,8 @@ export interface Preferences {
   maxPrsPerRepo: number;
   parallelReview: boolean;
   analytics: boolean;
+  /** Settings › Updates (#404). Missing or unknown values mean `'stable'`; see `normalizeUpdateChannel`. */
+  updateChannel?: import('./update-channel').UpdateChannel;
   /** When true, proactive reviews use the proactiveProvider/Model/Thinking fields
    *  below instead of the regular provider/model/thinking. Lets users run a fast
    *  cheap model (e.g. Sonnet) for background reviews while keeping Opus for
@@ -554,6 +556,31 @@ export interface RepoSearchResult {
 export interface UpdateInfo {
   version: string;
   releaseUrl: string;
+  /** A pre-release build, offered only on the Pre-release update channel (#404). */
+  prerelease?: boolean;
+}
+
+/** The outcome of the last update check, for Settings › Updates (#404). */
+export interface UpdateCheckResult {
+  at: number;
+  outcome: 'checking' | 'up-to-date' | 'downloading' | 'ready' | 'available' | 'failed';
+  /** The newer version, when there is one. */
+  version?: string;
+  prerelease?: boolean;
+  /** The release page, for a build that must be downloaded by hand. */
+  releaseUrl?: string;
+  message: string;
+}
+
+/** Settings › Updates: the running build, the chosen channel and the last check (#404). */
+export interface UpdateChannelInfo {
+  version: string;
+  /** The running build is a pre-release. */
+  prerelease: boolean;
+  channel: import('./update-channel').UpdateChannel;
+  /** Squirrel installs updates on this platform (macOS and Windows, packaged). Linux offers a download instead. */
+  autoUpdate: boolean;
+  lastCheck: UpdateCheckResult | null;
 }
 
 export interface PrLabel {

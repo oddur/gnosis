@@ -1075,14 +1075,16 @@ const updateScenario = new URLSearchParams(location.search).get('update');
 if (updateScenario) {
   const fixtureWindow = window as unknown as { fixtureUpdateCalls: string[] };
   fixtureWindow.fixtureUpdateCalls = [];
+  // ?update=prerelease: a downloaded pre-release (#404).
+  const readyVersion = updateScenario === 'prerelease' ? '9.9.9-beta.2' : '9.9.9';
   const status = updateScenario === 'failed'
     ? { state: 'failed' as const, version: '9.9.9', message: 'Gnosis v9.9.9 did not install. This happens when Gnosis is reopened before the update finishes installing.', releaseUrl: 'https://github.com/oddur/gnosis/releases/tag/v9.9.9' }
-    : { state: 'ready' as const, version: '9.9.9' };
+    : { state: 'ready' as const, version: readyVersion };
   Object.assign(mocks, {
     getUpdateStatus: () => Promise.resolve(status),
     installUpdate: () => {
       fixtureWindow.fixtureUpdateCalls.push('installUpdate');
-      return Promise.resolve({ state: 'installing' as const, version: '9.9.9' });
+      return Promise.resolve({ state: 'installing' as const, version: readyVersion });
     },
     openExternal: (url: string) => {
       fixtureWindow.fixtureUpdateCalls.push(url);
@@ -1115,6 +1117,40 @@ if (updateScenario) {
       return Promise.resolve('/tmp/gnosis-diagnostics.json');
     },
     refreshOpenPr: (urls: string[]) => { fixtureWindow.fixtureFocusRefreshes.push(urls); },
+  });
+}
+// Settings › Updates (#404). ?app-version=<v> is the running build and ?update-channel=prerelease the saved channel.
+// Calls are recorded in window.fixtureUpdateChannelCalls.
+{
+  type Info = import('../../lib/types').UpdateChannelInfo;
+  type Channel = import('../../lib/update-channel').UpdateChannel;
+  const { upToDateMessage } = await import('../../lib/update-channel');
+  const params = new URLSearchParams(location.search);
+  const version = params.get('app-version') ?? '0.41.0';
+  const fixtureWindow = window as unknown as { fixtureUpdateChannelCalls: string[] };
+  fixtureWindow.fixtureUpdateChannelCalls = [];
+  const listeners = new Set<(info: Info) => void>();
+  let info: Info = { version, prerelease: version.includes('-'), channel: params.get('update-channel') === 'prerelease' ? 'prerelease' : 'stable', autoUpdate: true, lastCheck: null };
+  const checked = (channel: Channel): Info['lastCheck'] => channel === 'prerelease'
+    ? { at: Date.now(), outcome: 'ready', version: '0.42.0-beta.3', prerelease: true, message: 'v0.42.0-beta.3 (pre-release) is ready. Restart Gnosis to install it.' }
+    : { at: Date.now(), outcome: 'up-to-date', message: upToDateMessage(channel, version) };
+  Object.assign(mocks, {
+    getUpdateChannel: () => Promise.resolve(info),
+    setUpdateChannel: (channel: Channel) => {
+      fixtureWindow.fixtureUpdateChannelCalls.push(`channel ${channel}`);
+      info = { ...info, channel, lastCheck: checked(channel) };
+      for (const listener of listeners) listener(info);
+      return Promise.resolve(info);
+    },
+    checkForUpdateNow: () => {
+      fixtureWindow.fixtureUpdateChannelCalls.push('check');
+      info = { ...info, lastCheck: checked(info.channel) };
+      return Promise.resolve(info);
+    },
+    onUpdateChannelChanged: (listener: (next: Info) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
   });
 }
 const fixtureFileContents = mocks.getPrChangeFile;

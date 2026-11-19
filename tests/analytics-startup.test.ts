@@ -6,6 +6,8 @@ import { setImmediate } from 'node:timers/promises';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { normalizeUpdateChannel } from '../lib/update-channel';
+import { isPrereleaseVersion } from '../lib/version';
 
 const require = createRequire(import.meta.url);
 const source = ts.createSourceFile(
@@ -43,7 +45,7 @@ const startup = source.statements
   .join('\n');
 const readyHandler = source.statements.find(
   (node) =>
-    node.getText(source).includes('app.whenReady().then') && node.getText(source).includes("trackEvent('app_started')")
+    node.getText(source).includes('app.whenReady().then') && node.getText(source).includes("trackEvent('app_started'")
 );
 assert.ok(readyHandler, 'Launch tracking must be wired into app readiness');
 const readyStatements: string[] = [];
@@ -54,7 +56,7 @@ function collect(node: ts.Node) {
       if (
         text === 'const prefs = loadPreferences();' ||
         text.includes('enableAnalyticsIfAllowed(prefs)') ||
-        text.includes("trackEvent('app_started')")
+        text.includes("trackEvent('app_started'")
       )
         readyStatements.push(text);
     }
@@ -65,7 +67,7 @@ const compile = (code: string) =>
   ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
 type Event = { eventName: string; systemProps: { isDebug: boolean }; props?: unknown };
-async function launch(stored: string | undefined, packaged = true, platform: NodeJS.Platform = 'linux') {
+async function launch(stored: string | undefined, packaged = true, platform: NodeJS.Platform = 'linux', version = '0.32.0') {
   let ready = false;
   let resolveReady!: () => void;
   const readiness = new Promise<void>((resolve) => {
@@ -78,7 +80,7 @@ async function launch(stored: string | undefined, packaged = true, platform: Nod
       isReady: () => ready,
       whenReady: () => readiness,
       isPackaged: packaged,
-      getVersion: () => '0.32.0',
+      getVersion: () => version,
       getLocale: () => 'en',
       getPath: () => '/fixture',
     },
@@ -170,6 +172,8 @@ async function launch(stored: string | undefined, packaged = true, platform: Nod
     normalizePreloadPreferences: () => ({ predictNavigation: true, preloadAmount: 'normal', prepareQueue: true, preloadBudgetPercent: 6 }),
     normalizeModelSelection: () => ({ provider: 'claude', model: 'opus' }),
     normalizeEffort: () => 'high',
+    normalizeUpdateChannel,
+    isPrereleaseVersion,
   });
   vm.runInContext(compile(startup), context);
   assert.equal(events.length, 0, 'SDK initialization itself must not send events');
@@ -194,9 +198,15 @@ for (const platform of ['darwin', 'linux', 'win32'] as const) {
       assert.equal(events.length, 1);
       assert.equal(events[0].eventName, 'app_started');
       assert.equal(events[0].systemProps.isDebug, false);
-      assert.equal(events[0].props, undefined);
+      // The update channel (#404): Stable unless the saved preference says Pre-release.
+      assert.deepEqual(events[0].props, { channel: 'stable', prerelease: false });
     });
   }
+  void test(`the launch event carries the Pre-release channel and a pre-release build on ${platform}`, async () => {
+    const events = await launch('{"analytics":true,"updateChannel":"prerelease"}', true, platform, '0.42.0-beta.2');
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0].props, { channel: 'prerelease', prerelease: true });
+  });
   void test(`opt-out sends no launch event on ${platform}`, async () => {
     assert.deepEqual(await launch('{"analytics":false}', true, platform), []);
   });

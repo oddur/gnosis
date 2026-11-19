@@ -44,9 +44,11 @@ import type {
   FreshnessResult,
   RepoSearchResult,
   UpdateInfo,
+  UpdateChannelInfo,
   GenerateExplainerRequest,
   InteractiveExplainer,
 } from '../lib/types';
+import type { UpdateChannel } from '../lib/update-channel';
 
 declare global {
   interface Window {
@@ -259,6 +261,11 @@ declare global {
       dismissUpdate: (version: string) => Promise<void>;
       getUpdateStatus: () => Promise<AppUpdateStatus>;
       installUpdate: () => Promise<AppUpdateStatus>;
+      /** Settings › Updates (#404). */
+      getUpdateChannel: () => Promise<UpdateChannelInfo>;
+      setUpdateChannel: (channel: UpdateChannel) => Promise<UpdateChannelInfo>;
+      checkForUpdateNow: () => Promise<UpdateChannelInfo>;
+      onUpdateChannelChanged: (callback: (info: UpdateChannelInfo) => void) => () => void;
       openExternal: (url: string) => Promise<void>;
       openLogsDirectory: () => Promise<void>;
       openReviewPrompt: (id: string) => Promise<void>;

@@ -18,6 +18,7 @@ import { CodeIntelligenceSettings } from './CodeIntelligenceSettings';
 import { Button } from './ui/button';
 import { Toggle, SettingRow } from './SettingsControls';
 import { DiagnosticsSettings } from './DiagnosticsSettings';
+import { UpdateSettings } from './UpdateSettings';
 import { NotificationSettings } from './NotificationSettings';
 import { useSystemSettingsPanes } from './DesktopSetup';
 import { menubarHelp } from '../lib/desktop-setup';
@@ -43,7 +44,7 @@ import { applyTheme, type ThemeChoice } from '@/lib/theme';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
 import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
 
-export type SettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'notifications' | 'integrations' | 'diagnostics';
+export type SettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'notifications' | 'integrations' | 'updates' | 'diagnostics';
 
 interface Props {
   initialSection?: SettingsSection;
@@ -516,6 +517,7 @@ export function SettingsDialog({
               <Tabs.Trigger value="appearance">Appearance</Tabs.Trigger>
               <Tabs.Trigger value="notifications">Notifications</Tabs.Trigger>
               <Tabs.Trigger value="integrations">Integrations</Tabs.Trigger>
+              <Tabs.Trigger value="updates">Updates</Tabs.Trigger>
               <Tabs.Trigger value="diagnostics">Diagnostics</Tabs.Trigger>
             </Tabs.List>
             <Tabs.Content forceMount value="repositories" className="settings-panel settings-repositories">
@@ -1156,6 +1158,9 @@ export function SettingsDialog({
                 Open logs directory →
               </button>
               {logsError && <p role="alert" className="text-sm text-destructive">{logsError}</p>}
+            </Tabs.Content>
+            <Tabs.Content value="updates" className="settings-panel">
+              <UpdateSettings />
             </Tabs.Content>
             <Tabs.Content value="diagnostics" className="settings-panel">
               <DiagnosticsSettings />
