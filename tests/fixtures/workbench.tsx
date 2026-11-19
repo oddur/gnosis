@@ -8,7 +8,7 @@ import { markdownBefore, markdownAfter, markdownFiles } from './markdown-review'
 import { prBadgePreview } from '../../lib/pr-badge-preview';
 import { fileFilterMocks, filterFixtureFiles } from './file-filters';
 import { diffGapContents, diffGapFiles } from './diff-gaps';
-import { syntaxLazyFiles, syntaxScopeContents, syntaxScopeFiles } from './syntax-scope';
+import { syntaxLazyFiles, syntaxScopeContents, syntaxScopeFiles, syntaxSpanFiles } from './syntax-scope';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
@@ -619,6 +619,7 @@ const mocks = {
       ] : []),
       ...(new URLSearchParams(location.search).has('syntax-scope') ? syntaxScopeFiles : []),
       ...(new URLSearchParams(location.search).has('syntax-lazy') ? syntaxLazyFiles : []),
+      ...(new URLSearchParams(location.search).has('syntax-span') ? syntaxSpanFiles : []),
       // A file renamed into a long path, for the file header's left-collapsing path and its rename display.
       ...(new URLSearchParams(location.search).has('renamed-file') ? [{path:'src/transport/ECORuntime/Core/ECONemoConnector.cs',previousPath:'src/transport/Legacy/NemoConnector.cs',status:'renamed' as const,additions:1,deletions:1,changeId:'renamed-v1'}] : []),
       {path:'src/worker.ts',status:'modified' as const,additions:1,deletions:1,changeId:'worker-v1',patch:'@@ -33,7 +33,7 @@\n const value32 = 32;\n const value33 = 33;\n const value34 = 34;\n-const value35 = 35;\n+const value35 = 36;\n const value36 = 36;\n const value37 = 37;\n const value38 = 38;'},

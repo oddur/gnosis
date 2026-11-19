@@ -20,6 +20,7 @@ import {
 } from '../lib/syntax-scope';
 import { diffGaps, pinLines, revealSpan, revealedParts, shownLines, withPins, type GapHunk } from '../lib/diff-gaps';
 import {
+  chainAt,
   hunkHeaderText,
   hunkScopes,
   oldToNew,
@@ -407,6 +408,17 @@ const keywordsOf = (list: SyntaxDefinition[], start: number) => {
   const inner = enclosingDefinition(list, start, start);
   return inner ? definitionChain(list, inner).map((d) => [d.crumbKeyword, d.crumb]) : [];
 };
+void test('A pinned header names the definitions around one line, on either side', async () => {
+  const list = await definitions('typescript', 'export function alpha() {\n  let a = 1;\n}\nconst top = 1;\nexport class Box {\n  open() {\n    return 1;\n  }\n}\n');
+  const at = (line: number) => chainAt({ after: list }, { side: 'after', line })?.map((d) => d.crumb);
+  assert.deepEqual(at(2), ['function alpha()']);
+  assert.deepEqual(at(1), ['function alpha()'], 'The signature line is inside');
+  assert.deepEqual(at(4), [], 'Outside every definition');
+  assert.deepEqual(at(7), ['class Box', 'open()']);
+  assert.equal(chainAt({ after: list }, { side: 'before', line: 2 }), undefined, 'No old definitions, no answer');
+  assert.deepEqual(chainAt({ after: [], before: list }, { side: 'before', line: 2 })?.map((d) => d.crumb), ['function alpha()']);
+});
+
 void test('A crumb names its kind word apart, for the keyword tint; a crumb without one has none', async () => {
   const rust = await definitions('rust', 'mod api {\n    impl Store {\n        fn save(&self) {\n            let a = 1;\n        }\n    }\n}\n');
   assert.deepEqual(keywordsOf(rust, 4), [['mod', 'mod api'], ['impl', 'impl Store'], ['fn', 'fn save']]);

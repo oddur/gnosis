@@ -189,18 +189,6 @@ void app.whenReady().then(async () => {
       await js(`document.querySelector(${JSON.stringify(bar)}).querySelector('.diff-gap-gutter button').focus({preventScroll:true})`);
       await capture(`${variant}-focus`, around(bar, 24));
       await js('document.activeElement.blur()');
-      // The rule's colours: cleanup() only deletes (red). No fixture hunk only adds, so green is shown by marking the
-      // same bar as added.
-      const cleanup = `.commit-stream-row[data-file="src/store.rs"] .diff-gap[data-change=deleted]`;
-      await js(`(()=>{const s=window.stream();const b=document.querySelector(${JSON.stringify(cleanup)});s.scrollTop+=b.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
-      await settle();
-      await capture(`${variant}-rule-deleted`, around(cleanup, 24));
-      await metric(variant, 'rule-deleted', `document.querySelector(${JSON.stringify(cleanup)})`);
-      await js(`document.querySelector(${JSON.stringify(cleanup)}).dataset.change='added'`);
-      const added = `.commit-stream-row[data-file="src/store.rs"] .diff-gap[data-change=added]`;
-      await capture(`${variant}-rule-added-forced`, around(added, 24));
-      await metric(variant, 'rule-added-forced', `document.querySelector(${JSON.stringify(added)})`);
-      await js(`document.querySelector(${JSON.stringify(added)}).dataset.change='deleted'`);
       // (3) A file with no grammar: the range alone, pinned.
       await select('sticky.rb');
       await wait(`window.stickyRow('src/sticky.rb')?.querySelectorAll('[data-hunk-header]').length===2`);
@@ -287,94 +275,111 @@ void app.whenReady().then(async () => {
     };
     const streamTop = (height: number) =>
       `(()=>{const b=document.querySelector('.commit-diff-stream').getBoundingClientRect();return {x:Math.round(b.left),y:Math.round(b.top),width:Math.round(b.width),height:${height}}})()`;
+    const around = (selector: string, above = 80, below = 80) =>
+      `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+        const y=Math.max(Math.round(s.top),Math.round(b.top-${above}));return {x:Math.round(s.left),y,width:Math.round(s.width),height:Math.round(Math.min(b.bottom+${below},s.bottom)-y)}})()`;
+    const toTop = (selector: string, offset = 140) =>
+      js(`(()=>{const s=document.querySelector('.commit-diff-stream');const b=document.querySelector(${JSON.stringify(selector)});s.scrollTop+=b.getBoundingClientRect().top-s.getBoundingClientRect().top-${offset}})()`);
     const select = async (name: string) => {
       await js(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`);
       await sleep(1700);
     };
-    // The file's section at the top of the stream: its chips, then its header.
-    const toRow = (path: string) =>
-      js(`(()=>{const s=document.querySelector('.commit-diff-stream');const r=window.stickyRow(${JSON.stringify(path)});s.scrollTop+=r.getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
-    const metrics = (path: string) =>
-      js<Record<string, unknown>>(`(()=>{const row=window.stickyRow(${JSON.stringify(path)});const h=row.querySelector('.changes-file-header');const c=document.createElement('canvas').getContext('2d',{willReadFrequently:true});
-        const rgb=v=>{if(!v)return null;c.clearRect(0,0,1,1);c.fillStyle='#000';c.fillStyle=v;c.fillRect(0,0,1,1);const d=c.getImageData(0,0,1,1).data;return '#'+[d[0],d[1],d[2]].map(n=>n.toString(16).padStart(2,'0')).join('')};
-        const color=sel=>{const e=h.querySelector(sel);return e?rgb(getComputedStyle(e).color):null};
-        const hunk=row.querySelector('.diff-gap[data-hunk-header]');
-        return {file:rgb(getComputedStyle(h).backgroundColor),hunk:hunk?rgb(getComputedStyle(hunk).backgroundColor):null,line:rgb(getComputedStyle(h).borderBottomColor),
-          name:color('.changes-file-name'),dir:color('.changes-file-dir'),stats:color('.changes-file-stats'),added:color('.diff-stats > :first-child'),deleted:color('.diff-stats > :last-child'),
-          button:color('[data-viewed-next]'),label:color('.changes-file-actions label'),rule:rgb(getComputedStyle(h).getPropertyValue('--file-status').trim()),status:h.dataset.status,height:Math.round(h.getBoundingClientRect().height)}})()`);
-    const metric = async (name: string, path: string) => {
-      for (const dark of [false, true]) {
-        await js(`document.documentElement.classList.toggle('dark',${dark})`);
-        await js(frames);
-        console.log(`FHMETRIC ${JSON.stringify({ case: name, theme: dark ? 'dark' : 'light', ...(await metrics(path)) })}`);
-      }
+    const open = async (query: string) => {
+      win.setContentSize(1280, 800);
+      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?${query}`);
+      await waitForWorkbenchQueue(win.webContents);
+      await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];void 0`);
+      await installSticky();
     };
-    win.setContentSize(1280, 800);
-    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope&renamed-file`);
-    await waitForWorkbenchQueue(win.webContents);
-    await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];void 0`);
-    await installSticky();
+    // Colours and target sizes, read as sRGB through a canvas.
+    const measure = (label: string) =>
+      js<Record<string, unknown>>(`(()=>{const c=document.createElement('canvas').getContext('2d',{willReadFrequently:true});
+        const rgb=v=>{if(!v)return null;c.clearRect(0,0,1,1);c.fillStyle='#000';c.fillStyle=v;c.fillRect(0,0,1,1);const d=c.getImageData(0,0,1,1).data;return '#'+[d[0],d[1],d[2]].map(n=>n.toString(16).padStart(2,'0')).join('')};
+        const q=s=>document.querySelector(s);const color=s=>q(s)?rgb(getComputedStyle(q(s)).color):null;const bg=s=>q(s)?rgb(getComputedStyle(q(s)).backgroundColor):null;
+        const hit=(s,pseudo)=>{const e=q(s);if(!e)return null;const r=e.getBoundingClientRect();const a=getComputedStyle(e,'::after');
+          const inset=a.content&&a.content!=='none'?parseFloat(a.top)||0:0;return {w:Math.round(r.width),h:Math.round(r.height),hitH:Math.round(r.height-2*inset),hitW:Math.round(r.width-2*(parseFloat(a.left)||0))}};
+        const box=q('.changes-file-actions input[type=checkbox]');
+        return {label:${JSON.stringify(label)},file:bg('.changes-file-header'),hunk:bg('.diff-gap[data-hunk-header]'),added:color('.diff-gap-added'),deleted:color('.diff-gap-deleted'),
+          outline:box?rgb(getComputedStyle(q('[data-viewed-next]')).borderTopColor):null,checkbox:box?rgb(getComputedStyle(box).borderTopColor):null,
+          chevron:hit('.diff-gap-gutter .diff-context-button'),crumb:hit('button.diff-gap-crumb'),viewed:hit('.changes-file-actions label'),
+          viewedTop:box?Math.round(q('.changes-file-actions label').getBoundingClientRect().top-q('[data-viewed-next]').getBoundingClientRect().top):null,
+          viewedMid:box?Math.round((q('.changes-file-actions label').getBoundingClientRect().top+q('.changes-file-actions label').getBoundingClientRect().bottom)/2-(q('[data-viewed-next]').getBoundingClientRect().top+q('[data-viewed-next]').getBoundingClientRect().bottom)/2):null}})()`);
+    const metric = async (label: string) => console.log(`FHMETRIC ${JSON.stringify(await measure(label))}`);
+
+    // ── Pinned mid-hunk, before and after the reader crosses into the second function ──
+    await open('pr-summary&syntax-scope&syntax-span');
     await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
     await click('Open PR overview');
     await click('Changes');
-    await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='sticky.ts')");
-    // Pinned, mid-file, with the hunk's header pinned under it.
-    await select('sticky.ts');
-    await js(`window.toMiddle('src/sticky.ts',1)`);
-    await settle();
-    await capture('pinned', streamTop(260));
-    await metric('pinned', 'src/sticky.ts');
-    // In the flow: the chips above the header.
-    await select('store.rs');
-    await toRow('src/store.rs');
-    await settle();
-    await capture('flow', streamTop(200));
-    await metric('flow', 'src/store.rs');
-    // Renamed, with a long path.
-    await select('ECONemoConnector.cs');
-    await toRow('src/transport/ECORuntime/Core/ECONemoConnector.cs');
-    await settle();
-    await capture('renamed', streamTop(160));
-    await metric('renamed', 'src/transport/ECORuntime/Core/ECONemoConnector.cs');
-    // Added and deleted.
-    for (const [name, path] of [['added', 'src/new.ts'], ['deleted', 'src/old.ts']]) {
-      await select(path.slice(4));
-      await toRow(path);
+    await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='span.ts')");
+    await select('span.ts');
+    for (const [name, line] of [['pinned-alpha', 30], ['pinned-beta', 100]] as const) {
+      await js(`(()=>{const section=window.stickyRow('src/span.ts').querySelector('.diff-hunk');
+        window.deepAll('[data-line]',section).find(e=>e.dataset.line==='${line}'&&e.dataset.lineType!=='change-deletion'&&e.getBoundingClientRect().height>0).scrollIntoView({block:'start',behavior:'instant'})})()`);
       await settle();
-      await capture(name, streamTop(160));
-      await metric(name, path);
+      await sleep(150);
+      await capture(name, streamTop(200));
     }
-    // Keyboard focus: a key press makes focus visible, as Tab would.
-    const keyboardFocus = async (selector: string) => {
-      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Shift' });
-      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Shift' });
-      await sleep(50);
-      await js(`window.stickyRow('src/old.ts').querySelector(${JSON.stringify(selector)}).focus({preventScroll:true})`);
-    };
-    await keyboardFocus('.changes-file-actions input[type=checkbox]');
-    await capture('focus-viewed', streamTop(160));
-    await keyboardFocus('[data-viewed-next]');
-    await capture('focus-viewed-next', streamTop(160));
+    // ── A hunk header with what it changes, and a top-level hunk ──
+    await select('store.rs');
+    await toTop('.commit-stream-row[data-file="src/store.rs"] .diff-gap[data-hunk-header]:has(.diff-gap-counts)', 120);
+    await settle();
+    await capture('counts', around('.commit-stream-row[data-file="src/store.rs"] .diff-gap[data-hunk-header]:has(.diff-gap-counts)', 60, 60));
+    await metric('store.rs');
+    await select('imports.ts');
+    await toTop('.commit-stream-row[data-file="src/imports.ts"] .diff-gap[data-hunk-header]', 120);
+    await settle();
+    await capture('top-level', around('.commit-stream-row[data-file="src/imports.ts"] .diff-gap[data-hunk-header]', 60, 60));
+    // ── A file boundary in a single PR: the trailing bar, the space, the next file ──
+    const trailing = '.commit-stream-row .diff-gap[data-trailing]';
+    await js(`document.querySelector(${JSON.stringify(trailing)}).closest('.commit-stream-row').setAttribute('data-shot-boundary','')`);
+    await toTop(`.commit-stream-row[data-shot-boundary] .diff-gap[data-trailing]`, 260);
+    await settle();
+    await capture('file-boundary', around(`.commit-stream-row[data-shot-boundary] .diff-gap[data-trailing]`, 100, 160));
+    // ── Keyboard focus on the Viewed checkbox ──
+    await select('worker.ts');
+    await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const r=window.stickyRow('src/worker.ts');s.scrollTop+=r.getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    await settle();
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Shift' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Shift' });
+    await sleep(50);
+    await js(`window.stickyRow('src/worker.ts').querySelector('.changes-file-actions input[type=checkbox]').focus({preventScroll:true})`);
+    await capture('focus-viewed', streamTop(120));
+    await metric('worker.ts');
     await js('document.activeElement.blur()');
-    // Narrow, pinned.
+    // ── Narrow, pinned, with the Ask icon ──
     win.setContentSize(760, 800);
     await sleep(400);
     await select('sticky.ts');
     await js(`window.toMiddle('src/sticky.ts',1)`);
     await settle();
-    await capture('narrow-pinned', streamTop(260));
-    await select('ECONemoConnector.cs');
-    await toRow('src/transport/ECORuntime/Core/ECONemoConnector.cs');
-    await settle();
-    await capture('narrow-renamed', streamTop(160));
-    win.setContentSize(1280, 800);
-    await sleep(400);
-    // The Commits tab.
-    await click('Commits');
-    await wait("!!document.querySelector('.pr-commits .changes-file-header')", 500);
+    await capture('narrow-pinned', streamTop(220));
+    // ── A stack's combined view: each file names the PRs that changed it, with their commits ──
+    await open('pr-summary&syntax-scope');
+    // The fixture has no combined comparison: this one is store.rs from the root PR, and worker.ts from every PR.
+    await js(`(()=>{const source=window.electronAPI.getPrChanges;
+      window.electronAPI.getStackChanges=async(subject)=>{const snapshots=await Promise.all(subject.members.map(m=>source(m.url)));const root=snapshots[0],tip=snapshots.at(-1);
+        const files=root.files.filter(f=>f.path==='src/store.rs'||f.path==='src/worker.ts');
+        const sources={'src/store.rs':[subject.members[0].url],'src/worker.ts':subject.members.map(m=>m.url)};
+        return {version:1,url:tip.url,metadata:{...tip.metadata,baseSha:root.metadata.baseSha,baseBranch:root.metadata.baseBranch},comparisonBase:root.metadata.baseSha,fetchedAt:Date.now(),files,
+          stackComparison:{key:'b'.repeat(64),subjectId:subject.id,members:snapshots.map(s=>({metadata:s.metadata,comparisonBase:s.comparisonBase})),fileSources:sources}}};})()`);
+    await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('bounded command queue')).click()");
+    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Open stack overview')");
+    await click('Open stack overview');
+    await wait("!!document.querySelector('.pr-overview-tabs')");
+    await click('Changes');
+    await wait("!!document.querySelector('.commit-diff-stream .changes-file-header')", 500);
+    await wait("!!document.querySelector('.stack-changes-switch')", 500);
+    await js("[...document.querySelectorAll('.stack-changes-switch button')].find(b=>b.textContent.trim()==='Combined').click()");
+    await wait("!!document.querySelector('.stack-comparison-context')", 500);
+    await sleep(1500);
+    console.log('HHINFO combined:', JSON.stringify(await js(`({switch:document.querySelector('.stack-changes-switch')?.textContent,pressed:document.querySelector('.stack-changes-switch [aria-pressed=true]')?.textContent,
+      rows:[...document.querySelectorAll('.commit-stream-row')].slice(0,3).map(r=>({file:r.dataset.file,context:r.querySelector('.changes-file-context')?.textContent??null}))})`)));
+    await wait("!!document.querySelector('.changes-file-context .changes-source-pr')", 500);
     await sleep(1700);
-    await capture('commits', `(()=>{const h=document.querySelector('.pr-commits .changes-file-header');const s=h.closest('.commit-diff-stream')??h.parentElement;const b=s.getBoundingClientRect();const t=h.getBoundingClientRect();
-      const y=Math.max(0,Math.round(t.top-60));return {x:Math.round(b.left),y,width:Math.round(b.width),height:220}})()`);
+    await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const r=document.querySelector('.commit-stream-row[data-file*="worker.ts"]')??document.querySelector('.commit-stream-row');s.scrollTop+=r.getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    await settle();
+    await capture('combined-chips', around('.commit-stream-row[data-file*="worker.ts"] .changes-file-context', 40, 90));
     await js(`document.documentElement.classList.toggle('dark',false)`);
   };
   try {
@@ -434,10 +439,10 @@ void app.whenReady().then(async () => {
     await wait(`(${scope}?.querySelectorAll('.diff-gap[data-gap]').length??0)>=4`);
     await wait('window.held.length>0');
     // Before scopes arrive, the diff is today's: three lines of context and no symbols. These hunk headers carry no
-    // text, so each hunk's provisional location is the file, beside a quiet "Loading structure…".
+    // text, so each hunk's provisional location is blank, beside a quiet "Loading structure…".
     assert.deepEqual(await js('window.symbols("src/scope.ts")'), []);
     await wait(`window.provisional('src/scope.ts').length>=4`);
-    assert.deepEqual(await js('window.provisional("src/scope.ts")'), Array(4).fill('scope.ts'));
+    assert.deepEqual(await js('window.provisional("src/scope.ts")'), Array(4).fill(''));
     assert.ok(
       (await js<string[]>('window.structureNote("src/scope.ts")')).every((note) => note === 'loading: Loading structure…'),
       'Loading structure… while the parse is pending'
@@ -475,10 +480,10 @@ void app.whenReady().then(async () => {
 
     // ── Each hunk's bar is a breadcrumb of the file and the definitions around the hunk ──
     const scopeCrumbs = [
-      'scope.ts › function resolvePaths()',
-      'scope.ts › class StoreBridge › flush()',
-      'scope.ts › function migrate()',
-      'scope.ts › describe "resolvePaths" › it "joins names"',
+      'function resolvePaths()',
+      'class StoreBridge › flush()',
+      'function migrate()',
+      'describe "resolvePaths" › it "joins names"',
     ];
     assert.deepEqual(await js('window.symbols("src/scope.ts")'), scopeCrumbs);
     assert.deepEqual(
@@ -536,11 +541,11 @@ void app.whenReady().then(async () => {
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='store.rs').click()");
     await wait(`window.symbols('src/store.rs').length>=5`);
     assert.deepEqual(await js('window.symbols("src/store.rs")'), [
-      'store.rs › impl StoreBridge',
-      'store.rs › impl StoreBridge › fn save',
-      'store.rs › trait Bridge',
-      'store.rs › fn cleanup',
-      'store.rs › mod tests › fn saves_items',
+      'impl StoreBridge',
+      'impl StoreBridge › fn save',
+      'trait Bridge',
+      'fn cleanup',
+      'mod tests › fn saves_items',
     ]);
     const store = "window.row('src/store.rs')";
     assert.deepEqual(
@@ -584,11 +589,11 @@ void app.whenReady().then(async () => {
 
     // ── The 3,000-line file parses in the worker ──
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='large.ts').click()");
-    await wait(`window.symbols('src/large.ts').includes('large.ts › function generated500()')`);
+    await wait(`window.symbols('src/large.ts').includes('function generated500()')`);
     // Imports at the file's first lines sit outside every definition and have no gap bar above them: the hunk still
     // shows where it is, as the file alone; the hunk inside total() shows its function.
     await wait(`window.symbols('src/imports.ts').length>=2`);
-    assert.deepEqual(await js('window.symbols("src/imports.ts")'), ['imports.ts', 'imports.ts › function total()'], 'Top-level changes show the file as their location');
+    assert.deepEqual(await js('window.symbols("src/imports.ts")'), ['top level', 'function total()'], 'Top-level changes say so');
     // C# (Unity): the hunk inside Update() names its namespace, class and method.
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='Navmesh.cs').click()");
     await wait(`window.symbols('src/Navmesh.cs').length>=1`);
@@ -634,7 +639,7 @@ void app.whenReady().then(async () => {
     await installSticky();
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='sticky.ts').click()");
     await wait(`window.symbols('src/sticky.ts').length>=2`);
-    const stickyCrumbs = ['sticky.ts › function first()', 'sticky.ts › function second()'];
+    const stickyCrumbs = ['function first()', 'function second()'];
     assert.deepEqual(await js('window.symbols("src/sticky.ts")'), stickyCrumbs);
     // The tree's jump holds the file in place for 1.5 s.
     await sleep(1700);
@@ -779,7 +784,7 @@ void app.whenReady().then(async () => {
     await wait(`window.provisional('src/lazy/h003.rs').length>=1`);
     assert.deepEqual(
       await js('window.provisional("src/lazy/h003.rs")'),
-      ['h003.rs › pub fn handler_3(&self) -> u32'],
+      ['pub fn handler_3(&self) -> u32'],
       'The provisional crumb is the hunk header text, without its brace'
     );
     assert.deepEqual(await js('window.symbols("src/lazy/h003.rs")'), []);
@@ -813,7 +818,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await js("window.lazyReads.filter(r=>r.path==='src/lazy/h003.rs').map(r=>r.side)"), ['after']);
     assert.deepEqual(
       await js('window.symbols("src/lazy/h003.rs")'),
-      ['h003.rs › … › impl Client3 › fn handler_3'],
+      ['… › impl Client3 › fn handler_3'],
       'A long chain keeps the file and the innermost two crumbs'
     );
     const trail = `${h03}.querySelector('.diff-gap-symbol')`;
@@ -842,12 +847,12 @@ void app.whenReady().then(async () => {
     await wait(`window.structureNote('src/lazy/h030.rs').some(n=>n.startsWith('failed:'))`, 800);
     assert.deepEqual(await js('window.structureNote("src/lazy/h030.rs")'), ['failed: Couldn’t load structure.Try again']);
     assert.equal(await js<number>("window.failedReads.filter(r=>r.path==='src/lazy/h030.rs').length"), 4);
-    assert.deepEqual(await js('window.provisional("src/lazy/h030.rs")'), ['h030.rs › pub fn handler_30(&self) -> u32'], 'The provisional crumb stays');
+    assert.deepEqual(await js('window.provisional("src/lazy/h030.rs")'), ['pub fn handler_30(&self) -> u32'], 'The provisional crumb stays');
     await js(`document.querySelector('.commit-diff-stream').scrollTop+=window.row('src/lazy/h030.rs').querySelector('.diff-gap-scope').closest('.diff-gap').getBoundingClientRect().top-document.querySelector('.commit-diff-stream').getBoundingClientRect().top-200`);
     await shot('structure-failed', '.commit-stream-row[data-file="src/lazy/h030.rs"] .diff-gap:has(.diff-gap-scope)');
     await js(`[...window.row('src/lazy/h030.rs').querySelectorAll('[data-structure=failed] button')].find(b=>b.textContent==='Try again').click()`);
     await wait(`window.symbols('src/lazy/h030.rs').length>=1`, 200);
-    assert.deepEqual(await js('window.symbols("src/lazy/h030.rs")'), ['h030.rs › … › impl Client30 › fn handler_30']);
+    assert.deepEqual(await js('window.symbols("src/lazy/h030.rs")'), ['… › impl Client30 › fn handler_30']);
     assert.deepEqual(await js('window.structureNote("src/lazy/h030.rs")'), []);
     // A file far from the view is not read while prefetch waits.
     for (const far of ['src/lazy/h020.rs', 'src/lazy/h023.rs', 'src/lazy/panel.ts'])
@@ -917,13 +922,13 @@ void app.whenReady().then(async () => {
     const reads = await js<number>('window.lazyReads.length');
     await js("window.treeClick('h020.rs')");
     await wait(`window.symbols('src/lazy/h020.rs').length>=1`, 50);
-    assert.deepEqual(await js('window.symbols("src/lazy/h020.rs")'), ['h020.rs › … › impl Client20 › fn handler_20']);
+    assert.deepEqual(await js('window.symbols("src/lazy/h020.rs")'), ['… › impl Client20 › fn handler_20']);
     await js("window.treeClick('cleanup.rs')");
     await wait(`window.symbols('src/lazy/cleanup.rs').length>=1`, 50);
-    assert.deepEqual(await js('window.symbols("src/lazy/cleanup.rs")'), ['cleanup.rs › fn cleanup']);
+    assert.deepEqual(await js('window.symbols("src/lazy/cleanup.rs")'), ['fn cleanup']);
     await js("window.treeClick('panel.ts')");
     await wait(`window.symbols('src/lazy/panel.ts').length>=1`, 50);
-    assert.deepEqual(await js('window.symbols("src/lazy/panel.ts")'), ['panel.ts › class Panel › open()']);
+    assert.deepEqual(await js('window.symbols("src/lazy/panel.ts")'), ['class Panel › open()']);
     await js(`document.querySelector('.commit-diff-stream').scrollTop+=window.row('src/lazy/panel.ts').querySelector('.diff-gap-scope').closest('.diff-gap').getBoundingClientRect().top-document.querySelector('.commit-diff-stream').getBoundingClientRect().top-40`);
     await shot('ts-breadcrumb', '.commit-stream-row[data-file="src/lazy/panel.ts"] .diff-gap:has(.diff-gap-scope)');
     // Revisits: back to the overview and into Changes again, and through every file. Nothing is read again.
@@ -961,6 +966,61 @@ void app.whenReady().then(async () => {
       [],
       'Nothing in Rust is parsed while Rust is off'
     );
+    // ═══ A pinned header follows the reader (#395): the definitions around the top line in view, and that line ═══
+    // `src/span.ts` is one long hunk across alpha() and beta(); beta()'s new lines are one past its old ones.
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope&syntax-span`);
+    await waitForWorkbenchQueue(win.webContents);
+    await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
+      window.__longTasks=[];new PerformanceObserver(l=>{for(const e of l.getEntries())window.__longTasks.push({start:e.startTime,duration:e.duration})}).observe({type:'longtask'});void 0`);
+    await installSticky();
+    await js(`window.symbols=p=>[...(window.stickyRow(p)?.querySelectorAll('.diff-gap-scope:not([data-provisional]) .diff-gap-symbol')??[])].map(e=>[...e.querySelectorAll('.diff-gap-crumb')].map(c=>c.textContent.trim()).join(' › '));void 0`);
+    await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
+    await click('Open PR overview');
+    await click('Changes');
+    await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='span.ts')");
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='span.ts').click()");
+    await wait(`window.symbols('src/span.ts').length>=1`);
+    await sleep(1700);
+    assert.deepEqual(await js('window.symbols("src/span.ts")'), ['top level'], 'Unpinned, the header names the hunk: it spans two functions');
+    type Live = { stuck: boolean; live?: string; crumb: string; line: string; own: string; height: number; shown: string };
+    const readerAt = (line: number) =>
+      js<Live>(`(async()=>{const section=window.stickyRow('src/span.ts').querySelector('.diff-hunk');
+        const target=window.deepAll('[data-line]',section).find(e=>e.dataset.line==='${line}'&&e.dataset.lineType!=='change-deletion'&&e.getBoundingClientRect().height>0);
+        target.scrollIntoView({block:'start',behavior:'instant'});
+        for(let i=0;i<3;i++)await new Promise(r=>requestAnimationFrame(r));await new Promise(r=>setTimeout(r,120));
+        const h=section.querySelector('[data-hunk-header]');
+        return {stuck:h.hasAttribute('data-stuck'),live:h.dataset.live,crumb:h.querySelector('.diff-gap-live').textContent.trim(),line:h.querySelector('.diff-gap-live-line').textContent,
+          own:window.headerLabel(h),height:Math.round(h.getBoundingClientRect().height),shown:getComputedStyle(h.querySelector('.diff-gap-live')).visibility}})()`);
+    const inAlpha = await readerAt(30);
+    console.log('Reader in alpha():', JSON.stringify(inAlpha));
+    assert.ok(inAlpha.stuck && inAlpha.live === 'scope' && inAlpha.shown === 'visible', `The pinned header follows the reader: ${JSON.stringify(inAlpha)}`);
+    assert.equal(inAlpha.crumb, 'function alpha()', 'Pinned inside alpha(), the header names alpha()');
+    assert.match(inAlpha.line, /^(old )?L(29|30|31)$/, 'and the line at the top of the view');
+    const inBeta = await readerAt(100);
+    console.log('Reader in beta():', JSON.stringify(inBeta));
+    assert.equal(inBeta.crumb, 'function beta()', 'Scrolled into beta(), the pinned header names beta()');
+    assert.match(inBeta.line, /^L(99|100|101)$|^old L(98|99|100)$/, 'in its own side’s numbers');
+    assert.equal(inBeta.height, inAlpha.height, 'The swap never changes the header’s height');
+    assert.equal(inBeta.own, 'top level', 'The header still describes its hunk for screen readers');
+    assert.equal(
+      await js<string | null>("window.stickyRow('src/span.ts').querySelector('[data-hunk-header] .diff-gap-live').closest('[aria-live]')?.getAttribute('aria-live') ?? null"),
+      null,
+      'Nothing is announced as the reader scrolls'
+    );
+    // Following costs one hit test a frame at most, only while a header is pinned.
+    const following = await js<{ frames: number; p50: number; max: number; longTasks: number[]; places: number }>(`(async()=>{
+      const s=window.stream();const section=window.stickyRow('src/span.ts').querySelector('.diff-hunk');
+      s.scrollTop+=section.getBoundingClientRect().top-s.getBoundingClientRect().top+200;await new Promise(r=>setTimeout(r,300));
+      const h=section.querySelector('[data-hunk-header]');let places=0;const watch=new MutationObserver(l=>places+=l.length);watch.observe(h,{attributeFilter:['data-live-key']});
+      window.__longTasks=[];const deltas=[];let last=performance.now();
+      for(let i=0;i<120;i++){s.scrollTop+=20;await new Promise(r=>requestAnimationFrame(r));const now=performance.now();deltas.push(now-last);last=now}
+      await new Promise(r=>setTimeout(r,100));watch.disconnect();deltas.sort((a,b)=>a-b);
+      return {frames:deltas.length,p50:Math.round(deltas[deltas.length>>1]*10)/10,max:Math.round(deltas.at(-1)*10)/10,longTasks:window.__longTasks.map(t=>Math.round(t.duration)),places}})()`);
+    console.log('Scrolling span.ts 20 px a frame, following the reader:', JSON.stringify(following));
+    assert.deepEqual(following.longTasks, [], 'Following the reader adds no long task');
+    assert.ok(following.places > 10, `The header follows line by line: ${following.places}`);
+    await shot('follow-alpha', '.commit-diff-stream');
+
     // ═══ Pinned hunk headers in the stack's Changes (#395) ═══
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
     await waitForWorkbenchQueue(win.webContents);

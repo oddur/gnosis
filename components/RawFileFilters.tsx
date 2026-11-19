@@ -105,21 +105,27 @@ export function RawFileFilters({
     </Popover.Root>
   );
 }
+/**
+ * A file's kinds and the menu that changes them. `part` renders one half: the tags (Generated, Test), which the file
+ * header shows beside the path, or the menu, which ends its actions. Both by default.
+ */
 export function FileKindControl({
   snapshot,
   file,
   kinds,
   filters,
+  part,
 }: {
   snapshot: PrChanges;
   file: PrChangeFile;
   kinds: FileKinds;
   filters: RawFilters;
+  part?: 'tags' | 'menu';
 }) {
   const repo = snapshot.metadata.baseRepo ?? fileSource(snapshot, file).repo;
   const override = filters.state.overrides[fileOverrideKey(repo, file.path)] ?? {};
-  return (
-    <div className="file-kind-control">
+  const tags = part !== 'menu' && (
+    <>
       {kinds.generated.value && (
         <span className="file-kind-tag" title={kinds.generated.reason}>
           Generated
@@ -130,6 +136,13 @@ export function FileKindControl({
           Test
         </span>
       )}
+    </>
+  );
+  if (part === 'tags')
+    return kinds.generated.value || kinds.test.value ? <span className="file-kind-tags">{tags}</span> : null;
+  return (
+    <div className="file-kind-control">
+      {tags}
       <EntryActions
         label={`File classification for ${file.path}`}
         description={

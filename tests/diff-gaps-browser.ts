@@ -504,7 +504,8 @@ void app.whenReady().then(async () => {
     await wait(`${gapsRow}.querySelector('.diff-gap[data-gap="0"]')?.getAttribute('aria-label')==='26 lines hidden'`);
     assert.equal(await lineAt('export const g27 = 27;'), '27');
     assert.deepEqual(await bars(), ['0: 26 lines hidden', '2: 47 lines hidden'], 'The after side gives the last gap its size');
-    await press(2, 'Show all');
+    // The bar below the last hunk is one quiet row: "47 more lines · Show".
+    await press(2, 'Show');
     await wait(`!${gapsRow}.querySelector('.diff-gap[data-gap="2"]')`);
     assert.match(String(await lineAt('export const g200 = 200;')), /^(201|200,201)$/);
     assert.deepEqual(await js('window.afterReads'), ['src/gaps.ts'], 'Every reveal used the one after-side read');

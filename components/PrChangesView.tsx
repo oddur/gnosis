@@ -795,6 +795,16 @@ export function PrChangesView({
                     preferences={prefs}
                     classificationControl={
                       <FileKindControl
+                        part="menu"
+                        snapshot={e.snapshot}
+                        file={e.file}
+                        kinds={filters.kind(e.snapshot, e.file)}
+                        filters={filters}
+                      />
+                    }
+                    classificationTags={
+                      <FileKindControl
+                        part="tags"
                         snapshot={e.snapshot}
                         file={e.file}
                         kinds={filters.kind(e.snapshot, e.file)}

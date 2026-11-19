@@ -18,12 +18,17 @@ export interface CodePalette {
   muted: string;
   /** The colour the theme gives the `keyword` scope, raised to TEXT_CONTRAST on the header; undefined without one. */
   keyword?: string;
+  /** A hunk header's +N and −M counts: the code tier's green and red, raised to TEXT_CONTRAST on the header. */
+  headerAdded: string;
+  headerDeleted: string;
   /** The file header's surface, a step above the hunk header's (FILE_LIFT, FILE_TINT). */
   file: string;
   /** Text on the file header: the foreground, raised where it would not read (TEXT_CONTRAST). */
   fileText: string;
   /** Secondary text on the file header, such as folders and the status word. */
   fileMuted: string;
+  /** Outlines of the file header's controls (buttons, the checkbox): 3:1 against it (CONTROL_CONTRAST). */
+  fileControl: string;
   /** The +N and −M counts on the file header: the code tier's green and red, raised to TEXT_CONTRAST. */
   fileAdded: string;
   fileDeleted: string;
@@ -74,9 +79,12 @@ export function codePalette(theme: PaletteTheme): CodePalette {
       line: background,
       muted: foreground,
       keyword,
+      headerAdded: CODE_ADDED,
+      headerDeleted: CODE_DELETED,
       file: background,
       fileText: foreground,
       fileMuted: foreground,
+      fileControl: foreground,
       fileAdded: CODE_ADDED,
       fileDeleted: CODE_DELETED,
     };
@@ -90,9 +98,12 @@ export function codePalette(theme: PaletteTheme): CodePalette {
     line: mixOklab(background, '#000000', LINE_DARKEN),
     muted: mutedColor(header, foreground),
     keyword: keyword && HEX.test(keyword) ? readable(keyword, header) : keyword,
+    headerAdded: readable(CODE_ADDED, header),
+    headerDeleted: readable(CODE_DELETED, header),
     file,
     fileText,
     fileMuted: mutedColor(file, fileText),
+    fileControl: controlColor(file, fileText),
     fileAdded: readable(CODE_ADDED, file),
     fileDeleted: readable(CODE_DELETED, file),
   };
@@ -103,6 +114,17 @@ function mutedColor(surface: string, foreground: string): string {
   for (let step = 20; step > 0; step--) {
     const candidate = mixColor(foreground, surface, step / 50);
     if (contrastRatio(candidate, surface) >= TEXT_CONTRAST) return candidate;
+  }
+  return foreground;
+}
+
+/** Controls' outlines keep this contrast with their surface: WCAG's 3:1 for non-text, with a margin. */
+export const CONTROL_CONTRAST = 3.1;
+/** The quietest mix of the text into the surface that still outlines a control (CONTROL_CONTRAST). */
+function controlColor(surface: string, foreground: string): string {
+  for (let step = 1; step <= 50; step++) {
+    const candidate = mixColor(surface, foreground, step / 50);
+    if (contrastRatio(candidate, surface) >= CONTROL_CONTRAST) return candidate;
   }
   return foreground;
 }
@@ -178,9 +200,12 @@ export function codePaletteCSS(theme: string, palette: CodePalette): string {
     `--diff-code-line:${palette.line}`,
     `--diff-code-muted:${palette.muted}`,
     ...(palette.keyword ? [`--diff-keyword:${palette.keyword}`] : []),
+    `--diff-code-added:${palette.headerAdded}`,
+    `--diff-code-deleted:${palette.headerDeleted}`,
     `--diff-file-bg:${palette.file}`,
     `--diff-file-fg:${palette.fileText}`,
     `--diff-file-muted:${palette.fileMuted}`,
+    `--diff-file-control:${palette.fileControl}`,
     `--diff-file-added:${palette.fileAdded}`,
     `--diff-file-deleted:${palette.fileDeleted}`,
   ];

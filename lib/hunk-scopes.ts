@@ -231,9 +231,28 @@ export function spokenDefinition(definition: SyntaxDefinition): string {
   if (definition.kind === 'impl') return `impl ${definition.name}`;
   return `${NOUNS[definition.kind] ?? definition.kind} ${definition.name}`;
 }
-/** Crumbs past this many show as the file, "…" and the innermost two. */
+/** A line on one side of a diff: deleted lines are on the old side, in old numbers. */
+export interface LinePoint {
+  side: 'after' | 'before';
+  line: number;
+}
+/**
+ * The definitions around one line, outermost first, for a pinned hunk header that follows the reader: empty outside
+ * every definition, undefined without that side's definitions.
+ */
+export function chainAt(
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  point: LinePoint
+): SyntaxDefinition[] | undefined {
+  const list = point.side === 'before' ? definitions.before : definitions.after;
+  if (!list) return undefined;
+  const inner = enclosingDefinition(list, point.line, point.line);
+  return inner ? definitionChain(list, inner) : [];
+}
+
+/** Crumbs past this many show as "…" and the innermost two. */
 export const SHOWN_CRUMBS = 2;
-/** The breadcrumb as shown: the file, then the chain, with its middle as "…" when it is long. */
+/** The breadcrumb as shown: the chain, its outer crumbs as "…" when it is long. The file is the header's. */
 export function visibleCrumbs(chain: readonly ScopeCrumb[]): (ScopeCrumb | 'more')[] {
   return chain.length > SHOWN_CRUMBS ? ['more', ...chain.slice(-SHOWN_CRUMBS)] : [...chain];
 }

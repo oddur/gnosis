@@ -5,19 +5,19 @@ import {
   estimateSliceHeight,
   hunkSlices,
   type DiffSlice,
-  hunkChange,
+  hunkCounts,
   hunkRange,
   type GapDirection,
   type GapPart,
-  type HunkChange,
+  type HunkCounts,
   type HunkRange,
 } from '../lib/diff-gaps';
 import { applyCodePalette } from '../lib/diff-code-palette';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
-import { revealLabel, spokenChain, visibleCrumbs, type HunkScope } from '../lib/hunk-scopes';
-import { definitionLines, type DefinitionReveal } from '../lib/syntax-scope';
+import { revealLabel, spokenChain, visibleCrumbs, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
+import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
 export type GapStatus =
@@ -167,12 +167,14 @@ function CrumbText({ crumb, keyword }: { crumb: string; keyword?: string }) {
   );
 }
 
+const PROVISIONAL_TITLE = "From GitHub's hunk header; the full location appears once the file is parsed.";
+
 /**
- * Where the hunk below a bar is (#393): a breadcrumb of the file and every definition around the hunk, such as
- * `store.rs › impl StoreBridge › fn save`. A long chain keeps the file and the innermost two crumbs, with "…" for the
- * middle; the whole chain is the tooltip and the accessible label. Each crumb whose definition is not all on screen
- * reveals it: whole up to the cap, else its signature. The breadcrumb starts at the code's text column, in the code's
- * type, so a provisional crumb resolves in place.
+ * Where the hunk below a bar is (#393): a breadcrumb of the definitions around the hunk, such as
+ * `impl StoreBridge › fn save`. The file header above already names the file, so the file is only in the tooltip and the
+ * accessible label. A long chain keeps the innermost two crumbs, with "…" for the outer ones. Each crumb whose
+ * definition is not all on screen reveals it: whole up to the cap, else its signature. The breadcrumb starts at the
+ * code's text column, in the code's type, so a provisional crumb resolves in place.
  */
 function HunkScopeLabel({
   scope,
@@ -197,15 +199,18 @@ function HunkScopeLabel({
       data-scope-kind={scope.provisional ? 'provisional' : scope.definition.kind}
       data-provisional={scope.provisional || undefined}
     >
-      <span className="diff-gap-symbol" role="group" aria-label={spoken} title={spoken}>
-        <span className="diff-gap-crumb" data-crumb-file="" data-innermost={!scope.chain.length || undefined}>
-          {file}
-        </span>
+      <span
+        className="diff-gap-symbol"
+        role="group"
+        aria-label={spoken}
+        title={scope.provisional ? `${spoken}\n${PROVISIONAL_TITLE}` : spoken}
+      >
         {crumbs.map((crumb, index) => {
+          const lead = index > 0 && separator;
           if (crumb === 'more')
             return (
               <span key="more" className="diff-gap-crumb-group">
-                {separator}
+                {lead}
                 <span className="diff-gap-crumb" aria-hidden="true">
                   …
                 </span>
@@ -218,7 +223,7 @@ function HunkScopeLabel({
           const { reveal } = crumb;
           return (
             <span key={index} className="diff-gap-crumb-group" data-last={last || undefined}>
-              {separator}
+              {lead}
               {reveal && onShow ? (
                 <button
                   type="button"
@@ -266,15 +271,15 @@ function ShowDefinition({ scope, onShow }: { scope?: HunkScope; onShow?: (reveal
 }
 
 /**
- * The file as the whole location, for a hunk outside every definition (imports, top-level statements). Shown only once
- * the file is parsed, so a lone file name always means "top level", never "not known yet".
+ * A hunk outside every definition (imports, top-level statements): "top level", muted. Shown only once the file is
+ * parsed, so it always means "outside every definition", never "not known yet".
  */
-function FileScopeLabel({ file }: { file: string }) {
+function TopLevelLabel({ file }: { file: string }) {
   return (
     <span className="diff-gap-scope" data-scope-kind="file">
       <span className="diff-gap-symbol" role="group" aria-label={`In ${file}, outside any definition`} title={`${file}, outside any definition`}>
-        <span className="diff-gap-crumb" data-crumb-file="" data-innermost="">
-          {file}
+        <span className="diff-gap-crumb" data-crumb-file="" data-innermost="" data-top-level="">
+          top level
         </span>
       </span>
     </span>
@@ -291,101 +296,105 @@ function RangeLabel({ range }: { range: HunkRange }) {
   );
 }
 
+/** What the hunk changes, beside its lines: `+12 −3` in the code's green and red; one side alone when the other is 0. */
+function CountsLabel({ counts }: { counts: HunkCounts }) {
+  const { added, deleted } = counts;
+  if (!added && !deleted) return null;
+  const spoken = [added && `${lines(added)} added`, deleted && `${lines(deleted)} deleted`].filter(Boolean).join(', ');
+  return (
+    <span className="diff-gap-counts" title={spoken}>
+      <span aria-hidden="true">
+        {added > 0 && <span className="diff-gap-added">+{added}</span>}
+        {deleted > 0 && <span className="diff-gap-deleted">−{deleted}</span>}
+      </span>
+      <span className="sr-only">{spoken}</span>
+    </span>
+  );
+}
+
 /**
- * A hunk header's or gap bar's contents, in DOM order as on screen: the expand chevrons in the line-number gutter, the
- * breadcrumb from the code's text column, the bar's other controls, and the hunk's lines at the end.
+ * A hunk header's contents, in DOM order as on screen: the expand chevrons in the line-number gutter, the breadcrumb
+ * from the code's text column, the bar's other controls, and what the hunk changes and its lines at the end. Pinned,
+ * the breadcrumb and the lines follow the reader: ChangesDiff writes the location of the top line in view into the
+ * `-live` slots, which sit over the hunk's own in the same grid cell, so the swap never changes the bar's size. They are
+ * hidden from screen readers, which keep the hunk's own location; nothing is announced as the reader scrolls.
  */
 function HeaderRow({
   gutter,
   location,
   controls,
   range,
+  counts,
+  live,
 }: {
   gutter?: ReactNode;
   location?: ReactNode;
   controls?: ReactNode;
   range?: HunkRange;
+  counts?: HunkCounts;
+  /** The bar heads a hunk, and pins: it has the slots the reader's location is written into. */
+  live?: boolean;
 }) {
   return (
     <>
       <span className="diff-gap-gutter">{gutter}</span>
-      {location}
+      <span className="diff-gap-where">
+        {location}
+        {live && <span className="diff-gap-live" aria-hidden="true" />}
+      </span>
       {/* Hidden, not removed, while the bar is pinned, so pinning never changes its height. */}
       <span className="diff-gap-controls">{controls}</span>
-      {range && <RangeLabel range={range} />}
+      {(range || counts) && (
+        <span className="diff-gap-end">
+          {counts && <CountsLabel counts={counts} />}
+          <span className="diff-gap-lines">
+            {range && <RangeLabel range={range} />}
+            {live && <span className="diff-gap-live-line" aria-hidden="true" />}
+          </span>
+        </span>
+      )}
     </>
   );
 }
 
-function GapBar({
-  part,
-  status,
-  onReveal,
-  onRetry,
-  scope,
-  fileName,
-  fileOnly,
-  note,
-  range,
-  change,
-  header,
-  onShowDefinition,
-}: {
-  part: GapBarPart;
-  status: GapStatus;
-  onReveal?: (part: GapBarPart, direction: GapDirection) => void;
-  onRetry?: () => void;
-  scope?: HunkScope;
-  /** The hunk below sits outside every definition of a parsed file: the file alone is its location. */
-  fileOnly?: boolean;
-  /** The file's name, the breadcrumb's first crumb. */
-  fileName?: string;
-  /** Beside the location: the structure is loading, or failed to load. */
-  note?: ReactNode;
-  /** The hunk below's lines. */
-  range?: HunkRange;
-  /** What the hunk below changes: the colour of the rule on the bar's edge. */
-  change?: HunkChange;
-  /** The bar heads the hunk below and sticks while the hunk is on screen (#395). */
-  header?: boolean;
-  onShowDefinition?: (reveal: DefinitionReveal) => void;
-}) {
+/** A gap bar's controls and messages for its state: stale, failed, short, or the chevrons and Show all. */
+function gapControls(part: GapBarPart, status: GapStatus, reveal: (direction: GapDirection) => () => void, onRetry?: () => void) {
   const { hidden, above, below } = part;
   const known = hidden !== undefined;
-  const busy = status.kind === 'loading';
-  const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
-  const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
-  let gutter: ReactNode = null;
-  let body: ReactNode;
-  if (!onReveal) body = <span className="diff-gap-count">{known ? `${lines(hidden)} hidden` : null}</span>;
-  else if (status.kind === 'stale')
-    body = (
-      <span className="diff-gap-message" role="status">
-        This file changed on GitHub after the diff loaded. Refresh the PR to show more lines.
-      </span>
-    );
-  else if (status.kind === 'error')
-    body = (
-      <>
-        <span className="diff-gap-message" role="alert">
-          {status.message}
+  if (status.kind === 'stale')
+    return {
+      body: (
+        <span className="diff-gap-message" role="status">
+          This file changed on GitHub after the diff loaded. Refresh the PR to show more lines.
         </span>
-        {onRetry && (
-          <button type="button" className="diff-context-button diff-gap-text" onClick={onRetry}>
-            Retry
-          </button>
-        )}
-      </>
-    );
-  else if (known && hidden <= GAP_STEP)
-    body = (
-      <button type="button" className="diff-context-button diff-gap-text" onClick={reveal('all')}>
-        <span className="icon-mask icon-unfold-vertical" aria-hidden="true" />
-        <span className="diff-gap-label">Show {lines(hidden)}</span>
-      </button>
-    );
-  else {
-    gutter = (
+      ),
+    };
+  if (status.kind === 'error')
+    return {
+      body: (
+        <>
+          <span className="diff-gap-message" role="alert">
+            {status.message}
+          </span>
+          {onRetry && (
+            <button type="button" className="diff-context-button diff-gap-text" onClick={onRetry}>
+              Retry
+            </button>
+          )}
+        </>
+      ),
+    };
+  if (known && hidden <= GAP_STEP)
+    return {
+      body: (
+        <button type="button" className="diff-context-button diff-gap-text" onClick={reveal('all')}>
+          <span className="icon-mask icon-unfold-vertical" aria-hidden="true" />
+          <span className="diff-gap-label">Show {lines(hidden)}</span>
+        </button>
+      ),
+    };
+  return {
+    gutter: (
       <>
         {above && (
           <button
@@ -410,8 +419,8 @@ function GapBar({
           </button>
         )}
       </>
-    );
-    body = (
+    ),
+    body: (
       <>
         <span className="diff-gap-count">{known ? `${lines(hidden)} hidden` : 'Unchanged lines below'}</span>
         <button type="button" className="diff-context-button diff-gap-text" onClick={reveal('all')}>
@@ -419,8 +428,104 @@ function GapBar({
           <span className="diff-gap-label">{known ? 'Show all' : 'Show the rest'}</span>
         </button>
       </>
+    ),
+  };
+}
+
+/**
+ * The lines after a file's last hunk: one quiet code-line row, on the code's background under a hairline, with what it
+ * holds and the action at the code's text column ("82 more lines · Show"). It heads nothing, so it never pins.
+ */
+function TrailingBar({
+  part,
+  status,
+  onReveal,
+  onRetry,
+}: {
+  part: GapBarPart;
+  status: GapStatus;
+  onReveal?: (part: GapBarPart, direction: GapDirection) => void;
+  onRetry?: () => void;
+}) {
+  const { hidden } = part;
+  const known = hidden !== undefined;
+  const busy = status.kind === 'loading';
+  const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
+  const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines may follow';
+  let body: ReactNode;
+  if (onReveal && (status.kind === 'stale' || status.kind === 'error'))
+    body = gapControls(part, status, () => () => {}, onRetry).body;
+  else
+    body = (
+      <>
+        <span className="diff-gap-count">{more}</span>
+        {onReveal && (
+          <>
+            <span className="diff-gap-dot" aria-hidden="true">
+              ·
+            </span>
+            <button
+              type="button"
+              className="diff-context-button diff-gap-text"
+              title={known ? `Show the last ${lines(hidden)}` : 'Show the rest of the file'}
+              onClick={() => onReveal(part, 'all')}
+            >
+              Show
+            </button>
+          </>
+        )}
+        {busy && (
+          <LoadingIndicator className="diff-gap-loading" announce={false}>
+            Loading lines…
+          </LoadingIndicator>
+        )}
+      </>
     );
-  }
+  return (
+    <div className="diff-gap" role="group" aria-label={label} aria-busy={busy || undefined} data-gap={part.gap.index} data-trailing="">
+      <span className="diff-gap-trailing">{body}</span>
+    </div>
+  );
+}
+
+function GapBar({
+  part,
+  status,
+  onReveal,
+  onRetry,
+  scope,
+  fileName,
+  fileOnly,
+  note,
+  range,
+  counts,
+  onShowDefinition,
+}: {
+  part: GapBarPart;
+  status: GapStatus;
+  onReveal?: (part: GapBarPart, direction: GapDirection) => void;
+  onRetry?: () => void;
+  scope?: HunkScope;
+  /** The hunk below sits outside every definition of a parsed file: it is at the top level. */
+  fileOnly?: boolean;
+  /** The file's name, for the breadcrumb's tooltip and accessible label. */
+  fileName?: string;
+  /** Beside the location: the structure is loading, or failed to load. */
+  note?: ReactNode;
+  /** The hunk below's lines. */
+  range?: HunkRange;
+  /** What the hunk below changes. */
+  counts?: HunkCounts;
+  onShowDefinition?: (reveal: DefinitionReveal) => void;
+}) {
+  const { hidden } = part;
+  const known = hidden !== undefined;
+  const busy = status.kind === 'loading';
+  const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
+  const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
+  const { gutter, body } = onReveal
+    ? gapControls(part, status, reveal, onRetry)
+    : { gutter: undefined, body: <span className="diff-gap-count">{known ? `${lines(hidden)} hidden` : null}</span> };
   const located = !!scope || (!!fileOnly && !!fileName);
   return (
     <div
@@ -429,8 +534,7 @@ function GapBar({
       aria-label={label}
       aria-busy={busy || undefined}
       data-gap={part.gap.index}
-      data-hunk-header={header || undefined}
-      data-change={header ? change : undefined}
+      data-hunk-header=""
     >
       <HeaderRow
         gutter={gutter}
@@ -438,7 +542,7 @@ function GapBar({
           scope ? (
             <HunkScopeLabel scope={scope} file={fileName ?? ''} onShow={onShowDefinition} />
           ) : fileOnly && fileName ? (
-            <FileScopeLabel file={fileName} />
+            <TopLevelLabel file={fileName} />
           ) : undefined
         }
         controls={
@@ -454,9 +558,92 @@ function GapBar({
           </>
         }
         range={range}
+        counts={counts}
+        live
       />
     </div>
   );
+}
+
+/** A probe that finds no line (a slice still mounting, a comment) looks again on this many following frames. */
+const MISSED_PROBES = 30;
+
+/**
+ * Names where the reader is in a pinned header (`bar`): the definitions around the code line just below it, and that
+ * line. One hit test finds the line, inside the diff's shadow root; the slots are rewritten only when the place
+ * changes. A deleted line is named by the old file's definitions and its old number.
+ */
+function followReader(
+  bar: HTMLElement,
+  scopeAt: ((point: LinePoint) => readonly SyntaxDefinition[] | undefined) | undefined
+): boolean {
+  const where = bar.querySelector<HTMLElement>('.diff-gap-where');
+  const section = bar.parentElement;
+  if (!where || !section) return true;
+  // Two reads of the pinned bar's own boxes: the code's text column, and the bar's bottom edge.
+  const x = where.getBoundingClientRect().left + 2;
+  // Half a code line below the bar: the first line mostly in view, not one sliding out under the bar.
+  const y = bar.getBoundingClientRect().bottom + 10;
+  let hit = document.elementFromPoint(x, y);
+  if (hit?.shadowRoot) hit = hit.shadowRoot.elementFromPoint(x, y) ?? hit;
+  const host = hit && (hit.getRootNode() as ShadowRoot).host;
+  // Nothing to name yet, such as a slice still mounting: the caller looks again next frame.
+  if (!hit || !host || !section.contains(host)) return false;
+  const line = hit.closest<HTMLElement>('[data-line]');
+  if (!line) return false;
+  const before = line.dataset.lineType === 'change-deletion';
+  const number = Number(!before && line.closest('[data-deletions]') ? line.dataset.altLine : line.dataset.line);
+  if (!number) return false;
+  const point: LinePoint = { side: before ? 'before' : 'after', line: number };
+  const chain = scopeAt?.(point);
+  const previous = bar.getAttribute('data-live-key')?.split(':')[2];
+  // A deleted line without the old file's definitions keeps the place named last: it sits among the same lines.
+  const scopeKey = chain ? chain.map((d) => d.start).join(',') : before && previous !== undefined ? previous : '-';
+  const key = `${point.side}:${number}:${scopeKey}`;
+  if (bar.getAttribute('data-live-key') === key) return true;
+  bar.setAttribute('data-live-key', key);
+  const lineSlot = bar.querySelector('.diff-gap-live-line');
+  if (lineSlot) lineSlot.textContent = before ? `old L${number}` : `L${number}`;
+  const slot = bar.querySelector('.diff-gap-live');
+  if (slot && chain && previous !== scopeKey) slot.replaceChildren(...liveCrumbs(chain));
+  if (chain || scopeKey === '-') bar.setAttribute('data-live', chain ? 'scope' : 'line');
+  return true;
+}
+
+/** A chain as the breadcrumb shows it, as plain elements: the innermost two crumbs, "…" before, or "top level". */
+function liveCrumbs(chain: readonly SyntaxDefinition[]): Node[] {
+  const make = (tag: string, className: string, text?: string) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  };
+  if (!chain.length) {
+    const top = make('span', 'diff-gap-crumb', 'top level');
+    top.setAttribute('data-top-level', '');
+    return [top];
+  }
+  const shown: (SyntaxDefinition | 'more')[] = chain.length > 2 ? ['more', ...chain.slice(-2)] : [...chain];
+  return shown.map((definition, index) => {
+    const group = make('span', 'diff-gap-crumb-group');
+    if (index > 0) group.append(make('span', 'diff-gap-crumb-separator', '›'));
+    const crumb = make('span', 'diff-gap-crumb');
+    if (definition === 'more') crumb.textContent = '…';
+    else {
+      const code = make('code', '');
+      const keyword = definition.crumbKeyword;
+      if (keyword && definition.crumb.startsWith(`${keyword} `))
+        code.append(make('span', 'diff-gap-kind', keyword), ` ${definition.crumb.slice(keyword.length + 1)}`);
+      else code.textContent = definition.crumb;
+      crumb.append(code);
+      if (index === shown.length - 1) {
+        crumb.setAttribute('data-innermost', '');
+        group.setAttribute('data-last', '');
+      }
+    }
+    group.append(crumb);
+    return group;
+  });
 }
 
 /**
@@ -495,6 +682,7 @@ export function ChangesDiff<A>({
   scopeNote,
   onShowDefinition,
   stickyUnder,
+  scopeAt,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -518,6 +706,11 @@ export function ChangesDiff<A>({
   onShowDefinition?: (reveal: DefinitionReveal) => void;
   /** The file's sticky header: each hunk's header pins right below it (#395). */
   stickyUnder?: RefObject<HTMLElement | null>;
+  /**
+   * The definitions around a line, outermost first, for a pinned header to follow the reader; empty at the top level,
+   * undefined where the file's structure says nothing.
+   */
+  scopeAt?: (point: LinePoint) => readonly SyntaxDefinition[] | undefined;
 }) {
   const stableOptions = useStableOptions({
     ...options,
@@ -544,13 +737,13 @@ export function ChangesDiff<A>({
         key: part.key,
         slices,
         changed: part.hunk.rows.some((row) => row.type !== ' '),
-        change: hunkChange(hunk),
-        range: hunkRange(hunk),
+        counts: hunkCounts(hunk),
+        range: hunkRange(hunk, { split: layout === 'split' && file.status !== 'added' && file.status !== 'deleted' }),
       };
     });
     cache.current = next;
     return result;
-  }, [parts, file.name, file.prevName, file.status]);
+  }, [parts, file.name, file.prevName, file.status, layout]);
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
   // Hunks with a change: pinned context (a definition's signature) is not a location of its own.
   const changedHunks = useMemo(() => new Set(blocks.flatMap((block) => (block.kind === 'hunk' && block.changed ? [block.key] : []))), [blocks]);
@@ -641,6 +834,9 @@ export function ChangesDiff<A>({
   // headers' `top` and the line below which one counts as pinned. A pinned header sits 1 px under the file header,
   // which covers its top border, so it is the one header that crosses that line and is not wholly below it.
   const stuck = useRef<IntersectionObserver>(undefined);
+  const latestScopeAt = useRef(scopeAt);
+  latestScopeAt.current = scopeAt;
+  const follow = useRef<() => void>(undefined);
   const observeHeaders = () => {
     const observer = stuck.current;
     if (!observer || !root.current) return;
@@ -654,6 +850,39 @@ export function ChangesDiff<A>({
     if (!element || !header || !scroller) return;
     let height: number | undefined;
     let written = headerHeight;
+    // While a header is pinned, its breadcrumb and lines name where the reader is: the line at the top of the view,
+    // found by one hit test a frame at most, and only while scrolling with a header pinned (followReader).
+    const pinned = new Set<HTMLElement>();
+    let frame = 0;
+    let listening = false;
+    // Frames left to look again for a place a probe could not name (MISSED_PROBES).
+    let retries = 0;
+    const probe = () => {
+      frame = 0;
+      let missed = false;
+      for (const bar of pinned)
+        if (!bar.isConnected) pinned.delete(bar);
+        else if (!followReader(bar, latestScopeAt.current)) missed = true;
+      if (missed && retries-- > 0) frame = requestAnimationFrame(probe);
+    };
+    const schedule = () => {
+      retries = MISSED_PROBES;
+      if (!frame) frame = requestAnimationFrame(probe);
+    };
+    const listen = (on: boolean) => {
+      if (on === listening) return;
+      listening = on;
+      if (on) scroller.addEventListener('scroll', schedule, { passive: true });
+      else {
+        scroller.removeEventListener('scroll', schedule);
+        cancelAnimationFrame(frame);
+        frame = 0;
+      }
+    };
+    follow.current = () => {
+      for (const bar of pinned) bar.removeAttribute('data-live-key');
+      if (pinned.size) schedule();
+    };
     const resize = new ResizeObserver((entries) => {
       const next = Math.round(entries[entries.length - 1].borderBoxSize[0].blockSize);
       if (next === height) return;
@@ -664,9 +893,14 @@ export function ChangesDiff<A>({
         (entries) => {
           for (const entry of entries) {
             const top = entry.rootBounds?.top ?? 0;
-            const pinned = entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top;
-            entry.target.toggleAttribute('data-stuck', pinned);
+            const stuckNow = entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top;
+            entry.target.toggleAttribute('data-stuck', stuckNow);
+            if (stuckNow) pinned.add(entry.target as HTMLElement);
+            else pinned.delete(entry.target as HTMLElement);
           }
+          for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
+          listen(pinned.size > 0);
+          if (pinned.size) schedule();
         },
         { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: [0, 1] }
       );
@@ -677,8 +911,12 @@ export function ChangesDiff<A>({
       resize.disconnect();
       stuck.current?.disconnect();
       stuck.current = undefined;
+      listen(false);
+      follow.current = undefined;
     };
   }, [stickyUnder]);
+  // New definitions name the reader's place anew.
+  useEffect(() => follow.current?.(), [scopeAt]);
   // Revealed lines re-create bars: watch the current ones.
   useEffect(observeHeaders, [blocks, structure]);
 
@@ -708,22 +946,23 @@ export function ChangesDiff<A>({
     if (block.kind === 'gap') {
       const key = `h${block.gap.index}`;
       const next = block.below ? blocks[index + 1] : undefined;
-      const bar = (
+      const bar = block.below ? (
         <GapBar
           key={`gap-${block.gap.index}`}
           part={block}
           status={status}
           onReveal={onReveal}
           onRetry={onRetry}
-          scope={block.below ? scopes?.get(key) : undefined}
-          fileOnly={!!structure && block.below && changedHunks.has(key) && !scopes?.get(key)}
+          scope={scopes?.get(key)}
+          fileOnly={!!structure && changedHunks.has(key) && !scopes?.get(key)}
           fileName={name}
           note={scopeNote}
           range={next?.kind === 'hunk' && next.changed ? next.range : undefined}
-          change={next?.kind === 'hunk' ? next.change : undefined}
-          header={block.below}
+          counts={next?.kind === 'hunk' && next.changed ? next.counts : undefined}
           onShowDefinition={onShowDefinition}
         />
+      ) : (
+        <TrailingBar key={`gap-${block.gap.index}`} part={block} status={status} onReveal={onReveal} onRetry={onRetry} />
       );
       // A bar below the last hunk heads nothing.
       if (block.below) open(key, bar);
@@ -748,14 +987,13 @@ export function ChangesDiff<A>({
           data-scope-line={structure ? '' : undefined}
           data-range-line={structure ? undefined : ''}
           data-hunk-header=""
-          data-change={block.change}
         >
           <HeaderRow
             location={
               !structure ? undefined : scope ? (
                 <HunkScopeLabel scope={scope} file={name} onShow={onShowDefinition} />
               ) : (
-                <FileScopeLabel file={name} />
+                <TopLevelLabel file={name} />
               )
             }
             controls={
@@ -767,6 +1005,8 @@ export function ChangesDiff<A>({
               )
             }
             range={block.range}
+            counts={block.counts}
+            live
           />
         </div>
       );

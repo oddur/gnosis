@@ -481,11 +481,12 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.pr-changes')?.checkVisibility()");
     await click('Changes');
     await wait("document.querySelector('.changes-notice')?.textContent.includes('New commits')");
+    // A single PR's files carry no commit chip any more (only a stack's combined view names PRs and commits): the
+    // revision stays the shown one while the update waits to be asked for.
+    await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(
-      await js(
-        "document.querySelector('.commit-stream-row[data-active=true] .changes-source').textContent.includes('new-head')"
-      ),
-      false,
+      await js("document.querySelector('.changes-notice')?.textContent.includes('New commits') ?? false"),
+      true,
       'New commits never replace the displayed revision automatically'
     );
     await click('Update changes');
@@ -509,7 +510,7 @@ void app.whenReady().then(async () => {
       "window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('#121/src/worker.ts')).click()"
     );
     await wait(
-      "document.querySelector('.commit-stream-row[data-active=true] .changes-source')?.textContent.includes('#121')"
+      "document.querySelector('.commit-stream-row[data-active=true]')?.dataset.file.includes('#121')"
     );
     assert.equal(
       await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input').checked"),

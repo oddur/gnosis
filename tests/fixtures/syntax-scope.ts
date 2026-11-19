@@ -266,6 +266,29 @@ const changeFiles = (sources: Record<string, [string[], string[]]>, prefix: stri
 export const syntaxScopeFiles: PrChangeFile[] = changeFiles(SOURCES, 'syntax');
 
 /**
+ * `?syntax-span`: one long hunk across two functions, for a pinned header that follows the reader from `alpha()` into
+ * `beta()`. A line added at the top of `beta()` puts its new line numbers one past its old ones.
+ */
+const spanBefore = [
+  '// Spanning hunk fixture: one hunk across two functions.',
+  'export function alpha(input: number): number {',
+  '  let value = input;',
+  ...Array.from({ length: 60 }, (_, i) => `  value += ${i};`),
+  '  return value;',
+  '}',
+  'export function beta(input: number): number {',
+  '  let value = input;',
+  ...Array.from({ length: 60 }, (_, i) => `  value -= ${i};`),
+  '  return value;',
+  '}',
+];
+const spanAfter = spanBefore
+  .map((line) => line.replace(/^  value ([+-])= (\d+);$/, '  value $1= $2 * 2;'))
+  .flatMap((line, i, all) => (all[i - 1] === 'export function beta(input: number): number {' ? [line, '  value = value | 0;'] : [line]));
+const SPAN: Record<string, [string[], string[]]> = { 'src/span.ts': [spanBefore, spanAfter] };
+export const syntaxSpanFiles: PrChangeFile[] = changeFiles(SPAN, 'span');
+
+/**
  * `?syntax-lazy`: files whose contents the queue never prepares, for loading on view and prefetch (#393). Each Rust
  * handler is 60 lines inside `mod api › impl ClientN`, so its hunk shows a truncated breadcrumb and "Show whole
  * function" (too long to open by default). `cleanup.rs` only deletes a line, so both of its sides load. `panel.ts`
@@ -322,7 +345,13 @@ const LAZY: Record<string, [string[], string[]]> = {
 export const syntaxLazyFiles: PrChangeFile[] = changeFiles(LAZY, 'lazy', true);
 
 export function syntaxScopeContents(path: string): PrFileContents | undefined {
-  const source = Object.hasOwn(SOURCES, path) ? SOURCES[path] : Object.hasOwn(LAZY, path) ? LAZY[path] : undefined;
+  const source = Object.hasOwn(SOURCES, path)
+    ? SOURCES[path]
+    : Object.hasOwn(LAZY, path)
+      ? LAZY[path]
+      : Object.hasOwn(SPAN, path)
+        ? SPAN[path]
+        : undefined;
   if (!source) return undefined;
   return { before: { kind: 'text', content: text(source[0]) }, after: { kind: 'text', content: text(source[1]) } };
 }

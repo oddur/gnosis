@@ -44,7 +44,7 @@ void test('The header stands apart from the code and from its added and deleted 
 void test('Text on the header reads: names, muted text and kind words', () => {
   for (const [bg, fg, keyword] of THEMES) {
     const palette = codePalette({ bg, fg, textmate: { settings: [{ scope: 'keyword', settings: { foreground: keyword } }] } });
-    for (const color of [palette.muted, palette.keyword ?? '']) {
+    for (const color of [palette.muted, palette.keyword ?? '', palette.headerAdded, palette.headerDeleted]) {
       const ratio = contrastRatio(color, palette.header);
       assert.ok(ratio >= TEXT_CONTRAST, `${color} on ${palette.header}: ${ratio}`);
     }
@@ -62,6 +62,7 @@ void test('The file header is a step above the hunk header, and its text reads',
       const ratio = contrastRatio(color, palette.file);
       assert.ok(ratio >= TEXT_CONTRAST, `${color} on ${palette.file}: ${ratio}`);
     }
+    assert.ok(contrastRatio(palette.fileControl, palette.file) >= 3, `${palette.fileControl} outlines on ${palette.file}`);
     // The status rules (tokens.css --code-added, --code-deleted, --code-modified, --code-renamed).
     for (const rule of ['#85cf99', '#ff9ba5', '#e9c46a', '#8fc4ff'])
       assert.ok(contrastRatio(rule, palette.file) >= 3, `${rule} on ${palette.file}`);
@@ -76,14 +77,17 @@ void test('The palette applies to the bars and file headers of diffs in that the
     line: '#010103',
     muted: '#a2a7ad',
     keyword: '#ff7b72',
+    headerAdded: '#85cf99',
+    headerDeleted: '#ff9ba5',
     file: '#393f4c',
     fileText: '#ffffff',
     fileMuted: '#b0b2b7',
+    fileControl: '#8a8f99',
     fileAdded: '#9ad8ab',
     fileDeleted: '#ffb0b8',
   };
   assert.equal(
     codePaletteCSS('gnosis-aurora-x', palette),
-    '[data-code-theme="gnosis-aurora-x"] :is(.diff-gap,.changes-file-header){--diff-code-bg:#0d1117;--diff-code-fg:#e6edf3;--diff-code-header:#272a35;--diff-code-line:#010103;--diff-code-muted:#a2a7ad;--diff-keyword:#ff7b72;--diff-file-bg:#393f4c;--diff-file-fg:#ffffff;--diff-file-muted:#b0b2b7;--diff-file-added:#9ad8ab;--diff-file-deleted:#ffb0b8}'
+    '[data-code-theme="gnosis-aurora-x"] :is(.diff-gap,.changes-file-header){--diff-code-bg:#0d1117;--diff-code-fg:#e6edf3;--diff-code-header:#272a35;--diff-code-line:#010103;--diff-code-muted:#a2a7ad;--diff-keyword:#ff7b72;--diff-code-added:#85cf99;--diff-code-deleted:#ff9ba5;--diff-file-bg:#393f4c;--diff-file-fg:#ffffff;--diff-file-muted:#b0b2b7;--diff-file-control:#8a8f99;--diff-file-added:#9ad8ab;--diff-file-deleted:#ffb0b8}'
   );
 });

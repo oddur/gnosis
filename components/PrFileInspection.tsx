@@ -7,11 +7,11 @@ import { isMarkdownFile, type MarkdownReview, type MarkdownLocation } from '../l
 import { useMarkdownView } from '../lib/use-markdown-view';
 import { peekMarkdownReview, prepareMarkdownReview } from '../lib/markdown-review-cache';
 import { MarkdownReviewPreview } from './MarkdownReviewPreview';
-import { RepositoryBadge, PrBadge, CommitBadge } from './EntityBadge';
+import { CommitBadge } from './EntityBadge';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { File } from '@pierre/diffs/react';
 import { parseDiffFromFile, type DiffFileInput, type FileDiffMetadata, type FileDiffOptions, type SelectedLineRange } from '@pierre/diffs';
-import { CheckCheck, MessageSquare, ExternalLink } from 'lucide-react';
+import { CheckCheck, MessageSquare, ExternalLink, Sparkles } from 'lucide-react';
 import { inspectionFiles as fileCache, previewFor } from '../lib/inspection-cache';
 import {
   isUnchangedMove,
@@ -43,7 +43,7 @@ import {
   type GapReveals,
 } from '../lib/diff-gaps';
 import { ChangesDiff, type GapStatus } from './ChangesDiff';
-import { hunkScopes, provisionalScopes } from '../lib/hunk-scopes';
+import { chainAt, hunkScopes, provisionalScopes, type LinePoint } from '../lib/hunk-scopes';
 import type { DefinitionReveal } from '../lib/syntax-scope';
 import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
 import { applyCodeIntelligence, useSyntaxContents } from '../lib/use-syntax-contents';
@@ -95,6 +95,7 @@ export function PrFileInspection({
   onAsk,
   onOpenCurrentFile,
   classificationControl,
+  classificationTags,
   sourceLine,
   sourceEndLine,
   renderFeedbackThread,
@@ -118,6 +119,8 @@ export function PrFileInspection({
   onOpenFeedback?: (url: string, threadId: string) => void;
   onOpenSource?: (url: string, path: string) => void;
   classificationControl?: ReactNode;
+  /** The file's kind tags, such as Test, beside its path and status. */
+  classificationTags?: ReactNode;
   preferences: Preferences;
   discussion: ReturnType<typeof usePrDiscussions>;
   onViewedNext?: () => void;
@@ -314,6 +317,11 @@ export function PrFileInspection({
     [scopes, parts, gaps, scopePlan, expandable, unchangedMove, afterMatches, entry.file.patch]
   );
   const shownScopes = scopes ?? provisional;
+  // A pinned hunk header names the definitions around the line the reader is at (ChangesDiff).
+  const scopeAt = useMemo(
+    () => (scopes ? (point: LinePoint) => chainAt(definitions, point) : undefined),
+    [scopes, definitions.after, definitions.before]
+  );
   const scopeNote = scopes ? undefined : structureRead.state === 'failed' ? (
     <span className="diff-gap-structure" data-structure="failed">
       <span className="diff-gap-message">Couldn’t load structure.</span>
@@ -727,28 +735,33 @@ export function PrFileInspection({
     setRange(null);
     changeMarkdownView({ mode });
   }
-  // The repository, PR and commit, in the flow above the file's sticky header: they scroll away, so the pinned header
-  // is always the one row it is in the flow, and pinning never changes its height.
-  const fileContext = !commit && !combined ? (
+  // In a stack's combined view, the PRs that changed this file and their commits, in the flow above the file's sticky
+  // header: they scroll away, so the pinned header is always the one row it is in the flow. A single PR's views name
+  // their PR already.
+  const fileContext = combined && sourceOptions.length ? (
     <span className="changes-source">
-      <RepositoryBadge repo={entry.snapshot.metadata.baseRepo} />{' '}
-      <PrBadge url={entry.snapshot.url} title={entry.snapshot.metadata.title} />{' '}
-      <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
-    </span>
-  ) : combined ? (
-    <span className="changes-source">
-      <span>Combined changes</span>
-      {sourceOptions.slice(0, 3).map((source) => (
-        <Button
-          key={source.metadata.url}
-          size="sm"
-          variant="link"
-          onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}
-        >
-          #{source.metadata.url.split('/').pop()}
-        </Button>
-      ))}
-      {sourceOptions.length > 3 && <span>+{sourceOptions.length - 3} PRs</span>}
+      {sourceOptions.map((source) => {
+        const number = source.metadata.url.split('/').pop();
+        return (
+          <span key={source.metadata.url} className="entity-badge-group">
+            <button
+              type="button"
+              className="entity-badge entity-badge-pr changes-source-pr"
+              data-entity-kind="pr"
+              title={`Open #${number} · ${source.metadata.title}`}
+              onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}
+            >
+              <span className="entity-badge-identity" aria-hidden="true">
+                <span className="icon-mask" />
+              </span>
+              <span className="entity-badge-value">
+                <span className="entity-badge-start">#{number}</span>
+              </span>
+            </button>
+            <CommitBadge sha={source.metadata.headSha} repo={source.metadata.headRepo} />
+          </span>
+        );
+      })}
     </span>
   ) : undefined;
   const fullPath = entry.file.previousPath ? `${entry.file.previousPath} → ${entry.file.path}` : entry.file.path;
@@ -777,6 +790,7 @@ export function PrFileInspection({
               </>
             )}
           </span>
+          {classificationTags}
         </div>
         <div className="changes-file-actions">
           {compactMove && !viewed && (
@@ -804,7 +818,6 @@ export function PrFileInspection({
               </Button>
             </div>
           )}
-          {classificationControl}
           <label>
             <input
               type="checkbox"
@@ -854,9 +867,10 @@ export function PrFileInspection({
             </Button>
           )}
           <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
-            <MessageSquare size={14} />
+            <Sparkles size={14} aria-hidden="true" />
             <span className="changes-file-action-label">Ask about this</span>
           </Button>
+          {classificationControl}
         </div>
       </header>
     </>
@@ -962,6 +976,7 @@ export function PrFileInspection({
                   scopes={shownScopes}
                   structure={!!shownScopes}
                   scopeNote={scopeNote}
+                  scopeAt={scopeAt}
                   onShowDefinition={showDefinition}
                   stickyUnder={headerRef}
                   onRetry={() => readAfter(true)}

@@ -54,33 +54,47 @@ const oldEnd = (hunk: GapHunk) => hunk.oldStart + oldCount(hunk) - 1;
 const newEnd = (hunk: GapHunk) => hunk.newStart + newCount(hunk) - 1;
 const stripFeed = (line: string | undefined) => (line ?? '').replace(/\n$/, '');
 
-/** What a hunk changes: lines added, lines deleted, or both. Undefined for context alone. */
-export type HunkChange = 'added' | 'deleted' | 'modified';
-export function hunkChange(hunk: Pick<GapHunk, 'rows'>): HunkChange | undefined {
-  const added = hunk.rows.some((row) => row.type === '+');
-  const deleted = hunk.rows.some((row) => row.type === '-');
-  return added && deleted ? 'modified' : added ? 'added' : deleted ? 'deleted' : undefined;
-}
-
 export interface HunkRange {
-  /** As the hunk header shows it: `L120–148`, or `old L9–11` for a hunk that only deletes. */
+  /** As the hunk header shows it: `L120–148`, `old L9–11` for a hunk that only deletes, `old L9–11 / L12–14` split. */
   label: string;
   /** In words, for the tooltip and screen readers: "Lines 120 to 148", "Old lines 9 to 11". */
   spoken: string;
 }
+/** One side's lines in a hunk: `L4`, `L120–148`, with `prefix` before the L. */
+function sideRange(start: number, count: number, prefix: string, words: string): HunkRange {
+  const end = start + Math.max(count, 1) - 1;
+  if (end <= start) return { label: `${prefix}L${start}`, spoken: `${words} ${start}` };
+  return { label: `${prefix}L${start}–${end}`, spoken: `${words}s ${start} to ${end}` };
+}
 /**
  * Where a hunk is, by its new lines, or by its old lines when it only deletes: its deleted lines have no new numbers.
- * Every hunk header shows it (#395).
+ * Every hunk header shows it (#395). Split, where both sides show, a hunk whose sides differ names both, old first as
+ * the old side is on the left: `old L9–11 / L12–14`.
  */
-export function hunkRange(hunk: Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>): HunkRange {
-  const old = !hunk.rows.some((row) => row.type === '+') && hunk.rows.some((row) => row.type === '-');
-  const start = old ? hunk.oldStart : hunk.newStart;
-  const count = old ? oldCount(hunk) : newCount(hunk);
-  const end = start + Math.max(count, 1) - 1;
-  const prefix = old ? 'old L' : 'L';
-  const words = old ? 'Old line' : 'Line';
-  if (end <= start) return { label: `${prefix}${start}`, spoken: `${words} ${start}` };
-  return { label: `${prefix}${start}–${end}`, spoken: `${words}s ${start} to ${end}` };
+export function hunkRange(hunk: Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>, { split = false } = {}): HunkRange {
+  const adds = hunk.rows.some((row) => row.type === '+');
+  const deletes = hunk.rows.some((row) => row.type === '-');
+  if (!adds && deletes) return sideRange(hunk.oldStart, oldCount(hunk), 'old ', 'Old line');
+  const after = sideRange(hunk.newStart, newCount(hunk), '', 'Line');
+  if (!split || !deletes) return after;
+  const before = sideRange(hunk.oldStart, oldCount(hunk), 'old ', 'Old line');
+  if (before.label === `old ${after.label}`) return after;
+  return { label: `${before.label} / ${after.label}`, spoken: `${before.spoken}, new ${after.spoken.toLowerCase()}` };
+}
+
+/** How many lines a hunk adds and deletes. */
+export interface HunkCounts {
+  added: number;
+  deleted: number;
+}
+export function hunkCounts(hunk: Pick<GapHunk, 'rows'>): HunkCounts {
+  let added = 0,
+    deleted = 0;
+  for (const row of hunk.rows) {
+    if (row.type === '+') added++;
+    else if (row.type === '-') deleted++;
+  }
+  return { added, deleted };
 }
 
 /** The hunks of a parsed diff as rows. Works for a patch preview and for a diff of two whole files. */
