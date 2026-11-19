@@ -1883,6 +1883,11 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-gap-where { align-self:stretch; }
 .diff-gap-live { align-self:stretch; align-items:center; }
 .diff-gap-live button.diff-gap-crumb::after { inset:50% 0 auto; height:24px; translate:0 -50%; }
+/* A jump whose line is hidden lands on its gap's bar, which flashes as a jumped-to line does (ChangesDiff's
+   check-flash), with an outline inside its box so nothing moves. */
+.diff-gap[data-jumped] { animation:check-flash 1.6s ease-out; outline-offset:-2px; }
+@keyframes check-flash { from { outline:2px solid var(--ring); } to { background-color:var(--diff-header-bg); } }
+@media (prefers-reduced-motion: reduce) { .diff-gap[data-jumped] { animation:none; outline:2px solid var(--ring); } }
 /* The lines after a file's last hunk: one code line, on the code's background under a hairline, the action at the
    code's text column. */
 .diff-gap[data-trailing] { min-height:var(--leading-code); padding:0; background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }

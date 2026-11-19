@@ -991,6 +991,9 @@ void app.whenReady().then(async () => {
           for(let f=0;f<2;f++)await new Promise(r=>requestAnimationFrame(r));await new Promise(r=>setTimeout(r,40))}
         await new Promise(r=>setTimeout(r,100));
         return {line:Math.round(l.getBoundingClientRect().top-s.getBoundingClientRect().top),scrollTop:Math.round(s.scrollTop),max:s.scrollHeight-s.clientHeight}};
+      // What a jump flashed (#417): the line or gap bar marked data-jumped, its animation, outline and box.
+      window.jumped=p=>window.deepAll('[data-jumped]',window.stickyRow(p)).map(e=>{const c=getComputedStyle(e);const r=e.getBoundingClientRect();
+        return {kind:e.matches('[data-line]')?'line':e.matches('.diff-gap')?'bar':'other',text:e.textContent.trim().slice(0,40),anim:c.animationName,outline:c.outlineStyle,top:Math.round(r.top),height:Math.round(r.height)}});
       window.crumbCenter=(p,label)=>{const b=[...window.stickyRow(p).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===label);
         if(!b)throw Error('No pinned crumb '+label);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};void 0`);
     type Jump = {
@@ -1008,6 +1011,7 @@ void app.whenReady().then(async () => {
       active: string | null;
       ring: string | null;
     };
+    type Flash = { kind: string; text: string; anim: string; outline: string; top: number; height: number };
     const jumpState = (path: string) => js<Jump>(`window.jumpState(${JSON.stringify(path)})`);
     const afterJump = async () => {
       await sleep(350);
@@ -1048,6 +1052,10 @@ void app.whenReady().then(async () => {
     assert.equal(toClass.lines, pinned.lines, 'Nothing was revealed');
     assert.equal(toClass.hidden, pinned.hidden, 'Every gap still hides what it hid');
     assert.equal(toClass.height, pinned.height, 'Pinning never changes the header’s height');
+    const classFlash = await js<Flash[]>(`window.jumped('src/runner.ts')`);
+    console.log('Flash after the class crumb:', JSON.stringify(classFlash));
+    assert.deepEqual(classFlash.map((f) => [f.kind, f.anim]), [['bar', 'check-flash']], 'The gap bar it landed on flashes');
+    assert.equal(classFlash[0].height, pinned.height, 'Flashing never changes the bar’s height');
     await shot('crumb-jump-after-class', '.commit-diff-stream');
     // From the keyboard: Enter on the innermost crumb goes to run()'s first line, under the pinned headers; focus stays.
     await js(`window.pinAt('src/runner.ts','value += 60 * 2;')`);
@@ -1069,7 +1077,44 @@ void app.whenReady().then(async () => {
     assert.equal(toRun.active, RUN, 'Focus stays on the pinned crumb');
     assert.equal(toRun.lines, pinned.lines, 'Nothing was revealed');
     assert.equal(toRun.height, pinned.height, 'The header keeps its height');
+    // The line it landed on flashes, as a review check's line does, and only that line; nothing moves.
+    const runFlash = await js<Flash[]>(`window.jumped('src/runner.ts')`);
+    console.log('Flash after Enter on run():', JSON.stringify(runFlash));
+    assert.equal(runFlash.length, 1, `Only the line jumped to flashes; the bar's flash ended: ${JSON.stringify(runFlash)}`);
+    assert.deepEqual([runFlash[0].kind, runFlash[0].anim], ['line', 'check-flash'], 'The line flashes');
+    assert.match(runFlash[0].text, /run\(input: number\): number \{/, 'It is the definition’s first line');
+    assert.equal(runFlash[0].top, runTop, 'The flash moves nothing');
+    await sleep(1700);
+    assert.deepEqual(await js(`window.jumped('src/runner.ts')`), [], 'The flash ends');
+    assert.equal(await js<number>(`window.lineTop('src/runner.ts','run(input: number): number {')`), runTop, 'and nothing moved');
+    assert.equal((await jumpState('src/runner.ts')).lines, pinned.lines, 'Nothing was revealed');
+    // Reduced motion: a still outline for a moment, with no animation.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    assert.equal(await js(`matchMedia('(prefers-reduced-motion: reduce)').matches`), true, 'Reduced motion is emulated');
+    await press('Enter', '\r');
+    await afterJump();
+    const stillFlash = await js<Flash[]>(`window.jumped('src/runner.ts')`);
+    console.log('Flash with reduced motion:', JSON.stringify(stillFlash));
+    assert.deepEqual(stillFlash.map((f) => [f.kind, f.anim, f.outline]), [['line', 'none', 'solid']], 'Reduced motion: a still outline, no animation');
+    await sleep(1500);
+    assert.deepEqual(await js(`window.jumped('src/runner.ts')`), [], 'The still outline goes too');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+    win.webContents.debugger.detach();
     await shot('crumb-jump-keyboard', '.commit-diff-stream');
+    // Mid-flash, light and dark: Enter again on the same crumb flashes the line again.
+    if (process.env.GNOSIS_SYNTAX_SCOPE_SHOT)
+      for (const dark of [false, true]) {
+        await js(`document.documentElement.classList.toggle('dark',${dark})`);
+        await settle();
+        await press('Enter', '\r');
+        await sleep(160);
+        const r = await js<{ x: number; y: number; width: number; height: number }>(
+          `(()=>{const b=document.querySelector('.commit-diff-stream').getBoundingClientRect();return {x:Math.round(b.left),y:Math.round(b.top),width:Math.round(b.width),height:220}})()`
+        );
+        console.log(`SHOT crumb-jump-flash-${dark ? 'dark' : 'light'} ${(await win.webContents.capturePage(r)).toPNG().toString('base64')}`);
+      }
+    await js(`document.documentElement.classList.toggle('dark',false)`);
     // Shift+Tab reaches the class crumb; Space goes there.
     await press('Tab', undefined, ['shift']);
     assert.equal((await jumpState('src/runner.ts')).active, CLASS, 'Shift+Tab moves to the outer pinned crumb');

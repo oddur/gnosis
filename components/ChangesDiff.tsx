@@ -45,6 +45,11 @@ const CHANGES_CSS = `[data-code] {
 }
 /* A line scrolled to lands below the file header and its hunk's pinned header (#395). */
 [data-line] { scroll-margin-top: var(--diff-sticky-offset, 0px); }
+/* The line a pinned crumb jumped to flashes as a review check's line does (ReviewDiff's check-flash), inside its own
+   box so nothing moves (#417). Reduced motion: a still outline until ChangesDiff removes it. */
+[data-line][data-jumped] { animation: check-flash 1.6s ease-out; outline-offset: -2px; }
+@keyframes check-flash { from { outline: 2px solid var(--ring); } to { background-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { [data-line][data-jumped] { animation: none; outline: 2px solid var(--ring); } }
 ${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
 const diffStyle = {
@@ -702,6 +707,10 @@ function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side'])
   return [decorative(make('span', 'diff-gap-more', '…')), ...groups];
 }
 
+/** A jumped-to line flashes for as long as a review check's line does (ReviewDiff); still, under reduced motion. */
+const JUMP_FLASH_MS = 1600;
+const JUMP_FLASH_STILL_MS = 1500;
+
 /** What the reader does to scroll: any of these stops a pinned crumb's jump from correcting the view (#417). */
 const READER_SCROLLS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
 
@@ -1039,8 +1048,26 @@ export function ChangesDiff<A>({
       jumpFrame = 0;
       for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
     };
+    // Where a jump landed flashes, as a review check's line does, so the reader finds it: the line, or the gap bar
+    // standing in for it. Visual only. A new jump ends the last flash; reduced motion shows it still, a little shorter.
+    let flashed: { target: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined;
+    const unflash = () => {
+      if (!flashed) return;
+      clearTimeout(flashed.timer);
+      flashed.target.removeAttribute('data-jumped');
+      flashed = undefined;
+    };
+    const flash = (target: HTMLElement) => {
+      unflash();
+      target.setAttribute('data-jumped', '');
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      flashed = { target, timer: setTimeout(unflash, still ? JUMP_FLASH_STILL_MS : JUMP_FLASH_MS) };
+    };
     const jump = (crumb: HTMLElement, keyboard: boolean) => {
       stopJump();
+      unflash();
+      // What the jump lands on, for the flash.
+      let landed: HTMLElement | undefined;
       const bar = crumb.closest<HTMLElement>('[data-hunk-header]');
       const start = Number(crumb.dataset.start);
       if (!bar || !start) return;
@@ -1057,6 +1084,7 @@ export function ChangesDiff<A>({
           if (!gapBar) return undefined;
           // A bar that heads a hunk pins at `top`; where it sits unpinned is its section's top.
           const section = gapBar.matches('[data-hunk-header]') ? gapBar.parentElement : null;
+          landed = gapBar;
           return section
             ? { y: section.getBoundingClientRect().top, to: top, exact: true }
             : { y: gapBar.getBoundingClientRect().top, to: under, exact: true };
@@ -1067,6 +1095,7 @@ export function ChangesDiff<A>({
         const slice = block.slices[block.slices.length > 1 ? index : 0];
         const holder = element.querySelector<HTMLElement>(`[data-slice="${CSS.escape(slice.key)}"]`);
         const line = lineElement(holder ?? element, side, place.line);
+        landed = line;
         if (line) return { y: line.getBoundingClientRect().top, to: under, exact: true };
         if (!holder) return undefined;
         // Not mounted yet: mount it now, and aim at the row's estimated place meanwhile.
@@ -1090,6 +1119,7 @@ export function ChangesDiff<A>({
           return;
         }
         stopJump();
+        if (landed?.isConnected) flash(landed);
         // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
         if (!keyboard) return;
         const slot = [...pinned].find((b) => b.isConnected && b.dataset.live === 'scope')?.querySelector<HTMLElement>('.diff-gap-live');
@@ -1119,6 +1149,7 @@ export function ChangesDiff<A>({
       listen(false);
       follow.current = undefined;
       stopJump();
+      unflash();
       element.removeEventListener('click', onClick);
       element.removeEventListener('focusin', onFocus);
       element.removeEventListener('focusout', onFocus);

@@ -142,6 +142,21 @@ void app.whenReady().then(async () => {
     assert.equal(after.hidden, before.hidden, `${surface}: every gap still hides what it hid`);
     assert.equal(after.height, before.height, `${surface}: the header keeps its height`);
     if (keyboard) assert.equal(after.active, label, `${surface}: focus stays on the pinned crumb`);
+    // Where it landed flashes, as a review check's line does: the line, or the gap bar standing in for it.
+    const still = await js<boolean>(`matchMedia('(prefers-reduced-motion: reduce)').matches`);
+    const flashed = await js<{ kind: string; anim: string; outline: string }[]>(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).map(e=>{const c=getComputedStyle(e);
+      return {kind:e.matches('[data-line]')?'line':e.matches('.diff-gap')?'bar':'other',anim:c.animationName,outline:c.outlineStyle}})`);
+    console.log(`${surface}: flash`, JSON.stringify(flashed));
+    assert.deepEqual(
+      flashed.map((f) => [f.kind, f.anim, ...(still ? [f.outline] : [])]),
+      [[after.line !== null ? 'line' : 'bar', still ? 'none' : 'check-flash', ...(still ? ['solid'] : [])]],
+      `${surface}: where the jump landed flashes${still ? ', still under reduced motion' : ''}`
+    );
+    await sleep(1700);
+    const done = await jumpState(root, text);
+    assert.equal(await js<number>(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).length`), 0, `${surface}: the flash ends`);
+    assert.equal(done.line, after.line, `${surface}: the flash moved nothing`);
+    assert.equal(done.lines, after.lines, `${surface}: nothing was revealed`);
     return after;
   };
   type Header = { parts: string[]; crumbs: string; range?: string; counts?: string; show?: string };
@@ -273,8 +288,13 @@ void app.whenReady().then(async () => {
     await pinTopic();
     await checkJump('Topic', topic, 'Go to class StoreBridge', 'export class StoreBridge {', false);
     await capture('explanation-crumb-jump', region('.explanation-document', 0, 260));
+    // With reduced motion, the flash is a still outline.
     await pinTopic();
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     await checkJump('Topic', topic, 'Go to function flush', 'flush(): number {', true);
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+    win.webContents.debugger.detach();
     await js('document.activeElement?.blur()');
     assert.deepEqual(errors, []);
     if (shots) await sideBySide();
