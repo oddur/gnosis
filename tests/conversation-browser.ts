@@ -81,15 +81,23 @@ void app.whenReady().then(async () => {
       return {section:!!d,above:!!d&&document.querySelector('.conversation-description').getBoundingClientRect().bottom<=bar.getBoundingClientRect().top+1,inTimeline:!!document.querySelector('.feedback-timeline .pr-description'),body:!!opened?.querySelector('.timeline-content'),text:opened?.querySelector('.timeline-title')?.textContent??''}})()`);
     assert.ok(description.section && description.above && !description.inTimeline, `The description is a section above the bar: ${JSON.stringify(description)}`);
     assert.ok(!description.body && /opened this PR/.test(description.text), `The opened event is one line: ${JSON.stringify(description)}`);
-    assert.ok(first.feedbackTop < first.height - 40, `The first feedback starts above the fold at 1280×800: ${JSON.stringify(first)}`);
+    // The description shows whole (#418): the timeline's bar follows straight after it. With a short description
+    // the first feedback still starts above the fold at 1280×800; a long one pushes the timeline down instead.
+    const descriptionHeight = await js<number>("document.querySelector('.conversation-description .feedback-entry-body').getBoundingClientRect().height");
+    if (descriptionHeight <= 160)
+      assert.ok(first.feedbackTop < first.height - 40, `A short description keeps the first feedback above the fold: ${JSON.stringify(first)}`);
+    const whole = await js<{ clipped: boolean; toggle: boolean; gap: number }>(`(()=>{const body=document.querySelector('.conversation-description .feedback-entry-body');const sec=document.querySelector('.conversation-description');const bar=document.querySelector('.feedback-toolbar');
+      return {clipped:body.scrollHeight>body.clientHeight+1,toggle:!!document.querySelector('.feedback-description-toggle'),gap:Math.round(bar.getBoundingClientRect().top-sec.getBoundingClientRect().bottom)}})()`);
+    assert.ok(!whole.clipped && !whole.toggle && whole.gap >= 0 && whole.gap <= 12, `The whole description, then the timeline: ${JSON.stringify(whole)}`);
     assert.match(await js<string>("document.querySelector('.conversation-sidebar').textContent"), /Reviewers.*maya.*Changes requested.*sam.*Review requested/s);
     await capture('single-pr', all);
     // Scrolled mid-timeline: the bar and the details column stay pinned.
-    await js("document.querySelector('[data-feedback-scroller]').scrollTop=500");
+    // Into the timeline, past the whole description, so the bar is pinned.
+    await js("(()=>{const p=document.querySelector('[data-feedback-scroller]');p.scrollTop=0;p.scrollTop=document.querySelector('.feedback-timeline').getBoundingClientRect().top-p.getBoundingClientRect().top+300})()");
     await sleep(200);
     const pinned = await js<{ page: number; bar: number; side: number }>("(()=>{const p=document.querySelector('[data-feedback-scroller]').getBoundingClientRect().top;return {page:p,bar:document.querySelector('.feedback-toolbar').getBoundingClientRect().top,side:document.querySelector('.conversation-side').getBoundingClientRect().top}})()");
     assert.ok(Math.abs(pinned.bar - pinned.page) <= 12 && Math.abs(pinned.side - pinned.page) <= 20, `Pinned while scrolling: ${JSON.stringify(pinned)}`);
-    await capture('scrolled-pinned', [[1280, 800], [1600, 900]], () => js("document.querySelector('[data-feedback-scroller]').scrollTop=500"));
+    await capture('scrolled-pinned', [[1280, 800], [1600, 900]], () => js("(()=>{const p=document.querySelector('[data-feedback-scroller]');p.scrollTop=0;p.scrollTop=document.querySelector('.feedback-timeline').getBoundingClientRect().top-p.getBoundingClientRect().top+300})()"));
     // Narrow: the details become a strip above the timeline.
     win.setContentSize(760, 800);
     await sleep(300);

@@ -82,8 +82,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js('document.activeElement.tagName'), 'H1');
     assert.match(await js<string>("document.querySelector('.pr-description').textContent"), /outbox/);
     assert.match(await js<string>("document.querySelector('.pr-metadata').textContent"), /lena/);
-    // The Conversation page (#418) shows a long description's start; the checks below read it whole.
-    await js("[...document.querySelectorAll('.feedback-description-toggle')].find(b=>b.textContent.trim()==='Show full description')?.click()");
+    // The description is never cut off (#418).
+    assert.equal(await js("!!document.querySelector('.feedback-description-toggle')"), false);
     assert.equal(
       await js("document.querySelector('.pr-merge-status').getBoundingClientRect().bottom < 350"),
       true,
@@ -306,7 +306,6 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/128\"] .stack-member-title > button:not(.entity-badge)').click()");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent==='Stack step 9'");
     assert.match(await js<string>("document.querySelector('.stack-context [aria-current=page] .stack-parent-link').textContent"), /#127/);
-    // The Conversation page shows a long description's start (#418), so the page may scroll less than 350px.
     await js("document.querySelector('.pr-summary-content').scrollTop=350");
     const left = Math.min(350, await js<number>("document.querySelector('.pr-summary-content').scrollTop"));
     await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/120')");

@@ -1234,13 +1234,11 @@ export function PrFeedbackView({
 }
 
 /**
- * The PR's description at the top of the Conversation page (#418): who opened it and when, its change stats into
- * Changes, and the description at reading size. A long description shows its start until opened. It is not sticky:
- * a long one would take the view. GitHub holds the text, so editing opens the PR there.
+ * The PR's description at the top of the Summary page (#418): who opened it and when, its change stats into Changes,
+ * and the whole description at reading size, never cut off. It is not sticky: a long one would take the view. GitHub
+ * holds the text, so editing opens the PR there.
  */
 function PrDescription({ member: m, onOpenChanges, stack }: { member: ReviewMember; onOpenChanges?: () => void; stack: boolean }) {
-  const [full, setFull] = useSessionDraft(`description-full:${m.url}`, false);
-  const long = m.description.trim().length > 400;
   return (
     <div className="conversation-description-pr">
       <header className="conversation-description-header">
@@ -1266,7 +1264,7 @@ function PrDescription({ member: m, onOpenChanges, stack }: { member: ReviewMemb
           Edit on GitHub
         </Button>
       </header>
-      <div className="feedback-entry-card feedback-description-card" data-clamped={(!full && long) || undefined}>
+      <div className="feedback-entry-card feedback-description-card">
         <div className="feedback-entry-body">
           <section className="pr-description" aria-label={`Author description for PR #${m.number}`}>
             {m.description.trim() ? (
@@ -1280,17 +1278,12 @@ function PrDescription({ member: m, onOpenChanges, stack }: { member: ReviewMemb
             )}
           </section>
         </div>
-        {long && (
-          <Button variant="ghost" size="sm" className="feedback-description-toggle" aria-expanded={full} onClick={() => setFull(!full)}>
-            {full ? 'Show less' : 'Show full description'}
-          </Button>
-        )}
       </div>
     </div>
   );
 }
 
-/** A stack's descriptions: one line per PR, opening in place. The PR picker shows one PR's description in full. */
+/** A stack's descriptions: one line per PR, opening in place to the whole description. The PR picker shows one PR's. */
 function StackDescriptions({ members, onOpenChanges }: { members: ReviewMember[]; onOpenChanges?: () => void }) {
   return (
     <div className="conversation-stack-descriptions">
