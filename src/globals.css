@@ -1783,17 +1783,18 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .diff-context-button:disabled { opacity:.55; cursor:default; background:none; }
 .diff-context-button:focus-visible { outline:2px solid var(--ring); outline-offset:-1px; }
 /* Changes: a gap between hunks reveals 20 lines next to either hunk, or all of it (#299). */
-/* Gap bars and hunk headers (#299, #393, #395) belong to the code, not the chrome around it: the code theme's
-   background and the code's type, with the breadcrumb starting at the code's text column. ChangesDiff writes the
-   theme's colours as --diff-code-bg, --diff-code-fg, --diff-code-muted and --diff-keyword on the bars alone
-   (lib/code-palette.ts); the fallbacks hold for the moment before the theme resolves. */
+/* Gap bars and hunk headers (#299, #393, #395) belong to the code, not the chrome around it: a surface raised from the
+   code's background toward its text and tinted cool, so it parts from the code and its green and red lines by lightness
+   and hue, with a darker line where it meets the code; the code's type, with the breadcrumb starting at the code's
+   text column. ChangesDiff writes the theme's colours as --diff-code-* and --diff-keyword on the bars alone
+   (lib/code-palette.ts); the fallbacks, mixed in OKLab as the palette is, hold until the theme resolves. */
 .diff-gap {
-  --diff-header-bg:var(--diff-code-bg, #22272e);
+  --diff-header-bg:var(--diff-code-header, color-mix(in oklab, color-mix(in oklab, var(--diff-code-bg, #22272e) 88%, var(--diff-code-fg, #c5ccd6)) 92%, var(--code-ring)));
   --diff-header-fg:var(--diff-code-fg, #c5ccd6);
-  --diff-header-muted:var(--diff-code-muted, color-mix(in oklab, var(--diff-header-fg) 78%, var(--diff-header-bg)));
-  --diff-header-line:color-mix(in oklab, var(--diff-header-fg) 14%, var(--diff-header-bg));
+  --diff-header-muted:var(--diff-code-muted, color-mix(in oklab, var(--diff-header-fg) 80%, var(--diff-header-bg)));
+  --diff-header-line:var(--diff-code-line, color-mix(in oklab, var(--diff-code-bg, #22272e) 55%, #000));
   --diff-header-hover:color-mix(in oklab, var(--diff-header-fg) 12%, var(--diff-header-bg));
-  --diff-header-height:calc(var(--leading-code) * 1.5);
+  --diff-header-height:calc(var(--leading-code) * 1.75);
   --diff-header-shadow:0 6px 10px -6px rgb(0 0 0 / 55%);
   --diff-rule:inset 0 0 0 transparent;
   /* Pierre's unified and split gutters: the number column (2ch, the digits, 1ch, a 2px rule), then the line's own
@@ -1827,7 +1828,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .diff-gap-message { color:var(--diff-header-fg); white-space:normal; overflow-wrap:anywhere; }
 .diff-gap-loading, .diff-gap .loading-indicator { color:var(--diff-header-muted); }
 /* The breadcrumb: the file and the definitions around the hunk, kind words in the theme's keyword colour, names in
-   the code's text colour. A crumb that reveals its definition is a button that reads as text until hovered. */
+   the code's text colour, the innermost semibold. A crumb that reveals its definition is a button that reads as text
+   until hovered. */
 .diff-gap-scope { display:flex; flex:1 1 auto; align-items:center; min-width:0; }
 .diff-gap-symbol { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; }
 /* Outer crumbs give way first; the innermost keeps its text until nothing else is left. */
@@ -1838,6 +1840,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .diff-gap-crumb-separator { padding-inline:1ch; color:var(--diff-header-muted); }
 .diff-gap-crumb { min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--diff-header-fg); font:inherit; }
 .diff-gap-crumb code { font:inherit; }
+.diff-gap-crumb[data-innermost] { font-weight:600; }
 .diff-gap-kind { color:var(--diff-keyword, inherit); }
 button.diff-gap-crumb { padding:0; border:0; border-radius:3px; background:none; cursor:pointer; }
 button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:var(--diff-header-muted); text-underline-offset:3px; }
@@ -1859,20 +1862,6 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
   .diff-gap-symbol > [data-crumb-file]:not(:only-child), .diff-gap-symbol > [data-crumb-file] + .diff-gap-crumb-group > .diff-gap-crumb-separator { display:none; }
 }
 
-/* Variants for review (hunk-header-design); ChangesDiff's HUNK_HEADER_STYLE. A: a code line. */
-/* B: raised, the surface lifted a step toward the text, and no border: the surface and, pinned, the shadow carry it. */
-/* (Mixed in OKLab: OKLCH swings the hue of near-greys, and a blue-grey code background turned brown.) */
-.changes-diff[data-hunk-header-style=b] .diff-gap {
-  --diff-header-bg:color-mix(in oklab, var(--diff-code-bg, #22272e) 95%, var(--diff-code-fg, #c5ccd6));
-  --diff-header-height:calc(var(--leading-code) * 1.75);
-  border-bottom:0;
-}
-.changes-diff[data-hunk-header-style=b] .diff-gap-crumb[data-innermost] { font-weight:600; }
-/* C: an outline, the innermost crumb in the text colour and bold, the outer ones quieter, the lines set apart. */
-.changes-diff[data-hunk-header-style=c] .diff-gap { --diff-header-height:calc(var(--leading-code) * 1.35); }
-.changes-diff[data-hunk-header-style=c] .diff-gap-crumb { color:var(--diff-header-muted); }
-.changes-diff[data-hunk-header-style=c] .diff-gap-scope:not([data-provisional]) .diff-gap-crumb[data-innermost] { color:var(--diff-header-fg); font-weight:600; }
-.changes-diff[data-hunk-header-style=c] .diff-gap-range { padding-left:12px; border-left:1px solid var(--diff-header-line); line-height:1; padding-block:3px; }
 /* Each hunk's header pins under the file header while its hunk is on screen, and the next hunk's header pushes it
    away (#395). ChangesDiff sets --diff-file-header-height from a ResizeObserver; the header sits 1 px higher, under
    the file header's bottom border, so it crosses the line that marks it pinned. Pinned, it casts a soft shadow onto the

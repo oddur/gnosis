@@ -111,9 +111,9 @@ void app.whenReady().then(async () => {
     }
   };
   /**
-   * Hunk header design review (hunk-header-design): with GNOSIS_HUNK_HEADER_SHOTS=1, renders each variant's cases in
+   * Hunk header review: with GNOSIS_HUNK_HEADER_SHOTS=1, renders the hunk header's cases in
    * light and dark, prints them as `HHSHOT <name> <base64 PNG>` lines and the header's colours and alignment as
-   * `HHMETRIC <json>`, and skips the checks. Delete with the variants that lose.
+   * `HHMETRIC <json>`, and skips the checks.
    */
   const hunkHeaderShots = async () => {
     const capture = async (name: string, rect: string) => {
@@ -155,9 +155,9 @@ void app.whenReady().then(async () => {
       }
     };
     const select = (name: string) => js(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`);
-    for (const variant of ['a', 'b', 'c']) {
+    for (const variant of ['final']) {
       win.setContentSize(1280, 800);
-      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope&hunk-header=${variant}`);
+      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
       await waitForWorkbenchQueue(win.webContents);
       await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
         window.symbols=p=>[...(window.stickyRow(p)?.querySelectorAll('.diff-gap-scope:not([data-provisional]) .diff-gap-symbol')??[])].map(e=>[...e.querySelectorAll('.diff-gap-crumb')].map(c=>c.textContent.trim()).join(' › '));void 0`);
@@ -231,7 +231,7 @@ void app.whenReady().then(async () => {
       await sleep(1700);
       await js(`(()=>{const s=window.stream();const b=document.querySelector(${JSON.stringify(bar)});s.scrollTop+=b.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
       await settle();
-      if (variant === 'a') await capture(`${variant}-split`, around(bar));
+      await capture(`${variant}-split`, around(bar));
       await metric(variant, 'controls-split', `document.querySelector(${JSON.stringify(bar)})`);
       await layout('unified');
       // Narrow, pinned.
@@ -244,7 +244,7 @@ void app.whenReady().then(async () => {
       await capture(`${variant}-narrow-pinned`, streamTop(300));
       win.setContentSize(1280, 800);
       // (4) Provisional: before its contents load, a hunk shows its patch header's text and Loading structure….
-      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope&syntax-lazy&hunk-header=${variant}`);
+      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope&syntax-lazy`);
       await waitForWorkbenchQueue(win.webContents);
       await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
         // Queue preparation reads none of the lazy files, and h003.rs's read never finishes.

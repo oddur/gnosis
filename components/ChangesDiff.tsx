@@ -157,19 +157,6 @@ function batch(slices: DiffSlice[], from: number): DiffSlice[] {
   return result;
 }
 
-/**
- * Hunk header design review: `?hunk-header=a|b|c` picks a variant of the header's surface, A by default. Only the
- * fixture sets it; delete with the variants that lose.
- */
-const HUNK_HEADER_STYLE = (() => {
-  try {
-    const value = new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('hunk-header');
-    return value === 'b' || value === 'c' ? value : 'a';
-  } catch {
-    return 'a';
-  }
-})();
-
 /** A crumb's text: its kind word, tinted as the syntax theme tints keywords, then its name. */
 function CrumbText({ crumb, keyword }: { crumb: string; keyword?: string }) {
   if (!keyword || !crumb.startsWith(`${keyword} `)) return <code>{crumb}</code>;
@@ -826,7 +813,6 @@ export function ChangesDiff<A>({
       data-code-theme={codeTheme}
       data-indicators={options.diffIndicators ?? 'classic'}
       data-line-numbers={options.disableLineNumbers ? 'off' : undefined}
-      data-hunk-header-style={HUNK_HEADER_STYLE}
       style={rootStyle}
     >
       {content}
