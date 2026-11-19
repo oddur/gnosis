@@ -166,13 +166,13 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.model-picker-popup')");
     await js("sessionStorage.setItem('ftue-tools', JSON.stringify({codex:'found'}))");
     await click('Check again');
-    await wait("document.querySelector('[aria-label=\"Explanation model\"]')?.textContent.includes('GPT-6.1 Sol')");
+    await wait("document.querySelector('[aria-label=\"Explanation model\"]')?.textContent.includes('GPT-6.2 Sol')");
     assert.match(await js<string>("document.querySelector('[aria-label=\"Briefing model\"]').textContent"), /GPT-6.1 Terra/);
     await capture('ai-codex');
     await js("sessionStorage.setItem('ftue-tools', JSON.stringify({claude:'error',codex:'found'}))");
     await click('Check again');
     await wait("document.querySelector('.setup-body')?.textContent.includes('Could not check Claude')");
-    assert.match(await js<string>("document.querySelector('[aria-label=\"Explanation model\"]').textContent"), /GPT-6.1 Sol/);
+    assert.match(await js<string>("document.querySelector('[aria-label=\"Explanation model\"]').textContent"), /GPT-6.2 Sol/);
     await js("sessionStorage.setItem('ftue-tools', JSON.stringify({claude:'found',codex:'found'}))");
     await click('Check again');
     await wait("document.querySelector('.setup-cli')?.textContent.includes('Claude Code and Codex found')");
@@ -220,9 +220,9 @@ void app.whenReady().then(async () => {
     await click('Apply setup');
     await wait("!document.querySelector('.setup-dialog')");
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.model==='claude-opus-5-5' && p.proactiveProvider==='codex' && p.proactiveModel==='gpt-6.1-terra' && p.proactiveReviewOverrides && p.effort==='xhigh' && p.proactiveEffort==='medium')"), true);
-    await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6.1-sol')");
+    await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6.2-sol')");
     await js('window.openModelMenu()');
-    await wait("document.querySelector('.workspace-menu-popup [aria-label=\"Review model\"]')?.textContent.includes('GPT-6.1 Sol')");
+    await wait("document.querySelector('.workspace-menu-popup [aria-label=\"Review model\"]')?.textContent.includes('GPT-6.2 Sol')");
     await js('window.closeModelMenu()');
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.proactiveReviewOverrides && p.proactiveModel==='gpt-6.1-terra')"), true, 'queue model changes preserve the briefing choice');
     assert.equal(

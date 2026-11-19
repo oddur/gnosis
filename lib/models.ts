@@ -6,7 +6,7 @@
 // and the Electron main process.
 
 export const CLAUDE_MODELS = [
-  { id: 'claude-fable-5-1', label: 'Fable 5.1', quick: false },
+  { id: 'claude-fable-5-2', label: 'Fable 5.2', quick: false },
   { id: 'claude-opus-5-5', label: 'Opus 5.5', quick: false },
   { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', quick: false },
   { id: 'claude-haiku-5-5', label: 'Haiku 5.5', quick: true },
@@ -31,7 +31,8 @@ export function isClaudeModel(id: string): id is ClaudeModel {
  * default model instead of passing a retired id to the CLI.
  */
 export const RETIRED_CLAUDE_MODELS: Record<string, { label: string; successor: ClaudeModel }> = {
-  'claude-fable-5': { label: 'Claude Fable 5', successor: 'claude-fable-5-1' },
+  'claude-fable-5': { label: 'Claude Fable 5', successor: 'claude-fable-5-2' },
+  'claude-fable-5-1': { label: 'Fable 5.1', successor: 'claude-fable-5-2' },
   'claude-opus-5': { label: 'Claude Opus 5', successor: 'claude-opus-5-5' },
   'claude-sonnet-5': { label: 'Claude Sonnet 5', successor: 'claude-sonnet-5-5' },
   'claude-haiku-4-5-20251001': { label: 'Claude Haiku 4.5', successor: 'claude-haiku-5-5' },
@@ -41,13 +42,19 @@ export const RETIRED_CLAUDE_MODELS: Record<string, { label: string; successor: C
 };
 
 export const CODEX_MODELS = [
-  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', quick: false },
-  { id: 'gpt-6-astra', label: 'GPT-6 Astra', quick: false },
+  { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', quick: false },
+  { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra', quick: false },
   { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', quick: false },
   { id: 'gpt-6-luna', label: 'GPT-6 Luna', quick: true },
 ] as const;
 
 export type CodexModel = (typeof CODEX_MODELS)[number]['id'];
+
+/** Codex models we used to offer, as RETIRED_CLAUDE_MODELS: labels for history, successors for saved preferences. */
+export const RETIRED_CODEX_MODELS: Record<string, { label: string; successor: CodexModel }> = {
+  'gpt-6.1-sol': { label: 'GPT-6.1 Sol', successor: 'gpt-6.2-sol' },
+  'gpt-6-astra': { label: 'GPT-6 Astra', successor: 'gpt-6.2-astra' },
+};
 export type Provider = 'claude' | 'codex';
 export type ModelId = ClaudeModel | CodexModel;
 
@@ -57,7 +64,7 @@ export const PROVIDERS = {
   codex: { label: 'Codex', models: CODEX_MODELS },
 } as const;
 
-export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6.1-sol';
+export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6.2-sol';
 export const DEFAULT_BRIEFING_CODEX_MODEL: CodexModel = 'gpt-6.1-terra';
 
 /** Keep provider and model together, including when loading older preferences. */
@@ -69,12 +76,9 @@ export function normalizeModelSelection(
   const selected = provider === 'codex' ? 'codex' : 'claude';
   const match = PROVIDERS[selected].models.find((m) => m.id === model);
   if (match) return { provider: selected, model: match.id };
-  if (
-    selected === 'claude' &&
-    typeof model === 'string' &&
-    Object.prototype.hasOwnProperty.call(RETIRED_CLAUDE_MODELS, model)
-  ) {
-    return { provider: selected, model: RETIRED_CLAUDE_MODELS[model].successor };
+  const retired: Record<string, { successor: ModelId }> = selected === 'claude' ? RETIRED_CLAUDE_MODELS : RETIRED_CODEX_MODELS;
+  if (typeof model === 'string' && Object.prototype.hasOwnProperty.call(retired, model)) {
+    return { provider: selected, model: retired[model].successor };
   }
   return {
     provider: selected,

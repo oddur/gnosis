@@ -3724,28 +3724,14 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
   const run = beginChat(_event, req.requestId);
   workbench.interrupt();
   activeForegroundChats++;
-  let mcpConfigPath: string | undefined;
   try {
     const chatProvider = getProvider(req.provider);
     const systemPrompt = buildSlideChatSystemPrompt();
     const userMessage = buildSlideChatUserMessage(req);
     let toolCalls = 0;
 
-    const prefs = loadPreferences();
-    let allowedTools: string[] | undefined;
-
-    if (req.provider === 'claude' && prefs.enableTools) {
-      const token = getResolvedToken();
-      if (token) {
-        mcpConfigPath = writeMcpConfig(token);
-        allowedTools = ALLOWED_TOOLS;
-      } else {
-        allowedTools = WEB_ONLY_TOOLS;
-      }
-    } else if (req.provider === 'claude' && prefs.enableWebResearch) {
-      allowedTools = WEB_ONLY_TOOLS;
-    }
-
+    // Chat runs isolated: no tools, no MCP servers (#190). "Web search and context" applies to generation only, so
+    // nothing here writes the GitHub token to an MCP config the isolated run would never read.
     const result = await chatProvider.generate({
       content: userMessage,
       systemPrompt,
@@ -3763,15 +3749,12 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
         if (!run.controller.signal.aborted && !_event.sender.isDestroyed())
           _event.sender.send('chat-trace', { requestId: req.requestId, steps: [toolCallStep(call, toolCalls++)] });
       },
-      mcpConfigPath,
-      allowedTools,
     });
     run.controller.signal.throwIfAborted();
     return result;
   } finally {
     run.release();
     activeForegroundChats--;
-    if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
   }
 });
 
