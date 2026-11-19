@@ -33,7 +33,7 @@ import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { useChangesComments } from './useChangesComments';
 import { PrFileChat } from './PrFileChat';
 import { Button } from './ui/button';
-import { changesRevision, type InspectionMode, type InspectionRecheck, type PrChanges } from '../lib/pr-changes';
+import { changesRevision, type PrChanges } from '../lib/pr-changes';
 import { staleDiffRefresh } from '../lib/use-stale-diff-refresh';
 import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
 import type { AgentBriefView } from '../lib/agent-brief';
@@ -209,15 +209,7 @@ export function PrChangesView({
   };
   const loadController = useRef<AbortController | undefined>(undefined);
   const [pendingMembers, setPendingMembers] = useState<string[]>([]);
-  /**
-   * Reads the members' changes. Update changes refreshes them; a stale diff (lib/stale-diff-refresh.ts) refreshes one
-   * PR at the view tier and lists its suspect files again (`recheck`), as Update changes would otherwise show it.
-   */
-  async function load(
-    refresh: boolean,
-    onlyUrl?: string,
-    { mode = false, recheck }: { mode?: InspectionMode; recheck?: InspectionRecheck } = {}
-  ): Promise<PrChanges | undefined> {
+  async function load(refresh: boolean, onlyUrl?: string) {
     if (commit || combined) return;
     const current = ++generation.current;
     setLoading(true);
@@ -232,7 +224,7 @@ export function PrChangesView({
     const failures = new Map(loadErrors.filter(e => onlyUrl && e.url !== onlyUrl).map(e => [e.url, e]));
     setLoadErrors([...failures.values()]);
     try {
-      await loadInspectionBatch(members, (member, signal) => inspectionData.readChanges(member, refresh, mode, signal, recheck), (member, result) => {
+      await loadInspectionBatch(members, (member, signal) => inspectionData.readChanges(member, refresh, false, signal), (member, result) => {
         if (!alive.current || current !== generation.current) return;
         if ('value' in result) {
           registerChangeProgress(result.value);
@@ -251,18 +243,31 @@ export function PrChangesView({
     } finally {
       if (alive.current && current === generation.current) { setLoading(false); setPendingMembers([]); }
     }
-    return onlyUrl ? next.get(onlyUrl) : undefined;
   }
-  const loadNow = useRef(load);
-  loadNow.current = load;
-  // A diff here whose contents do not match its patch refreshes its PR as Update changes does, keeping the reader's
-  // place, so a newer head shows as it would after a manual update.
+  const shownSnapshots = useRef(loadedSnapshots);
+  shownSnapshots.current = loadedSnapshots;
+  /**
+   * A diff here whose contents do not match its patch (lib/stale-diff-refresh.ts) reads its PR's changes again,
+   * listing the suspect files anew (`recheck`), beside any load in progress: it never cancels one. At the same head the
+   * refreshed files replace the shown ones, keeping the reader's place. A newer head is offered as New commits, as
+   * the head watch offers it: the open diff stays until the reader moves. The reader's own Refresh moves, as Update
+   * changes does.
+   */
   useEffect(() => {
     if (commit || combined) return;
     const stops = subject.members.map((member) =>
       staleDiffRefresh.register(member.url, async (url, revision, paths, interactive) => {
-        const snapshot = await loadNow.current(true, url, { mode: interactive ? false : 'view', recheck: { ...revision, paths } });
-        return snapshot?.metadata;
+        const value = await inspectionData.readChanges(member, true, interactive ? false : 'view', undefined, { ...revision, paths });
+        const shown = shownSnapshots.current.find((snapshot) => snapshot.url === url);
+        if (!alive.current || !shown) return shown?.metadata;
+        if (!interactive && changesRevision(value.metadata) !== changesRevision(shown.metadata)) {
+          setNewer(true);
+          return shown.metadata;
+        }
+        registerChangeProgress(value);
+        stream.current?.preservePosition();
+        setSnapshots((previous) => previous.map((snapshot) => (snapshot.url === url ? value : snapshot)));
+        return value.metadata;
       })
     );
     return () => stops.forEach((stop) => stop());
