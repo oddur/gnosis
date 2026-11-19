@@ -9,6 +9,7 @@ import { prBadgePreview } from '../../lib/pr-badge-preview';
 import { fileFilterMocks, filterFixtureFiles } from './file-filters';
 import { diffGapContents, diffGapFiles, staleDiffFiles } from './diff-gaps';
 import { scopeAfter, syntaxLazyFiles, syntaxScopeContents, syntaxScopeFiles, syntaxSpanFiles } from './syntax-scope';
+import { syntaxLargeContents, syntaxLargeFiles } from './syntax-large';
 import { NAV_TOPIC_FILES, breadcrumbNavContents, breadcrumbNavFiles } from './breadcrumb-nav';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
@@ -222,7 +223,7 @@ if (parityScenario) {
 // `?breadcrumb-nav` files, so the matrix's core checks run in a topic as in Changes.
 if (new URLSearchParams(location.search).has('breadcrumb-nav')) {
   const files = breadcrumbNavFiles.filter((file) => NAV_TOPIC_FILES.includes(file.path));
-  review.changedFiles = files.map((file) => ({ filename: prefix + file.path, status: 'modified', additions: file.additions, deletions: file.deletions }));
+  review.changedFiles = files.map((file) => ({ filename: prefix + file.path, status: file.status, additions: file.additions, deletions: file.deletions }));
   review.slides[0] = {
     ...review.slides[0],
     title: 'Schedule steps, show short scopes, outline the changes',
@@ -682,6 +683,7 @@ const mocks = {
       ...(new URLSearchParams(location.search).has('syntax-scope') ? syntaxScopeFiles : []),
       ...(new URLSearchParams(location.search).has('syntax-lazy') ? syntaxLazyFiles : []),
       ...(new URLSearchParams(location.search).has('syntax-span') ? syntaxSpanFiles : []),
+      ...(new URLSearchParams(location.search).has('syntax-large') ? syntaxLargeFiles() : []),
       ...(new URLSearchParams(location.search).has('breadcrumb-nav') ? breadcrumbNavFiles : []),
       // A file renamed into a long path, for the file header's left-collapsing path and its rename display.
       ...(new URLSearchParams(location.search).has('renamed-file') ? [{path:'src/transport/ECORuntime/Core/ECONemoConnector.cs',previousPath:'src/transport/Legacy/NemoConnector.cs',status:'renamed' as const,additions:1,deletions:1,changeId:'renamed-v1'}] : []),
@@ -704,7 +706,7 @@ const mocks = {
     return {...snapshot, comparison:selection,comparisonBase:parent,metadata:{...snapshot.metadata,baseSha:parent,headSha:selection.lastSha}};
   },
   getPrChangeFile: (request: import('../../lib/pr-changes').PrFileRequest) => {
-    const gapFile = diffGapContents(request.path) ?? syntaxScopeContents(request.path) ?? breadcrumbNavContents(request.path);
+    const gapFile = diffGapContents(request.path) ?? syntaxScopeContents(request.path) ?? syntaxLargeContents(request.path) ?? breadcrumbNavContents(request.path);
     if (gapFile) return Promise.resolve(gapFile);
     if (new URLSearchParams(location.search).has('markdown-review')) return Promise.resolve({ before: request.path.endsWith('/new.md') ? { kind: 'absent' as const } : { kind: 'text' as const, content: markdownBefore }, after: request.path.endsWith('/removed.md') ? { kind: 'absent' as const } : { kind: 'text' as const, content: markdownAfter } });
     if(request.path.endsWith('.svg')) {const image={kind:'image' as const,dataUrl:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="140"><rect width="300" height="140" fill="#5076b8"/><text x="30" y="75" fill="white">Queue flow</text></svg>')};return Promise.resolve({before:image,after:image});}

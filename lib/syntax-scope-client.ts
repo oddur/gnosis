@@ -13,6 +13,8 @@ import type { SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
+import { traceStructure } from './structure-trace';
+import { higherPriority, type SyntaxPriority } from './syntax-parse-queue';
 
 /**
  * The page's side of the tree-sitter worker (#393). Grammars are assets of the renderer build, so they load offline
@@ -37,27 +39,64 @@ export const SYNTAX_MAX_CHARACTERS = 1_000_000;
 const MEMO_ENTRIES = 512;
 
 type Timing = Extract<SyntaxResponse, { definitions: unknown }>['timing'];
-let worker: Promise<Worker | undefined> | undefined;
+/**
+ * One worker parses every file, nearest the reader first (lib/syntax-parse-queue.ts). It can split in two: files on
+ * screen and near it in a front worker, prefetched files in a back one, so a file the reader looks at never waits
+ * behind a prefetched file's parse that has started; a waiting prefetch parse that comes into view moves to the front.
+ * On the large-PR bench (tests/syntax-scope-browser.ts, GNOSIS_STRUCTURE_WORKERS=1,2) two workers were no faster once
+ * parses were ordered, and each loads its own grammars, so it stays off.
+ */
+type Lane = 'front' | 'back';
+let split = false;
+/** One worker or two, before any starts: for the bench, which compares them. */
+export function setSyntaxWorkerSplit(value: boolean) {
+  split = value;
+}
+const laneFor = (priority: SyntaxPriority): Lane => (split && priority === 'prefetch' ? 'back' : 'front');
+const workers = new Map<Lane, Promise<Worker | undefined>>();
 let nextId = 0;
 const waiting = new Map<number, { resolve: (value: SyntaxDefinition[]) => void; reject: (error: Error) => void }>();
 // `at` is the entry's last use, so a PR whose definitions outlive its files is still swept when idle (#355).
 const memo = new Map<string, { url: string; definitions: SyntaxDefinition[]; at: number }>();
-const pending = new Map<string, { url: string; promise: Promise<SyntaxDefinition[]> }>();
+interface Pending {
+  url: string;
+  promise: Promise<SyntaxDefinition[]>;
+  priority: SyntaxPriority;
+  /** The worker its parse went to, once it went. */
+  lane?: Lane;
+  /** What was sent, to send it to the front worker if it moves there. */
+  message?: Extract<SyntaxRequest, { type: 'definitions' }>;
+}
+const pending = new Map<string, Pending>();
+/** Parses asked to leave the back worker for the front one, by id: what to do if they did. */
+const moving = new Map<number, () => void>();
 /** The last parses, newest last, for the diagnostics export and the browser checks. */
 export const syntaxTimings: (Timing & { key: string; language: SyntaxLanguage; characters: number })[] = [];
 
 const absolute = (url: string) => new URL(url, document.baseURI).href;
 
-function start(): Promise<Worker | undefined> {
-  worker ??= import('./syntax-scope.worker?worker&inline')
+function start(lane: Lane = 'front'): Promise<Worker | undefined> {
+  const known = workers.get(lane);
+  if (known) return known;
+  const started: Promise<Worker | undefined> = import('./syntax-scope.worker?worker&inline')
     .then(({ default: SyntaxWorker }) => {
-      const instance = new SyntaxWorker({ name: 'gnosis-syntax' });
+      const instance = new SyntaxWorker({ name: lane === 'front' ? 'gnosis-syntax' : 'gnosis-syntax-prefetch' });
       instance.onmessage = (event: MessageEvent<SyntaxResponse & { id: number }>) => {
         const response = event.data;
+        if ('taken' in response) {
+          const move = moving.get(response.id);
+          moving.delete(response.id);
+          // Not taken: its parse had started, and its answer comes from the back worker.
+          if (response.taken) move?.();
+          return;
+        }
         const entry = waiting.get(response.id);
         if (!entry) return;
         waiting.delete(response.id);
-        if ('error' in response) entry.reject(Error(response.error));
+        if ('error' in response) {
+          timings.delete(response.id);
+          entry.reject(Error(response.error));
+        }
         else {
           entry.resolve(response.definitions);
           timings.get(response.id)?.(response.timing);
@@ -67,13 +106,17 @@ function start(): Promise<Worker | undefined> {
         event.preventDefault();
         for (const entry of waiting.values()) entry.reject(Error('The syntax worker stopped'));
         waiting.clear();
-        worker = undefined;
+        if (workers.get(lane) === started) workers.delete(lane);
       };
       return instance;
     })
     .catch(() => undefined);
-  return worker;
+  workers.set(lane, started);
+  return started;
 }
+const eachWorker = (send: (instance: Worker) => void) => {
+  for (const started of workers.values()) void started.then((instance) => instance && send(instance));
+};
 const timings = new Map<number, (timing: Timing) => void>();
 
 let languageAllowed: (language: SyntaxLanguage) => boolean = () => true;
@@ -93,22 +136,68 @@ export function peekDefinitions(key: string): SyntaxDefinition[] | undefined {
 }
 
 /**
+ * Loads the grammars of these languages in the worker while it has nothing to parse, and starts the worker, so the
+ * first file of each language a PR shows does not wait for its grammar (#393). Languages that are off are left out.
+ */
+export function warmSyntax(languages: Iterable<SyntaxLanguage>) {
+  const grammars = [...new Set(languages)]
+    .filter((language) => languageAllowed(language))
+    .map((language) => ({ language, grammarUrl: absolute(GRAMMARS[language]) }));
+  if (!grammars.length) return;
+  for (const lane of split ? (['front', 'back'] as const) : (['front'] as const))
+    void start(lane).then((instance) =>
+      instance?.postMessage({ type: 'warm', runtimeUrl: absolute(runtimeWasm), grammars } satisfies SyntaxRequest)
+    );
+}
+
+/**
  * A file's definitions, parsed in the worker. Rejects for a file that could not parse, and when workers are not
- * available: the caller then shows the diff as it is.
+ * available: the caller then shows the diff as it is. `priority` says where the file is (lib/syntax-parse-queue.ts):
+ * the worker parses files on screen first, then files near the view, then prefetched ones. Asking again for a file
+ * whose parse waits, at a higher priority, moves it up.
  */
 export function readDefinitions(request: {
   key: string;
   url: string;
   language: SyntaxLanguage;
   text: string;
+  priority?: SyntaxPriority;
 }): Promise<SyntaxDefinition[]> {
   if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
   const known = peekDefinitions(request.key);
   if (known) return Promise.resolve(known);
   if (request.text.length > SYNTAX_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to parse'));
+  const priority = request.priority ?? 'view';
   const existing = pending.get(request.key);
-  if (existing) return existing.promise;
-  const promise = start().then(
+  if (existing) {
+    const raised = higherPriority(existing.priority, priority);
+    if (raised !== existing.priority) {
+      existing.priority = raised;
+      const { lane, message } = existing;
+      if (lane && message && lane !== laneFor(raised)) {
+        // Waiting in the back worker: it leaves for the front one, unless its parse has started.
+        existing.lane = laneFor(raised);
+        moving.set(message.id, () => {
+          void start(laneFor(raised)).then((instance) => {
+            message.priority = existing.priority;
+            instance?.postMessage(message);
+          });
+        });
+        void workers.get(lane)?.then((instance) =>
+          instance?.postMessage({ type: 'take', key: request.key, id: message.id } satisfies SyntaxRequest)
+        );
+      } else if (lane)
+        void workers.get(lane)?.then((instance) =>
+          instance?.postMessage({ type: 'priority', key: request.key, priority: raised } satisfies SyntaxRequest)
+        );
+    }
+    return existing.promise;
+  }
+  const file = request.key.replace(/:(after|before)$/, '');
+  const after = !request.key.endsWith(':before');
+  if (after) traceStructure(file, { parseRequest: performance.now() });
+  const lane = laneFor(priority);
+  const promise = start(lane).then(
     (instance) =>
       new Promise<SyntaxDefinition[]>((resolve, reject) => {
         if (!instance) {
@@ -119,6 +208,16 @@ export function readDefinitions(request: {
         waiting.set(id, { resolve, reject });
         timings.set(id, (timing) => {
           timings.delete(id);
+          if (after)
+            traceStructure(file, {
+              parseDone: performance.now(),
+              workerWait: timing.wait,
+              load: timing.load,
+              parse: timing.parse,
+              query: timing.query,
+            });
+          else traceStructure(file, { beforeDone: performance.now() });
+          if (after) traceStructure(file, { tier: timing.priority });
           syntaxTimings.push({
             ...timing,
             key: request.key,
@@ -127,8 +226,10 @@ export function readDefinitions(request: {
           });
           if (syntaxTimings.length > 50) syntaxTimings.shift();
         });
-        instance.postMessage({
-          type: 'definitions',
+        if (after) traceStructure(file, { parsePosted: performance.now() });
+        const entry = pending.get(request.key);
+        const message = {
+          type: 'definitions' as const,
           id,
           key: request.key,
           url: request.url,
@@ -136,10 +237,20 @@ export function readDefinitions(request: {
           text: request.text,
           runtimeUrl: absolute(runtimeWasm),
           grammarUrl: absolute(GRAMMARS[request.language]),
-        } satisfies SyntaxRequest);
+          // A request that came in the meantime may have raised it.
+          priority: entry?.priority ?? priority,
+          side: after ? ('after' as const) : ('before' as const),
+        } satisfies SyntaxRequest;
+        if (entry?.promise === promise) {
+          entry.message = message;
+          entry.lane = laneFor(message.priority);
+        }
+        // Raised to the front while the back worker started.
+        if (laneFor(message.priority) !== lane) void start(laneFor(message.priority)).then((front) => (front ?? instance).postMessage(message));
+        else instance.postMessage(message);
       })
   );
-  pending.set(request.key, { url: request.url, promise });
+  pending.set(request.key, { url: request.url, promise, priority });
   void promise.then(
     (definitions) => {
       // A parse whose PR left the caches while it ran answers its caller and keeps nothing.
@@ -158,16 +269,28 @@ export function readDefinitions(request: {
   return promise;
 }
 
+/**
+ * Moves a file side's waiting parse up to `priority`, as asking for it again would, without a caller to answer. A
+ * side that is parsed, or not asked for, is left alone.
+ */
+export function raiseDefinitions(key: string, priority: SyntaxPriority) {
+  const existing = pending.get(key);
+  if (!existing || higherPriority(existing.priority, priority) === existing.priority) return;
+  existing.priority = priority;
+  const { lane } = existing;
+  if (lane) void workers.get(lane)?.then((instance) => instance?.postMessage({ type: 'priority', key, priority } satisfies SyntaxRequest));
+}
+
 /** Drops these PRs' definitions here and in the worker, with the rest of their inspection data (#355). */
 export function forgetDefinitions(urls: ReadonlySet<string>) {
   for (const [key, entry] of memo) if (urls.has(entry.url)) memo.delete(key);
   for (const [key, entry] of pending) if (urls.has(entry.url)) pending.delete(key);
-  void worker?.then((instance) => instance?.postMessage({ type: 'forget', urls: [...urls] } satisfies SyntaxRequest));
+  eachWorker((instance) => instance.postMessage({ type: 'forget', urls: [...urls] } satisfies SyntaxRequest));
 }
 export function clearDefinitions() {
   memo.clear();
   pending.clear();
-  void worker?.then((instance) => instance?.postMessage({ type: 'clear' } satisfies SyntaxRequest));
+  eachWorker((instance) => instance.postMessage({ type: 'clear' } satisfies SyntaxRequest));
 }
 /** Entries kept on the page, for the diagnostics export. */
 export const definitionStats = () => ({

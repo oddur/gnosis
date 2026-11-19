@@ -1,4 +1,5 @@
 import type { PrChangeFile, PrFileContents } from '../../lib/pr-changes';
+import { structuredPatch } from 'diff';
 import { patchOf } from './syntax-scope';
 
 /**
@@ -266,20 +267,89 @@ export const NAV_SOURCES: Record<string, [string[], string[]]> = {
   'src/nav/outline.ts': [outlineBefore, outlineAfter],
 };
 
-export const breadcrumbNavFiles: PrChangeFile[] = Object.entries(NAV_SOURCES).map(([path, [before, after]], i) => {
-  const patch = patchOf(before, after);
-  const additions = patch.split('\n').filter((line) => line.startsWith('+')).length;
-  const deletions = patch.split('\n').filter((line) => line.startsWith('-')).length;
-  return { path, status: 'modified' as const, additions, deletions, changeId: `nav-${i}`, patch };
-});
+/**
+ * Added and deleted files (#394): their structure comes from the patch, which holds the whole side, with no read.
+ * `wire_response.rs` adds a struct and its impl, `widget_panel.ts` a class with three methods, and `worker_job.ts`
+ * deletes two functions. Each is long enough to scroll through with its hunk header pinned. Their names sort after
+ * every other file, so the rows around `far_mod.rs` are the same as without them: the arrival check needs it near the
+ * top, and the scroll performance check mounts the rows below it.
+ */
+const responseAdded = [
+  'use serde::Serialize;',
+  '',
+  '#[derive(Debug, Clone, Default, Serialize)]',
+  'pub struct BuildingObjectPositionResponse {',
+  ...Array.from({ length: 24 }, (_, i) => `    pub field_${i}: f32,`),
+  '}',
+  '',
+  'impl BuildingObjectPositionResponse {',
+  '    pub fn new() -> Self {',
+  ...Array.from({ length: 40 }, (_, i) => `        let value_${i} = ${i} as f32;`),
+  '        Self::default()',
+  '    }',
+  '}',
+];
+const method = (name: string) => [
+  `  ${name}(): number {`,
+  '    let size = 0;',
+  ...Array.from({ length: 24 }, (_, i) => `    size += ${i}; // ${name}`),
+  '    return size;',
+  '  }',
+];
+const panelAdded = ["import { render } from './dom';", '', 'export class Panel {', ...method('open'), ...method('close'), ...method('resize'), '}'];
+const jobDeleted = [
+  'export function runJob(input: number): number {',
+  ...Array.from({ length: 30 }, (_, i) => `  input += ${i}; // run`),
+  '  return input;',
+  '}',
+  '',
+  'export function stopJob(input: number): number {',
+  ...Array.from({ length: 30 }, (_, i) => `  input -= ${i}; // stop`),
+  '  return input;',
+  '}',
+];
+export const NAV_WHOLE: Record<string, { status: 'added' | 'deleted'; lines: string[] }> = {
+  'src/nav/wire_response.rs': { status: 'added', lines: responseAdded },
+  'src/nav/widget_panel.ts': { status: 'added', lines: panelAdded },
+  'src/nav/worker_job.ts': { status: 'deleted', lines: jobDeleted },
+};
 
 const text = (lines: string[]) => `${lines.join('\n')}\n`;
+/** GitHub's patch of a whole file added or deleted: one hunk from `@@ -0,0 +1,N @@` or `@@ -1,N +0,0 @@`. */
+function wholePatch(status: 'added' | 'deleted', lines: string[]): string {
+  const [before, after] = status === 'added' ? ['', text(lines)] : [text(lines), ''];
+  const [hunk] = structuredPatch('a', 'b', before, after, '', '', { context: 3 }).hunks;
+  return [`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`, ...hunk.lines].join('\n');
+}
+
+export const breadcrumbNavFiles: PrChangeFile[] = [
+  ...Object.entries(NAV_SOURCES).map(([path, [before, after]], i) => {
+    const patch = patchOf(before, after);
+    const additions = patch.split('\n').filter((line) => line.startsWith('+')).length;
+    const deletions = patch.split('\n').filter((line) => line.startsWith('-')).length;
+    return { path, status: 'modified' as const, additions, deletions, changeId: `nav-${i}`, patch };
+  }),
+  ...Object.entries(NAV_WHOLE).map(([path, { status, lines }], i) => ({
+    path,
+    status,
+    additions: status === 'added' ? lines.length : 0,
+    deletions: status === 'deleted' ? lines.length : 0,
+    changeId: `nav-whole-${i}`,
+    patch: wholePatch(status, lines),
+  })),
+];
+
 export function breadcrumbNavContents(path: string): PrFileContents | undefined {
+  const whole = Object.hasOwn(NAV_WHOLE, path) ? NAV_WHOLE[path] : undefined;
+  if (whole)
+    return whole.status === 'added'
+      ? { before: { kind: 'absent' }, after: { kind: 'text', content: text(whole.lines) } }
+      : { before: { kind: 'text', content: text(whole.lines) }, after: { kind: 'absent' } };
   const source = Object.hasOwn(NAV_SOURCES, path) ? NAV_SOURCES[path] : undefined;
   if (!source) return undefined;
   return { before: { kind: 'text', content: text(source[0]) }, after: { kind: 'text', content: text(source[1]) } };
 }
 
-/** The files the first Explanation topic shows whole with `?breadcrumb-nav`: the same checks run in a slide, and
- * `far_mod.rs`, far down the topic, is arrived at straight in its middle. */
-export const NAV_TOPIC_FILES = ['src/nav/deep.ts', 'src/nav/scoped.ts', 'src/nav/outline.ts', 'src/nav/far_mod.rs'];
+/** The files the first Explanation topic shows whole with `?breadcrumb-nav`: the same checks run in a slide;
+ * `far_mod.rs`, far down the topic, is arrived at straight in its middle; and `panel.ts` is an added file. */
+export const NAV_TOPIC_FILES = ['src/nav/deep.ts', 'src/nav/scoped.ts', 'src/nav/outline.ts', 'src/nav/far_mod.rs', 'src/nav/widget_panel.ts'];

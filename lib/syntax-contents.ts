@@ -13,6 +13,9 @@ import { pathFileKinds } from './file-kinds';
  *   PR after them. They run only when no view read waits, and pause while the reader scrolls or types, while the
  *   window is hidden, and during a rate limit. A view read for a file that waits as a prefetch takes it over.
  *
+ * At most `concurrency` reads run at once, and prefetch only starts one while fewer than that run. A view read never
+ * waits behind prefetch: while prefetch fills every slot, one more view read may start beside them.
+ *
  * Reads go through the inspection file cache, so each revision is read once, and a read that started finishes and
  * stays cached. A view read goes to GitHub at foreground priority, ahead of queue preparation; a prefetch read goes in
  * the background. A view request for a file whose prefetch is running promotes it. Requests for the same file share
@@ -103,10 +106,37 @@ export function backoffUntil(error: unknown, now = Date.now()): number | undefin
 }
 
 /**
+ * The whole text of an added file's new side, or of a deleted file's old side, from its patch (#394): every line of
+ * that side is in the patch's one hunk, so nothing needs reading. Undefined when the patch is not the whole side:
+ * GitHub leaves the patch out of large files, and a topic's patch has only some of the lines.
+ */
+export function wholeFileText(patch: string, side: 'after' | 'before'): string | undefined {
+  const lines = patch.split('\n');
+  const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(lines[0] ?? '');
+  if (!header) return;
+  const [start, count, otherCount] = side === 'after' ? [header[3], header[4], header[2]] : [header[1], header[2], header[4]];
+  if (Number(start) !== 1 || otherCount !== '0') return;
+  const sign = side === 'after' ? '+' : '-';
+  const text: string[] = [];
+  let newline = true;
+  for (const [index, line] of lines.slice(1).entries()) {
+    if (line.startsWith(sign)) text.push(line.slice(1));
+    // "\ No newline at end of file"
+    else if (line.startsWith('\\')) newline = false;
+    // A patch that ends in a line break.
+    else if (line === '' && index === lines.length - 2) continue;
+    else return;
+  }
+  if (text.length !== (count === undefined ? 1 : Number(count))) return;
+  return text.join('\n') + (newline ? '\n' : '');
+}
+
+/**
  * What a changed file's scopes need read, from its patch: the after side, or both sides when a hunk only deletes
- * lines (scopes of deleted lines come from the old tree). Undefined for a file whose scopes cannot show or need no
- * read: added or deleted files, files without a patch (the view reads them whole), no grammar, images, generated
- * files, and files the patch alone shows to be too large.
+ * lines (scopes of deleted lines come from the old tree). An added file needs its new side and a deleted file its old
+ * one, which their patch already holds whole: they need a read only when it does not. Undefined for a file whose scopes
+ * cannot show or need no read: added or deleted files with their whole patch, files without a patch (the view reads
+ * them whole), no grammar, images, generated files, and files the patch alone shows to be too large.
  */
 export function syntaxContentsPlan(
   snapshot: Pick<PrChanges, 'fileKinds'>,
@@ -114,9 +144,20 @@ export function syntaxContentsPlan(
   /** Whether a path's language is on in Settings (lib/code-intelligence.ts). */
   allowed: (path: string) => boolean = (path) => !!syntaxLanguage(path)
 ): { both: boolean; characters: number } | undefined {
-  if (file.status === 'added' || file.status === 'deleted' || !file.patch) return;
-  if (!syntaxLanguage(file.path) || !allowed(file.path) || imageMimeType(file.path)) return;
+  if (!file.patch) return;
+  // A deleted file is named by its old path.
+  const path = file.status === 'deleted' ? (file.previousPath ?? file.path) : file.path;
+  if (!syntaxLanguage(path) || !allowed(path) || imageMimeType(path)) return;
   if ((snapshot.fileKinds?.[file.path] ?? pathFileKinds(file.path)).generated.value) return;
+  if (file.status === 'added' || file.status === 'deleted') {
+    const side = file.status === 'added' ? 'after' : 'before';
+    if (wholeFileText(file.patch, side) !== undefined) return;
+    const sign = side === 'after' ? '+' : '-';
+    let characters = 0;
+    for (const line of file.patch.split('\n')) if (line.startsWith(sign) || line.startsWith(' ')) characters += line.length;
+    if (characters > SYNTAX_CONTENTS_MAX_CHARACTERS) return;
+    return { both: side === 'before', characters };
+  }
   let characters = 0;
   // Per hunk: whether it deletes lines and whether it adds any. A hunk that only deletes needs the old side.
   const hunks: { deletes: boolean; adds: boolean }[] = [];
@@ -188,7 +229,10 @@ export function createSyntaxContentsScheduler({
     promotions = 0,
     peak = 0;
   const log: SyntaxContentsRead[] = [];
-  let running = 0;
+  let running = 0,
+    runningView = 0;
+  /** Views that want to know when a file's contents land, whoever read them (`watch`). */
+  const watchers = new Map<string, Set<() => void>>();
 
   const wanted = (entry: Entry) => entry.waiters.size > 0 || entry.owners.size > 0;
   const capped = (job: SyntaxContentsJob) => {
@@ -232,6 +276,7 @@ export function createSyntaxContentsScheduler({
    * to be tried again is left until its time.
    */
   function next(): [string, Entry] | undefined {
+    const slots = running < concurrency;
     let view: [string, Entry] | undefined, prefetch: [string, Entry] | undefined, order = Infinity;
     const at = now();
     let retryAt = Infinity;
@@ -252,8 +297,10 @@ export function createSyntaxContentsScheduler({
           }
     }
     if (retryAt < Infinity) wake(retryAt);
-    if (view) return view;
-    if (!prefetch || hidden) return;
+    // A view read takes a free slot, or the one beside a full set of prefetch reads.
+    if (view && (slots || (runningView < concurrency && running - runningView >= concurrency && running < concurrency + 1)))
+      return view;
+    if (!prefetch || hidden || !slots) return;
     if (at < prefetchPausedUntil) {
       wake(prefetchPausedUntil);
       return;
@@ -270,7 +317,7 @@ export function createSyntaxContentsScheduler({
       wake(pausedUntil);
       return;
     }
-    while (running < concurrency) {
+    for (;;) {
       const item = next();
       if (!item) return;
       const [key, entry] = item;
@@ -295,6 +342,8 @@ export function createSyntaxContentsScheduler({
       entry.tier = tier;
       entry.attempts++;
       running++;
+      const counted = tier === 'view';
+      if (counted) runningView++;
       reads++;
       peak = Math.max(peak, running);
       const at = now();
@@ -341,11 +390,15 @@ export function createSyntaxContentsScheduler({
         )
         .finally(() => {
           running--;
+          if (counted) runningView--;
           entry.running = false;
           entry.tier = undefined;
           record.runMs = now() - (entry.startedAt ?? now());
           if (done || failed.has(key) || !wanted(entry)) drop(key, entry);
-          if (done) for (const waiter of entry.waiters.keys()) waiter();
+          if (done) {
+            for (const waiter of entry.waiters.keys()) waiter();
+            for (const watcher of watchers.get(key) ?? []) watcher();
+          }
           pump();
         });
     }
@@ -425,6 +478,20 @@ export function createSyntaxContentsScheduler({
       pump();
       return () => {
         if (owners.get(owner) === keys) release(owner);
+      };
+    },
+    /**
+     * Calls `onDone` whenever a read of `key` succeeds, whoever asked for it: a file whose contents a prefetch or the
+     * PR's opening reads brought in shows its scopes then, without waiting to ask for them itself. Returns the
+     * function that stops watching.
+     */
+    watch(key: string, onDone: () => void): () => void {
+      let set = watchers.get(key);
+      if (!set) watchers.set(key, (set = new Set()));
+      set.add(onDone);
+      return () => {
+        set.delete(onDone);
+        if (!set.size && watchers.get(key) === set) watchers.delete(key);
       };
     },
     /** Why a file has no contents: its read failed, or it is too large. Undefined otherwise. */

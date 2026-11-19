@@ -169,3 +169,34 @@ void test('Per-symbol Viewed: kept by file revision and symbol, following the fi
   await markSymbolsViewed(first, ['function:merge'], false);
   assert.equal(isSymbolViewed(first, 'function:merge'), false);
 });
+
+void test('An added file lists its symbols as added, and a deleted file its symbols as removed', async () => {
+  const lines = [
+    '#[derive(Debug, Clone, Serialize)]',
+    'pub struct BuildingObjectPositionResponse {',
+    '    pub x: f32,',
+    '    pub y: f32,',
+    '}',
+    '',
+    'impl BuildingObjectPositionResponse {',
+    '    pub fn new(x: f32, y: f32) -> Self {',
+    '        Self { x, y }',
+    '    }',
+    '}',
+  ];
+  const definitions = await parse('rust', lines);
+  // The whole file is one hunk; an added file has no old side, so its old definitions are none.
+  const added = changedSymbols(hunksOf([], lines), { after: definitions, before: [] });
+  assert.ok(added);
+  assert.ok(added.every((symbol) => symbol.change === 'added'), JSON.stringify(brief(added)));
+  assert.deepEqual(
+    added.map((symbol) => symbol.id),
+    ['struct:BuildingObjectPositionResponse', 'impl:BuildingObjectPositionResponse'],
+    'The method folds into its impl'
+  );
+  assert.equal(outlineSummary(added), 'Adds 1 struct and 1 impl block');
+  const removed = changedSymbols(hunksOf(lines, []), { after: [], before: definitions });
+  assert.ok(removed);
+  assert.ok(removed.every((symbol) => symbol.change === 'removed' && symbol.side === 'before'));
+  assert.equal(outlineSummary(removed), 'Removes 1 struct and 1 impl block');
+});

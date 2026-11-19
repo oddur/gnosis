@@ -164,6 +164,7 @@ export function ReviewDiff({
     readStructure: !!source,
     codeSettings: currentCodeIntelligence(),
     sectionRef: root,
+    status: lfs ? undefined : fileStatus,
   });
   // Unified context lines name their old line too, for review checks and jumps (findReviewLine).
   const oldOf = useMemo(() => {

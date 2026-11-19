@@ -110,7 +110,7 @@ try {
         reject(new Error('Workbench browser checks timed out'));
       },
       // Short suites still leave room for one stalled fixture load and its retry (tests/workbench-ready.ts).
-      splitDiff || threads ? 150000 : prSummary ? 180000 : process.argv.includes('--header-stability') || process.argv.includes('--interaction-perf') ? 600000 : process.argv.includes('--instant-views') ? 420000 : 300000
+      process.env.GNOSIS_STRUCTURE_BENCH ? 3600000 : splitDiff || threads ? 150000 : prSummary ? 180000 : process.argv.includes('--header-stability') || process.argv.includes('--interaction-perf') ? 600000 : process.argv.includes('--instant-views') ? 420000 : 300000
     );
     child.on('error', (error) => {
       clearTimeout(timer);
