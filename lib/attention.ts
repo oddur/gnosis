@@ -150,6 +150,13 @@ export interface AttentionItem {
 }
 const STATUS_KINDS: readonly AttentionKind[] = ['changes-requested', 'checks-failed', 'conflicts', 'ready-to-merge'];
 
+/**
+ * Whether this PR of a queue entry changed since your latest review of it. Per PR when main says which
+ * (`QueueItem.sinceReview`); in older queues, every PR of an `updated` entry.
+ */
+export const updatedSinceYourReview = (item: Pick<QueueItem, 'attention' | 'sinceReview'>, url: string) =>
+  item.attention === 'updated' && (!item.sinceReview || !!item.sinceReview[url]);
+
 /** Signals young enough for status kinds (`ATTENTION_SIGNALS_MAX_AGE`). */
 export const freshSignals = (signals: QueueSignals | undefined, now: number) =>
   signals && now - signals.checkedAt <= ATTENTION_SIGNALS_MAX_AGE ? signals : undefined;
@@ -167,7 +174,7 @@ export function memberKinds(
   options: { teamRequests?: boolean } = {}
 ): Set<AttentionKind> {
   const kinds = new Set(Object.keys(memberAttention(member, fresh, login, options)) as AttentionKind[]);
-  if (item.attention === 'updated' && !isOwnPr(member, login)) kinds.add('updated-since-review');
+  if (updatedSinceYourReview(item, member.url) && !isOwnPr(member, login)) kinds.add('updated-since-review');
   if ((item.responses?.[member.url]?.awaitingReply ?? 0) > 0) kinds.add('replies');
   // A finished, current, unread explanation. It folds into a review request on the same row.
   if (explanationFor(item, member.url)?.unread) kinds.add('explanation-ready');
@@ -239,7 +246,7 @@ export function attentionItems(input: {
  */
 export function explanationFor(item: QueueItem, url: string): { id: string; unread: boolean } | undefined {
   const review = item.review;
-  if (!review || (review.status ?? 'completed') !== 'completed' || item.attention === 'updated') return undefined;
+  if (!review || (review.status ?? 'completed') !== 'completed' || item.attention === 'updated' || item.reviewOutdated) return undefined;
   const members = item.subject.members;
   const owner = members.some((member) => member.url === review.prUrl) ? review.prUrl : members[0]?.url;
   return owner === url ? { id: review.id, unread: !!review.unread } : undefined;

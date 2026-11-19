@@ -26,7 +26,7 @@
  * | Ready to merge | The newest approval, else the PR's last update |
  * | Awaiting review | The newest review by someone else (a re-request follows it), else when the PR was opened |
  */
-import { ATTENTION_LABEL, ATTENTION_RANK, explanationFor, freshSignals, isOwnPr, memberKinds, reviewRequest, type AttentionKind } from './attention';
+import { ATTENTION_LABEL, ATTENTION_RANK, explanationFor, freshSignals, isOwnPr, memberKinds, reviewRequest, updatedSinceYourReview, type AttentionKind } from './attention';
 import { changeRequests, type QueueSignals } from './queue-signals';
 import { currentApprovers } from './pr-review-status';
 import { preciseTarget } from './notification-targets';
@@ -516,7 +516,7 @@ export function overviewStatusRequests(
         continue;
       }
       const request = reviewRequest(member, login);
-      const reviewed = item.attention === 'updated' || (item.responses?.[member.url]?.awaitingReply ?? 0) > 0;
+      const reviewed = updatedSinceYourReview(item, member.url) || (item.responses?.[member.url]?.awaitingReply ?? 0) > 0;
       if (request === 'direct' || (request === 'team' && options.teamRequests) || reviewed) {
         seen.add(member.url);
         others.push(member);

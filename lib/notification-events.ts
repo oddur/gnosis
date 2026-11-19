@@ -4,7 +4,7 @@
  * derive nothing; `src/notification-store.ts` adds a persisted key per event on top.
  */
 import { attentionTarget, memberAttention, type AttentionKind, type AttentionMember } from './attention';
-import type { QueueSignals } from './queue-signals';
+import { viewerReview, type QueueSignals } from './queue-signals';
 import type { DeepLinkTarget } from './deep-link';
 import type { NotificationEventType } from './notification-settings';
 
@@ -234,10 +234,7 @@ const NOTIFICATION_TYPES_RESOLVED_BY_CLOSE: readonly NotificationEventType[] = [
 
 /** The reader's latest submitted review of this PR, with the commit it was made on, from the signals. */
 function ownLatestReview(signals: QueueSignals, login: string) {
-  const reviews = [...(signals.opinions ?? []), ...(signals.latestReview ? [signals.latestReview] : [])].filter(
-    (review) => same(review.author, login) && review.state !== 'PENDING' && review.state !== 'DISMISSED'
-  );
-  return reviews.sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt)).at(0);
+  return viewerReview(signals, login);
 }
 /** "Ready to merge" absorbs "Approved" for the same PR. */
 export function subsume(events: readonly NotificationEvent[]): NotificationEvent[] {

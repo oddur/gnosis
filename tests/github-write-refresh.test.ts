@@ -148,6 +148,8 @@ void test('each follow-up condition matches the change it waits for', () => {
   assert.equal(seen('submit-review', { signals: signals() }, { reviewUrl: review.url }), false);
   assert.equal(seen('submit-review', { signals: signals({ latestReview: review }) }, { reviewUrl: review.url }), true);
   assert.equal(seen('submit-review', { signals: signals({ latestReview: { ...review, url: 'other' } }) }, { reviewUrl: review.url }), false);
+  // Someone else reviewed right after: your own latest review still shows it.
+  assert.equal(seen('submit-review', { signals: signals({ latestReview: { ...review, url: 'other' }, mine: review }) }, { reviewUrl: review.url }), true);
   assert.equal(seen('review-comment', { metadata: metadata() }), false);
   assert.equal(seen('thread-reply', { metadata: metadata({ reviewCommentCount: 3 }) }), true);
   assert.equal(seen('comment-delete', { metadata: metadata({ reviewCommentCount: 1 }) }), true);

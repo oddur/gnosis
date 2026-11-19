@@ -46,7 +46,7 @@ export interface WriteObservation {
     | 'commentCount'
     | 'reviewCommentCount'
   >;
-  signals?: Pick<QueueSignals, 'headSha' | 'checks' | 'latestReview' | 'readiness' | 'comments'>;
+  signals?: Pick<QueueSignals, 'headSha' | 'checks' | 'latestReview' | 'mine' | 'readiness' | 'comments'>;
 }
 export interface WriteDetails {
   /** The state before the write. Main captures it from local copies before the write starts. */
@@ -138,16 +138,17 @@ export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   'submit-review': {
     kinds: ALL,
     probes: ['metadata', 'signals'],
-    seen: ({ signals }, details) => {
-      const review = signals?.latestReview;
-      if (!review) return false;
-      if (details.reviewUrl) return review.url === details.reviewUrl;
-      return (
-        !!details.viewer &&
-        review.author.toLowerCase() === details.viewer.toLowerCase() &&
-        Date.parse(review.submittedAt) >= (details.at ?? 0) - 120_000
-      );
-    },
+    // Your own latest review (`mine`) shows it even when someone else reviewed right after.
+    seen: ({ signals }, details) =>
+      [signals?.mine, signals?.latestReview].some((review) => {
+        if (!review) return false;
+        if (details.reviewUrl) return review.url === details.reviewUrl;
+        return (
+          !!details.viewer &&
+          review.author.toLowerCase() === details.viewer.toLowerCase() &&
+          Date.parse(review.submittedAt) >= (details.at ?? 0) - 120_000
+        );
+      }),
     queue: true,
   },
   'review-comment': {

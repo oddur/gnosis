@@ -527,6 +527,8 @@ export function applyToSignals(patch: OptimisticPatch, base: QueueSignals): Queu
       return {
         ...next,
         latestReview: review,
+        // The reader's own latest review: the PR is no longer "updated since your review" at this head.
+        mine: review,
         ...(opinions ? { opinions } : {}),
         ...(base.readiness && decision ? { readiness: { ...base.readiness, reviewDecision: decision } } : {}),
       };

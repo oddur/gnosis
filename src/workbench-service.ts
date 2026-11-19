@@ -8,7 +8,7 @@ import { focusStackPr } from '../lib/stack-workspace';
 import { createMemoryStorage, type StateStorage } from './app-data-store';
 import { createPrReadStore } from './pr-read-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
-import type { QueueSignals, QueueSignalRequest, QueueSignalOptions } from '../lib/queue-signals';
+import { viewerReview, type QueueSignals, type QueueSignalRequest, type QueueSignalOptions } from '../lib/queue-signals';
 import { createNotificationStore, type NotificationStore } from './notification-store';
 import type { NotificationEvent, ObservedMember, PrObservation } from '../lib/notification-events';
 import { planSweep, sweepCostFactor } from '../lib/notification-cadence';
@@ -86,6 +86,8 @@ import {
   fingerprint,
   fingerprintIdentity,
   attentionFor,
+  updatedSinceReview,
+  type GitHubOwnReview,
   type ReviewSubject,
   type ReviewMember,
   type Briefing,
@@ -547,6 +549,25 @@ export function createWorkbenchService(deps: Deps) {
       return member ? [{ member: observedMember(member), signals: signal, explanation: hasExplanation(member.url) }] : [];
     }));
   }
+  /**
+   * Reviews the reader submitted in Gnosis this session, by PR. They count before saved status shows them; a newer
+   * review in status wins over them.
+   */
+  const submittedReviews = new Map<string, { account: string; headSha: string; submittedAt: string }>();
+  /** The GitHub review each PR's attention last used, by PR: `ownReviewsChanged` compares fresh status with it. */
+  const usedOwnReviews = new Map<string, string>();
+  const ownReviewKey = (headSha: string, review: GitHubOwnReview | undefined) =>
+    `${headSha}|${review?.submittedAt ?? ''}|${review?.headSha ?? ''}|${review?.headCommittedAt ?? ''}`;
+  /** The reader's latest GitHub review of one PR revision: saved status, or a review submitted in Gnosis since. */
+  function ownReview(account: string, url: string, headSha: string, signals: QueueSignals | undefined): GitHubOwnReview | undefined {
+    const seen = signals?.headSha === headSha ? viewerReview(signals, account) : undefined;
+    const local = submittedReviews.get(url);
+    const candidates: GitHubOwnReview[] = [
+      ...(seen ? [{ submittedAt: seen.submittedAt, headSha: seen.headSha, ...(signals?.headCommittedAt ? { headCommittedAt: signals.headCommittedAt } : {}) }] : []),
+      ...(local && local.account.toLowerCase() === account.toLowerCase() ? [{ submittedAt: local.submittedAt, headSha: local.headSha }] : []),
+    ];
+    return candidates.sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt)).at(0);
+  }
   function view(includeHidden = false): WorkbenchQueue {
     return timed('view', () => buildView(includeHidden), (queue) =>
       `items=${queue.items.length} muted=${queue.mutedPrs?.length ?? 0} history=${deps.history().length}`);
@@ -603,8 +624,20 @@ export function createWorkbenchService(deps: Deps) {
     const responseSignals = new Map((deps.cachedSignals?.(allMembers.filter(member => member.author.toLowerCase() === s.account.toLowerCase())) ?? []).map(value => [value.url, value]));
     const pause = activePause(s, selection.provider);
     const pauseNotice = pause && providerPauseNotice(pause, now());
+    // Your latest GitHub review of each open PR you did not write, from saved status only: never a read. Your own
+    // PRs keep the saved Gnosis review's meaning of "updated".
+    const reviewable = subjects.flatMap(subject => subject.members.filter(member => member.state === 'open' && !member.merged && member.author.toLowerCase() !== s.account.toLowerCase()));
+    const reviewSignals = new Map((reviewable.length ? deps.cachedSignals?.(reviewable) ?? [] : []).map(value => [value.url, value]));
+    usedOwnReviews.clear();
+    const githubReview = (member: ReviewMember) => {
+      if (member.state !== 'open' || member.merged || member.author.toLowerCase() === s.account.toLowerCase()) return undefined;
+      const value = ownReview(s.account, member.url, member.headSha, reviewSignals.get(member.url));
+      usedOwnReviews.set(member.url, ownReviewKey(member.headSha, value));
+      return value;
+    };
     const allItems = subjects.map((subject) => {
       const review = reviewFor(subject, visible);
+      const sinceReview = updatedSinceReview(subject, review, githubReview);
       const k = key(subject, selection);
       const cached = s.briefs[k];
       const block = automaticBriefingBlock(subject, preferences, s.used, s.repositoryUsed ?? {}) ?? pauseNotice;
@@ -621,7 +654,9 @@ export function createWorkbenchService(deps: Deps) {
         subject,
         review,
         briefing,
-        attention: attentionFor(subject, review),
+        attention: attentionFor(subject, review, sinceReview),
+        ...(Object.keys(sinceReview).length ? { sinceReview } : {}),
+        ...(review?.snapshot && review.snapshot.fingerprint !== fingerprint(subject) ? { reviewOutdated: true } : {}),
         unreadUrls: subject.members.filter(member => readStates[member.url]?.unread.length).map(member => member.url),
         starred: isStarredSubject(subject, starredUrls),
         starredUrls: subject.members.filter((m) => starredUrls.has(m.url)).map((m) => m.url),
@@ -1665,6 +1700,17 @@ export function createWorkbenchService(deps: Deps) {
       notifySignals(account, signals);
       return changed;
     },
+    /**
+     * Whether fresh status changes the GitHub review a PR's attention used, such as an approval made on GitHub. The
+     * caller then rebuilds the queue.
+     */
+    ownReviewsChanged(account: string, signals: readonly QueueSignals[]) {
+      if (account !== deps.auth().login) return false;
+      return signals.some(value => {
+        const used = usedOwnReviews.get(value.url);
+        return used !== undefined && used.startsWith(`${value.headSha}|`) && used !== ownReviewKey(value.headSha, ownReview(account, value.url, value.headSha, value));
+      });
+    },
     noteOwnReview(account: string, url: string, inlineComments: number, reviewUrl?: string) {
       try { if (account === deps.auth().login) reads.ownReview(account, url, reviewUrl); }
       catch (error) { console.warn('Review posted, but its unread progress could not be saved:', error); }
@@ -1820,8 +1866,10 @@ export function createWorkbenchService(deps: Deps) {
      * The reader submitted a review from Gnosis. GitHub's `review-requested:` search stops returning the PR, so it
      * leaves Review requested at once instead of at the next discovery.
      */
-    reviewSubmitted(account: string, url: string) {
+    reviewSubmitted(account: string, url: string, headSha?: string) {
       if (account !== deps.auth().login) return;
+      // The PR is no longer "updated since your review" at this head, even before its status is read again.
+      if (headSha) submittedReviews.set(url, { account, headSha, submittedAt: new Date(now()).toISOString() });
       const s = load();
       const requested = (subject: ReviewSubject) => subject.members.some(member => member.url === url && member.role === 'review-requested');
       const saved = stars.load(s.account).find(entry => entry.member.url === url);

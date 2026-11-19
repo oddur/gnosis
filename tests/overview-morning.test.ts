@@ -37,7 +37,7 @@ import { checkView } from '../lib/check-summary';
 import { overviewBriefing } from '../lib/overview';
 import { appendSinceEvents, parseSinceEvent, sinceEventsFromNotifications, sinceLabel, sinceLine, sinceSummary, SINCE_LOG_LIMIT, SINCE_LOG_MAX_AGE_MS, type SinceEvent } from '../lib/since-log';
 import { parseRereviewTargets, rereviewCompare, rereviewSize, REREVIEW_LIMIT } from '../lib/rereview-lines';
-import { reviewedCommit, waitingReply } from '../lib/use-morning';
+import { reviewedCommit, rereviewFrom, waitingReply } from '../lib/use-morning';
 import { closeBlockedReason, type PrActionState } from '../lib/pr-actions';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
 import type { QueueSignals } from '../lib/queue-signals';
@@ -813,6 +813,12 @@ void test('re-review lines: one compare per PR from your reviewed commit to the 
   ] };
   assert.equal(reviewedCommit(status, LOGIN), 'abc1234');
   assert.equal(reviewedCommit(signals(pr), LOGIN), undefined);
+  // When main names the commit of your latest review (Gnosis or GitHub, whichever is newer), the count starts there.
+  assert.equal(rereviewFrom({ sinceReview: { [pr.url]: { from: 'fed4321' } } }, status, pr.url, LOGIN), 'fed4321');
+  // An unknown commit: "updated since your review" without a count.
+  assert.equal(rereviewFrom({ sinceReview: { [pr.url]: { from: null } } }, status, pr.url, LOGIN), undefined);
+  // Older queues: your GitHub review's commit, from status.
+  assert.equal(rereviewFrom({}, status, pr.url, LOGIN), 'abc1234');
 });
 
 void test('the reply quoted on a row is the last human comment of a thread waiting on you', () => {

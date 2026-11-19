@@ -50,10 +50,12 @@ interface PullSignals {
   comments: { totalCount: number; nodes?: { id: string; createdAt: string; isMinimized?: boolean; author: GitHubActor | null }[] };
   reviews?: { nodes: { id: string; url?: string; submittedAt: string | null; state: string; isMinimized?: boolean; author: GitHubActor | null; commit?: { oid: string } | null }[] };
   latestOpinionatedReviews?: { nodes: ({ url: string; submittedAt: string | null; state: string; author: { login: string } | null; commit: { oid: string } | null } | null)[] | null } | null;
+  viewerLatestReview?: { url: string; submittedAt: string | null; state: string; author: { login: string } | null; commit: { oid: string } | null } | null;
   reviewThreads?: { totalCount: number; nodes: { id: string; isResolved: boolean }[] };
   commits: {
     nodes: {
       commit: {
+        committedDate?: string | null;
         author?: { user: { login: string } | null } | null;
         committer?: { user: { login: string } | null } | null;
         checkSuites?: { nodes: (SuiteRun | null)[] | null } | null;
@@ -172,8 +174,10 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
       comments(last:10) { totalCount nodes { id createdAt isMinimized author { __typename login } } }
       reviews(last:10,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]) { nodes { id url submittedAt state isMinimized author { __typename login } commit { oid } } }
       latestOpinionatedReviews(first:100,writersOnly:true) { nodes { url submittedAt state author { login } commit { oid } } }
+      viewerLatestReview { url submittedAt state author { login } commit { oid } }
       reviewThreads(first:100) { totalCount nodes { id isResolved } }
       commits(last:1) { nodes { commit {
+        committedDate
         author { user { login } } committer { user { login } }
         checkSuites(first:100) { nodes { workflowRun { databaseId event workflow { databaseId } } } }
         statusCheckRollup { state contexts {
@@ -233,6 +237,12 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
                 url: review.url, author: review.author?.login ?? 'Deleted user', state: review.state,
                 submittedAt: review.submittedAt, headSha: review.commit?.oid ?? null,
               }] : []) } : {}),
+            // Your own latest review, of any state: what "updated since your review" compares the head with.
+            ...(pr.viewerLatestReview !== undefined ? { mine: pr.viewerLatestReview?.submittedAt ? {
+              url: pr.viewerLatestReview.url, author: pr.viewerLatestReview.author?.login ?? 'Deleted user', state: pr.viewerLatestReview.state,
+              submittedAt: pr.viewerLatestReview.submittedAt, headSha: pr.viewerLatestReview.commit?.oid ?? null,
+            } : null } : {}),
+            ...(head?.committedDate ? { headCommittedAt: head.committedDate } : {}),
             activity: {
               comment: newestComment ? { id: newestComment.id, at: newestComment.createdAt, author: newestComment.author?.login ?? '' } : undefined,
               review: newestReview?.submittedAt ? { id: newestReview.url ?? newestReview.id, state: newestReview.state, at: newestReview.submittedAt, author: newestReview.author?.login ?? '' } : undefined,
