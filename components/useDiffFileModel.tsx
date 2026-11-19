@@ -23,6 +23,7 @@ import {
 import { chainAt, hunkScopes, provisionalScopes, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
 import type { DefinitionReveal, SyntaxDefinition } from '../lib/syntax-scope';
 import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
+import { raiseDefinitions } from '../lib/syntax-scope-client';
 import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-syntax-contents';
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
@@ -215,7 +216,10 @@ export function useDiffFileModel({
   );
   const parseable = structure && active && (whole ? !!baseHunks : expandable && !!gaps);
   // Files on screen parse first, then files near the view, then the rest (lib/syntax-parse-queue.ts).
-  const tier = useViewTier(sectionRef, parseable);
+  const tier = useViewTier(sectionRef, parseable, (place) => {
+    raiseDefinitions(`${fileKey}:after`, place);
+    raiseDefinitions(`${fileKey}:before`, place);
+  });
   const definitions = useSyntaxDefinitions({
     key: fileKey,
     url: request?.url ?? '',

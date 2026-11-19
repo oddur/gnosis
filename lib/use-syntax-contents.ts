@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import {
   createSyntaxContentsScheduler,
   syntaxContentsDiagnostics,
@@ -235,16 +235,29 @@ export function warmPredictedSyntax(files: readonly SyntaxFile[]) {
 /**
  * Where a file's diff is, for the order of parses (lib/syntax-parse-queue.ts): on screen (`view`), within a viewport
  * of it (`near`), or further (`prefetch`). Until the first observation it is `near`: it was just mounted, so close.
+ * The place is kept in a ref and `onChange` hears of each change, so a file crossing the view while the reader scrolls
+ * renders nothing: only a parse that still waits is told to move.
  */
-export function useViewTier(element: RefObject<HTMLElement | null>, enabled: boolean): SyntaxPriority {
-  const [tier, setTier] = useState<SyntaxPriority>('near');
+export function useViewTier(
+  element: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  onChange: (tier: SyntaxPriority) => void
+): RefObject<SyntaxPriority> {
+  const tier = useRef<SyntaxPriority>('near');
+  const changed = useRef(onChange);
+  changed.current = onChange;
   useEffect(() => {
     const target = element.current;
     if (!enabled || !target || typeof IntersectionObserver === 'undefined') return;
     const root = target.closest('.commit-diff-stream, [data-diff-scroller]');
     let onScreen = false,
       near = true;
-    const update = () => setTier(onScreen ? 'view' : near ? 'near' : 'prefetch');
+    const update = () => {
+      const next: SyntaxPriority = onScreen ? 'view' : near ? 'near' : 'prefetch';
+      if (next === tier.current) return;
+      tier.current = next;
+      changed.current(next);
+    };
     const screen = new IntersectionObserver(
       (entries) => {
         onScreen = entries[entries.length - 1].isIntersecting;
