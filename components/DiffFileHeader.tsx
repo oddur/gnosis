@@ -1,5 +1,6 @@
 import type { ReactNode, Ref } from 'react';
 import { DiffStats } from './DiffStats';
+import { FileTypeIcon } from './FileTypeIcon';
 
 /**
  * A changed file's header, in the code tier (#395): its path in the code's type, its status and counts, and the view's
@@ -43,6 +44,8 @@ export function DiffFileHeader({
     <header ref={headerRef} className="changes-file-header" data-status={status}>
       {lead}
       <div className="changes-file-title">
+        {/* The header is code-tier, dark in both app themes, so the icon uses its dark variant. */}
+        <FileTypeIcon filePath={path} surface="dark" />
         <h2 title={fullPath} data-renamed={previousPath ? '' : undefined}>
           {previousPath && (
             <>

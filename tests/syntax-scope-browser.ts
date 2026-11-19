@@ -1171,7 +1171,7 @@ void app.whenReady().then(async () => {
         return {line:Math.round(l.getBoundingClientRect().top-s.getBoundingClientRect().top),scrollTop:Math.round(s.scrollTop),max:s.scrollHeight-s.clientHeight}};
       // Where a jump landed (#417): the line or gap bar marked "here" (lib/diff-here.ts), its band's animation and colour,
       // whether its gutter cell is marked too, the gutter's bar, and its box.
-      window.hereMarks=root=>window.deepAll('[data-here]',root).filter(e=>!e.matches('[data-column-number]')).map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');const r=e.getBoundingClientRect();
+      window.hereMarks=root=>window.deepAll('[data-here]',root).filter(e=>!e.matches('[data-column-number],[data-gutter-buffer]')&&e.getAttribute('data-here-part')!=='body').map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');const r=e.getBoundingClientRect();
         const i=e.getAttribute('data-line-index');const col=e.closest('[data-deletions],[data-additions]')??e.closest('[data-code]');const g=i!==null&&col?col.querySelector('[data-column-number][data-line-index="'+i+'"]'):null;
         return {kind:e.matches('[data-line]')?'line':bar?'bar':'other',text:e.textContent.trim().slice(0,40),anim:c.animationName.replace(/-[ab]$/,''),band:c.backgroundColor,gutter:g?g.getAttribute('data-here')!==null:null,
           edge:g?getComputedStyle(g,'::after').boxShadow:bar?c.boxShadow:null,top:Math.round(r.top),height:Math.round(r.height)}});

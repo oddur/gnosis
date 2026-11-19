@@ -17,7 +17,7 @@ import {
   type HunkRange,
 } from '../lib/diff-gaps';
 import { applyCodePalette } from '../lib/diff-code-palette';
-import { HERE_CSS, clearHere, markHere } from '../lib/diff-here';
+import { HERE_CSS, clearHere, markHere, markSection } from '../lib/diff-here';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
@@ -671,6 +671,9 @@ function GapBar({
  */
 export const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
 
+/** The pinned state's thresholds: 0, 5%, 10%… 100% of a header in view (see the observer in ChangesDiff). */
+const STUCK_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i / 20);
+
 /** A probe that finds no line (a slice still mounting, a comment) looks again on this many following frames. */
 const MISSED_PROBES = 30;
 
@@ -768,6 +771,7 @@ function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side'])
     crumb.dataset.side = side;
     crumb.dataset.start = String(definition.start);
     crumb.dataset.signatureEnd = String(definition.signatureEnd);
+    crumb.dataset.end = String(definition.end);
     crumb.setAttribute('aria-label', jumpLabel(definition));
     crumb.title = jumpLabel(definition);
     const code = make('code', '');
@@ -848,6 +852,8 @@ export interface DiffDestination {
   reveal?: readonly [number, number];
   /** The lines to mark "here", on `side`: by default the line alone, a definition's whole signature for a crumb. */
   here?: readonly [number, number];
+  /** The definition the line starts, on `side`: the whole of it is marked, its signature (`here`) most. */
+  section?: readonly [number, number];
 }
 /** What a view holds to take the reader to a line of the file's diff, as a pinned crumb does. */
 export interface DiffNavigator {
@@ -1175,6 +1181,7 @@ export function ChangesDiff<A>({
       line: definition.start,
       reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
       here: [definition.start, Math.max(definition.start, definition.signatureEnd)],
+      section: [definition.start, definition.end],
     });
   };
   const observeHeaders = () => {
@@ -1233,24 +1240,48 @@ export function ChangesDiff<A>({
         (entries) => {
           for (const entry of entries) {
             const top = entry.rootBounds?.top ?? 0;
-            const stuckNow = entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top;
-            entry.target.toggleAttribute('data-stuck', stuckNow);
-            if (stuckNow) pinned.add(entry.target as HTMLElement);
-            else {
-              pinned.delete(entry.target as HTMLElement);
-              entry.target.removeAttribute('data-live-focus');
-              closeFolded(entry.target);
-            }
+            mark(entry.target, entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top);
           }
-          for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
-          listen(pinned.size > 0);
-          if (pinned.size) schedule();
+          settled();
         },
-        { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: [0, 1] }
+        // A threshold every 5%: a header is partly in view both while it enters at the bottom and while it is pinned,
+        // so a jump straight from one to the other, such as to a line of a file never shown, crosses one of them.
+        { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: STUCK_THRESHOLDS }
       );
       observeHeaders();
     });
     resize.observe(header);
+    const mark = (target: Element, stuckNow: boolean) => {
+      target.toggleAttribute('data-stuck', stuckNow);
+      if (stuckNow) pinned.add(target as HTMLElement);
+      else {
+        pinned.delete(target as HTMLElement);
+        target.removeAttribute('data-live-focus');
+        closeFolded(target);
+      }
+    };
+    const settled = () => {
+      for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
+      listen(pinned.size > 0);
+      if (pinned.size) schedule();
+    };
+    // Once any scroll ends, however the reader arrived (a jump, a review check, a deep link, the outline), the pinned
+    // state is read from the headers' boxes, for the one case the thresholds cannot see: a header partly in view by
+    // exactly as much before a jump as after it. One read of this diff's box, and of its headers' when it is in view.
+    const recheck = () => {
+      if (height === undefined) return;
+      const view = scroller.getBoundingClientRect();
+      const box = element.getBoundingClientRect();
+      if (box.bottom <= view.top || box.top >= view.bottom) return;
+      const line = view.top + height;
+      for (const bar of element.querySelectorAll('[data-hunk-header]')) {
+        const r = bar.getBoundingClientRect();
+        const stuckNow = r.bottom > line && r.top < view.bottom && r.top < line;
+        if (stuckNow !== bar.hasAttribute('data-stuck')) mark(bar, stuckNow);
+      }
+      settled();
+    };
+    scroller.addEventListener('scrollend', recheck, { passive: true });
 
     // Going to a line (#417): a pinned crumb, or a symbol of the file's outline (#394). Whatever must show is revealed
     // first; then the line scrolls right under the pinned headers, with an eased move. A line that stays hidden (a topic
@@ -1264,7 +1295,7 @@ export function ChangesDiff<A>({
       jumpFrame = 0;
       for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
     };
-    const goTo = ({ side, line: start, reveal, here = [start, start], onLanded }: DiffDestination & { onLanded?: () => void }) => {
+    const goTo = ({ side, line: start, reveal, here = [start, start], section, onLanded }: DiffDestination & { onLanded?: () => void }) => {
       stopJump();
       clearHere();
       const id = ++jumpId;
@@ -1351,7 +1382,18 @@ export function ChangesDiff<A>({
         }
         stopJump();
         where();
-        if (landed?.isConnected) {
+        if (landed?.isConnected && section && landed.matches('[data-line]')) {
+          // A definition is marked whole, in both columns of a split diff, with the gap bars inside it.
+          const [first, last] = section;
+          const bars = latestParts.current.flatMap((part) => {
+            if (part.kind !== 'gap' || part.end === undefined) return [];
+            const offset = side === 'before' ? part.gap.oldOffset : 0;
+            if (part.start + offset <= first || part.end + offset >= last) return [];
+            const bar = element.querySelector(`[data-gap="${part.gap.index}"]`);
+            return bar ? [bar] : [];
+          });
+          markSection(element.querySelectorAll('diffs-container'), { side, start: first, end: last, signatureEnd: here[1] }, bars);
+        } else if (landed?.isConnected) {
           // A line is marked with the rest of `here` on its side, such as a definition's whole signature; a bar alone.
           const rows: HTMLElement[] = [landed];
           if (landed.matches('[data-line]'))
@@ -1383,6 +1425,7 @@ export function ChangesDiff<A>({
         line: start,
         reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
         here: [start, Math.max(start, Number(crumb.dataset.signatureEnd) || start)],
+        section: [start, Math.max(start, Number(crumb.dataset.end) || start)],
         // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
         onLanded: keyboard
           ? () => {
@@ -1433,6 +1476,7 @@ export function ChangesDiff<A>({
     element.addEventListener('focusout', onFocus);
     return () => {
       resize.disconnect();
+      scroller.removeEventListener('scrollend', recheck);
       stuck.current?.disconnect();
       stuck.current = undefined;
       listen(false);

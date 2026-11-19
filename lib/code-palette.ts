@@ -223,5 +223,8 @@ export function codePaletteCSS(theme: string, palette: CodePalette): string {
 export const HERE_BAND = '#2f55d4';
 export const HERE_SETTLED = 0.22;
 export const HERE_PEAK = 0.38;
+/** The rest of a marked section (lib/diff-here.ts): a softer band, settling here from its own bloom. */
+export const HERE_SECTION_SETTLED = 0.12;
+export const HERE_SECTION_PEAK = 0.18;
 /** The ring the band's bar is drawn in, as --code-ring in tokens.css. */
 export const HERE_BAR = CODE_RING;

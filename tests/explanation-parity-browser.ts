@@ -161,11 +161,14 @@ void app.whenReady().then(async () => {
     if (keyboard) assert.equal(after.active, label, `${surface}: focus stays on the pinned crumb`);
     // Where it landed flashes, as a review check's line does: the line, or the gap bar standing in for it.
     const still = await js<boolean>(`matchMedia('(prefers-reduced-motion: reduce)').matches`);
-    const flashed = await js<{ kind: string; anim: string; band: string; gutter: boolean | null }[]>(`(()=>{const marks=root=>window.deepAll('[data-here]',root).filter(e=>!e.matches('[data-column-number]')).map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');const r=e.getBoundingClientRect();
+    const flashed = await js<{ kind: string; anim: string; band: string; gutter: boolean | null }[]>(`(()=>{const marks=root=>window.deepAll('[data-here]',root).filter(e=>!e.matches('[data-column-number],[data-gutter-buffer]')&&e.getAttribute('data-here-part')!=='body').map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');const r=e.getBoundingClientRect();
         const i=e.getAttribute('data-line-index');const col=e.closest('[data-deletions],[data-additions]')??e.closest('[data-code]');const g=i!==null&&col?col.querySelector('[data-column-number][data-line-index="'+i+'"]'):null;
         return {kind:e.matches('[data-line]')?'line':bar?'bar':'other',text:e.textContent.trim().slice(0,40),anim:c.animationName.replace(/-[ab]$/,''),band:c.backgroundColor,gutter:g?g.getAttribute('data-here')!==null:null,
           edge:g?getComputedStyle(g,'::after').boxShadow:bar?c.boxShadow:null,top:Math.round(r.top),height:Math.round(r.height)}});return marks(document.querySelector(${JSON.stringify(root)}))})()`);
     console.log(`${surface}: here`, JSON.stringify(flashed));
+    // The whole definition is marked, its signature most and the rest of it more softly (lib/diff-here.ts).
+    const body = await js<number>(`window.deepAll('[data-line][data-here][data-here-part=body]',document.querySelector(${JSON.stringify(root)})).length`);
+    assert.ok(body > 0, `${surface}: the rest of the definition is marked too: ${body} rows`);
     assert.deepEqual(
       flashed.map((f) => [f.kind, f.anim, f.gutter, ...(still ? [f.band] : [])]),
       [['line', still ? 'none' : 'gnosis-here-band', true, ...(still ? ['rgba(47, 85, 212, 0.22)'] : [])]],

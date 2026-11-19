@@ -103,6 +103,25 @@ void app.whenReady().then(async () => {
           if(Math.abs(off)>1){s.dispatchEvent(new WheelEvent('wheel'));s.scrollTop+=off;still=0}else still++;
           for(let f=0;f<2;f++)await new Promise(r=>requestAnimationFrame(r));await new Promise(r=>setTimeout(r,40))}
         await new Promise(r=>setTimeout(r,100));return Math.round(s.scrollTop)};
+      // One scroll, as a jump, a review check or a deep link makes: the line straight to right under where the headers pin,
+      // with no stop between. Returns where the file's header and the line ended up.
+      window.arrive=async(root,scroller,text)=>{const s=window.q(scroller);const r=window.q(root);
+        // A file never shown is laid out only once it nears the view: its top just shows at the bottom of the view, so its
+        // hunk header is partly in view there, as when a reader's jump starts.
+        s.scrollTop+=r.getBoundingClientRect().top-(s.getBoundingClientRect().bottom-120);
+        for(let f=0;f<4;f++)await new Promise(q=>requestAnimationFrame(q));await new Promise(q=>setTimeout(q,200));
+        // Its hunk header now only partly in view at the bottom, the hardest start: from there to pinned, it is never wholly in view.
+        for(let i=0,still=0;i<20&&still<3;i++){const h=r.querySelectorAll('[data-hunk-header]');const head=h[h.length-1];
+          const off=head.getBoundingClientRect().top-(s.getBoundingClientRect().bottom-head.offsetHeight/2);if(Math.abs(off)>1){s.scrollTop+=off;still=0}else still++;
+          for(let f=0;f<3;f++)await new Promise(q=>requestAnimationFrame(q))}
+        const l=window.lineRow(root,text,false);
+        const under=s.getBoundingClientRect().top+r.querySelector('.changes-file-header').offsetHeight-1+r.querySelector('[data-hunk-header]').offsetHeight;
+        const before=[...r.querySelectorAll('[data-hunk-header]')].at(-1)?.getBoundingClientRect().top;
+        // Files above may change height as they come near: aim again, in single moves, until the line holds still.
+        for(let i=0,still=0;i<20&&still<3;i++){const off=l.getBoundingClientRect().top-under;if(Math.abs(off)>1){s.scrollTop+=off;still=0}else still++;
+          for(let f=0;f<3;f++)await new Promise(q=>requestAnimationFrame(q))}
+        await new Promise(q=>setTimeout(q,300));
+        return {before:Math.round(before??-1),line:Math.round(l.getBoundingClientRect().top),under:Math.round(under)}};
       window.jumpState=root=>{const r=window.q(root);const h=r.querySelector('[data-hunk-header][data-stuck]');const b=h?.getBoundingClientRect();const a=document.activeElement;
         const slot=h?.querySelector('.diff-gap-live');
         return {stuck:!!h,live:h?.dataset.live??null,bottom:b?Math.round(b.bottom):null,height:b?Math.round(b.height):null,
@@ -126,10 +145,21 @@ void app.whenReady().then(async () => {
           if(Math.abs(off)>1){s.scrollTop+=off;still=0}else still++;for(let f=0;f<2;f++)await new Promise(r=>requestAnimationFrame(r))}
         const b=window.q(root).querySelector(selector);if(!b)throw Error('Missing '+selector);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};
       // Where the reader was taken (lib/diff-here.ts): marked lines and bars, with their band and gutter.
-      window.hereMarks=root=>window.deepAll('[data-here]',window.q(root)).filter(e=>!e.matches('[data-column-number]')).map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');
+      window.hereMarks=root=>window.deepAll('[data-here]',window.q(root)).filter(e=>!e.matches('[data-column-number],[data-gutter-buffer]')&&e.getAttribute('data-here-part')!=='body').map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');
         const i=e.getAttribute('data-line-index');const col=e.closest('[data-deletions],[data-additions]')??e.closest('[data-code]');const g=i!==null&&col?col.querySelector('[data-column-number][data-line-index="'+i+'"]'):null;
         return {kind:e.matches('[data-line]')?'line':bar?'bar':'other',text:e.textContent.trim().slice(0,48),anim:c.animationName.replace(/-[ab]$/,''),band:c.backgroundColor,gutter:g?g.hasAttribute('data-here'):null,top:Math.round(e.getBoundingClientRect().top)}});
-      window.sampleScroll=scroller=>{const s=window.q(scroller);const v=[];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
+      // A section's mark (lib/diff-here.ts): its signature rows, how many rows its body has, which visual rows each column
+      // of a split diff marks, its empty-row buffers, and its gap bars.
+      window.sectionMarks=root=>{const r=window.q(root);const out={sig:[],body:0,bodyTexts:[],del:[],add:[],buffers:0,bars:r.querySelectorAll('.diff-gap[data-here]').length,parts:[]};
+        for(const host of r.querySelectorAll('diffs-container')){const sr=host.shadowRoot;if(!sr)continue;const split=!!sr.querySelector('[data-deletions]');
+          for(const e of sr.querySelectorAll('[data-here]')){if(e.matches('[data-content-buffer],[data-gutter-buffer]')){out.buffers++;continue}
+            if(!e.matches('[data-line]'))continue;const parts=(e.getAttribute('data-line-index')??'').split(',');const at=Number(split&&parts.length>1?parts[1]:parts[0]);
+            if(split)(e.closest('[data-deletions]')?out.del:out.add).push(at);
+            if(e.getAttribute('data-here-part')==='body'){out.body++;out.bodyTexts.push(e.textContent.trim())}else out.sig.push(e.textContent.trim())}}
+        out.del=[...new Set(out.del)].sort((a,b)=>a-b);out.add=[...new Set(out.add)].sort((a,b)=>a-b);out.bodyTexts=out.bodyTexts.slice(0,400);return out};
+      // The scroller's scrollTop from now (the first sample is taken at once, so a jump that lands before the next frame
+      // still shows as a move) and on each of the next 90 frames, into window.__samples.
+      window.sampleScroll=scroller=>{const s=window.q(scroller);const v=[Math.round(s.scrollTop)];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
       // Show scope's rails: the gutter cells marked, by their line number.
       window.rails=root=>window.deepAll('[data-column-number][data-scope-rail]',window.q(root)).filter(c=>!c.closest('[data-deletions]')).map(c=>c.getAttribute('data-column-number')+':'+c.getAttribute('data-scope-rail'));
       window.headerActions=root=>[...window.q(root).querySelectorAll('.diff-gap-act > button')].map(b=>b.textContent.trim());
@@ -168,6 +198,7 @@ void app.whenReady().then(async () => {
     slotLabel: string | null;
     active: string | null;
   };
+  type Section = { sig: string[]; body: number; bodyTexts: string[]; del: number[]; add: number[]; buffers: number; bars: number };
   type Here = { kind: string; text: string; anim: string; band: string; gutter: boolean | null; top: number };
   const state = (root: string) => js<Jump>(`window.jumpState(${JSON.stringify(root)})`);
   const here = (root: string) => js<Here[]>(`window.hereMarks(${JSON.stringify(root)})`);
@@ -305,6 +336,22 @@ void app.whenReady().then(async () => {
           await wait(`window.hereMarks(${JSON.stringify(deep)}).length>0`, 80);
           await sleep(delay);
         });
+      // The same in split view: both columns in sync.
+      const layoutKey = `window.q('${STREAM}').dispatchEvent(new KeyboardEvent('keydown',{key:'d',bubbles:true,cancelable:true,composed:true}))`;
+      await js(layoutKey);
+      await wait("document.querySelector('.pr-changes')?.dataset.diffLayout==='split'");
+      await sleep(600);
+      for (const [name, delay] of [['here-split-bloom', 120], ['here-split-settled', 900]] as const)
+        await capture(`${name}-${width}`, area(STREAM, 0, 300), async () => {
+          await js(`window.pinAt(${JSON.stringify(deep)},${JSON.stringify(STREAM)},'next += 30 * 2;',false)`);
+          await wait(`window.jumpState(${JSON.stringify(deep)}).crumbs.length===4`);
+          await clickCrumb(deep, 'Go to function step');
+          await wait(`window.hereMarks(${JSON.stringify(deep)}).length>0`, 80);
+          await sleep(delay);
+        });
+      await js(layoutKey);
+      await wait("document.querySelector('.pr-changes')?.dataset.diffLayout==='unified'");
+      await sleep(600);
       // Show scope: a short class shown whole with its rail, and a function too long to.
       const scoped = rowOf('src/nav/scoped.ts');
       await select('scoped.ts');
@@ -361,6 +408,18 @@ void app.whenReady().then(async () => {
       return;
     }
     await open();
+
+    // ═══ Arriving straight in the middle of a file never shown pins its hunk header ═══
+    // The header goes from partly in view at the bottom to pinned at the top in one move, never wholly in view between.
+    {
+      const far = rowOf('src/nav/far_mod.rs');
+      await wait(`!!window.lineRow(${JSON.stringify(far)},'total += 40 * 2;',false)`, 500);
+      console.log('Changes, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(far)},'${STREAM}','total += 40 * 2;')`)));
+      await wait(`window.jumpState(${JSON.stringify(far)}).crumbs.length>0`, 50).catch(() => undefined);
+      const direct = await state(far);
+      assert.ok(direct.stuck && direct.live === 'scope', `Changes: a direct jump into a file never shown pins its header: ${JSON.stringify(direct)}`);
+      assert.deepEqual(direct.crumbs, ['Go to module api', 'Go to impl Client', 'Go to function handle'], 'Changes: and it follows the reader');
+    }
 
     // ═══ Languages: each chain, pinned, and its outermost crumb's jump ═══
     const cases = [
@@ -435,6 +494,14 @@ void app.whenReady().then(async () => {
     await pin(deep, STREAM, 'next += 40 * 2;');
     // The namespace's first line is hidden too; going there shows only from it down.
     let after = await jump('deep.ts', deep, 'Go to module Engine', 'export namespace Engine {', { above: 'export const lead19 = 19;' });
+    {
+      const section = await js<Section>(`window.sectionMarks(${JSON.stringify(deep)})`);
+      console.log('Section mark, unified:', JSON.stringify({ ...section, bodyTexts: section.bodyTexts.length }));
+      assert.deepEqual(section.sig, ['export namespace Engine {'], 'Unified: the signature blooms');
+      for (const text of ['export class Scheduler {', 'readonly slot10 = 10;', 'next += 59 * 2;', 'return total;'])
+        assert.ok(section.bodyTexts.includes(text), `Unified: the rest of the namespace is marked: ${text}`);
+      assert.ok(!section.bodyTexts.includes('export const lead19 = 19;'), 'Unified: nothing outside it is');
+    }
     assert.deepEqual(after.crumbs, ['Go to module Engine'], 'Landed on the namespace line, the pinned breadcrumb names where the reader is');
     await pin(deep, STREAM, 'next += 40 * 2;');
     // run() shows whole by show scope; its first line is on screen: nothing is revealed.
@@ -570,16 +637,25 @@ void app.whenReady().then(async () => {
     // Reduced motion: the jump lands in one frame, and the band is still.
     await reducedMotion(true);
     await pin(far, STREAM, 'total += 50 * 2;');
+    // Recording starts, and settles a frame, before the click: a reduced-motion jump lands within the click itself.
+    const point = await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(far)},'Go to impl Client')`);
     await js(`window.sampleScroll('${STREAM}')`);
-    clickPoint(await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(far)},'Go to impl Client')`));
+    await js(frames);
+    clickPoint(point);
     await landed(far);
     await wait('window.__samples.length>=90');
     const instant = await js<number[]>('window.__samples');
     const moves = instant.filter((v, i) => i > 0 && v !== instant[i - 1]);
     const still = await here(far);
-    console.log('Reduced motion:', JSON.stringify({ moves, still }));
+    console.log('Reduced motion:', JSON.stringify({ start: instant[0], moves, still }));
+    assert.ok(Math.abs(instant[0] - (instant.at(-1) ?? 0)) > 40, `Reduced motion: the jump starts away from its target: ${instant[0]} → ${instant.at(-1)}`);
     assert.ok(moves.length >= 1 && Math.abs(moves[0] - (instant.at(-1) ?? 0)) <= 2, `Reduced motion: the first move lands: ${JSON.stringify(moves)}`);
     assert.deepEqual(still.map((m) => [m.anim, m.band]), [['none', 'rgba(47, 85, 212, 0.22)']], 'Reduced motion: the band is still');
+    assert.equal(
+      await js<string>(`(()=>{const e=window.deepAll('[data-line][data-here][data-here-part=body]',window.q(${JSON.stringify(far)}))[0];return e?getComputedStyle(e,'::after').animationName+' '+getComputedStyle(e,'::after').backgroundColor:''})()`),
+      'none rgba(47, 85, 212, 0.12)',
+      'Reduced motion: the rest of the section has its softer band, still'
+    );
     await reducedMotion(false);
     // The reader is followed after a jump: Landed on impl Client, the pinned breadcrumb names it.
     assert.deepEqual((await state(far)).crumbs, ['Go to module api', 'Go to impl Client'], 'After a jump, the breadcrumb names the definitions around the line landed on');
@@ -607,6 +683,29 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.pr-changes')?.dataset.diffLayout==='split'");
     await sleep(600);
     await deleted('split', false);
+    {
+      const section = await js<Section>(`window.sectionMarks(${JSON.stringify(ledger)})`);
+      console.log('Section mark, split:', JSON.stringify({ ...section, bodyTexts: section.bodyTexts.length }));
+      assert.ok(section.del.length > 20, `Split: the old column marks the class: ${section.del.length} rows`);
+      const shared = section.add.filter((at) => section.del.includes(at));
+      assert.ok(shared.length > 20, 'Split: both columns mark the same rows');
+      assert.ok(section.add.every((at) => at >= section.del[0] && at <= (section.del.at(-1) ?? 0)), 'Split: in sync, one block across the view');
+      assert.ok(section.buffers > 0, 'Split: the empty rows across from deleted lines are marked too');
+    }
+    // A removed function: its old rows, and the empty rows across from them, as one block.
+    const removedIn = rowOf('src/nav/outline.ts');
+    await select('outline.ts');
+    await wait(`window.outline(${JSON.stringify(removedIn)})?.chips.length===4`);
+    clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(removedIn)},'.diff-outline-chip[data-change=removed] .diff-outline-go','${STREAM}')`));
+    await landed(removedIn);
+    {
+      const section = await js<Section>(`window.sectionMarks(${JSON.stringify(removedIn)})`);
+      console.log('Section mark, split, removed:', JSON.stringify(section));
+      assert.deepEqual(section.sig, ['export function rebase(list: number[]): number[] {'], 'Split: the removed signature blooms');
+      assert.ok(section.bodyTexts.includes('return list.slice(1);') && section.bodyTexts.includes('}'), 'Split: the rest of it is marked');
+      assert.equal(section.add.length, 0, 'Split: the new column has no rows of it');
+      assert.ok(section.buffers >= 2, `Split: its empty rows across, row and gutter, are marked: ${section.buffers}`);
+    }
     const store = rowOf('src/nav/Store.java');
     await select('Store.java');
     await setWidth(store, '680px');
@@ -767,9 +866,18 @@ void app.whenReady().then(async () => {
     await wait(`!!window.q(${JSON.stringify(slideDeep)})&&window.symbols(${JSON.stringify(slideDeep)}).length>=2`, 500);
     // The topic's code column sets its own width: the window is fixed at 1440 px for it (openTopic). The file comes into
     // view first, as a reader scrolls to it.
-    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideDeep)}).getBoundingClientRect().top-s.getBoundingClientRect().top-20})()`);
-    await settle();
-    await sleep(600);
+    // Straight into the middle of a file of the topic never shown, as a review check, the outline or a deep link arrives.
+    const slideFar = topicFile('src/nav/far_mod.rs');
+    await wait(`!!window.lineRow(${JSON.stringify(slideFar)},'total += 40 * 2;',false)`, 500);
+    console.log('Topic, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(slideFar)},'${DOC}','total += 40 * 2;')`)));
+    await wait(`window.jumpState(${JSON.stringify(slideFar)}).crumbs.length>0`, 50).catch(() => undefined);
+    const farDirect = await state(slideFar);
+    assert.ok(farDirect.stuck && farDirect.live === 'scope', `Topic: a direct jump into a file never shown pins its header: ${JSON.stringify(farDirect)}`);
+    assert.deepEqual(farDirect.crumbs, ['Go to module api', 'Go to impl Client', 'Go to function handle'], 'Topic: and it follows the reader');
+    console.log('Topic deep.ts, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(slideDeep)},'${DOC}','next += 30 * 2;')`)));
+    await wait(`window.jumpState(${JSON.stringify(slideDeep)}).crumbs.length>0`, 50).catch(() => undefined);
+    const deepDirect = await state(slideDeep);
+    assert.ok(deepDirect.stuck && deepDirect.live === 'scope', `Topic: arriving straight in deep.ts pins its header: ${JSON.stringify(deepDirect)}`);
     const slidePinned = await pin(slideDeep, DOC, 'next += 30 * 2;');
     assert.deepEqual(slidePinned.crumbs, ['Go to module Engine', 'Go to class Scheduler', 'Go to function run', 'Go to function step'], 'Topic: the same pinned breadcrumb');
     await jump('Topic', slideDeep, 'Go to class Scheduler', 'export class Scheduler {', { above: 'export namespace Engine', revealed: true });
