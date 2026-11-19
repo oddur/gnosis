@@ -49,7 +49,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.explanation-empty')");
     assert.equal(await js('window.starts'), 0);
     assert.deepEqual(await js("[...document.querySelectorAll('.pr-overview-tabs button')].map(b=>b.textContent)"), [
-      'Conversation',
+      'Summary',
       'Changes',
       'Commits',
       'Checks',
@@ -539,7 +539,7 @@ void app.whenReady().then(async () => {
     await js(`(async()=>{const element=document.querySelector('.explanation-document');let previous=-1,stable=0;
       for(let n=0;n<40&&stable<3;n++){await new Promise(r=>setTimeout(r,50));const top=element.scrollTop;stable=Math.abs(top-previous)<1?stable+1:0;previous=top;}})()`);
     const readingPosition = await js<number>("document.querySelector('.explanation-document').scrollTop");
-    await click('Conversation');
+    await click('Summary');
     const header = await js("document.querySelector('.pr-overview-heading h1').textContent");
     // Hidden walkthrough shortcuts must not consume navigation in another tab.
     await click('Explanation');

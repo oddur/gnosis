@@ -357,7 +357,7 @@ void app.whenReady().then(async () => {
         // Tabs switch on mousedown, as a pointer press does.
         `(()=>{const b=[...document.querySelectorAll('.pr-overview-tabs button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
       );
-    await tab('Conversation');
+    await tab('Summary');
     await wait("document.querySelector('.explanation-document').clientHeight===0");
     await tab('Explanation');
     await wait(`Math.abs(document.querySelector('.explanation-document').scrollTop-${before.top})<2`);

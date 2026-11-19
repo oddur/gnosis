@@ -29,7 +29,7 @@ import { chooseWorkspaceMenuItem } from './workspace-menu';
  * #346, returning to Changes took 900-1,100 ms and Checks 300-360 ms; see the numbers this suite prints. */
 const budgets: Record<string, number> = {
   'open PR': 300,
-  'tab Conversation': 200,
+  'tab Summary': 200,
   'tab Changes (first)': 650,
   // Showing kept Changes again re-runs its effects. The diffs keep their rendered lines (#352).
   'tab Changes': 600,
@@ -869,21 +869,21 @@ void app.whenReady().then(async () => {
     // ── Tabs ──────────────────────────────────────────────────────
     const selected = (label: string) => `${tab(label)}?.getAttribute('aria-selected')==='true'`;
     for (let round = 0; round < 2; round++)
-      for (const label of ['Changes', 'Checks', 'Conversation']) {
-        const first = round === 0 && label !== 'Conversation' ? ' (first)' : '';
+      for (const label of ['Changes', 'Checks', 'Summary']) {
+        const first = round === 0 && label !== 'Summary' ? ' (first)' : '';
         await measure(`tab ${label}${first}`, () => mouse(tab(label)), selected(label));
         if (label === 'Changes' && round === 0) {
           await wait("window.deepAll('[role=treeitem]').length>10");
           await sleep(800);
         }
-        if (label === 'Conversation' && round === 0) {
+        if (label === 'Summary' && round === 0) {
           await wait("document.querySelectorAll('.feedback-entry').length>2");
           await sleep(500);
         }
       }
 
     // ── Feedback: move through the timeline ──────────────────────
-    await mouse(tab('Conversation'));
+    await mouse(tab('Summary'));
     await wait("document.querySelectorAll('.feedback-entry').length>2");
     const feedbackRows = await js<number>("document.querySelectorAll('.feedback-entry').length");
     assert.ok(feedbackRows < 60, `Feedback with 440 conversations mounts only nearby rows: ${feedbackRows}`);
@@ -926,7 +926,7 @@ void app.whenReady().then(async () => {
     // ── Tabs: leave Changes while the 3,000-line file shows, and come back (#352) ──
     const hugeLines = `(${hugeRow}?.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]').length??0)>50`;
     for (let i = 0; i < 6; i++) {
-      const label = i % 2 ? 'Conversation' : 'Checks';
+      const label = i % 2 ? 'Summary' : 'Checks';
       await measure('tab away from large diff', () => mouse(tab(label)), `${selected(label)}&&!${hugeRow}.checkVisibility()`);
       await sleep(400);
       await measure('tab back to large diff', () => mouse(tab('Changes')), `${selected('Changes')}&&${hugeLines}&&${hugeRow}.checkVisibility()`);

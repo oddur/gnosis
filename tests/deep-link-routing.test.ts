@@ -172,12 +172,12 @@ void test('a digest opens the queue filtered to its PRs, and the list is parsed 
   assert.deepEqual(link('gnosis://queue?read=unread'), { kind: 'queue', filters: { read: 'unread' } });
 });
 
-void test('Feedback links and saved Feedback tabs open the Conversation page at their thread (#418)', async () => {
+void test('Feedback links and saved Feedback tabs open the Summary page at their thread (#418)', async () => {
   const { workspaceTab } = await import('../lib/deep-link-routing');
   const { conversationTab } = await import('../lib/navigation-history');
   assert.equal(workspaceTab('feedback'), 'summary');
   assert.equal(workspaceTab('notes'), 'brief');
-  assert.equal(conversationTab('feedback'), 'summary', 'A restored Feedback tab opens Conversation');
+  assert.equal(conversationTab('feedback'), 'summary', 'A restored Feedback tab opens Summary');
   assert.equal(conversationTab('changes'), 'changes');
   assert.deepEqual(link('gnosis://pr/oddur/gnosis/160/feedback?thread=PRRT_1'), { kind: 'pr', pr, tab: 'feedback', threadId: 'PRRT_1' }, 'An old Feedback link keeps its thread');
 });

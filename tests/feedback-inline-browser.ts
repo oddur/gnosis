@@ -120,7 +120,7 @@ void app.whenReady().then(async () => {
     })()`);
     await js("document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await wait("!!document.querySelector('.stack-overview')");
-    await click('Conversation');
+    await click('Summary');
     await wait("!!document.querySelector('.feedback-timeline .feedback-entry')");
     // Hide GitHub Actions stays a toggle; turned off, the three CI comments in a row collapse into one quiet row.
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);

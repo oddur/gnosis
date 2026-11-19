@@ -522,7 +522,7 @@ void app.whenReady().then(async () => {
     step = 'open-row';
     const tabs = await tabCount();
     await js(`document.querySelector('${row(`next|answer|${url('klang/engine', 312)}`)}').click()`);
-    await wait(`${activeSection}.startsWith('Conversation')`, 400);
+    await wait(`${activeSection}.startsWith('Summary')`, 400);
     assert.equal(await tabCount(), tabs + 1);
     await firstTab();
 

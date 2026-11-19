@@ -362,13 +362,13 @@ export function workspaceTabDescription(tab: WorkspaceTabEntry) {
     (
       {
         queue: 'Review queue',
-        summary: 'Conversation',
+        summary: 'Summary',
         changes: 'Changes',
         commits: 'Commits',
         explanation: 'Explanation',
         checks: 'Checks',
         brief: 'Local notes',
-        feedback: 'Conversation',
+        feedback: 'Summary',
       } as Record<string, string>
     )[tab.section] ?? tab.section;
   return [tab.label, tab.detail, section].filter(Boolean).join(' · ');

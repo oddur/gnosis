@@ -107,7 +107,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.pr-description')");
     // Its Changes were read once, so main's cache has them for the next launch. Back to Summary, which is restored.
     await timeTo(changesReady, "window.openTab('Changes')");
-    await timeTo("!!document.querySelector('.pr-description')", "window.openTab('Conversation')");
+    await timeTo("!!document.querySelector('.pr-description')", "window.openTab('Summary')");
     await new Promise((resolve) => setTimeout(resolve, 1200));
     await loadWorkbenchPage(win, slow);
     await wait('window.instantViews?.firstDescription!==undefined', 200).catch(() => {});
@@ -125,7 +125,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.pr-description')");
 
     // 4. Feedback opens on its saved discussion while GitHub is slow.
-    const feedback = await timeTo("document.body.innerText.includes('Saved discussion for this PR.')", "window.openTab('Conversation')");
+    const feedback = await timeTo("document.body.innerText.includes('Saved discussion for this PR.')", "window.openTab('Summary')");
     metrics.feedbackSavedCopy = feedback;
     check(feedback.ms >= 0 && !feedback.loading.length, 'Feedback shows its saved discussion with no loading state');
 

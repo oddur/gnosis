@@ -662,7 +662,7 @@ function PrSummaryContent({
           <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
-          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" /><PrTabLabel>Conversation</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" /><PrTabLabel>Summary</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="changes" data-tour="changes" {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" /><PrTabLabel>Changes</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="commits" {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" /><PrTabLabel>Commits</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="checks" {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" /><PrTabLabel>Checks</PrTabLabel>{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>

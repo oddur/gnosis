@@ -58,7 +58,7 @@ void app.whenReady().then(async () => {
     assert.equal(
       await js("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')"),
       true,
-      'Conversation reads the discussion for its timeline'
+      'Summary reads the discussion for its timeline'
     );
     assert.equal(
       await js(

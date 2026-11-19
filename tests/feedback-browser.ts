@@ -75,7 +75,7 @@ void app.whenReady().then(async () => {
       "document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))"
     );
     await wait("!!document.querySelector('.stack-overview')");
-    await click('Conversation');
+    await click('Summary');
     await wait(
       "document.querySelectorAll('.feedback-entry').length>2 && document.querySelector('.feedback-sync')?.textContent==='Updates automatically'"
     );
@@ -89,8 +89,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);
     await js("document.querySelector('.feedback-actions-filter input').click()");
     await wait("document.querySelector('.feedback-filters button').textContent.trim()==='All 12'");
-    await click('Conversation');
-    await click('Conversation');
+    await click('Summary');
+    await click('Summary');
     await wait("document.querySelector('.feedback-actions-filter input')?.checked===false");
     await show('actions-c-120');
     assert.match(await js<string>(`${entry('actions-c-120')}.textContent`), /Client\/server tests passed/);
@@ -185,8 +185,8 @@ void app.whenReady().then(async () => {
     await capture('narrow-conversation-dark');
     win.setContentSize(1280, 800);
     await js("document.documentElement.classList.remove('dark');window.failFeedback=false");
-    await click('Conversation');
-    await click('Conversation');
+    await click('Summary');
+    await click('Summary');
     await wait("document.querySelectorAll('.feedback-entry').length>0");
     await show('r-120');
     assert.equal(await js(`!!${entry('r-120')}.querySelector('.pr-unread-dot')`), false, 'Read status survives tab navigation');
@@ -252,7 +252,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.changes-diff-pane .github-thread[data-thread-id=\"t-120\"] textarea')?.value==='Keep this reply while browsing.'");
     await js("[...document.querySelectorAll('.changes-diff-pane .github-thread[data-thread-id=\"t-120\"] button')].find(b=>b.textContent==='Address feedback').click()");
     await wait(`${entry('t-120')}?.getAttribute('aria-current')==='true'`);
-    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]').textContent"), 'Conversation');
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]').textContent"), 'Summary');
     await wait(`${entry('t-120')}?.querySelector('textarea')?.value==='Keep this reply while browsing.'`);
     await click('Cancel', entry('t-120'));
     // A thread link scopes to its PR. Return to all PRs before going through the stack.
@@ -285,7 +285,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[aria-label=\"Close review requests\"]').click()");
 
     // A stack review blocker opens the PR's review summary in Feedback.
-    await click('Conversation');
+    await click('Summary');
     await js(`(async()=>{
       const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');
       const read=window.electronAPI.getQueueSignals;

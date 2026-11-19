@@ -103,8 +103,8 @@ void app.whenReady().then(async () => {
     // ── A reply: sending at once, then the real comment exactly once ──
     await js(`${row}.querySelector('.queue-row-main').click()`);
     await click('Open PR overview');
-    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Conversation')");
-    await click('Conversation');
+    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Summary')");
+    await click('Summary');
     await wait('!!document.querySelector(\'[data-feedback-id="t1"]\')');
     await js('document.querySelector(\'[data-feedback-id="t1"]\').click()');
     await wait("document.querySelector('.feedback-entry[data-feedback-id=\"t1\"]')?.textContent.includes('reconnect timer')");

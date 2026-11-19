@@ -70,7 +70,7 @@ void app.whenReady().then(async () => {
     await mouse(3);
     await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Changes'");
     await mouse(3);
-    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Conversation'");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Summary'");
     await mouse(3);
     await wait("!!document.querySelector('.queue-list')?.checkVisibility()");
     assert.ok(
@@ -78,7 +78,7 @@ void app.whenReady().then(async () => {
       'Queue selection survives Back'
     );
     await mouse(4);
-    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Conversation'");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Summary'");
     assert.equal(await title(), original);
     assert.equal(
       await js('window.historyFilterWrites'),
@@ -99,14 +99,14 @@ void app.whenReady().then(async () => {
     await js(
       "window.dispatchEvent(new KeyboardEvent('keydown',{key:'[',code:'BracketLeft',metaKey:true,bubbles:true,cancelable:true}))"
     );
-    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Conversation'");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Summary'");
     await mouse(3);
     await wait("!!document.querySelector('.queue-list')?.checkVisibility()");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Reduce allocations')).click()"
     );
     await click('Open PR overview');
-    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Conversation'");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Summary'");
     const another = await title();
     assert.notEqual(another, original);
     await mouse(4);

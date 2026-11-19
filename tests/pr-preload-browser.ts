@@ -94,7 +94,7 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js('window.inspection.peekChanges(window.nextRevision).metadata.headSha'), 'new-prepared-head');
     // Visited tabs stay mounted, so returning keeps the displayed revision and offers the update.
-    await click('Conversation');
+    await click('Summary');
     await click('Changes');
     await wait("[...document.querySelectorAll('.changes-notice')].some(e=>e.textContent.includes('New commits are available'))");
     assert.equal(
@@ -223,7 +223,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.briefing-panel .loading-indicator')"), false, 'Status opens without a loading state');
     assert.ok((await js<string[]>('window.liveReads')).includes('status'), 'GitHub had not answered');
     await click('Open PR overview');
-    await click('Conversation');
+    await click('Summary');
     // GitHub reads never answer here, so the comment can only come from the saved copy.
     await wait("document.body.innerText.includes('Preloaded discussion is ready.')");
 

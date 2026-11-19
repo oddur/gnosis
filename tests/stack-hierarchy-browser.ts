@@ -70,7 +70,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.commit-row').length===3");
     await choose(stack);
     await wait("!!document.querySelector('.pr-summary-page.is-stack') && document.querySelectorAll('.commit-row').length>3");
-    await click('Conversation');
+    await click('Summary');
     await wait("document.querySelector('.stack-overview-member[data-pr-url$=\"/121\"]')?.textContent.includes('1/5 files viewed')");
     await capture('renamed-overview-light');
     await js("document.documentElement.classList.add('dark')");
@@ -88,7 +88,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.changes-tree-pane')");
     await capture('pr-changes-narrow-dark');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
-    await choose(stack); await click('Conversation');
+    await choose(stack); await click('Summary');
     await capture('overview-narrow-dark');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
     console.log('Stack hierarchy passed: explicit scopes, local rename, unread isolation, generation scope, tabs, parent navigation, laptop and narrow layouts.');

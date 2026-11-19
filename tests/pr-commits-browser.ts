@@ -119,7 +119,7 @@ void app.whenReady().then(async () => {
     await capture('viewed-narrow');
     window.setSize(1280, 800);
     await js("document.documentElement.classList.remove('dark')");
-    await click('Conversation');
+    await click('Summary');
     await click('Commits');
     await wait("!!document.querySelector('.commit-row[aria-pressed=true]') && !document.querySelector('.commit-row[aria-pressed=true] .pr-unread-dot')");
     // The completion marker uses the existing durable Viewed store.
@@ -139,7 +139,7 @@ void app.whenReady().then(async () => {
     assert.ok(await js<number>('window.commitScrollBefore') > 0, 'The regression starts with a scrolled history');
     assert.equal(await js("document.querySelector('.commit-list').scrollTop"), await js('window.commitScrollBefore'), 'Selecting a commit must not jump the history back to the top');
     assert.equal(await js("document.activeElement===document.querySelector('.commit-row[aria-pressed=true]')"), true, 'Keyboard focus stays on the chosen commit');
-    await click('Conversation');
+    await click('Summary');
     await click('Commits');
     await wait("document.querySelector('.commit-detail-title')?.textContent.includes('Keep retry boundaries')");
     await new Promise(r => setTimeout(r, 200));
@@ -200,7 +200,7 @@ void app.whenReady().then(async () => {
     );
     assert.match(await js<string>("document.querySelector('.changes-progress').textContent"), /1 \/ 5/);
     // Persistent selection, file, and Viewed state when returning from Summary.
-    await click('Conversation');
+    await click('Summary');
     await click('Commits');
     await wait(
       "(document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2') ?? document.querySelector('.changes-file-header h2'))?.textContent==='src/worker.ts'"
@@ -229,7 +229,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.commit-detail') && !!document.querySelector('.changes-file-header')");
     // New pushes are announced without replacing an open historical diff.
     await js("window.electronAPI.checkPrChanges=async()=>({headSha:'moved',baseSha:'base-0'});void 0;");
-    await click('Conversation');
+    await click('Summary');
     await click('Commits');
     await wait("document.querySelector('.pr-commits .changes-notice')?.textContent.includes('New commits')");
     assert.equal(await js('document.querySelector(\'[aria-label="Compare with parent"]\').value'), 'f'.repeat(40));
@@ -323,7 +323,7 @@ void app.whenReady().then(async () => {
     await capture('stream-scrolled');
     const readingOffset = "document.querySelector('.commit-stream-row[data-active=true]').getBoundingClientRect().top-document.querySelector('.commit-diff-stream').getBoundingClientRect().top";
     const savedScroll = await js<number>(readingOffset);
-    await click('Conversation');
+    await click('Summary');
     await click('Commits');
     await wait("document.querySelector('.commit-stream-row[data-active=true]')?.dataset.file==='src/new.ts'");
     await new Promise((r) => setTimeout(r, 400));

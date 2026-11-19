@@ -111,7 +111,7 @@ export function prMetadataItem(ref: PrRef, meta: PrMetadata): QueueItem {
 // ── What a link may open in this version (Phase 1 of #309) ──
 
 const TAB_LABELS: Record<PrTab, string> = {
-  summary: 'Conversation', changes: 'Changes', commits: 'Commits', checks: 'Checks', feedback: 'Conversation', explanation: 'Explanation', notes: 'Local notes',
+  summary: 'Summary', changes: 'Changes', commits: 'Commits', checks: 'Checks', feedback: 'Summary', explanation: 'Explanation', notes: 'Local notes',
 };
 /** Locators this version cannot follow yet. A thread, a check and a focus are followed. */
 const LOCATOR_LABELS: [keyof PrLinkTarget, string][] = [

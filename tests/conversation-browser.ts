@@ -64,7 +64,7 @@ void app.whenReady().then(async () => {
     })()`);
     await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await wait("!!document.querySelector('.feedback-entry[data-feedback-id=\"t-1\"]') || !!document.querySelector('.feedback-entry[data-entry-type=description]')");
-    await wait("[...document.querySelectorAll('.pr-overview-tabs [role=tab] .pr-tab-label')].map(t=>t.dataset.label).join()==='Conversation,Changes,Commits,Checks,Explanation,Local notes'");
+    await wait("[...document.querySelectorAll('.pr-overview-tabs [role=tab] .pr-tab-label')].map(t=>t.dataset.label).join()==='Summary,Changes,Commits,Checks,Explanation,Local notes'");
     await wait("!!document.querySelector('.conversation-sidebar') && !!document.querySelector('.feedback-entry[data-feedback-id]')");
     // The description leads, and the first feedback starts above the fold of a 1280×800 laptop.
     const first = await js<{ type: string; feedbackTop: number; height: number; parts: unknown }>(`(()=>{const rows=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index).filter(e=>e.dataset.entryType!=='day');
@@ -100,7 +100,7 @@ void app.whenReady().then(async () => {
     win.setContentSize(1280, 800);
     // An old Feedback link opens Conversation at its thread.
     await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'pr',pr:{host:'github.com',owner:'klang',repo:'engine',number:Number(window.singleUrl.split('/').pop())},tab:'feedback',threadId:'t-1'}}))`);
-    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] .pr-overview-tabs [aria-selected=true]')?.textContent==='Conversation' && document.querySelector('.workspace-panel[data-workspace-active=true] .feedback-entry[aria-current=true]')?.dataset.feedbackId==='t-1'");
+    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] .pr-overview-tabs [aria-selected=true]')?.textContent==='Summary' && document.querySelector('.workspace-panel[data-workspace-active=true] .feedback-entry[aria-current=true]')?.dataset.feedbackId==='t-1'");
     // A stack: its merge plan and PRs above the timeline.
     await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
@@ -108,7 +108,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.workspace-panel[data-workspace-active=true] .conversation-band .stack-overview')");
     await capture('stack', all, () => js("document.querySelector('.workspace-panel[data-workspace-active=true] [data-feedback-scroller]').scrollTop=0"));
     assert.equal(errors.filter((e) => !e.includes('favicon')).length, 0, errors.join('\n'));
-    console.log('Conversation passed: tab list, description first above the fold, pinned bar and details, narrow strip, Feedback link redirect, stack band.');
+    console.log('Summary page passed: tab list, description first above the fold, pinned bar and details, narrow strip, Feedback link redirect, stack band.');
     app.exit(0);
   } catch (error) {
     console.error(error, errors.join('\n'));

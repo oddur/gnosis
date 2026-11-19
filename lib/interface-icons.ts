@@ -1,7 +1,7 @@
 import {
   Activity, BookMarked, BookOpen, Bookmark, CircleAlert, CircleCheck, CircleHelp, CircleMinus,
   Clock3, Copy, FileDiff, FileText, FolderGit2, GitBranch, GitCommitHorizontal, GitPullRequest,
-  History, Inbox, Layers, Lightbulb, ListChecks, MessageSquare,
+  History, Inbox, Layers, LayoutList, Lightbulb, ListChecks, MessageSquare,
   MessageSquarePlus, MessagesSquare, Network, NotebookPen, RefreshCw, RotateCcw, Settings, Star, UserRound, VolumeX, AlarmClock,
   CircleX, Eye, GitCompareArrows, GitMerge, GitMergeConflict, LayoutDashboard, MessageSquareWarning, Bot,
   BellRing, GitPullRequestClosed, Hourglass,
@@ -17,12 +17,12 @@ export const subjectIcons = {
 };
 
 export const workspaceSections = {
-  // The PR's conversation: description, timeline and details on one page. Feedback is part of it (#418).
-  summary: { label: 'Conversation', icon: MessagesSquare },
+  // The PR's description, timeline and details on one page. Feedback is part of it (#418).
+  summary: { label: 'Summary', icon: LayoutList },
   changes: { label: 'Changes', icon: FileDiff },
   commits: { label: 'Commits', icon: subjectIcons.commit },
   checks: { label: 'Checks', icon: ListChecks },
-  feedback: { label: 'Conversation', icon: MessagesSquare },
+  feedback: { label: 'Summary', icon: LayoutList },
   explanation: { label: 'Explanation', icon: BookOpen },
   brief: { label: 'Local notes', icon: NotebookPen },
 } satisfies Record<WorkspaceTab, { label: string; icon: LucideIcon }>;

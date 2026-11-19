@@ -329,7 +329,7 @@ void app.whenReady().then(async () => {
     await fullCapture('integrated-topic-small-dark');
     await assertDock();
     await viewport(900, 720);
-    await click('Conversation');
+    await click('Summary');
     await wait("document.querySelector('.pr-summary-context').checkVisibility()");
     await click('Explanation');
     await wait("!!document.querySelector('.chat-sheet textarea')");
@@ -410,7 +410,7 @@ void app.whenReady().then(async () => {
       await js(`(()=>{${test}})()`);
       assert.equal(await js("!!document.querySelector('.changes-chat')"), false, test);
     }
-    await click('Conversation');
+    await click('Summary');
     await js(
       "document.activeElement?.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
     );

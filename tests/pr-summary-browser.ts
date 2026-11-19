@@ -230,7 +230,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait("document.querySelector('.explanation-generating .explanation-build')?.textContent.includes('Explaining')");
     assert.equal(await js('window.generationCalls.length'), 1);
-    await click('Conversation');
+    await click('Summary');
     assert.equal(await js("!!document.querySelector('.pr-description')"), true, 'Description remains readable while generating');
     await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
@@ -264,7 +264,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Back to stack');
     await wait("!!document.querySelector('.explanation-reader')");
-    await click('Conversation');
+    await click('Summary');
     assert.equal(await js("document.querySelectorAll('.stack-overview-member').length"), 3);
     await click('Explanation');
     await wait("!!document.querySelector('.explanation-section')");

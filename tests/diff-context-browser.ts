@@ -60,7 +60,7 @@ void app.whenReady().then(async () => {
     await wait('window.contextCount()===6');
     await setContext(5);
     await wait('window.contextCount()===6');
-    await click('Conversation');
+    await click('Summary');
     await click('Changes');
     await wait('window.contextCount()===6');
     assert.deepEqual(await js('window.fileReads.filter(p=>p.endsWith("worker.ts"))'), [], 'More context reads neither side');

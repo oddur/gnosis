@@ -100,7 +100,7 @@ void app.whenReady().then(async () => {
     for (const width of [1400, 1024, 640, 1280]) {
       await viewport(width, 800);
       await wait(`innerWidth===${width}`);
-      await click('Conversation');
+      await click('Summary');
       await new Promise((r) => setTimeout(r, 100));
       const summaryFrame = await frame();
       await capture(`frame-summary-${width}`);
@@ -357,7 +357,7 @@ void app.whenReady().then(async () => {
       false,
       'Drafts stay private'
     );
-    await click('Conversation');
+    await click('Summary');
     await click('Changes');
     await wait("!!document.querySelector('.changes-pending-comment')");
     await js("window.openFile('worker.ts')");
@@ -448,7 +448,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.changes-chat .chat-conversation')?.textContent.includes('retry boundary')");
     await capture('chat');
     await click('Close chat');
-    await click('Conversation');
+    await click('Summary');
     await click('Changes');
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts'"
@@ -477,7 +477,7 @@ void app.whenReady().then(async () => {
     window.show();
     window.focus();
     await wait("document.visibilityState==='visible'");
-    await click('Conversation');
+    await click('Summary');
     await wait("!document.querySelector('.pr-changes')?.checkVisibility()");
     await click('Changes');
     await wait("document.querySelector('.changes-notice')?.textContent.includes('New commits')");
