@@ -37,7 +37,7 @@ run('docker', [
   ...platform,
   '--shm-size=2g',
   // Review screenshot modes print PNGs to the log (tests/syntax-scope-browser.ts); pass them through when set.
-  ...['GNOSIS_FILE_HEADER_SHOTS', 'GNOSIS_HUNK_HEADER_SHOTS', 'GNOSIS_SYNTAX_SCOPE_SHOT', 'GNOSIS_PARITY_SHOTS'].flatMap((name) =>
+  ...['GNOSIS_FILE_HEADER_SHOTS', 'GNOSIS_HUNK_HEADER_SHOTS', 'GNOSIS_SYNTAX_SCOPE_SHOT', 'GNOSIS_PARITY_SHOTS', 'GNOSIS_NAV_SHOTS'].flatMap((name) =>
     process.env[name] ? ['-e', `${name}=${process.env[name]}`] : []
   ),
   '--security-opt',
