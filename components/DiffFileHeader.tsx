@@ -1,4 +1,5 @@
 import type { ReactNode, Ref } from 'react';
+import { Pilcrow, SquareSlash } from 'lucide-react';
 import { DiffStats } from './DiffStats';
 import { FileTypeIcon } from './FileTypeIcon';
 
@@ -20,6 +21,7 @@ export function DiffFileHeader({
   lead,
   tags,
   actions,
+  noise,
 }: {
   headerRef?: Ref<HTMLElement>;
   path: string;
@@ -37,6 +39,11 @@ export function DiffFileHeader({
   /** After the status and counts: the file's kind tags, or the stack PR it comes from. */
   tags?: ReactNode;
   actions?: ReactNode;
+  /**
+   * How much of the change is noise the reader hides (#396), quietly after the counts: "90 formatting", or the
+   * file's whole label, "Formatting only", when every change is.
+   */
+  noise?: { text: string; title: string; comments: boolean };
 }) {
   const fullPath = previousPath ? `${previousPath} → ${path}` : path;
   const counted = additions !== undefined && deletions !== undefined;
@@ -64,6 +71,15 @@ export function DiffFileHeader({
                   {status && <span className="changes-file-sep"> · </span>}
                   <span className="changes-file-counts" title={countsLabel} aria-label={countsLabel}>
                     <DiffStats additions={additions} deletions={deletions} />
+                  </span>
+                </>
+              )}
+              {noise && (
+                <>
+                  <span className="changes-file-sep"> · </span>
+                  <span className="changes-file-noise" title={noise.title} data-noise-stat="">
+                    {noise.comments ? <SquareSlash size={12} aria-hidden="true" /> : <Pilcrow size={12} aria-hidden="true" />}
+                    {noise.text}
                   </span>
                 </>
               )}

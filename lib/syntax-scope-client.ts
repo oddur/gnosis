@@ -10,6 +10,7 @@ import csharpWasm from '../src/assets/tree-sitter/csharp.wasm?url';
 import jsonWasm from '../src/assets/tree-sitter/json.wasm?url';
 import yamlWasm from '../src/assets/tree-sitter/yaml.wasm?url';
 import type { SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
+import { blocksSignature, changeBlocks, type NoiseBlock } from './semantic-noise';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
@@ -55,7 +56,7 @@ export function setSyntaxWorkerSplit(value: boolean) {
 const laneFor = (priority: SyntaxPriority): Lane => (split && priority === 'prefetch' ? 'back' : 'front');
 const workers = new Map<Lane, Promise<Worker | undefined>>();
 let nextId = 0;
-const waiting = new Map<number, { resolve: (value: SyntaxDefinition[]) => void; reject: (error: Error) => void }>();
+const waiting = new Map<number, { resolve: (value: never) => void; reject: (error: Error) => void }>();
 // `at` is the entry's last use, so a PR whose definitions outlive its files is still swept when idle (#355).
 const memo = new Map<string, { url: string; definitions: SyntaxDefinition[]; at: number }>();
 interface Pending {
@@ -97,8 +98,11 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
           timings.delete(response.id);
           entry.reject(Error(response.error));
         }
-        else {
-          entry.resolve(response.definitions);
+        else if ('noise' in response) {
+          (entry.resolve as (value: NoiseBlock[]) => void)(response.noise);
+          noiseTimings.get(response.id)?.(response.timing);
+        } else {
+          (entry.resolve as (value: SyntaxDefinition[]) => void)(response.definitions);
           timings.get(response.id)?.(response.timing);
         }
       };
@@ -205,7 +209,7 @@ export function readDefinitions(request: {
           return;
         }
         const id = ++nextId;
-        waiting.set(id, { resolve, reject });
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
         timings.set(id, (timing) => {
           timings.delete(id);
           if (after)
@@ -293,3 +297,156 @@ onInspectionForget((urls) => (urls ? forgetDefinitions(urls) : clearDefinitions(
 onInspectionUses((into) => {
   for (const { url, at } of memo.values()) if ((into.get(url) ?? -Infinity) < at) into.set(url, at);
 });
+
+// ── Formatting and comment comparison (#396) ────────────────────────────────
+
+type NoiseTiming = Extract<SyntaxResponse, { noise: unknown }>['timing'];
+const noiseTimings = new Map<number, (timing: NoiseTiming) => void>();
+/** The last comparisons, newest last, for the diagnostics export and the browser checks. */
+export const noiseClassifyTimings: (NoiseTiming & { key: string; language: SyntaxLanguage; characters: number })[] = [];
+/**
+ * Files larger than this are not compared: a comparison parses both sides in the one worker, and a long one would hold
+ * up the next file's breadcrumbs.
+ */
+export const NOISE_MAX_CHARACTERS = 400_000;
+type NoiseHunks = Extract<SyntaxRequest, { type: 'noise' }>['hunks'];
+const noiseMemo = new Map<string, { url: string; blocks: NoiseBlock[]; at: number }>();
+const noisePending = new Map<string, { url: string; promise: Promise<NoiseBlock[]>; priority: SyntaxPriority; lane: Lane }>();
+/** The newest whole-file comparison of each file revision, for views that list files (the file tree, the stats). */
+const noiseByFile = new Map<string, { url: string; blocks: NoiseBlock[] }>();
+const noiseListeners = new Set<() => void>();
+let noiseVersion = 0;
+const noiseChanged = () => {
+  noiseVersion++;
+  for (const listener of noiseListeners) listener();
+};
+/** Tells `listener` when a comparison lands or leaves; the return stops it. */
+export function onNoise(listener: () => void): () => void {
+  noiseListeners.add(listener);
+  return () => noiseListeners.delete(listener);
+}
+export const noiseRevision = () => noiseVersion;
+
+/** The key a comparison is kept under: the file revision and its change blocks, whatever context the view shows. */
+export const noiseKey = (fileKey: string, hunks: readonly { oldStart: number; newStart: number; rows: readonly { type: ' ' | '+' | '-' }[] }[]) =>
+  `${fileKey}:noise:${blocksSignature(changeBlocks(hunks.map((hunk) => ({ ...hunk, rows: hunk.rows.map((row) => ({ type: row.type, text: '' })) }))))}`;
+
+/** A comparison already made, or undefined. */
+export function peekNoise(key: string): NoiseBlock[] | undefined {
+  const entry = noiseMemo.get(key);
+  if (!entry) return undefined;
+  entry.at = Date.now();
+  return entry.blocks;
+}
+/** A file's newest whole-file comparison (Changes, prefetch), by its revision key. */
+export const peekFileNoise = (fileKey: string) => noiseByFile.get(fileKey)?.blocks;
+
+/**
+ * Each change block of a file's hunks, compared in the worker (lib/semantic-noise.ts). `whole` says the hunks are the
+ * file's whole patch, so the file tree and the stats can use the result. Rejects when the language is off, the file
+ * too large, or the worker not available: the caller then hides nothing.
+ */
+export function readNoise(request: {
+  fileKey: string;
+  url: string;
+  language: SyntaxLanguage;
+  text: string;
+  hunks: NoiseHunks;
+  priority?: SyntaxPriority;
+  whole?: boolean;
+}): Promise<NoiseBlock[]> {
+  if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
+  const key = noiseKey(request.fileKey, request.hunks);
+  const known = peekNoise(key);
+  if (known) return Promise.resolve(known);
+  if (request.text.length > NOISE_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));
+  const priority = request.priority ?? 'view';
+  const existing = noisePending.get(key);
+  if (existing) {
+    const raised = higherPriority(existing.priority, priority);
+    if (raised !== existing.priority) {
+      existing.priority = raised;
+      void workers.get(existing.lane)?.then((instance) =>
+        instance?.postMessage({ type: 'priority', key, priority: raised } satisfies SyntaxRequest)
+      );
+    }
+    return existing.promise;
+  }
+  // Comparisons stay in the front worker: they are few, and moving one between workers is not worth it.
+  const lane: Lane = 'front';
+  const promise = start(lane).then(
+    (instance) =>
+      new Promise<NoiseBlock[]>((resolve, reject) => {
+        if (!instance) {
+          reject(Error('The syntax worker is not available'));
+          return;
+        }
+        const id = ++nextId;
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+        noiseTimings.set(id, (timing) => {
+          noiseTimings.delete(id);
+          noiseClassifyTimings.push({ ...timing, key, language: request.language, characters: request.text.length });
+          if (noiseClassifyTimings.length > 50) noiseClassifyTimings.shift();
+        });
+        const entry = noisePending.get(key);
+        instance.postMessage({
+          type: 'noise',
+          id,
+          key,
+          url: request.url,
+          language: request.language,
+          text: request.text,
+          hunks: request.hunks.map((hunk) => ({
+            oldStart: hunk.oldStart,
+            newStart: hunk.newStart,
+            rows: hunk.rows.map((row) => ({ type: row.type, text: row.text })),
+          })),
+          runtimeUrl: absolute(runtimeWasm),
+          grammarUrl: absolute(GRAMMARS[request.language]),
+          priority: entry?.priority ?? priority,
+          side: 'noise',
+        } satisfies SyntaxRequest);
+      })
+  );
+  noisePending.set(key, { url: request.url, promise, priority, lane });
+  void promise.then(
+    (blocks) => {
+      if (noisePending.get(key)?.promise !== promise) return;
+      noisePending.delete(key);
+      noiseMemo.set(key, { url: request.url, blocks, at: Date.now() });
+      for (const old of noiseMemo.keys()) {
+        if (noiseMemo.size <= MEMO_ENTRIES) break;
+        noiseMemo.delete(old);
+      }
+      if (request.whole) {
+        noiseByFile.delete(request.fileKey);
+        noiseByFile.set(request.fileKey, { url: request.url, blocks });
+        for (const old of noiseByFile.keys()) {
+          if (noiseByFile.size <= MEMO_ENTRIES) break;
+          noiseByFile.delete(old);
+        }
+      }
+      noiseChanged();
+    },
+    () => {
+      if (noisePending.get(key)?.promise === promise) noisePending.delete(key);
+    }
+  );
+  return promise;
+}
+function forgetNoise(urls?: ReadonlySet<string>) {
+  for (const [key, entry] of noiseMemo) if (!urls || urls.has(entry.url)) noiseMemo.delete(key);
+  for (const [key, entry] of noisePending) if (!urls || urls.has(entry.url)) noisePending.delete(key);
+  for (const [key, entry] of noiseByFile) if (!urls || urls.has(entry.url)) noiseByFile.delete(key);
+  noiseChanged();
+}
+// Comparisons leave with their PR's inspection data, as definitions do (#355).
+onInspectionForget((urls) => forgetNoise(urls));
+onInspectionUses((into) => {
+  for (const { url, at } of noiseMemo.values()) if ((into.get(url) ?? -Infinity) < at) into.set(url, at);
+});
+addDiagnosticsSource('semanticNoise', () => ({
+  entries: noiseMemo.size,
+  comparing: noisePending.size,
+  timings: noiseClassifyTimings.slice(-10),
+}));

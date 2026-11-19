@@ -1953,6 +1953,17 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-gap-trailing .diff-gap-text { padding-inline:4px; color:var(--diff-header-fg); text-decoration:underline; text-decoration-color:var(--diff-header-muted); text-underline-offset:3px; }
 .diff-gap-trailing .diff-context-button { position:relative; }
 .diff-gap-trailing .diff-context-button::after { content:''; position:absolute; inset:-2px 0; }
+/* Quiet changes (#396): a hunk, or a whole file, whose every change is formatting or comments the reader hides. One
+   code line in the trailing bar's style, with an icon and the kind in words, then how much it holds and the action
+   that shows it. */
+.diff-noise-icon { flex:none; color:var(--diff-header-muted); }
+.diff-noise-label { color:var(--diff-header-fg); }
+.diff-gap[data-noise-bar], .diff-gap[data-noise-file] { border-bottom:1px solid color-mix(in oklab, var(--diff-header-fg) 10%, var(--diff-code-bg, #22272e)); }
+.diff-gap[data-noise-file] { min-height:calc(var(--leading-code) * 1.75); }
+.changes-file-noise { display:inline-flex; align-items:center; gap:4px; }
+.changes-file-noise svg { flex:none; }
+.changes-progress-quiet { color:var(--muted-foreground); }
+.diff-outline-noise { flex:none; padding-left:0; white-space:nowrap; }
 /* A file's outline of changed symbols (#394, DiffOutline): one quiet code line between the file header and the first
    hunk, on the code's background with a hairline under it, as the trailing bar is. What the changes touch, each symbol
    marked added, modified or removed by icon as well as colour, and how many the reviewer has ticked. Expanded, a list

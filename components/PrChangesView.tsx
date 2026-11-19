@@ -17,6 +17,9 @@ import { DiffWorkerPool, diffThemeName } from '../lib/diff-worker-pool';
 import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useSyntaxPrefetch } from '../lib/use-syntax-contents';
+import { noiseFilterOf } from '../lib/review-diff';
+import { fileNoise, noiseLabel } from '../lib/semantic-noise';
+import { peekFileNoise, useNoiseRevision } from '../lib/use-semantic-noise';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import {
   fileIsReady,
@@ -411,7 +414,21 @@ export function PrChangesView({
     [entries, visibleSignature]
   );
   const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
-  useSyntaxPrefetch(prefetchOwner, scopeFiles, (file) => progress.isFileViewed(file.key), codeSettings);
+  // Quiet changes (#396): what the reader hides, and each file's comparison as it lands, for the tree and progress.
+  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideComments]);
+  useSyntaxPrefetch(prefetchOwner, scopeFiles, (file) => progress.isFileViewed(file.key), codeSettings, noiseFilter);
+  const noiseRevision = useNoiseRevision();
+  const quietFiles = useMemo(() => {
+    const result = new Map<string, { label: string; lines: number }>();
+    if (!noiseFilter.whitespace && !noiseFilter.comments) return result;
+    for (const e of visible) {
+      const blocks = peekFileNoise(viewKey(e));
+      if (!blocks) continue;
+      const noise = fileNoise(blocks, noiseFilter);
+      if (noise.all) result.set(e.key, { label: noiseLabel(noise.kinds), lines: noise.added + noise.deleted });
+    }
+    return result;
+  }, [entries, visibleSignature, noiseRevision, noiseFilter]);
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]
@@ -435,13 +452,21 @@ export function PrChangesView({
                   (t) => t.path === e.file.path || t.path === e.file.previousPath
                 )
               ),
+          quiet: quietFiles.get(e.key)?.label,
           commentError: combinedDiscussion
             ? combinedDiscussion.failures.length > 0
             : !!discussion.discussions[e.snapshot.url]?.error,
         };
       }),
-    [entries, visibleSignature, viewedSignature, discussion.discussions]
+    [entries, visibleSignature, viewedSignature, discussion.discussions, quietFiles]
   );
+  // Files whose every change is noise still count towards review: Viewed is the reviewer's own mark. The progress says
+  // how many of the files left are only that, so they read as quick to clear (Viewed & next).
+  const quietLeft = visible.filter((e) => quietFiles.has(e.key) && !progress.isFileViewed(viewKey(e)));
+  const quietKinds = [...new Set(quietLeft.map((e) => quietFiles.get(e.key)?.label))];
+  const quietNote = quietLeft.length
+    ? `${quietLeft.length} ${quietKinds.length === 1 && quietKinds[0] === 'Comments only' ? 'comment-only' : quietKinds.length === 1 && quietKinds[0] === 'Formatting only' ? 'formatting-only' : 'quiet'} ${quietLeft.length === 1 ? 'file' : 'files'}`
+    : undefined;
   useEffect(() => {
     if (!initialFile) return;
     const match = entries.find(
@@ -600,6 +625,16 @@ export function PrChangesView({
           <span className="changes-progress">
             {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
             {incomplete && ' · available files'}
+            {quietNote && (
+              <span
+                className="changes-progress-quiet"
+                data-quiet-files={quietLeft.length}
+                title={`Of the files left to view, ${quietLeft.length} only ${quietLeft.length === 1 ? 'changes' : 'change'} formatting or comments that Diff appearance hides. They still count: mark them Viewed when you have looked.`}
+              >
+                {' · '}
+                {quietNote}
+              </span>
+            )}
           </span>
         )}
         <span className="changes-toolbar-spacer" />

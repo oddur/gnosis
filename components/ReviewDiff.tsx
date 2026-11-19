@@ -5,7 +5,7 @@ import type { GitHubReviewThread } from '../lib/review-threads';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
 import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
-import { DEFAULT_DIFF_APPEARANCE, diffContextLines, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, noiseFilterOf, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
 import { reviewGapHunks, type ReviewPin } from '@/lib/review-gap-hunks';
 import { fileRevisionKey, type PrChangeFile, type PrChanges, type PrFileRequest } from '@/lib/pr-changes';
 import { currentCodeIntelligence } from '@/lib/use-syntax-contents';
@@ -148,6 +148,8 @@ export function ReviewDiff({
     };
     return { key: fileKey, snapshot, file };
   }, [fileKey, source?.previousPath, fileStatus, saved.patch]);
+  // The same quiet changes as Changes (#396), from the same appearance.
+  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideComments]);
   const model = useDiffFileModel({
     fileKey,
     revealKey,
@@ -165,6 +167,7 @@ export function ReviewDiff({
     codeSettings: currentCodeIntelligence(),
     sectionRef: root,
     status: lfs ? undefined : fileStatus,
+    noiseFilter,
   });
   // Unified context lines name their old line too, for review checks and jumps (findReviewLine).
   const oldOf = useMemo(() => {
@@ -313,7 +316,9 @@ export function ReviewDiff({
           onShowDefinition={model.showDefinition}
           rails={model.rails}
           onCollapseScope={model.collapseScope}
+          noise={model.noise}
           outline={{
+            quiet: model.quietSymbols,
             symbols: model.symbols,
             pending: model.outlinePending,
             fileKey,

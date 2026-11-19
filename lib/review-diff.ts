@@ -8,6 +8,12 @@ export interface DiffAppearance {
   backgrounds: boolean;
   wrap: boolean;
   lineNumbers: boolean;
+  /**
+   * Collapse changes that only reformat code, or only change comments, to a bar that shows them (#396,
+   * lib/semantic-noise.ts). Undefined is the default: formatting hidden, comments shown.
+   */
+  hideWhitespace?: boolean;
+  hideComments?: boolean;
 }
 export const DEFAULT_DIFF_APPEARANCE: DiffAppearance = {
   contextLines: 3,
@@ -16,7 +22,18 @@ export const DEFAULT_DIFF_APPEARANCE: DiffAppearance = {
   backgrounds: true,
   wrap: false,
   lineNumbers: true,
+  hideWhitespace: true,
+  hideComments: false,
 };
+
+/**
+ * What a diff hides as noise. Formatting is hidden by default: a change the classifier calls formatting has the same
+ * tokens in the same syntax tree, so hiding it loses nothing, and the bar in its place shows it. Comments are shown by
+ * default: they are prose a reviewer may need to check, and a wrong comment is a bug of its own.
+ */
+export function noiseFilterOf(appearance?: Pick<DiffAppearance, 'hideWhitespace' | 'hideComments'>) {
+  return { whitespace: appearance?.hideWhitespace ?? true, comments: appearance?.hideComments ?? false };
+}
 
 export function diffContextLines(appearance?: DiffAppearance): number {
   const count = appearance?.contextLines;

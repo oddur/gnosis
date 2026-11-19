@@ -4,7 +4,7 @@ import { useId } from 'react';
 import { Popover } from 'radix-ui';
 import { SlidersHorizontal } from 'lucide-react';
 import { Button } from './ui/button';
-import { DEFAULT_DIFF_APPEARANCE, diffContextLines, type DiffAppearance } from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, noiseFilterOf, type DiffAppearance } from '@/lib/review-diff';
 import { DIFF_LAYOUT_KEYS } from '@/lib/diff-layout';
 
 const inlineDescriptions: Record<DiffAppearance['inline'], string> = {
@@ -29,6 +29,9 @@ export function DiffAppearanceMenu({
   const descriptionId = useId();
   const contextDescriptionId = useId();
   const layoutDescriptionId = useId();
+  const noiseHeadingId = useId();
+  const noiseDescriptionId = useId();
+  const noise = noiseFilterOf(value);
   const change = (next: DiffAppearance) => {
     publishDiffAppearance(next);
     onChange(next);
@@ -145,6 +148,32 @@ export function DiffAppearanceMenu({
                 />
               </label>
             ))}
+            <div className="diff-noise-options pt-3 border-t" role="group" aria-labelledby={noiseHeadingId} aria-describedby={noiseDescriptionId}>
+              <h4 id={noiseHeadingId} className="text-xs font-semibold text-muted-foreground mb-2">
+                Quiet changes
+              </h4>
+              {(
+                [
+                  ['hideWhitespace', 'Hide whitespace-only changes', noise.whitespace],
+                  ['hideComments', 'Hide comment-only changes', noise.comments],
+                ] as const
+              ).map(([key, label, checked]) => (
+                <label key={key} className="flex items-center justify-between gap-3 cursor-pointer mb-2">
+                  {label}
+                  <input
+                    type="checkbox"
+                    data-noise-toggle={key}
+                    className="size-4 accent-[var(--ring)]"
+                    checked={checked}
+                    onChange={(e) => change({ ...value, [key]: e.target.checked })}
+                  />
+                </label>
+              ))}
+              <p id={noiseDescriptionId} className="text-xs text-muted-foreground leading-relaxed">
+                Compares the code’s syntax on both sides. Changes that only move whitespace or edit comments collapse to
+                a bar you can open. Anything in doubt stays shown.
+              </p>
+            </div>
           </div>
           <Button variant="ghost" size="sm" className="mt-4" onClick={() => change({ ...DEFAULT_DIFF_APPEARANCE })}>
             Reset appearance

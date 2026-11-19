@@ -23,6 +23,8 @@ export interface ChangeTreeEntry {
   deletions: number;
   commentCount?: number;
   commentError?: boolean;
+  /** Every change is noise the reader hides (#396): "Formatting only", "Comments only" or "Formatting and comments". */
+  quiet?: string;
 }
 export function ChangesFileTree({
   entries,
@@ -63,6 +65,9 @@ export function ChangesFileTree({
       const entry = current.current.entries.find((e) => e.key === item.path);
       if (!entry) return null;
       const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
+      // A file whose every change is quiet says so in words, muted, in place of its counts: the tree is narrow, and the
+      // counts stay in the tooltip and the file's header.
+      const quiet = !entry.viewed && entry.quiet ? (entry.quiet === 'Formatting and comments' ? 'Quiet' : entry.quiet.replace(' only', '')) : undefined;
       const count = entry.commentCount;
       // Files with comments get a count, and files whose comments could not be read get a dash. Nothing is
       // shown while comments load: a placeholder would be removed again for most files once they arrive,
@@ -73,14 +78,16 @@ export function ChangesFileTree({
         ? 'Comments unavailable'
         : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, in unresolved threads on the current diff`;
       return {
-        text: showCommentCount ? `${changes} · ${count ?? '—'}` : changes,
+        text: `${quiet ?? changes}${showCommentCount ? ` · ${count ?? '—'}` : ''}`,
         parts: [
           ...(entry.viewed
             ? [{ text: 'Viewed' }]
-            : [
-                { text: `+${entry.additions}`, color: DIFF_STAT_COLORS.added },
-                { text: `−${entry.deletions}`, color: DIFF_STAT_COLORS.removed },
-              ]),
+            : quiet
+              ? [{ text: quiet, color: 'var(--muted-foreground)' }]
+              : [
+                  { text: `+${entry.additions}`, color: DIFF_STAT_COLORS.added },
+                  { text: `−${entry.deletions}`, color: DIFF_STAT_COLORS.removed },
+                ]),
           ...(showCommentCount
             ? [
                 {
@@ -90,7 +97,7 @@ export function ChangesFileTree({
               ]
             : []),
         ],
-        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${showCommentCount ? `. ${comments}` : ''}`,
+        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${quiet ? `. ${entry.quiet}: the code’s syntax is the same on both sides` : ''}${showCommentCount ? `. ${comments}` : ''}`,
       };
     },
   });

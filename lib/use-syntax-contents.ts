@@ -10,7 +10,8 @@ import {
 } from './syntax-contents';
 import { addDiagnosticsSource } from './diagnostics-sources';
 import { inspectionFileRequest, inspectionFiles, onInspectionForget, onInspectionUses } from './inspection-cache';
-import { readDefinitions, setSyntaxLanguages, warmSyntax } from './syntax-scope-client';
+import { readDefinitions, readNoise, setSyntaxLanguages, warmSyntax } from './syntax-scope-client';
+import { NO_NOISE_FILTER, noiseFilterOn, patchHunks, type NoiseFilter } from './semantic-noise';
 import type { SyntaxPriority } from './syntax-parse-queue';
 import {
   DEFAULT_CODE_INTELLIGENCE,
@@ -100,6 +101,21 @@ function parse(key: string, url: string, path: string, side: PrFileSide, priorit
   const language = syntaxLanguage(path);
   if (language && side.kind === 'text') void readDefinitions({ key, url, language, text: side.content, priority }).catch(() => {});
 }
+
+// Quiet changes (#396): while the reader hides some, every file whose after side is read for its scopes is compared
+// too, below its parses, so the file tree and the PR's stats know which files are only noise before they are shown.
+let noiseFilter: NoiseFilter = NO_NOISE_FILTER;
+/** What the open Changes view hides as noise (Diff appearance). */
+export function applyNoiseFilter(filter: NoiseFilter) {
+  noiseFilter = filter;
+}
+function compare({ key, snapshot, file }: SyntaxFile, side: PrFileSide, priority: SyntaxPriority) {
+  if (!noiseFilterOn(noiseFilter) || side.kind !== 'text' || file.status === 'added' || file.status === 'deleted') return;
+  const language = syntaxLanguage(file.path);
+  const hunks = patchHunks(file.patch);
+  if (!language || !hunks || !allowed(file.path)) return;
+  void readNoise({ fileKey: key, url: snapshot.url, language, text: side.content, hunks, priority, whole: true }).catch(() => {});
+}
 /**
  * The read for a file's scopes: the after side through the same cache and IPC as a gap reveal, or both sides for a
  * file with hunks that only delete. Each side goes to the worker as it arrives, under the keys the view asks for
@@ -127,10 +143,12 @@ export function syntaxContentsJob(
         traceStructure(key, { readEnd: performance.now() });
         parse(`${key}:after`, snapshot.url, file.path, contents.after, priority);
         parse(`${key}:before`, snapshot.url, file.previousPath ?? file.path, contents.before, priority);
+        compare({ key, snapshot, file }, contents.after, priority);
       } else {
         const after = await inspectionFiles.readAfter(request, mode);
         traceStructure(key, { readEnd: performance.now() });
         parse(`${key}:after`, snapshot.url, file.path, after, priority);
+        compare({ key, snapshot, file }, after, priority);
       }
     },
   };
@@ -184,9 +202,10 @@ export function useSyntaxPrefetch(
   owner: string,
   files: readonly SyntaxFile[],
   viewed: (file: SyntaxFile) => boolean,
-  settings: CodeIntelligenceSettings
+  settings: CodeIntelligenceSettings,
+  noise: NoiseFilter = NO_NOISE_FILTER
 ) {
-  const setting = JSON.stringify(settings);
+  const setting = JSON.stringify([settings, noise]);
   const restart = useSyncExternalStore(
     (listener) => {
       epochListeners.add(listener);
@@ -197,6 +216,7 @@ export function useSyntaxPrefetch(
   const signature = files.map((file) => `${file.key}\u0000${viewed(file) ? 1 : 0}`).join('\n');
   useEffect(() => {
     applyCodeIntelligence(settings);
+    applyNoiseFilter(noise);
     const planned = files.flatMap((file) => {
       const plan = syntaxContentsPlan(file.snapshot, file.file, allowed);
       return plan ? [{ file, plan }] : [];
@@ -209,6 +229,13 @@ export function useSyntaxPrefetch(
       )
     );
     const jobs = planned.filter(({ file }) => !viewed(file)).map(({ file, plan }) => syntaxContentsJob(file, plan));
+    // Files read before the reader hid any noise are compared from the cache: their reads will not run again.
+    if (noiseFilterOn(noise))
+      for (const { file } of planned) {
+        if (viewed(file)) continue;
+        const after = inspectionFiles.peekAfter(inspectionFileRequest(file.snapshot, file.file));
+        if (after) compare(file, after, 'prefetch');
+      }
     // The first files show first: they are read at once, as view reads, before the view has measured anything. The
     // file the view opens on asks again when it is near, which makes it the newest request.
     const opening = jobs.slice(0, SYNTAX_OPEN_FILES).map((job) => syntaxContents.request(job, () => {}));

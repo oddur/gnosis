@@ -28,6 +28,8 @@ import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intellig
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
 import { changedSymbols } from '../lib/symbol-outline';
+import { useSemanticNoise } from '../lib/use-semantic-noise';
+import { blockKey, fileNoise, hidden, noiseFilterOn, type FileNoise, type NoiseFilter, type NoiseKind } from '../lib/semantic-noise';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { inspectionFiles } from '../lib/inspection-cache';
 import { traceStructure } from '../lib/structure-trace';
@@ -43,7 +45,23 @@ const NO_PINS: readonly (readonly [number, number])[] = [];
 const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_SHOWN: readonly ShownScope[] = [];
 const NO_DEFINITIONS: readonly SyntaxDefinition[] = [];
+const NO_SHOWN_NOISE: ReadonlySet<string> = new Set();
 
+/**
+ * The diff's quiet changes (#396), for ChangesDiff: each change block's kind, what the reader hides, and the blocks
+ * the reader opened. `file` is set once the file is compared.
+ */
+export interface DiffNoise {
+  kinds: ReadonlyMap<string, NoiseKind>;
+  filter: NoiseFilter;
+  /** Blocks the reader opened, by `blockKey`: they show whatever their kind. */
+  shown: ReadonlySet<string>;
+  show: (keys: readonly string[]) => void;
+  /** The whole diff as the filter sees it: whether every change is hidden, and how much is. */
+  file?: FileNoise;
+  /** Every change is hidden and the reader opened none: the file shows as one bar. */
+  fileHidden: boolean;
+}
 /**
  * One file's diff as Changes and Explanation topics show it (#157 parity): hunks with the gaps between them, the
  * lines revealed into those gaps, the after side gaps reveal from, and the tree-sitter scopes, provisional crumbs and
@@ -68,6 +86,7 @@ export function useDiffFileModel({
   codeSettings,
   sectionRef,
   status,
+  noiseFilter,
 }: {
   /** The file's revision key (changeFileKey): reveals, pins and parsed definitions are kept under it. */
   fileKey: string;
@@ -100,6 +119,8 @@ export function useDiffFileModel({
   sectionRef: RefObject<HTMLElement | null>;
   /** Added and deleted files are one hunk of the whole file: its structure comes from the patch (#394). */
   status?: string;
+  /** What the reader hides as noise (Diff appearance): formatting-only and comment-only changes (#396). */
+  noiseFilter: NoiseFilter;
 }) {
   const alive = useRef(true);
   const currentFile = useRef(fileKey);
@@ -226,6 +247,47 @@ export function useDiffFileModel({
     enabled: parseable && (whole || afterMatches === true),
     priority: tier,
   });
+  // Formatting-only and comment-only changes (#396): compared in the worker once the after side agrees with the hunks,
+  // while the reader hides either. Added and deleted files have no other side to compare.
+  const noiseOn = noiseFilterOn(noiseFilter);
+  const noise = useSemanticNoise({
+    fileKey,
+    url: request?.url ?? '',
+    path,
+    after: afterText,
+    hunks: baseHunks,
+    enabled: noiseOn && structure && active && !wholeSide && afterMatches === true,
+    priority: tier,
+    whole: !partial,
+  });
+  const [shownNoise, setShownNoise] = useState<{ key: string; value: ReadonlySet<string> }>();
+  const noiseShown = shownNoise?.key === revealKey ? shownNoise.value : NO_SHOWN_NOISE;
+  // Changed lines the reader hides and has not opened: the outline leaves them out.
+  const quietLines = useMemo(() => {
+    if (!noiseOn || !noise.blocks) return undefined;
+    const lines = new Set<string>();
+    for (const block of noise.blocks) {
+      if (!hidden(block.kind, noiseFilter) || noiseShown.has(blockKey(block))) continue;
+      for (let i = 0; i < block.oldCount; i++) lines.add(`b${block.oldStart + i}`);
+      for (let i = 0; i < block.newCount; i++) lines.add(`a${block.newStart + i}`);
+    }
+    return lines.size ? lines : undefined;
+  }, [noiseOn, noise.blocks, noiseFilter.whitespace, noiseFilter.comments, noiseShown]);
+  const diffNoise = useMemo((): DiffNoise | undefined => {
+    if (!noiseOn) return undefined;
+    const file = noise.blocks ? fileNoise(noise.blocks, noiseFilter) : undefined;
+    return {
+      kinds: noise.kinds,
+      filter: noiseFilter,
+      shown: noiseShown,
+      show: (keys) => {
+        if (sectionRef.current) keepDiffLineInView(sectionRef.current);
+        setShownNoise({ key: revealKey, value: new Set([...noiseShown, ...keys]) });
+      },
+      file,
+      fileHidden: !!file?.all && !noise.blocks?.some((block) => noiseShown.has(blockKey(block))),
+    };
+  }, [noiseOn, noise.kinds, noise.blocks, noiseFilter.whitespace, noiseFilter.comments, noiseShown, revealKey]);
   // An added file has no old side, so every symbol in it is added; a deleted file has no new side, so every symbol in
   // it is removed.
   const fileDefinitions = useMemo(
@@ -326,9 +388,17 @@ export function useDiffFileModel({
   // the old side is on its way, the outline waits for it, in the same bar, so its removed symbols are not first listed
   // as modified ones: it parses right behind the after side, after the breadcrumbs have shown.
   const symbols = useMemo(
-    () => (fileDefinitions.after && !definitions.beforeParsing && baseHunks ? changedSymbols(baseHunks, fileDefinitions) : undefined),
-    [baseHunks, fileDefinitions, definitions.beforeParsing]
+    () =>
+      fileDefinitions.after && !definitions.beforeParsing && baseHunks
+        ? changedSymbols(baseHunks, fileDefinitions, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`)))
+        : undefined,
+    [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines]
   );
+  // Symbols whose every change is hidden, for the outline's quiet note.
+  const quietSymbols = useMemo(() => {
+    if (!symbols || !quietLines || !fileDefinitions.after || !baseHunks) return 0;
+    return Math.max(0, (changedSymbols(baseHunks, fileDefinitions)?.length ?? 0) - symbols.length);
+  }, [symbols, quietLines, fileDefinitions, baseHunks]);
   // An added or deleted file's bar waits from the first render, as its patch parses, so nothing moves when it lands.
   const outlinePending =
     !symbols &&
@@ -460,7 +530,9 @@ export function useDiffFileModel({
     rails,
     collapseScope,
     symbols,
+    quietSymbols,
     outlinePending,
+    noise: diffNoise,
     gapStatus,
     revealLines,
     canReveal,
