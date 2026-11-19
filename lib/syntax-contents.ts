@@ -13,6 +13,9 @@ import { pathFileKinds } from './file-kinds';
  *   PR after them. They run only when no view read waits, and pause while the reader scrolls or types, while the
  *   window is hidden, and during a rate limit. A view read for a file that waits as a prefetch takes it over.
  *
+ * At most `concurrency` reads run at once, and prefetch only starts one while fewer than that run. A view read never
+ * waits behind prefetch: while prefetch fills every slot, one more view read may start beside them.
+ *
  * Reads go through the inspection file cache, so each revision is read once, and a read that started finishes and
  * stays cached. A view read goes to GitHub at foreground priority, ahead of queue preparation; a prefetch read goes in
  * the background. A view request for a file whose prefetch is running promotes it. Requests for the same file share
@@ -188,7 +191,10 @@ export function createSyntaxContentsScheduler({
     promotions = 0,
     peak = 0;
   const log: SyntaxContentsRead[] = [];
-  let running = 0;
+  let running = 0,
+    runningView = 0;
+  /** Views that want to know when a file's contents land, whoever read them (`watch`). */
+  const watchers = new Map<string, Set<() => void>>();
 
   const wanted = (entry: Entry) => entry.waiters.size > 0 || entry.owners.size > 0;
   const capped = (job: SyntaxContentsJob) => {
@@ -232,6 +238,7 @@ export function createSyntaxContentsScheduler({
    * to be tried again is left until its time.
    */
   function next(): [string, Entry] | undefined {
+    const slots = running < concurrency;
     let view: [string, Entry] | undefined, prefetch: [string, Entry] | undefined, order = Infinity;
     const at = now();
     let retryAt = Infinity;
@@ -252,8 +259,10 @@ export function createSyntaxContentsScheduler({
           }
     }
     if (retryAt < Infinity) wake(retryAt);
-    if (view) return view;
-    if (!prefetch || hidden) return;
+    // A view read takes a free slot, or the one beside a full set of prefetch reads.
+    if (view && (slots || (runningView < concurrency && running - runningView >= concurrency && running < concurrency + 1)))
+      return view;
+    if (!prefetch || hidden || !slots) return;
     if (at < prefetchPausedUntil) {
       wake(prefetchPausedUntil);
       return;
@@ -270,7 +279,7 @@ export function createSyntaxContentsScheduler({
       wake(pausedUntil);
       return;
     }
-    while (running < concurrency) {
+    for (;;) {
       const item = next();
       if (!item) return;
       const [key, entry] = item;
@@ -295,6 +304,8 @@ export function createSyntaxContentsScheduler({
       entry.tier = tier;
       entry.attempts++;
       running++;
+      const counted = tier === 'view';
+      if (counted) runningView++;
       reads++;
       peak = Math.max(peak, running);
       const at = now();
@@ -341,11 +352,15 @@ export function createSyntaxContentsScheduler({
         )
         .finally(() => {
           running--;
+          if (counted) runningView--;
           entry.running = false;
           entry.tier = undefined;
           record.runMs = now() - (entry.startedAt ?? now());
           if (done || failed.has(key) || !wanted(entry)) drop(key, entry);
-          if (done) for (const waiter of entry.waiters.keys()) waiter();
+          if (done) {
+            for (const waiter of entry.waiters.keys()) waiter();
+            for (const watcher of watchers.get(key) ?? []) watcher();
+          }
           pump();
         });
     }
@@ -425,6 +440,20 @@ export function createSyntaxContentsScheduler({
       pump();
       return () => {
         if (owners.get(owner) === keys) release(owner);
+      };
+    },
+    /**
+     * Calls `onDone` whenever a read of `key` succeeds, whoever asked for it: a file whose contents a prefetch or the
+     * PR's opening reads brought in shows its scopes then, without waiting to ask for them itself. Returns the
+     * function that stops watching.
+     */
+    watch(key: string, onDone: () => void): () => void {
+      let set = watchers.get(key);
+      if (!set) watchers.set(key, (set = new Set()));
+      set.add(onDone);
+      return () => {
+        set.delete(onDone);
+        if (!set.size && watchers.get(key) === set) watchers.delete(key);
       };
     },
     /** Why a file has no contents: its read failed, or it is too large. Undefined otherwise. */

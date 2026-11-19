@@ -1,5 +1,6 @@
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
+import { createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
 import javascriptTags from '../src/assets/tree-sitter/javascript-tags.scm?raw';
 import typescriptTags from '../src/assets/tree-sitter/typescript-tags.scm?raw';
 import rustTags from '../src/assets/tree-sitter/rust-tags.scm?raw';
@@ -25,14 +26,22 @@ export type SyntaxRequest =
       text: string;
       runtimeUrl: string;
       grammarUrl: string;
+      /** Where the file is: on screen, near it, or prefetched (lib/syntax-parse-queue.ts). */
+      priority: SyntaxPriority;
+      side: 'after' | 'before';
     }
+  /** The view came nearer a file whose parse waits: it moves up to `priority`. */
+  | { type: 'priority'; key: string; priority: SyntaxPriority }
+  /** Loads these grammars while no parse waits, so a PR's first parse of each language does not load one. */
+  | { type: 'warm'; runtimeUrl: string; grammars: { language: SyntaxLanguage; grammarUrl: string }[] }
   | { type: 'forget'; urls: string[] }
   | { type: 'clear' };
 export type SyntaxResponse =
   | {
       id: number;
       definitions: SyntaxDefinition[];
-      timing: { parse: number; query: number; load?: number; cached: boolean; wait?: number };
+      /** `wait` is the time in the queue; `priority`, the tier the parse ran at. */
+      timing: { parse: number; query: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority };
     }
   | { id: number; error: string };
 
@@ -78,18 +87,78 @@ const engine = createSyntaxEngine(TreeSitter, {
   tags: (name) => Promise.resolve(TAGS[name] ?? ''),
 });
 const cache = new Map<string, { url: string; definitions: SyntaxDefinition[] }>();
-// One parse at a time: requests queue in order, and a cached file answers without waiting for parses before it.
-let queue = Promise.resolve();
+type Job = Extract<SyntaxRequest, { type: 'definitions' }> & { received: number };
+// One parse at a time, nearest the reader first (lib/syntax-parse-queue.ts); a cached file answers at once.
+const queue = createParseQueue<Job>();
+/** Grammars to load once no parse waits. */
+const warming: SyntaxLanguage[] = [];
+let draining = false;
+/** Lets messages that came during a parse (a file on screen, a raised priority) in before the next parse starts. */
+const yieldToMessages = () =>
+  new Promise<void>((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(0);
+  });
+
+async function run(job: Job) {
+  const wait = performance.now() - job.received;
+  try {
+    const result = await engine.definitions(job.language, job.text);
+    cache.set(job.key, { url: job.url, definitions: result.definitions });
+    for (const key of cache.keys()) {
+      if (cache.size <= CACHE_ENTRIES) break;
+      cache.delete(key);
+    }
+    self.postMessage({
+      id: job.id,
+      definitions: result.definitions,
+      timing: { parse: result.parse, query: result.query, load: result.load, cached: false, wait, priority: job.priority },
+    } satisfies SyntaxResponse);
+  } catch (error) {
+    self.postMessage({ id: job.id, error: error instanceof Error ? error.message : String(error) } satisfies SyntaxResponse);
+  }
+}
+async function drain() {
+  if (draining) return;
+  draining = true;
+  try {
+    for (;;) {
+      await yieldToMessages();
+      const job = queue.take();
+      if (job) await run(job);
+      else if (warming.length) await engine.warm(warming.shift()!).catch(() => {});
+      else break;
+    }
+  } finally {
+    draining = false;
+  }
+}
 
 self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   const message = event.data;
-  if (message.type === 'forget') {
-    const urls = new Set(message.urls);
-    for (const [key, entry] of cache) if (urls.has(entry.url)) cache.delete(key);
+  if (message.type === 'forget' || message.type === 'clear') {
+    const urls = message.type === 'forget' ? new Set(message.urls) : undefined;
+    for (const [key, entry] of cache) if (!urls || urls.has(entry.url)) cache.delete(key);
+    // Waiting parses of those PRs are dropped: the page has let go of them.
+    for (const job of queue.remove((job) => !urls || urls.has(job.url)))
+      self.postMessage({ id: job.id, error: 'The PR left the caches' } satisfies SyntaxResponse);
     return;
   }
-  if (message.type === 'clear') {
-    cache.clear();
+  if (message.type === 'priority') {
+    queue.raise(message.key, message.priority);
+    return;
+  }
+  if (message.type === 'warm') {
+    runtimeUrl ||= message.runtimeUrl;
+    for (const { language, grammarUrl } of message.grammars) {
+      grammarUrls.set(language, grammarUrl);
+      if (!warming.includes(language)) warming.push(language);
+    }
+    void drain();
     return;
   }
   const hit = cache.get(message.key);
@@ -105,26 +174,6 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   }
   runtimeUrl ||= message.runtimeUrl;
   grammarUrls.set(message.language, message.grammarUrl);
-  const received = performance.now();
-  queue = queue.then(async () => {
-    const wait = performance.now() - received;
-    try {
-      const result = await engine.definitions(message.language, message.text);
-      cache.set(message.key, { url: message.url, definitions: result.definitions });
-      for (const key of cache.keys()) {
-        if (cache.size <= CACHE_ENTRIES) break;
-        cache.delete(key);
-      }
-      self.postMessage({
-        id: message.id,
-        definitions: result.definitions,
-        timing: { parse: result.parse, query: result.query, load: result.load, cached: false, wait },
-      } satisfies SyntaxResponse);
-    } catch (error) {
-      self.postMessage({
-        id: message.id,
-        error: error instanceof Error ? error.message : String(error),
-      } satisfies SyntaxResponse);
-    }
-  });
+  queue.add({ ...message, received: performance.now() });
+  void drain();
 };

@@ -302,9 +302,9 @@ void app.whenReady().then(async () => {
   /**
    * Structure load on a large PR (`?syntax-large`, tests/fixtures/syntax-large.ts): 168 files in six languages, some
    * 2,400 lines, some deleting lines, none prepared. Reads take `latency` ms (±50%), as GitHub's would. From the click
-   * on Changes, it times the first file's breadcrumbs; a second after, it jumps to a file mid-PR and times its
-   * breadcrumbs; and it counts the files whose after side is parsed 2, 5 and 10 s after the click. Each file's steps
-   * come from lib/structure-trace.ts.
+   * on Changes, it times the first file's breadcrumbs; 0.4 s after the click, while prefetch still reads and parses,
+   * it jumps to a file mid-PR and times its breadcrumbs from the click on it; and it counts the files whose after side
+   * is parsed 2, 5 and 10 s after the click. Each file's steps come from lib/structure-trace.ts.
    */
   const structureLoad = async (latency: number) => {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-large`);
@@ -320,7 +320,7 @@ void app.whenReady().then(async () => {
       window.treeClick=async name=>{const item=()=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===name);
         const first=window.deepAll('[role=treeitem]')[0];let box=first?.parentElement;while(box&&box.scrollHeight<=box.clientHeight)box=box.parentElement;
         if(box)box.scrollTop=0;for(let i=0;i<80&&!item()&&box;i++){box.scrollTop+=200;await new Promise(r=>requestAnimationFrame(r))}
-        const target=item();if(!target)throw Error('Missing tree item '+name);target.click()};
+        const target=item();if(!target)throw Error('Missing tree item '+name);window.clickAt=performance.now();target.click()};
       // Each large file's first frame with parsed breadcrumbs, and whether it ever showed Loading structure….
       window.appear={};window.loadingShown={};
       const watch=()=>{for(const row of document.querySelectorAll('.commit-stream-row[data-file^="src/large/"]')){const p=row.dataset.file;
@@ -359,9 +359,10 @@ void app.whenReady().then(async () => {
       await debug(FIRST);
       throw error;
     }
-    await sleep(Math.max(0, 1000 - ((await js<number>('performance.now()')) - t0)));
-    const tJump = await js<number>('performance.now()');
+    await sleep(Math.max(0, 400 - ((await js<number>('performance.now()')) - t0)));
     await js(`window.treeClick('f091.rs')`);
+    // From the click on the file in the tree; finding it in the virtualized tree takes the test a few frames before.
+    const tJump = await js<number>('window.clickAt');
     try {
       await wait(`window.appear[${JSON.stringify(MID)}]!==undefined`, 500);
     } catch (error) {
@@ -445,6 +446,24 @@ void app.whenReady().then(async () => {
         );
       }
       return;
+    }
+    if (!process.env.GNOSIS_HUNK_HEADER_SHOTS && !process.env.GNOSIS_FILE_HEADER_SHOTS) {
+      // ═══ A large PR: structure shows nearest the reader first, file by file ═══
+      // Twice: GitHub-like reads, then reads from main's cache, where every file is read within a second and parses
+      // pile up in the worker.
+      for (const latency of [200, 5]) {
+        const large = await structureLoad(latency);
+        console.log(`Large PR, reads of ${latency} ms: ${JSON.stringify(large)}`);
+        assert.ok(
+          large.first.total !== undefined && large.lastParse !== undefined && large.first.total < large.lastParse,
+          `The first file's breadcrumbs show before prefetch has parsed every file (${large.first.total} ms, last parse ${large.lastParse} ms)`
+        );
+        assert.ok(large.first.workerQueue < 200, `The first file's parse does not wait behind prefetched ones (${large.first.workerQueue} ms)`);
+        assert.ok(large.mid.workerQueue < 200, `Nor does the file jumped to (${large.mid.workerQueue} ms)`);
+        assert.ok(large.frames >= 20, `Files resolve one by one, not in one frame (${large.frames} frames for ${large.parsed} files)`);
+        assert.ok(large.resolved['2s'] < large.parsed || latency < 50, 'With GitHub-like reads, files keep resolving after 2 s');
+        assert.equal(large.loadingFlashes, 0, 'No file flashes "Loading structure…" for less than 150 ms');
+      }
     }
     if (process.env.GNOSIS_HUNK_HEADER_SHOTS) {
       await hunkHeaderShots();
@@ -852,6 +871,8 @@ void app.whenReady().then(async () => {
     );
     assert.deepEqual(await js('window.symbols("src/lazy/h003.rs")'), []);
     await wait(`window.heldReads.length>0`);
+    // The note waits a moment, so a file whose structure lands sooner never flickers it.
+    await wait(`window.structureNote('src/lazy/h003.rs').length>0`);
     assert.deepEqual(await js('window.structureNote("src/lazy/h003.rs")'), ['loading: Loading structure…']);
     assert.equal(
       await js("window.readModes.find(r=>r.path==='src/lazy/h003.rs').mode"),

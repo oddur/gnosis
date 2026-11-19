@@ -14,6 +14,7 @@ import {
 } from '../lib/syntax-contents';
 import { inspectionRank, type InspectionMode, type PrChangeFile, type PrFileSide } from '../lib/pr-changes';
 import { createPrFileCache } from '../lib/pr-file-cache';
+import { createParseQueue, higherPriority, type ParseJob, type SyntaxPriority } from '../lib/syntax-parse-queue';
 import {
   DEFAULT_CODE_INTELLIGENCE,
   codeIntelligenceSettings,
@@ -130,9 +131,9 @@ void test('A forgotten PR’s prefetch reads that have not started are dropped; 
   scheduler.prefetch('predicted', [job('a'), job('b'), job('c'), job('x', { pr: other })], 1);
   let viewed = 0;
   scheduler.request(job('c'), () => viewed++);
-  assert.deepEqual(started, ['a'], 'One read at a time');
+  assert.deepEqual(started, ['a', 'c'], 'The view read does not wait behind the prefetch read');
   scheduler.forget(new Set([job('a').pr]));
-  assert.equal(scheduler.stats().queued, 2, 'b leaves the queue; c, which a view waits for, and the other PR’s x stay');
+  assert.equal(scheduler.stats().queued, 1, 'b leaves the queue; the other PR’s x stays');
   await finish('a');
   await finish('c');
   assert.equal(viewed, 1);
@@ -171,17 +172,21 @@ void test('Prefetch runs in order after view reads, and a view read takes over a
   const { scheduler, job, started, finish } = harness();
   scheduler.prefetch('open', ['p1', 'p2', 'p3', 'p4', 'p5'].map((key) => job(key)));
   assert.deepEqual(started, ['p1', 'p2']);
-  // The reader scrolls to p5 and to v: both go before p3 and p4.
+  // The reader scrolls to v and to p5: both go before p3 and p4. v starts at once, in the slot beside the two prefetch
+  // reads; p5 waits for a slot, as there is only one beside them.
   let p5 = 0;
   scheduler.request(job('v'), () => {});
+  assert.deepEqual(started, ['p1', 'p2', 'v'], 'A view read does not wait behind prefetch');
   scheduler.request(job('p5'), () => p5++);
+  assert.equal(scheduler.stats().running, 3);
   await finish('p1');
+  assert.deepEqual(started, ['p1', 'p2', 'v'], 'Two reads run: no third starts');
   await finish('p2');
-  assert.deepEqual(started, ['p1', 'p2', 'p5', 'v']);
+  assert.deepEqual(started, ['p1', 'p2', 'v', 'p5']);
   await finish('p5');
   assert.equal(p5, 1);
   await finish('v');
-  assert.deepEqual(started, ['p1', 'p2', 'p5', 'v', 'p3', 'p4']);
+  assert.deepEqual(started, ['p1', 'p2', 'v', 'p5', 'p3', 'p4']);
   assert.deepEqual(
     scheduler.stats().log.map((entry) => entry.tier),
     ['prefetch', 'prefetch', 'view', 'view', 'prefetch', 'prefetch']
@@ -477,4 +482,36 @@ void test('Diagnostics: each read records its tier, wait, run time, tries and ou
   assert.deepEqual(report.slow.map((read) => read.key), ['a', 'b']);
   assert.equal(report.recent.length, 2);
   assert.equal(report.reads, 2);
+});
+
+void test('A file sees its contents land whoever read them', async () => {
+  const { scheduler, job, finish } = harness();
+  let landed = 0;
+  const stop = scheduler.watch('p1', () => landed++);
+  scheduler.prefetch('open', [job('p1')]);
+  await finish('p1');
+  assert.equal(landed, 1, 'A prefetch read tells the file');
+  stop();
+  scheduler.request(job('p1'), () => {});
+  await finish('p1');
+  assert.equal(landed, 1, 'Not after it stopped watching');
+});
+
+void test('Parses go nearest the reader first: on screen, newest first; near; then prefetch in order', () => {
+  const queue = createParseQueue<ParseJob>();
+  const add = (key: string, priority: SyntaxPriority, side: 'after' | 'before' = 'after') => queue.add({ key, priority, side });
+  add('p1', 'prefetch');
+  add('p2', 'prefetch');
+  add('p2-old', 'prefetch', 'before');
+  add('n1', 'near');
+  add('v1', 'view');
+  add('v1-old', 'view', 'before');
+  add('v2', 'view');
+  // The reader scrolls to p2: it moves up to the screen, as the newest request there.
+  assert.equal(queue.raise('p2', 'view'), true);
+  assert.equal(queue.raise('v1', 'near'), false, 'A request never lowers a parse');
+  const order: string[] = [];
+  for (let job = queue.take(); job; job = queue.take()) order.push(job.key);
+  assert.deepEqual(order, ['p2', 'v2', 'v1', 'v1-old', 'n1', 'p1', 'p2-old']);
+  assert.equal(higherPriority('prefetch', 'near'), 'near');
 });

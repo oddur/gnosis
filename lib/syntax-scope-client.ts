@@ -14,6 +14,7 @@ import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
 import { traceStructure } from './structure-trace';
+import { higherPriority, type SyntaxPriority } from './syntax-parse-queue';
 
 /**
  * The page's side of the tree-sitter worker (#393). Grammars are assets of the renderer build, so they load offline
@@ -43,7 +44,7 @@ let nextId = 0;
 const waiting = new Map<number, { resolve: (value: SyntaxDefinition[]) => void; reject: (error: Error) => void }>();
 // `at` is the entry's last use, so a PR whose definitions outlive its files is still swept when idle (#355).
 const memo = new Map<string, { url: string; definitions: SyntaxDefinition[]; at: number }>();
-const pending = new Map<string, { url: string; promise: Promise<SyntaxDefinition[]> }>();
+const pending = new Map<string, { url: string; promise: Promise<SyntaxDefinition[]>; priority: SyntaxPriority }>();
 /** The last parses, newest last, for the diagnostics export and the browser checks. */
 export const syntaxTimings: (Timing & { key: string; language: SyntaxLanguage; characters: number })[] = [];
 
@@ -58,7 +59,10 @@ function start(): Promise<Worker | undefined> {
         const entry = waiting.get(response.id);
         if (!entry) return;
         waiting.delete(response.id);
-        if ('error' in response) entry.reject(Error(response.error));
+        if ('error' in response) {
+          timings.delete(response.id);
+          entry.reject(Error(response.error));
+        }
         else {
           entry.resolve(response.definitions);
           timings.get(response.id)?.(response.timing);
@@ -94,23 +98,50 @@ export function peekDefinitions(key: string): SyntaxDefinition[] | undefined {
 }
 
 /**
+ * Loads the grammars of these languages in the worker while it has nothing to parse, and starts the worker, so the
+ * first file of each language a PR shows does not wait for its grammar (#393). Languages that are off are left out.
+ */
+export function warmSyntax(languages: Iterable<SyntaxLanguage>) {
+  const grammars = [...new Set(languages)]
+    .filter((language) => languageAllowed(language))
+    .map((language) => ({ language, grammarUrl: absolute(GRAMMARS[language]) }));
+  if (!grammars.length) return;
+  void start().then((instance) =>
+    instance?.postMessage({ type: 'warm', runtimeUrl: absolute(runtimeWasm), grammars } satisfies SyntaxRequest)
+  );
+}
+
+/**
  * A file's definitions, parsed in the worker. Rejects for a file that could not parse, and when workers are not
- * available: the caller then shows the diff as it is.
+ * available: the caller then shows the diff as it is. `priority` says where the file is (lib/syntax-parse-queue.ts):
+ * the worker parses files on screen first, then files near the view, then prefetched ones. Asking again for a file
+ * whose parse waits, at a higher priority, moves it up.
  */
 export function readDefinitions(request: {
   key: string;
   url: string;
   language: SyntaxLanguage;
   text: string;
+  priority?: SyntaxPriority;
 }): Promise<SyntaxDefinition[]> {
   if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
   const known = peekDefinitions(request.key);
   if (known) return Promise.resolve(known);
   if (request.text.length > SYNTAX_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to parse'));
+  const priority = request.priority ?? 'view';
   const existing = pending.get(request.key);
-  if (existing) return existing.promise;
+  if (existing) {
+    const raised = higherPriority(existing.priority, priority);
+    if (raised !== existing.priority) {
+      existing.priority = raised;
+      void worker?.then((instance) =>
+        instance?.postMessage({ type: 'priority', key: request.key, priority: raised } satisfies SyntaxRequest)
+      );
+    }
+    return existing.promise;
+  }
   const file = request.key.replace(/:(after|before)$/, '');
-  const after = request.key.endsWith(':after');
+  const after = !request.key.endsWith(':before');
   if (after) traceStructure(file, { parseRequest: performance.now() });
   const promise = start().then(
     (instance) =>
@@ -132,6 +163,7 @@ export function readDefinitions(request: {
               query: timing.query,
             });
           else traceStructure(file, { beforeDone: performance.now() });
+          if (after) traceStructure(file, { tier: timing.priority });
           syntaxTimings.push({
             ...timing,
             key: request.key,
@@ -150,10 +182,13 @@ export function readDefinitions(request: {
           text: request.text,
           runtimeUrl: absolute(runtimeWasm),
           grammarUrl: absolute(GRAMMARS[request.language]),
+          // A request that came in the meantime may have raised it.
+          priority: pending.get(request.key)?.priority ?? priority,
+          side: after ? 'after' : 'before',
         } satisfies SyntaxRequest);
       })
   );
-  pending.set(request.key, { url: request.url, promise });
+  pending.set(request.key, { url: request.url, promise, priority });
   void promise.then(
     (definitions) => {
       // A parse whose PR left the caches while it ran answers its caller and keeps nothing.

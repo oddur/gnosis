@@ -643,6 +643,8 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
     return pending;
   };
   return {
+    /** Loads a grammar and its query ahead of the first parse that needs it. */
+    warm: (id: SyntaxLanguage) => load(id).then(() => undefined),
     async definitions(id: SyntaxLanguage, text: string): Promise<DefinitionsResult> {
       const loading = !languages.has(id);
       const t0 = performance.now();

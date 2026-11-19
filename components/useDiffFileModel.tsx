@@ -23,7 +23,7 @@ import {
 import { chainAt, hunkScopes, provisionalScopes, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
 import type { DefinitionReveal, SyntaxDefinition } from '../lib/syntax-scope';
 import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
-import { useSyntaxContents, type SyntaxFile } from '../lib/use-syntax-contents';
+import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-syntax-contents';
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan } from '../lib/syntax-contents';
 import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
@@ -194,6 +194,9 @@ export function useDiffFileModel({
       ? scopeFile
       : undefined
   );
+  const parseable = structure && expandable && active && !!gaps;
+  // Files on screen parse first, then files near the view, then the rest (lib/syntax-parse-queue.ts).
+  const tier = useViewTier(sectionRef, parseable);
   const definitions = useSyntaxDefinitions({
     key: fileKey,
     url: request?.url ?? '',
@@ -201,7 +204,8 @@ export function useDiffFileModel({
     previousPath,
     after: afterText,
     before: beforeText,
-    enabled: structure && expandable && active && !!gaps && afterMatches === true,
+    enabled: parseable && afterMatches === true,
+    priority: tier,
   });
   const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
   // What the reader revealed: chevrons, Show all, Show whole function, crumbs.
@@ -212,10 +216,11 @@ export function useDiffFileModel({
   const scopeOn = codeSettings.enabled && codeSettings.showScope;
   const planned = useMemo(
     () =>
-      scopeOn && definitions.after && hunks && gaps && lines
+      // The old side names hunks that only delete: the plan waits for it, which lands right after the after side.
+      scopeOn && definitions.after && !definitions.beforeParsing && hunks && gaps && lines
         ? showScopePlan(revealedParts(hunks, gaps, NO_REVEALS, lines), gaps, definitions)
         : undefined,
-    [scopeOn, definitions.after, definitions.before, hunks, gaps, lines]
+    [scopeOn, definitions.after, definitions.before, definitions.beforeParsing, hunks, gaps, lines]
   );
   const [adopted, setAdopted] = useState<{ key: string; value: readonly ShownScope[] }>();
   const [collapsed, setCollapsed] = useState<{ key: string; value: ReadonlySet<string> }>();
@@ -286,12 +291,16 @@ export function useDiffFileModel({
   useEffect(() => {
     if (scopes) traceStructure(fileKey, { shown: performance.now() });
   }, [!!scopes, fileKey]);
-  // The symbols the hunks change (#394), for the file's outline, once the file is parsed; a quiet bar until then.
+  // The symbols the hunks change (#394), for the file's outline, once the file is parsed; a quiet bar until then. When
+  // the old side is on its way, the outline waits for it, in the same bar, so its removed symbols are not first listed
+  // as modified ones: it parses right behind the after side, after the breadcrumbs have shown.
   const symbols = useMemo(
-    () => (definitions.after && baseHunks ? changedSymbols(baseHunks, definitions) : undefined),
-    [baseHunks, definitions.after, definitions.before]
+    () => (definitions.after && !definitions.beforeParsing && baseHunks ? changedSymbols(baseHunks, definitions) : undefined),
+    [baseHunks, definitions.after, definitions.before, definitions.beforeParsing]
   );
-  const outlinePending = !symbols && !!provisional && structurePending;
+  const outlinePending = !symbols && ((!!provisional && structurePending) || (!!scopes && !!definitions.beforeParsing));
+  // "Loading structure…" shows only once a file has waited a moment: one whose structure lands sooner never flickers.
+  const loadingShown = useDelayedFlag(structurePending && !!provisional && !scopes, STRUCTURE_NOTE_DELAY_MS);
   // A pinned hunk header names the definitions around the line the reader is at (ChangesDiff).
   const scopeAt = useMemo(
     () =>
@@ -305,7 +314,7 @@ export function useDiffFileModel({
         Try again
       </button>
     </span>
-  ) : structurePending && provisional ? (
+  ) : loadingShown ? (
     <span className="diff-gap-structure" data-structure="loading">
       <LoadingIndicator announce={false}>Loading structure…</LoadingIndicator>
     </span>
@@ -422,6 +431,22 @@ export function useDiffFileModel({
     lineCount,
     afterSide,
   };
+}
+
+/** How long a file's structure may take before its hunk headers say "Loading structure…". */
+const STRUCTURE_NOTE_DELAY_MS = 150;
+/** True once `on` has held for `ms`; false again as soon as it does not. */
+function useDelayedFlag(on: boolean, ms: number): boolean {
+  const [held, setHeld] = useState(false);
+  useEffect(() => {
+    if (!on) {
+      setHeld(false);
+      return;
+    }
+    const timer = setTimeout(() => setHeld(true), ms);
+    return () => clearTimeout(timer);
+  }, [on, ms]);
+  return on && held;
 }
 
 /** How many lines of a gap that holds other changes agree on both sides, from its top and from its bottom. */
