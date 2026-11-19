@@ -1271,8 +1271,10 @@ void app.whenReady().then(async () => {
     await shot('stack-sticky-mid-hunk', '.commit-diff-stream');
     // A very long path keeps the file header on one row: the path shortens from the left, the actions stay beside it.
     const longPath = await js<{ before: number; after: number; actionsTop: number; titleTop: number; name: boolean }>(`(()=>{
-      const head=[...document.querySelectorAll('.changes-file-header')].find(e=>e.getClientRects().length&&e.getBoundingClientRect().width>=900);
-      if(!head) throw Error('Missing a wide file header');
+      // Set the header's own width: CI desktops (Windows: 1024px) can clamp the window below what this check needs.
+      const head=[...document.querySelectorAll('.changes-file-header')].find(e=>e.getClientRects().length);
+      if(!head) throw Error('Missing a file header');
+      head.style.width='1100px'; head.style.maxWidth='none';
       const before=head.getBoundingClientRect().height;
       const dir=head.querySelector('.changes-file-dir'), name=head.querySelector('.changes-file-name');
       if(dir) dir.textContent='project/workers/SimulationWorkers.Domains/AI/Agents/Activities/Conditions/Agent/Deeply/Nested/Folder/';
