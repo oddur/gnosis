@@ -132,8 +132,9 @@ async function drain() {
     for (;;) {
       await yieldToMessages();
       const job = queue.take();
+      const grammar = job ? undefined : warming.shift();
       if (job) await run(job);
-      else if (warming.length) await engine.warm(warming.shift()!).catch(() => {});
+      else if (grammar) await engine.warm(grammar).catch(() => {});
       else break;
     }
   } finally {
@@ -146,8 +147,8 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   if (message.type === 'forget' || message.type === 'clear') {
     const urls = message.type === 'forget' ? new Set(message.urls) : undefined;
     for (const [key, entry] of cache) if (!urls || urls.has(entry.url)) cache.delete(key);
-    // Waiting parses of those PRs are dropped: the page has let go of them.
-    for (const job of queue.remove((job) => !urls || urls.has(job.url)))
+    // Their prefetched files that wait are dropped: nobody looks at them. A file on screen or near it still parses.
+    for (const job of queue.remove((job) => job.priority === 'prefetch' && (!urls || urls.has(job.url))))
       self.postMessage({ id: job.id, error: 'The PR left the caches' } satisfies SyntaxResponse);
     return;
   }

@@ -46,13 +46,13 @@ type Timing = Extract<SyntaxResponse, { definitions: unknown }>['timing'];
  * does both, in the same order (lib/syntax-parse-queue.ts).
  */
 type Lane = 'front' | 'back';
-let split = typeof navigator !== 'undefined' && (navigator.hardwareConcurrency ?? 1) >= 4;
+let split = typeof navigator !== 'undefined' && navigator.hardwareConcurrency >= 4;
 /** One worker or two, before any starts: for the browser checks, which compare them. */
 export function setSyntaxWorkerSplit(value: boolean) {
   split = value;
 }
 const laneFor = (priority: SyntaxPriority): Lane => (split && priority === 'prefetch' ? 'back' : 'front');
-const workers: Partial<Record<Lane, Promise<Worker | undefined>>> = {};
+const workers = new Map<Lane, Promise<Worker | undefined>>();
 let nextId = 0;
 const waiting = new Map<number, { resolve: (value: SyntaxDefinition[]) => void; reject: (error: Error) => void }>();
 // `at` is the entry's last use, so a PR whose definitions outlive its files is still swept when idle (#355).
@@ -75,7 +75,9 @@ export const syntaxTimings: (Timing & { key: string; language: SyntaxLanguage; c
 const absolute = (url: string) => new URL(url, document.baseURI).href;
 
 function start(lane: Lane = 'front'): Promise<Worker | undefined> {
-  const started = (workers[lane] ??= import('./syntax-scope.worker?worker&inline')
+  const known = workers.get(lane);
+  if (known) return known;
+  const started: Promise<Worker | undefined> = import('./syntax-scope.worker?worker&inline')
     .then(({ default: SyntaxWorker }) => {
       const instance = new SyntaxWorker({ name: lane === 'front' ? 'gnosis-syntax' : 'gnosis-syntax-prefetch' });
       instance.onmessage = (event: MessageEvent<SyntaxResponse & { id: number }>) => {
@@ -103,15 +105,16 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
         event.preventDefault();
         for (const entry of waiting.values()) entry.reject(Error('The syntax worker stopped'));
         waiting.clear();
-        if (workers[lane] === started) delete workers[lane];
+        if (workers.get(lane) === started) workers.delete(lane);
       };
       return instance;
     })
-    .catch(() => undefined));
+    .catch(() => undefined);
+  workers.set(lane, started);
   return started;
 }
 const eachWorker = (send: (instance: Worker) => void) => {
-  for (const started of Object.values(workers)) void started?.then((instance) => instance && send(instance));
+  for (const started of workers.values()) void started.then((instance) => instance && send(instance));
 };
 const timings = new Map<number, (timing: Timing) => void>();
 
@@ -179,11 +182,11 @@ export function readDefinitions(request: {
             instance?.postMessage(message);
           });
         });
-        void workers[lane]?.then((instance) =>
+        void workers.get(lane)?.then((instance) =>
           instance?.postMessage({ type: 'take', key: request.key, id: message.id } satisfies SyntaxRequest)
         );
       } else if (lane)
-        void workers[lane]?.then((instance) =>
+        void workers.get(lane)?.then((instance) =>
           instance?.postMessage({ type: 'priority', key: request.key, priority: raised } satisfies SyntaxRequest)
         );
     }

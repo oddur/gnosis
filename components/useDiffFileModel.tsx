@@ -31,6 +31,7 @@ import { changedSymbols } from '../lib/symbol-outline';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { inspectionFiles } from '../lib/inspection-cache';
 import { traceStructure } from '../lib/structure-trace';
+import { pathFileKinds } from '../lib/file-kinds';
 import type { PrFileContents, PrFileRequest, PrFileSide } from '../lib/pr-changes';
 import { staleAttemptKey, staleStatus, type StaleTarget } from '../lib/stale-diff-refresh';
 import { staleDiffRefresh, useStaleAttempt } from '../lib/use-stale-diff-refresh';
@@ -193,8 +194,9 @@ export function useDiffFileModel({
   // What is parsed: the after side the view has, or an added file's patch.
   const afterParsed = afterText ?? (wholeSide === 'after' ? patchWhole : undefined);
   const wholeText = wholeSide === 'after' ? afterParsed : wholeSide === 'before' ? beforeText : undefined;
-  // A Git LFS pointer is not the file.
-  const whole = !!wholeSide && !wholeText?.startsWith('version https://git-lfs.github.com/spec/');
+  // A Git LFS pointer is not the file, and generated files (lockfiles, bundles) have no structure worth parsing.
+  const generated = !!wholeSide && (scopeFile?.snapshot.fileKinds?.[path] ?? pathFileKinds(path)).generated.value;
+  const whole = !!wholeSide && !generated && !wholeText?.startsWith('version https://git-lfs.github.com/spec/');
   const scopePlan = useMemo(
     () => (scopeFile ? syntaxContentsPlan(scopeFile.snapshot, scopeFile.file, (p) => pathEnabled(codeSettings, p)) : undefined),
     [scopeFile, codeSettings]
@@ -449,7 +451,9 @@ export function useDiffFileModel({
     hunks,
     shown,
     scopes: shownScopes,
-    structure: !!shownScopes,
+    // An added or deleted file's one hunk header shows from the first render, naming the file until its patch is
+    // parsed, so nothing below it moves when its breadcrumb arrives.
+    structure: !!shownScopes || (whole && parseable && wholeText !== undefined),
     scopeNote,
     scopeAt,
     showDefinition,

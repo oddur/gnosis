@@ -373,13 +373,13 @@ void app.whenReady().then(async () => {
     }
     await sleep(Math.max(0, 10_500 - ((await js<number>('performance.now()')) - t0)));
     type Trace = Record<string, number | string | undefined>;
-    const data = await js<{ traces: Record<string, Trace>; appear: Record<string, number>; loading: Record<string, number> }>(
+    const data = await js<{ traces: Record<string, Trace>; appear: Record<string, number | undefined>; loading: Record<string, number> }>(
       `(async()=>({traces:(await import('/lib/structure-trace.ts')).structureTraces(),appear:window.appear,loading:window.loadingShown}))()`
     );
     const byPath = new Map<string, Trace>();
     for (const [key, trace] of Object.entries(data.traces)) {
       const path = (JSON.parse(key) as string[])[1];
-      if (path?.startsWith('src/large/')) byPath.set(path, trace);
+      if (path.startsWith('src/large/')) byPath.set(path, trace);
     }
     const num = (value: unknown) => (typeof value === 'number' ? value : undefined);
     const phases = (path: string, start: number) => {
@@ -402,7 +402,11 @@ void app.whenReady().then(async () => {
         steps: Object.fromEntries(Object.entries(t).map(([name, value]) => [name, typeof value === 'number' && name !== 'workerWait' && name !== 'load' && name !== 'parse' && name !== 'query' ? Math.round(value - start) : value])),
       };
     };
-    const resolved = (ms: number) => [...byPath.values()].filter((t) => num(t.parseDone) !== undefined && num(t.parseDone)! - t0 <= ms).length;
+    const resolved = (ms: number) =>
+      [...byPath.values()].filter((t) => {
+        const done = num(t.parseDone);
+        return done !== undefined && done - t0 <= ms;
+      }).length;
     const doneTimes = [...byPath.values()].map((t) => num(t.parseDone)).filter((v): v is number => v !== undefined).sort((a, b) => a - b);
     return {
       first: phases(FIRST, t0),

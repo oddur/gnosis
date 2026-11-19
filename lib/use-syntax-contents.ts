@@ -201,8 +201,13 @@ export function useSyntaxPrefetch(
       const plan = syntaxContentsPlan(file.snapshot, file.file, allowed);
       return plan ? [{ file, plan }] : [];
     });
-    // The PR's grammars load in the worker while the first reads run, so no parse waits for one.
-    warmSyntax(planned.flatMap(({ file: { file } }) => [file.path, ...(file.previousPath ? [file.previousPath] : [])].flatMap((path) => syntaxLanguage(path) ?? [])));
+    // The PR's grammars load in the worker while the first reads run, so no parse waits for one. Added files count,
+    // though they read nothing: their patch is parsed.
+    warmSyntax(
+      files.flatMap(({ file }) =>
+        [file.path, ...(file.previousPath ? [file.previousPath] : [])].flatMap((path) => (allowed(path) && syntaxLanguage(path)) || [])
+      )
+    );
     const jobs = planned.filter(({ file }) => !viewed(file)).map(({ file, plan }) => syntaxContentsJob(file, plan));
     // The first files show first: they are read at once, as view reads, before the view has measured anything. The
     // file the view opens on asks again when it is near, which makes it the newest request.
