@@ -289,7 +289,9 @@ function ShowDefinition({
   onShow?: (reveal: DefinitionReveal) => void;
   onCollapse?: (key: string) => void;
 }) {
-  if (!scope?.reveal && scope?.shown && onCollapse) {
+  // A definition the rule showed offers to collapse, even when a long stretch of it stays hidden between two of its
+  // hunks: that stretch's own gap bar shows it.
+  if (scope?.shown && onCollapse) {
     const { key, definition } = scope.shown;
     const noun = definitionNoun(definition);
     return (
@@ -632,6 +634,7 @@ function GapBar({
       aria-busy={busy || undefined}
       data-gap={part.gap.index}
       data-hunk-header=""
+      data-message={(onReveal && blocked(status)) || undefined}
     >
       <HeaderRow
         gutter={gutter}
@@ -717,6 +720,7 @@ function followReader(
   if (slot && chain && previous !== scopeKey) {
     // A crumb with focus stays focused across the rewrite: on its definition's crumb, or else the innermost.
     const focused = slot.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.start ?? '' : undefined;
+    closeFolded(bar);
     slot.replaceChildren(...liveCrumbs(chain, point.side));
     slot.setAttribute(
       'aria-label',
@@ -780,7 +784,15 @@ function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side'])
     return group;
   });
   if (chain.length < 2) return groups;
-  return [decorative(make('span', 'diff-gap-more', '…')), ...groups];
+  // Folded crumbs are still reachable: "…" opens them as a list under the bar (openFolded).
+  const more = make('button', 'diff-gap-more', '…') as HTMLButtonElement;
+  more.type = 'button';
+  more.dataset.more = '';
+  more.setAttribute('aria-haspopup', 'true');
+  more.setAttribute('aria-expanded', 'false');
+  more.setAttribute('aria-label', 'Show the folded levels');
+  more.title = 'Show the folded levels';
+  return [more, ...groups];
 }
 
 /** Frames a pinned crumb's jump waits at most for its reveal to render before it scrolls: a reveal the view cannot
@@ -859,6 +871,40 @@ function lineElement(scope: ParentNode, side: LinePoint['side'], line: number): 
       if (Number(own ? row.dataset.line : row.dataset.altLine) === line) return row;
     }
   return undefined;
+}
+
+/**
+ * Opens the levels a narrow pinned breadcrumb folded into "…" (#417): a list under the bar, outermost first, of the
+ * same crumbs, which go where theirs go. Escape, a jump, or the reader moving on closes it.
+ */
+function openFolded(more: HTMLElement) {
+  const bar = more.closest<HTMLElement>('[data-hunk-header]');
+  const slot = more.closest<HTMLElement>('.diff-gap-live');
+  if (!bar || !slot) return;
+  if (closeFolded(bar)) return;
+  const menu = document.createElement('div');
+  menu.className = 'diff-gap-folded';
+  menu.setAttribute('role', 'group');
+  menu.setAttribute('aria-label', 'Folded levels');
+  for (const crumb of slot.querySelectorAll<HTMLElement>(':scope > .diff-gap-crumb-group[data-collapsed] > button[data-jump]')) {
+    const item = crumb.cloneNode(true) as HTMLElement;
+    item.removeAttribute('data-innermost');
+    menu.append(item);
+  }
+  if (!menu.childElementCount) return;
+  menu.style.left = `${Math.round(more.getBoundingClientRect().left - bar.getBoundingClientRect().left)}px`;
+  bar.append(menu);
+  bar.setAttribute('data-folded-open', '');
+  more.setAttribute('aria-expanded', 'true');
+  menu.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
+}
+/** Closes a bar's list of folded levels; whether one was open. */
+function closeFolded(bar: Element): boolean {
+  const menu = bar.querySelector(':scope > .diff-gap-folded');
+  bar.removeAttribute('data-folded-open');
+  bar.querySelector('.diff-gap-live > [data-more]')?.setAttribute('aria-expanded', 'false');
+  menu?.remove();
+  return !!menu;
 }
 
 /** Focuses a pinned crumb without scrolling: the one for the definition starting at `start` if it shows, else the
@@ -1193,6 +1239,7 @@ export function ChangesDiff<A>({
             else {
               pinned.delete(entry.target as HTMLElement);
               entry.target.removeAttribute('data-live-focus');
+              closeFolded(entry.target);
             }
           }
           for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
@@ -1349,17 +1396,39 @@ export function ChangesDiff<A>({
     own.current = navigation;
     if (navigator) navigator.current = navigation;
     const onClick = (event: MouseEvent) => {
-      const crumb = (event.target as Element | null)?.closest<HTMLElement>('.diff-gap-live button[data-jump]');
-      if (crumb && element.contains(crumb)) jump(crumb, event.detail === 0);
+      const target = event.target as Element | null;
+      const more = target?.closest<HTMLElement>('.diff-gap-live button[data-more]');
+      if (more && element.contains(more)) {
+        openFolded(more);
+        return;
+      }
+      const crumb = target?.closest<HTMLElement>(':is(.diff-gap-live, .diff-gap-folded) button[data-jump]');
+      if (!crumb || !element.contains(crumb)) return;
+      const bar = crumb.closest('[data-hunk-header]');
+      const folded = !!crumb.closest('.diff-gap-folded');
+      jump(crumb, event.detail === 0);
+      if (folded && bar) {
+        closeFolded(bar);
+        // From the keyboard, focus goes back to the breadcrumb, as for a crumb that showed.
+        if (event.detail === 0) bar.querySelector<HTMLElement>('.diff-gap-live [data-more]')?.focus({ preventScroll: true });
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const bar = (event.target as Element | null)?.closest('[data-hunk-header][data-folded-open]');
+      if (!bar || !closeFolded(bar)) return;
+      event.stopPropagation();
+      bar.querySelector<HTMLElement>('.diff-gap-live [data-more]')?.focus({ preventScroll: true });
     };
     // Focus on a pinned crumb keeps the header pinned-looking: focus elsewhere in it brings back its own location and
     // its controls, which act on the hunk.
     const onFocus = (event: FocusEvent) => {
-      const slot = (event.target as Element | null)?.closest('.diff-gap-live');
+      const slot = (event.target as Element | null)?.closest('.diff-gap-live, .diff-gap-folded');
       const into = event.type === 'focusin' || (event.relatedTarget instanceof Node && !!slot?.contains(event.relatedTarget));
       slot?.closest('[data-hunk-header]')?.toggleAttribute('data-live-focus', into);
     };
     element.addEventListener('click', onClick);
+    element.addEventListener('keydown', onKey);
     element.addEventListener('focusin', onFocus);
     element.addEventListener('focusout', onFocus);
     return () => {
@@ -1373,6 +1442,7 @@ export function ChangesDiff<A>({
       stopJump();
       clearHere();
       element.removeEventListener('click', onClick);
+      element.removeEventListener('keydown', onKey);
       element.removeEventListener('focusin', onFocus);
       element.removeEventListener('focusout', onFocus);
     };
