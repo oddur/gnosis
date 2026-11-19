@@ -47,6 +47,7 @@ import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
 import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId, Slide } from '../../lib/types';
 import { DEFAULT_FAST_CLAUDE_MODEL, PROVIDERS } from '../../lib/models';
+import { markHere } from '../../lib/diff-here';
 
 export interface ChangesFileTarget {
   url: string;
@@ -493,9 +494,13 @@ function ReviewPageContent({
         if (target) {
           inspectedTarget.current = codeTarget.nonce;
           target.scrollIntoView({ block: 'center' });
-          target.classList.remove('check-highlight');
-          void target.offsetWidth;
-          target.classList.add('check-highlight');
+          // A line gets the same "here" as a jump in Changes (lib/diff-here.ts); a whole file, a brief wash.
+          if (target.matches('[data-line]')) markHere([target]);
+          else {
+            target.classList.remove('check-highlight');
+            void target.offsetWidth;
+            target.classList.add('check-highlight');
+          }
           target.tabIndex = -1;
           target.focus({ preventScroll: true });
           clearInterval(timer);

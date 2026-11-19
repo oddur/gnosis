@@ -213,3 +213,15 @@ export function codePaletteCSS(theme: string, palette: CodePalette): string {
   // restyle every line of the diff (#366).
   return `[data-code-theme="${name}"] :is(.diff-gap,.changes-file-header){${declarations.join(';')}}`;
 }
+
+/**
+ * "You are here" (lib/diff-here.ts): the band under a line the reader was taken to is this saturated blue, laid over
+ * the line's own surface (context, added or deleted) at HERE_SETTLED, blooming from HERE_PEAK as it arrives. A deep
+ * blue changes the surface's hue more than its lightness, so the band shows on every theme while the line's text keeps
+ * most of its contrast; the bar on the gutter's edge is the code tier's ring (--code-ring), solid.
+ */
+export const HERE_BAND = '#2f55d4';
+export const HERE_SETTLED = 0.22;
+export const HERE_PEAK = 0.38;
+/** The ring the band's bar is drawn in, as --code-ring in tokens.css. */
+export const HERE_BAR = CODE_RING;

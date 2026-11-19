@@ -142,7 +142,7 @@ void app.whenReady().then(async () => {
       win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     }
     await sleep(100);
-    await wait(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).length>0`, 60);
+    await wait(`window.deepAll('[data-here]',document.querySelector(${JSON.stringify(root)})).length>0`, 60);
     await settle();
     const after = await jumpState(root, text);
     console.log(`${surface}: ${label}`, JSON.stringify({ before: { ...before, crumbs: undefined }, after: { ...after, crumbs: undefined } }));
@@ -161,17 +161,19 @@ void app.whenReady().then(async () => {
     if (keyboard) assert.equal(after.active, label, `${surface}: focus stays on the pinned crumb`);
     // Where it landed flashes, as a review check's line does: the line, or the gap bar standing in for it.
     const still = await js<boolean>(`matchMedia('(prefers-reduced-motion: reduce)').matches`);
-    const flashed = await js<{ kind: string; anim: string; outline: string }[]>(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).map(e=>{const c=getComputedStyle(e);
-      return {kind:e.matches('[data-line]')?'line':e.matches('.diff-gap')?'bar':'other',anim:c.animationName,outline:c.outlineStyle}})`);
-    console.log(`${surface}: flash`, JSON.stringify(flashed));
+    const flashed = await js<{ kind: string; anim: string; band: string; gutter: boolean | null }[]>(`(()=>{const marks=root=>window.deepAll('[data-here]',root).filter(e=>!e.matches('[data-column-number]')).map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');const r=e.getBoundingClientRect();
+        const i=e.getAttribute('data-line-index');const col=e.closest('[data-deletions],[data-additions]')??e.closest('[data-code]');const g=i!==null&&col?col.querySelector('[data-column-number][data-line-index="'+i+'"]'):null;
+        return {kind:e.matches('[data-line]')?'line':bar?'bar':'other',text:e.textContent.trim().slice(0,40),anim:c.animationName.replace(/-[ab]$/,''),band:c.backgroundColor,gutter:g?g.getAttribute('data-here')!==null:null,
+          edge:g?getComputedStyle(g,'::after').boxShadow:bar?c.boxShadow:null,top:Math.round(r.top),height:Math.round(r.height)}});return marks(document.querySelector(${JSON.stringify(root)}))})()`);
+    console.log(`${surface}: here`, JSON.stringify(flashed));
     assert.deepEqual(
-      flashed.map((f) => [f.kind, f.anim, ...(still ? [f.outline] : [])]),
-      [['line', still ? 'none' : 'check-flash', ...(still ? ['solid'] : [])]],
-      `${surface}: where the jump landed flashes${still ? ', still under reduced motion' : ''}`
+      flashed.map((f) => [f.kind, f.anim, f.gutter, ...(still ? [f.band] : [])]),
+      [['line', still ? 'none' : 'gnosis-here-band', true, ...(still ? ['rgba(47, 85, 212, 0.22)'] : [])]],
+      `${surface}: where the jump landed is marked here${still ? ', still under reduced motion' : ''}`
     );
-    await sleep(1700);
+    await sleep(2100);
     const done = await jumpState(root, text);
-    assert.equal(await js<number>(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).length`), 0, `${surface}: the flash ends`);
+    assert.equal(await js<number>(`window.deepAll('[data-here]',document.querySelector(${JSON.stringify(root)})).length`), 0, `${surface}: the band ends`);
     assert.equal(done.line, after.line, `${surface}: the flash moved nothing`);
     assert.equal(done.lines, after.lines, `${surface}: nothing was revealed`);
     return after;
@@ -305,7 +307,7 @@ void app.whenReady().then(async () => {
     await pinTopic();
     await checkJump('Topic', topic, 'Go to class StoreBridge', 'export class StoreBridge {', false, { between: 'private items = new Map', above: 'export const before29' });
     await capture('explanation-crumb-jump', region('.explanation-document', 0, 260));
-    // With reduced motion, the flash is a still outline.
+    // With reduced motion, the band is still.
     await pinTopic();
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });

@@ -17,6 +17,7 @@ import {
   type HunkRange,
 } from '../lib/diff-gaps';
 import { applyCodePalette } from '../lib/diff-code-palette';
+import { HERE_CSS, clearHere, markHere } from '../lib/diff-here';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
@@ -47,11 +48,8 @@ const CHANGES_CSS = `[data-code] {
 }
 /* A line scrolled to lands below the file header and its hunk's pinned header (#395). */
 [data-line] { scroll-margin-top: var(--diff-sticky-offset, 0px); }
-/* The line a pinned crumb jumped to flashes as a review check's line does (ReviewDiff's check-flash), inside its own
-   box so nothing moves (#417). Reduced motion: a still outline until ChangesDiff removes it. */
-[data-line][data-jumped] { animation: check-flash 1.6s ease-out; outline-offset: -2px; }
-@keyframes check-flash { from { outline: 2px solid var(--ring); } to { background-color: transparent; } }
-@media (prefers-reduced-motion: reduce) { [data-line][data-jumped] { animation: none; outline: 2px solid var(--ring); } }
+/* Where a jump or a review check took the reader (lib/diff-here.ts). */
+${HERE_CSS}
 ${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
 const diffStyle = {
@@ -690,6 +688,7 @@ function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side'])
     crumb.dataset.jump = '';
     crumb.dataset.side = side;
     crumb.dataset.start = String(definition.start);
+    crumb.dataset.signatureEnd = String(definition.signatureEnd);
     crumb.setAttribute('aria-label', jumpLabel(definition));
     crumb.title = jumpLabel(definition);
     const code = make('code', '');
@@ -717,9 +716,22 @@ const jumpDuration = (distance: number, screen: number) => 250 + 200 * Math.min(
 /** Exponential ease-out, reaching 1 at 1. */
 const easeOut = (t: number) => (t >= 1 ? 1 : 1 - 2 ** (-10 * t));
 
-/** A jumped-to line flashes for as long as a review check's line does (ReviewDiff); still, under reduced motion. */
-const JUMP_FLASH_MS = 1600;
-const JUMP_FLASH_STILL_MS = 1500;
+/** A definition's signature is marked "here" with its first line, up to this many lines. */
+const MAX_HERE_LINES = 12;
+
+/** Where to take the reader in a file's diff (#417, #394): a line on one side, in that side's numbers. */
+export interface DiffDestination {
+  side: LinePoint['side'];
+  line: number;
+  /** New lines to reveal first, if any are hidden: a crumb reveals from its definition down to the reader. */
+  reveal?: readonly [number, number];
+  /** The lines to mark "here", on `side`: by default the line alone, a definition's whole signature for a crumb. */
+  here?: readonly [number, number];
+}
+/** What a view holds to take the reader to a line of the file's diff, as a pinned crumb does. */
+export interface DiffNavigator {
+  goTo(destination: DiffDestination): void;
+}
 
 /** What the reader does to scroll: any of these stops a pinned crumb's jump from correcting the view (#417). */
 const READER_SCROLLS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
@@ -811,6 +823,7 @@ export function ChangesDiff<A>({
   stickyUnder,
   scopeAt,
   canReveal,
+  navigator,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -841,6 +854,8 @@ export function ChangesDiff<A>({
   scopeAt?: (point: LinePoint) => readonly SyntaxDefinition[] | undefined;
   /** Whether a gap can show its lines; by default every gap can when `onReveal` is set. */
   canReveal?: (gap: GapBarPart['gap']) => boolean;
+  /** Set while the diff can take the reader to a line, as its pinned crumbs do: the file's outline uses it. */
+  navigator?: RefObject<DiffNavigator | null>;
 }) {
   const stableOptions = useStableOptions({
     ...options,
@@ -1050,51 +1065,28 @@ export function ChangesDiff<A>({
     });
     resize.observe(header);
 
-    // A pinned crumb goes to its definition's first line (#417): it reveals the lines between that line and the reader,
-    // then scrolls the line right under the pinned headers. A line that stays hidden (a topic without it) is stood in
-    // for by its gap's bar. A line in a slice not laid out yet is aimed at by its estimated place until it mounts. The
-    // reader's wheel, touch, pointer or key stops the scroll. The pinned breadcrumb then follows the reader as after
-    // any scroll.
+    // Going to a line (#417): a pinned crumb, or a symbol of the file's outline (#394). Whatever must show is revealed
+    // first; then the line scrolls right under the pinned headers, with an eased move. A line that stays hidden (a topic
+    // without it) is stood in for by its gap's bar. A line in a slice not laid out yet is aimed at by its estimated
+    // place until it mounts. The reader's wheel, touch, pointer or key stops the scroll. Where it lands is marked "here"
+    // (lib/diff-here.ts), and the pinned breadcrumb then follows the reader as after any scroll.
     let jumpFrame = 0;
+    let jumpId = 0;
     const stopJump = () => {
       cancelAnimationFrame(jumpFrame);
       jumpFrame = 0;
       for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
     };
-    // Where a jump landed flashes, as a review check's line does, so the reader finds it: the line, or the gap bar
-    // standing in for it. Visual only. A new jump ends the last flash; reduced motion shows it still, a little shorter.
-    let flashed: { target: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined;
-    const unflash = () => {
-      if (!flashed) return;
-      clearTimeout(flashed.timer);
-      flashed.target.removeAttribute('data-jumped');
-      flashed = undefined;
-    };
-    const flash = (target: HTMLElement) => {
-      unflash();
-      target.setAttribute('data-jumped', '');
-      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-      flashed = { target, timer: setTimeout(unflash, still ? JUMP_FLASH_STILL_MS : JUMP_FLASH_MS) };
-    };
-    const jump = (crumb: HTMLElement, keyboard: boolean) => {
+    const goTo = ({ side, line: start, reveal, here = [start, start], onLanded }: DiffDestination & { onLanded?: () => void }) => {
       stopJump();
-      unflash();
-      const bar = crumb.closest<HTMLElement>('[data-hunk-header]');
-      const start = Number(crumb.dataset.start);
-      if (!bar || !start) return;
-      const side: LinePoint['side'] = crumb.dataset.side === 'before' ? 'before' : 'after';
-      // Every bar has the same height; the clicked one may go when the reveal joins its hunk to the one above.
-      const barHeight = bar.offsetHeight;
-      // Reveal first: every hidden line from the definition's first line down to where the reader is, as Show whole
-      // function does, and nothing above it. Reveals are in new numbers.
-      const [readerSide, readerLine] = (bar.getAttribute('data-live-key') ?? '').split(':');
+      clearHere();
+      const id = ++jumpId;
+      // Every bar has the same height, pinned or not.
+      const barHeight = element.querySelector<HTMLElement>('[data-hunk-header]')?.offsetHeight ?? 0;
       const parts = latestParts.current;
-      const from = newLineAt(parts, side, start);
-      const to = newLineAt(parts, readerSide === 'before' ? 'before' : 'after', Number(readerLine));
-      const revealing =
-        from !== undefined && to !== undefined && from < to && hiddenBetween(parts, from, to - 1) ? parts : undefined;
-      if (revealing && from !== undefined && to !== undefined) latestShow.current?.({ kind: 'whole', start: from, end: to - 1 });
-      // What the jump lands on, for the flash.
+      const revealing = reveal && reveal[0] <= reveal[1] && hiddenBetween(parts, reveal[0], reveal[1]) ? parts : undefined;
+      if (revealing && reveal) latestShow.current?.({ kind: 'whole', start: reveal[0], end: reveal[1] });
+      // What the jump lands on, for the "here" mark.
       let landed: HTMLElement | undefined;
       // Where the place is (`y`) and where it should be (`to`), in viewport pixels, found anew each frame: the reveal
       // and late slices move it.
@@ -1140,6 +1132,7 @@ export function ChangesDiff<A>({
       let still = 0;
       const step = (now: number) => {
         jumpFrame = 0;
+        if (id !== jumpId) return;
         // The revealed lines render first; scroll anchoring keeps the reader's lines in place meanwhile.
         if (revealing && latestParts.current === revealing && waited++ < REVEAL_WAIT_FRAMES) {
           jumpFrame = requestAnimationFrame(step);
@@ -1171,15 +1164,49 @@ export function ChangesDiff<A>({
         }
         stopJump();
         where();
-        if (landed?.isConnected) flash(landed);
-        // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
-        if (!keyboard) return;
-        const slot = [...pinned].find((b) => b.isConnected && b.dataset.live === 'scope')?.querySelector<HTMLElement>('.diff-gap-live');
-        if (slot && !slot.contains(document.activeElement)) focusCrumb(slot, String(start));
+        if (landed?.isConnected) {
+          // A line is marked with the rest of `here` on its side, such as a definition's whole signature; a bar alone.
+          const rows: HTMLElement[] = [landed];
+          if (landed.matches('[data-line]'))
+            for (let n = start + 1; n <= here[1] && n < start + MAX_HERE_LINES; n++) {
+              const row = lineElement(element, side, n);
+              if (row) rows.push(row);
+            }
+          markHere(rows);
+        }
+        onLanded?.();
       };
       for (const type of READER_SCROLLS) scroller.addEventListener(type, stopJump, { passive: true });
       step(performance.now());
     };
+    // A pinned crumb goes to its definition's first line (#417): it reveals every hidden line from there down to where
+    // the reader is, as Show whole function does, and nothing above it. Reveals are in new numbers. The definition's
+    // signature is marked with its first line.
+    const jump = (crumb: HTMLElement, keyboard: boolean) => {
+      const bar = crumb.closest<HTMLElement>('[data-hunk-header]');
+      const start = Number(crumb.dataset.start);
+      if (!bar || !start) return;
+      const side: LinePoint['side'] = crumb.dataset.side === 'before' ? 'before' : 'after';
+      const [readerSide, readerLine] = (bar.getAttribute('data-live-key') ?? '').split(':');
+      const parts = latestParts.current;
+      const from = newLineAt(parts, side, start);
+      const to = newLineAt(parts, readerSide === 'before' ? 'before' : 'after', Number(readerLine));
+      goTo({
+        side,
+        line: start,
+        reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
+        here: [start, Math.max(start, Number(crumb.dataset.signatureEnd) || start)],
+        // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
+        onLanded: keyboard
+          ? () => {
+              const slot = [...pinned].find((b) => b.isConnected && b.dataset.live === 'scope')?.querySelector<HTMLElement>('.diff-gap-live');
+              if (slot && !slot.contains(document.activeElement)) focusCrumb(slot, String(start));
+            }
+          : undefined,
+      });
+    };
+    const navigation: DiffNavigator = { goTo };
+    if (navigator) navigator.current = navigation;
     const onClick = (event: MouseEvent) => {
       const crumb = (event.target as Element | null)?.closest<HTMLElement>('.diff-gap-live button[data-jump]');
       if (crumb && element.contains(crumb)) jump(crumb, event.detail === 0);
@@ -1200,8 +1227,9 @@ export function ChangesDiff<A>({
       stuck.current = undefined;
       listen(false);
       follow.current = undefined;
+      if (navigator?.current === navigation) navigator.current = null;
       stopJump();
-      unflash();
+      clearHere();
       element.removeEventListener('click', onClick);
       element.removeEventListener('focusin', onFocus);
       element.removeEventListener('focusout', onFocus);

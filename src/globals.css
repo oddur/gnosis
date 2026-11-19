@@ -558,8 +558,9 @@
 
 /* ─── Check suggestion jump highlight ────────────────────────── */
 
-/* When a reviewer clicks a "What to check" hint, the target diff
-   line gets this class briefly. The ::after overlays the line with a
+/* When a reviewer opens code from the explanation and it lands on a
+   whole file rather than a line, the file gets this class briefly. A
+   line is marked "here" instead (lib/diff-here.ts). The ::after overlays the line with a
    claret wash that fades to zero — a page-turning blink rather than
    a pulsing highlight. isolation:isolate keeps the overlay contained
    if the target happens to be inside another stacking context. */
@@ -1883,11 +1884,30 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-gap-where { align-self:stretch; }
 .diff-gap-live { align-self:stretch; align-items:center; }
 .diff-gap-live button.diff-gap-crumb::after { inset:50% 0 auto; height:24px; translate:0 -50%; }
-/* A jump whose line is hidden lands on its gap's bar, which flashes as a jumped-to line does (ChangesDiff's
-   check-flash), with an outline inside its box so nothing moves. */
-.diff-gap[data-jumped] { animation:check-flash 1.6s ease-out; outline-offset:-2px; }
-@keyframes check-flash { from { outline:2px solid var(--ring); } to { background-color:var(--diff-header-bg); } }
-@media (prefers-reduced-motion: reduce) { .diff-gap[data-jumped] { animation:none; outline:2px solid var(--ring); } }
+/* A jump whose line is hidden lands on its gap's bar, which is marked "here" as a line is (lib/diff-here.ts): a band
+   in the code tier's blue under its text, with a bar on its left edge, that blooms, settles and fades. Nothing moves. */
+.diff-gap[data-here] { isolation:isolate; }
+.diff-gap[data-here]:not([data-hunk-header]) { position:relative; }
+.diff-gap[data-here]::before {
+  content:''; position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background-color:rgb(47 85 212 / 0%); animation:2s linear forwards gnosis-here-bar;
+}
+.diff-gap[data-here=b]::before { animation-name:gnosis-here-bar-b; }
+@keyframes gnosis-here-bar {
+  0% { background-color:rgb(47 85 212 / 38%); box-shadow:inset 3px 0 0 var(--code-ring); animation-timing-function:cubic-bezier(0.33, 0, 0.2, 1); }
+  38%, 72% { background-color:rgb(47 85 212 / 22%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  72% { animation-timing-function:cubic-bezier(0.4, 0, 0.6, 1); }
+  100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
+}
+@keyframes gnosis-here-bar-b {
+  0% { background-color:rgb(47 85 212 / 38%); box-shadow:inset 3px 0 0 var(--code-ring); animation-timing-function:cubic-bezier(0.33, 0, 0.2, 1); }
+  38%, 72% { background-color:rgb(47 85 212 / 22%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  72% { animation-timing-function:cubic-bezier(0.4, 0, 0.6, 1); }
+  100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .diff-gap[data-here]::before { animation:none; background-color:rgb(47 85 212 / 22%); box-shadow:inset 3px 0 0 var(--code-ring); }
+}
 /* The lines after a file's last hunk: one code line, on the code's background under a hairline, the action at the
    code's text column. */
 .diff-gap[data-trailing] { min-height:var(--leading-code); padding:0; background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }

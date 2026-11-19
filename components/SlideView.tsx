@@ -15,6 +15,7 @@ import { ArrowRight, Check, Copy, CopyX } from 'lucide-react';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { Button } from '@/components/ui/button';
 import { findReviewLine, reviewDiffTheme } from './ReviewDiff';
+import { markHere } from '@/lib/diff-here';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
 import { ReviewFileDiscussion } from './ReviewFileDiscussion';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
@@ -561,9 +562,8 @@ export function SlideView({
         const line = findReviewLine(container, filePath, check.startLine as number);
         if (!line?.isConnected) return;
         line.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        line.classList.remove('check-highlight');
-        void line.offsetWidth;
-        line.classList.add('check-highlight');
+        // The same "here" as a pinned crumb's jump in Changes (lib/diff-here.ts).
+        markHere([line]);
       });
     },
     [onInspectCode]

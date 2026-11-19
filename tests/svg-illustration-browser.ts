@@ -177,7 +177,7 @@ void app.whenReady().then(async () => {
     await capture('slide-integration');
     await click('Show supporting code');
     await wait(
-      "[...document.querySelectorAll('diffs-container')].some(el=>!!el.shadowRoot?.querySelector('.check-highlight'))"
+      "[...document.querySelectorAll('diffs-container')].some(el=>!!el.shadowRoot?.querySelector('[data-here]'))"
     );
     await loadWorkbenchPage(win,
       (process.env.GNOSIS_WORKBENCH_URL ?? '').replace('workbench.html', 'mechanisms.html') + '?motion-fixture'

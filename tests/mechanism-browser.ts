@@ -161,7 +161,7 @@ void app.whenReady().then(async () => {
     await capture('slide-integration');
     await click('Show supporting code');
     await wait(
-      "[...document.querySelectorAll('diffs-container')].some(el=>!!el.shadowRoot?.querySelector('.check-highlight'))"
+      "[...document.querySelectorAll('diffs-container')].some(el=>!!el.shadowRoot?.querySelector('[data-here]'))"
     );
     console.log(`Mechanism browser checks passed. Captures: ${dir}`);
   } catch (error) {
