@@ -1,5 +1,6 @@
 import type { ReactNode, Ref } from 'react';
-import { Pilcrow, SquareSlash } from 'lucide-react';
+import { Brush, Pilcrow, SquareSlash } from 'lucide-react';
+import type { QuietHeader } from '../lib/quiet-changes-header';
 import { DiffStats } from './DiffStats';
 import { FileTypeIcon } from './FileTypeIcon';
 
@@ -43,7 +44,7 @@ export function DiffFileHeader({
    * How much of the change is noise the reader hides (#396), quietly after the counts: "90 formatting", or the
    * file's whole label, "Formatting only", when every change is.
    */
-  noise?: { text: string; title: string; comments: boolean };
+  noise?: QuietHeader;
 }) {
   const fullPath = previousPath ? `${previousPath} → ${path}` : path;
   const counted = additions !== undefined && deletions !== undefined;
@@ -77,8 +78,13 @@ export function DiffFileHeader({
               {noise && (
                 <>
                   <span className="changes-file-sep"> · </span>
-                  <span className="changes-file-noise" title={noise.title} data-noise-stat="">
-                    {noise.comments ? <SquareSlash size={12} aria-hidden="true" /> : <Pilcrow size={12} aria-hidden="true" />}
+                  <span className="changes-file-noise" title={noise.title} data-noise-stat="" data-noise-kind={noise.kind}>
+                    <QuietIcon kind={noise.kind} />
+                    {noise.code && (
+                      <span className="changes-file-code" data-noise-code="">
+                        <DiffStats additions={noise.code.added} deletions={noise.code.deleted} /> code ·{' '}
+                      </span>
+                    )}
                     {noise.text}
                   </span>
                 </>
@@ -109,4 +115,10 @@ export function FilePath({ path, old }: { path: string; old?: boolean }) {
       <span className="changes-file-name">{path.slice(slash + 1)}</span>
     </span>
   );
+}
+
+/** A quiet change's icon, beside its words: a pilcrow for whitespace, a brush for formatting, a slash for comments. */
+function QuietIcon({ kind }: { kind: QuietHeader['kind'] }) {
+  const Icon = kind === 'comments' ? SquareSlash : kind === 'formatting' ? Brush : Pilcrow;
+  return <Icon size={12} aria-hidden="true" />;
 }

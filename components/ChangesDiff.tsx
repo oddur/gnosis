@@ -27,7 +27,7 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
-import { Pilcrow, SquareSlash } from 'lucide-react';
+import { Brush, Pilcrow, SquareSlash } from 'lucide-react';
 import { blockKey, changeBlocks, hunkNoise, noiseLabel, type HunkNoise, type NoiseKind } from '../lib/semantic-noise';
 import type { DiffNoise } from './useDiffFileModel';
 
@@ -872,9 +872,10 @@ function markNoise(host: Element, lines: ReadonlySet<string>) {
   }
 }
 
-/** A quiet run's icon: a pilcrow for layout, a comment slash for comments. */
+/** A quiet run's icon: a pilcrow for whitespace, a brush for formatting, a slash for comments. */
 function NoiseIcon({ kinds }: { kinds: readonly NoiseKind[] }) {
-  const Icon = noiseLabel(kinds) === 'Comments only' ? SquareSlash : Pilcrow;
+  const label = noiseLabel(kinds);
+  const Icon = label === 'Comments only' ? SquareSlash : label.startsWith('Formatting') ? Brush : Pilcrow;
   return <Icon className="diff-noise-icon" size={13} strokeWidth={2} aria-hidden="true" />;
 }
 
@@ -1251,6 +1252,8 @@ export function ChangesDiff<A>({
   latestParts.current = parts;
   const latestBlocks = useRef(blocks);
   latestBlocks.current = blocks;
+  const latestNoise = useRef(noise);
+  latestNoise.current = noise;
   const latestShow = useRef(onShowDefinition);
   latestShow.current = onShowDefinition;
   const latestName = useRef('');
@@ -1415,6 +1418,11 @@ export function ChangesDiff<A>({
         }
         const block = latestBlocks.current.find((b) => b.kind === 'hunk' && b.key === place.key);
         if (block?.kind !== 'hunk' || !block.slices.length) return undefined;
+        // The line is in a hunk collapsed as a quiet change: it opens, and the jump aims again once it renders.
+        if (block.quiet?.hidden) {
+          latestNoise.current?.show(block.blockKeys);
+          return undefined;
+        }
         const index = Math.min(block.slices.length - 1, Math.floor(place.row / HUNK_SLICE_SIZE));
         const slice = block.slices[block.slices.length > 1 ? index : 0];
         const holder = element.querySelector<HTMLElement>(`[data-slice="${CSS.escape(slice.key)}"]`);
@@ -1750,7 +1758,8 @@ export function ChangesDiff<A>({
   if (quietNoise?.file) {
     const changes = quietNoise.file.added + quietNoise.file.deleted;
     const hunks = blocks.filter((block) => block.kind === 'hunk' && block.changed).length;
-    const label = noiseLabel(quietNoise.file.kinds);
+    // A whole file of layout changes across hunks reads as a formatter run: "Reformatted".
+    const label = quietNoise.file.reformatted ? 'Reformatted' : noiseLabel(quietNoise.file.kinds);
     content.length = 0;
     content.push(
       <div key="noise-file" className="diff-gap" role="group" aria-label={`${label}: every change in this file`} data-trailing="" data-noise-file={label}>

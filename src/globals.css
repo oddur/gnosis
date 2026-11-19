@@ -1964,6 +1964,20 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .changes-file-noise svg { flex:none; }
 .changes-progress-quiet { color:var(--muted-foreground); }
 .diff-outline-noise { flex:none; padding-left:0; white-space:nowrap; }
+/* A bar takes the place of its hunk calmly when quiet changes collapse. */
+@media (prefers-reduced-motion: no-preference) {
+  .diff-gap[data-noise-bar], .diff-gap[data-noise-file] { animation:noise-bar-in 180ms cubic-bezier(0.16, 1, 0.3, 1); }
+}
+@keyframes noise-bar-in { from { opacity:0; } }
+.changes-file-code { display:inline-flex; align-items:baseline; gap:.5ch; }
+/* The quiet changes summary in the Changes toolbar: one quiet chip, its count in tabular figures. */
+.quiet-chip-count { font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
+.quiet-chip[data-quiet-chip=on] .quiet-chip-count { color:inherit; }
+.quiet-breakdown { display:flex; flex-direction:column; gap:4px; margin:0; padding:0; list-style:none; font-size:var(--type-caption); }
+.quiet-breakdown-row { display:flex; align-items:center; gap:8px; min-height:22px; }
+.quiet-breakdown-row svg { flex:none; color:var(--muted-foreground); }
+.quiet-breakdown-count { margin-left:auto; font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
+.quiet-breakdown-files { color:var(--muted-foreground); }
 /* A file's outline of changed symbols (#394, DiffOutline): one quiet code line between the file header and the first
    hunk, on the code's background with a hairline under it, as the trailing bar is. What the changes touch, each symbol
    marked added, modified or removed by icon as well as colour, and how many the reviewer has ticked. Expanded, a list

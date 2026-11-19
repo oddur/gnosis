@@ -17,6 +17,7 @@ import { useFileFilterSync } from '../lib/use-raw-file-filters';
 import { WorkspaceDraftBoundary, retainWorkspaceDrafts } from '../lib/session-drafts';
 import { CommandCenter } from '../lib/command-center';
 import { useDiffLayoutShortcuts } from '../lib/use-diff-layout-shortcuts';
+import { useQuietChangesShortcut } from '../lib/quiet-changes';
 import { hasVisibleModal, WorkspaceNavigation } from '../lib/workspace-navigation';
 import {
   initialWorkspaceTabs,
@@ -68,6 +69,7 @@ function startSavedQueue() {
 /** Diff layout keys and commands need the command center, so they live inside it. */
 function DiffLayoutShortcuts() {
   useDiffLayoutShortcuts();
+  useQuietChangesShortcut();
   return null;
 }
 

@@ -46,6 +46,9 @@ const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_SHOWN: readonly ShownScope[] = [];
 const NO_DEFINITIONS: readonly SyntaxDefinition[] = [];
 const NO_SHOWN_NOISE: ReadonlySet<string> = new Set();
+/** Quiet changes the reader opened, by file revision (and a topic's hunks): kept for the session, newest last. */
+const openedNoise = new Map<string, ReadonlySet<string>>();
+const OPENED_NOISE_FILES = 500;
 
 /**
  * The diff's quiet changes (#396), for ChangesDiff: each change block's kind, what the reader hides, and the blocks
@@ -260,8 +263,9 @@ export function useDiffFileModel({
     priority: tier,
     whole: !partial,
   });
+  // What the reader opened stays open for the session, though the file's diff unmounts as it scrolls away.
   const [shownNoise, setShownNoise] = useState<{ key: string; value: ReadonlySet<string> }>();
-  const noiseShown = shownNoise?.key === revealKey ? shownNoise.value : NO_SHOWN_NOISE;
+  const noiseShown = shownNoise?.key === revealKey ? shownNoise.value : (openedNoise.get(revealKey) ?? NO_SHOWN_NOISE);
   // Changed lines the reader hides and has not opened: the outline leaves them out.
   const quietLines = useMemo(() => {
     if (!noiseOn || !noise.blocks) return undefined;
@@ -282,7 +286,14 @@ export function useDiffFileModel({
       shown: noiseShown,
       show: (keys) => {
         if (sectionRef.current) keepDiffLineInView(sectionRef.current);
-        setShownNoise({ key: revealKey, value: new Set([...noiseShown, ...keys]) });
+        const value = new Set([...noiseShown, ...keys]);
+        openedNoise.delete(revealKey);
+        openedNoise.set(revealKey, value);
+        for (const key of openedNoise.keys()) {
+          if (openedNoise.size <= OPENED_NOISE_FILES) break;
+          openedNoise.delete(key);
+        }
+        setShownNoise({ key: revealKey, value });
       },
       file,
       fileHidden: !!file?.all && !noise.blocks?.some((block) => noiseShown.has(blockKey(block))),

@@ -13,6 +13,8 @@ export interface DiffAppearance {
    * lib/semantic-noise.ts). Undefined is the default: formatting hidden, comments shown.
    */
   hideWhitespace?: boolean;
+  /** Hides formatting too: equivalent tokens a formatter writes (quotes, trailing commas, optional parentheses…). */
+  hideFormatting?: boolean;
   hideComments?: boolean;
 }
 export const DEFAULT_DIFF_APPEARANCE: DiffAppearance = {
@@ -23,16 +25,24 @@ export const DEFAULT_DIFF_APPEARANCE: DiffAppearance = {
   wrap: false,
   lineNumbers: true,
   hideWhitespace: true,
+  hideFormatting: true,
   hideComments: false,
 };
 
 /**
- * What a diff hides as noise. Formatting is hidden by default: a change the classifier calls formatting has the same
- * tokens in the same syntax tree, so hiding it loses nothing, and the bar in its place shows it. Comments are shown by
- * default: they are prose a reviewer may need to check, and a wrong comment is a bug of its own.
+ * What a diff hides as noise (lib/semantic-noise.ts). Whitespace is hidden by default: the tokens and tree are the same.
+ * Formatting is hidden by default too: its equivalences are exact per grammar, and formatter and mutation runs over
+ * real code found no change of meaning among them (scripts/noise-audit.ts). Comments are shown by default: they are
+ * prose a reviewer may need to check. Saved preferences from before formatting had its own toggle meant formatting
+ * by "whitespace", so formatting follows that toggle until it is set.
  */
-export function noiseFilterOf(appearance?: Pick<DiffAppearance, 'hideWhitespace' | 'hideComments'>) {
-  return { whitespace: appearance?.hideWhitespace ?? true, comments: appearance?.hideComments ?? false };
+export function noiseFilterOf(appearance?: Pick<DiffAppearance, 'hideWhitespace' | 'hideFormatting' | 'hideComments'>) {
+  const whitespace = appearance?.hideWhitespace ?? true;
+  return {
+    whitespace,
+    formatting: appearance?.hideFormatting ?? whitespace,
+    comments: appearance?.hideComments ?? false,
+  };
 }
 
 export function diffContextLines(appearance?: DiffAppearance): number {
@@ -88,3 +98,20 @@ export const CODE_LINE_HEIGHT = 20;
 /** A hunk longer than this renders as several diffs, so off-screen slices can skip style and layout (lib/diff-gaps.ts). */
 export const HUNK_SLICE_LIMIT = 300;
 export const HUNK_SLICE_SIZE = 200;
+
+export type QuietToggles = Pick<DiffAppearance, 'hideWhitespace' | 'hideFormatting' | 'hideComments'>;
+/**
+ * The quiet changes toggles after `w` (lib/quiet-changes.ts): all off when any is on; else the reader's last choice,
+ * or the defaults.
+ */
+export function toggledQuietChanges(appearance: DiffAppearance, last?: QuietToggles): QuietToggles {
+  const filter = noiseFilterOf(appearance);
+  if (filter.whitespace || filter.formatting || filter.comments) return { hideWhitespace: false, hideFormatting: false, hideComments: false };
+  return (
+    last ?? {
+      hideWhitespace: DEFAULT_DIFF_APPEARANCE.hideWhitespace,
+      hideFormatting: DEFAULT_DIFF_APPEARANCE.hideFormatting,
+      hideComments: DEFAULT_DIFF_APPEARANCE.hideComments,
+    }
+  );
+}

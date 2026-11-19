@@ -3,9 +3,10 @@ import { patchOf } from './syntax-scope';
 
 /**
  * `?noise-filter`: quiet changes (#396, tests/noise-filter-browser.ts). Each file is a case the filter must get right:
- * - `src/noise/format.ts`: every change is formatting (reindented, rewrapped, respaced): the file is one bar.
+ * - `src/noise/format.ts`: every change is whitespace (reindented, rewrapped, respaced): the file is one bar.
+ * - `src/noise/prettier.ts`: a formatter run (quotes, semicolons, trailing commas, parentheses): "Reformatted".
  * - `src/noise/comments.ts`: every change is a comment (a JSDoc edit, a comment added, one removed).
- * - `src/noise/mixed.ts`: a formatting-only hunk, a code hunk, a hunk with a reformatted line one line above a code
+ * - `src/noise/mixed.ts`: a formatting-only hunk (quote style), a code hunk, a hunk with a reformatted line one line above a code
  *   change (it stays, its formatting line dimmed), and a comment-only hunk.
  * - `src/noise/indent.py`: a re-indented line that leaves a loop (code, never hidden), and a respaced signature.
  * - `config/noise.yaml`: a key re-indented out of its mapping (code, never hidden), and a respaced value.
@@ -65,6 +66,8 @@ const commentsAfter = [
   ...filler('d', 8),
 ];
 
+// A function whose respaced signature is quiet and whose last line changes code: its breadcrumb jumps into the bar.
+const COMPUTE_BODY = Array.from({ length: 24 }, (_, i) => `  const step${i} = a * ${i} + b;`);
 const mixedBefore = [
   "import { join } from 'node:path';",
   'export const base = join("a","b");',
@@ -83,10 +86,14 @@ const mixedBefore = [
   '// Rounds down.',
   'export const floor = Math.floor;',
   ...filler('q', 6),
+  'export function compute(a:number,b:number):number {',
+  ...COMPUTE_BODY,
+  '  return a + b;',
+  '}',
 ];
 const mixedAfter = [
   "import { join } from 'node:path';",
-  'export const base = join("a", "b");',
+  "export const base = join('a', 'b');",
   ...filler('m', 20),
   'export function scale(value: number): number {',
   '  return value * 3;',
@@ -102,6 +109,10 @@ const mixedAfter = [
   '// Rounds towards negative infinity.',
   'export const floor = Math.floor;',
   ...filler('q', 6),
+  'export function compute(a: number, b: number): number {',
+  ...COMPUTE_BODY,
+  '  return a - b;',
+  '}',
 ];
 
 const pyFiller = (count: number) => Array.from({ length: count }, (_, i) => (i % 5 === 4 ? `# Section ${i}.` : `VALUE_${i} = ${i}`));
@@ -136,7 +147,33 @@ const yamlFiller = Array.from({ length: 20 }, (_, i) => `key_${i}: ${i}`);
 const yamlBefore = ['server:', '  port: 80', '  tls:', '    cert: a', '  host: example', ...yamlFiller, 'retries:   3', 'timeout: 10'];
 const yamlAfter = ['server:', '  port: 80', '  tls:', '    cert: a', 'host: example', ...yamlFiller, 'retries: 3', 'timeout: 10'];
 
+// A formatter run: quotes, semicolons, trailing commas and parentheses, in four hunks.
+const prettierBefore = [
+  "import { join } from 'node:path'",
+  ...filler('r', 12),
+  "export const names = ['alpha', 'beta']",
+  ...filler('s', 12),
+  'export const sum = (a) => (a + 1)',
+  ...filler('t', 12),
+  "export const label = 'done'",
+  ...filler('u', 4),
+];
+const prettierAfter = [
+  'import { join } from "node:path";',
+  ...filler('r', 12),
+  'export const names = [',
+  '  "alpha",',
+  '  "beta",',
+  '];',
+  ...filler('s', 12),
+  'export const sum = a => a + 1;',
+  ...filler('t', 12),
+  'export const label = "done";',
+  ...filler('u', 4),
+];
+
 export const NOISE_FILES = {
+  prettier: 'src/noise/prettier.ts',
   format: 'src/noise/format.ts',
   comments: 'src/noise/comments.ts',
   mixed: 'src/noise/mixed.ts',
@@ -145,6 +182,7 @@ export const NOISE_FILES = {
 } as const;
 const SOURCES: [string, string[], string[]][] = [
   [NOISE_FILES.format, formatBefore, formatAfter],
+  [NOISE_FILES.prettier, prettierBefore, prettierAfter],
   [NOISE_FILES.comments, commentsBefore, commentsAfter],
   [NOISE_FILES.mixed, mixedBefore, mixedAfter],
   [NOISE_FILES.python, pythonBefore, pythonAfter],

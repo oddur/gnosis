@@ -2,42 +2,50 @@ import type * as TreeSitter from 'web-tree-sitter';
 import type { SyntaxLanguage } from './syntax-scope';
 
 /**
- * Formatting-only and comment-only changes (#396), from the two sides' syntax trees.
+ * Quiet changes (#396): whitespace-only, formatting-only and comment-only changes, from the two sides' syntax trees.
  *
  * A diff's unit here is a change block: a run of added and deleted lines with no unchanged line between them. A
  * GitHub hunk holds one or more; a view that joins hunks (a revealed gap) still shows the same blocks. Each block is
- * - `formatting` when both sides have the same code: the same tokens, in the same tree, with only whitespace, line
- *   breaks, blank lines, and the equivalences below between them;
- * - `comments` when the code is the same and only comments differ (added, removed or edited, doc comments too);
- * - `both` when the code is the same and comments and layout both differ;
+ * - `whitespace` when both sides have the same tokens as written, in the same tree: only indentation, line breaks,
+ *   spaces and blank lines differ;
+ * - `formatting` when the tokens differ only by the equivalences below, which a formatter writes;
+ * - `comments` when the code is the same as written and only comments differ (doc comments too), at the same layout;
+ * - `whitespace-comments` and `formatting-comments` when comments differ along with whitespace or formatting;
  * - `code` otherwise, and whenever the comparison is in doubt.
  *
  * The comparison is structural: each tree is read as a sequence of events (a node opens, a token, the node closes),
- * with comments left out. Comparing structure as well as tokens is what keeps whitespace-sensitive languages safe: a
- * Python line that changes indentation changes which `block` holds it, a YAML key that changes indentation changes
- * which mapping holds it, and a JavaScript line break after `return` changes the statements. Those trees differ, so
- * the block is code.
+ * with comments left out, once with the equivalences and once as written. Comparing structure as well as tokens is
+ * what keeps whitespace-sensitive languages safe: a Python line that changes indentation changes which `block` holds
+ * it, a YAML key that changes indentation changes which mapping holds it, and a JavaScript line break after `return`
+ * changes the statements. Those trees differ, so the block is code. When the two whole files read the same, every
+ * block is quiet, however the line diff paired their lines.
  *
- * Safeguards, so that "formatting only" is never wrong:
+ * Safeguards, so that a quiet label is never wrong:
  * - Either side with a parse error (an ERROR or MISSING node anywhere) makes every block code.
  * - Strings, template strings, regexes, characters and YAML scalars are compared whole, as written: a change of
  *   whitespace inside one is a change of the program. Text inside a node that no child covers is compared too.
- * - A string or other token that spans a block's edge makes that block code.
+ * - A string or other token across a block's edge makes every block it reaches code once the string changed.
  * - The unchanged lines between blocks must give the same events on both sides. Where they do not (a change made a
  *   comment swallow code, or regrouped the code around it), the blocks whose nodes reach the difference are code, and
  *   if no block reaches it, every block is.
- * - Comments that tools read are code: `//go:build`, `// +build`, `@ts-ignore`, `/// <reference …>`, `# type:`, and
- *   the like.
+ * - Comments that tools read are code: `//go:build`, `// +build`, `@ts-ignore`, `/// <reference …>`, `# type:`,
+ *   `eslint-disable`, `prettier-ignore`, and the like.
+ * - Import order is never formatting: a module can run code when it is imported.
  *
- * Equivalences, chosen where the grammar makes them exact:
- * - A trailing comma before `)`, `]`, `}` or `>` in argument, parameter, array, object, import and type lists, per
- *   language. Never in Python tuples or subscripts, Rust tuples, or anything not listed.
+ * Equivalences (formatting), each exact in its grammar; FLATTEN and `optional` hold the structural ones:
+ * - A trailing comma before `)`, `]`, `}` or `>` in argument, parameter, array, object, import, type and pattern lists,
+ *   per language, and in tuples of two or more. Never in a one-element tuple, a Python subscript, or a macro.
  * - Single or double quotes around a simple string in JavaScript, TypeScript and Python (no escapes, no quotes inside,
- *   no prefix), and around a simple quoted YAML scalar.
+ *   no prefix), and around a simple quoted YAML scalar. JSX text as React reads it.
+ * - Number spelling: digit separators, letter case, and in JavaScript the value (`1.50` is `1.5`).
+ * - JavaScript and TypeScript: optional `;`, parentheses where they group nothing, one arrow parameter's parentheses,
+ *   a union's leading `|`, braces around one statement. Python: parentheses around a whole value. Rust: a match arm's or
+ *   closure's `{ expr }`, a match arm's `,`. Java and C#: braces around one statement.
  * - A Python docstring (a string alone as the first statement of a module, class or function) is a doc comment.
- * Redundant parentheses are not an equivalence: whether they are redundant depends on precedence.
+ *
+ * scripts/noise-audit.ts checks these on real code: formatter output must be quiet, and mutations must be code.
  */
-export type NoiseKind = 'formatting' | 'comments' | 'both' | 'code';
+export type NoiseKind = 'whitespace' | 'formatting' | 'comments' | 'whitespace-comments' | 'formatting-comments' | 'code';
 
 /** A run of changed lines. Starts are 1-based line numbers; a side with no lines names the line its change sits before. */
 export interface ChangeBlock {
@@ -254,14 +262,23 @@ const TRAILING_COMMA: Record<SyntaxLanguage, Set<string>> = {
     'type_arguments',
     'type_parameters',
     'struct_pattern',
+    'tuple_struct_pattern',
+    'slice_pattern',
+    'ordered_field_declaration_list',
   ]),
   go: new Set(['argument_list', 'parameter_list', 'literal_value', 'type_arguments', 'type_parameter_list']),
   python: new Set(['argument_list', 'parameters', 'list', 'dictionary', 'set', 'import_from_statement']),
   java: new Set(['array_initializer', 'element_value_array_initializer']),
   csharp: new Set(['initializer_expression', 'enum_member_declaration_list', 'collection_expression', 'switch_expression']),
   json: new Set(),
-  yaml: new Set(),
+  // YAML flow collections allow a comma before their closing bracket.
+  yaml: new Set(['flow_sequence', 'flow_mapping']),
 };
+/**
+ * Tuples, where a trailing comma is optional once there are two elements: `(a, b,)` is `(a, b)`, but `(a,)` is a tuple
+ * and `(a)` is not.
+ */
+const TUPLES = new Set(['tuple_expression', 'tuple_pattern', 'tuple_type', 'tuple']);
 const CLOSERS = new Set([')', ']', '}', '>']);
 
 /** Comments that tools read: changing one changes the build, the type check or the bundle. */
@@ -288,6 +305,41 @@ export function jsxText(value: string): string {
     result += i === lastNonEmpty ? trimmed : `${trimmed} `;
   });
   return result;
+}
+
+/** Numeric literals, by grammar: their spelling is formatting (`1_000`, `0xFF`, `1E3`), their value is not. */
+const NUMBERS: Record<SyntaxLanguage, ReadonlySet<string>> = {
+  typescript: new Set(['number']),
+  tsx: new Set(['number']),
+  javascript: new Set(['number']),
+  rust: new Set(['integer_literal', 'float_literal']),
+  go: new Set(['int_literal', 'float_literal', 'imaginary_literal']),
+  python: new Set(['integer', 'float']),
+  java: new Set([
+    'decimal_integer_literal',
+    'hex_integer_literal',
+    'octal_integer_literal',
+    'binary_integer_literal',
+    'decimal_floating_point_literal',
+    'hex_floating_point_literal',
+  ]),
+  csharp: new Set(['integer_literal', 'real_literal']),
+  // JSON and YAML values are read by many parsers, some exact: their numbers stay as written.
+  json: new Set(),
+  yaml: new Set(),
+};
+/**
+ * A number as compared. Digit separators go and letters are lower-cased in every language with numbers here: case never
+ * changes a literal's value or type (`0XFF`, `1E3`, `10L`, `1F`). JavaScript's numbers are doubles, so their spelling
+ * reduces to the value (`1.50` is `1.5`), except a legacy octal (`017`) and a BigInt, which keep their digits.
+ */
+export function numberText(language: SyntaxLanguage, text: string): string {
+  const value = text.replace(/_/g, '').toLowerCase();
+  if (language !== 'typescript' && language !== 'tsx' && language !== 'javascript') return value;
+  if (/^0\d/.test(value) || value.endsWith('n')) return value;
+  if (!/^(0[xob][0-9a-f]+|(\d+\.?\d*|\.\d+)(e[+-]?\d+)?)$/.test(value)) return value;
+  const number = Number(value);
+  return Number.isFinite(number) ? String(number) : value;
 }
 
 /** A string as compared: simple strings in quote-insensitive languages lose their quote style. */
@@ -321,9 +373,17 @@ interface Comment {
 }
 interface Reading {
   events: Event[];
+  /**
+   * The same reading with no equivalence: every token as written, every node. Two sides with equal strict readings
+   * differ only in whitespace; equal readings but different strict ones, in formatting.
+   */
+  strict: Event[];
   comments: Comment[];
-  /** Blocks a token crosses the edge of. */
-  edges: Set<number>;
+  /**
+   * Tokens that cross a block's edge (a multi-line string): the segment they start in, and the blocks they reach. They
+   * matter only when they changed, which the segment they start in shows.
+   */
+  edges: { seg: number; blocks: number[] }[];
 }
 
 /** Each row's segment: `2i + 1` inside block i, `2j` in the unchanged lines before block j (and after the last). */
@@ -342,14 +402,21 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
   const atoms = ATOMS[language];
   const trailing = TRAILING_COMMA[language];
   const events: Event[] = [];
+  const strict: Event[] = [];
   const comments: Comment[] = [];
-  const edges = new Set<number>();
+  const edges: Reading['edges'] = [];
+  const pushStrict = (sig: string, a: number) => {
+    const event = { sig, seg: segOf(a), a, b: a };
+    strict.push(event);
+    return event;
+  };
   const last = seg.length - 1;
   const segOf = (row: number) => seg[Math.min(row, last)];
   const leafEnd = (row: number, column: number, startRow: number) => (column === 0 && row > startRow ? row - 1 : row);
   interface Frame {
     type: string;
     enter?: Event;
+    strictEnter: Event;
     first: number;
     lastRow: number;
     /** End of the last child, for text no child covers. */
@@ -362,6 +429,14 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
     /** The first non-comment child is still to come: a Python docstring is the first statement. */
     firstChild: boolean;
     parentType: string;
+    /** An equivalence leaves this node out (FLATTEN): no events of its own, and these delimiters among its children. */
+    flat?: ReadonlySet<string>;
+    /** A one-parameter arrow function's parentheses are left out: so is its parameter's wrapper. */
+    flatParameter?: boolean;
+    /** Children seen so far, for a delimiter that only counts as the first child. */
+    children: number;
+    /** Named children seen so far: a tuple of two or more may end in a comma. */
+    named: number;
   }
   const stack: Frame[] = [];
   // A token's rows go to the innermost open node; each node hands its rows to its parent when it closes.
@@ -382,8 +457,13 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
     events.push(event);
     return event;
   };
-  const leaf = (type: string, value: string, a: number, b: number) => {
-    if (segOf(a) !== segOf(b)) for (let s = segOf(a); s <= segOf(b); s++) if (s % 2) edges.add((s - 1) / 2);
+  const leaf = (type: string, value: string, a: number, b: number, raw = `${type}\u0000${value}`) => {
+    pushStrict(raw, a);
+    if (segOf(a) !== segOf(b)) {
+      const reached: number[] = [];
+      for (let s = segOf(a); s <= segOf(b); s++) if (s % 2) reached.push((s - 1) / 2);
+      edges.push({ seg: segOf(a), blocks: reached });
+    }
     push(`${type}\u0000${value}`, a, b, CLOSERS.has(type));
     touch(a, b);
   };
@@ -398,6 +478,7 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
     const between = text.slice(from, to);
     if (/\S/.test(between)) leaf('\u0001text', between.replace(/\s+/g, ' ').trim(), row, row);
   };
+  let flat: ReadonlySet<string> | undefined;
   const cursor = tree.walk();
   try {
     for (;;) {
@@ -420,6 +501,10 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
         parent.covered = Math.max(parent.covered, end);
       }
       let descend = false;
+      if (parent) {
+        parent.children++;
+        if (cursor.nodeIsNamed && !COMMENTS.has(type)) parent.named++;
+      }
       const docstring =
         language === 'python' &&
         type === 'expression_statement' &&
@@ -435,23 +520,35 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
         if (LAYOUT_EXTRAS.has(type)) {
           // Joins two lines and nothing else.
         } else if (atoms.has(type)) {
-          const value = atomText(language, type, text.slice(start, end));
+          const written = text.slice(start, end);
+          const value = atomText(language, type, written);
           // JSX text that is only layout is no child at all.
-          if (value || type !== 'jsx_text') leaf(atomType(type), value, a, rowsEnd());
+          if (value || type !== 'jsx_text') leaf(atomType(type), value, a, rowsEnd(), `${type}\u0000${written}`);
+          else pushStrict(`${type}\u0000${written}`, a);
           if (parent) parent.afterNamed = true;
+        } else if (FLATTEN_CANDIDATES[language].has(type) && (flat = flatten(language, type, parent, cursor.currentNode)) && cursor.gotoFirstChild()) {
+          const strictEnter = pushStrict(`>${type}`, a);
+          stack.push({ type, strictEnter, first: -1, lastRow: -1, covered: start, end, afterNamed: false, firstChild: true, parentType: parent?.type ?? '', flat, flatParameter: type === 'formal_parameters', children: 0, named: 0 });
+          descend = true;
         } else if (cursor.gotoFirstChild()) {
           const enter = push(`>${type}`, a, a);
-          stack.push({ type, enter, first: -1, lastRow: -1, covered: start, end, afterNamed: false, firstChild: true, parentType: parent?.type ?? '' });
+          const strictEnter = pushStrict(`>${type}`, a);
+          stack.push({ type, enter, strictEnter, first: -1, lastRow: -1, covered: start, end, afterNamed: false, firstChild: true, parentType: parent?.type ?? '', children: 0, named: 0 });
           descend = true;
         } else {
           const value = text.slice(start, end);
           const named = cursor.nodeIsNamed;
-          if (type === ',' && parent && trailing.has(parent.type) && parent.afterNamed) {
+          if (parent && optional(language, type, parent)) {
+            // A delimiter an equivalence leaves out (FLATTEN, optional): no event, and the rows stay.
+            pushStrict(`${type}\u0000${value}`, a);
+          } else if (type === ',' && parent && (trailing.has(parent.type) || (TUPLES.has(parent.type) && parent.named >= 2)) && parent.afterNamed) {
             // Held until the next sibling: dropped before a closing bracket.
+            pushStrict(`,\u0000,`, a);
             if (parent.comma) events.push(parent.comma);
             parent.comma = { sig: `,\u0000,`, seg: segOf(a), a, b: a };
             touch(a, a);
-          } else leaf(type, /\S/.test(value) ? value : '', a, rowsEnd());
+          } else if (NUMBERS[language].has(type)) leaf(type, numberText(language, value), a, rowsEnd(), `${type}\u0000${value}`);
+          else leaf(type, /\S/.test(value) ? value : '', a, rowsEnd());
           if (parent) parent.afterNamed = named;
         }
       }
@@ -460,9 +557,16 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
       for (;;) {
         if (cursor.gotoNextSibling()) break;
         const frame = stack.pop();
-        if (!frame) return { events, comments, edges };
+        if (!frame) return { events, strict, comments, edges };
         gap(frame.covered, frame.end, frame.lastRow < 0 ? 0 : frame.lastRow);
         if (frame.comma) events.push(frame.comma);
+        if (frame.first < 0) {
+          const index = strict.lastIndexOf(frame.strictEnter);
+          if (index >= 0) strict.splice(index, 1);
+        } else {
+          frame.strictEnter.seg = segOf(frame.first);
+          strict.push({ sig: '<', seg: segOf(frame.lastRow), a: frame.first, b: frame.lastRow });
+        }
         if (frame.enter) {
           if (frame.first < 0) {
             // A node with no tokens (all comments, or empty): no events.
@@ -483,12 +587,143 @@ function read(tree: TreeSitter.Tree, text: string, language: SyntaxLanguage, seg
             parent.lastRow = frame.lastRow;
           }
         }
-        if (!cursor.gotoParent()) return { events, comments, edges };
+        if (!cursor.gotoParent()) return { events, strict, comments, edges };
       }
     }
   } finally {
     cursor.delete();
   }
+}
+
+/**
+ * Equivalences of structure, each exact in its grammar: the left side and the right side are one program.
+ * - JavaScript and TypeScript: `(expr)` where a whole expression goes (a return value, an initializer, an argument, an
+ *   arrow's body…) is `expr`: the tree already holds the grouping, and those places take the expression whole. Not
+ *   around a sequence (`a, b`). Around a JSX element, a name or a literal, anywhere. `(x) => …` is `x => …` for one plain parameter. A union or intersection type's leading
+ *   `|` or `&` (`| A | B`) is `A | B`. A `;` is left out everywhere but a `for` header: where it ends a statement, the
+ *   tree's statements already say so, and a `;` that changes them (ASI) changes the tree.
+ * - Python: `(expr)` as a return value, an assigned value, an argument or a statement is `expr`.
+ * - Rust: a match arm's or closure's body `{ expr }` is `expr` (rustfmt writes one for the other), and a match arm's
+ *   `,` is optional.
+ * Redundant parentheses elsewhere stay: inside an operator they can change precedence, and `(a?.b).c` is not `a?.b.c`.
+ */
+const SCRIPT_WHOLE = new Set([
+  'return_statement',
+  'variable_declarator',
+  'assignment_expression',
+  'augmented_assignment_expression',
+  'arrow_function',
+  'jsx_expression',
+  'arguments',
+  'array',
+  'pair',
+  'template_substitution',
+  'await_expression',
+  'spread_element',
+  'yield_expression',
+  'throw_statement',
+  'expression_statement',
+  'export_statement',
+]);
+const SCRIPT_PRIMARY = new Set([
+  'jsx_element',
+  'jsx_self_closing_element',
+  'jsx_fragment',
+  'identifier',
+  'number',
+  'string',
+  'template_string',
+  'true',
+  'false',
+  'null',
+  'undefined',
+  'this',
+]);
+const PYTHON_WHOLE = new Set(['return_statement', 'assignment', 'augmented_assignment', 'keyword_argument', 'argument_list', 'expression_statement']);
+const SCRIPT_FLATTEN = new Set(['parenthesized_expression', 'formal_parameters', 'required_parameter', 'union_type', 'intersection_type', 'statement_block']);
+const FLATTEN_CANDIDATES: Record<SyntaxLanguage, ReadonlySet<string>> = {
+  typescript: SCRIPT_FLATTEN,
+  tsx: SCRIPT_FLATTEN,
+  javascript: SCRIPT_FLATTEN,
+  python: new Set(['parenthesized_expression']),
+  rust: new Set(['block', 'expression_statement']),
+  go: new Set(),
+  java: new Set(['block']),
+  csharp: new Set(['block']),
+  json: new Set(),
+  yaml: new Set(),
+};
+const PARENS: ReadonlySet<string> = new Set(['(', ')']);
+const SCRIPT_BRACED = new Set(['if_statement', 'else_clause', 'for_statement', 'for_in_statement', 'while_statement', 'do_statement']);
+/** Statements whose body may be one statement with or without braces. */
+const BRACED: Partial<Record<SyntaxLanguage, ReadonlySet<string>>> = {
+  typescript: SCRIPT_BRACED,
+  tsx: SCRIPT_BRACED,
+  javascript: SCRIPT_BRACED,
+  java: new Set(['if_statement', 'for_statement', 'enhanced_for_statement', 'while_statement', 'do_statement']),
+  csharp: new Set(['if_statement', 'else_clause', 'for_statement', 'foreach_statement', 'while_statement', 'do_statement']),
+};
+const NONE: ReadonlySet<string> = new Set();
+const BRACES: ReadonlySet<string> = new Set(['{', '}']);
+/** The delimiters a node drops when an equivalence leaves it out, or undefined when it stays. */
+function flatten(
+  language: SyntaxLanguage,
+  type: string,
+  parent: { type: string; flatParameter?: boolean; flat?: ReadonlySet<string> } | undefined,
+  node: TreeSitter.Node
+): ReadonlySet<string> | undefined {
+  if (!parent) return undefined;
+  if (type === 'parenthesized_expression') {
+    const whole = language === 'python' ? PYTHON_WHOLE : SCRIPT_WHOLE;
+    if (node.namedChildCount !== 1) return undefined;
+    const inner = node.namedChild(0)?.type ?? '';
+    // Around a primary expression (a JSX element, a name, a literal), parentheses change nothing anywhere: there is no
+    // operator inside for them to group. Calls and member accesses are left out: `(a?.b).c` is not `a?.b.c`.
+    if (language !== 'python' && SCRIPT_PRIMARY.has(inner)) return PARENS;
+    if (!whole.has(parent.type)) return undefined;
+    return /sequence|comment|yield|generator|tuple/.test(inner) ? undefined : PARENS;
+  }
+  if (type === 'formal_parameters') {
+    if (parent.type !== 'arrow_function' || node.namedChildCount !== 1) return undefined;
+    const only = node.namedChild(0);
+    if (!only) return undefined;
+    if (only.type === 'identifier') return PARENS;
+    // TypeScript: `required_parameter` with a plain name and nothing else: no type, default, modifier or `...`.
+    return only.type === 'required_parameter' && only.childCount === 1 && only.child(0)?.type === 'identifier' ? PARENS : undefined;
+  }
+  if (type === 'required_parameter') return parent.flatParameter && parent.flat ? NONE : undefined;
+  if (type === 'union_type' || type === 'intersection_type') {
+    const lead = type === 'union_type' ? '|' : '&';
+    return node.childCount === 2 && node.child(0)?.type === lead ? new Set([lead]) : undefined;
+  }
+  if ((type === 'statement_block' || type === 'block') && BRACED[language]?.has(parent.type)) {
+    // `if (a) { b(); }` is `if (a) b();`: one statement, braced or not. The tree says which `if` an `else` belongs to,
+    // so braces that move an `else` change the tree. Declarations are left alone: they cannot stand unbraced.
+    if (node.childCount !== 3 || node.child(0)?.type !== '{' || node.child(2)?.type !== '}') return undefined;
+    const inner = node.child(1)?.type ?? '';
+    return inner.endsWith('_statement') && !/declaration|labeled|local_function/.test(inner) ? BRACES : undefined;
+  }
+  if (type === 'block' && language === 'rust') {
+    if (parent.type !== 'match_arm' && parent.type !== 'closure_expression') return undefined;
+    if (node.childCount !== 3 || node.child(0)?.type !== '{' || node.child(2)?.type !== '}') return undefined;
+    const inner = node.child(1);
+    if (!inner?.isNamed) return undefined;
+    // A block-like expression (`match`, `if`, `loop`) at the end of a block reads as an expression statement
+    // without a `;`: it is still the block's value.
+    if (inner.type === 'expression_statement') return inner.childCount === 1 ? BRACES : undefined;
+    return !/statement|declaration|_item$|comment|^label$/.test(inner.type) ? BRACES : undefined;
+  }
+  if (type === 'expression_statement' && language === 'rust')
+    return parent.type === 'block' && parent.flat === BRACES && node.childCount === 1 ? NONE : undefined;
+  return undefined;
+}
+const SCRIPTS = new Set<SyntaxLanguage>(['typescript', 'tsx', 'javascript']);
+/** A token that is left out: a flattened node's delimiter, or a token the language never needs (see FLATTEN). */
+function optional(language: SyntaxLanguage, type: string, parent: { type: string; flat?: ReadonlySet<string>; children: number }): boolean {
+  if (parent.flat?.has(type)) return parent.type !== 'union_type' && parent.type !== 'intersection_type' ? true : parent.children === 1;
+  if (type === ';' && SCRIPTS.has(language)) return !/^for(_in)?_statement$/.test(parent.type);
+  if (type === ',' && language === 'rust') return parent.type === 'match_arm';
+  return false;
 }
 
 function isDocstring(node: TreeSitter.Node): boolean {
@@ -537,8 +772,8 @@ const commentTexts = (comments: readonly Comment[], row: number, count: number) 
   comments.filter((c) => reaches(c.a, c.b, row, count)).map((c) => c.text.replace(/\s+/g, ' ').trim());
 
 /** Blocks compared together at most, and the unchanged lines between two of them: about one GitHub hunk. */
-const JOIN_BLOCKS = 16;
-const JOIN_GAP = 6;
+const JOIN_BLOCKS = 48;
+const JOIN_GAP = 40;
 
 export interface NoiseParser {
   parse: (text: string) => TreeSitter.Tree | null;
@@ -571,15 +806,28 @@ export function classifyBlocks(
     const oldGroups = bySegment(before.events, count),
       newGroups = bySegment(after.events, count);
     const reasons: (string | undefined)[] = blocks.map(() => undefined);
-    for (const index of [...before.edges, ...after.edges]) reasons[index] ??= 'edge';
+    // The whole program reads the same: every block is formatting or comments, however the line diff paired lines.
+    // Blocks compared together (a join below), so their strict readings are compared together too.
+    const groups = blocks.map((_, i): [number, number] => [i, i]);
+    const strictSame = (i: number) => {
+      const [from, to] = groups[i];
+      const pick = (list: Event[]) => list.filter((event) => event.seg >= 2 * from + 1 && event.seg <= 2 * to + 1);
+      return same(pick(before.strict), pick(after.strict));
+    };
+    if (same(before.events, after.events)) {
+      const whole = same(before.strict, after.strict);
+      return quietKinds(blocks, texts, before, after, oldStarts, newStarts, reasons, (i) => whole || strictSame(i));
+    }
     blocks.forEach((_, i) => {
       if (!same(oldGroups[2 * i + 1], newGroups[2 * i + 1])) reasons[i] ??= 'tokens';
     });
     // The unchanged lines must read the same. Where they do not, the blocks whose nodes reach the difference are code.
+    const contextDiffers: boolean[] = [];
     for (let j = 0; j <= blocks.length; j++) {
       const o = oldGroups[2 * j],
         n = newGroups[2 * j];
-      if (same(o, n)) continue;
+      contextDiffers[j] = !same(o, n);
+      if (!contextDiffers[j]) continue;
       let head = 0;
       while (head < o.length && head < n.length && o[head].sig === n[head].sig) head++;
       let tail = 0;
@@ -611,6 +859,20 @@ export function classifyBlocks(
       if (above) reasons[j - 1] ??= 'context';
       if (below) reasons[j] ??= 'context';
     }
+    // A token across a block's edge (a multi-line string) is compared in the segment it starts in; when that segment
+    // differs, every block it reaches is code.
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const edge of [...before.edges, ...after.edges]) {
+        const start = edge.seg % 2 ? reasons[(edge.seg - 1) / 2] !== undefined : contextDiffers[edge.seg / 2];
+        if (!start) continue;
+        for (const index of edge.blocks)
+          if (reasons[index] === undefined) {
+            reasons[index] = 'edge';
+            changed = true;
+          }
+      }
+    }
     // A line diff can pair lines across blocks, such as a closing brace of a reindented block matched to another
     // one: no single block reads the same, though together they do. Neighbouring blocks that differ only in their
     // tokens are compared together, unchanged lines between them included.
@@ -621,27 +883,47 @@ export function classifyBlocks(
         if (blocks[k].newRow - (blocks[k - 1].newRow + blocks[k - 1].newCount) > JOIN_GAP) break;
         if (reasons[k] && reasons[k] !== 'tokens') break;
         if (!same(joined(i, k, oldGroups), joined(i, k, newGroups))) continue;
-        for (let m = i; m <= k; m++) reasons[m] = undefined;
+        for (let m = i; m <= k; m++) {
+          reasons[m] = undefined;
+          groups[m] = [i, k];
+        }
         i = k;
         break;
       }
     }
-    return blocks.map((block, i) => {
-      const reason = reasons[i];
-      if (reason) return { kind: 'code' as const, reason };
-      const oldComments = commentTexts(before.comments, block.oldRow, block.oldCount);
-      const newComments = commentTexts(after.comments, block.newRow, block.newCount);
-      const commented = oldComments.length !== newComments.length || oldComments.some((text, k) => text !== newComments[k]);
-      if (!commented) return { kind: 'formatting' as const };
-      const oldLayout = layout(texts.before, oldStarts, block.oldRow, block.oldCount, before.comments);
-      const newLayout = layout(texts.after, newStarts, block.newRow, block.newCount, after.comments);
-      const moved = oldLayout.length !== newLayout.length || oldLayout.some((line, k) => line !== newLayout[k]);
-      return { kind: moved ? ('both' as const) : ('comments' as const) };
-    });
+    return quietKinds(blocks, texts, before, after, oldStarts, newStarts, reasons, strictSame);
   } finally {
     oldTree?.delete();
     newTree?.delete();
   }
+}
+
+/** Each block's kind: code for a reason, else formatting, comments or both, by its comments and its layout. */
+function quietKinds(
+  blocks: readonly SideBlock[],
+  texts: { before: string; after: string },
+  before: Reading,
+  after: Reading,
+  oldStarts: readonly number[],
+  newStarts: readonly number[],
+  reasons: readonly (string | undefined)[],
+  /** The block's tokens are the same as written, not only equivalent: whitespace, not formatting. */
+  strictSame: (index: number) => boolean
+): { kind: NoiseKind; reason?: string }[] {
+  return blocks.map((block, i) => {
+    const reason = reasons[i];
+    if (reason) return { kind: 'code' as const, reason };
+    const oldComments = commentTexts(before.comments, block.oldRow, block.oldCount);
+    const newComments = commentTexts(after.comments, block.newRow, block.newCount);
+    const commented = oldComments.length !== newComments.length || oldComments.some((text, k) => text !== newComments[k]);
+    const written = strictSame(i);
+    if (!commented) return { kind: written ? ('whitespace' as const) : ('formatting' as const) };
+    if (!written) return { kind: 'formatting-comments' as const };
+    const oldLayout = layout(texts.before, oldStarts, block.oldRow, block.oldCount, before.comments);
+    const newLayout = layout(texts.after, newStarts, block.newRow, block.newCount, after.comments);
+    const moved = oldLayout.length !== newLayout.length || oldLayout.some((line, k) => line !== newLayout[k]);
+    return { kind: moved ? ('whitespace-comments' as const) : ('comments' as const) };
+  });
 }
 
 /**
@@ -663,32 +945,64 @@ export function classifyNoise(
 
 // ── Views ───────────────────────────────────────────────────────────────────
 
-/** What the reader chose to hide (Diff appearance). */
+/**
+ * What the reader chose to hide (Diff appearance). Hiding formatting hides whitespace too: a formatter's change is
+ * whitespace and equivalent tokens, so the reader who hides one hides the lesser.
+ */
 export interface NoiseFilter {
   whitespace: boolean;
+  formatting: boolean;
   comments: boolean;
 }
-export const NO_NOISE_FILTER: NoiseFilter = { whitespace: false, comments: false };
-export const noiseFilterOn = (filter: NoiseFilter) => filter.whitespace || filter.comments;
+export const NO_NOISE_FILTER: NoiseFilter = { whitespace: false, formatting: false, comments: false };
+export const noiseFilterOn = (filter: NoiseFilter) => filter.whitespace || filter.formatting || filter.comments;
 
-/** Whether the filter hides a block of this kind: both kinds hide `both`. */
-export function hidden(kind: NoiseKind | undefined, filter: NoiseFilter): boolean {
-  if (kind === 'formatting') return filter.whitespace;
-  if (kind === 'comments') return filter.comments;
-  if (kind === 'both') return filter.whitespace && filter.comments;
-  return false;
+/** The parts of a kind: its code's layout or spelling (whitespace or formatting), and comments. */
+function parts(kind: NoiseKind): { layout?: 'whitespace' | 'formatting'; comments: boolean } {
+  switch (kind) {
+    case 'whitespace':
+      return { layout: 'whitespace', comments: false };
+    case 'formatting':
+      return { layout: 'formatting', comments: false };
+    case 'comments':
+      return { comments: true };
+    case 'whitespace-comments':
+      return { layout: 'whitespace', comments: true };
+    case 'formatting-comments':
+      return { layout: 'formatting', comments: true };
+    default:
+      return { comments: false };
+  }
 }
 
-/** A hidden run's label: "Formatting only", "Comments only", or "Formatting and comments". */
+/** Whether the filter hides a block of this kind: a mixed kind only when the filter hides each of its parts. */
+export function hidden(kind: NoiseKind | undefined, filter: NoiseFilter): boolean {
+  if (!kind || kind === 'code') return false;
+  const { layout, comments } = parts(kind);
+  const layoutHidden = !layout || (layout === 'whitespace' ? filter.whitespace || filter.formatting : filter.formatting);
+  return layoutHidden && (!comments || filter.comments);
+}
+
+/**
+ * A hidden run's label: "Whitespace only", "Formatting only", "Comments only", or with comments, "Whitespace and
+ * comments" and "Formatting and comments". Formatting includes whitespace, so a run of both is formatting.
+ */
 export function noiseLabel(kinds: Iterable<NoiseKind>): string {
-  let formatting = false,
+  let whitespace = false,
+    formatting = false,
     comments = false;
   for (const kind of kinds) {
-    if (kind === 'formatting' || kind === 'both') formatting = true;
-    if (kind === 'comments' || kind === 'both') comments = true;
+    const p = parts(kind);
+    if (p.layout === 'whitespace') whitespace = true;
+    if (p.layout === 'formatting') formatting = true;
+    if (p.comments) comments = true;
   }
-  return formatting && comments ? 'Formatting and comments' : comments ? 'Comments only' : 'Formatting only';
+  const layout = formatting ? 'Formatting' : whitespace ? 'Whitespace' : '';
+  if (!layout) return 'Comments only';
+  return comments ? `${layout} and comments` : `${layout} only`;
 }
+/** Whether a run is comments alone, for its icon. */
+export const commentsOnly = (kinds: Iterable<NoiseKind>) => noiseLabel(kinds) === 'Comments only';
 
 /** One hunk of a view, as the filter sees it: hidden when every change in it is, with what it hides. */
 export interface HunkNoise {
@@ -732,26 +1046,52 @@ export interface FileNoise {
   kinds: NoiseKind[];
   added: number;
   deleted: number;
+  /** Hidden lines by what they are: a block of formatting and comments counts as formatting. */
+  lines: { whitespace: number; formatting: number; comments: number };
+  /** Lines of the changes that show: code, and noise the filter does not hide. */
+  shown: number;
+  /**
+   * Every change is whitespace or formatting, across several hunks or many lines: the file reads as one run of a
+   * formatter. Only then does it say "Reformatted".
+   */
+  reformatted: boolean;
 }
+/** Hunks, or changed lines, a quiet file needs before it reads as reformatted. */
+const REFORMATTED_BLOCKS = 3;
+const REFORMATTED_LINES = 20;
 export function fileNoise(blocks: readonly NoiseBlock[], filter: NoiseFilter): FileNoise {
-  const result: FileNoise = { all: blocks.length > 0, kinds: [], added: 0, deleted: 0 };
+  const result: FileNoise = {
+    all: blocks.length > 0,
+    kinds: [],
+    added: 0,
+    deleted: 0,
+    lines: { whitespace: 0, formatting: 0, comments: 0 },
+    shown: 0,
+    reformatted: false,
+  };
   for (const block of blocks) {
+    const lines = block.newCount + block.oldCount;
     if (!hidden(block.kind, filter)) {
       result.all = false;
+      result.shown += lines;
       continue;
     }
     result.kinds.push(block.kind);
     result.added += block.newCount;
     result.deleted += block.oldCount;
+    result.lines[parts(block.kind).layout ?? 'comments'] += lines;
   }
+  const layoutOnly = result.kinds.every((kind) => kind === 'whitespace' || kind === 'formatting');
+  result.reformatted =
+    result.all && layoutOnly && (blocks.length >= REFORMATTED_BLOCKS || result.added + result.deleted >= REFORMATTED_LINES);
   return result;
 }
 
-/** The noise in a `+N −M` stat, quietly: "90 formatting", "12 comments", "40 formatting and comments". */
-export function noiseStat(noise: Pick<FileNoise, 'kinds' | 'added' | 'deleted'>): string | undefined {
-  const lines = noise.added + noise.deleted;
-  if (!lines) return undefined;
-  const label = noiseLabel(noise.kinds);
-  const word = label === 'Formatting only' ? 'formatting' : label === 'Comments only' ? 'comments' : 'formatting and comments';
-  return `${lines.toLocaleString()} ${word}`;
+/** The hidden lines in words, quietly, largest first: "90 formatting · 12 comments". */
+export function noiseStat(noise: Pick<FileNoise, 'lines'>): string | undefined {
+  const words = (['formatting', 'whitespace', 'comments'] as const)
+    .filter((key) => noise.lines[key] > 0)
+    .sort((a, b) => noise.lines[b] - noise.lines[a])
+    .map((key) => `${noise.lines[key].toLocaleString()} ${key}`);
+  return words.length ? words.join(' · ') : undefined;
 }

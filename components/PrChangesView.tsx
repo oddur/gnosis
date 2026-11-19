@@ -18,7 +18,10 @@ import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLay
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useSyntaxPrefetch } from '../lib/use-syntax-contents';
 import { noiseFilterOf } from '../lib/review-diff';
-import { useQuietSignature } from '../lib/use-semantic-noise';
+import { useQuietSummary } from '../lib/use-semantic-noise';
+import { anchorReader } from '../lib/quiet-changes';
+import { publishDiffAppearance } from '../lib/use-diff-appearance';
+import { QuietChangesChip } from './QuietChanges';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import {
   fileIsReady,
@@ -414,20 +417,15 @@ export function PrChangesView({
   );
   const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
   // Quiet changes (#396): what the reader hides, and each file's comparison as it lands, for the tree and progress.
-  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideComments]);
+  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
   useSyntaxPrefetch(prefetchOwner, scopeFiles, (file) => progress.isFileViewed(file.key), codeSettings, noiseFilter);
   // Comparisons land for every view's files. This view renders again only when its own quiet files change: a string
   // of them is the store's snapshot, so other views' comparisons cost it a lookup per file and no render.
   const quietKeys = useMemo(() => visible.map((e) => ({ key: e.key, fileKey: viewKey(e) })), [entries, visibleSignature]);
-  const quietSignature = useQuietSignature(quietKeys, noiseFilter);
-  const quietFiles = useMemo(() => {
-    const result = new Map<string, { label: string; lines: number }>();
-    for (const line of quietSignature ? quietSignature.split('\n') : []) {
-      const [key, label, lines] = line.split('\u0000');
-      result.set(key, { label, lines: Number(lines) });
-    }
-    return result;
-  }, [quietSignature]);
+  const quiet = useQuietSummary(quietKeys, noiseFilter);
+  // Only the quiet files' labels reach the tree: a new comparison elsewhere in the PR leaves the tree's input alone.
+  const quietLabels = [...quiet.files].filter(([, file]) => file.label).map(([key, file]) => `${key}\u0000${file.label}`).join('\n');
+  const quietFiles = useMemo(() => new Map(quietLabels ? quietLabels.split('\n').map((row) => row.split('\u0000') as [string, string]) : []), [quietLabels]);
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]
@@ -451,7 +449,7 @@ export function PrChangesView({
                   (t) => t.path === e.file.path || t.path === e.file.previousPath
                 )
               ),
-          quiet: quietFiles.get(e.key)?.label,
+          quiet: quietFiles.get(e.key),
           commentError: combinedDiscussion
             ? combinedDiscussion.failures.length > 0
             : !!discussion.discussions[e.snapshot.url]?.error,
@@ -462,10 +460,16 @@ export function PrChangesView({
   // Files whose every change is noise still count towards review: Viewed is the reviewer's own mark. The progress says
   // how many of the files left are only that, so they read as quick to clear (Viewed & next).
   const quietLeft = visible.filter((e) => quietFiles.has(e.key) && !progress.isFileViewed(viewKey(e)));
-  const quietKinds = [...new Set(quietLeft.map((e) => quietFiles.get(e.key)?.label))];
-  const quietNote = quietLeft.length
-    ? `${quietLeft.length} ${quietKinds.length === 1 && quietKinds[0] === 'Comments only' ? 'comment-only' : quietKinds.length === 1 && quietKinds[0] === 'Formatting only' ? 'formatting-only' : 'quiet'} ${quietLeft.length === 1 ? 'file' : 'files'}`
-    : undefined;
+  const quietKinds = [...new Set(quietLeft.map((e) => quietFiles.get(e.key)))];
+  const quietWord =
+    quietKinds.length !== 1 ? 'quiet' : quietKinds[0] === 'Reformatted' ? 'reformatted' : (quietKinds[0] ?? '').replace(/ only$/, '-only').replace(/ and comments$/, ' and comment').toLowerCase();
+  const quietNote = quietLeft.length ? `${quietLeft.length} ${quietWord} ${quietLeft.length === 1 ? 'file' : 'files'}` : undefined;
+  const changeQuiet = (next: Pick<Preferences['diffAppearance'] & object, 'hideWhitespace' | 'hideFormatting' | 'hideComments'>) => {
+    anchorReader();
+    const diffAppearance = { ...appearance, ...next };
+    publishDiffAppearance(diffAppearance);
+    savePreferences({ diffAppearance });
+  };
   useEffect(() => {
     if (!initialFile) return;
     const match = entries.find(
@@ -628,7 +632,7 @@ export function PrChangesView({
               <span
                 className="changes-progress-quiet"
                 data-quiet-files={quietLeft.length}
-                title={`Of the files left to view, ${quietLeft.length} only ${quietLeft.length === 1 ? 'changes' : 'change'} formatting or comments that Diff appearance hides. They still count: mark them Viewed when you have looked.`}
+                title={`Of the files left to view, ${quietLeft.length} only ${quietLeft.length === 1 ? 'changes' : 'change'} whitespace, formatting or comments that Diff appearance hides. They still count: mark them Viewed when you have looked.`}
               >
                 {' · '}
                 {quietNote}
@@ -666,6 +670,7 @@ export function PrChangesView({
           generated={[...kinds.values()].filter((k) => k.generated.value).length}
           tests={[...kinds.values()].filter((k) => k.test.value).length}
         />
+        {!commit && <QuietChangesChip summary={quiet} files={visible.length} filter={noiseFilter} onChange={changeQuiet} />}
         <DiffAppearanceMenu
           layout={layout}
           onLayoutChange={changeLayout}

@@ -25,7 +25,7 @@ import { useFileProgress } from '../lib/file-view-progress';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { useDiffLayout } from '../lib/use-diff-layout';
 import { diffContextLines, noiseFilterOf } from '../lib/review-diff';
-import { noiseLabel, noiseStat } from '../lib/semantic-noise';
+import { quietHeader } from '../lib/quiet-changes-header';
 import { gapContaining, hunksFromDiff, shownSelection } from '../lib/diff-gaps';
 import { ChangesDiff } from './ChangesDiff';
 import { useDiffFileModel } from './useDiffFileModel';
@@ -203,7 +203,7 @@ export function PrFileInspection({
   const expandable = entry.file.status !== 'added' && entry.file.status !== 'deleted' && !contents?.lfs;
   // Settings › Appearance › Code intelligence: a language that is off shows as a file without a grammar.
   const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
-  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideComments]);
+  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
   useEffect(() => applyCodeIntelligence(codeSettings), [codeSettings]);
   const scopeFile = useMemo(() => ({ key: activeKey, snapshot: entry.snapshot, file: entry.file }), [activeKey, entry.snapshot, entry.file]);
   // Gaps, reveals, scopes and structure loading are shared with Explanation topics (components/useDiffFileModel.tsx).
@@ -227,15 +227,7 @@ export function PrFileInspection({
   });
   // How much of the file is noise the reader hides (#396), for its header: "90 formatting", or "Formatting only".
   const quiet = model.noise?.file;
-  const quietStat = quiet && (quiet.added || quiet.deleted)
-    ? {
-        text: quiet.all ? noiseLabel(quiet.kinds) : (noiseStat(quiet) ?? ''),
-        title: quiet.all
-          ? `Every change in this file is ${noiseLabel(quiet.kinds).replace(' only', '').toLowerCase()}: the code's syntax is the same on both sides.`
-          : `${(quiet.added + quiet.deleted).toLocaleString()} of the changed lines only change ${noiseLabel(quiet.kinds).replace(' only', '').toLowerCase()}.`,
-        comments: noiseLabel(quiet.kinds) === 'Comments only',
-      }
-    : undefined;
+  const quietStat = quiet && (quiet.added || quiet.deleted) ? quietHeader(quiet, entry.file.additions, entry.file.deletions) : undefined;
   const { parts, gaps, shown, lineCount } = model;
   const revealLines = model.revealLines;
   const wantsPreview = !compactMove && markdown && markdownView.mode === 'preview' && sourceOverride !== activeKey;

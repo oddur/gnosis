@@ -67,7 +67,7 @@ export function ChangesFileTree({
       const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
       // A file whose every change is quiet says so in words, muted, in place of its counts: the tree is narrow, and the
       // counts stay in the tooltip and the file's header.
-      const quiet = !entry.viewed && entry.quiet ? (entry.quiet === 'Formatting and comments' ? 'Quiet' : entry.quiet.replace(' only', '')) : undefined;
+      const quiet = !entry.viewed && entry.quiet ? (entry.quiet.endsWith('and comments') ? 'Quiet' : entry.quiet.replace(' only', '')) : undefined;
       const count = entry.commentCount;
       // Files with comments get a count, and files whose comments could not be read get a dash. Nothing is
       // shown while comments load: a placeholder would be removed again for most files once they arrive,

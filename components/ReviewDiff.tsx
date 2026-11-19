@@ -149,7 +149,7 @@ export function ReviewDiff({
     return { key: fileKey, snapshot, file };
   }, [fileKey, source?.previousPath, fileStatus, saved.patch]);
   // The same quiet changes as Changes (#396), from the same appearance.
-  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideComments]);
+  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
   const model = useDiffFileModel({
     fileKey,
     revealKey,
