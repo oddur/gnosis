@@ -55,9 +55,12 @@ const newEnd = (hunk: GapHunk) => hunk.newStart + newCount(hunk) - 1;
 const stripFeed = (line: string | undefined) => (line ?? '').replace(/\n$/, '');
 
 export interface HunkRange {
-  /** As the hunk header shows it: `L120–148`, `old L9–11` for a hunk that only deletes, `old L9–11 / L12–14` split. */
+  /** As the hunk header shows it: `L120–148`, or `old L9–11` for a hunk that only deletes. */
   label: string;
-  /** In words, for the tooltip and screen readers: "Lines 120 to 148", "Old lines 9 to 11". */
+  /**
+   * In words, for the tooltip and screen readers: "Lines 120 to 148", "Old lines 9 to 11", and the old lines too where
+   * they differ: "Lines 12 to 14 (old lines 9 to 11)".
+   */
   spoken: string;
 }
 /** One side's lines in a hunk: `L4`, `L120–148`, with `prefix` before the L. */
@@ -68,18 +71,18 @@ function sideRange(start: number, count: number, prefix: string, words: string):
 }
 /**
  * Where a hunk is, by its new lines, or by its old lines when it only deletes: its deleted lines have no new numbers.
- * Every hunk header shows it (#395). Split, where both sides show, a hunk whose sides differ names both, old first as
- * the old side is on the left: `old L9–11 / L12–14`.
+ * Every hunk header shows it (#395). Where the old lines differ, they are in the words alone, for the tooltip and
+ * screen readers: the header shows one range.
  */
-export function hunkRange(hunk: Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>, { split = false } = {}): HunkRange {
+export function hunkRange(hunk: Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>): HunkRange {
   const adds = hunk.rows.some((row) => row.type === '+');
   const deletes = hunk.rows.some((row) => row.type === '-');
   if (!adds && deletes) return sideRange(hunk.oldStart, oldCount(hunk), 'old ', 'Old line');
   const after = sideRange(hunk.newStart, newCount(hunk), '', 'Line');
-  if (!split || !deletes) return after;
+  if (!deletes) return after;
   const before = sideRange(hunk.oldStart, oldCount(hunk), 'old ', 'Old line');
   if (before.label === `old ${after.label}`) return after;
-  return { label: `${before.label} / ${after.label}`, spoken: `${before.spoken}, new ${after.spoken.toLowerCase()}` };
+  return { label: after.label, spoken: `${after.spoken} (${before.spoken.toLowerCase()})` };
 }
 
 /** How many lines a hunk adds and deletes. */

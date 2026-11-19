@@ -247,13 +247,13 @@ test('a hunk names its lines for a pinned header without structure (#395)', () =
   // A hunk that only deletes is where its deleted lines were, on the old side, context and all.
   assert.deepEqual(hunkRange({ oldStart: 9, newStart: 7, rows: rows(' -- ') }), { label: 'old L9–12', spoken: 'Old lines 9 to 12' });
   assert.deepEqual(hunkRange({ oldStart: 1200, newStart: 1201, rows: rows(' '.repeat(10)) }), { label: 'L1201–1210', spoken: 'Lines 1201 to 1210' });
-  // Split, both sides show: a hunk whose sides differ names both, old first.
-  assert.deepEqual(hunkRange({ oldStart: 9, newStart: 12, rows: rows(' -+ ') }, { split: true }), {
-    label: 'old L9–11 / L12–14',
-    spoken: 'Old lines 9 to 11, new lines 12 to 14',
+  // The header shows the new lines; old lines that differ are in the words, for the tooltip and screen readers.
+  assert.deepEqual(hunkRange({ oldStart: 9, newStart: 12, rows: rows(' -+ ') }), {
+    label: 'L12–14',
+    spoken: 'Lines 12 to 14 (old lines 9 to 11)',
   });
-  assert.deepEqual(hunkRange({ oldStart: 120, newStart: 120, rows: rows(' -+ ') }, { split: true }), { label: 'L120–122', spoken: 'Lines 120 to 122' });
-  assert.deepEqual(hunkRange({ oldStart: 4, newStart: 4, rows: rows(' ++ ') }, { split: true }), { label: 'L4–7', spoken: 'Lines 4 to 7' });
+  assert.deepEqual(hunkRange({ oldStart: 120, newStart: 120, rows: rows(' -+ ') }), { label: 'L120–122', spoken: 'Lines 120 to 122' });
+  assert.deepEqual(hunkRange({ oldStart: 4, newStart: 4, rows: rows(' ++ ') }), { label: 'L4–7', spoken: 'Lines 4 to 7' });
   assert.deepEqual(hunkCounts({ rows: rows(' ++-+ ') }), { added: 3, deleted: 1 });
   assert.deepEqual(hunkCounts({ rows: rows('  ') }), { added: 0, deleted: 0 });
 });

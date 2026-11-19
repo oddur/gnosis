@@ -250,12 +250,6 @@ export function chainAt(
   return inner ? definitionChain(list, inner) : [];
 }
 
-/** Crumbs past this many show as "…" and the innermost two. */
-export const SHOWN_CRUMBS = 2;
-/** The breadcrumb as shown: the chain, its outer crumbs as "…" when it is long. The file is the header's. */
-export function visibleCrumbs(chain: readonly ScopeCrumb[]): (ScopeCrumb | 'more')[] {
-  return chain.length > SHOWN_CRUMBS ? ['more', ...chain.slice(-SHOWN_CRUMBS)] : [...chain];
-}
 /** The whole breadcrumb in words: "In build_api_routes.rs, impl GameplayClient, function list_badge_grants". */
 export const spokenChain = (file: string, chain: readonly ScopeCrumb[]) =>
   [`In ${file}`, ...chain.map((crumb) => (crumb.provisional ? crumb.definition.crumb : spokenDefinition(crumb.definition)))].join(', ');

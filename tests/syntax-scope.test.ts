@@ -28,7 +28,6 @@ import {
   provisionalScopes,
   revealLabel,
   spokenChain,
-  visibleCrumbs,
 } from '../lib/hunk-scopes';
 import { perfBudget } from './perf-budget';
 import { largeAfter, lazyHandler, patchOf, scopeAfter, scopeBefore, storeAfter, storeBefore } from './fixtures/syntax-scope';
@@ -461,11 +460,6 @@ void test('A long breadcrumb keeps the innermost two crumbs; the whole chain is 
   const chain = definitionChain(list, list[3]);
   assert.deepEqual(chain.map((d) => d.crumb), ['mod api', 'mod v2', 'impl GameplayClient', 'fn list_badge_grants']);
   const crumbs = chain.map((definition) => ({ definition }));
-  assert.deepEqual(
-    visibleCrumbs(crumbs).map((crumb) => (crumb === 'more' ? '…' : crumb.definition.crumb)),
-    ['…', 'impl GameplayClient', 'fn list_badge_grants']
-  );
-  assert.deepEqual(visibleCrumbs(crumbs.slice(2)).length, 2, 'Two crumbs show whole');
   assert.equal(
     spokenChain('build_api_routes.rs', crumbs.slice(2)),
     'In build_api_routes.rs, impl GameplayClient, function list_badge_grants'

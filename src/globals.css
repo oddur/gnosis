@@ -1818,6 +1818,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 /* Targets reach 24px past their drawn size, so they fit the gutter and the bar's height stays. */
 .diff-gap-gutter .diff-context-button::after { content:''; position:absolute; inset:-1px; }
 .diff-gap-controls { display:flex; flex:none; align-items:center; gap:4px; margin-left:auto; white-space:nowrap; }
+/* "Show whole function" sits right after the breadcrumb it acts on. */
+.diff-gap-act { display:flex; flex:none; align-items:center; white-space:nowrap; }
 .diff-gap-controls:empty { display:none; }
 .diff-gap-count { font-variant-numeric:tabular-nums; }
 .diff-gap-text { padding-inline:4px 6px; }
@@ -1827,16 +1829,18 @@ button:disabled { cursor: not-allowed; opacity: .5; }
    the code's text colour, the innermost semibold. A crumb that reveals its definition is a button that reads as text
    until hovered. */
 /* The location: the hunk's own, and over it in the same cell the reader's while the bar is pinned (HeaderRow). */
-.diff-gap-where { display:grid; flex:1 1 auto; align-items:center; min-width:0; }
+.diff-gap-where { display:grid; flex:0 1 auto; align-items:center; min-width:0; }
 .diff-gap-where > * { grid-area:1 / 1; min-width:0; }
 .diff-gap-live { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; visibility:hidden; }
 .diff-gap-scope { display:flex; flex:1 1 auto; align-items:center; min-width:0; }
 .diff-gap-symbol { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; }
-/* Outer crumbs give way first; the innermost keeps its text until nothing else is left. */
-.diff-gap-symbol > .diff-gap-crumb, .diff-gap-crumb-group { display:inline-flex; align-items:baseline; flex-shrink:100; min-width:min-content; }
-.diff-gap-symbol > .diff-gap-crumb { min-width:3ch; }
-.diff-gap-crumb-group { min-width:0; }
+/* The whole chain shows while it fits. When the bar is too narrow, ChangesDiff (fitCrumbs) folds crumbs from the
+   outside into "…", outermost first; the innermost stays whole, and gives way only once it is alone. */
+.diff-gap-crumb-group { display:inline-flex; align-items:baseline; flex:none; min-width:0; }
 .diff-gap-crumb-group[data-last] { flex-shrink:1; }
+.diff-gap-crumb-group[data-collapsed] { display:none; }
+.diff-gap-more { display:none; flex:none; color:var(--diff-header-muted); }
+[data-collapsed] > .diff-gap-more { display:inline; }
 .diff-gap-crumb-separator { padding-inline:1ch; color:var(--diff-header-muted); }
 .diff-gap-crumb { min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--diff-header-fg); font:inherit; }
 .diff-gap-crumb code { font:inherit; }
@@ -1893,7 +1897,7 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    controls keep their space, so pinning changes nothing's size, stay in the tab order, and come back while focus is
    inside the bar. */
 .diff-gap[data-stuck] { box-shadow:var(--diff-header-shadow); }
-.diff-gap[data-stuck]:not(:focus-within) :is(.diff-gap-gutter > *, .diff-gap-controls > :not(.diff-gap-structure)) { opacity:0; pointer-events:none; }
+.diff-gap[data-stuck]:not(:focus-within) :is(.diff-gap-gutter > *, .diff-gap-act > *, .diff-gap-controls > :not(.diff-gap-structure)) { opacity:0; pointer-events:none; }
 .diff-gap[data-stuck]:not(:focus-within) button.diff-gap-crumb { pointer-events:none; }
 .changes-diff :is(button, a, input, textarea, select, [tabindex]) { scroll-margin-top:var(--diff-sticky-offset); }
 .changes-diff .diff-gap[data-hunk-header] :is(button, a, [tabindex]) { scroll-margin-top:var(--diff-file-header-height, 0px); }

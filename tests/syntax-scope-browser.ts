@@ -6,8 +6,8 @@ import { app, BrowserWindow } from 'electron';
  * Enclosing definitions in Changes (#393), on the synthetic files in tests/fixtures/syntax-scope.ts.
  *
  * - Each hunk's bar is a breadcrumb of the file and the definitions around the hunk, in TypeScript and Rust; deleted
- *   lines use the old file's tree. A long chain keeps the file and the innermost two crumbs; the whole chain is the
- *   tooltip and the accessible label. A crumb reveals its definition.
+ *   lines use the old file's tree. The whole chain shows while it fits, and folds from the outside when not; the whole
+ *   chain is the tooltip and the accessible label. A crumb reveals its definition.
  * - "Show whole function" reveals the definition; past 150 lines it shows the signature only.
  * - Short definitions open whole by default, and the line at the top of the view stays where it is when they do.
  * - A file without a grammar is unchanged.
@@ -81,7 +81,7 @@ void app.whenReady().then(async () => {
         return [...row.querySelectorAll('.diff-hunk')].map(section=>{const h=section.querySelector(':scope > [data-hunk-header]');if(!h)return null;const r=h.getBoundingClientRect();
           const hit=document.elementFromPoint(r.left+12,r.top+r.height/2);
           return {offset:Math.round(r.top-file.bottom),fileTop:Math.round(file.top-window.stream().getBoundingClientRect().top),height:Math.round(r.height),stuck:h.hasAttribute('data-stuck'),label:window.headerLabel(h),
-            onTop:!!hit&&h.contains(hit),controls:[...h.querySelectorAll(':is(.diff-gap-gutter,.diff-gap-controls) > button')].map(b=>getComputedStyle(b).opacity)}})};
+            onTop:!!hit&&h.contains(hit),controls:[...h.querySelectorAll(':is(.diff-gap-gutter,.diff-gap-act,.diff-gap-controls) > button')].map(b=>getComputedStyle(b).opacity)}})};
       window.toMiddle=(p,i)=>{const s=window.stream();const section=window.stickyRow(p).querySelectorAll('.diff-hunk')[i];const r=section.getBoundingClientRect();
         s.scrollTop+=r.top-s.getBoundingClientRect().top+r.height/2};
       void 0;`);
@@ -111,9 +111,8 @@ void app.whenReady().then(async () => {
     }
   };
   /**
-   * Hunk header review: with GNOSIS_HUNK_HEADER_SHOTS=1, renders the hunk header's cases in
-   * light and dark, prints them as `HHSHOT <name> <base64 PNG>` lines and the header's colours and alignment as
-   * `HHMETRIC <json>`, and skips the checks.
+   * Hunk header review: with GNOSIS_HUNK_HEADER_SHOTS=1, renders hunk headers at 1280 and 760 px in light and dark as
+   * `HHSHOT <name> <base64 PNG>` lines, with what each breadcrumb folded as `HHINFO`, and skips the checks.
    */
   const hunkHeaderShots = async () => {
     const capture = async (name: string, rect: string) => {
@@ -125,137 +124,51 @@ void app.whenReady().then(async () => {
         console.log(`HHSHOT ${name}-${dark ? 'dark' : 'light'} ${(await win.webContents.capturePage(r)).toPNG().toString('base64')}`);
       }
     };
-    // From the stream's top: the file header, the pinned hunk header and the code under it.
+    const around = (selector: string, above = 70, below = 70) =>
+      `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+        const y=Math.max(Math.round(s.top),Math.round(b.top-${above}));return {x:Math.round(s.left),y,width:Math.round(s.width),height:Math.round(Math.min(b.bottom+${below},s.bottom)-y)}})()`;
     const streamTop = (height: number) =>
       `(()=>{const b=document.querySelector('.commit-diff-stream').getBoundingClientRect();return {x:Math.round(b.left),y:Math.round(b.top),width:Math.round(b.width),height:${height}}})()`;
-    // Around one bar: the code above and below it.
-    const around = (selector: string, margin = 64) =>
-      `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
-        const y=Math.max(Math.round(s.top),Math.round(b.top-${margin}));return {x:Math.round(s.left),y,width:Math.round(s.width),height:Math.round(Math.min(b.bottom+${margin},s.bottom)-y)}})()`;
-    // Colours of a header's parts as sRGB, through a canvas, and where its breadcrumb and the code's text start.
-    const metrics = (header: string) =>
-      js<Record<string, unknown>>(`(()=>{const h=${header};const c=document.createElement('canvas').getContext('2d',{willReadFrequently:true});
-        const rgb=v=>{if(!v)return null;c.clearRect(0,0,1,1);c.fillStyle='#000';c.fillStyle=v;c.fillRect(0,0,1,1);const d=c.getImageData(0,0,1,1).data;return '#'+[d[0],d[1],d[2]].map(n=>n.toString(16).padStart(2,'0')).join('')};
-        const color=sel=>{const e=h.querySelector(sel);return e?rgb(getComputedStyle(e).color):null};
-        const cs=getComputedStyle(h);
-        const section=h.closest('.diff-hunk');
-        const line=section&&window.deepAll('[data-line]',section).find(e=>e.getBoundingClientRect().width>0);
-        const code=line?line.getBoundingClientRect().left+parseFloat(getComputedStyle(line).paddingLeft):null;
-        const crumb=h.querySelector('.diff-gap-symbol,.diff-gap-scope');
-        return {background:rgb(cs.backgroundColor),name:color('.diff-gap-crumb[data-innermost]'),outer:color('.diff-gap-crumb[data-crumb-file]'),kind:color('.diff-gap-kind'),
-          separator:color('.diff-gap-crumb-separator'),range:color('.diff-gap-range'),count:color('.diff-gap-count'),button:color('.diff-gap-text'),
-          rule:rgb(cs.getPropertyValue('--diff-change').trim()),change:h.dataset.change,height:Math.round(h.getBoundingClientRect().height),
-          crumbLeft:crumb?Math.round(crumb.getBoundingClientRect().left*10)/10:null,codeLeft:code===null?null:Math.round(code*10)/10,
-          headerLeft:Math.round(h.getBoundingClientRect().left*10)/10}})()`);
-    const metric = async (variant: string, name: string, header: string) => {
-      for (const dark of [false, true]) {
-        await js(`document.documentElement.classList.toggle('dark',${dark})`);
-        await js(frames);
-        console.log(`HHMETRIC ${JSON.stringify({ variant, case: name, theme: dark ? 'dark' : 'light', ...(await metrics(header)) })}`);
-      }
+    const select = async (name: string) => {
+      await js(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`);
+      await sleep(1700);
     };
-    const select = (name: string) => js(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`);
-    for (const variant of ['final']) {
-      win.setContentSize(1280, 800);
-      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
-      await waitForWorkbenchQueue(win.webContents);
-      await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
-        window.symbols=p=>[...(window.stickyRow(p)?.querySelectorAll('.diff-gap-scope:not([data-provisional]) .diff-gap-symbol')??[])].map(e=>[...e.querySelectorAll('.diff-gap-crumb')].map(c=>c.textContent.trim()).join(' › '));void 0`);
-      await installSticky();
-      await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
-      await click('Open PR overview');
-      await click('Changes');
-      await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='sticky.ts')");
-      // (1) Pinned, mid-hunk.
-      await select('sticky.ts');
-      await wait(`window.symbols('src/sticky.ts').length>=2`);
-      await sleep(1700);
-      await js(`window.toMiddle('src/sticky.ts',1)`);
-      await settle();
-      const pinned = `window.stickyRow('src/sticky.ts').querySelectorAll('.diff-hunk')[1].querySelector('[data-hunk-header]')`;
-      await capture(`${variant}-pinned`, streamTop(300));
-      await metric(variant, 'pinned', pinned);
-      // (2) A bar with its controls, on store.rs: the chevrons, Show all and Show whole function.
-      await select('store.rs');
-      await wait(`window.symbols('src/store.rs').length>=5`);
-      await sleep(1700);
-      const bar = `.commit-stream-row[data-file="src/store.rs"] .diff-gap[data-gap]:has(.diff-gap-gutter button):has([data-show-definition])`;
-      console.log('HHINFO store.rs bars:', JSON.stringify(await js(`[...document.querySelectorAll('.commit-stream-row[data-file="src/store.rs"] .diff-gap')].map(b=>b.textContent.replace(/\\s+/g,' ').trim())`)));
-      await js(`(()=>{const s=window.stream();const b=document.querySelector(${JSON.stringify(bar)});s.scrollTop+=b.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
-      await settle();
-      await capture(`${variant}-controls`, around(bar));
-      await metric(variant, 'controls', `document.querySelector(${JSON.stringify(bar)})`);
-      // Keyboard focus on the bar's first chevron.
-      await js(`document.querySelector(${JSON.stringify(bar)}).querySelector('.diff-gap-gutter button').focus({preventScroll:true})`);
-      await capture(`${variant}-focus`, around(bar, 24));
-      await js('document.activeElement.blur()');
-      // (3) A file with no grammar: the range alone, pinned.
-      await select('sticky.rb');
-      await wait(`window.stickyRow('src/sticky.rb')?.querySelectorAll('[data-hunk-header]').length===2`);
-      await sleep(1700);
-      await js(`window.toMiddle('src/sticky.rb',1)`);
-      await settle();
-      await capture(`${variant}-no-grammar`, streamTop(220));
-      await metric(variant, 'no-grammar', `window.stickyRow('src/sticky.rb').querySelectorAll('.diff-hunk')[1].querySelector('[data-hunk-header]')`);
-      // C#: a namespace, class and method chain, unpinned.
-      await select('Navmesh.cs');
-      await wait(`window.symbols('src/Navmesh.cs').length>=1`);
-      await sleep(1700);
-      const navmesh = `.commit-stream-row[data-file="src/Navmesh.cs"] [data-hunk-header]`;
-      await js(`(()=>{const s=window.stream();const b=document.querySelector(${JSON.stringify(navmesh)});s.scrollTop+=b.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
-      await settle();
-      await capture(`${variant}-csharp`, around(navmesh));
-      await metric(variant, 'csharp', `document.querySelector(${JSON.stringify(navmesh)})`);
-      // Split: the breadcrumb still starts at the old side's code column.
-      const layout = async (value: string) => {
-        await click('Diff appearance');
-        await wait(`!!document.querySelector('select[aria-label="Diff layout"]')`);
-        await js(`(()=>{const s=document.querySelector('select[aria-label="Diff layout"]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,${JSON.stringify(value)});s.dispatchEvent(new Event('change',{bubbles:true}))})()`);
-        await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
-        await sleep(300);
-      };
-      await layout('split');
-      await select('store.rs');
-      await sleep(1700);
-      await js(`(()=>{const s=window.stream();const b=document.querySelector(${JSON.stringify(bar)});s.scrollTop+=b.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
-      await settle();
-      await capture(`${variant}-split`, around(bar));
-      await metric(variant, 'controls-split', `document.querySelector(${JSON.stringify(bar)})`);
-      await layout('unified');
-      // Narrow, pinned.
-      win.setContentSize(760, 800);
+    const toTop = (selector: string, offset: number) =>
+      js(`(()=>{const s=document.querySelector('.commit-diff-stream');const b=document.querySelector(${JSON.stringify(selector)});s.scrollTop+=b.getBoundingClientRect().top-s.getBoundingClientRect().top-${offset}})()`);
+    const folded = (selector: string) =>
+      js(`(()=>{const s=document.querySelector(${JSON.stringify(selector)}+' .diff-gap-symbol');return {chain:[...s.querySelectorAll('.diff-gap-crumb')].map(c=>c.textContent).join(' › '),folded:[...s.querySelectorAll(':scope > [data-collapsed]')].map(g=>g.textContent.replace('›','').trim()),right:s.closest('.diff-gap').querySelector('.diff-gap-controls').textContent+' | '+s.closest('.diff-gap').querySelector('.diff-gap-end')?.textContent}})()`);
+    win.setContentSize(1280, 800);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
+    await waitForWorkbenchQueue(win.webContents);
+    await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];void 0`);
+    await installSticky();
+    await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
+    await click('Open PR overview');
+    await click('Changes');
+    await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='Navmesh.cs')");
+    const navmesh = '.commit-stream-row[data-file="src/Navmesh.cs"] [data-hunk-header]';
+    const store = '.commit-stream-row[data-file="src/store.rs"] .diff-gap[data-gap]:has(.diff-gap-gutter button):has([data-show-definition])';
+    for (const [width, label] of [[1280, '1280'], [760, '760']] as const) {
+      win.setContentSize(width, 800);
       await sleep(400);
+      // A long C# chain: whole where it fits, folded from the outside where it does not.
+      await select('Navmesh.cs');
+      await toTop(navmesh, 120);
+      await settle();
+      console.log(`HHINFO navmesh ${label}: ${JSON.stringify(await folded(navmesh))}`);
+      await capture(`chain-${label}`, around(navmesh));
+      // The right side, and Show whole function after the breadcrumb.
+      await select('store.rs');
+      await wait(`!!document.querySelector(${JSON.stringify(store)})`);
+      await toTop(store, 120);
+      await settle();
+      console.log(`HHINFO store ${label}: ${JSON.stringify(await folded(store))}`);
+      await capture(`controls-${label}`, around(store));
+      // Pinned mid-hunk.
       await select('sticky.ts');
-      await sleep(1700);
       await js(`window.toMiddle('src/sticky.ts',1)`);
       await settle();
-      await capture(`${variant}-narrow-pinned`, streamTop(300));
-      win.setContentSize(1280, 800);
-      // (4) Provisional: before its contents load, a hunk shows its patch header's text and Loading structure….
-      await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope&syntax-lazy`);
-      await waitForWorkbenchQueue(win.webContents);
-      await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
-        // Queue preparation reads none of the lazy files, and h003.rs's read never finishes.
-        for(const name of ['getPrChangeFile','getPrChangeFileAfter']){const read=window.electronAPI[name];window.electronAPI[name]=async(r,...rest)=>{
-          if(!r.path.startsWith('src/lazy/'))return read(r,...rest);
-          if(name==='getPrChangeFile'&&rest[0])throw Error('This file is too large to preview. Open it on GitHub.');
-          if(r.path==='src/lazy/h003.rs')return new Promise(()=>{});return read(r,...rest)}}
-        window.treeClick=async name=>{const item=()=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===name);
-          const first=window.deepAll('[role=treeitem]')[0];let box=first?.parentElement;while(box&&box.scrollHeight<=box.clientHeight)box=box.parentElement;
-          if(box)box.scrollTop=0;for(let i=0;i<60&&!item()&&box;i++){box.scrollTop+=200;await new Promise(r=>requestAnimationFrame(r))}
-          const target=item();if(!target)throw Error('Missing tree item '+name);target.click()};void 0`);
-      await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
-      await click('Open PR overview');
-      await click('Changes');
-      await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='h003.rs')");
-      await js("window.treeClick('h003.rs')");
-      const provisional = `.commit-stream-row[data-file="src/lazy/h003.rs"] .diff-gap:has(.diff-gap-scope[data-provisional])`;
-      await wait(`!!document.querySelector(${JSON.stringify(provisional)})&&!!document.querySelector('.commit-stream-row[data-file="src/lazy/h003.rs"] [data-structure=loading]')`);
-      await sleep(1700);
-      await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const b=document.querySelector(${JSON.stringify(provisional)});s.scrollTop+=b.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
-      await settle();
-      await capture(`${variant}-provisional`, around(provisional));
-      await metric(variant, 'provisional', `document.querySelector(${JSON.stringify(provisional)})`);
+      await capture(`pinned-${label}`, streamTop(230));
     }
     await js(`document.documentElement.classList.toggle('dark',false)`);
   };
@@ -673,7 +586,7 @@ void app.whenReady().then(async () => {
     // Focus inside a pinned bar brings its controls back, so a keyboard reader can use them.
     const focused = await js<(string | boolean)[]>(`(()=>{const h=window.stickyRow('src/sticky.ts').querySelectorAll('.diff-hunk')[1].querySelector('[data-hunk-header]');
       h.querySelector('.diff-gap-controls > button').focus({preventScroll:true});
-      return [document.activeElement.closest('[data-hunk-header]')===h,...[...h.querySelectorAll(':is(.diff-gap-gutter,.diff-gap-controls) > button')].map(b=>getComputedStyle(b).opacity)]})()`);
+      return [document.activeElement.closest('[data-hunk-header]')===h,...[...h.querySelectorAll(':is(.diff-gap-gutter,.diff-gap-act,.diff-gap-controls) > button')].map(b=>getComputedStyle(b).opacity)]})()`);
     assert.deepEqual(focused.slice(0, 1), [true], 'A pinned bar\'s controls stay in the tab order');
     assert.ok(focused.length > 1 && focused.slice(1).every((v) => v === '1'), `Focus shows a pinned bar's controls: ${focused}`);
     await js('document.activeElement.blur()');
@@ -818,9 +731,24 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await js("window.lazyReads.filter(r=>r.path==='src/lazy/h003.rs').map(r=>r.side)"), ['after']);
     assert.deepEqual(
       await js('window.symbols("src/lazy/h003.rs")'),
-      ['… › impl Client3 › fn handler_3'],
-      'A long chain keeps the file and the innermost two crumbs'
+      ['mod api › impl Client3 › fn handler_3'],
+      'The whole chain, which fits'
     );
+    // The chain shows whole while it fits; a bar too narrow for it folds crumbs from the outside, keeping the innermost.
+    const folds = async (width: string) => {
+      await js(`window.row('src/lazy/h003.rs').querySelector('.changes-diff').style.width=${JSON.stringify(width)}`);
+      await js(frames);
+      await sleep(100);
+      return js<{ folded: string[]; more: boolean; innermost: string; fits: boolean }>(`(()=>{const s=window.row('src/lazy/h003.rs').querySelector('.diff-gap-symbol');
+        return {folded:[...s.querySelectorAll(':scope > [data-collapsed]')].map(g=>g.textContent.replace('›','').trim()),more:getComputedStyle(s.querySelector('.diff-gap-more')).display!=='none',
+          innermost:s.querySelector('[data-innermost]').textContent,fits:s.scrollWidth<=s.clientWidth+1}})()`);
+    };
+    assert.deepEqual(await folds(''), { folded: [], more: false, innermost: 'fn handler_3', fits: true }, 'Nothing folds while the chain fits');
+    const narrow = await folds('520px');
+    console.log('Breadcrumb at 520px:', JSON.stringify(narrow));
+    assert.equal(narrow.folded[0], 'mod api', 'The outermost crumb folds first');
+    assert.ok(narrow.more && narrow.fits && narrow.innermost === 'fn handler_3', `It folds into "…" and the innermost stays whole: ${JSON.stringify(narrow)}`);
+    assert.deepEqual((await folds('')).folded, [], 'Widened again, the whole chain comes back');
     const trail = `${h03}.querySelector('.diff-gap-symbol')`;
     assert.equal(
       await js(`${trail}.getAttribute('title')`),
@@ -852,7 +780,7 @@ void app.whenReady().then(async () => {
     await shot('structure-failed', '.commit-stream-row[data-file="src/lazy/h030.rs"] .diff-gap:has(.diff-gap-scope)');
     await js(`[...window.row('src/lazy/h030.rs').querySelectorAll('[data-structure=failed] button')].find(b=>b.textContent==='Try again').click()`);
     await wait(`window.symbols('src/lazy/h030.rs').length>=1`, 200);
-    assert.deepEqual(await js('window.symbols("src/lazy/h030.rs")'), ['… › impl Client30 › fn handler_30']);
+    assert.deepEqual(await js('window.symbols("src/lazy/h030.rs")'), ['mod api › impl Client30 › fn handler_30']);
     assert.deepEqual(await js('window.structureNote("src/lazy/h030.rs")'), []);
     // A file far from the view is not read while prefetch waits.
     for (const far of ['src/lazy/h020.rs', 'src/lazy/h023.rs', 'src/lazy/panel.ts'])
@@ -922,7 +850,7 @@ void app.whenReady().then(async () => {
     const reads = await js<number>('window.lazyReads.length');
     await js("window.treeClick('h020.rs')");
     await wait(`window.symbols('src/lazy/h020.rs').length>=1`, 50);
-    assert.deepEqual(await js('window.symbols("src/lazy/h020.rs")'), ['… › impl Client20 › fn handler_20']);
+    assert.deepEqual(await js('window.symbols("src/lazy/h020.rs")'), ['mod api › impl Client20 › fn handler_20']);
     await js("window.treeClick('cleanup.rs')");
     await wait(`window.symbols('src/lazy/cleanup.rs').length>=1`, 50);
     assert.deepEqual(await js('window.symbols("src/lazy/cleanup.rs")'), ['fn cleanup']);

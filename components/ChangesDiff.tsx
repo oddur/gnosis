@@ -16,7 +16,7 @@ import { applyCodePalette } from '../lib/diff-code-palette';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
-import { revealLabel, spokenChain, visibleCrumbs, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
+import { revealLabel, spokenChain, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
@@ -186,7 +186,7 @@ function HunkScopeLabel({
   onShow?: (reveal: DefinitionReveal) => void;
 }) {
   const spoken = spokenChain(file, scope.chain);
-  const crumbs = visibleCrumbs(scope.chain);
+  const crumbs = scope.chain;
   const innermost = scope.chain.at(-1);
   const separator = (
     <span className="diff-gap-crumb-separator" aria-hidden="true">
@@ -205,17 +205,13 @@ function HunkScopeLabel({
         aria-label={spoken}
         title={scope.provisional ? `${spoken}\n${PROVISIONAL_TITLE}` : spoken}
       >
+        {crumbs.length > 1 && (
+          <span className="diff-gap-more" aria-hidden="true">
+            …
+          </span>
+        )}
         {crumbs.map((crumb, index) => {
           const lead = index > 0 && separator;
-          if (crumb === 'more')
-            return (
-              <span key="more" className="diff-gap-crumb-group">
-                {lead}
-                <span className="diff-gap-crumb" aria-hidden="true">
-                  …
-                </span>
-              </span>
-            );
           const last = crumb === innermost;
           const text = (
             <CrumbText crumb={crumb.definition.crumb} keyword={crumb.provisional ? undefined : crumb.definition.crumbKeyword} />
@@ -260,7 +256,7 @@ function ShowDefinition({ scope, onShow }: { scope?: HunkScope; onShow?: (reveal
       title={
         signature
           ? `This ${definitionLines(scope.definition).toLocaleString()}-line definition is too long to show whole; this shows its signature.`
-          : undefined
+          : revealLabel(scope)
       }
       onClick={() => scope.reveal && onShow(scope.reveal)}
     >
@@ -326,6 +322,7 @@ function HeaderRow({
   range,
   counts,
   live,
+  action,
 }: {
   gutter?: ReactNode;
   location?: ReactNode;
@@ -334,6 +331,8 @@ function HeaderRow({
   counts?: HunkCounts;
   /** The bar heads a hunk, and pins: it has the slots the reader's location is written into. */
   live?: boolean;
+  /** What acts on the breadcrumb's definition ("Show whole function"), right after it. */
+  action?: ReactNode;
 }) {
   return (
     <>
@@ -342,6 +341,7 @@ function HeaderRow({
         {location}
         {live && <span className="diff-gap-live" aria-hidden="true" />}
       </span>
+      {action && <span className="diff-gap-act">{action}</span>}
       {/* Hidden, not removed, while the bar is pinned, so pinning never changes its height. */}
       <span className="diff-gap-controls">{controls}</span>
       {(range || counts) && (
@@ -422,8 +422,8 @@ function gapControls(part: GapBarPart, status: GapStatus, reveal: (direction: Ga
     ),
     body: (
       <>
-        <span className="diff-gap-count">{known ? `${lines(hidden)} hidden` : 'Unchanged lines below'}</span>
-        <button type="button" className="diff-context-button diff-gap-text" onClick={reveal('all')}>
+        <span className="diff-gap-count">{known ? `${hidden.toLocaleString()} hidden` : 'Unchanged lines below'}</span>
+        <button type="button" className="diff-context-button diff-gap-text" title={known ? `Show all ${lines(hidden)}` : 'Show the rest of the file'} onClick={reveal('all')}>
           <span className="icon-mask icon-unfold-vertical" aria-hidden="true" />
           <span className="diff-gap-label">{known ? 'Show all' : 'Show the rest'}</span>
         </button>
@@ -548,7 +548,6 @@ function GapBar({
         controls={
           <>
             {body}
-            <ShowDefinition scope={scope} onShow={onShowDefinition} />
             {located && note}
             {busy && (
               <LoadingIndicator className="diff-gap-loading" announce={false}>
@@ -560,6 +559,7 @@ function GapBar({
         range={range}
         counts={counts}
         live
+        action={<ShowDefinition scope={scope} onShow={onShowDefinition} />}
       />
     </div>
   );
@@ -605,7 +605,10 @@ function followReader(
   const lineSlot = bar.querySelector('.diff-gap-live-line');
   if (lineSlot) lineSlot.textContent = before ? `old L${number}` : `L${number}`;
   const slot = bar.querySelector('.diff-gap-live');
-  if (slot && chain && previous !== scopeKey) slot.replaceChildren(...liveCrumbs(chain));
+  if (slot && chain && previous !== scopeKey) {
+    slot.replaceChildren(...liveCrumbs(chain));
+    fitCrumbs([slot as HTMLElement]);
+  }
   if (chain || scopeKey === '-') bar.setAttribute('data-live', chain ? 'scope' : 'line');
   return true;
 }
@@ -623,8 +626,8 @@ function liveCrumbs(chain: readonly SyntaxDefinition[]): Node[] {
     top.setAttribute('data-top-level', '');
     return [top];
   }
-  const shown: (SyntaxDefinition | 'more')[] = chain.length > 2 ? ['more', ...chain.slice(-2)] : [...chain];
-  return shown.map((definition, index) => {
+  const shown: readonly (SyntaxDefinition | 'more')[] = chain;
+  const groups = shown.map((definition, index) => {
     const group = make('span', 'diff-gap-crumb-group');
     if (index > 0) group.append(make('span', 'diff-gap-crumb-separator', '›'));
     const crumb = make('span', 'diff-gap-crumb');
@@ -644,7 +647,36 @@ function liveCrumbs(chain: readonly SyntaxDefinition[]): Node[] {
     group.append(crumb);
     return group;
   });
+  if (chain.length < 2) return groups;
+  const more = make('span', 'diff-gap-more', '…');
+  return [more, ...groups];
 }
+
+/**
+ * Folds breadcrumbs that overflow their bar, from the outside: the outermost crumb goes into "…" first, then the next,
+ * and the innermost never folds. Every list is reset and measured together, so a pass costs one layout per round, at
+ * most one round per crumb, and runs only when the bars' width or their crumbs change, never while scrolling.
+ */
+function fitCrumbs(lists: Iterable<HTMLElement>) {
+  const all = [...lists];
+  for (const list of all) {
+    list.removeAttribute('data-collapsed');
+    for (const group of list.querySelectorAll(':scope > [data-collapsed]')) group.removeAttribute('data-collapsed');
+  }
+  let pending = all;
+  while (pending.length) {
+    const over = pending.filter((list) => list.scrollWidth > list.clientWidth + 1);
+    pending = [];
+    for (const list of over) {
+      const next = list.querySelector<HTMLElement>(':scope > .diff-gap-crumb-group:not([data-collapsed]):not([data-last])');
+      if (!next) continue;
+      next.setAttribute('data-collapsed', '');
+      list.setAttribute('data-collapsed', '');
+      pending.push(list);
+    }
+  }
+}
+const crumbLists = (root: ParentNode) => root.querySelectorAll<HTMLElement>('.diff-gap-symbol, .diff-gap-live');
 
 /**
  * The last file header's height. Files in a stream share their header's layout, so a diff renders with this height
@@ -738,12 +770,12 @@ export function ChangesDiff<A>({
         slices,
         changed: part.hunk.rows.some((row) => row.type !== ' '),
         counts: hunkCounts(hunk),
-        range: hunkRange(hunk, { split: layout === 'split' && file.status !== 'added' && file.status !== 'deleted' }),
+        range: hunkRange(hunk),
       };
     });
     cache.current = next;
     return result;
-  }, [parts, file.name, file.prevName, file.status, layout]);
+  }, [parts, file.name, file.prevName, file.status]);
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
   // Hunks with a change: pinned context (a definition's signature) is not a location of its own.
   const changedHunks = useMemo(() => new Set(blocks.flatMap((block) => (block.kind === 'hunk' && block.changed ? [block.key] : []))), [blocks]);
@@ -917,6 +949,23 @@ export function ChangesDiff<A>({
   }, [stickyUnder]);
   // New definitions name the reader's place anew.
   useEffect(() => follow.current?.(), [scopeAt]);
+  // Breadcrumbs fold to fit their bar: again whenever the bars' width or their crumbs change.
+  useLayoutEffect(() => {
+    if (root.current) fitCrumbs(crumbLists(root.current));
+  }, [blocks, scopes, structure]);
+  useEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    let width: number | undefined;
+    const resize = new ResizeObserver((entries) => {
+      const next = Math.round(entries[entries.length - 1].contentRect.width);
+      if (next === width) return;
+      width = next;
+      fitCrumbs(crumbLists(element));
+    });
+    resize.observe(element);
+    return () => resize.disconnect();
+  }, []);
   // Revealed lines re-create bars: watch the current ones.
   useEffect(observeHeaders, [blocks, structure]);
 
@@ -996,14 +1045,8 @@ export function ChangesDiff<A>({
                 <TopLevelLabel file={name} />
               )
             }
-            controls={
-              structure && (
-                <>
-                  <ShowDefinition scope={scope} onShow={onShowDefinition} />
-                  {scopeNote}
-                </>
-              )
-            }
+            controls={structure && scopeNote}
+            action={structure && <ShowDefinition scope={scope} onShow={onShowDefinition} />}
             range={block.range}
             counts={block.counts}
             live
