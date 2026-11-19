@@ -27,6 +27,7 @@ import {
   patchHeaders,
   provisionalScopes,
   revealLabel,
+  jumpLabel,
   spokenChain,
 } from '../lib/hunk-scopes';
 import { perfBudget } from './perf-budget';
@@ -464,6 +465,10 @@ void test('A long breadcrumb keeps the innermost two crumbs; the whole chain is 
     spokenChain('build_api_routes.rs', crumbs.slice(2)),
     'In build_api_routes.rs, impl GameplayClient, function list_badge_grants'
   );
+  // A pinned crumb is a button that names where it goes (#417).
+  assert.equal(jumpLabel(list[2]), 'Go to impl GameplayClient');
+  assert.equal(jumpLabel(list[3]), 'Go to function list_badge_grants');
+  assert.equal(jumpLabel(at('class', 'ProductionProcessRunner', 'class ProductionProcessRunner', 1, 9)), 'Go to class ProductionProcessRunner');
 });
 
 void test('Tag queries keep only their definition patterns', () => {
