@@ -626,7 +626,9 @@ void app.whenReady().then(async () => {
     // GitHub refuses while the file is out of view: the failure still reaches the reader, with Retry.
     await js('window.rejectComment()');
     await wait("[...document.querySelectorAll('[class*=toast], li, [role=dialog], [role=alertdialog], [role=alert], [role=status]')].some(e=>e.textContent.includes('Comment wasn’t posted')&&e.textContent.includes('Offline: retry your comment.'))");
-    // Back on the file, the composer is open again with the text and the error.
+    // Back on the file, the composer is open again with the text and the error. The failed comment brings its file's
+    // row into the tree; that can land a moment after the toast.
+    await wait("window.deepAll('[role=treeitem]',document.querySelector('#large-stream-test')).some(e=>e.getAttribute('data-item-path')==='src/file119.ts')");
     await js(
       `(()=>{const root=document.querySelector('#large-stream-test');const row=window.deepAll('[role=treeitem]',root).find(e=>e.getAttribute('data-item-path')==='src/file119.ts');if(!row)throw Error('Missing tree row src/file119.ts');row.click()})()`
     );
