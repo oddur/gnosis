@@ -27,15 +27,15 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.queue-item')");
     await js(`(()=>{
       const at = new Date(Date.now() - 60_000).toISOString();
-      const failed = (id, title, detail, kind = 'briefing') => ({ id, kind, title, detail, model: 'gpt-6-astra', status: 'failed', updatedAt: at, canCancel: false, canRetry: true });
+      const failed = (id, title, detail, kind = 'briefing') => ({ id, kind, title, detail, model: 'gpt-6.2-astra', status: 'failed', updatedAt: at, canCancel: false, canRetry: true });
       window.fixtureTasks = [
-        { id: 'briefing-pause:codex', kind: 'briefing', title: 'Automatic briefings paused', model: 'gpt-6-astra', status: 'paused',
+        { id: 'briefing-pause:codex', kind: 'briefing', title: 'Automatic briefings paused', model: 'gpt-6.2-astra', status: 'paused',
           detail: 'Codex usage limit reached. Automatic briefings resume at 1:25 PM. You can still generate one manually.',
           updatedAt: at, canCancel: false, canRetry: true },
         failed('briefing:a', 'ci: rebuild the CI runner images', 'Codex did not finish the briefing within 90 seconds. Retry this briefing.'),
         failed('briefing:b', 'Bound the worker queue', 'GitHub was too slow to load this PR for a briefing. Retry this briefing.'),
         failed('review:c', 'Boot checks for the published images', '1 of 2 topics saved. Retry this explanation to reuse completed topics.', 'review'),
-        { id: 'review:done', kind: 'review', title: 'Review transport shutdown', detail: 'Review ready', reviewId: 'workbench-review', model: 'gpt-6-astra', status: 'completed', updatedAt: at, canCancel: false, canRetry: false },
+        { id: 'review:done', kind: 'review', title: 'Review transport shutdown', detail: 'Review ready', reviewId: 'workbench-review', model: 'gpt-6.2-astra', status: 'completed', updatedAt: at, canCancel: false, canRetry: false },
       ];
       window.fixtureActions = [];
       window.electronAPI.listActivity = () => Promise.resolve(structuredClone(window.fixtureTasks));

@@ -4,11 +4,11 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { codexProvider, createCodexEventHandler } from '../lib/providers/codex';
 import { setBinaryOverride } from '../lib/providers/shared';
-import { normalizeModelSelection, RETIRED_CLAUDE_MODELS } from '../lib/models';
+import { normalizeModelSelection, RETIRED_CLAUDE_MODELS, RETIRED_CODEX_MODELS } from '../lib/models';
 
 setBinaryOverride('codex', path.resolve('tests/fixtures/codex.mjs'));
 after(() => setBinaryOverride('codex', ''));
-const options = { model: 'gpt-6.1-sol' as const, systemPrompt: 'Return only JSON.', thinking: true };
+const options = { model: 'gpt-6.2-sol' as const, systemPrompt: 'Return only JSON.', thinking: true };
 
 void test('runs Codex with isolated context and returns only the final answer', async () => {
   const chunks: [string, boolean][] = [];
@@ -115,8 +115,8 @@ void test('ignores diagnostics, unknown events and recovered stream errors', () 
 
 void test('preserves Codex preferences and migrates retired or mismatched model IDs', () => {
   assert.deepEqual(normalizeModelSelection('codex', 'gpt-6-luna'), { provider: 'codex', model: 'gpt-6-luna' });
-  assert.deepEqual(normalizeModelSelection('codex', 'claude-opus-5-5'), { provider: 'codex', model: 'gpt-6.1-sol' });
-  assert.deepEqual(normalizeModelSelection('claude', 'gpt-6-astra'), { provider: 'claude', model: 'claude-opus-5-5' });
+  assert.deepEqual(normalizeModelSelection('codex', 'claude-opus-5-5'), { provider: 'codex', model: 'gpt-6.2-sol' });
+  assert.deepEqual(normalizeModelSelection('claude', 'gpt-6.2-astra'), { provider: 'claude', model: 'claude-opus-5-5' });
   assert.deepEqual(normalizeModelSelection('claude', 'claude-opus-4-7'), {
     provider: 'claude',
     model: 'claude-opus-5-5',
@@ -130,7 +130,8 @@ void test('preserves Codex preferences and migrates retired or mismatched model 
 
 void test('upgrades saved Claude preferences within each model family and preserves history labels', () => {
   for (const [previous, current, label] of [
-    ['claude-fable-5', 'claude-fable-5-1', 'Claude Fable 5'],
+    ['claude-fable-5', 'claude-fable-5-2', 'Claude Fable 5'],
+    ['claude-fable-5-1', 'claude-fable-5-2', 'Fable 5.1'],
     ['claude-opus-5', 'claude-opus-5-5', 'Claude Opus 5'],
     ['claude-sonnet-5', 'claude-sonnet-5-5', 'Claude Sonnet 5'],
     ['claude-haiku-4-5-20251001', 'claude-haiku-5-5', 'Claude Haiku 4.5'],
@@ -171,4 +172,15 @@ void test('Codex receives explicit effort and clamps Ultra for Luna', async () =
     ...options, model: 'gpt-6-luna', effort: 'ultra', content: JSON.stringify({ mode: 'success' }),
   })) as { args: string[] };
   assert.ok(args.includes('model_reasoning_effort="max"'));
+});
+
+void test('upgrades saved Codex preferences to GPT-6.2 and keeps history labels', () => {
+  for (const [previous, current, label] of [
+    ['gpt-6.1-sol', 'gpt-6.2-sol', 'GPT-6.1 Sol'],
+    ['gpt-6-astra', 'gpt-6.2-astra', 'GPT-6 Astra'],
+  ]) {
+    assert.deepEqual(normalizeModelSelection('codex', previous), { provider: 'codex', model: current });
+    assert.equal(RETIRED_CODEX_MODELS[previous].label, label);
+  }
+  assert.deepEqual(normalizeModelSelection('codex', 'gpt-6.1-terra'), { provider: 'codex', model: 'gpt-6.1-terra' });
 });

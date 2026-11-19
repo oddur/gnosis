@@ -97,7 +97,7 @@ for (const provider of ['codex', 'claude'] as const) {
     let chat: ReturnType<typeof useSlideChat> | undefined;
     let activeReview = { ...review, reviewId: `test-${provider}` };
     function Probe() {
-      chat = useSlideChat(activeReview, provider, provider === 'codex' ? 'gpt-6.1-sol' : 'claude-opus-5-5');
+      chat = useSlideChat(activeReview, provider, provider === 'codex' ? 'gpt-6.2-sol' : 'claude-opus-5-5');
       return createElement(
         'div',
         {},
