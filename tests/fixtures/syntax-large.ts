@@ -15,7 +15,8 @@ const BODY = 18;
 
 /** One method, `BODY + 3` lines, at the given indent. */
 function method(extension: Extension, index: number, indent: string): string[] {
-  const body = Array.from({ length: BODY }, (_, k) => `total += ${k};`);
+  // Lines as dense as real code: a call with several arguments, a string and arithmetic.
+  const body = Array.from({ length: BODY }, (_, k) => `total += compute(total, ${k}, "label-${k}") * (total + ${k}) / scale(1, ${k});`);
   const inner = indent + '    ';
   switch (extension) {
     case 'cs':
@@ -52,12 +53,12 @@ function source(extension: Extension, file: number, count: number): string[] {
   }
 }
 
-/** The line of method `index`'s body that changes: `total += 5;` inside it. */
+/** The line of method `index`'s body that changes: its `compute(total, k, …)` line. */
 const target = (extension: Extension, before: string[], index: number, k: number) => {
   const head =
     extension === 'cs' || extension === 'go' ? `Method${index}(` : extension === 'ts' || extension === 'java' ? `method${index}(` : `method_${index}(`;
   const start = before.findIndex((line) => line.includes(head));
-  return before.findIndex((line, i) => i > start && line.trim().replace(/;$/, '') === `total += ${k}`);
+  return before.findIndex((line, i) => i > start && line.includes(`compute(total, ${k},`));
 };
 
 export function largeFile(file: number): { path: string; before: string[]; after: string[]; deletes: boolean } {
@@ -71,7 +72,7 @@ export function largeFile(file: number): { path: string; before: string[]; after
   const [first, middle, last] = [1, Math.floor(count / 2), count - 2];
   const edit = (index: number, k: number) => {
     const line = target(extension, before, index, k);
-    after[line] = after[line].replace(`+= ${k}`, `+= ${k} * 2`);
+    after[line] = after[line].replace(`compute(total, ${k},`, `compute(total, ${k} * 2,`);
   };
   edit(first, 5);
   edit(last, 5);

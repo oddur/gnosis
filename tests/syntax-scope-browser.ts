@@ -396,6 +396,7 @@ void app.whenReady().then(async () => {
         before: span(at(done), at(num(t.beforeDone))),
         react: span(at(Math.max(done ?? 0, num(t.beforeDone) ?? 0)), data.appear[path]),
         tier: t.tier,
+        steps: Object.fromEntries(Object.entries(t).map(([name, value]) => [name, typeof value === 'number' && name !== 'workerWait' && name !== 'load' && name !== 'parse' && name !== 'query' ? Math.round(value - start) : value])),
       };
     };
     const resolved = (ms: number) => [...byPath.values()].filter((t) => num(t.parseDone) !== undefined && num(t.parseDone)! - t0 <= ms).length;
