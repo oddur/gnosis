@@ -1880,6 +1880,12 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 /* Beside the location: the structure is loading, or failed to load. */
 .diff-gap-structure { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
 .diff-gap-structure .loading-indicator { font-size:inherit; }
+/* The note shows only once a file has waited 150 ms (useDiffFileModel), and fades in, so a file whose structure lands
+   just after that barely shows it. */
+@media (prefers-reduced-motion: no-preference) {
+  .diff-gap-structure[data-structure=loading] { animation: diff-structure-in 240ms ease-out both; }
+}
+@keyframes diff-structure-in { from { opacity:0; } }
 /* Where the hunk is by its lines, always at the end: the only label of a file with no structure. */
 .diff-gap-range { flex:none; white-space:nowrap; font-variant-numeric:tabular-nums; color:var(--diff-header-muted); }
 /* At the end: what the hunk changes, then its lines (or, pinned, the reader's line). */
