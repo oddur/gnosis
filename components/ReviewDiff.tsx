@@ -49,6 +49,10 @@ interface Props {
   stickyUnder?: RefObject<HTMLElement | null>;
   /** The file is expanded: collapsed files read nothing. */
   active?: boolean;
+  /** The file is marked Viewed: its outline's symbols read as viewed. */
+  fileViewed?: boolean;
+  /** Marks the file Viewed, offered once every symbol of its outline is ticked. */
+  onMarkFileViewed?: () => void;
 }
 
 /** The Pierre theme a topic's code was highlighted in, from its saved HTML: the file header and bars take its palette. */
@@ -81,6 +85,8 @@ export function ReviewDiff({
   source,
   stickyUnder,
   active = true,
+  fileViewed,
+  onMarkFileViewed,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
   // Without the file's status, a topic whose saved hunks add (or delete) the whole file is an added (or deleted) file,
@@ -306,6 +312,14 @@ export function ReviewDiff({
           onShowDefinition={model.showDefinition}
           rails={model.rails}
           onCollapseScope={model.collapseScope}
+          outline={{
+            symbols: model.symbols,
+            pending: model.outlinePending,
+            fileKey,
+            fileName: path.slice(path.lastIndexOf('/') + 1),
+            fileViewed,
+            onMarkFileViewed,
+          }}
           stickyUnder={stickyUnder}
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
           lineCount={model.lineCount}

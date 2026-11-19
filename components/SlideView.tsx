@@ -868,6 +868,15 @@ export function SlideView({
             slideIndex={slideNumber}
             commentCallbacks={commentCallbacks}
             stickyUnder={headerRef}
+            fileViewed={viewed}
+            onMarkFileViewed={
+              onFileViewedChange
+                ? () => {
+                    setFileExpansion((current) => ({ ...current, [filePath]: false }));
+                    onFileViewedChange(filePath, true);
+                  }
+                : undefined
+            }
           />
         );
 

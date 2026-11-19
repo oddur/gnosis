@@ -24,6 +24,7 @@ import { useSyntaxContents, type SyntaxFile } from '../lib/use-syntax-contents';
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan } from '../lib/syntax-contents';
 import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
+import { changedSymbols } from '../lib/symbol-outline';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { inspectionFiles } from '../lib/inspection-cache';
 import type { PrFileContents, PrFileRequest, PrFileSide } from '../lib/pr-changes';
@@ -164,18 +165,13 @@ export function useDiffFileModel({
     });
   }, [expandable, hunks, afterMatches, after, before, partial, known]);
   // Enclosing definitions (#393), from text this view already has: the after side gaps reveal from, and the before
-  // side when both sides are loaded. A file without a grammar, or with a stale after side, shows as before.
-  // The old side is parsed only for hunks that delete lines and add none.
-  const onlyDeletes = useMemo(
-    () =>
-      !!baseHunks?.some((hunk) => hunk.rows.some((row) => row.type === '-') && !hunk.rows.some((row) => row.type === '+')),
-    [baseHunks]
-  );
+  // side when it is loaded. A file without a grammar, or with a stale after side, shows as before.
+  // The old side is parsed when the file deletes lines: hunks that only delete are named by it, and the outline finds
+  // removed symbols in it (lib/symbol-outline.ts).
+  const deletes = useMemo(() => !!baseHunks?.some((hunk) => hunk.rows.some((row) => row.type === '-')), [baseHunks]);
   const structure = pathEnabled(codeSettings, path);
   const beforeText =
-    onlyDeletes && contents?.before.kind === 'text' && pathEnabled(codeSettings, previousPath ?? path)
-      ? contents.before.content
-      : undefined;
+    deletes && beforeSide?.kind === 'text' && pathEnabled(codeSettings, previousPath ?? path) ? beforeSide.content : undefined;
   const scopePlan = useMemo(
     () => (scopeFile ? syntaxContentsPlan(scopeFile.snapshot, scopeFile.file, (p) => pathEnabled(codeSettings, p)) : undefined),
     [scopeFile, codeSettings]
@@ -278,6 +274,12 @@ export function useDiffFileModel({
     [scopes, parts, gaps, scopePlan, expandable, afterMatches, patch]
   );
   const shownScopes: ReadonlyMap<string, HunkScope> | undefined = scopes ?? provisional;
+  // The symbols the hunks change (#394), for the file's outline, once the file is parsed; a quiet bar until then.
+  const symbols = useMemo(
+    () => (definitions.after && baseHunks ? changedSymbols(baseHunks, definitions) : undefined),
+    [baseHunks, definitions.after, definitions.before]
+  );
+  const outlinePending = !symbols && !!provisional && structurePending;
   // A pinned hunk header names the definitions around the line the reader is at (ChangesDiff).
   const scopeAt = useMemo(
     () =>
@@ -364,6 +366,8 @@ export function useDiffFileModel({
     showDefinition,
     rails,
     collapseScope,
+    symbols,
+    outlinePending,
     gapStatus,
     revealLines,
     canReveal,

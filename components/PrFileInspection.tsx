@@ -814,6 +814,14 @@ export function PrFileInspection({
                   onShowDefinition={model.showDefinition}
                   rails={model.rails}
                   onCollapseScope={model.collapseScope}
+                  outline={{
+                    symbols: model.symbols,
+                    pending: model.outlinePending,
+                    fileKey: activeKey,
+                    fileName: entry.file.path.slice(entry.file.path.lastIndexOf('/') + 1),
+                    fileViewed: viewed,
+                    onMarkFileViewed: () => mark(false),
+                  }}
                   stickyUnder={headerRef}
                   onRetry={() => model.readAfter(true)}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}

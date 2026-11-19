@@ -98,6 +98,31 @@ export function markFilesViewed(keys: readonly string[], viewed: boolean) {
 export function markFileViewed(key: string, viewed: boolean) {
   return markFilesViewed([key], viewed);
 }
+/**
+ * Per-symbol Viewed (#394): a reviewer ticks off the symbols of a file's outline (lib/symbol-outline.ts). A mark is
+ * kept beside the file's own, under the file's revision key and the symbol's id, and follows the file's content alias
+ * as the file's mark does: a new head that leaves the file's change alone keeps its ticks, a new change to the file
+ * starts them afresh. A mark made before the alias was known is still found under the raw key.
+ */
+export const symbolViewedKey = (fileKey: string, symbolId: string) => `symbol:${JSON.stringify([fileKey, symbolId])}`;
+export function isSymbolViewed(fileKey: string, symbolId: string): boolean {
+  const s = load();
+  const resolved = s.marks[symbolViewedKey(s.aliases[fileKey] ?? fileKey, symbolId)];
+  return resolved ?? !!s.marks[symbolViewedKey(fileKey, symbolId)];
+}
+/** Ticks or unticks symbols of one file with one notification and one persisted patch. */
+export function markSymbolsViewed(fileKey: string, symbolIds: readonly string[], viewed: boolean) {
+  const s = load();
+  const resolvedFile = s.aliases[fileKey] ?? fileKey;
+  const marks: Record<string, boolean> = {};
+  for (const id of new Set(symbolIds)) {
+    if (isSymbolViewed(fileKey, id) === viewed) continue;
+    const key = symbolViewedKey(resolvedFile, id);
+    s.marks[key] = viewed;
+    marks[key] = viewed;
+  }
+  return Object.keys(marks).length ? changed({ aliases: {}, marks }) : Promise.resolve(true);
+}
 export function useFileProgress() {
   useSyncExternalStore(
     (callback) => {
@@ -106,5 +131,5 @@ export function useFileProgress() {
     },
     () => version
   );
-  return { isFileViewed, markFileViewed, markFilesViewed };
+  return { isFileViewed, markFileViewed, markFilesViewed, isSymbolViewed, markSymbolsViewed };
 }

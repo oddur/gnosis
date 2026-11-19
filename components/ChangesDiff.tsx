@@ -23,6 +23,8 @@ import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
 import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
 import type { ScopeRail } from '../lib/show-scope';
+import type { ChangedSymbol } from '../lib/symbol-outline';
+import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 
@@ -904,6 +906,7 @@ export function ChangesDiff<A>({
   navigator,
   rails = NO_RAILS,
   onCollapseScope,
+  outline,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -940,6 +943,8 @@ export function ChangesDiff<A>({
   rails?: readonly ScopeRail[];
   /** Takes a definition shown whole by show scope back to plain context. */
   onCollapseScope?: (key: string) => void;
+  /** The file's outline of changed symbols (#394), above its first hunk. */
+  outline?: Omit<OutlineProps, 'onGo'>;
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1082,6 +1087,21 @@ export function ChangesDiff<A>({
   const latestName = useRef('');
   latestName.current = file.name.slice(file.name.lastIndexOf('/') + 1);
   const follow = useRef<() => void>(undefined);
+  // The diff's own navigator, for its outline.
+  const own = useRef<DiffNavigator | null>(null);
+  // An outline symbol goes where its crumb would (#394): its definition's first line, revealing every hidden line from
+  // there down to its first change, and nothing above it; its signature is marked "here".
+  const goToSymbol = ({ definition, side, first }: ChangedSymbol) => {
+    const parts = latestParts.current;
+    const from = newLineAt(parts, side, definition.start);
+    const to = newLineAt(parts, first.side, first.line);
+    own.current?.goTo({
+      side,
+      line: definition.start,
+      reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
+      here: [definition.start, Math.max(definition.start, definition.signatureEnd)],
+    });
+  };
   const observeHeaders = () => {
     const observer = stuck.current;
     if (!observer || !root.current) return;
@@ -1297,6 +1317,7 @@ export function ChangesDiff<A>({
       });
     };
     const navigation: DiffNavigator = { goTo };
+    own.current = navigation;
     if (navigator) navigator.current = navigation;
     const onClick = (event: MouseEvent) => {
       const crumb = (event.target as Element | null)?.closest<HTMLElement>('.diff-gap-live button[data-jump]');
@@ -1319,6 +1340,7 @@ export function ChangesDiff<A>({
       listen(false);
       follow.current = undefined;
       if (navigator?.current === navigation) navigator.current = null;
+      if (own.current === navigation) own.current = null;
       stopJump();
       clearHere();
       element.removeEventListener('click', onClick);
@@ -1488,6 +1510,7 @@ export function ChangesDiff<A>({
       data-line-numbers={options.disableLineNumbers ? 'off' : undefined}
       style={rootStyle}
     >
+      {outline && <DiffOutline {...outline} onGo={goToSymbol} />}
       {content}
     </div>
   );
