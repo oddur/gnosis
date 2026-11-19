@@ -298,7 +298,7 @@ void app.whenReady().then(async () => {
         await capture(`${name}-${width}`, area(STREAM, 0, 260), async () => {
           await js(`window.pinAt(${JSON.stringify(deep)},${JSON.stringify(STREAM)},'next += 30 * 2;',false)`);
           await wait(`window.jumpState(${JSON.stringify(deep)}).crumbs.length===4`);
-          clickPoint(await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(deep)},'Go to class Scheduler')`));
+          await clickCrumb(deep, 'Go to class Scheduler');
           await wait(`window.hereMarks(${JSON.stringify(deep)}).length>0`, 80);
           await sleep(delay);
         });
@@ -337,11 +337,15 @@ void app.whenReady().then(async () => {
       await toTop(slideScoped, '.changes-file-header', DOC, 10);
       await capture(`slide-scope-outline-${width}`, area(DOC, 0, 520));
       const slideDeep = topicFile('src/nav/deep.ts');
+      // The file comes into view first, as a reader scrolls to it (see the topic checks below).
+      await toTop(slideDeep, '.changes-file-header', DOC, 20);
+      await settle();
+      await sleep(600);
       await js(`window.pinAt(${JSON.stringify(slideDeep)},${JSON.stringify(DOC)},'next += 30 * 2;',false)`);
       await capture(`slide-jump-${width}`, area(DOC, 0, 280), async () => {
         await js(`window.pinAt(${JSON.stringify(slideDeep)},${JSON.stringify(DOC)},'next += 30 * 2;',false)`);
         await wait(`window.jumpState(${JSON.stringify(slideDeep)}).crumbs.length===4`);
-        clickPoint(await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(slideDeep)},'Go to class Scheduler')`));
+        await clickCrumb(slideDeep, 'Go to class Scheduler');
         await wait(`window.hereMarks(${JSON.stringify(slideDeep)}).length>0`, 80);
         await sleep(400);
       });
