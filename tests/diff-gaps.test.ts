@@ -7,6 +7,7 @@ import {
   gapContaining,
   gapSize,
   hunkRange,
+  hunkChange,
   hunkSlices,
   hunksFromDiff,
   matchesAfter,
@@ -240,8 +241,14 @@ void test('a selection across hidden lines numbers each shown line', () => {
 
 test('a hunk names its lines for a pinned header without structure (#395)', () => {
   const rows = (types: string) => [...types].map((type) => ({ type: type as ' ' | '+' | '-', text: '' }));
-  assert.equal(hunkRange({ oldStart: 120, newStart: 120, rows: rows(' -+-+ ') }), 'Lines 120–123');
-  assert.equal(hunkRange({ oldStart: 4, newStart: 4, rows: rows('+') }), 'Line 4');
-  assert.equal(hunkRange({ oldStart: 9, newStart: 9, rows: rows('---') }), 'Old lines 9–11');
-  assert.equal(hunkRange({ oldStart: 1200, newStart: 1201, rows: rows(' '.repeat(10)) }), 'Lines 1,201–1,210');
+  assert.deepEqual(hunkRange({ oldStart: 120, newStart: 120, rows: rows(' -+-+ ') }), { label: 'L120–123', spoken: 'Lines 120 to 123' });
+  assert.deepEqual(hunkRange({ oldStart: 4, newStart: 4, rows: rows('+') }), { label: 'L4', spoken: 'Line 4' });
+  assert.deepEqual(hunkRange({ oldStart: 9, newStart: 9, rows: rows('---') }), { label: 'old L9–11', spoken: 'Old lines 9 to 11' });
+  // A hunk that only deletes is where its deleted lines were, on the old side, context and all.
+  assert.deepEqual(hunkRange({ oldStart: 9, newStart: 7, rows: rows(' -- ') }), { label: 'old L9–12', spoken: 'Old lines 9 to 12' });
+  assert.deepEqual(hunkRange({ oldStart: 1200, newStart: 1201, rows: rows(' '.repeat(10)) }), { label: 'L1201–1210', spoken: 'Lines 1201 to 1210' });
+  assert.equal(hunkChange({ rows: rows(' + ') }), 'added');
+  assert.equal(hunkChange({ rows: rows(' - ') }), 'deleted');
+  assert.equal(hunkChange({ rows: rows('-+') }), 'modified');
+  assert.equal(hunkChange({ rows: rows('  ') }), undefined);
 });

@@ -54,17 +54,33 @@ const oldEnd = (hunk: GapHunk) => hunk.oldStart + oldCount(hunk) - 1;
 const newEnd = (hunk: GapHunk) => hunk.newStart + newCount(hunk) - 1;
 const stripFeed = (line: string | undefined) => (line ?? '').replace(/\n$/, '');
 
+/** What a hunk changes: lines added, lines deleted, or both. Undefined for context alone. */
+export type HunkChange = 'added' | 'deleted' | 'modified';
+export function hunkChange(hunk: Pick<GapHunk, 'rows'>): HunkChange | undefined {
+  const added = hunk.rows.some((row) => row.type === '+');
+  const deleted = hunk.rows.some((row) => row.type === '-');
+  return added && deleted ? 'modified' : added ? 'added' : deleted ? 'deleted' : undefined;
+}
+
+export interface HunkRange {
+  /** As the hunk header shows it: `L120–148`, or `old L9–11` for a hunk that only deletes. */
+  label: string;
+  /** In words, for the tooltip and screen readers: "Lines 120 to 148", "Old lines 9 to 11". */
+  spoken: string;
+}
 /**
- * Where a hunk is, by line numbers, for files with no structure: "Lines 120–148", or its old lines when it only
- * deletes. A hunk's pinned header shows it, so every changed hunk says where it is (#395).
+ * Where a hunk is, by its new lines, or by its old lines when it only deletes: its deleted lines have no new numbers.
+ * Every hunk header shows it (#395).
  */
-export function hunkRange(hunk: Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>): string {
-  const added = newCount(hunk);
-  const start = added ? hunk.newStart : hunk.oldStart;
-  const count = added || oldCount(hunk);
-  const prefix = added ? 'Line' : 'Old line';
-  if (count <= 1) return `${prefix} ${start.toLocaleString('en-US')}`;
-  return `${prefix}s ${start.toLocaleString('en-US')}–${(start + count - 1).toLocaleString('en-US')}`;
+export function hunkRange(hunk: Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>): HunkRange {
+  const old = !hunk.rows.some((row) => row.type === '+') && hunk.rows.some((row) => row.type === '-');
+  const start = old ? hunk.oldStart : hunk.newStart;
+  const count = old ? oldCount(hunk) : newCount(hunk);
+  const end = start + Math.max(count, 1) - 1;
+  const prefix = old ? 'old L' : 'L';
+  const words = old ? 'Old line' : 'Line';
+  if (end <= start) return { label: `${prefix}${start}`, spoken: `${words} ${start}` };
+  return { label: `${prefix}${start}–${end}`, spoken: `${words}s ${start} to ${end}` };
 }
 
 /** The hunks of a parsed diff as rows. Works for a patch preview and for a diff of two whole files. */

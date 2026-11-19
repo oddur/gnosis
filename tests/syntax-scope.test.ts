@@ -402,6 +402,32 @@ void test('Breadcrumbs in Go and Python', async () => {
   assert.deepEqual(chainOf(python, 6), ['class Store', 'def size']);
 });
 
+/** Each crumb of the breadcrumb around lines `start`–`end` as [kind word, crumb]. */
+const keywordsOf = (list: SyntaxDefinition[], start: number) => {
+  const inner = enclosingDefinition(list, start, start);
+  return inner ? definitionChain(list, inner).map((d) => [d.crumbKeyword, d.crumb]) : [];
+};
+void test('A crumb names its kind word apart, for the keyword tint; a crumb without one has none', async () => {
+  const rust = await definitions('rust', 'mod api {\n    impl Store {\n        fn save(&self) {\n            let a = 1;\n        }\n    }\n}\n');
+  assert.deepEqual(keywordsOf(rust, 4), [['mod', 'mod api'], ['impl', 'impl Store'], ['fn', 'fn save']]);
+  const go = await definitions('go', 'package x\n\nfunc (s *Store) Save() {\n\ts.a++\n}\n');
+  assert.deepEqual(keywordsOf(go, 4), [['func', 'func (s *Store) Save']]);
+  const python = await definitions('python', 'class Store:\n    def size(self):\n        return 1\n');
+  assert.deepEqual(keywordsOf(python, 3), [['class', 'class Store'], ['def', 'def size']]);
+  const list = await definitions('typescript', TS);
+  assert.deepEqual(keywordsOf(list, lineOf(ts, '      this.count++;')), [['class', 'class StoreBridge'], [undefined, 'save()'], [undefined, 'next()']]);
+  assert.deepEqual(keywordsOf(list, lineOf(ts, '  const out = [a];')), [['function', 'function resolvePaths()']]);
+  assert.deepEqual(keywordsOf(list, lineOf(ts, '    expect(1).toBe(1);')), [[undefined, 'describe "parser"'], [undefined, 'it "parses paths"']]);
+  const unity = await definitions('csharp', UNITY);
+  const lines = UNITY.split('\n');
+  assert.deepEqual(keywordsOf(unity, lineOf(lines, '            transform.Translate(0, Step(speed), 0);')), [
+    ['namespace', 'namespace Klang.Seed.World'],
+    ['class', 'class Navmesh'],
+    [undefined, 'Update()'],
+  ]);
+  assert.equal(unity.find((d) => d.name === 'Edge')?.crumbKeyword, 'record struct');
+});
+
 void test('A long breadcrumb keeps the innermost two crumbs; the whole chain is its label', () => {
   const at = (kind: SyntaxDefinition['kind'], name: string, crumb: string, start: number, end: number): SyntaxDefinition => ({
     kind,

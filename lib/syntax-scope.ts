@@ -40,6 +40,11 @@ export interface SyntaxDefinition {
    * such as `fn save`, `impl Bridge for Store`, `class Store`, `save()`, `describe "parser"` or `def load`.
    */
   crumb: string;
+  /**
+   * The language's kind word that starts `crumb`, such as `fn`, `class`, `impl`, `def` or `record struct`; the
+   * breadcrumb tints it as the syntax theme tints keywords. Undefined for a crumb with no kind word, such as `save()`.
+   */
+  crumbKeyword?: string;
   /** First and last line, from 1, inclusive. Attributes, decorators and `export` belong to the definition. */
   start: number;
   end: number;
@@ -411,7 +416,7 @@ export function collectDefinitions(
       kind: entry.kind,
       name: entry.name,
       label: clip(definitionLabel(entry.kind, entry.name, language, entry.node, ownerName)),
-      crumb: clip(crumbLabel(entry.kind, entry.name, language, entry.node), 48),
+      ...crumbOf(crumbLabel(entry.kind, entry.name, language, entry.node)),
       start: entry.start,
       end: entry.end,
       signatureEnd: Math.min(entry.end, signatureEnd(entry.node, line(entry.node.startPosition.row))),
@@ -464,44 +469,51 @@ function innerNode(node: Node): Node {
   }
 }
 
-function crumbLabel(kind: DefinitionKind, name: string, language: SyntaxLanguage, outer: Node): string {
+/** A crumb as its kind word and the rest. */
+type CrumbParts = [keyword: string | undefined, rest: string];
+function crumbOf([keyword, rest]: CrumbParts): Pick<SyntaxDefinition, 'crumb' | 'crumbKeyword'> {
+  const crumb = clip(keyword ? `${keyword} ${rest}` : rest, 48);
+  return keyword ? { crumb, crumbKeyword: keyword } : { crumb };
+}
+
+function crumbLabel(kind: DefinitionKind, name: string, language: SyntaxLanguage, outer: Node): CrumbParts {
   const node = innerNode(outer);
   const script = language === 'typescript' || language === 'tsx' || language === 'javascript';
-  if (kind === 'key') return language === 'json' ? JSON.stringify(name) : `${name}:`;
+  if (kind === 'key') return [undefined, language === 'json' ? JSON.stringify(name) : `${name}:`];
   if (kind === 'test' && script) {
     const callee = node.type === 'call_expression' ? squash(node.childForFieldName('function')?.text ?? 'test') : 'test';
-    return `${clip(callee, 20)} ${JSON.stringify(name)}`;
+    return [undefined, `${clip(callee, 20)} ${JSON.stringify(name)}`];
   }
   switch (language) {
     case 'rust':
-      if (kind === 'function' || kind === 'method' || kind === 'test') return `fn ${name}`;
-      if (kind === 'module') return `mod ${name}`;
-      if (kind === 'macro') return `macro_rules! ${name}`;
-      return `${kind} ${name}`;
+      if (kind === 'function' || kind === 'method' || kind === 'test') return ['fn', name];
+      if (kind === 'module') return ['mod', name];
+      if (kind === 'macro') return ['macro_rules!', name];
+      return [kind, name];
     case 'go': {
       if (kind === 'method') {
         const receiver = squash(node.childForFieldName('receiver')?.text ?? '');
-        return receiver ? `func ${receiver} ${name}` : `func ${name}`;
+        return ['func', receiver ? `${receiver} ${name}` : name];
       }
-      if (kind === 'function' || kind === 'test') return `func ${name}`;
-      return `type ${name}`;
+      if (kind === 'function' || kind === 'test') return ['func', name];
+      return ['type', name];
     }
     case 'python':
-      return kind === 'class' ? `class ${name}` : `def ${name}`;
+      return kind === 'class' ? ['class', name] : ['def', name];
     case 'java':
-      return kind === 'method' ? `${name}()` : `${kind} ${name}`;
+      return kind === 'method' ? [undefined, `${name}()`] : [kind, name];
     case 'csharp':
-      if (kind === 'method' || kind === 'function' || kind === 'test') return `${name}()`;
-      if (kind === 'property') return name;
-      if (kind === 'module') return `namespace ${name}`;
-      if (node.type === 'record_declaration') return `${/^record\s+struct\b/.test(recordKeyword(node)) ? 'record struct' : 'record'} ${name}`;
-      return `${kind} ${name}`;
+      if (kind === 'method' || kind === 'function' || kind === 'test') return [undefined, `${name}()`];
+      if (kind === 'property') return [undefined, name];
+      if (kind === 'module') return ['namespace', name];
+      if (node.type === 'record_declaration') return [/^record\s+struct\b/.test(recordKeyword(node)) ? 'record struct' : 'record', name];
+      return [kind, name];
     default:
-      if (kind === 'method') return `${name}()`;
+      if (kind === 'method') return [undefined, `${name}()`];
       if (kind === 'function')
-        return /^(function|generator_function)_declaration$/.test(node.type) ? `function ${name}()` : `${name}()`;
-      if (kind === 'module') return `namespace ${name}`;
-      return `${kind} ${name}`;
+        return /^(function|generator_function)_declaration$/.test(node.type) ? ['function', `${name}()`] : [undefined, `${name}()`];
+      if (kind === 'module') return ['namespace', name];
+      return [kind, name];
   }
 }
 
