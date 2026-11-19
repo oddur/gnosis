@@ -125,7 +125,7 @@ void app.whenReady().then(async () => {
     );
     await wait("!!document.querySelector('.feedback-workspace')");
     assert.ok(
-      await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent.includes('Feedback')")
+      await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent.includes('Conversation')")
     );
     assert.equal(
       await js('window.responseQueueWatchIds.filter(id=>window.responseWatches.has(id)).length'),

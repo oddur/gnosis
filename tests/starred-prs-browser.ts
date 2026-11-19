@@ -85,7 +85,7 @@ void app.whenReady().then(async () => {
     await capture('pr-header');
     await click('Changes');
     assert.ok(await js('!!document.querySelector(\'.pr-overview-heading .entry-star-marker\')'));
-    await click('Summary');
+    await click('Conversation');
     await js("window.electronAPI.workbenchStarPrs=async()=>{throw Error('Disk is full')};void 0");
     await click('Unstar PR #152');
     await wait("document.querySelector('.pr-overview-heading [role=alert]')?.textContent.includes('Disk is full')");

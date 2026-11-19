@@ -1,6 +1,8 @@
 import { hasVisibleNavigationOverlay } from '../lib/workspace-navigation';
 import { feedbackCodeContext, type FeedbackRequest, type ResponseIntent } from '../lib/feedback';
 import { PrFeedbackView } from './PrFeedbackView';
+import { ConversationSidebar } from './ConversationSidebar';
+import { PrReadiness } from './PrReadiness';
 import { WorkspaceIcon, workspaceTabs } from './WorkspaceIcon';
 import { SubjectIcon } from './SubjectIcon';
 import { stackMergePlan } from '../lib/stack-merge-plan';
@@ -40,7 +42,6 @@ import { AlarmClock, ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, Re
 import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
 import { backLine } from '../lib/snooze';
 import { Markdown } from './Markdown';
-import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem, type ReviewSubject } from '../lib/workbench';
 import { QUEUE_SIGNALS_TTL, type QueueSignals } from '../lib/queue-signals';
 import { statusClock, useStatusNow } from '../lib/status-clock';
@@ -314,7 +315,7 @@ function PrSummaryContent({
     setFeedbackThread(threadId);
     setFeedbackIntent('address');
     setFeedbackJump(n => n + 1);
-    onTabChange('feedback');
+    onTabChange('summary');
   }, [onTabChange]);
   const openBrief = useCallback(() => onTabChange('brief'), [onTabChange]);
   const brief = useAgentBrief(item.subject.id);
@@ -535,7 +536,7 @@ function PrSummaryContent({
   useReviewBreadcrumbs('summary', []);
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const evidence = (
-    <ReviewEvidence onFeedback={url => { setFeedbackPr(url); setFeedbackJump(n => n + 1); onTabChange('feedback'); }}
+    <ReviewEvidence onFeedback={url => { setFeedbackPr(url); setFeedbackJump(n => n + 1); onTabChange('summary'); }}
       compact={!stacked}
       key={`${account}:${item.subject.id}`}
       subject={item.subject}
@@ -661,11 +662,10 @@ function PrSummaryContent({
           <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
-          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" /><PrTabLabel>Summary</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" /><PrTabLabel>Conversation</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="changes" data-tour="changes" {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" /><PrTabLabel>Changes</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="commits" {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" /><PrTabLabel>Commits</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="checks" {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" /><PrTabLabel>Checks</PrTabLabel>{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="feedback" {...tabIntentHandlers('feedback')}><WorkspaceIcon tab="feedback" /><PrTabLabel>Feedback</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" /><PrTabLabel>Explanation</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" /><PrTabLabel>Local notes</PrTabLabel>{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
@@ -685,12 +685,6 @@ function PrSummaryContent({
               onOpenBrief={openBrief}
             />
           )}
-        </KeptTab>
-        <KeptTab value="feedback" tab={tab} visited={visited} arrival={arrival('feedback')} className="pr-changes-tab">
-          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}:${feedbackRequest?.id ?? ''}:${feedbackJump}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} initialThreadId={feedbackThread} preferences={preferences ?? undefined} intent={feedbackIntent} onIntentHandled={() => { setFeedbackIntent(undefined); setFeedbackThread(undefined); }} onSource={item => {
-            if (!item.thread) return;
-            setInitialFile({ url: item.member.url, headSha: item.member.headSha, path: item.thread.path, line: feedbackCodeContext(item.thread, item.headSha ? { headSha: item.headSha, baseSha: item.baseSha ?? '' } : undefined, item.member) === 'current' ? item.thread.line ?? undefined : undefined, side: item.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
-          }} />
         </KeptTab>
         <KeptTab value="brief" tab={tab} visited={visited} className="pr-changes-tab">
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
@@ -745,53 +739,67 @@ function PrSummaryContent({
             }}
           />
         </Tabs.Content>
-        <KeptTab value="summary" tab={tab} visited={visited} arrival={arrival('summary')} className="pr-summary-content" ref={page} onScroll={remember}>
+        <KeptTab value="summary" tab={tab} visited={visited} arrival={arrival('summary')} className="pr-summary-content conversation-page" ref={page} onScroll={remember}>
+          {/* The Conversation page (#418): the briefing and merge readiness, then the PR's timeline beside its details.
+              Feedback lives here; links and saved tabs that name Feedback open this page at their thread. */}
           <div className="pr-summary-body">
-            {tab === 'summary' && summaryReview.panel}
-            {item.subject.warnings.map((warning) => (
-              <p key={warning} className="workbench-notice" role="status">
-                {warning}
-              </p>
-            ))}
-            {stacked ? <div className="stack-summary-layout">
-              <div className="stack-summary-main">
-                <StackOverview account={account} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
-                  onFeedback={member => { setFeedbackPr(member.url); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }} onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
-                {evidence}
-                <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
-              </div>
-            </div> : <PrSubjectDetails
-              overview={{
-                evidence,
-                onChanges: () => onTabChange('changes'),
-                stackContext: parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} compact />,
-                briefing: item.briefing?.status === 'ready' && <details className="pr-briefing"><summary>AI briefing</summary><Markdown>{item.briefing.summary ?? ''}</Markdown></details>,
-              }}
-              generationActions={generationActions}
-              onReview={onReview}
-              reviewDisabled={!account}
-              starredUrls={starredUrls}
-              starBusy={starBusy}
-              onStarChange={onStarChange}
-              onMute={onMute}
-              muteBusy={muteBusy}
-              signals={signals}
-              compactIdentity
-              statusChecking={!signalsLoaded && !!account}
+            <PrFeedbackView
+              key={`${account}:${item.subject.id}:${feedbackPr ?? ''}:${feedbackRequest?.id ?? ''}:${feedbackJump}`}
               subject={item.subject}
-              activeUrl={activeUrl}
-              onSelect={(url) => {
-                remember();
-                setMemberUrl(url);
+              account={account}
+              initialPrUrl={feedbackPr}
+              initialThreadId={feedbackThread}
+              preferences={preferences ?? undefined}
+              intent={feedbackIntent}
+              scroller={page}
+              onOpenChanges={() => onTabChange('changes')}
+              onIntentHandled={() => { setFeedbackIntent(undefined); setFeedbackThread(undefined); }}
+              onSource={feedbackItem => {
+                if (!feedbackItem.thread) return;
+                setInitialFile({ url: feedbackItem.member.url, headSha: feedbackItem.member.headSha, path: feedbackItem.thread.path, line: feedbackCodeContext(feedbackItem.thread, feedbackItem.headSha ? { headSha: feedbackItem.headSha, baseSha: feedbackItem.baseSha ?? '' } : undefined, feedbackItem.member) === 'current' ? feedbackItem.thread.line ?? undefined : undefined, side: feedbackItem.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
               }}
-              statuses={statuses}
-              statusErrors={statusErrors}
-              onRetryStatus={onRetryStatus}
-            />}
+              band={<>
+                {tab === 'summary' && summaryReview.panel}
+                {item.subject.warnings.map((warning) => (
+                  <p key={warning} className="workbench-notice" role="status">
+                    {warning}
+                  </p>
+                ))}
+                {stacked ? <>
+                  <StackOverview account={account} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
+                  onFeedback={member => { setFeedbackPr(member.url); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('summary'); }} onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
+                  {evidence}
+                  <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
+                </> : <>
+                  <BandReadiness reveal={mergeLanding !== undefined}><PrReadiness compact member={activeMember} status={statuses[activeMember.url]} signals={signals.find((s) => s.url === activeMember.url)} error={statusErrors[activeMember.url]} onRetry={onRetryStatus} /></BandReadiness>
+                  {item.briefing?.status === 'ready' && <details className="pr-briefing"><summary>AI briefing</summary><Markdown>{item.briefing.summary ?? ''}</Markdown></details>}
+                </>}
+              </>}
+              sidebar={stacked ? undefined : (values) => (
+                <ConversationSidebar evidence={evidence} context={parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} compact />} member={activeMember} status={statuses[activeMember.url]} snapshot={values[activeMember.url]} checks={checks.values[activeMember.url]} onChecks={() => openChecks(activeMember.url)} />
+              )}
+            />
           </div>
         </KeptTab>
       </main>
     </Tabs.Root>
+  );
+}
+
+/**
+ * Merge readiness in the Conversation band (#418): the verdict and its reasons on one line, so the description and
+ * the first feedback start above a laptop's fold. Details opens the full reasons and the PR's merge actions.
+ */
+function BandReadiness({ children, reveal }: { children: ReactNode; /** A merge landing shows the actions. */ reveal?: boolean }) {
+  const [opened, setOpen] = useState(false);
+  const open = opened || !!reveal;
+  return (
+    <div className="band-readiness" data-open={open || undefined}>
+      {children}
+      <Button variant="ghost" size="sm" className="band-readiness-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Less' : 'Details and actions'}
+      </Button>
+    </div>
   );
 }
 

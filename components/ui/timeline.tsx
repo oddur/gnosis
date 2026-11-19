@@ -57,8 +57,9 @@ export function TimelineHeader({ className, ...props }: ComponentProps<'div'>) {
   return <div data-slot="timeline-header" className={cn('timeline-header', className)} {...props} />;
 }
 
-export function TimelineTitle({ className, ...props }: ComponentProps<'h3'>) {
-  return <h3 data-slot="timeline-title" className={cn('timeline-title', className)} {...props} />;
+/** A level-2 heading: each item is a section of the page that holds the timeline. */
+export function TimelineTitle({ className, ...props }: ComponentProps<'h2'>) {
+  return <h2 data-slot="timeline-title" className={cn('timeline-title', className)} {...props} />;
 }
 
 export function TimelineDate({ className, ...props }: ComponentProps<'time'>) {

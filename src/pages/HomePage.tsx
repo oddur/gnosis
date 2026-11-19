@@ -95,7 +95,7 @@ import { homeTabPreference, rememberHomeTab, restoredTool, type HomeTab } from '
 import { notificationSettings } from '../../lib/notification-settings';
 import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
 import { Activity, Suspense, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
+import { conversationTab, type HomeLocation, type WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
   Plus,
@@ -205,7 +205,10 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   /** Where a deep link or notification lands inside the opened PR. */
   const [landing, setLanding] = useState<PrLanding & { subjectId: string }>();
   const [responseUnavailable, setResponseUnavailable] = useState(0);
-  const [overviewTab,setOverviewTab] = useState<WorkspaceTab>('summary');
+  const [overviewTab, setOverviewTabState] = useState<WorkspaceTab>('summary');
+  // Every route into a PR tab, including restored sessions, links and notifications, passes here: Feedback opens
+  // Conversation (#418).
+  const setOverviewTab = useCallback((tab: WorkspaceTab) => setOverviewTabState(conversationTab(tab)), []);
   const [reviewRequest, setReviewRequest] = useState<PrReviewRequest>();
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);

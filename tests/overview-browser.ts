@@ -522,13 +522,19 @@ void app.whenReady().then(async () => {
     step = 'open-row';
     const tabs = await tabCount();
     await js(`document.querySelector('${row(`next|answer|${url('klang/engine', 312)}`)}').click()`);
-    await wait(`${activeSection}.startsWith('Feedback')`, 400);
+    await wait(`${activeSection}.startsWith('Conversation')`, 400);
     assert.equal(await tabCount(), tabs + 1);
     await firstTab();
 
     step = 'menu';
-    await menuAction(js, 'Actions for PR #312', 'Mark as read');
+    // Opening #312 landed on its Conversation page (#418), which reads the PR as Summary did, so its menu has nothing
+    // left to mark read.
     await wait("window.fixtureOverview.writes.some(w=>w.kind==='mark-read' && w.url.endsWith('/312'))");
+    await js(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width&&b.getAttribute('aria-label')==='Actions for PR #312');b.focus();b.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))})()`);
+    await wait("!![...document.querySelectorAll('[role=menuitem]')].find(b=>b.textContent==='Mark as read')");
+    assert.ok(await js("(()=>{const i=[...document.querySelectorAll('[role=menuitem]')].find(b=>b.textContent==='Mark as read');return i.hasAttribute('data-disabled')||i.getAttribute('aria-disabled')==='true'})()"), 'A PR read on its Conversation page has nothing to mark read');
+    await key('Escape');
+    await wait("!document.querySelector('[role=menuitem]')");
     const line322 = row(`you|person:ivar|${url('klang/cli', 325)}`);
     await js(`document.querySelector('${line322}').focus()`);
     await key('F10', 8);

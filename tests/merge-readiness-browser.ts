@@ -66,7 +66,7 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
     await capture('desktop-update-required');
-    for (const tab of ['Changes', 'Commits', 'Explanation', 'Summary']) {
+    for (const tab of ['Changes', 'Commits', 'Explanation', 'Conversation']) {
       await click(tab);
       assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
       assert.match(

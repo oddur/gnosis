@@ -234,7 +234,7 @@ void app.whenReady().then(async () => {
         await js(`window.deepAll('[role=treeitem]').find(e=>e.checkVisibility()&&e.getAttribute('aria-label')===${JSON.stringify(name)})?.click()`);
         await sleep(250);
       }
-      await press(prTab('Summary'));
+      await press(prTab('Conversation'));
       await sleep(200);
       // Back in the queue, step over the next rows so their PRs are predicted as neighbours.
       await toQueue();

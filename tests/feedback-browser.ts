@@ -38,7 +38,7 @@ void app.whenReady().then(async () => {
   const entry = (id: string) => `document.querySelector('.feedback-entry[data-feedback-id="${id}"]')`;
   /** Scroll the virtualized timeline until the item is mounted, put it at the top, and make it the cursor. */
   const show = async (id: string) => {
-    await js(`(async()=>{const t=document.querySelector('.feedback-timeline');let e=${entry(id)};if(!e){t.scrollTop=0;for(let i=0;i<120&&!(e=${entry(id)});i++){t.scrollTop+=300;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))}}
+    await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');let e=${entry(id)};if(!e){t.scrollTop=0;for(let i=0;i<120&&!(e=${entry(id)});i++){t.scrollTop+=300;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))}}
       e?.scrollIntoView({block:'start'});e?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))})()`);
     await wait(`${entry(id)}?.getAttribute('aria-current')==='true'`);
   };
@@ -75,13 +75,13 @@ void app.whenReady().then(async () => {
       "document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))"
     );
     await wait("!!document.querySelector('.stack-overview')");
-    await click('Feedback');
+    await click('Conversation');
     await wait(
       "document.querySelectorAll('.feedback-entry').length>2 && document.querySelector('.feedback-sync')?.textContent==='Updates automatically'"
     );
     // Opening the tab reads nothing by itself: only what stays on screen for a moment becomes read.
     assert.match(await js<string>("document.querySelector('.feedback-filters').textContent"), /Unread 9/, 'Opening the tab must not read all conversations');
-    await js("document.querySelector('.feedback-timeline').scrollTop=400");
+    await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');for(let i=0;i<60&&!document.querySelector('.feedback-entry[data-feedback-id]');i++){t.scrollTop+=300;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))}document.querySelector('.feedback-entry[data-feedback-id]')?.scrollIntoView({block:'start'})})()`);
     await sleep(2000);
     const unreadAfter = Number((await js<string>("document.querySelector('.feedback-filters').textContent")).match(/Unread (\d+)/)?.[1]);
     assert.ok(unreadAfter > 0 && unreadAfter < 9, `Only conversations seen on screen become read: ${unreadAfter}`);
@@ -89,8 +89,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);
     await js("document.querySelector('.feedback-actions-filter input').click()");
     await wait("document.querySelector('.feedback-filters button').textContent.trim()==='All 12'");
-    await click('Summary');
-    await click('Feedback');
+    await click('Conversation');
+    await click('Conversation');
     await wait("document.querySelector('.feedback-actions-filter input')?.checked===false");
     await show('actions-c-120');
     assert.match(await js<string>(`${entry('actions-c-120')}.textContent`), /Client\/server tests passed/);
@@ -147,7 +147,7 @@ void app.whenReady().then(async () => {
     await click('Reply on GitHub', entry('r-120'));
     await wait(`${entry('r-120')}?.querySelector('.feedback-message [role=alert]')?.textContent.includes('Reply wasn’t posted')`);
     assert.equal(await js(`${entry('r-120')}.querySelector('textarea').value`), 'The guard is restored in the latest commit.');
-    const visible = `(()=>{const a=${entry('r-120')}.querySelector('[role=alert]').getBoundingClientRect(),b=document.querySelector('.feedback-timeline').getBoundingClientRect();return a.top>=b.top-1 && a.bottom<=b.bottom+1})()`;
+    const visible = `(()=>{const a=${entry('r-120')}.querySelector('[role=alert]').getBoundingClientRect(),b=document.querySelector('[data-feedback-scroller]').getBoundingClientRect();return a.top>=b.top-1 && a.bottom<=b.bottom+1})()`;
     await js(`${entry('r-120')}.querySelector('[role=alert]').scrollIntoView({block:'nearest'})`);
     await wait(visible);
     await capture('reply-error');
@@ -185,8 +185,8 @@ void app.whenReady().then(async () => {
     await capture('narrow-conversation-dark');
     win.setContentSize(1280, 800);
     await js("document.documentElement.classList.remove('dark');window.failFeedback=false");
-    await click('Summary');
-    await click('Feedback');
+    await click('Conversation');
+    await click('Conversation');
     await wait("document.querySelectorAll('.feedback-entry').length>0");
     await show('r-120');
     assert.equal(await js(`!!${entry('r-120')}.querySelector('.pr-unread-dot')`), false, 'Read status survives tab navigation');
@@ -252,7 +252,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.changes-diff-pane .github-thread[data-thread-id=\"t-120\"] textarea')?.value==='Keep this reply while browsing.'");
     await js("[...document.querySelectorAll('.changes-diff-pane .github-thread[data-thread-id=\"t-120\"] button')].find(b=>b.textContent==='Address feedback').click()");
     await wait(`${entry('t-120')}?.getAttribute('aria-current')==='true'`);
-    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]').textContent"), 'Feedback');
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]').textContent"), 'Conversation');
     await wait(`${entry('t-120')}?.querySelector('textarea')?.value==='Keep this reply while browsing.'`);
     await click('Cancel', entry('t-120'));
     // A thread link scopes to its PR. Return to all PRs before going through the stack.
@@ -285,7 +285,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[aria-label=\"Close review requests\"]').click()");
 
     // A stack review blocker opens the PR's review summary in Feedback.
-    await click('Summary');
+    await click('Conversation');
     await js(`(async()=>{
       const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');
       const read=window.electronAPI.getQueueSignals;

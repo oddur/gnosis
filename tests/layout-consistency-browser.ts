@@ -221,7 +221,8 @@ void app.whenReady().then(async () => {
     await titlebarPass('pr', history);
     const tabNames = await js<string[]>(`[...document.querySelectorAll('.pr-overview-tabs [role=tab]')].map(e=>e.textContent.trim())`);
     const sections: Record<string, unknown> = {};
-    const toolbar = `.pr-summary-page :is(.changes-toolbar,.checks-toolbar,.feedback-toolbar)`;
+    // Conversation's timeline bar sits in the page below its band (#418), not at the top of the section like these.
+    const toolbar = `.pr-summary-page :is(.changes-toolbar,.checks-toolbar)`;
     for (const [index, name] of tabNames.entries()) {
       await mouse(`document.querySelectorAll('.pr-overview-tabs [role=tab]')[${index}]`);
       await sleep(900);
@@ -319,7 +320,7 @@ void app.whenReady().then(async () => {
         `(()=>{const n=v=>Math.round(v*10)/10;const box=e=>{const r=e.getBoundingClientRect();return {x:n(r.x),y:n(r.y),w:n(r.width),h:n(r.height),right:n(r.right),bottom:n(r.bottom)}};const panel=document.querySelector('.pr-summary-page [role=tabpanel][data-state=active]');const bar=panel&&panel.querySelector('.changes-toolbar,.checks-toolbar,.feedback-toolbar');const root=bar?bar.parentElement:panel;const deep=(sel,r=document)=>[...r.querySelectorAll(sel),...[...r.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(sel,e.shadowRoot):[])];const tree=panel?deep('[data-item-path]',panel).filter(e=>e.getBoundingClientRect().height>0).map(row=>{const d=row.querySelector('[data-item-section=decoration]');const r=d?d.getBoundingClientRect():null;return r?n(r.x):null}):[];return {toolbar:bar?box(bar):null,panes:root?[...root.children].filter(e=>e!==bar&&e.checkVisibility()&&!e.matches('[role=status],.changes-notice')).map(box).slice(0,3):[],tree}})()`
       );
     const loading: Record<string, unknown> = {};
-    for (const name of ['Changes', 'Commits', 'Feedback']) {
+    for (const name of ['Changes', 'Commits']) {
       await js(`window.__layoutGate.open=false`);
       await mouse(named('.pr-overview-tabs [role=tab]', name));
       await sleep(400);

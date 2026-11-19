@@ -120,7 +120,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js('document.querySelectorAll(".activity-capsule").length'), 1, 'one global Activity surface');
     // Browser history belongs to this PR tab; switching to the queue must not
     // make its Back command change the PR tab's position.
-    await click('Summary');
+    await click('Conversation');
     await key('[', { metaKey: true });
     await wait(`${root}.querySelector('.pr-changes')!==null`);
     await js(`document.querySelectorAll('.workspace-tab-select')[0].click()`);

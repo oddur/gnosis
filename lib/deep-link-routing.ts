@@ -15,7 +15,9 @@ export interface DeepLinkRoute {
   tab: DeepLinkTab;
   destination: SearchDestination;
 }
-export const workspaceTab = (tab: PrTab | undefined): WorkspaceTab | undefined => (tab === 'notes' ? 'brief' : tab);
+/** Links keep naming `feedback` for threads; it opens the Conversation page (#418). */
+export const workspaceTab = (tab: PrTab | undefined): WorkspaceTab | undefined =>
+  tab === 'notes' ? 'brief' : tab === 'feedback' ? 'summary' : tab;
 
 /** The queue item that shows a PR: a stack member is focused with its stack as context. */
 export function queueItemFor(url: string, queue: Pick<WorkbenchQueue, 'items' | 'starredItems' | 'stacks'>): QueueItem | undefined {
@@ -109,7 +111,7 @@ export function prMetadataItem(ref: PrRef, meta: PrMetadata): QueueItem {
 // ── What a link may open in this version (Phase 1 of #309) ──
 
 const TAB_LABELS: Record<PrTab, string> = {
-  summary: 'Summary', changes: 'Changes', commits: 'Commits', checks: 'Checks', feedback: 'Feedback', explanation: 'Explanation', notes: 'Local notes',
+  summary: 'Conversation', changes: 'Changes', commits: 'Commits', checks: 'Checks', feedback: 'Conversation', explanation: 'Explanation', notes: 'Local notes',
 };
 /** Locators this version cannot follow yet. A thread, a check and a focus are followed. */
 const LOCATOR_LABELS: [keyof PrLinkTarget, string][] = [

@@ -37,7 +37,7 @@ void app.whenReady().then(async () => {
   const active = () => js<string | null>("document.querySelector('.feedback-entry[aria-current=true]')?.dataset.feedbackId ?? document.querySelector('.feedback-entry[aria-current=true]')?.dataset.entryType ?? null");
   const entry = (id: string) => `document.querySelector('.feedback-entry[data-feedback-id="${id}"]')`;
   const inView = (id: string) =>
-    js<boolean>(`(()=>{const e=${entry(id)},t=document.querySelector('.feedback-timeline');if(!e)return false;const a=e.getBoundingClientRect(),b=t.getBoundingClientRect();return a.top>=b.top-2&&a.top<b.bottom-40})()`);
+    js<boolean>(`(()=>{const e=${entry(id)},t=document.querySelector('[data-feedback-scroller]');if(!e)return false;const a=e.getBoundingClientRect(),b=t.getBoundingClientRect();return a.top>=b.top-2&&a.top<b.bottom-40})()`);
   const capture = async (name: string, prepare?: () => Promise<unknown>) => {
     if (!shots) return;
     for (const width of [1280, 1600, 760]) {
@@ -120,7 +120,7 @@ void app.whenReady().then(async () => {
     })()`);
     await js("document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await wait("!!document.querySelector('.stack-overview')");
-    await click('Feedback');
+    await click('Conversation');
     await wait("!!document.querySelector('.feedback-timeline .feedback-entry')");
     // Hide GitHub Actions stays a toggle; turned off, the three CI comments in a row collapse into one quiet row.
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);
@@ -138,7 +138,7 @@ void app.whenReady().then(async () => {
 
     // Collect the whole timeline by scrolling: one order across every kind of item.
     const collected = await js<{ index: number; type: string; id?: string; at: string; text: string; node?: string; label?: string; role?: string }[]>(`(async()=>{
-      const t=document.querySelector('.feedback-timeline');const seen=new Map();t.scrollTop=0;window.__railGaps=[];window.__nodeClones={};
+      const t=document.querySelector('[data-feedback-scroller]');const seen=new Map();t.scrollTop=0;window.__railGaps=[];window.__nodeClones={};
       for(let i=0;i<80;i++){await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
         const mounted=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index);
         for(const e of mounted){const n=e.querySelector(':scope > .timeline-indicator');
@@ -163,6 +163,7 @@ void app.whenReady().then(async () => {
     const railGaps = await js<number[]>('window.__railGaps');
     assert.ok(railGaps.length > 10 && Math.max(...railGaps) <= 1, `The rail is continuous across virtualized rows: ${JSON.stringify(railGaps)}`);
     assert.ok(collected.some((row) => row.type === 'day' && /\d+ days later/.test(row.text)), 'A long pause says how long');
+    assert.equal(collected.find((row) => row.type !== 'day')?.type, 'description', 'The PR description is the first entry');
     const kinds = collected.map((row) => row.type);
     for (const kind of ['description', 'item', 'commits', 'event', 'bots', 'divider', 'day'])
       assert.ok(kinds.includes(kind), `The timeline shows ${kind}: ${kinds.join(',')}`);
@@ -194,11 +195,11 @@ void app.whenReady().then(async () => {
       }
       await js("document.documentElement.classList.remove('dark');document.getElementById('node-legend').remove()");
     }
-    await capture('long-gap', () => js(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const d=[...document.querySelectorAll('.feedback-entry[data-entry-type=day]')].find(e=>/days later/.test(e.textContent));if(d){d.scrollIntoView({block:'center'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`));
-    await capture('pushes', () => js(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const d=document.querySelector('.feedback-entry[data-entry-type=commits]');if(d){d.scrollIntoView({block:'center'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`));
+    await capture('long-gap', () => js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const d=[...document.querySelectorAll('.feedback-entry[data-entry-type=day]')].find(e=>/days later/.test(e.textContent));if(d){d.scrollIntoView({block:'center'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`));
+    await capture('pushes', () => js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const d=document.querySelector('.feedback-entry[data-entry-type=commits]');if(d){d.scrollIntoView({block:'center'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`));
 
     // Bots: collapsed, then expanded in place.
-    const botsKey = await js<string>(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const b=document.querySelector('.feedback-entry[data-entry-type=bots]');if(b){b.scrollIntoView({block:'start'});return b.dataset.entryKey}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
+    const botsKey = await js<string>(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const b=document.querySelector('.feedback-entry[data-entry-type=bots]');if(b){b.scrollIntoView({block:'start'});return b.dataset.entryKey}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
     await sleep(200);
     await capture('bots-collapsed', () => js(`document.querySelector('[data-entry-key="${botsKey}"]')?.scrollIntoView({block:'start'})`));
     await js(`document.querySelector('[data-entry-key="${botsKey}"] .feedback-bots-summary').click()`);
@@ -206,7 +207,7 @@ void app.whenReady().then(async () => {
     await capture('bots-expanded', () => js(`document.querySelector('[data-entry-key="${botsKey}"]')?.scrollIntoView({block:'start'})`));
 
     // A resolved thread is one line, and opens in place.
-    await js(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const e=${entry('t-resolved')};if(e){e.scrollIntoView({block:'start'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
+    await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const e=${entry('t-resolved')};if(e){e.scrollIntoView({block:'start'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
     await wait(`!!${entry('t-resolved')}?.querySelector('.feedback-resolved-summary')`);
     assert.match(await js<string>(`${entry('t-resolved')}.textContent`), /sam commented on worker\.ts:34.*Resolved.*2 comments/);
     await capture('resolved-collapsed', () => js(`${entry('t-resolved')}?.scrollIntoView({block:'start'})`));
@@ -217,7 +218,7 @@ void app.whenReady().then(async () => {
     await js(`${entry('t-resolved')}?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
     await click('Next unresolved');
     await wait(`document.querySelector('.feedback-entry[aria-current=true]')?.dataset.feedbackId==='t-main'`);
-    await wait(`(()=>{const e=${entry('t-main')};return !!e&&Math.abs(e.getBoundingClientRect().top-document.querySelector('.feedback-timeline').getBoundingClientRect().top)<40})()`);
+    await wait(`(()=>{const e=${entry('t-main')};return !!e&&Math.abs(e.getBoundingClientRect().top-document.querySelector('.feedback-toolbar').getBoundingClientRect().bottom)<40})()`);
     await key('n');
     await wait("document.querySelector('.feedback-entry[aria-current=true]')?.dataset.feedbackId==='t-second'");
     assert.ok(await inView('t-second'), 'n scrolls the next unresolved thread into view');
@@ -247,14 +248,24 @@ void app.whenReady().then(async () => {
       const size = await js<{ timeline: number; card: number; workspace: number }>(
         `(()=>{const w=document.querySelector('.feedback-workspace').getBoundingClientRect().width,t=document.querySelector('.feedback-timeline').clientWidth,c=${entry('t-main')}.querySelector('.review-file-group').getBoundingClientRect().width;return {timeline:t,card:c,workspace:w}})()`
       );
+      // A stack's timeline takes the page's full width (a single PR's details column: tests/conversation-browser.ts).
       assert.ok(size.timeline >= size.workspace - 20 && size.card >= size.timeline - 100, `Full width at ${width}px: ${JSON.stringify(size)}`);
+      // A stack has no details column; the timeline's bar stays pinned while the page scrolls (tests/conversation-browser.ts covers the column).
+      const back = await js<number>("document.querySelector('[data-feedback-scroller]').scrollTop");
+      await js("document.querySelector('[data-feedback-scroller]').scrollTop+=1500");
+      await sleep(200);
+      const pinned = await js<{ bar: number; page: number }>("(()=>({page:document.querySelector('[data-feedback-scroller]').getBoundingClientRect().top,bar:document.querySelector('.feedback-toolbar').getBoundingClientRect().top}))()");
+      assert.ok(Math.abs(pinned.bar - pinned.page) <= 12, `The bar stays pinned at ${width}px: ${JSON.stringify(pinned)}`);
+      await js(`document.querySelector('[data-feedback-scroller]').scrollTop=${back}`);
+      await sleep(200);
     }
+
     win.setContentSize(1280, 800);
     await sleep(300);
-    await js(`${entry('t-second')}?.scrollIntoView({block:'start'})`);
+    await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');for(let i=0;i<80&&!${entry('t-second')};i++){t.scrollTop+=300;await new Promise(r=>requestAnimationFrame(r))}${entry('t-second')}?.scrollIntoView({block:'start'})})()`);
     await wait(`!!${entry('t-second')}?.closest('.feedback-timeline') && !!${entry('t-second')}.querySelector('.changes-diff diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
     const overflow = await js<{ host: number; thread: number; timeline: boolean }>(`(()=>{const e=${entry('t-second')};const h=e.querySelector('.changes-diff diffs-container');const pre=h.shadowRoot.querySelector('pre');const th=e.querySelector('.github-thread');
-      const t=document.querySelector('.feedback-timeline');return {host:(pre?.scrollWidth??0)-(pre?.clientWidth??0),thread:th.scrollWidth-th.clientWidth,timeline:t.scrollWidth>t.clientWidth+1}})()`);
+      const t=document.querySelector('[data-feedback-scroller]');return {host:(pre?.scrollWidth??0)-(pre?.clientWidth??0),thread:th.scrollWidth-th.clientWidth,timeline:t.scrollWidth>t.clientWidth+1}})()`);
     assert.ok(overflow.host <= 1 && overflow.thread <= 1 && !overflow.timeline, `No sideways scroll inside a thread at 1280px: ${JSON.stringify(overflow)}`);
 
     // Keyboard: j/k move between items, r replies to the active thread, e resolves it.
@@ -279,13 +290,13 @@ void app.whenReady().then(async () => {
     await wait("window.feedbackWrites.some(w=>w.action==='unresolve'&&w.threadId==='t-main')");
 
     // The review keeps its verdict, and the bar stays put while the timeline scrolls.
-    await js("document.querySelector('.feedback-timeline').scrollTop=0");
-    await capture('timeline', () => js("document.querySelector('.feedback-timeline').scrollTop=0"));
-    await js("document.querySelector('.feedback-timeline').scrollTop=600");
+    await js("document.querySelector('[data-feedback-scroller]').scrollTop=0");
+    await capture('timeline', () => js("document.querySelector('[data-feedback-scroller]').scrollTop=0"));
+    await js("document.querySelector('[data-feedback-scroller]').scrollTop=600");
     await sleep(150);
     assert.ok(await js("document.querySelector('.feedback-toolbar').getBoundingClientRect().top>=0"));
-    await capture('sticky-bar', () => js("document.querySelector('.feedback-timeline').scrollTop=600"));
-    await js(`(async()=>{const t=document.querySelector('.feedback-timeline');t.scrollTop=0;for(let i=0;i<80;i++){const e=${entry('r-maya')};if(e){e.scrollIntoView({block:'start'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
+    await capture('sticky-bar', () => js("document.querySelector('[data-feedback-scroller]').scrollTop=600"));
+    await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const e=${entry('r-maya')};if(e){e.scrollIntoView({block:'start'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
     await wait(`/Changes requested/.test(${entry('r-maya')}?.textContent ?? '')`);
     await capture('review', () => js(`${entry('r-maya')}?.scrollIntoView({block:'start'})`));
     // Filters hide the rest: Mentions shows the PR comment that names the reader.
@@ -302,7 +313,7 @@ void app.whenReady().then(async () => {
       const {receiveDiscussion}=await import('/lib/review-discussion-cache.ts');
       const start=performance.now();receiveDiscussion(m.url,data);
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const render=performance.now()-start;
-      const t=document.querySelector('.feedback-timeline');const j0=performance.now();t.scrollTop=t.scrollHeight;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const jump=performance.now()-j0;
+      const t=document.querySelector('[data-feedback-scroller]');const j0=performance.now();t.scrollTop=t.scrollHeight;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const jump=performance.now()-j0;
       return {items:data.threads.length+data.feedback.comments.length+data.feedback.events.length,mounted:document.querySelectorAll('.feedback-entry').length,render,jump}})()`);
     console.log(`Large PR: ${JSON.stringify(large)}`);
     assert.ok(large.items > 500 && large.mounted < 40, `Only rows near the view mount: ${JSON.stringify(large)}`);

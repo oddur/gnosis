@@ -111,7 +111,7 @@ void app.whenReady().then(async () => {
     await menuAction(js, 'Actions for PR #152', 'Mark as unread');
     await click('Commits');
     await wait("!!document.querySelector('.commit-row')");
-    await click('Summary');
+    await click('Conversation');
     assert.ok(await js<number>(unread(152)), 'Manual unread survives switching tabs during this visit');
     await back();
     await open(152);

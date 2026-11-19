@@ -137,11 +137,11 @@ void app.whenReady().then(async () => {
     // A desktop notification click arrives as a deep link: Feedback on another PR, in its own tab.
     const tabs = await js<number>('document.querySelectorAll(".workspace-tab").length');
     await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'pr',pr:{host:'github.com',owner:'klang',repo:'engine',number:121},tab:'feedback'}}))`);
-    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Feedback')");
+    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Conversation')");
     assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), tabs + 1);
     // The same PR again reuses its tab.
     await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:{kind:'pr',pr:{host:'github.com',owner:'klang',repo:'engine',number:121},tab:'summary'}}))`);
-    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Summary')");
+    await wait("document.querySelector('.workspace-panel[data-workspace-active=true] [role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Conversation')");
     assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), tabs + 1);
 
     // #385 part 2: a mention lands on its thread, in the tab that already shows the PR, and offers local actions.
@@ -169,14 +169,14 @@ void app.whenReady().then(async () => {
     await capture('mention-toast');
     const before = await js<number>('document.querySelectorAll(".workspace-tab").length');
     await clickText('.app-toast[data-kind=mention] .app-toast-action', 'Open thread');
-    await wait(`${activeTab}?.startsWith('Feedback')`);
+    await wait(`${activeTab}?.startsWith('Conversation')`);
     await wait(`${selectedThread} === 'thread-left'`);
     assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), before, 'the tab that shows the PR is reused');
     await capture('mention-thread');
 
     // A desktop click on a reply to a PR that is not open: a new tab, on that thread.
     await js(`window.dispatchEvent(new CustomEvent('fixture-deep-link',{detail:${JSON.stringify({ kind: 'pr', pr: { ...pr121, number: 122 }, tab: 'feedback', threadId: 'thread-right' })}}))`);
-    await wait(`${activeTab}?.startsWith('Feedback') && ${selectedThread} === 'thread-right'`);
+    await wait(`${activeTab}?.startsWith('Conversation') && ${selectedThread} === 'thread-right'`);
     assert.equal(await js<number>('document.querySelectorAll(".workspace-tab").length'), before + 1);
     await wait("window.fixtureNotificationContext === 'https://github.com/klang/engine/pull/122'");
 

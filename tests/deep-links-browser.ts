@@ -56,7 +56,7 @@ void app.whenReady().then(async () => {
     await capture('checks-tab');
     // A second link to the same PR reuses its tab and lands on the new tab.
     await deliver({ source: 'content', target: { kind: 'pr', pr: pr(150), tab: 'feedback' } });
-    await wait(`${prTab}?.startsWith('Feedback')`);
+    await wait(`${prTab}?.startsWith('Conversation')`);
     assert.equal(await workspaceTabs(), tabs + 1);
 
     // A locator this version cannot follow: the tab opens, with a note.

@@ -211,7 +211,7 @@ void app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const changesScroll = await js<number>('window.keptScroller.scrollTop');
     assert.ok(changesScroll > 0, 'The changes pane scrolled');
-    await tab('Feedback');
+    await tab('Checks');
     await wait("!!document.querySelector('.pr-changes-tab[data-state=active]')&&!window.keptChanges.checkVisibility()");
     // Hidden content has no layout. Record what Chromium reports, which is why kept tabs restore scroll.
     console.log('Hidden Changes pane scrollTop:', await js<number>('window.keptScroller.scrollTop'));

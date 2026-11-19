@@ -31,8 +31,8 @@ export function buildTimeline(
   const raw: TimelineEntry[] = [];
   for (const member of members) {
     if (conversationOnly) break;
-    if (member.description.trim())
-      raw.push({ type: 'description', key: `${member.url}#description`, at: member.createdAt, member });
+    // Every PR opens with its description, even an empty one, so the page always starts where the PR did.
+    raw.push({ type: 'description', key: `${member.url}#description`, at: member.createdAt, member });
     const known = events.get(member.url);
     if (known?.earlierEvents)
       raw.push({ type: 'earlier', key: `${member.url}#earlier`, at: known.events?.[0]?.at ?? member.createdAt, member });

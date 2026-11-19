@@ -103,7 +103,7 @@ void app.whenReady().then(async () => {
     assert.ok(await js("document.body.textContent.includes('GitHub line comments refer to the pointer file')"));
     assert.ok(await js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Comment').disabled"));
     await capture('text-dark');
-    await click('Summary');
+    await click('Conversation');
     await click('Changes');
     assert.equal(await js('window.lfsCalls.length'), 3);
     // Explanation uses the same explicit interaction, preserving errors for retry.

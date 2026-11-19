@@ -31,7 +31,7 @@ interface Frame {
   focusRing: boolean;
 }
 
-const sections = ['Summary', 'Changes', 'Commits', 'Checks', 'Feedback', 'Explanation', 'Local notes'] as const;
+const sections = ['Conversation', 'Changes', 'Commits', 'Checks', 'Explanation', 'Local notes'] as const;
 const tolerance = 0.5;
 
 void app.whenReady().then(async () => {
@@ -190,13 +190,11 @@ void app.whenReady().then(async () => {
   const report: Record<string, Record<string, Frame>> = {};
 
   const sectionReady: Record<(typeof sections)[number], string> = {
-    Summary: "!!document.querySelector('.pr-summary-content[data-state=active] .pr-summary-body')",
+    Conversation: "!!document.querySelector('.pr-summary-content[data-state=active] .pr-summary-body')",
     Changes:
       "!!document.querySelector('.pr-changes-tab[data-state=active] .changes-file-header, .pr-changes-tab[data-state=active] .changes-file-tree')",
     Commits: "!!document.querySelector('.pr-changes-tab[data-state=active] .commit-row')",
     Checks: "!!document.querySelector('.pr-changes-tab[data-state=active] .pr-checks-workspace')",
-    Feedback:
-      "!!document.querySelector('.pr-changes-tab[data-state=active] .feedback-workspace, .pr-changes-tab[data-state=active] .feedback-empty')",
     Explanation:
       "!!document.querySelector('.pr-changes-tab[data-state=active] .explanation-reader, .pr-changes-tab[data-state=active] .explanation-empty')",
     'Local notes': "!!document.querySelector('.pr-changes-tab[data-state=active] .agent-brief')",
@@ -207,11 +205,11 @@ void app.whenReady().then(async () => {
     const key = `${subject}-${width}x${height}-${theme}`;
     await viewport(width, height);
     await js(`document.documentElement.classList.toggle('dark', ${theme === 'dark'})`);
-    await pointerTab('Summary');
-    await must(sectionReady.Summary);
+    await pointerTab('Conversation');
+    await must(sectionReady.Conversation);
     await pause(400);
     const reference = await frame();
-    report[key] = { Summary: reference };
+    report[key] = { Conversation: reference };
     // Summary content ends where the header does, even with its scrollbar gutter.
     const edges = await js<{ header: number; content: number; gutter: number }>(
       `(()=>{const page=document.querySelector('.pr-summary-page'),inset=parseFloat(getComputedStyle(page).getPropertyValue('--pr-frame-inset'));const content=document.querySelector('.pr-summary-content'),body=content.querySelector('.pr-summary-body');return {header:page.getBoundingClientRect().left+page.clientWidth-inset,content:body.getBoundingClientRect().right,gutter:content.offsetWidth-content.clientWidth}})()`
@@ -233,7 +231,7 @@ void app.whenReady().then(async () => {
       await capture(`${key}-${section.toLowerCase().replace(/\s+/g, '-')}`);
     }
     // Returning to Summary lands on the same frame.
-    await pointerTab('Summary');
+    await pointerTab('Conversation');
     await pause(200);
     compare(`${key} Summary (return)`, reference, await frame());
   };
@@ -284,7 +282,7 @@ void app.whenReady().then(async () => {
     // Chat beside Changes keeps the same header.
     await viewport(1280, 800);
     await js(`document.documentElement.classList.remove('dark')`);
-    await pointerTab('Summary');
+    await pointerTab('Conversation');
     await pause(300);
     const reference = await frame();
     await pointerTab('Changes');

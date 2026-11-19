@@ -874,7 +874,7 @@ void app.whenReady().then(async () => {
     await js(`document.querySelector('.commit-diff-stream').scrollTop+=window.row('src/lazy/panel.ts').querySelector('.diff-gap-scope').closest('.diff-gap').getBoundingClientRect().top-document.querySelector('.commit-diff-stream').getBoundingClientRect().top-40`);
     await shot('ts-breadcrumb', '.commit-stream-row[data-file="src/lazy/panel.ts"] .diff-gap:has(.diff-gap-scope)');
     // Revisits: back to the overview and into Changes again, and through every file. Nothing is read again.
-    await click('Summary');
+    await click('Conversation');
     await sleep(300);
     await click('Changes');
     await wait("window.deepAll('[role=treeitem]').length>0");

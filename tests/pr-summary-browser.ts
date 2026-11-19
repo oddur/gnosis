@@ -82,7 +82,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js('document.activeElement.tagName'), 'H1');
     assert.match(await js<string>("document.querySelector('.pr-description').textContent"), /outbox/);
     assert.match(await js<string>("document.querySelector('.pr-metadata').textContent"), /lena/);
-    assert.equal(await js("document.querySelector('.pr-secondary-metadata').open"), false);
+    // The Conversation page (#418) shows a long description's start; the checks below read it whole.
+    await js("[...document.querySelectorAll('.feedback-description-toggle')].find(b=>b.textContent.trim()==='Show full description')?.click()");
     assert.equal(
       await js("document.querySelector('.pr-merge-status').getBoundingClientRect().bottom < 350"),
       true,
@@ -126,6 +127,8 @@ void app.whenReady().then(async () => {
       await js("[...document.querySelectorAll('.pr-description a')].find(a=>a.textContent==='Source').href"),
       'https://github.com/klang/engine/blob/head-0/src/outbox.ts'
     );
+    // The description now sits below the band (#418): bring its images into view so they load.
+    await js("document.querySelector('.pr-description').scrollIntoView({block:'end'})");
     await wait("!!document.querySelector('.markdown-image-fallback')");
     await js('document.querySelector(\'img[alt="Private attachment"]\')?.scrollIntoView()');
     await wait('document.querySelector(\'img[alt="Private attachment"]\')?.naturalWidth === 600');
@@ -152,7 +155,8 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.mermaid-diagram').scrollIntoView({block:'center'})");
     await capture('pr-summary-mermaid-dark');
     await js("document.querySelector('.pr-summary-content').scrollTop = 0");
-    assert.ok(await js(`document.querySelector('.pr-description-heading').getBoundingClientRect().top < 500`), 'The author description should be in the first laptop viewport');
+    const descriptionAt = await js<string>("JSON.stringify({top:document.querySelector('.pr-description').getBoundingClientRect().top,band:document.querySelector('.conversation-band')?.getBoundingClientRect().height,scroll:document.querySelector('.pr-summary-content').scrollTop,inner:innerHeight})");
+    assert.ok(JSON.parse(descriptionAt).top < 500, `The author description should be in the first laptop viewport: ${descriptionAt}`);
     await capture('pr-summary-dark');
     window.setSize(980, 700);
     await capture('pr-summary-laptop');
@@ -200,6 +204,8 @@ void app.whenReady().then(async () => {
     await js(`(async()=>{
       const q=await window.electronAPI.workbenchQueue();
       q.items.find(i=>i.subject.title.includes('Fix reconnect')).subject.members[0].description=window.originalDescription;
+      // The fixture edits its queue in place, which no store change announces; a PR action's completion reads it again.
+      window.dispatchEvent(new Event('gnosis-pr-action-completed'));
     })()`);
     await wait("document.querySelectorAll('.pr-description .mermaid-diagram').length===1");
     await wait("!!document.querySelector('.pr-description .mermaid-preview > div > svg')");
@@ -212,10 +218,6 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Fix reconnect')");
     await wait("document.querySelector('.pr-summary-content').scrollTop >= 400");
     await js("document.querySelector('.pr-summary-content').scrollTop = 0");
-    await js(
-      "document.querySelector('.pr-secondary-metadata summary').dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}))"
-    );
-    assert.match(await js<string>("document.querySelector('.pr-overview-heading h1').textContent"), /Fix reconnect/);
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}))");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Reduce allocations')");
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',bubbles:true}))");
@@ -228,7 +230,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait("document.querySelector('.explanation-generating .explanation-build')?.textContent.includes('Explaining')");
     assert.equal(await js('window.generationCalls.length'), 1);
-    await click('Summary');
+    await click('Conversation');
     assert.equal(await js("!!document.querySelector('.pr-description')"), true, 'Description remains readable while generating');
     await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
@@ -262,7 +264,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Back to stack');
     await wait("!!document.querySelector('.explanation-reader')");
-    await click('Summary');
+    await click('Conversation');
     assert.equal(await js("document.querySelectorAll('.stack-overview-member').length"), 3);
     await click('Explanation');
     await wait("!!document.querySelector('.explanation-section')");
@@ -299,15 +301,17 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelectorAll('.stack-overview-member').length === 9");
     assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 0);
-    assert.ok(await js("!!document.querySelector('.pr-summary-body>.workbench-notice')"));
+    assert.ok(await js("!!document.querySelector('.conversation-band>.workbench-notice')"));
     await capture('pr-summary-nine-pr-stack');
     await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/128\"] .stack-member-title > button:not(.entity-badge)').click()");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent==='Stack step 9'");
     assert.match(await js<string>("document.querySelector('.stack-context [aria-current=page] .stack-parent-link').textContent"), /#127/);
+    // The Conversation page shows a long description's start (#418), so the page may scroll less than 350px.
     await js("document.querySelector('.pr-summary-content').scrollTop=350");
+    const left = Math.min(350, await js<number>("document.querySelector('.pr-summary-content').scrollTop"));
     await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/120')");
     await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/128')");
-    await wait("document.querySelector('.pr-summary-content').scrollTop>=330");
+    await wait(`document.querySelector('.pr-summary-content').scrollTop>=${left - 20}`);
     window.setSize(540, 760);
     await js("document.querySelector('.pr-summary-content').scrollTop=0");
     await capture('pr-summary-nine-pr-stack-narrow');

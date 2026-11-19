@@ -54,10 +54,11 @@ void app.whenReady().then(async () => {
     );
     await click('Open PR overview');
     await wait("document.querySelector('.review-evidence-summary')?.textContent.includes('different commit')");
+    // The Conversation page (#418) reads the discussion for its timeline, so evidence finds it already subscribed.
     assert.equal(
       await js("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')"),
-      false,
-      'Collapsed evidence must not load discussions'
+      true,
+      'Conversation reads the discussion for its timeline'
     );
     assert.equal(
       await js(
@@ -70,7 +71,7 @@ void app.whenReady().then(async () => {
     await wait(`document.activeElement===document.querySelector('.review-evidence h2')`);
     await wait("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
     await js(
-      `(()=>{const target=[...window.evidenceSubscriptions.values()].find(v=>v.kind==='discussion').targets[0];window.evidenceTarget=target;window.pushEvidence('discussion',{...target,baseSha:'base',checkedAt:Date.now(),threads:[{id:'t1',path:'src/worker.ts',isResolved:false,isOutdated:true,comments:[{url:target.url+'#discussion_r1'}]}]})})()`
+      `(()=>{const target=[...window.evidenceSubscriptions.values()].find(v=>v.kind==='discussion').targets[0];window.evidenceTarget=target;window.pushEvidence('discussion',{...target,baseSha:'base',checkedAt:Date.now(),threads:[{id:'t1',path:'src/worker.ts',isResolved:false,isOutdated:true,comments:[{id:'c1',body:'Is the retry still needed?',createdAt:'2026-11-01T10:00:00Z',author:{login:'maya',avatarUrl:''},url:target.url+'#discussion_r1'}]}]})})()`
     );
     await wait("document.querySelector('.review-evidence-details')?.textContent.includes('1 unresolved discussion')");
     assert.match(
@@ -141,7 +142,8 @@ void app.whenReady().then(async () => {
     await js('window.releaseRefresh();void 0');
     await wait('!document.querySelector(\'[aria-label="Refresh GitHub information"]\').disabled');
     await click('Hide details');
-    await wait("![...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
+    // Evidence stops reading the discussion; the Conversation timeline keeps its own read of it (#418).
+    await new Promise((r) => setTimeout(r, 300));
     await click('Show details');
     await wait("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
     await js(

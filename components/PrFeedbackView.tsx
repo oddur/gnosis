@@ -3,7 +3,8 @@ import { FeedbackCodeThread } from './FeedbackCodeThread';
 import type { Preferences } from '../lib/types';
 import { Popover } from 'radix-ui';
 import { SearchableSelect } from './SearchableSelect';
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import type { GitHubReviewThreads } from '../lib/review-threads';
 import {
   ArrowDown,
   ArrowUp,
@@ -37,10 +38,11 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from './ui/button';
 import { GitHubAuthor } from './GitHubAuthor';
 import { SubjectIcon } from './SubjectIcon';
-import { GitHubReviewThread, HiddenComment } from './GitHubReviewThread';
+import { GitHubReviewThread, HiddenComment, inFrontPanel } from './GitHubReviewThread';
 import { minimizedLabel } from '../lib/review-threads';
 import { CommentMarkdown } from './CommentMarkdown';
 import { Markdown } from './Markdown';
+import { DiffStats } from './DiffStats';
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useEvidenceDiscussions } from '../lib/use-evidence-discussions';
 import {
@@ -68,7 +70,7 @@ import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import type { ReviewMember, ReviewSubject } from '../lib/workbench';
 import { timeAgo } from '../lib/utils';
 import { countRender } from '../lib/render-count';
-import { useKeptReplyDraft } from '../lib/notification-drafts';
+import { replyDraftSent, useKeptReplyDraft } from '../lib/notification-drafts';
 import { optimisticWrite } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
 
@@ -121,6 +123,8 @@ interface Parts {
   quiet?: boolean;
   /** Something in it is new to the reader: the node carries a dot. */
   unread?: boolean;
+  /** The PR description: the page's first and heaviest entry. */
+  lead?: boolean;
 }
 const DAY_MS = 86_400_000;
 const dayOf = (at: string) => new Date(at).toDateString();
@@ -194,6 +198,10 @@ export function PrFeedbackView({
   intent,
   onIntentHandled,
   onSource,
+  band,
+  sidebar,
+  scroller,
+  onOpenChanges,
 }: {
   subject: ReviewSubject;
   account: string | null;
@@ -203,6 +211,13 @@ export function PrFeedbackView({
   intent?: 'address' | 'request' | ResponseIntent;
   onIntentHandled?: () => void;
   onSource: (item: FeedbackItem) => void;
+  /** Above the timeline and side column, scrolling away: the briefing and merge readiness (Conversation page). */
+  band?: ReactNode;
+  /** The side column beside the timeline, from the same discussions. */
+  sidebar?: (values: Record<string, GitHubReviewThreads | undefined>) => ReactNode;
+  /** The page that scrolls, when the timeline is part of one; otherwise the timeline scrolls itself. */
+  scroller?: RefObject<HTMLElement | null>;
+  onOpenChanges?: () => void;
 }) {
   countRender('PrFeedbackView');
   const discussions = useEvidenceDiscussions(subject, account, true, true);
@@ -297,7 +312,8 @@ export function PrFeedbackView({
     const result: Row[] = [];
     let previous: string | undefined;
     for (const entry of entries) {
-      if (!previous || dayOf(previous) !== dayOf(entry.at)) {
+      // The first day needs no marker: the first entry carries its date.
+      if (previous && dayOf(previous) !== dayOf(entry.at)) {
         const days = previous ? Math.round((new Date(dayOf(entry.at)).getTime() - new Date(dayOf(previous)).getTime()) / DAY_MS) : 0;
         result.push({ type: 'day', key: `day:${dayOf(entry.at)}`, at: entry.at, label: dayLabel(entry.at), gap: days >= 2 ? `${days} days later` : undefined });
       }
@@ -310,9 +326,37 @@ export function PrFeedbackView({
   const newFrom = rows.findIndex((row) => row.type === 'divider');
   const navigable = rows.filter((row) => !isMarker(row));
   const activeIndex = navigable.findIndex((row) => row.key === activeKey);
+  const scrollRef = scroller ?? timeline;
+  const toolbar = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState({ margin: 0, bar: 0 });
+  // After the commit: the page's ref is attached once its children have mounted.
+  useEffect(() => {
+    const page = scroller?.current;
+    const list = timeline.current;
+    if (!page || !list) return;
+    page.setAttribute('data-diff-scroller', '');
+    page.setAttribute('data-feedback-scroller', '');
+    const measure = () => {
+      const margin = Math.round(list.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop);
+      const bar = toolbar.current?.offsetHeight ?? 0;
+      setLayout((current) => (current.margin === margin && current.bar === bar ? current : { margin, bar }));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(page);
+    if (root.current) observer.observe(root.current);
+    return () => {
+      observer.disconnect();
+      page.removeAttribute('data-diff-scroller');
+      page.removeAttribute('data-feedback-scroller');
+    };
+  }, [scroller]);
   const virtual = useVirtualizer({
     count: rows.length,
-    getScrollElement: () => timeline.current,
+    getScrollElement: () => scrollRef.current,
+    // In a page, the rows start below the band; the pinned bar covers the top of the view.
+    scrollMargin: layout.margin,
+    scrollPaddingStart: layout.bar,
     estimateSize: (index) => {
       const row = rows[index];
       if (row.type === 'item') return row.item.thread ? (row.item.thread.isResolved ? 48 : 360) : 140;
@@ -322,7 +366,7 @@ export function PrFeedbackView({
     },
     overscan: 4,
     getItemKey: (index) => rows[index].key,
-    paddingStart: 12,
+    paddingStart: 4,
     paddingEnd: 48,
   });
   /** Scroll an entry to the top of the timeline and move the keyboard cursor to it. */
@@ -401,7 +445,8 @@ export function PrFeedbackView({
     if (divider.current === undefined) return;
     initialSelection.current = true;
     if (activeKey && rows.some((row) => row.key === activeKey)) goTo(activeKey, false);
-    else if (divider.current) virtual.scrollToIndex(rows.findIndex((row) => row.key === 'new-since'), { align: 'start' });
+    // A page restored to where the reader left it stays there.
+    else if (divider.current && !scroller?.current?.scrollTop) virtual.scrollToIndex(rows.findIndex((row) => row.key === 'new-since'), { align: 'start' });
   }, [intent, initialThreadId, rows.length, account, discussions.values, divider.current]);
   function markRead(item: FeedbackItem) {
     if (!account || document.visibilityState === 'hidden') return;
@@ -524,8 +569,9 @@ export function PrFeedbackView({
   // between timeline items. They apply only while this tab is visible.
   useKeyboardShortcuts(
     {
-      j: () => move(1),
-      k: () => move(-1),
+      // Inside the page, j and k move between items; elsewhere they keep moving between PRs (PrSummary).
+      j: () => (root.current?.contains(document.activeElement) ? move(1) : false),
+      k: () => (root.current?.contains(document.activeElement) ? move(-1) : false),
       ArrowDown: (e) => (e.target === timeline.current || (e.target as HTMLElement).dataset.entryKey ? move(1) : false),
       ArrowUp: (e) => (e.target === timeline.current || (e.target as HTMLElement).dataset.entryKey ? move(-1) : false),
       n: goNextUnresolved,
@@ -595,30 +641,61 @@ export function PrFeedbackView({
         return { node: 'day', title: row.label, meta: row.gap && <span className="feedback-gap-label">{row.gap}</span>, quiet: true };
       case 'divider':
         return { node: 'new', title: 'New since you last looked', quiet: true };
-      case 'description':
+      case 'description': {
+        // The PR as it is now: the queue refreshes members, while timeline rows keep the object they were built from.
+        const m = subject.members.find((member) => member.url === row.member.url) ?? row.member;
+        const full = expanded.includes(`${row.key}:full`);
         return {
           node: 'description',
+          lead: true,
           title: (
             <>
-              <Actor login={row.member.author} /> opened this PR
+              <Actor login={m.author} /> opened this PR
             </>
+          ),
+          badges: onOpenChanges && (
+            <Button variant="outline" size="sm" className="feedback-description-stats" onClick={onOpenChanges} aria-label="View changed files">
+              {m.changedFileCount === undefined ? (
+                `${m.commitCount} ${m.commitCount === 1 ? 'commit' : 'commits'}`
+              ) : (
+                <>
+                  {m.changedFileCount} {m.changedFileCount === 1 ? 'file' : 'files'}
+                  <DiffStats additions={m.additions ?? 0} deletions={m.deletions ?? 0} />
+                </>
+              )}
+            </Button>
           ),
           meta: (
             <>
-              {pr(row.member)}
+              {pr(m)}
               {when(row.at)}
             </>
           ),
           body: (
-            <div className="feedback-entry-card">
+            // The description leads the page, at reading size; a long one shows its start until opened.
+            <div className="feedback-entry-card feedback-description-card" data-clamped={(!full && m.description.trim().length > 400) || undefined}>
               <div className="feedback-entry-body">
-                <Markdown className="github-comment-body" githubSource={{ repo: row.member.repo, ref: row.member.headSha }}>
-                  {row.member.description}
-                </Markdown>
+              <section className="pr-description" aria-label={`Author description for PR #${m.number}`}>
+                {m.description.trim() ? (
+                  <Markdown className="pr-markdown" headingLevel={3} githubSource={{ repo: m.headRepo || m.repo, ref: m.headSha || m.headBranch }}>
+                    {m.description}
+                  </Markdown>
+                ) : (
+                  <p className="feedback-description-empty">
+                    No description provided by <GitHubAuthor login={m.author} />.
+                  </p>
+                )}
+              </section>
               </div>
+              {m.description.trim().length > 400 && (
+                <Button variant="ghost" size="sm" className="feedback-description-toggle" aria-expanded={full} onClick={() => toggle(`${row.key}:full`)}>
+                  {full ? 'Show less' : 'Show full description'}
+                </Button>
+              )}
             </div>
           ),
         };
+      }
       case 'earlier':
         return {
           node: 'earlier',
@@ -882,8 +959,11 @@ export function PrFeedbackView({
   const filterLabels: Record<Filter, string> = { all: 'All', unresolved: 'Unresolved', unread: 'Unread', mentions: 'Mentions' };
   return (
     <ReviewDraftBoundary value={`feedback:${account}`}>
-      <div className="feedback-workspace feedback-timeline-workspace" ref={root}>
-        <div className="feedback-toolbar" role="toolbar" aria-label="Feedback timeline">
+      <div className="feedback-workspace feedback-timeline-workspace" data-page={scroller ? '' : undefined} ref={root}>
+        {band && <div className="conversation-band">{band}</div>}
+        <div className="conversation-grid" data-sidebar={sidebar ? '' : undefined}>
+        <div className="conversation-main">
+        <div className="feedback-toolbar" ref={toolbar} role="toolbar" aria-label="Feedback timeline">
           <div className="feedback-filters" role="group" aria-label="Show in the timeline">
             {(['all', 'unresolved', 'unread', 'mentions'] as const).map((value) => (
               <Button
@@ -954,7 +1034,7 @@ export function PrFeedbackView({
               <Popover.Trigger asChild>
                 <Button size="sm" variant="outline" aria-label="Review requests">
                   <Send size={14} />
-                  Review requests <span>{reviewers.length}</span>
+                  <span className="feedback-review-requests-label">Review requests</span> <span>{reviewers.length}</span>
                 </Button>
               </Popover.Trigger>
               <Popover.Portal>
@@ -1105,7 +1185,8 @@ export function PrFeedbackView({
           aria-label="PR timeline"
           aria-busy={discussions.busy || undefined}
           tabIndex={-1}
-          data-diff-scroller=""
+          data-diff-scroller={scroller ? undefined : ''}
+          data-feedback-scroller={scroller ? undefined : ''}
         >
           {rows.length ? (
             <Timeline className="feedback-timeline-rail" style={{ height: virtual.getTotalSize(), position: 'relative' }}>
@@ -1115,21 +1196,21 @@ export function PrFeedbackView({
                   <TimelineRowShell
                     key={v.key}
                     index={v.index}
-                    start={v.start}
+                    start={v.start - layout.margin}
                     row={row}
                     active={row.key === activeKey}
                     edge={rows.length === 1 ? 'only' : v.index === 0 ? 'first' : v.index === rows.length - 1 ? 'last' : undefined}
                     tone={newFrom < 0 ? undefined : v.index < newFrom ? 'seen' : 'new'}
                     gap={row.type === 'day' && !!row.gap}
                     measure={virtual.measureElement}
-                    root={timeline}
+                    root={scrollRef}
                     onRead={() => (isMarker(row) ? undefined : entryItems(row).forEach(markRead))}
                     onActivate={() => !isMarker(row) && setActiveKey(row.key)}
                   >
                     <MemoRow
                       row={row}
                       render={renderRow}
-                      state={`${expanded.includes(row.key)}|${isMarker(row) ? '' : entryItems(row).map((i) => `${isUnread(i)}${mentions(i)}`).join()}|${stack}|${version}`}
+                      state={`${expanded.includes(row.key)}|${isMarker(row) ? '' : entryItems(row).map((i) => `${isUnread(i)}${mentions(i)}`).join()}|${stack}|${version}|${row.type === "description" ? `${expanded.includes(`${row.key}:full`)}${row.member.description}${row.member.changedFileCount ?? ""}` : ""}`}
                     />
                   </TimelineRowShell>
                 );
@@ -1175,6 +1256,9 @@ export function PrFeedbackView({
             </div>
           )}
         </div>
+        </div>
+        {sidebar && <div className="conversation-side">{sidebar(discussions.values)}</div>}
+        </div>
       </div>
     </ReviewDraftBoundary>
   );
@@ -1192,7 +1276,7 @@ const MemoRow = memo(
         <TimelineIndicator label={parts.unread ? `${label}, new` : label} tone={node.tone} data-node-kind={parts.node} data-unread={parts.unread || undefined}>
           {Icon && <Icon size={row.type === 'day' ? 12 : 14} aria-hidden="true" />}
         </TimelineIndicator>
-        <TimelineHeader data-quiet={parts.quiet || undefined}>
+        <TimelineHeader data-quiet={parts.quiet || undefined} data-lead={parts.lead || undefined}>
           <TimelineTitle>{parts.title}</TimelineTitle>
           {parts.badges && <span className="timeline-badges">{parts.badges}</span>}
           {parts.meta && <span className="timeline-meta">{parts.meta}</span>}
@@ -1202,7 +1286,8 @@ const MemoRow = memo(
       </>
     );
   },
-  (a, b) => a.row === b.row && a.state === b.state
+  // A description reads its PR, which changes in place when the queue refreshes: it always renders again.
+  (a, b) => a.row === b.row && a.state === b.state && a.row.type !== 'description'
 );
 
 /**
@@ -1231,7 +1316,7 @@ function TimelineRowShell({
   tone?: 'seen' | 'new';
   gap: boolean;
   measure: (element: Element | null) => void;
-  root: React.RefObject<HTMLDivElement | null>;
+  root: React.RefObject<HTMLElement | null>;
   onRead: () => void;
   onActivate: () => void;
   children: ReactNode;
@@ -1391,8 +1476,10 @@ function MessageEntry({
         setDraft('');
         setReplying(false);
       }
-    }
+    },
+    () => inFrontPanel(card.current)
   );
+  const card = useRef<HTMLElement>(null);
   const [sending, setSending] = useState(false),
     [sent, setSent] = useState(false);
   const comment = item.comments[0];
@@ -1417,6 +1504,7 @@ function MessageEntry({
       },
       write: async () => {
         await onReply(body);
+        replyDraftSent(`feedback:${feedbackKey(item)}`, body);
         setSent(true);
       },
     }).finally(() => setSending(false));
@@ -1424,7 +1512,7 @@ function MessageEntry({
   const bot = isBot(comment.author?.login, comment.author?.__typename);
   const unresolvedRelated = related.filter((r) => r.thread && !r.thread.isResolved);
   return (
-    <article className="feedback-entry-card feedback-message" data-quiet={quiet || bot || undefined} data-sending={comment.sending}>
+    <article ref={card} className="feedback-entry-card feedback-message" data-quiet={quiet || bot || undefined} data-sending={comment.sending}>
       {header}
       <div className="feedback-entry-body">
         {comment.isMinimized ? <HiddenComment comment={comment} /> : <CommentMarkdown>{comment.body}</CommentMarkdown>}

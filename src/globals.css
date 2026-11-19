@@ -5479,9 +5479,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-badge .pr-unread-dot { width:6px; height:6px; }
 .timeline-badges .feedback-verdict { height:20px; padding:0 7px; border:1px solid currentColor; border-radius:999px; font-size:var(--type-caption); font-weight:550; }
 /* Days part the rail with more space above; a long pause says how long. */
-.feedback-entry[data-entry-type=day] { padding-top:16px; padding-bottom:16px; }
+.feedback-entry[data-entry-type=day] { padding-top:4px; padding-bottom:8px; }
 .feedback-entry[data-entry-type=day] .timeline-title { font-size:var(--type-control); font-weight:650; color:var(--foreground); }
-.feedback-entry[data-entry-type=day] .timeline-indicator { top:20px; }
+.feedback-entry[data-entry-type=day] .timeline-indicator { top:8px; }
 .feedback-gap-label { padding:0 7px; border:1px dashed var(--border); border-radius:999px; color:var(--muted-foreground); font-size:var(--type-caption); }
 .feedback-entry[data-entry-type=divider] { padding-bottom:16px; }
 .feedback-entry[data-entry-type=divider] .timeline-title { color:var(--ring); font-size:var(--type-control); font-weight:650; }
@@ -5508,3 +5508,88 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* Events without a card sit closer together than conversations. */
 .timeline-item:has(> .timeline-header[data-quiet]):not(:has(> .timeline-content)) { padding-bottom:12px; }
 .feedback-message .feedback-related button { display:inline-flex; width:auto; padding:0 4px; border:0; font-family:var(--font-mono); font-size:var(--type-code); }
+
+/* The Conversation page (#418): the PR header, then a band with the briefing and merge readiness that scrolls away,
+   then the timeline beside the PR's details. The page scrolls as one; the timeline's bar and the details column stay
+   pinned. Below 1100px the details become a compact strip above the timeline. */
+.conversation-page { padding-top:4px; }
+.feedback-timeline-workspace[data-page] { display:block; height:auto; min-height:0; }
+.conversation-band { display:flex; flex-direction:column; gap:8px; padding:0 0 8px; }
+.conversation-band:empty { display:none; }
+.conversation-grid { display:grid; grid-template-columns:minmax(0,1fr); }
+.conversation-grid[data-sidebar] { grid-template-columns:minmax(0,1fr) 300px; gap:0 28px; align-items:start; }
+.conversation-main, .conversation-side { min-width:0; }
+.feedback-timeline-workspace[data-page] .feedback-toolbar { position:sticky; top:0; z-index:7; padding-inline:0; }
+.feedback-timeline-workspace[data-page] .feedback-timeline { flex:none; overflow:visible; padding-inline:0; }
+.conversation-side { position:sticky; top:0; align-self:start; max-height:calc(100cqh - 8px); overflow:auto; overscroll-behavior:contain; padding-top:8px; }
+.conversation-sidebar { display:flex; flex-direction:column; gap:20px; font-size:var(--type-control); color:var(--foreground); }
+.conversation-sidebar > section { display:flex; flex-direction:column; gap:8px; padding-top:12px; border-top:1px solid var(--border); }
+.conversation-sidebar > section:first-child { border-top:0; padding-top:0; }
+.conversation-sidebar h2 { font-size:var(--type-control); font-weight:650; color:var(--foreground); }
+.conversation-sidebar p { color:var(--muted-foreground); line-height:1.5; }
+.conversation-sidebar > section > button { align-self:flex-start; padding-inline:0; }
+.conversation-sidebar dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; align-items:baseline; }
+.conversation-sidebar dt { color:var(--muted-foreground); font-size:var(--type-caption); }
+.conversation-sidebar dd { min-width:0; overflow-wrap:anywhere; }
+.conversation-sidebar .pr-branches { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.conversation-reviewers { display:flex; flex-direction:column; gap:8px; margin:0; padding:0; list-style:none; }
+.conversation-reviewers li { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+.conversation-verdict { --tone:var(--muted-foreground); display:inline-flex; align-items:center; gap:4px; color:var(--tone); font-size:var(--type-caption); font-weight:550; white-space:nowrap; }
+.conversation-verdict[data-tone=success] { --tone:var(--color-success); }
+.conversation-verdict[data-tone=danger] { --tone:var(--color-danger); }
+.conversation-verdict[data-tone=review] { --tone:var(--ring); }
+.conversation-empty-value { font-size:var(--type-control); }
+.conversation-sidebar.is-stack { gap:0; }
+/* The description leads: a larger node, a heavier title, prose at reading size, and its start until opened. */
+.timeline-header[data-lead] .timeline-title { font-size:var(--type-section-title); font-weight:500; }
+.feedback-entry[data-entry-type=description] > .timeline-indicator { width:28px; height:28px; left:2px; top:2px; }
+.feedback-description-card .pr-markdown { font-size:var(--type-prose); }
+.feedback-description-card[data-clamped] .feedback-entry-body { max-height:144px; overflow:hidden; mask-image:linear-gradient(to bottom, #000 70%, transparent); }
+.feedback-description-card { position:relative; }
+.feedback-description-toggle { position:absolute; right:8px; bottom:6px; background:var(--card); }
+.feedback-description-card:not([data-clamped]) .feedback-entry-body { padding-bottom:40px; }
+.feedback-description-stats { gap:6px; height:24px; font-variant-numeric:tabular-nums; }
+@container (max-width:1100px) {
+  .conversation-grid[data-sidebar] { grid-template-columns:minmax(0,1fr); }
+  .conversation-side { order:-1; position:static; max-height:none; overflow:visible; padding:0 0 12px; }
+  .conversation-sidebar:not(.is-stack) { flex-direction:row; flex-wrap:wrap; gap:8px 28px; padding:10px 0 12px; border-bottom:1px solid var(--border); }
+  .conversation-sidebar:not(.is-stack) > section { border-top:0; padding-top:0; gap:4px; }
+  .conversation-sidebar:not(.is-stack) dl { display:flex; flex-wrap:wrap; gap:4px 16px; }
+  .conversation-sidebar:not(.is-stack) dl > :is(dt:nth-of-type(n+3), dd:nth-of-type(n+3)) { display:none; }
+}
+/* The description fills its card; its paragraphs keep the reading measure (.pr-summary-body .pr-markdown). */
+.feedback-description-card .markdown-body { max-width:none; }
+
+/* The Conversation bar is one row of compact controls at laptop widths. */
+.feedback-timeline-workspace[data-page] .feedback-toolbar { padding-block:4px; }
+
+/* Density for the laptop fold (#418): the band's readiness reads as one block whose reasons flow on one line where
+   they fit; the details column narrows below 1400px; the bar's buttons are tighter so it stays one row. */
+.conversation-band .pr-readiness-compact .pr-summary-decision { padding-block:8px; }
+.conversation-band .pr-readiness-compact ul { display:flex; flex-wrap:wrap; gap:2px 18px; margin-block:4px 0; }
+.conversation-band .pr-readiness-compact li { margin:0; }
+.feedback-timeline-workspace[data-page] .feedback-toolbar button[data-size=sm] { padding-inline:8px; }
+@container (min-width:1101px) and (max-width:1400px) { .conversation-grid[data-sidebar] { grid-template-columns:minmax(0,1fr) 260px; gap:0 24px; } }
+
+/* The band's readiness, collapsed: verdict, checked time and reasons in one line; Details opens the rest. */
+.band-readiness { display:flex; align-items:flex-start; gap:4px 12px; }
+.band-readiness > :first-child { flex:1; min-width:0; }
+.band-readiness:not([data-open]) .pr-summary-decision > :not(.pr-merge-detail), .band-readiness:not([data-open]) .pr-merge-requirements { display:none; }
+.band-readiness:not([data-open]) .pr-merge-detail { display:flex; align-items:baseline; gap:4px 12px; min-width:0; }
+.band-readiness:not([data-open]) .pr-summary-decision-heading { flex:none; }
+.band-readiness:not([data-open]) .pr-merge-detail ul { display:block; flex:1; min-width:0; margin:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--muted-foreground); }
+.band-readiness:not([data-open]) .pr-merge-detail li { display:inline; }
+.band-readiness:not([data-open]) .pr-merge-detail li + li::before { content:' · '; }
+.band-readiness-toggle { flex:none; margin-top:4px; }
+.feedback-timeline-workspace[data-page] .feedback-review-requests-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+
+/* The narrow strip: sections share the row and wrap; none widens the page. */
+@container (max-width:1100px) {
+  .conversation-sidebar:not(.is-stack) > section { flex:1 1 220px; min-width:0; max-width:100%; }
+}
+/* Collapsed readiness never widens the band: its one line shrinks and ellipsizes. */
+.band-readiness .pr-readiness { min-width:0; overflow:hidden; }
+.band-readiness:not([data-open]) .pr-summary-decision { display:block; min-width:0; }
+/* Nothing on the Conversation page scrolls sideways; wide content wraps or scrolls inside its own block. */
+.conversation-page { overflow-x:hidden; }
+.feedback-code-thread .diff-gap :is(.diff-gap-message, .diff-gap-trailing) { white-space:normal; }

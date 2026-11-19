@@ -147,7 +147,7 @@ void test('a thread, a check and a focus are followed; the route carries them in
   assert.deepEqual(link('gnosis://pr/oddur/gnosis/160?focus=unviewed-file'), { kind: 'pr', pr, tab: 'changes', focus: 'unviewed-file' }, 'a focus implies its tab');
   assert.deepEqual(link('gnosis://pr/oddur/gnosis/160/checks?focus=merge'), { kind: 'pr', pr, tab: 'checks' }, 'a focus on another tab is dropped');
   const route = routeDeepLink({ kind: 'pr', pr, tab: 'feedback', threadId: 'PRRT_1' }, { tabs: [tab('t1')], active: 't1' }, { items: [] }, 9);
-  assert.deepEqual(route.destination, { kind: 'home', url: 'https://github.com/oddur/gnosis/pull/160', open: { tab: 'feedback', nonce: 9, threadId: 'PRRT_1' } });
+  assert.deepEqual(route.destination, { kind: 'home', url: 'https://github.com/oddur/gnosis/pull/160', open: { tab: 'summary', nonce: 9, threadId: 'PRRT_1' } });
   assert.deepEqual(route.tab, { kind: 'new' }, 'current work is not replaced');
   const focus = routeDeepLink({ kind: 'pr', pr, focus: 'merge' }, { tabs: [tab('t1')], active: 't1' }, { items: [] }, 9);
   assert.deepEqual(focus.destination.kind === 'home' && focus.destination.open, { tab: undefined, nonce: 9, focus: 'merge' });
@@ -170,4 +170,14 @@ void test('a digest opens the queue filtered to its PRs, and the list is parsed 
   assert.deepEqual(route.destination, { kind: 'home', section: 'all', filters: { prs: urls } });
   // Older links still parse the same.
   assert.deepEqual(link('gnosis://queue?read=unread'), { kind: 'queue', filters: { read: 'unread' } });
+});
+
+void test('Feedback links and saved Feedback tabs open the Conversation page at their thread (#418)', async () => {
+  const { workspaceTab } = await import('../lib/deep-link-routing');
+  const { conversationTab } = await import('../lib/navigation-history');
+  assert.equal(workspaceTab('feedback'), 'summary');
+  assert.equal(workspaceTab('notes'), 'brief');
+  assert.equal(conversationTab('feedback'), 'summary', 'A restored Feedback tab opens Conversation');
+  assert.equal(conversationTab('changes'), 'changes');
+  assert.deepEqual(link('gnosis://pr/oddur/gnosis/160/feedback?thread=PRRT_1'), { kind: 'pr', pr, tab: 'feedback', threadId: 'PRRT_1' }, 'An old Feedback link keeps its thread');
 });

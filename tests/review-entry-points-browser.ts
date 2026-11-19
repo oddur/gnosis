@@ -37,7 +37,7 @@ void app.whenReady().then(async () => {
     const selected = await js("document.querySelector('.queue-item.is-selected .queue-title')?.textContent");
     await menuAction(js, 'Actions for PR #152', 'Review PR #152…');
     await wait("document.querySelector('.review-submit-header')?.textContent.includes('#152')");
-    assert.equal(await js("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]').textContent"), 'Summary');
+    assert.equal(await js("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]').textContent"), 'Conversation');
     assert.notEqual(await js("document.querySelector('h1').textContent"), selected);
     assert.equal(await js('window.reviewSubmissions.length'), 0, 'Opening a menu action never submits');
     await click('Close');
@@ -145,7 +145,7 @@ void app.whenReady().then(async () => {
     await wait("!!window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('src/new.ts'))");
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('src/new.ts')).click()");
     await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts'");
-    await click('Summary');
+    await click('Conversation');
     await js(`(async()=>{
       const {updateReviewDrafts}=await import('/lib/changes-review-drafts.ts');
       const member=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.number===121);
