@@ -42,6 +42,12 @@ export interface DiffGap {
    * the after side: an Explanation topic shows some of a file's hunks (`diffGaps` with `partial`).
    */
   opaque?: boolean;
+  /**
+   * In an opaque gap, how many lines next to the hunk above, and next to the hunk below, both sides agree on: those
+   * reveal; the change between them does not.
+   */
+  revealDown?: number;
+  revealUp?: number;
 }
 /** Lines revealed in one gap: `down` continues the hunk above, `up` the hunk below. */
 export interface GapReveal {
@@ -141,7 +147,8 @@ export function afterLines(text: string): string[] {
 /**
  * The gaps before, between and after the hunks. Each gap must hide as many old lines as new ones; a patch that says
  * otherwise has no gaps to reveal, and this returns undefined. With `partial`, the hunks are some of a file's (an
- * Explanation topic's), and a gap whose sides differ holds changes left out: it is `opaque`, and never reveals.
+ * Explanation topic's), and a gap whose sides differ holds changes left out: it is `opaque`, and reveals only the
+ * lines next to its hunks that the view finds unchanged (`revealDown`, `revealUp`).
  */
 export function diffGaps(hunks: GapHunk[], afterLineCount?: number, { partial = false } = {}): DiffGap[] | undefined {
   if (!hunks.length) return undefined;
@@ -212,6 +219,8 @@ export type GapPart =
       /** A hunk lies above or below, so the gap can grow towards it. */
       above: boolean;
       below: boolean;
+      /** Lines the view has, next to the hunk above or below, are still hidden. */
+      more?: { down: boolean; up: boolean };
     }
   | { kind: 'hunk'; key: string; hunk: GapHunk };
 
@@ -238,12 +247,16 @@ export function revealedParts(
     const above = gap.index > 0,
       below = gap.index < hunks.length;
     const size = gapSize(gap);
-    // A gap reveals only lines the text has: all of them with the after text, or some with a topic's saved lines.
-    const known = !!lines && size !== undefined && !gap.opaque && knownLines(lines, gap.newStart, size);
-    const small = above && below && size !== undefined && size <= joinUpTo;
-    const reveal = known ? (small ? { down: size, up: 0 } : (reveals[gap.index] ?? { down: 0, up: 0 })) : { down: 0, up: 0 };
-    const down = above && size !== undefined ? Math.min(reveal.down, size) : 0;
-    const up = below && size !== undefined ? Math.min(reveal.up, size - down) : 0;
+    // A gap reveals only lines the text has: all of them with the after text, or those next to a hunk that a topic
+    // saved, below the last hunk too before the after text says where the file ends. A gap holding changes left out
+    // reveals nothing.
+    const has = (from: number, step: 1 | -1) => (lines ? definedRun(lines, from, size ?? Infinity, step) : 0);
+    const downTo = Math.min(has(gap.newStart, 1), gap.opaque ? (gap.revealDown ?? 0) : Infinity),
+      upTo = size === undefined ? 0 : Math.min(has(gap.newStart + size - 1, -1), gap.opaque ? (gap.revealUp ?? 0) : Infinity);
+    const small = above && below && size !== undefined && size <= joinUpTo && downTo === size;
+    const reveal = small ? { down: size, up: 0 } : (reveals[gap.index] ?? { down: 0, up: 0 });
+    const down = above ? Math.min(reveal.down, size ?? Infinity, downTo) : 0;
+    const up = below && size !== undefined ? Math.min(reveal.up, size - down, upTo) : 0;
     if (current && down) current.hunk = { ...current.hunk, rows: [...current.hunk.rows, ...context(gap.newStart, down)] };
     const hidden = size === undefined ? undefined : size - down - up;
     const next = below ? hunks[gap.index] : undefined;
@@ -265,6 +278,7 @@ export function revealedParts(
       hidden,
       above,
       below,
+      more: { down: above && downTo > down, up: below && upTo > up },
     });
     current = next
       ? { key: `h${gap.index}`, hunk: { ...next, oldStart: next.oldStart - up, newStart: next.newStart - up, rows: [...upRows, ...next.rows] } }
@@ -272,6 +286,13 @@ export function revealedParts(
   }
   if (current) parts.push({ kind: 'hunk', ...current });
   return parts;
+}
+
+/** How many lines `lines` has in a row from `start`, going `step`, at most `count`: a topic's saved lines leave holes. */
+function definedRun(lines: readonly (string | undefined)[], start: number, count: number, step: 1 | -1): number {
+  let run = 0;
+  while (run < count && lines[start - 1 + run * step] !== undefined) run++;
+  return run;
 }
 
 /** Whether `lines` has every line from `start`, `count` of them: a topic's saved lines leave holes. */
@@ -401,7 +422,7 @@ export function revealSpan(reveals: GapReveals, gaps: DiffGap[], start: number, 
   let next = reveals;
   for (const gap of gaps) {
     const gapEnd = gap.newEnd;
-    if (gap.opaque || gapEnd === undefined || end < gap.newStart || start > gapEnd) continue;
+    if (gapEnd === undefined || end < gap.newStart || start > gapEnd) continue;
     const current = next[gap.index] ?? { down: 0, up: 0 };
     const down = start <= gap.newStart ? Math.max(current.down, Math.min(end, gapEnd) - gap.newStart + 1) : current.down;
     const up = end >= gapEnd ? Math.max(current.up, gapEnd - Math.max(start, gap.newStart) + 1) : current.up;

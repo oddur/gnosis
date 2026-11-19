@@ -221,7 +221,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.github-discussion-refresh')");
     await click('Refresh comments');
     await wait("document.querySelectorAll('.review-diff .github-thread').length===3");
-    assert.equal(await js("!!document.querySelector('.diff-context-gap')"), true);
+    assert.equal(await js("!!document.querySelector('.review-diff .diff-gap[data-gap]')"), true);
     assert.equal(
       await js("document.querySelectorAll('.review-diff .github-thread').length"),
       3,

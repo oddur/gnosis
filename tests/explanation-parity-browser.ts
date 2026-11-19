@@ -71,8 +71,8 @@ void app.whenReady().then(async () => {
   /** Clicks a code line's number in `root`'s diffs, as a reader does, to start a comment there. */
   const clickLineNumber = async (root: string, line: number) => {
     const point = await js<{ x: number; y: number }>(`(()=>{const root=document.querySelector(${JSON.stringify(root)});
-      const cell=window.deepAll('[data-column-number]',root).find(e=>e.dataset.lineType==='change-addition'&&e.closest('[data-line]')?.dataset.line==='${line}')
-        ??window.deepAll('[data-column-number]',root).find(e=>(e.closest('[data-line]')??e).dataset.line==='${line}'&&e.dataset.lineType!=='change-deletion');
+      const cells=window.deepAll('[data-column-number="${line}"]',root);
+      const cell=cells.find(e=>e.dataset.lineType==='change-addition')??cells.find(e=>e.dataset.lineType!=='change-deletion');
       if(!cell)throw Error('No line ${line}');cell.scrollIntoView({block:'center'});const r=cell.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`);
     win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
     win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
@@ -133,7 +133,8 @@ void app.whenReady().then(async () => {
     // ── The topic: the same file, two of its hunks ──
     await click('Review queue');
     await wait("!!document.querySelector('.queue-row-main')");
-    await js("document.querySelector('.queue-row-main').click()");
+    await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()");
+    await wait("!!document.querySelector('.briefing-panel')");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.explanation-reader')");
     await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);

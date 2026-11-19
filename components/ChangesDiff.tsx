@@ -526,12 +526,18 @@ function GapBar({
   const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
   // A topic that leaves out changes between its hunks says so: those lines are not the after side's alone.
   const label = part.gap.opaque ? OPAQUE : known ? `${lines(hidden)} hidden` : 'More lines may follow';
-  const { gutter, body } = onReveal
-    ? gapControls(part, status, reveal, onRetry)
-    : {
-        gutter: undefined,
-        body: <span className="diff-gap-count">{part.gap.opaque ? OPAQUE : known ? `${lines(hidden)} hidden` : null}</span>,
-      };
+  const { gutter, body } = part.gap.opaque
+    ? {
+        // Unchanged lines next to the hunks still show; the change between them belongs to another topic.
+        gutter: onReveal && gapControls({ ...part, hidden: undefined, above: !!part.more?.down, below: !!part.more?.up }, status, reveal).gutter,
+        body: <span className="diff-gap-count">{OPAQUE}</span>,
+      }
+    : onReveal
+      ? gapControls(part, status, reveal, onRetry)
+      : {
+          gutter: undefined,
+          body: <span className="diff-gap-count">{known ? `${lines(hidden)} hidden` : null}</span>,
+        };
   const located = !!scope || (!!fileOnly && !!fileName);
   return (
     <div

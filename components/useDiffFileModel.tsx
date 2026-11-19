@@ -147,7 +147,10 @@ export function useDiffFileModel({
       const size = gapSize(gap);
       if (gap.opaque || size === undefined || (known && knownLines(known, gap.newStart, size))) return gap;
       if (!before || !after || !afterMatches) return gap;
-      return unchanged(before, after, gap, size) ? gap : { ...gap, opaque: true };
+      if (unchanged(before, after, gap, size)) return gap;
+      // The hunk below sits this far apart on the two sides; the hunk above, `gap.oldOffset`.
+      const next = hunks?.at(gap.index);
+      return { ...gap, opaque: true, ...agreeing(before, after, gap, size, next && next.oldStart - next.newStart) };
     });
   }, [expandable, hunks, afterMatches, after, before, partial, known]);
   const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
@@ -277,7 +280,17 @@ export function useDiffFileModel({
     const size = gapSize(gap);
     return !!lines && size !== undefined && knownLines(lines, gap.newStart, size);
   };
-  const canReveal = (gap: DiffGap) => !gap.opaque && (!!request || covered(gap));
+  // Without a revision to read (a local review), a topic's gap reveals the saved lines next to its hunks.
+  const nextToHunk = (gap: DiffGap) => {
+    const size = gapSize(gap);
+    return (
+      !!lines &&
+      ((gap.index > 0 && lines[gap.newStart - 1] !== undefined) ||
+        (size !== undefined && gap.index < (hunks?.length ?? 0) && lines[gap.newStart + size - 2] !== undefined))
+    );
+  };
+  const canReveal = (gap: DiffGap) =>
+    gap.opaque ? !!(gap.revealDown || gap.revealUp) : !!request || nextToHunk(gap);
   const revealLines = (gap: DiffGap, direction: GapDirection) => {
     if (!hunks || !canReveal(gap)) return;
     const key = revealKey,
@@ -305,6 +318,24 @@ export function useDiffFileModel({
     lineCount,
     afterSide,
   };
+}
+
+/** How many lines of a gap that holds other changes agree on both sides, from its top and from its bottom. */
+function agreeing(
+  before: readonly string[],
+  after: readonly string[],
+  gap: DiffGap,
+  size: number,
+  belowOffset: number | undefined
+): { revealDown: number; revealUp: number } {
+  let revealDown = 0,
+    revealUp = 0;
+  while (revealDown < size && before[gap.newStart + revealDown + gap.oldOffset - 1] === after[gap.newStart + revealDown - 1])
+    revealDown++;
+  const last = gap.newStart + size - 1;
+  if (belowOffset !== undefined)
+    while (revealUp < size - revealDown && before[last - revealUp + belowOffset - 1] === after[last - revealUp - 1]) revealUp++;
+  return { revealDown, revealUp };
 }
 
 /** Whether a gap's lines are the same on both sides, so revealing it from the after side shows no change. */

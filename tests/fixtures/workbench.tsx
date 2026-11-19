@@ -1146,9 +1146,7 @@ for (const topic of review.slides)
     hunk.renderedHtml = await renderDiffHunk(
       hunk.content,
       hunk.language,
-      // The app renders saved hunks in the reader's code theme (main.ts reRenderAllHunks); the parity check compares
-      // the topic's palette with Changes', so it does too.
-      polishScenario ? 'aurora-x' : parityScenario ? prefs.codeTheme : 'github-dark',
+      polishScenario ? 'aurora-x' : 'github-dark',
       hunk.hunkHeader
     );
 const { initializeDiffHighlighter } = await import('../../lib/diff-highlighter');

@@ -121,7 +121,7 @@ export function ReviewFileHeader({
               </span>
             )}
             {onViewedChange && (
-              <label title="Track this file as viewed in Gnosis">
+              <label className="review-file-viewed" title="Track this file as viewed in Gnosis">
                 <input
                   type="checkbox"
                   checked={viewed}
