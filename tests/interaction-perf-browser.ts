@@ -110,10 +110,14 @@ void app.whenReady().then(async () => {
   const frames = 'new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))';
 
   // ── Trusted input ────────────────────────────────────────────────
-  const point = (expression: string) =>
-    js<{ x: number; y: number }>(`(()=>{const e=${expression};if(!e)throw Error('Missing target');
+  // A sync push can re-render the queue between inputs, so a row or badge is waited for briefly: one Windows run asked
+  // for the second visible badge while the list was re-rendering after a click.
+  const point = async (expression: string) => {
+    await wait(`!!(${expression})`, 50).catch(() => {});
+    return js<{ x: number; y: number }>(`(()=>{const e=${expression};if(!e)throw Error('Missing target');
       e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();
       return {x:Math.round(r.left+Math.min(r.width/2,40)),y:Math.round(r.top+r.height/2)}})()`);
+  };
   const mouse = async (expression: string) => {
     const { x, y } = await point(expression);
     win.webContents.sendInputEvent({ type: 'mouseMove', x, y });

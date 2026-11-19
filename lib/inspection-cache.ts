@@ -169,13 +169,24 @@ export function onInspectionForget(listener: (urls: ReadonlySet<string> | undefi
   forgetListeners.add(listener);
   return () => forgetListeners.delete(listener);
 }
+const useSources = new Set<(into: Map<string, number>) => void>();
+/**
+ * Adds a cache kept beside these to the idle sweep: `source` merges the last use of each PR it holds into `into` (the
+ * latest wins). A PR that only such a cache still holds, after its files left the file cache by its bound, is then
+ * swept too, and its `onInspectionForget` listener drops it.
+ */
+export function onInspectionUses(source: (into: Map<string, number>) => void) {
+  useSources.add(source);
+  return () => useSources.delete(source);
+}
 
-/** When each PR in the inspection caches was last read. */
+/** When each PR in the inspection caches, and in the caches kept beside them, was last read. */
 function inspectionLastUses() {
   const uses = new Map<string, number>();
   inspectionData.lastUses(uses);
   inspectionFiles.lastUses(uses);
   stackLastUses(uses);
+  for (const source of useSources) source(uses);
   for (const [snapshot, at] of comparisons.uses()) if ((uses.get(snapshot.url) ?? -Infinity) < at) uses.set(snapshot.url, at);
   for (const [preview, at] of previews.uses()) if ((uses.get(preview.url) ?? -Infinity) < at) uses.set(preview.url, at);
   uses.delete('');

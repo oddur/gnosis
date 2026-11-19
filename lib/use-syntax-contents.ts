@@ -9,7 +9,7 @@ import {
   type SyntaxContentsJob,
 } from './syntax-contents';
 import { addDiagnosticsSource } from './diagnostics-sources';
-import { inspectionFileRequest, inspectionFiles, onInspectionForget } from './inspection-cache';
+import { inspectionFileRequest, inspectionFiles, onInspectionForget, onInspectionUses } from './inspection-cache';
 import { readDefinitions, setSyntaxLanguages } from './syntax-scope-client';
 import {
   DEFAULT_CODE_INTELLIGENCE,
@@ -24,8 +24,10 @@ import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 
 /** The page's one queue of contents reads for hunk scopes (#393): view reads first, then prefetch. */
 export const syntaxContents = createSyntaxContentsScheduler();
-// Caps and failures leave with their PR's inspection data, as the contents and definitions do.
+// Caps and failures leave with their PR's inspection data, as the contents and definitions do, and a PR they alone
+// still hold is swept when idle.
 onInspectionForget((urls) => syntaxContents.forget(urls));
+onInspectionUses((into) => syntaxContents.lastUses(into));
 // Each read's tier, wait, run time, tries and outcome, so an export shows why breadcrumbs came late.
 addDiagnosticsSource('syntaxContents', () => syntaxContentsDiagnostics(syntaxContents.stats()));
 

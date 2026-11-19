@@ -138,12 +138,14 @@ void app.whenReady().then(async () => {
     );
     win.setSize(900, 700);
     win.webContents.setZoomFactor(2);
+    // The resize and the zoom reach the page asynchronously; on the Windows runner the check once ran before both had.
+    const zoomed = `(()=>{const d=document.querySelector('.global-command-dialog'),r=d.getBoundingClientRect();
+      return {fits:r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&d.scrollWidth<=d.clientWidth+1,zoom:devicePixelRatio,
+        viewport:[innerWidth,innerHeight],dialog:[r.left,r.top,r.right,r.bottom].map(Math.round),scroll:[d.scrollWidth,d.clientWidth]}})()`;
+    await wait(`${zoomed}.fits`, 40).catch(() => {});
     await capture('zoom');
-    assert.ok(
-      await js(
-        `(()=>{const d=document.querySelector('.global-command-dialog'),r=d.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&d.scrollWidth<=d.clientWidth+1})()`
-      )
-    );
+    const fit = await js<{ fits: boolean }>(zoomed);
+    assert.ok(fit.fits, `At 200% zoom in a 900×700 window the command center fits: ${JSON.stringify(fit)}`);
     await key('Escape');
     await wait("!document.querySelector('.global-command-dialog')");
     win.webContents.setZoomFactor(1);

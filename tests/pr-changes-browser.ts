@@ -195,7 +195,7 @@ void app.whenReady().then(async () => {
     const afterSwitch = await js<typeof beforeSwitch>('window.streamTop()');
     assert.equal(afterSwitch.file, beforeSwitch.file, 'The same file stays in view');
     assert.equal(afterSwitch.active, beforeSwitch.active);
-    assert.equal(afterSwitch.line, beforeSwitch.line, 'The same diff line stays at the top');
+    assert.equal(afterSwitch.line, beforeSwitch.line, `The same diff line stays at the top: ${JSON.stringify([beforeSwitch, afterSwitch])}`);
     assert.ok(
       Math.abs(afterSwitch.offset - beforeSwitch.offset) <= 2,
       `The line stays in place: ${JSON.stringify([beforeSwitch, afterSwitch])}`

@@ -11,7 +11,8 @@ import jsonWasm from '../src/assets/tree-sitter/json.wasm?url';
 import yamlWasm from '../src/assets/tree-sitter/yaml.wasm?url';
 import type { SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
-import { onInspectionForget } from './inspection-cache';
+import { onInspectionForget, onInspectionUses } from './inspection-cache';
+import { addDiagnosticsSource } from './diagnostics-sources';
 
 /**
  * The page's side of the tree-sitter worker (#393). Grammars are assets of the renderer build, so they load offline
@@ -39,8 +40,9 @@ type Timing = Extract<SyntaxResponse, { definitions: unknown }>['timing'];
 let worker: Promise<Worker | undefined> | undefined;
 let nextId = 0;
 const waiting = new Map<number, { resolve: (value: SyntaxDefinition[]) => void; reject: (error: Error) => void }>();
-const memo = new Map<string, { url: string; definitions: SyntaxDefinition[] }>();
-const pending = new Map<string, Promise<SyntaxDefinition[]>>();
+// `at` is the entry's last use, so a PR whose definitions outlive its files is still swept when idle (#355).
+const memo = new Map<string, { url: string; definitions: SyntaxDefinition[]; at: number }>();
+const pending = new Map<string, { url: string; promise: Promise<SyntaxDefinition[]> }>();
 /** The last parses, newest last, for the diagnostics export and the browser checks. */
 export const syntaxTimings: (Timing & { key: string; language: SyntaxLanguage; characters: number })[] = [];
 
@@ -86,6 +88,7 @@ export function peekDefinitions(key: string): SyntaxDefinition[] | undefined {
   if (!entry) return undefined;
   memo.delete(key);
   memo.set(key, entry);
+  entry.at = Date.now();
   return entry.definitions;
 }
 
@@ -104,7 +107,7 @@ export function readDefinitions(request: {
   if (known) return Promise.resolve(known);
   if (request.text.length > SYNTAX_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to parse'));
   const existing = pending.get(request.key);
-  if (existing) return existing;
+  if (existing) return existing.promise;
   const promise = start().then(
     (instance) =>
       new Promise<SyntaxDefinition[]>((resolve, reject) => {
@@ -136,19 +139,20 @@ export function readDefinitions(request: {
         } satisfies SyntaxRequest);
       })
   );
-  pending.set(request.key, promise);
+  pending.set(request.key, { url: request.url, promise });
   void promise.then(
     (definitions) => {
-      if (pending.get(request.key) !== promise) return;
+      // A parse whose PR left the caches while it ran answers its caller and keeps nothing.
+      if (pending.get(request.key)?.promise !== promise) return;
       pending.delete(request.key);
-      memo.set(request.key, { url: request.url, definitions });
+      memo.set(request.key, { url: request.url, definitions, at: Date.now() });
       for (const key of memo.keys()) {
         if (memo.size <= MEMO_ENTRIES) break;
         memo.delete(key);
       }
     },
     () => {
-      if (pending.get(request.key) === promise) pending.delete(request.key);
+      if (pending.get(request.key)?.promise === promise) pending.delete(request.key);
     }
   );
   return promise;
@@ -157,6 +161,7 @@ export function readDefinitions(request: {
 /** Drops these PRs' definitions here and in the worker, with the rest of their inspection data (#355). */
 export function forgetDefinitions(urls: ReadonlySet<string>) {
   for (const [key, entry] of memo) if (urls.has(entry.url)) memo.delete(key);
+  for (const [key, entry] of pending) if (urls.has(entry.url)) pending.delete(key);
   void worker?.then((instance) => instance?.postMessage({ type: 'forget', urls: [...urls] } satisfies SyntaxRequest));
 }
 export function clearDefinitions() {
@@ -165,7 +170,15 @@ export function clearDefinitions() {
   void worker?.then((instance) => instance?.postMessage({ type: 'clear' } satisfies SyntaxRequest));
 }
 /** Entries kept on the page, for the diagnostics export. */
-export const definitionStats = () => ({ entries: memo.size });
+export const definitionStats = () => ({
+  entries: memo.size,
+  parsing: pending.size,
+  prs: new Set([...memo.values(), ...pending.values()].map((entry) => entry.url)).size,
+});
+addDiagnosticsSource('syntaxDefinitions', definitionStats);
 
 // Definitions leave with their PR's inspection data: a closed tab, an idle PR, or a cache reset (#355).
 onInspectionForget((urls) => (urls ? forgetDefinitions(urls) : clearDefinitions()));
+onInspectionUses((into) => {
+  for (const { url, at } of memo.values()) if ((into.get(url) ?? -Infinity) < at) into.set(url, at);
+});

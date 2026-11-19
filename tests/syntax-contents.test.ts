@@ -124,6 +124,22 @@ void test('The per-PR cap counts distinct files; other PRs and revisits are not 
   assert.equal(started.at(-1), 'c');
 });
 
+void test('A forgotten PR’s prefetch reads that have not started are dropped; a view read and reads in flight stay', async () => {
+  const { scheduler, job, started, finish } = harness({ concurrency: 1 });
+  const other = job('x').pr.replace(/1$/, '2');
+  scheduler.prefetch('predicted', [job('a'), job('b'), job('c'), job('x', { pr: other })], 1);
+  let viewed = 0;
+  scheduler.request(job('c'), () => viewed++);
+  assert.deepEqual(started, ['a'], 'One read at a time');
+  scheduler.forget(new Set([job('a').pr]));
+  assert.equal(scheduler.stats().queued, 2, 'b leaves the queue; c, which a view waits for, and the other PR’s x stay');
+  await finish('a');
+  await finish('c');
+  assert.equal(viewed, 1);
+  await finish('x');
+  assert.deepEqual(started, ['a', 'c', 'x'], 'b is never read');
+});
+
 void test('Files too large, and files whose read failed, are not read again', async () => {
   const { scheduler, job, started, finish } = harness();
   scheduler.request(job('big', { characters: SYNTAX_CONTENTS_MAX_CHARACTERS + 1 }), () => {});

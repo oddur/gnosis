@@ -127,6 +127,30 @@ void test('files remember their PR’s last use and leave with their PR (#355)',
   assert.equal(cache.stats().entries, 1);
 });
 
+void test('A read in flight when its PR is forgotten answers its caller and keeps nothing', async () => {
+  const releases: (() => void)[] = [];
+  const later = <T,>(result: T) => new Promise<T>((resolve) => releases.push(() => resolve(result)));
+  const cache = createPrFileCache(() => later(value), 1_000_000, () => later(value.after));
+  const whole = cache.read(request);
+  const after = cache.readAfter({ ...request, path: 'src/after.ts' });
+  cache.forget(new Set([request.url]));
+  // A read that starts after the forget is kept as usual.
+  const again = cache.readAfter({ ...request, path: 'src/again.ts' });
+  for (const release of releases) release();
+  assert.equal(await whole, value);
+  assert.deepEqual(await after, value.after);
+  await again;
+  assert.equal(cache.peek(request), undefined, 'The whole file stays out');
+  assert.equal(cache.peekAfter({ ...request, path: 'src/after.ts' }), undefined, 'The after side stays out');
+  assert.deepEqual(cache.peekAfter({ ...request, path: 'src/again.ts' }), value.after);
+  assert.deepEqual(cache.stats(), { entries: 0, bytes: 0, afters: { entries: 1, bytes: cache.stats().afters.bytes } });
+  // With nothing in flight, the PR's next reads are kept.
+  const next = cache.read(request);
+  for (const release of releases.splice(0)) release();
+  await next;
+  assert.equal(cache.peek(request), value);
+});
+
 void test('A reveal does not wait behind a background after-side read; a background read joins a reveal', async () => {
   const modes: unknown[] = [];
   const cache = createPrFileCache(
