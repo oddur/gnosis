@@ -33,7 +33,8 @@ import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { useChangesComments } from './useChangesComments';
 import { PrFileChat } from './PrFileChat';
 import { Button } from './ui/button';
-import { changesRevision, type PrChanges } from '../lib/pr-changes';
+import { changesRevision, type InspectionMode, type InspectionRecheck, type PrChanges } from '../lib/pr-changes';
+import { staleDiffRefresh } from '../lib/use-stale-diff-refresh';
 import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
 import type { AgentBriefView } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
@@ -208,7 +209,15 @@ export function PrChangesView({
   };
   const loadController = useRef<AbortController | undefined>(undefined);
   const [pendingMembers, setPendingMembers] = useState<string[]>([]);
-  async function load(refresh: boolean, onlyUrl?: string) {
+  /**
+   * Reads the members' changes. Update changes refreshes them; a stale diff (lib/stale-diff-refresh.ts) refreshes one
+   * PR at the view tier and lists its suspect files again (`recheck`), as Update changes would otherwise show it.
+   */
+  async function load(
+    refresh: boolean,
+    onlyUrl?: string,
+    { mode = false, recheck }: { mode?: InspectionMode; recheck?: InspectionRecheck } = {}
+  ): Promise<PrChanges | undefined> {
     if (commit || combined) return;
     const current = ++generation.current;
     setLoading(true);
@@ -223,7 +232,7 @@ export function PrChangesView({
     const failures = new Map(loadErrors.filter(e => onlyUrl && e.url !== onlyUrl).map(e => [e.url, e]));
     setLoadErrors([...failures.values()]);
     try {
-      await loadInspectionBatch(members, (member, signal) => inspectionData.readChanges(member, refresh, false, signal), (member, result) => {
+      await loadInspectionBatch(members, (member, signal) => inspectionData.readChanges(member, refresh, mode, signal, recheck), (member, result) => {
         if (!alive.current || current !== generation.current) return;
         if ('value' in result) {
           registerChangeProgress(result.value);
@@ -242,7 +251,22 @@ export function PrChangesView({
     } finally {
       if (alive.current && current === generation.current) { setLoading(false); setPendingMembers([]); }
     }
+    return onlyUrl ? next.get(onlyUrl) : undefined;
   }
+  const loadNow = useRef(load);
+  loadNow.current = load;
+  // A diff here whose contents do not match its patch refreshes its PR as Update changes does, keeping the reader's
+  // place, so a newer head shows as it would after a manual update.
+  useEffect(() => {
+    if (commit || combined) return;
+    const stops = subject.members.map((member) =>
+      staleDiffRefresh.register(member.url, async (url, revision, paths, interactive) => {
+        const snapshot = await loadNow.current(true, url, { mode: interactive ? false : 'view', recheck: { ...revision, paths } });
+        return snapshot?.metadata;
+      })
+    );
+    return () => stops.forEach((stop) => stop());
+  }, [subject.id, !!commit, !!combined]);
   useEffect(() => {
     alive.current = true;
     if (!commit && !combined && loadedSnapshots.length === subject.members.length) loadedSnapshots.forEach(registerChangeProgress);

@@ -24,8 +24,15 @@ export type GapStatus =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  /** The after text no longer matches the patch. */
-  | { kind: 'stale' };
+  /** The after text no longer matches the patch, and the view cannot refresh it (a local review). */
+  | { kind: 'stale' }
+  /** The after text did not match the patch: the PR's changes and the file are loading again (useDiffFileModel). */
+  | { kind: 'refreshing' }
+  /** Still no match after that refresh, at the same revision. The reader can refresh again (`onRetry`). */
+  | { kind: 'mismatch' };
+/** The statuses a gap bar shows instead of its reveal controls. */
+const blocked = (status: GapStatus) =>
+  status.kind === 'stale' || status.kind === 'error' || status.kind === 'refreshing' || status.kind === 'mismatch';
 
 const parse = (patch: string) => processFile(patch, { throwOnError: true });
 /**
@@ -369,6 +376,29 @@ function gapControls(part: GapBarPart, status: GapStatus, reveal: (direction: Ga
         </span>
       ),
     };
+  if (status.kind === 'refreshing')
+    return {
+      body: (
+        <LoadingIndicator className="diff-gap-loading" announce={false}>
+          Updating to the latest version…
+        </LoadingIndicator>
+      ),
+    };
+  if (status.kind === 'mismatch')
+    return {
+      body: (
+        <>
+          <span className="diff-gap-message" role="status">
+            Couldn’t match this file to its diff.
+          </span>
+          {onRetry && (
+            <button type="button" className="diff-context-button diff-gap-text" onClick={onRetry}>
+              Refresh
+            </button>
+          )}
+        </>
+      ),
+    };
   if (status.kind === 'error')
     return {
       body: (
@@ -449,12 +479,11 @@ function TrailingBar({
 }) {
   const { hidden } = part;
   const known = hidden !== undefined;
-  const busy = status.kind === 'loading';
+  const busy = status.kind === 'loading' || status.kind === 'refreshing';
   const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
   const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines may follow';
   let body: ReactNode;
-  if (onReveal && (status.kind === 'stale' || status.kind === 'error'))
-    body = gapControls(part, status, () => () => {}, onRetry).body;
+  if (onReveal && blocked(status)) body = gapControls(part, status, () => () => {}, onRetry).body;
   else
     body = (
       <>
@@ -474,7 +503,7 @@ function TrailingBar({
             </button>
           </>
         )}
-        {busy && (
+        {status.kind === 'loading' && (
           <LoadingIndicator className="diff-gap-loading" announce={false}>
             Loading lines…
           </LoadingIndicator>
@@ -522,7 +551,7 @@ function GapBar({
 }) {
   const { hidden } = part;
   const known = hidden !== undefined;
-  const busy = status.kind === 'loading';
+  const busy = status.kind === 'loading' || status.kind === 'refreshing';
   const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
   // A topic that leaves out changes between its hunks says so: those lines are not the after side's alone.
   const label = part.gap.opaque ? OPAQUE : known ? `${lines(hidden)} hidden` : 'More lines may follow';
@@ -561,7 +590,7 @@ function GapBar({
           <>
             {body}
             {located && note}
-            {busy && (
+            {status.kind === 'loading' && (
               <LoadingIndicator className="diff-gap-loading" announce={false}>
                 Loading lines…
               </LoadingIndicator>

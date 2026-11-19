@@ -4,13 +4,16 @@ import {
   GAP_STEP,
   afterLines,
   diffGaps,
+  firstMismatch,
   gapContaining,
   gapSize,
   hunkRange,
   hunkCounts,
   hunkSlices,
   hunksFromDiff,
+  lineEndings,
   matchesAfter,
+  patchLineEndings,
   revealGap,
   revealedParts,
   shownLines,
@@ -90,6 +93,64 @@ void test('a patch that ends without a line feed has no gap below it', () => {
   assert.equal(gapSize(gaps[1]), 0);
   assert.equal(matchesAfter(end, ['1', '2', 'a', 'c']), true);
   assert.equal(matchesAfter(end, ['1', '2', 'a', 'c', 'extra']), false);
+});
+
+void test('line endings and a byte order mark never make a file look stale', () => {
+  // GitHub's patch keeps the carriage returns of a CRLF file, as the file does.
+  const crlf = hunksFromDiff(parse('@@ -1,3 +1,3 @@\r\n a\r\n-b\r\n+B\r\n c\r'));
+  assert.equal(matchesAfter(crlf, afterLines('a\r\nB\r\nc\r\n')), true);
+  // A topic's saved hunks, or another source, can lose them: still the same lines.
+  const lf = hunksFromDiff(parse('@@ -1,3 +1,3 @@\n a\n-b\n+B\n c'));
+  assert.equal(matchesAfter(lf, afterLines('a\r\nB\r\nc\r\n')), true);
+  assert.equal(matchesAfter(crlf, afterLines('a\nB\nc\n')), true);
+  // Main decodes contents with TextDecoder, which drops a leading BOM; GitHub's patch keeps it.
+  const bom = hunksFromDiff(parse('@@ -1,3 +1,3 @@\n \ufeffa\n-b\n+B\n c'));
+  assert.equal(matchesAfter(bom, afterLines('a\nB\nc\n')), true);
+  assert.equal(matchesAfter(lf, afterLines('\ufeffa\nB\nc\n')), true);
+  // Only on line 1: a BOM anywhere else is text.
+  const later = hunksFromDiff(parse('@@ -2,2 +2,2 @@\n \ufeffa\n-b\n+B'));
+  assert.equal(matchesAfter(later, afterLines('x\na\nB\n')), false);
+  // A file without a final line feed matches a patch that says so, with or without CRLF.
+  const noEof = hunksFromDiff(parse('@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n\\ No newline at end of file'));
+  assert.equal(matchesAfter(noEof, afterLines('a\nB\nc')), true);
+  assert.equal(matchesAfter(noEof, afterLines('a\r\nB\r\nc')), true);
+  const crlfNoEof = hunksFromDiff(parse('@@ -1,2 +1,2 @@\n a\r\n-b\r\n+B\n\\ No newline at end of file'));
+  assert.equal(matchesAfter(crlfNoEof, afterLines('a\r\nB')), true);
+  // And one that gained a final line feed is the same lines.
+  assert.equal(matchesAfter(noEof, afterLines('a\nB\nc\n')), true);
+  // Context trimmed below GitHub's three lines keeps the marker on the file's last line.
+  const trimmed = hunksFromDiff(
+    must(
+      pierreParse(
+        pierre.trimPatchContext(
+          'diff --git a/source b/source\n--- a/source\n+++ b/source\n@@ -1,5 +1,5 @@\n a\n-b\n+B\n c\n d\n e\n\\ No newline at end of file\n',
+          1
+        )
+      )
+    )
+  );
+  assert.equal(matchesAfter(trimmed, afterLines('a\nB\nc\nd\ne')), true);
+  // A real change is still one.
+  assert.equal(matchesAfter(lf, afterLines('a\r\nX\r\nc\r\n')), false);
+});
+
+void test('a mismatch names its first line and how the patch and the file end their lines', () => {
+  const lf = hunksFromDiff(parse('@@ -1,3 +1,3 @@\n a\n-b\n+B\n c'));
+  assert.equal(firstMismatch(lf, afterLines('a\nB\nc\n')), undefined);
+  assert.equal(firstMismatch(lf, afterLines('a\nX\nc\n')), 2);
+  assert.equal(firstMismatch(lf, ['a']), 2);
+  const noEof = hunksFromDiff(parse('@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n\\ No newline at end of file'));
+  assert.equal(firstMismatch(noEof, afterLines('a\nB\nc\nmore\n')), 4, 'The line after the patch’s last');
+  assert.deepEqual(patchLineEndings(lf), { endings: 'lf', finalNewline: true, bom: false });
+  assert.deepEqual(patchLineEndings(noEof), { endings: 'lf', finalNewline: false, bom: false });
+  assert.deepEqual(patchLineEndings(hunksFromDiff(parse('@@ -1,2 +1,2 @@\n \ufeffa\r\n-b\r\n+B\r'))), {
+    endings: 'crlf',
+    finalNewline: true,
+    bom: true,
+  });
+  assert.deepEqual(lineEndings('a\r\nb\r\n'), { endings: 'crlf', finalNewline: true, bom: false });
+  assert.deepEqual(lineEndings('\ufeffa\nb\r\nc'), { endings: 'mixed', finalNewline: false, bom: true });
+  assert.deepEqual(lineEndings('one line'), { endings: 'none', finalNewline: false, bom: false });
 });
 
 void test('the after text must agree with every new-side line of the patch', () => {
