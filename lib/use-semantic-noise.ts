@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { syntaxLanguage } from './syntax-scope';
-import { noiseKey, noiseRevision, onNoise, peekFileNoise, peekNoise, readNoise } from './syntax-scope-client';
-import { blockKey, type NoiseBlock, type NoiseKind } from './semantic-noise';
+import { noiseKey, onNoise, peekFileNoise, peekNoise, readNoise } from './syntax-scope-client';
+import { blockKey, fileNoise, noiseFilterOn, noiseLabel, type NoiseBlock, type NoiseFilter, type NoiseKind } from './semantic-noise';
 import type { SyntaxPriority } from './syntax-parse-queue';
 import type { GapHunk } from './diff-gaps';
 
@@ -52,8 +52,26 @@ export function useSemanticNoise({
   return { blocks, kinds };
 }
 
-/** Re-renders when any comparison lands: for views that list files, such as the file tree and the PR's stats. */
-export function useNoiseRevision(): number {
-  return useSyncExternalStore(onNoise, noiseRevision);
+/**
+ * The files of a list whose every change the filter hides, as `key NUL label NUL lines` lines: for views that list
+ * files, such as the file tree and the progress. It changes only when one of these files' comparisons does, so a
+ * comparison of another view's file renders nothing here.
+ */
+export function useQuietSignature(
+  /** Each file's key in the list, and its revision key (`changeFileKey`), which comparisons are kept under. */
+  files: readonly { key: string; fileKey: string }[],
+  filter: NoiseFilter
+): string {
+  const snapshot = () => {
+    if (!noiseFilterOn(filter)) return '';
+    const lines: string[] = [];
+    for (const entry of files) {
+      const blocks = peekFileNoise(entry.fileKey);
+      if (!blocks) continue;
+      const noise = fileNoise(blocks, filter);
+      if (noise.all) lines.push(`${entry.key}\u0000${noiseLabel(noise.kinds)}\u0000${noise.added + noise.deleted}`);
+    }
+    return lines.join('\n');
+  };
+  return useSyncExternalStore(onNoise, snapshot);
 }
-export { peekFileNoise };

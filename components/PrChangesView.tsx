@@ -18,8 +18,7 @@ import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLay
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useSyntaxPrefetch } from '../lib/use-syntax-contents';
 import { noiseFilterOf } from '../lib/review-diff';
-import { fileNoise, noiseLabel } from '../lib/semantic-noise';
-import { peekFileNoise, useNoiseRevision } from '../lib/use-semantic-noise';
+import { useQuietSignature } from '../lib/use-semantic-noise';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import {
   fileIsReady,
@@ -417,22 +416,18 @@ export function PrChangesView({
   // Quiet changes (#396): what the reader hides, and each file's comparison as it lands, for the tree and progress.
   const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideComments]);
   useSyntaxPrefetch(prefetchOwner, scopeFiles, (file) => progress.isFileViewed(file.key), codeSettings, noiseFilter);
-  const noiseRevision = useNoiseRevision();
-  const quietScan = useMemo(() => {
+  // Comparisons land for every view's files. This view renders again only when its own quiet files change: a string
+  // of them is the store's snapshot, so other views' comparisons cost it a lookup per file and no render.
+  const quietKeys = useMemo(() => visible.map((e) => ({ key: e.key, fileKey: viewKey(e) })), [entries, visibleSignature]);
+  const quietSignature = useQuietSignature(quietKeys, noiseFilter);
+  const quietFiles = useMemo(() => {
     const result = new Map<string, { label: string; lines: number }>();
-    if (!noiseFilter.whitespace && !noiseFilter.comments) return result;
-    for (const e of visible) {
-      const blocks = peekFileNoise(viewKey(e));
-      if (!blocks) continue;
-      const noise = fileNoise(blocks, noiseFilter);
-      if (noise.all) result.set(e.key, { label: noiseLabel(noise.kinds), lines: noise.added + noise.deleted });
+    for (const line of quietSignature ? quietSignature.split('\n') : []) {
+      const [key, label, lines] = line.split('\u0000');
+      result.set(key, { label, lines: Number(lines) });
     }
     return result;
-  }, [entries, visibleSignature, noiseRevision, noiseFilter]);
-  // Comparisons land for every view's files: the tree changes only when this view's quiet files do, since a new tree
-  // input resets it.
-  const quietSignature = [...quietScan].map(([key, { label, lines }]) => `${key}\u0000${label}\u0000${lines}`).join('\n');
-  const quietFiles = useMemo(() => quietScan, [quietSignature]);
+  }, [quietSignature]);
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]
