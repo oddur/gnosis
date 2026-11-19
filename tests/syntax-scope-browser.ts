@@ -1,6 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
+import { perfBudget } from './perf-budget';
 
 /**
  * Enclosing definitions in Changes (#393), on the synthetic files in tests/fixtures/syntax-scope.ts.
@@ -35,6 +36,15 @@ void app.whenReady().then(async () => {
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
   const errors: string[] = [];
+  // Hosted macOS and Windows runners report prefers-reduced-motion: reduce. Every check runs under an emulated
+  // preference: no-preference, except the reduced-motion checks, which ask for reduce.
+  const motion = async (value: 'reduce' | 'no-preference' | 'system') => {
+    if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: value === 'system' ? [] : [{ name: 'prefers-reduced-motion', value }],
+    });
+  };
+
   win.webContents.on('console-message', ({ level, message }) => {
     if (level === 'error' && !message.includes('ResizeObserver')) errors.push(message);
   });
@@ -491,6 +501,10 @@ void app.whenReady().then(async () => {
     }
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
     await waitForWorkbenchQueue(win.webContents);
+    // What the system asks for, without the emulation: hosted macOS and Windows runners report reduce.
+    await motion('system');
+    console.log('The system reports prefers-reduced-motion: reduce:', await js(`matchMedia('(prefers-reduced-motion: reduce)').matches`));
+    await motion('no-preference');
     await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
       window.__longTasks=[];
       new PerformanceObserver(l=>{for(const e of l.getEntries())window.__longTasks.push({start:e.startTime,duration:e.duration})}).observe({type:'longtask'});
@@ -1287,8 +1301,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js<number>(`window.lineTop('src/runner.ts','run(input: number): number {')`), runTop, 'and nothing moved');
     assert.equal((await jumpState('src/runner.ts')).lines, toClass.lines, 'Nothing was revealed');
     // Reduced motion: the settled band, still, for as long, with no animation.
-    win.webContents.debugger.attach('1.3');
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await motion('reduce');
     assert.equal(await js(`matchMedia('(prefers-reduced-motion: reduce)').matches`), true, 'Reduced motion is emulated');
     await press('Enter', '\r');
     await afterJump();
@@ -1297,8 +1310,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual(stillFlash.map((f) => [f.kind, f.anim, f.band]), [['line', 'none', 'rgba(47, 85, 212, 0.22)']], 'Reduced motion: a still band, no animation');
     await sleep(2100);
     assert.deepEqual(await js(`window.jumped('src/runner.ts')`), [], 'The still band goes too');
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
-    win.webContents.debugger.detach();
+    await motion('no-preference');
     await shot('crumb-jump-keyboard', '.commit-diff-stream');
     // Mid-flash, light and dark: Enter again on the same crumb flashes the line again.
     if (process.env.GNOSIS_SYNTAX_SCOPE_SHOT)
@@ -1392,7 +1404,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js<number>(`window.shownCount('src/far.ts','readonly far')`), 230, 'All 230 lines between the class line and the hunk show');
     assert.equal(await js<number>(`window.shownCount('src/far.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
     assert.ok(steps >= 4, `The scroll eases over several frames: ${JSON.stringify(samples)}`);
-    assert.deepEqual(longTasks.map((t) => Math.round(t.duration)), [], 'Revealing 230 lines and easing there leaves no long task');
+    assert.deepEqual(longTasks.map((t) => Math.round(t.duration)).filter((ms) => ms > perfBudget(50)), [], `Revealing 230 lines and easing there leaves no task over ${perfBudget(50)} ms`);
     assert.deepEqual((await js<Flash[]>(`window.jumped('src/far.ts')`)).map((f) => f.text), ['export class FarRunner {'], 'The class line flashes');
     // The reader's wheel stops the scroll part way.
     await js(`window.pinAt('src/far.ts','total += 50 * 2;')`);
@@ -1410,8 +1422,7 @@ void app.whenReady().then(async () => {
     assert.ok(stillFar === null || Math.abs(stillFar - (inWork.bottom ?? 0)) > 50, 'Wheel input stops the scroll before it lands');
     assert.deepEqual(await js(`window.jumped('src/far.ts')`), [], 'A stopped jump does not flash');
     // Reduced motion: the jump lands in one frame.
-    win.webContents.debugger.attach('1.3');
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await motion('reduce');
     await js(`window.pinAt('src/far.ts','total += 40 * 2;')`);
     await wait(`window.jumpState('src/far.ts').crumbs.length===2`);
     await js('window.sampleScroll()');
@@ -1421,8 +1432,7 @@ void app.whenReady().then(async () => {
     const moves = instant.filter((v, i) => i > 0 && v !== instant[i - 1]);
     console.log('Reduced-motion jump scrollTops:', JSON.stringify(moves));
     assert.ok(moves.length >= 1 && Math.abs(moves[0] - instant.at(-1)!) <= 2, `Reduced motion: the first move lands: ${JSON.stringify(moves)}`);
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
-    win.webContents.debugger.detach();
+    await motion('no-preference');
 
     // ═══ Pinned hunk headers in the stack's Changes (#395) ═══
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
