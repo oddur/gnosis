@@ -267,7 +267,7 @@ export function useDiffFileModel({
   });
   // Where the file is matters only while a side of it, or its comparison, waits: then it is watched, and a move
   // raises it.
-  useViewTier(sectionRef, parseable && !!(definitions.parsing || definitions.beforeParsing || noise.pending), tier, (place) => {
+  useViewTier(sectionRef, parseable && (!!definitions.parsing || !!definitions.beforeParsing || noise.pending), tier, (place) => {
     raiseDefinitions(`${fileKey}:after`, place);
     raiseDefinitions(`${fileKey}:before`, place);
     if (noise.key) raiseNoise(noise.key, place);

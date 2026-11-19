@@ -39,7 +39,7 @@ export function useSemanticNoise({
   useEffect(() => {
     if (!key || !language || after === undefined || !hunks) return;
     let cancelled = false;
-    void readNoise({ fileKey, url, language, text: after, hunks, priority: priority.current ?? 'view', whole })
+    void readNoise({ fileKey, url, language, text: after, hunks, priority: priority.current, whole })
       .catch(() => undefined)
       .then((blocks) => {
         if (!cancelled) setState({ key, blocks });
