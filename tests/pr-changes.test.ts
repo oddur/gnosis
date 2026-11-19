@@ -162,6 +162,34 @@ void test('a saved inventory for the merged revision reports the merge its queue
   assert.equal(shown.metadata.state, 'closed');
   assert.equal(shown.files.length, open.files.length);
 });
+void test('a recheck lists the files of a saved revision again and drops the stale files’ saved contents', async () => {
+  const f = fixture(),
+    client = f.pool.client('one'),
+    service = createPrChangesService();
+  const first = await service.manifest(client, url);
+  const request = { url, path: 'pnpm-lock.yaml', baseSha: 'base', headSha: 'head1' };
+  await service.content(client, request);
+  // GitHub listed the files from before a push for a moment; the head is the same.
+  f.files[3].patch = '@@ -1 +1 @@\n-old\n+const value = 1;';
+  const listed = () => f.reads.filter((u) => u.pathname.endsWith('/files')).length;
+  const contents = () => f.reads.filter((u) => u.pathname.includes('/contents/')).length;
+  const lists = listed();
+  const refreshed = await service.manifest(client, url, true, { revision: first.metadata });
+  assert.equal(listed(), lists, 'A plain refresh at a saved revision keeps its inventory');
+  assert.equal(refreshed.files[3].patch, first.files[3].patch);
+  const reads = contents();
+  const rechecked = await service.manifest(client, url, true, {
+    revision: first.metadata,
+    recheck: { baseSha: 'base', headSha: 'head1', paths: ['pnpm-lock.yaml'] },
+  });
+  assert.equal(listed(), lists + 1, 'The recheck lists the files again');
+  assert.equal(rechecked.metadata.headSha, 'head1');
+  assert.equal(rechecked.files[3].patch, '@@ -1 +1 @@\n-old\n+const value = 1;');
+  await service.content(client, request);
+  assert.ok(contents() > reads, 'The stale file’s contents read again');
+  // The new inventory is saved: the next plain read uses it.
+  assert.equal((await service.manifest(client, url)).files[3].patch, rechecked.files[3].patch);
+});
 void test('additions and deletions have genuinely absent sides; request failures never become empty files', async () => {
   const f = fixture(),
     client = f.pool.client('one'),

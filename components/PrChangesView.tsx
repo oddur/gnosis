@@ -34,6 +34,7 @@ import { useChangesComments } from './useChangesComments';
 import { PrFileChat } from './PrFileChat';
 import { Button } from './ui/button';
 import { changesRevision, type PrChanges } from '../lib/pr-changes';
+import { staleDiffRefresh } from '../lib/use-stale-diff-refresh';
 import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
 import type { AgentBriefView } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
@@ -243,6 +244,42 @@ export function PrChangesView({
       if (alive.current && current === generation.current) { setLoading(false); setPendingMembers([]); }
     }
   }
+  const shownSnapshots = useRef(loadedSnapshots);
+  shownSnapshots.current = loadedSnapshots;
+  /**
+   * A diff here whose contents do not match its patch (lib/stale-diff-refresh.ts) reads its PR's changes again,
+   * listing the suspect files anew (`recheck`), beside any load in progress: it never cancels one. At the same head the
+   * refreshed files replace the shown ones, keeping the reader's place. A newer head is offered as New commits, as
+   * the head watch offers it: the open diff stays until the reader moves. The reader's own Refresh moves, as Update
+   * changes does.
+   */
+  useEffect(() => {
+    if (commit || combined) return;
+    const stops = subject.members.map((member) =>
+      staleDiffRefresh.register(member.url, async (url, revision, paths, interactive) => {
+        const value = await inspectionData.readChanges(member, true, interactive ? false : 'view', undefined, { ...revision, paths });
+        const shown = shownSnapshots.current.find((snapshot) => snapshot.url === url);
+        if (!alive.current || !shown) return shown?.metadata;
+        if (!interactive && changesRevision(value.metadata) !== changesRevision(shown.metadata)) {
+          setNewer(true);
+          return shown.metadata;
+        }
+        // The same files listed again: nothing new to show, so the view keeps its snapshot and its state.
+        const patch = (snapshot: PrChanges, path: string) => snapshot.files.find((file) => file.path === path)?.patch;
+        if (
+          changesRevision(value.metadata) === changesRevision(shown.metadata) &&
+          value.files.length === shown.files.length &&
+          paths.every((path) => patch(value, path) === patch(shown, path))
+        )
+          return shown.metadata;
+        registerChangeProgress(value);
+        stream.current?.preservePosition();
+        setSnapshots((previous) => previous.map((snapshot) => (snapshot.url === url ? value : snapshot)));
+        return value.metadata;
+      })
+    );
+    return () => stops.forEach((stop) => stop());
+  }, [subject.id, !!commit, !!combined]);
   useEffect(() => {
     alive.current = true;
     if (!commit && !combined && loadedSnapshots.length === subject.members.length) loadedSnapshots.forEach(registerChangeProgress);

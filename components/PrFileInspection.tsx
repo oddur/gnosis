@@ -813,7 +813,7 @@ export function PrFileInspection({
                   scopeAt={model.scopeAt}
                   onShowDefinition={model.showDefinition}
                   stickyUnder={headerRef}
-                  onRetry={() => model.readAfter(true)}
+                  onRetry={model.retry}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}
                 />

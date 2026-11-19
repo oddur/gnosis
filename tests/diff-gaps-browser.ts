@@ -16,6 +16,10 @@ import { app, BrowserWindow } from 'electron';
  * scroll into view, or that find in page shows, are in the accessibility tree.
  *
  * Gaps: each gap between hunks reveals 20 lines, or all of it, from the after side only, in one request per file.
+ *
+ * Stale diffs: files whose after side disagrees with their patch refresh the PR once, together, at the view tier. A
+ * file that matches after it reveals its lines; one that still does not shows "Couldn’t match" with a manual Refresh,
+ * and never refreshes again by itself.
  */
 // Scaled outside strict runs; see tests/perf-budget.ts.
 const LONG_TASK_BUDGET = Number(process.env.GNOSIS_LONG_TASK_BUDGET ?? perfBudget(200));
@@ -512,8 +516,78 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await js('window.reads.filter(p=>p.endsWith("gaps.ts"))'), [], 'The before side is never read');
     // One diff per hunk: the revealed middle joined both hunks.
     assert.equal(await js<number>(`${gapsRow}.querySelectorAll('.changes-code diffs-container').length`), 1);
+
+    // ── A stale diff refreshes by itself, once ─────────────────────────
+    // Two files whose after sides disagree with their patch at line 48 (a context line of the first hunk). The first
+    // matches once refreshed; the second never does, and must end at the manual message without looping.
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&diff-gaps&stale-diff`);
+    await waitForWorkbenchQueue(win.webContents);
+    await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
+      window.row=p=>document.querySelector('.commit-stream-row[data-file="'+p+'"]');
+      window.staleReads=[];window.changeReads=[];
+      const stale=p=>p==='src/stale-a.ts'||p==='src/stale-b.ts';
+      {const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=async(r,...rest)=>{if(rest[0]&&stale(r.path))throw Error('Not prepared in this suite');return read(r,...rest)};}
+      {const read=window.electronAPI.getPrChangeFileAfter;window.electronAPI.getPrChangeFileAfter=async(r,...rest)=>{
+        const side=await read(r,...rest);if(!stale(r.path))return side;
+        const n=window.staleReads.filter(x=>x.path===r.path).length;window.staleReads.push({path:r.path,mode:rest[0]??false});
+        await new Promise(x=>setTimeout(x,150));
+        return r.path==='src/stale-b.ts'||n===0?{...side,content:side.content.replace('export const g48 = 48;','export const g48 = 4800;')}:side}}
+      {const read=window.electronAPI.getPrChanges;window.electronAPI.getPrChanges=(url,refresh,options)=>{if(refresh)window.changeReads.push({view:!!options?.view,recheck:options?.recheck?.paths??null});return read(url,refresh,options)};}
+      void 0;`);
+    await js(`(async()=>{const prefs=await window.electronAPI.loadPreferences();const next={...prefs,codeIntelligence:{enabled:false}};
+      await window.electronAPI.savePreferences(next);window.dispatchEvent(new CustomEvent('gnosis-preferences-changed',{detail:next}));
+      (await import('/lib/use-syntax-contents.ts')).applyCodeIntelligence({enabled:false,disabled:[]})})()`);
+    await js("(async()=>{(await import('/lib/inspection-cache.ts')).inspectionFiles.clear()})()");
+    await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
+    await click('Open PR overview');
+    await click('Changes');
+    const staleA = "window.row('src/stale-a.ts')",
+      staleB = "window.row('src/stale-b.ts')";
+    for (const name of ['stale-a.ts', 'stale-b.ts']) {
+      await wait(`window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='${name}')`);
+      await js(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='${name}').click()`);
+      await wait(`(window.row('src/${name}')?.querySelectorAll('.diff-gap[data-gap]').length??0)===3`);
+    }
+    // Refreshes of the PR's changes, automatic or manual.
+    const changeReads = () => js<{ view: boolean; recheck: string[] | null }[]>('window.changeReads');
+    assert.deepEqual(await changeReads(), [], 'Nothing refreshed before the files went stale');
+    // Both files go stale within the debounce: one refresh for the PR.
+    await js(`(()=>{for(const row of [${staleA},${staleB}]){const b=[...row.querySelectorAll('.diff-gap[data-gap="1"] button')].find(b=>b.getAttribute('aria-label')==='Show 20 lines below the change above');if(!b)throw Error('Missing reveal');b.click()}})()`);
+    await wait(`${staleB}.querySelector('.diff-gap[data-gap="1"]')?.textContent.includes('Updating to the latest version…')`);
+    assert.equal(await js(`${staleB}.querySelector('.diff-gap[data-gap="1"]').getAttribute('aria-busy')`), 'true');
+    assert.ok(!(await js<boolean>(`${staleB}.textContent.includes('changed on GitHub')`)), 'The stale message never shows while it refreshes');
+    // The first file matches once refreshed: its reveal applies.
+    await wait(`${staleA}?.querySelector('.diff-gap[data-gap="1"]')?.getAttribute('aria-label')==='73 lines hidden'`);
+    await wait(`${staleB}?.querySelector('.diff-gap[data-gap="1"]')?.textContent.includes('Couldn’t match this file to its diff.')`);
+    assert.ok(await js<boolean>(`[...${staleB}.querySelectorAll('.diff-gap[data-gap="1"] button')].some(b=>b.textContent.trim()==='Refresh')`), 'A manual Refresh');
+    // Nothing loops: wait longer than the debounce and the reads, then count.
+    await sleep(2000);
+    const refreshes = await changeReads();
+    assert.deepEqual(refreshes, [{ view: true, recheck: ['src/stale-a.ts', 'src/stale-b.ts'] }], `One automatic refresh at the view tier: ${JSON.stringify(refreshes)}`);
+    const staleReads = () => js<{ path: string; mode: unknown }[]>('window.staleReads');
+    assert.deepEqual(
+      (await staleReads()).map((r) => `${r.path} ${String(r.mode)}`).sort(),
+      ['src/stale-a.ts false', 'src/stale-a.ts view', 'src/stale-b.ts false', 'src/stale-b.ts view'],
+      'Each file read once on reveal and once, at the view tier, after the refresh'
+    );
+    assert.ok(await js<boolean>(`window.deepAll('[data-line]',${staleA}).some(e=>e.textContent.trim()==='export const g60 = 60;')`), 'The refreshed file reveals its lines');
+    // The reader's Refresh tries once more, interactively, and stops again.
+    await js(`[...${staleB}.querySelectorAll('.diff-gap[data-gap="1"] button')].find(b=>b.textContent.trim()==='Refresh').click()`);
+    await wait(`window.staleReads.filter(r=>r.path==='src/stale-b.ts').length===3`);
+    await wait(`${staleB}?.querySelector('.diff-gap[data-gap="1"]')?.textContent.includes('Couldn’t match this file to its diff.')`);
+    await sleep(1500);
+    assert.deepEqual((await changeReads()).slice(1), [{ view: false, recheck: ['src/stale-b.ts'] }], 'One interactive refresh');
+    assert.equal((await staleReads()).length, 5);
+    const diagnostics = await js<{ refreshes: number; mismatches: { path: string; headSha: string; line?: number; lineEndingsDiffer: boolean }[] }>(
+      "(async()=>(await import('/lib/use-stale-diff-refresh.ts')).staleDiffRefresh.stats())()"
+    );
+    assert.deepEqual(
+      diagnostics.mismatches.map((m) => [m.path, m.line, m.lineEndingsDiffer]),
+      [['src/stale-b.ts', 48, false], ['src/stale-b.ts', 48, false]],
+      'Each attempt that ends stale is in the diagnostics export, with its first mismatching line'
+    );
     assert.deepEqual(errors, [], 'No console errors');
-    console.log('Diff gap browser checks passed: slices without long tasks, 20-line and full reveals from one after-side read.');
+    console.log('Diff gap browser checks passed: slices without long tasks, 20-line and full reveals from one after-side read, stale diffs refresh once by themselves.');
   } catch (e) {
     console.error(e);
     process.exitCode = 1;

@@ -182,16 +182,70 @@ export const gapSize = (gap: DiffGap) => (gap.newEnd === undefined ? undefined :
 
 /** Whether `lines` can be the after side of `hunks`: every line the patch shows on the new side is that line. */
 export function matchesAfter(hunks: GapHunk[], lines: string[]): boolean {
+  return firstMismatch(hunks, lines) === undefined;
+}
+
+const BOM = '\ufeff';
+/**
+ * A line as the comparison sees it: without a carriage return at its end, and line 1 without a byte order mark. Main
+ * decodes file contents with TextDecoder, which drops a leading BOM that GitHub's patch keeps; and a topic's saved
+ * hunks, or a patch from another source, can lose the carriage returns of a CRLF file. Neither is a change.
+ */
+function sameLine(file: string | undefined, patch: string, line: number): boolean {
+  if (file === patch) return true;
+  if (file === undefined) return false;
+  const strip = (text: string) => {
+    const start = line === 1 && text.startsWith(BOM) ? 1 : 0;
+    const end = text.endsWith('\r') ? text.length - 1 : text.length;
+    return text.slice(start, end);
+  };
+  return strip(file) === strip(patch);
+}
+
+/**
+ * The first new line where `lines` disagrees with `hunks`, or undefined when they agree (`matchesAfter`). A patch
+ * that ends without a final line feed and a file with more lines below disagree at the line after the patch's last.
+ */
+export function firstMismatch(hunks: GapHunk[], lines: readonly string[]): number | undefined {
   for (const hunk of hunks) {
     let line = hunk.newStart;
     for (const row of hunk.rows) {
       if (row.type === '-') continue;
-      if (lines[line - 1] !== row.text) return false;
+      if (!sameLine(lines[line - 1], row.text, line)) return line;
       line++;
     }
   }
   const last = hunks.at(-1);
-  return !last || !last.noEofNew || newEnd(last) === lines.length;
+  if (!last || !last.noEofNew || newEnd(last) === lines.length) return undefined;
+  return newEnd(last) + 1;
+}
+
+/** How a file's text ends its lines, for the diagnostics of a file that does not match its patch. */
+export interface LineEndings {
+  /** `crlf` when every line feed follows a carriage return, `mixed` when some do. */
+  endings: 'lf' | 'crlf' | 'mixed' | 'none';
+  finalNewline: boolean;
+  bom: boolean;
+}
+export function lineEndings(text: string): LineEndings {
+  const feeds = text.split('\n').length - 1;
+  const crlf = text.split('\r\n').length - 1;
+  return {
+    endings: !feeds ? 'none' : crlf === feeds ? 'crlf' : crlf ? 'mixed' : 'lf',
+    finalNewline: text.endsWith('\n'),
+    bom: text.startsWith(BOM),
+  };
+}
+/** The same, for a patch's new side: its rows end in a carriage return where the file's lines do. */
+export function patchLineEndings(hunks: GapHunk[]): LineEndings {
+  const rows = hunks.flatMap((hunk) => hunk.rows.filter((row) => row.type !== '-'));
+  const returns = rows.filter((row) => row.text.endsWith('\r')).length;
+  const first = hunks[0]?.newStart === 1 ? hunks[0].rows.find((row) => row.type !== '-') : undefined;
+  return {
+    endings: !rows.length ? 'none' : returns === rows.length ? 'crlf' : returns ? 'mixed' : 'lf',
+    finalNewline: !hunks.at(-1)?.noEofNew,
+    bom: !!first?.text.startsWith(BOM),
+  };
 }
 
 /** Reveal `GAP_STEP` lines on one side of a gap, or all of it. The edges of the file reveal towards their hunk. */
