@@ -1,6 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
+import { perfBudget } from './perf-budget';
 
 /**
  * Breadcrumb navigation, the whole matrix (#417, #394, show scope), on the synthetic files in
@@ -75,13 +76,27 @@ void app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
   };
-  const reducedMotion = async (on: boolean) => {
-    if (on) win.webContents.debugger.attach('1.3');
+  // Hosted macOS and Windows runners report prefers-reduced-motion: reduce. Every check runs under an emulated
+  // preference: no-preference, except the reduced-motion checks, which ask for reduce.
+  const motion = async (value: 'reduce' | 'no-preference' | 'system') => {
+    if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
-      features: on ? [{ name: 'prefers-reduced-motion', value: 'reduce' }] : [],
+      features: value === 'system' ? [] : [{ name: 'prefers-reduced-motion', value }],
     });
-    if (!on) win.webContents.debugger.detach();
   };
+  const reducedMotion = (on: boolean) => motion(on ? 'reduce' : 'no-preference');
+  /** Once, what the system asks for, without the emulation: hosted macOS and Windows runners report reduce. */
+  let logged = false;
+  const logMotion = async () => {
+    if (logged) return;
+    logged = true;
+    await motion('system');
+    console.log('The system reports prefers-reduced-motion: reduce:', await js(`matchMedia('(prefers-reduced-motion: reduce)').matches`));
+    await motion('no-preference');
+  };
+  /** Long tasks over the scaled budget: a jump that reveals and renders a 200-row slice runs one render task by design
+   * (#353), about 17 ms here and up to 50 ms on a slow CI runner. */
+  const overBudget = (tasks: number[]) => tasks.filter((ms) => ms > perfBudget(50));
 
   /** Helpers in the page, for a diff's root (a Changes row or a topic's file group) and the scroller it is in. */
   const install = () =>
@@ -155,6 +170,7 @@ void app.whenReady().then(async () => {
           for(const e of sr.querySelectorAll('[data-here]')){if(e.matches('[data-content-buffer],[data-gutter-buffer]')){out.buffers++;continue}
             if(!e.matches('[data-line]'))continue;const parts=(e.getAttribute('data-line-index')??'').split(',');const at=Number(split&&parts.length>1?parts[1]:parts[0]);
             if(split)(e.closest('[data-deletions]')?out.del:out.add).push(at);
+            out.bottom=Math.max(out.bottom??-Infinity,Math.round(e.getBoundingClientRect().bottom));
             if(e.getAttribute('data-here-part')==='body'){out.body++;out.bodyTexts.push(e.textContent.trim())}else out.sig.push(e.textContent.trim())}}
         out.del=[...new Set(out.del)].sort((a,b)=>a-b);out.add=[...new Set(out.add)].sort((a,b)=>a-b);out.bodyTexts=out.bodyTexts.slice(0,400);return out};
       // The scroller's scrollTop from now (the first sample is taken at once, so a jump that lands before the next frame
@@ -168,6 +184,9 @@ void app.whenReady().then(async () => {
           chips:[...o.querySelectorAll('.diff-outline-chip[data-change]')].map(c=>c.dataset.change+':'+c.querySelector('.diff-outline-go').textContent.trim()+(c.dataset.viewed?':viewed':'')),
           rows:[...o.querySelectorAll('.diff-outline-row')].map(r=>r.dataset.change+':'+r.querySelector('.diff-outline-go').textContent.trim()+':'+(r.querySelector('input').checked?'ticked':'open')),
           progress:o.querySelector('.diff-outline-end')?.textContent.trim()??null,height:Math.round(o.querySelector('.diff-outline-bar').getBoundingClientRect().height)}};
+      // Every contents read, by path: added and deleted files read nothing, their patch is the file.
+      if(!window.navReads){window.navReads=[];for(const name of ['getPrChangeFile','getPrChangeFileAfter']){const read=window.electronAPI[name];
+        window.electronAPI[name]=(r,...rest)=>{window.navReads.push(r.path);return read(r,...rest)}}}
       void 0`);
   const select = async (name: string) => {
     await js(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`);
@@ -195,7 +214,7 @@ void app.whenReady().then(async () => {
     slotLabel: string | null;
     active: string | null;
   };
-  type Section = { sig: string[]; body: number; bodyTexts: string[]; del: number[]; add: number[]; buffers: number; bars: number };
+  type Section = { bottom?: number; sig: string[]; body: number; bodyTexts: string[]; del: number[]; add: number[]; buffers: number; bars: number };
   type Here = { kind: string; text: string; anim: string; band: string; gutter: boolean | null; top: number };
   const state = (root: string) => js<Jump>(`window.jumpState(${JSON.stringify(root)})`);
   const here = (root: string) => js<Here[]>(`window.hereMarks(${JSON.stringify(root)})`);
@@ -280,6 +299,7 @@ void app.whenReady().then(async () => {
     win.setContentSize(1280, 800);
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&breadcrumb-nav`);
     await waitForWorkbenchQueue(win.webContents);
+    await logMotion();
     await install();
     await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
     await click('Open PR overview');
@@ -495,8 +515,11 @@ void app.whenReady().then(async () => {
       const section = await js<Section>(`window.sectionMarks(${JSON.stringify(deep)})`);
       console.log('Section mark, unified:', JSON.stringify({ ...section, bodyTexts: section.bodyTexts.length }));
       assert.deepEqual(section.sig, ['export namespace Engine {'], 'Unified: the signature blooms');
-      for (const text of ['export class Scheduler {', 'readonly slot10 = 10;', 'next += 59 * 2;', 'return total;'])
+      for (const text of ['export class Scheduler {', 'readonly slot10 = 10;', 'next += 5;'])
         assert.ok(section.bodyTexts.includes(text), `Unified: the rest of the namespace is marked: ${text}`);
+      // The mark runs past the bottom of the view; rows further down, out of view while it lasts, are left unmarked.
+      const viewBottom = await js<number>(`Math.round(window.q('${STREAM}').getBoundingClientRect().bottom)`);
+      assert.ok((section.bottom ?? 0) > viewBottom, `Unified: the mark fills the view: ${section.bottom} > ${viewBottom}`);
       assert.ok(!section.bodyTexts.includes('export const lead19 = 19;'), 'Unified: nothing outside it is');
     }
     assert.deepEqual(after.crumbs, ['Go to module Engine'], 'Landed on the namespace line, the pinned breadcrumb names where the reader is');
@@ -552,7 +575,7 @@ void app.whenReady().then(async () => {
     assert.equal(rapid.filter((m) => m.kind === 'line').length, 1, 'Rapid jumps leave one place marked');
     assert.ok(Math.abs(((await js<number | null>(`window.lineTop(${JSON.stringify(deep)},'function step(value: number): number {',false)`)) ?? 0) - (rapidState.bottom ?? 0)) <= 2, 'and land where the last one goes');
     assert.equal(rapidState.active, 'Go to function step', 'Focus stays through rapid jumps');
-    assert.deepEqual(await js('window.__longTasks.map(t=>Math.round(t.duration))'), [], 'Rapid jumps leave no long task');
+    assert.deepEqual(overBudget(await js<number[]>('window.__longTasks.map(t=>Math.round(t.duration))')), [], `Rapid jumps leave no task over ${perfBudget(50)} ms`);
     await js('document.activeElement?.blur()');
     // Narrow: the pinned breadcrumb folds from the outside into "…", keeps the innermost, and keeps its height.
     await setWidth(deep, '430px');
@@ -618,7 +641,7 @@ void app.whenReady().then(async () => {
     assert.ok(slices > 1, `The revealed hunk is sliced, and its slices mount as they are reached: ${slices}`);
     assert.equal(await js<number>(`window.shownCount(${JSON.stringify(far)},'pub const FAR_')`), 240, 'All 240 lines from the module down to the reader show');
     assert.ok(steps >= 4, `The scroll eases over several frames: ${steps}`);
-    assert.deepEqual(farTasks, [], 'Revealing 240 lines into slices and easing there leaves no long task');
+    assert.deepEqual(overBudget(farTasks), [], `Revealing 240 lines into slices and easing there leaves no task over ${perfBudget(50)} ms`);
     // A jump stopped by the wheel, and by a key, mid-way: it does not land, and nothing is marked.
     for (const stop of ['wheel', 'key'] as const) {
       await pin(far, STREAM, 'total += 50 * 2;');
@@ -810,6 +833,39 @@ void app.whenReady().then(async () => {
     await sleep(400);
     await js(`window.q(${JSON.stringify(outline)})?.querySelector('.diff-outline-toggle[aria-expanded=true]')?.click()`);
 
+    // ═══ Added and deleted files (#394): the outline and the pinned breadcrumb, from the patch, with no read ═══
+    const wholeFiles = [
+      {
+        file: 'wire_response.rs',
+        path: 'src/nav/wire_response.rs',
+        summary: 'Adds 1 struct and 1 impl block',
+        pin: 'let value_20 = 20 as f32;',
+        innermost: 'Go to function new',
+      },
+      { file: 'widget_panel.ts', path: 'src/nav/widget_panel.ts', summary: 'Adds 1 class', pin: 'size += 12; // resize', innermost: 'Go to function resize' },
+      { file: 'worker_job.ts', path: 'src/nav/worker_job.ts', summary: 'Removes 2 functions', pin: 'input -= 12; // stop', innermost: 'Go to function stopJob', deleted: true },
+    ];
+    for (const w of wholeFiles) {
+      const root = rowOf(w.path);
+      await select(w.file);
+      await wait(`window.outline(${JSON.stringify(root)})?.chips.length>0`);
+      const bar = await js<{ summary: string; chips: string[] }>(`window.outline(${JSON.stringify(root)})`);
+      console.log(`${w.file}: outline`, JSON.stringify(bar));
+      assert.equal(bar.summary, w.summary, `${w.file}: the outline says what the file adds or removes`);
+      const change = w.deleted ? 'removed' : 'added';
+      assert.ok(bar.chips.every((chip) => chip.startsWith(`${change}:`)), `${w.file}: every symbol is ${change}: ${JSON.stringify(bar.chips)}`);
+      await setWidth(root, '680px');
+      const pinned = await pin(root, STREAM, w.pin, !!w.deleted);
+      console.log(`${w.file}: pinned`, JSON.stringify({ crumbs: pinned.crumbs, live: pinned.live }));
+      assert.ok(pinned.stuck && pinned.live === 'scope', `${w.file}: the one hunk's header pins and follows the reader`);
+      assert.equal(pinned.crumbs.at(-1), w.innermost, `${w.file}: the pinned breadcrumb names where the reader is`);
+    }
+    assert.deepEqual(
+      await js<string[]>(`window.navReads.filter(p=>${JSON.stringify(wholeFiles.map((w) => w.path))}.includes(p))`),
+      [],
+      'Added and deleted files read nothing: the patch is the file'
+    );
+
     // ═══ Performance: scrolling while the pinned header follows the reader, with rails and the outline on the page ═══
     await select('far_mod.rs');
     const scrolling = await js<{ frames: number; p50: number; max: number; longTasks: number[]; places: number }>(`(async()=>{
@@ -854,9 +910,46 @@ void app.whenReady().then(async () => {
     assert.ok((await js<string[]>(`window.rails(${JSON.stringify(slideScoped)})`)).includes('2:start'), 'Topic: with its rail');
     assert.ok((await js<string[]>(`window.headerActions(${JSON.stringify(slideScoped)})`)).includes('Collapse class'), 'Topic: and Collapse');
     const slideOutline = topicFile('src/nav/outline.ts');
-    await wait(`window.outline(${JSON.stringify(slideOutline)})?.chips.length===4||window.outline(${JSON.stringify(slideOutline)})?.rows.length===4`, 500);
+    // The reader comes to the file: a topic's file far from the view loads its structure as it nears it.
+    console.log(
+      'Topic files:',
+      JSON.stringify(await js(`[...document.querySelectorAll('[data-explanation-section="1"] .review-file-group')].map(g=>[g.dataset.filePath.replace(/^.*\\/nav\\//,''),Math.round(g.getBoundingClientRect().top),Math.round(g.getBoundingClientRect().height)])`))
+    );
+    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideOutline)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    await settle();
+    await wait(`window.outline(${JSON.stringify(slideOutline)})?.chips.length===4||window.outline(${JSON.stringify(slideOutline)})?.rows.length===4`, 500).catch(async (error: unknown) => {
+      console.log(
+        'Topic outline, timed out:',
+        JSON.stringify(
+          await js(`(async()=>{const client=await import('/lib/syntax-scope-client.ts');const traces=(await import('/lib/structure-trace.ts')).structureTraces();
+            return {outline:window.outline(${JSON.stringify(slideOutline)}),top:document.querySelector(${JSON.stringify(slideOutline)})?.getBoundingClientRect().top,
+              definitions:client.definitionStats(),traces:Object.entries(traces).filter(([k])=>k.includes('outline.ts')),
+              timings:client.syntaxTimings.filter(t=>t.key.includes('outline.ts')).map(t=>({key:t.key,priority:t.priority,cached:t.cached})),
+              scopes:[...document.querySelector(${JSON.stringify(slideOutline)}).querySelectorAll('.diff-gap-scope')].map(e=>e.hasAttribute('data-provisional')?'provisional':'parsed'),
+              notes:[...document.querySelector(${JSON.stringify(slideOutline)}).querySelectorAll('[data-structure]')].map(e=>e.dataset.structure),
+              lines:window.deepAll('[data-line]',document.querySelector(${JSON.stringify(slideOutline)})).length,
+              bars:[...document.querySelector(${JSON.stringify(slideOutline)}).querySelectorAll('.diff-gap')].map(b=>b.textContent.trim().slice(0,90)),
+              topicCached:await (async()=>{const files=(await import('/lib/inspection-cache.ts')).inspectionFiles;const r={url:'https://github.com/klang/engine/pull/121',path:'src/nav/outline.ts',baseSha:'base-1',headSha:'head-1'};
+                return {both:!!files.peek(r),after:!!files.peekAfter(r)}})(),
+              cached:await (async()=>{const files=(await import('/lib/inspection-cache.ts')).inspectionFiles;const r={url:'https://github.com/klang/engine/pull/150',path:'src/nav/outline.ts',baseSha:'base-0',headSha:'head-0'};
+                return {both:!!files.peek(r),after:!!files.peekAfter(r)}})(),
+              memo:!!client.peekDefinitions('["https://github.com/klang/engine/pull/150","src/nav/outline.ts","base-0","head-0"]:after')}})()`)
+        )
+      );
+      await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideOutline)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+      await sleep(3000);
+      console.log('Topic outline, once in view:', JSON.stringify(await js(`window.outline(${JSON.stringify(slideOutline)})`)));
+      throw error;
+    });
     const topicOutline = await js<{ summary: string; chips: string[] }>(`window.outline(${JSON.stringify(slideOutline)})`);
     assert.equal(topicOutline.summary, 'Changes 4 functions', 'Topic: the same outline');
+    // An added file in a slide: its outline from the topic's patch, as in Changes.
+    const slidePanel = topicFile('src/nav/widget_panel.ts');
+    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slidePanel)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    await wait(`window.outline(${JSON.stringify(slidePanel)})?.chips.length>0||window.outline(${JSON.stringify(slidePanel)})?.rows.length>0`, 500);
+    assert.equal((await js<{ summary: string }>(`window.outline(${JSON.stringify(slidePanel)})`)).summary, 'Adds 1 class', 'Topic: an added file’s outline');
+    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideOutline)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    await settle();
     clickPoint(await js<{ x: number; y: number }>(`window.center(${JSON.stringify(slideOutline)},'.diff-outline-chip[data-change=modified] .diff-outline-go','${DOC}')`));
     await landed(slideOutline);
     const topicLanding = await state(slideOutline);

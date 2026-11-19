@@ -1,6 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
+import { perfBudget } from './perf-budget';
 
 /**
  * Enclosing definitions in Changes (#393), on the synthetic files in tests/fixtures/syntax-scope.ts.
@@ -35,6 +36,15 @@ void app.whenReady().then(async () => {
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
   const errors: string[] = [];
+  // Hosted macOS and Windows runners report prefers-reduced-motion: reduce. Every check runs under an emulated
+  // preference: no-preference, except the reduced-motion checks, which ask for reduce.
+  const motion = async (value: 'reduce' | 'no-preference' | 'system') => {
+    if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: value === 'system' ? [] : [{ name: 'prefers-reduced-motion', value }],
+    });
+  };
+
   win.webContents.on('console-message', ({ level, message }) => {
     if (level === 'error' && !message.includes('ResizeObserver')) errors.push(message);
   });
@@ -299,7 +309,188 @@ void app.whenReady().then(async () => {
     await capture('combined-chips', around('.commit-stream-row[data-file*="worker.ts"] .changes-file-context', 40, 90));
     await js(`document.documentElement.classList.toggle('dark',false)`);
   };
+  /**
+   * Structure load on a large PR (`?syntax-large`, tests/fixtures/syntax-large.ts): 168 files in six languages, some
+   * 2,400 lines, some deleting lines, none prepared. Reads take `latency` ms (±50%), as GitHub's would. From the click
+   * on Changes, it times the first file's breadcrumbs; 0.4 s after the click, while prefetch still reads and parses,
+   * it jumps to a file mid-PR and times its breadcrumbs from the click on it; and it counts the files whose after side
+   * is parsed 2, 5 and 10 s after the click. Each file's steps come from lib/structure-trace.ts.
+   */
+  const structureLoad = async (latency: number, workers?: 1 | 2) => {
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-large`);
+    await waitForWorkbenchQueue(win.webContents);
+    await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
+      window.blockPrepare=true;window.latency=${latency};
+      const large=p=>p.startsWith('src/large/');
+      const slow=async read=>{await new Promise(r=>setTimeout(r,window.latency*(0.5+Math.random())));return read()};
+      for(const name of ['getPrChangeFile','getPrChangeFileAfter']){const read=window.electronAPI[name];window.electronAPI[name]=async(r,...rest)=>{
+        if(!large(r.path))return read(r,...rest);
+        if(rest[0]&&window.blockPrepare)throw Error('This file is too large to preview. Open it on GitHub.');
+        return slow(()=>read(r,...rest))}}
+      window.treeClick=async name=>{const item=()=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===name);
+        const first=window.deepAll('[role=treeitem]')[0];let box=first?.parentElement;while(box&&box.scrollHeight<=box.clientHeight)box=box.parentElement;
+        if(box)box.scrollTop=0;for(let i=0;i<80&&!item()&&box;i++){box.scrollTop+=200;await new Promise(r=>requestAnimationFrame(r))}
+        const target=item();if(!target)throw Error('Missing tree item '+name);window.clickAt=performance.now();target.click()};
+      // Each large file's first frame with parsed breadcrumbs, and whether it ever showed Loading structure….
+      window.appear={};window.loadingShown={};
+      const watch=()=>{for(const row of document.querySelectorAll('.commit-stream-row[data-file^="src/large/"]')){const p=row.dataset.file;
+        if(!window.loadingShown[p]&&row.querySelector('[data-structure=loading]'))window.loadingShown[p]=performance.now();
+        if(window.appear[p]===undefined&&row.querySelector('.diff-gap-scope:not([data-provisional]) .diff-gap-symbol'))window.appear[p]=performance.now()}
+        requestAnimationFrame(watch)};requestAnimationFrame(watch);
+      void 0;`);
+    await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
+    await click('Open PR overview');
+    await sleep(1500);
+    // About the 90th of 168 files in diff order (api, core, server, Services, tools, web): mid-PR, and C#.
+    const MID = 'src/large/Services/f048.cs';
+    // Reads refused while the queue prepared (the predicted next PR's warm-up among them) are forgotten, so every
+    // large file starts unread and unrefused.
+    await js(`(async()=>{(await import('/lib/inspection-cache.ts')).inspectionFiles.clear();(await import('/lib/use-syntax-contents.ts')).syntaxContents.forget();
+      (await import('/lib/structure-trace.ts')).clearStructureTraces();
+      ${workers ? `(await import('/lib/syntax-scope-client.ts')).setSyntaxWorkerSplit?.(${workers === 2})` : ''}})()`);
+    const t0 = await js<number>(`(()=>{window.blockPrepare=false;const t=performance.now();
+      const e=[...document.querySelectorAll('button')].find(e=>e.getBoundingClientRect().width&&(e.textContent.trim()==='Changes'||e.getAttribute('aria-label')==='Changes'));
+      e.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));e.click();return t})()`);
+    // The first large file in the stream is the one the reader sees first.
+    await wait(`document.querySelector('.commit-stream-row[data-file^="src/large/"]')`, 500);
+    const FIRST = await js<string>(`document.querySelector('.commit-stream-row[data-file^="src/large/"]').dataset.file`);
+    const debug = async (path: string) =>
+      console.log(
+        'STRUCTURE DEBUG',
+        path,
+        JSON.stringify(
+          await js(`(async()=>{const t=(await import('/lib/structure-trace.ts')).structureTraces();const c=(await import('/lib/use-syntax-contents.ts')).syntaxContents.stats();
+            const p=${JSON.stringify(path)};const row=document.querySelector('.commit-stream-row[data-file="'+p+'"]');
+            return {now:performance.now(),trace:Object.entries(t).filter(([k])=>k.includes(p)),reads:c.log.filter(e=>e.key.includes(p)),running:c.running,queued:c.queued,
+              row:!!row,note:row?.querySelector('[data-structure]')?.textContent,provisional:row?.querySelectorAll('.diff-gap-scope[data-provisional]').length,scopes:row?.querySelectorAll('.diff-gap-scope').length}})()`)
+        )
+      );
+    try {
+      await wait(`window.appear[${JSON.stringify(FIRST)}]!==undefined`, 500);
+    } catch (error) {
+      await debug(FIRST);
+      throw error;
+    }
+    await sleep(Math.max(0, 400 - ((await js<number>('performance.now()')) - t0)));
+    await js(`window.treeClick('f048.cs')`);
+    // From the click on the file in the tree; finding it in the virtualized tree takes the test a few frames before.
+    const tJump = await js<number>('window.clickAt');
+    try {
+      await wait(`window.appear[${JSON.stringify(MID)}]!==undefined`, 500);
+    } catch (error) {
+      await debug(MID);
+      throw error;
+    }
+    await sleep(Math.max(0, 10_500 - ((await js<number>('performance.now()')) - t0)));
+    type Trace = Record<string, number | string | undefined>;
+    const data = await js<{ traces: Record<string, Trace>; appear: Record<string, number | undefined>; loading: Record<string, number> }>(
+      `(async()=>({traces:(await import('/lib/structure-trace.ts')).structureTraces(),appear:window.appear,loading:window.loadingShown}))()`
+    );
+    const byPath = new Map<string, Trace>();
+    for (const [key, trace] of Object.entries(data.traces)) {
+      const path = (JSON.parse(key) as string[])[1];
+      if (path.startsWith('src/large/')) byPath.set(path, trace);
+    }
+    const num = (value: unknown) => (typeof value === 'number' ? value : undefined);
+    const phases = (path: string, start: number) => {
+      const t = byPath.get(path) ?? {};
+      const readStart = num(t.readStart), readEnd = num(t.readEnd), posted = num(t.parsePosted), done = num(t.parseDone);
+      const worker = (num(t.workerWait) ?? 0) + (num(t.load) ?? 0) + (num(t.parse) ?? 0) + (num(t.query) ?? 0);
+      const at = (value: number | undefined) => (value === undefined ? undefined : Math.max(start, value));
+      const span = (from: number | undefined, to: number | undefined) => (from === undefined || to === undefined ? undefined : Math.round(Math.max(0, to - from)));
+      return {
+        total: span(start, data.appear[path]),
+        beforeRead: span(start, at(readStart)),
+        read: span(at(readStart), at(readEnd)),
+        toWorker: span(at(readEnd), at(posted)),
+        workerQueue: done !== undefined && done > start ? Math.round(num(t.workerWait) ?? 0) : 0,
+        parse: done !== undefined && done > start ? Math.round(worker - (num(t.workerWait) ?? 0)) : 0,
+        message: done !== undefined && done > start && posted !== undefined ? Math.round(Math.max(0, done - Math.max(start, posted) - worker)) : 0,
+        before: span(at(done), at(num(t.beforeDone))),
+        react: span(at(Math.max(done ?? 0, num(t.beforeDone) ?? 0)), data.appear[path]),
+        tier: t.tier,
+        steps: Object.fromEntries(Object.entries(t).map(([name, value]) => [name, typeof value === 'number' && name !== 'workerWait' && name !== 'load' && name !== 'parse' && name !== 'query' ? Math.round(value - start) : value])),
+      };
+    };
+    const resolved = (ms: number) =>
+      [...byPath.values()].filter((t) => {
+        const done = num(t.parseDone);
+        return done !== undefined && done - t0 <= ms;
+      }).length;
+    const doneTimes = [...byPath.values()].map((t) => num(t.parseDone)).filter((v): v is number => v !== undefined).sort((a, b) => a - b);
+    return {
+      first: phases(FIRST, t0),
+      mid: phases(MID, tJump),
+      resolved: { '2s': resolved(2000), '5s': resolved(5000), '10s': resolved(10_000) },
+      lastParse: doneTimes.length ? Math.round(doneTimes[doneTimes.length - 1] - t0) : undefined,
+      parsed: doneTimes.length,
+      // Distinct frames (16 ms) in which files resolved: one frame for all of them would be "all at once".
+      frames: new Set(doneTimes.map((v) => Math.floor(v / 16))).size,
+      // Files whose "Loading structure…" showed for under 150 ms before their breadcrumbs came: it waits 150 ms to show,
+      // and fades in, so these are faint.
+      loadingFlashes: Object.keys(data.loading).filter((p) => data.appear[p] !== undefined && data.appear[p] - data.loading[p] < 150).length,
+      firstPath: FIRST,
+      // The renderer's memory, with its workers, once the PR has loaded.
+      memoryMB: Math.round(
+        (app.getAppMetrics().find((metric) => metric.pid === win.webContents.getOSProcessId())?.memory.workingSetSize ?? 0) / 1024
+      ),
+    };
+  };
+  const percentile = (values: number[], p: number) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))];
+  };
   try {
+    // GNOSIS_STRUCTURE_BENCH=<runs> times the large PR that many times at GitHub-like and cached read latencies, prints
+    // the numbers, and skips the checks.
+    if (process.env.GNOSIS_STRUCTURE_BENCH) {
+      const runs = Number(process.env.GNOSIS_STRUCTURE_BENCH) || 5;
+      // GNOSIS_STRUCTURE_WORKERS=1,2 compares one parse worker with two.
+      const pools = (process.env.GNOSIS_STRUCTURE_WORKERS ?? '').split(',').filter(Boolean).map(Number) as (1 | 2)[];
+      for (const [latency, workers] of [200, 5].flatMap((latency) => (pools.length ? pools : [undefined]).map((workers) => [latency, workers] as const))) {
+        const results: Awaited<ReturnType<typeof structureLoad>>[] = [];
+        for (let i = 0; i < runs; i++) {
+          const result = await structureLoad(latency, workers);
+          console.log(`BENCH run latency=${latency} workers=${workers ?? 'default'} ${JSON.stringify(result)}`);
+          results.push(result);
+        }
+        const stat = (pick: (r: (typeof results)[number]) => number | undefined) => {
+          const values = results.map(pick).filter((v): v is number => v !== undefined);
+          return { p50: percentile(values, 50), p95: percentile(values, 95) };
+        };
+        console.log(
+          `BENCH summary latency=${latency} workers=${workers ?? 'default'} ${JSON.stringify({
+            first: stat((r) => r.first.total),
+            mid: stat((r) => r.mid.total),
+            resolved2s: stat((r) => r.resolved['2s']),
+            resolved5s: stat((r) => r.resolved['5s']),
+            resolved10s: stat((r) => r.resolved['10s']),
+            lastParse: stat((r) => r.lastParse),
+            firstWorkerQueue: stat((r) => r.first.workerQueue),
+            midWorkerQueue: stat((r) => r.mid.workerQueue),
+            memoryMB: stat((r) => r.memoryMB),
+          })}`
+        );
+      }
+      return;
+    }
+    if (!process.env.GNOSIS_HUNK_HEADER_SHOTS && !process.env.GNOSIS_FILE_HEADER_SHOTS) {
+      // ═══ A large PR: structure shows nearest the reader first, file by file ═══
+      // Twice: GitHub-like reads, then reads from main's cache, where every file is read within a second and parses
+      // pile up in the worker.
+      for (const latency of [200, 5]) {
+        const large = await structureLoad(latency);
+        console.log(`Large PR, reads of ${latency} ms: ${JSON.stringify(large)}`);
+        assert.ok(
+          large.first.total !== undefined && large.lastParse !== undefined && large.first.total < large.lastParse,
+          `The first file's breadcrumbs show before prefetch has parsed every file (${large.first.total} ms, last parse ${large.lastParse} ms)`
+        );
+        assert.ok(large.first.workerQueue < 400, `The first file's parse does not wait behind prefetched ones (${large.first.workerQueue} ms)`);
+        assert.ok(large.mid.workerQueue < 400, `Nor does the file jumped to (${large.mid.workerQueue} ms)`);
+        assert.ok(large.frames >= 20, `Files resolve one by one, not in one frame (${large.frames} frames for ${large.parsed} files)`);
+        assert.ok(large.resolved['2s'] < large.parsed || latency < 50, 'With GitHub-like reads, files keep resolving after 2 s');
+      }
+    }
     if (process.env.GNOSIS_HUNK_HEADER_SHOTS) {
       await hunkHeaderShots();
       return;
@@ -310,6 +501,10 @@ void app.whenReady().then(async () => {
     }
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
     await waitForWorkbenchQueue(win.webContents);
+    // What the system asks for, without the emulation: hosted macOS and Windows runners report reduce.
+    await motion('system');
+    console.log('The system reports prefers-reduced-motion: reduce:', await js(`matchMedia('(prefers-reduced-motion: reduce)').matches`));
+    await motion('no-preference');
     await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
       window.__longTasks=[];
       new PerformanceObserver(l=>{for(const e of l.getEntries())window.__longTasks.push({start:e.startTime,duration:e.duration})}).observe({type:'longtask'});
@@ -706,6 +901,8 @@ void app.whenReady().then(async () => {
     );
     assert.deepEqual(await js('window.symbols("src/lazy/h003.rs")'), []);
     await wait(`window.heldReads.length>0`);
+    // The note waits a moment, so a file whose structure lands sooner never flickers it.
+    await wait(`window.structureNote('src/lazy/h003.rs').length>0`);
     assert.deepEqual(await js('window.structureNote("src/lazy/h003.rs")'), ['loading: Loading structure…']);
     assert.equal(
       await js("window.readModes.find(r=>r.path==='src/lazy/h003.rs').mode"),
@@ -1104,8 +1301,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js<number>(`window.lineTop('src/runner.ts','run(input: number): number {')`), runTop, 'and nothing moved');
     assert.equal((await jumpState('src/runner.ts')).lines, toClass.lines, 'Nothing was revealed');
     // Reduced motion: the settled band, still, for as long, with no animation.
-    win.webContents.debugger.attach('1.3');
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await motion('reduce');
     assert.equal(await js(`matchMedia('(prefers-reduced-motion: reduce)').matches`), true, 'Reduced motion is emulated');
     await press('Enter', '\r');
     await afterJump();
@@ -1114,8 +1310,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual(stillFlash.map((f) => [f.kind, f.anim, f.band]), [['line', 'none', 'rgba(47, 85, 212, 0.22)']], 'Reduced motion: a still band, no animation');
     await sleep(2100);
     assert.deepEqual(await js(`window.jumped('src/runner.ts')`), [], 'The still band goes too');
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
-    win.webContents.debugger.detach();
+    await motion('no-preference');
     await shot('crumb-jump-keyboard', '.commit-diff-stream');
     // Mid-flash, light and dark: Enter again on the same crumb flashes the line again.
     if (process.env.GNOSIS_SYNTAX_SCOPE_SHOT)
@@ -1209,7 +1404,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js<number>(`window.shownCount('src/far.ts','readonly far')`), 230, 'All 230 lines between the class line and the hunk show');
     assert.equal(await js<number>(`window.shownCount('src/far.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
     assert.ok(steps >= 4, `The scroll eases over several frames: ${JSON.stringify(samples)}`);
-    assert.deepEqual(longTasks.map((t) => Math.round(t.duration)), [], 'Revealing 230 lines and easing there leaves no long task');
+    assert.deepEqual(longTasks.map((t) => Math.round(t.duration)).filter((ms) => ms > perfBudget(50)), [], `Revealing 230 lines and easing there leaves no task over ${perfBudget(50)} ms`);
     assert.deepEqual((await js<Flash[]>(`window.jumped('src/far.ts')`)).map((f) => f.text), ['export class FarRunner {'], 'The class line flashes');
     // The reader's wheel stops the scroll part way.
     await js(`window.pinAt('src/far.ts','total += 50 * 2;')`);
@@ -1227,8 +1422,7 @@ void app.whenReady().then(async () => {
     assert.ok(stillFar === null || Math.abs(stillFar - (inWork.bottom ?? 0)) > 50, 'Wheel input stops the scroll before it lands');
     assert.deepEqual(await js(`window.jumped('src/far.ts')`), [], 'A stopped jump does not flash');
     // Reduced motion: the jump lands in one frame.
-    win.webContents.debugger.attach('1.3');
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await motion('reduce');
     await js(`window.pinAt('src/far.ts','total += 40 * 2;')`);
     await wait(`window.jumpState('src/far.ts').crumbs.length===2`);
     await js('window.sampleScroll()');
@@ -1238,8 +1432,7 @@ void app.whenReady().then(async () => {
     const moves = instant.filter((v, i) => i > 0 && v !== instant[i - 1]);
     console.log('Reduced-motion jump scrollTops:', JSON.stringify(moves));
     assert.ok(moves.length >= 1 && Math.abs(moves[0] - instant.at(-1)!) <= 2, `Reduced motion: the first move lands: ${JSON.stringify(moves)}`);
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
-    win.webContents.debugger.detach();
+    await motion('no-preference');
 
     // ═══ Pinned hunk headers in the stack's Changes (#395) ═══
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);
@@ -1259,6 +1452,24 @@ void app.whenReady().then(async () => {
     await sleep(1700);
     await checkPinned('Stack changes', 'src/sticky.ts', stickyCrumbs);
     await shot('stack-sticky-mid-hunk', '.commit-diff-stream');
+    // A very long path keeps the file header on one row: the path shortens from the left, the actions stay beside it.
+    const longPath = await js<{ before: number; after: number; actionsTop: number; titleTop: number; name: boolean }>(`(()=>{
+      // Set the header's own width: CI desktops (Windows: 1024px) can clamp the window below what this check needs.
+      const head=[...document.querySelectorAll('.changes-file-header')].find(e=>e.getClientRects().length);
+      if(!head) throw Error('Missing a file header');
+      head.style.width='1100px'; head.style.maxWidth='none';
+      const before=head.getBoundingClientRect().height;
+      const dir=head.querySelector('.changes-file-dir'), name=head.querySelector('.changes-file-name');
+      if(dir) dir.textContent='project/workers/SimulationWorkers.Domains/AI/Agents/Activities/Conditions/Agent/Deeply/Nested/Folder/';
+      name.textContent='CanLearnSchematicBinaryConsiderationCondition.cs';
+      const after=head.getBoundingClientRect().height;
+      const actions=head.querySelector('.changes-file-actions').getBoundingClientRect(), title=head.querySelector('.changes-file-title').getBoundingClientRect();
+      const n=name.getBoundingClientRect();
+      return {before,after,actionsTop:Math.round(actions.top),titleTop:Math.round(title.top),name:n.width>=40&&n.right<=title.right+1};
+    })()`);
+    assert.ok(Math.abs(longPath.after - longPath.before) <= 1, `A long path keeps the file header one row tall: ${JSON.stringify(longPath)}`);
+    assert.ok(Math.abs(longPath.actionsTop - longPath.titleTop) <= 12, `The actions stay beside a long path: ${JSON.stringify(longPath)}`);
+    assert.ok(longPath.name, `The file name stays visible inside the title: ${JSON.stringify(longPath)}`);
     assert.deepEqual(errors, [], 'No console errors');
     console.log(
       'Syntax scope browser checks passed: breadcrumbs, crumb reveals, Show whole function, default open, fallback, worker parsing, loading on view, prefetch, the read bound, the language setting and pinned hunk headers.'

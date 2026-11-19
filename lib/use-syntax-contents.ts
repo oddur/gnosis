@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import {
   createSyntaxContentsScheduler,
   syntaxContentsDiagnostics,
@@ -10,7 +10,8 @@ import {
 } from './syntax-contents';
 import { addDiagnosticsSource } from './diagnostics-sources';
 import { inspectionFileRequest, inspectionFiles, onInspectionForget, onInspectionUses } from './inspection-cache';
-import { readDefinitions, setSyntaxLanguages } from './syntax-scope-client';
+import { readDefinitions, setSyntaxLanguages, warmSyntax } from './syntax-scope-client';
+import type { SyntaxPriority } from './syntax-parse-queue';
 import {
   DEFAULT_CODE_INTELLIGENCE,
   codeIntelligenceSettings,
@@ -20,6 +21,7 @@ import {
 } from './code-intelligence';
 import { preferencesReady, startupPreferences } from './startup-preferences';
 import { syntaxLanguage } from './syntax-scope';
+import { traceStructure } from './structure-trace';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 
 /** The page's one queue of contents reads for hunk scopes (#393): view reads first, then prefetch. */
@@ -56,22 +58,31 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
 }
 
 /**
- * How long a file stays near the view, with the view still, before its read is queued, so files that only flash past
- * are not read. Scrolling restarts the wait: on a slow machine a fast scroll can leave each file near the view for
- * longer than this, so time near the view alone is not enough.
+ * How long the view must be still before a file near it queues its read, so files that only flash past are not read.
+ * Scrolling restarts the wait: on a slow machine a fast scroll can leave each file near the view for longer than this,
+ * so time near the view alone is not enough. A scroll fires every frame, so a scroll that is still going never lets
+ * this much time pass; a file that came near without a scroll (the PR opened, a file expanded) asks at once.
  */
-const SETTLE_MS = 250;
+const SETTLE_MS = 150;
 let lastScrollAt = 0;
-/** Runs `run` once the view has been still for SETTLE_MS; the returned function cancels it. */
-function whenSettled(run: () => void): () => void {
-  let timer: ReturnType<typeof setTimeout>;
+/**
+ * Runs `run` once the view has been still for SETTLE_MS, at once when it already is; the returned function cancels it.
+ * Reads wait for it, and so do the renders that show structure that lands while the reader scrolls: they would add
+ * work to the frames of the scroll.
+ */
+export function whenSettled(run: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
   const check = () => {
     const wait = lastScrollAt + SETTLE_MS - Date.now();
     if (wait > 0) timer = setTimeout(check, wait);
-    else run();
+    else if (!cancelled) run();
   };
-  timer = setTimeout(check, SETTLE_MS);
-  return () => clearTimeout(timer);
+  check();
+  return () => {
+    cancelled = true;
+    clearTimeout(timer);
+  };
 }
 /** Near the view: within a viewport above or below it. Rows outside the virtualizer's range are not mounted. */
 const NEAR = '100% 0px';
@@ -89,15 +100,17 @@ export interface SyntaxFile {
   file: PrChangeFile;
 }
 
-function parse(key: string, url: string, path: string, side: PrFileSide) {
+function parse(key: string, url: string, path: string, side: PrFileSide, priority: SyntaxPriority) {
   const language = syntaxLanguage(path);
-  if (language && side.kind === 'text') void readDefinitions({ key, url, language, text: side.content }).catch(() => {});
+  if (language && side.kind === 'text') void readDefinitions({ key, url, language, text: side.content, priority }).catch(() => {});
 }
 /**
  * The read for a file's scopes: the after side through the same cache and IPC as a gap reveal, or both sides for a
- * file with hunks that only delete. Each side is parsed in the worker as soon as it arrives, under the keys the view
- * asks for (lib/use-syntax-definitions.ts), so a file prefetched before the reader reaches it shows its scopes at once.
- * View reads go at foreground priority (`'view'`), prefetch in the background.
+ * file with hunks that only delete. Each side goes to the worker as it arrives, under the keys the view asks for
+ * (lib/use-syntax-definitions.ts), so a file prefetched before the reader reaches it shows its scopes at once. A view
+ * read's file is near the view, and parses ahead of prefetched files, which parse only when nothing nearer waits; a
+ * file on screen asks again, and goes first (lib/syntax-parse-queue.ts). View reads go at foreground priority
+ * (`'view'`), prefetch in the background.
  */
 export function syntaxContentsJob(
   { key, snapshot, file }: SyntaxFile,
@@ -111,11 +124,18 @@ export function syntaxContentsJob(
     ready: () => (plan.both ? !!inspectionFiles.peek(request) : !!inspectionFiles.peekAfter(request)),
     run: async (tier) => {
       const mode = syntaxReadMode(tier);
+      const priority: SyntaxPriority = tier === 'view' ? 'near' : 'prefetch';
+      traceStructure(key, { readStart: performance.now() });
       if (plan.both) {
         const contents = await inspectionFiles.read(request, mode);
-        parse(`${key}:after`, snapshot.url, file.path, contents.after);
-        parse(`${key}:before`, snapshot.url, file.previousPath ?? file.path, contents.before);
-      } else parse(`${key}:after`, snapshot.url, file.path, await inspectionFiles.readAfter(request, mode));
+        traceStructure(key, { readEnd: performance.now() });
+        parse(`${key}:after`, snapshot.url, file.path, contents.after, priority);
+        parse(`${key}:before`, snapshot.url, file.previousPath ?? file.path, contents.before, priority);
+      } else {
+        const after = await inspectionFiles.readAfter(request, mode);
+        traceStructure(key, { readEnd: performance.now() });
+        parse(`${key}:after`, snapshot.url, file.path, after, priority);
+      }
     },
   };
 }
@@ -185,6 +205,13 @@ export function useSyntaxPrefetch(
       const plan = syntaxContentsPlan(file.snapshot, file.file, allowed);
       return plan ? [{ file, plan }] : [];
     });
+    // The PR's grammars load in the worker while the first reads run, so no parse waits for one. Added files count,
+    // though they read nothing: their patch is parsed.
+    warmSyntax(
+      files.flatMap(({ file }) =>
+        [file.path, ...(file.previousPath ? [file.previousPath] : [])].flatMap((path) => (allowed(path) && syntaxLanguage(path)) || [])
+      )
+    );
     const jobs = planned.filter(({ file }) => !viewed(file)).map(({ file, plan }) => syntaxContentsJob(file, plan));
     // The first files show first: they are read at once, as view reads, before the view has measured anything. The
     // file the view opens on asks again when it is near, which makes it the newest request.
@@ -209,6 +236,57 @@ export function warmPredictedSyntax(files: readonly SyntaxFile[]) {
   syntaxContents.prefetch('predicted', jobs, 1);
 }
 
+/**
+ * Where a file's diff is, for the order of parses (lib/syntax-parse-queue.ts): on screen (`view`), within a viewport
+ * of it (`near`), or further (`prefetch`). Until the first observation it is `near`: it was just mounted, so close.
+ * The place is kept in `tier` and `onChange` hears of each change, so a file crossing the view while the reader
+ * scrolls renders nothing: only a parse that still waits is told to move. Watched only while `enabled`, which a file
+ * whose structure is parsed is not; it is `near` again while not watched.
+ */
+export function useViewTier(
+  element: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  tier: { current: SyntaxPriority },
+  onChange: (tier: SyntaxPriority) => void
+) {
+  const changed = useRef(onChange);
+  changed.current = onChange;
+  useEffect(() => {
+    const target = element.current;
+    if (!enabled || !target || typeof IntersectionObserver === 'undefined') return;
+    const root = target.closest('.commit-diff-stream, [data-diff-scroller]');
+    let onScreen = false,
+      near = true;
+    const update = () => {
+      const next: SyntaxPriority = onScreen ? 'view' : near ? 'near' : 'prefetch';
+      if (next === tier.current) return;
+      tier.current = next;
+      changed.current(next);
+    };
+    const screen = new IntersectionObserver(
+      (entries) => {
+        onScreen = entries[entries.length - 1].isIntersecting;
+        update();
+      },
+      { root }
+    );
+    const around = new IntersectionObserver(
+      (entries) => {
+        near = entries[entries.length - 1].isIntersecting;
+        update();
+      },
+      { root, rootMargin: NEAR }
+    );
+    screen.observe(target);
+    around.observe(target);
+    return () => {
+      screen.disconnect();
+      around.disconnect();
+      tier.current = 'near';
+    };
+  }, [enabled]);
+}
+
 /** Where a file's scope contents are: being read, read, or not readable; `retry` asks again after a failure. */
 export interface SyntaxContentsStatus {
   state: 'idle' | 'loading' | 'failed';
@@ -228,6 +306,20 @@ export function useSyntaxContents(
   const [result, setResult] = useState<{ key: string; state: 'done' | 'failed' | 'refused' }>();
   const [attempt, setAttempt] = useState(0);
   const active = !!want;
+  // Contents another read brought in (the PR's opening reads, prefetch, another view) show as soon as they land.
+  useEffect(() => {
+    if (!want) return;
+    const { key } = want;
+    let show = () => {};
+    const stop = syntaxContents.watch(key, () => {
+      show();
+      show = whenSettled(() => setResult({ key, state: 'done' }));
+    });
+    return () => {
+      stop();
+      show();
+    };
+  }, [want?.key]);
   useEffect(() => {
     const target = element.current;
     if (!active || !target || typeof IntersectionObserver === 'undefined') return;
@@ -247,7 +339,9 @@ export function useSyntaxContents(
     if (!plan) return;
     const { key } = want;
     let cancel = () => {};
+    traceStructure(key, { near: performance.now() });
     const stopWaiting = whenSettled(() => {
+      traceStructure(key, { viewRequest: performance.now() });
       cancel = syntaxContents.request(
         syntaxContentsJob(want, plan),
         () => setResult({ key, state: 'done' }),

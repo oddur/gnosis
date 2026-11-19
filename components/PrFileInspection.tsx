@@ -219,6 +219,8 @@ export function PrFileInspection({
     readStructure: !!preview && !unchangedMove,
     codeSettings,
     sectionRef,
+    // An added or deleted file's structure comes from its patch; an LFS pointer is not the file.
+    status: contents?.lfs ? undefined : entry.file.status,
   });
   const { parts, gaps, shown, lineCount } = model;
   const revealLines = model.revealLines;
