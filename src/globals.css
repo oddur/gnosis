@@ -2654,6 +2654,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 /* The path keeps room to name the file: when the actions leave it less than this (a narrow Commits pane with the
    Markdown switch), they wrap to a second row instead of squeezing the path to nothing. */
 .changes-file-title { display:flex; align-items:baseline; gap:12px; flex:1 1 auto; min-width:min(100%, 260px); }
+/* The file's type icon leads the path, centred on its line; the path keeps its own gap to the counts. */
+.changes-file-title > .file-type-icon { align-self:center; margin-right:-4px; }
 .changes-file-header h2 { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); font-weight:400; }
 /* The path's parts are the heading's own flex items, so they give way in order: the old folders, the new folders,
    the old name, and the new name last. */
