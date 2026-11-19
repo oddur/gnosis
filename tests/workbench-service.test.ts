@@ -320,7 +320,7 @@ test('clearing the briefing override routes generation to the selected Codex mod
   const s = setup(async () => '{"summary":"Ready"}', false);
   const calls: { provider: string; model: string; effort: string }[] = [];
   s.prefs.provider = 'codex';
-  s.prefs.model = 'gpt-6-astra';
+  s.prefs.model = 'gpt-6.2-astra';
   s.prefs.proactiveReviewOverrides = true;
   s.prefs.proactiveProvider = 'claude';
   s.prefs.proactiveModel = 'claude-sonnet-5-5';
@@ -340,7 +340,7 @@ test('clearing the briefing override routes generation to the selected Codex mod
     await settle(service, 'ready');
     assert.deepEqual(calls, [
       { provider: 'claude', model: 'claude-sonnet-5-5', effort: 'low' },
-      { provider: 'codex', model: 'gpt-6-astra', effort: 'low' },
+      { provider: 'codex', model: 'gpt-6.2-astra', effort: 'low' },
     ]);
   } finally {
     s.cleanup();

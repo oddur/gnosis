@@ -150,7 +150,7 @@ void test('both real CLI launch paths inherit, isolate and remove provider overr
     for (const launch of [provider.generate.bind(provider), provider.quick.bind(provider)]) {
       const result = JSON.parse(
         await launch({
-          model: provider.name === 'claude' ? 'claude-opus-5-5' : 'gpt-6.1-sol',
+          model: provider.name === 'claude' ? 'claude-opus-5-5' : 'gpt-6.2-sol',
           thinking: false,
           systemPrompt: 'Test',
           content: '{}',

@@ -60,9 +60,9 @@ void app.whenReady().then(async () => {
     );
 
     await js(
-      `window.selectOption('[aria-label="Review model"]', 'gpt-6-astra')`
+      `window.selectOption('[aria-label="Review model"]', 'gpt-6.2-astra')`
     );
-    assert.equal(await js('window.electronAPI.loadPreferences().then(p => p.model)'), 'gpt-6-astra');
+    assert.equal(await js('window.electronAPI.loadPreferences().then(p => p.model)'), 'gpt-6.2-astra');
     assert.equal(
       await js('window.electronAPI.loadPreferences().then(p => p.proactiveReviewOverrides)'),
       true,

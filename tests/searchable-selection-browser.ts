@@ -154,7 +154,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('[data-slot=combobox-content]')");
     await click('[data-slot=dialog-close]');
     // Model and effort are saved together, including when changing harnesses.
-    await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6.1-sol')");
+    await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6.2-sol')");
     await js("window.selectEffort('Review model', 'ultra')");
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.effort)"), 'ultra');
     await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6-luna')");

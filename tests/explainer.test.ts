@@ -70,7 +70,7 @@ void test('generation repairs invalid output, saves once, and reuses the saved a
   const service = createExplainerService({
     activity,
     reviewsDir: () => dir,
-    preferences: () => ({ provider: 'codex', model: 'gpt-6.1-sol' }) as Preferences,
+    preferences: () => ({ provider: 'codex', model: 'gpt-6.2-sol' }) as Preferences,
     provider: () => provider,
     validate: () => {
       validations++;

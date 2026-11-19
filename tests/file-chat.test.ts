@@ -62,7 +62,7 @@ void test('file chat streams only its request, retains partial answers, retries 
     baseSha: 'base',
     headSha: 'head',
     provider: 'codex' as const,
-    model: 'gpt-6.1-sol' as const,
+    model: 'gpt-6.2-sol' as const,
     question: 'Why?',
     selection: 'return value;',
   };

@@ -222,7 +222,7 @@ test('splitting a named stack does not copy its identity or name into two stacks
 });
 
 void test('briefing effort is independent of explanation effort and normalized for its model', () => {
-  const p = { provider: 'codex', model: 'gpt-6.1-sol', effort: 'ultra' } as const;
+  const p = { provider: 'codex', model: 'gpt-6.2-sol', effort: 'ultra' } as const;
   assert.equal(briefingModel(p).effort, 'low');
   assert.equal(briefingModel({ ...p, proactiveThinking: true }).effort, 'low');
   assert.equal(briefingModel({ ...p, proactiveEffort: 'medium' }).effort, 'medium');
