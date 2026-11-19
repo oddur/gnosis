@@ -270,7 +270,9 @@ export const NAV_SOURCES: Record<string, [string[], string[]]> = {
 /**
  * Added and deleted files (#394): their structure comes from the patch, which holds the whole side, with no read.
  * `building_object_position_response.rs` adds a struct and its impl, `panel.ts` a class with three methods, and
- * `job_runner.ts` deletes two functions. Each is long enough to scroll through with its hunk header pinned.
+ * `job_runner.ts` deletes two functions. Each is long enough to scroll through with its hunk header pinned. They sit
+ * in `src/nav/whole/`, away from `far_mod.rs`: the scroll performance check mounts the rows below it, and must see
+ * the same rows as before they were added.
  */
 const responseAdded = [
   'use serde::Serialize;',
@@ -307,9 +309,9 @@ const jobDeleted = [
   '}',
 ];
 export const NAV_WHOLE: Record<string, { status: 'added' | 'deleted'; lines: string[] }> = {
-  'src/nav/building_object_position_response.rs': { status: 'added', lines: responseAdded },
-  'src/nav/panel.ts': { status: 'added', lines: panelAdded },
-  'src/nav/job_runner.ts': { status: 'deleted', lines: jobDeleted },
+  'src/nav/whole/building_object_position_response.rs': { status: 'added', lines: responseAdded },
+  'src/nav/whole/panel.ts': { status: 'added', lines: panelAdded },
+  'src/nav/whole/job_runner.ts': { status: 'deleted', lines: jobDeleted },
 };
 
 const text = (lines: string[]) => `${lines.join('\n')}\n`;
@@ -350,4 +352,4 @@ export function breadcrumbNavContents(path: string): PrFileContents | undefined 
 
 /** The files the first Explanation topic shows whole with `?breadcrumb-nav`: the same checks run in a slide;
  * `far_mod.rs`, far down the topic, is arrived at straight in its middle; and `panel.ts` is an added file. */
-export const NAV_TOPIC_FILES = ['src/nav/deep.ts', 'src/nav/scoped.ts', 'src/nav/outline.ts', 'src/nav/far_mod.rs', 'src/nav/panel.ts'];
+export const NAV_TOPIC_FILES = ['src/nav/deep.ts', 'src/nav/scoped.ts', 'src/nav/outline.ts', 'src/nav/far_mod.rs', 'src/nav/whole/panel.ts'];
