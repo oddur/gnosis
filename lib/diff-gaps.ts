@@ -37,6 +37,11 @@ export interface DiffGap {
   newEnd?: number;
   /** Old line = new line + oldOffset, anywhere in the gap. */
   oldOffset: number;
+  /**
+   * Changes the view leaves out lie in this gap, so its sides differ in length and its lines cannot be revealed from
+   * the after side: an Explanation topic shows some of a file's hunks (`diffGaps` with `partial`).
+   */
+  opaque?: boolean;
 }
 /** Lines revealed in one gap: `down` continues the hunk above, `up` the hunk below. */
 export interface GapReveal {
@@ -135,9 +140,10 @@ export function afterLines(text: string): string[] {
 
 /**
  * The gaps before, between and after the hunks. Each gap must hide as many old lines as new ones; a patch that says
- * otherwise has no gaps to reveal, and this returns undefined.
+ * otherwise has no gaps to reveal, and this returns undefined. With `partial`, the hunks are some of a file's (an
+ * Explanation topic's), and a gap whose sides differ holds changes left out: it is `opaque`, and never reveals.
  */
-export function diffGaps(hunks: GapHunk[], afterLineCount?: number): DiffGap[] | undefined {
+export function diffGaps(hunks: GapHunk[], afterLineCount?: number, { partial = false } = {}): DiffGap[] | undefined {
   if (!hunks.length) return undefined;
   const gaps: DiffGap[] = [];
   let previousOld = 0,
@@ -146,14 +152,21 @@ export function diffGaps(hunks: GapHunk[], afterLineCount?: number): DiffGap[] |
     const hunk = hunks[index];
     const oldSize = hunk.oldStart - 1 - previousOld,
       newSize = hunk.newStart - 1 - previousNew;
-    if (oldSize !== newSize || newSize < 0) return undefined;
-    gaps.push({ index, newStart: previousNew + 1, newEnd: hunk.newStart - 1, oldOffset: previousOld - previousNew });
+    if (newSize < 0 || oldSize < 0 || (oldSize !== newSize && !partial)) return undefined;
+    gaps.push({
+      index,
+      newStart: previousNew + 1,
+      newEnd: hunk.newStart - 1,
+      oldOffset: previousOld - previousNew,
+      ...(oldSize !== newSize ? { opaque: true } : {}),
+    });
     previousOld = oldEnd(hunk);
     previousNew = newEnd(hunk);
   }
   const last = hunks[hunks.length - 1];
   const end = afterLineCount ?? (last.noEofNew ? previousNew : undefined);
   if (end !== undefined && end < previousNew) return undefined;
+  // Below the last hunk shown, a topic may leave out more changes: its lines are known only from the after text.
   gaps.push({ index: hunks.length, newStart: previousNew + 1, newEnd: end, oldOffset: previousOld - previousNew });
   return gaps;
 }
@@ -214,7 +227,7 @@ export function revealedParts(
   hunks: GapHunk[],
   gaps: DiffGap[],
   reveals: GapReveals,
-  lines?: string[],
+  lines?: readonly (string | undefined)[],
   joinUpTo = SMALL_GAP
 ): GapPart[] {
   const parts: GapPart[] = [];
@@ -225,20 +238,17 @@ export function revealedParts(
     const above = gap.index > 0,
       below = gap.index < hunks.length;
     const size = gapSize(gap);
+    // A gap reveals only lines the text has: all of them with the after text, or some with a topic's saved lines.
+    const known = !!lines && size !== undefined && !gap.opaque && knownLines(lines, gap.newStart, size);
     const small = above && below && size !== undefined && size <= joinUpTo;
-    const reveal =
-      lines && size !== undefined
-        ? small
-          ? { down: size, up: 0 }
-          : (reveals[gap.index] ?? { down: 0, up: 0 })
-        : { down: 0, up: 0 };
+    const reveal = known ? (small ? { down: size, up: 0 } : (reveals[gap.index] ?? { down: 0, up: 0 })) : { down: 0, up: 0 };
     const down = above && size !== undefined ? Math.min(reveal.down, size) : 0;
     const up = below && size !== undefined ? Math.min(reveal.up, size - down) : 0;
     if (current && down) current.hunk = { ...current.hunk, rows: [...current.hunk.rows, ...context(gap.newStart, down)] };
     const hidden = size === undefined ? undefined : size - down - up;
     const next = below ? hunks[gap.index] : undefined;
     const upRows = next && up && size !== undefined ? context(gap.newStart + size - up, up) : [];
-    if (hidden === 0) {
+    if (hidden === 0 && !gap.opaque) {
       if (next) {
         const rows = [...upRows, ...next.rows];
         if (current) current.hunk = { ...current.hunk, rows: [...current.hunk.rows, ...rows], noEofOld: next.noEofOld, noEofNew: next.noEofNew };
@@ -264,9 +274,16 @@ export function revealedParts(
   return parts;
 }
 
+/** Whether `lines` has every line from `start`, `count` of them: a topic's saved lines leave holes. */
+export function knownLines(lines: readonly (string | undefined)[], start: number, count: number): boolean {
+  for (let line = start; line < start + count; line++) if (lines[line - 1] === undefined) return false;
+  return true;
+}
+
 /** The gap that hides a line, if any. Before-side lines map through the gap's offset. */
 export function gapContaining(gaps: DiffGap[], side: 'before' | 'after', line: number): DiffGap | undefined {
   return gaps.find((gap) => {
+    if (gap.opaque) return false;
     const n = side === 'after' ? line : line - gap.oldOffset;
     return n >= gap.newStart && (gap.newEnd === undefined || n <= gap.newEnd);
   });
@@ -384,7 +401,7 @@ export function revealSpan(reveals: GapReveals, gaps: DiffGap[], start: number, 
   let next = reveals;
   for (const gap of gaps) {
     const gapEnd = gap.newEnd;
-    if (gapEnd === undefined || end < gap.newStart || start > gapEnd) continue;
+    if (gap.opaque || gapEnd === undefined || end < gap.newStart || start > gapEnd) continue;
     const current = next[gap.index] ?? { down: 0, up: 0 };
     const down = start <= gap.newStart ? Math.max(current.down, Math.min(end, gapEnd) - gap.newStart + 1) : current.down;
     const up = end >= gapEnd ? Math.max(current.up, gapEnd - Math.max(start, gap.newStart) + 1) : current.up;
@@ -406,7 +423,7 @@ export function pinLines(
   start: number,
   end: number
 ): { pin?: [number, number]; reveals: GapReveals } {
-  const gap = gaps.find((g) => g.newEnd !== undefined && start >= g.newStart && start <= g.newEnd);
+  const gap = gaps.find((g) => !g.opaque && g.newEnd !== undefined && start >= g.newStart && start <= g.newEnd);
   if (!gap || gap.newEnd === undefined) return { reveals };
   const current = reveals[gap.index] ?? { down: 0, up: 0 };
   const above = gap.index > 0,

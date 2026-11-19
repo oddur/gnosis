@@ -488,6 +488,8 @@ function TrailingBar({
   );
 }
 
+const OPAQUE = 'Other changes, not in this topic';
+
 function GapBar({
   part,
   status,
@@ -522,10 +524,14 @@ function GapBar({
   const known = hidden !== undefined;
   const busy = status.kind === 'loading';
   const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
-  const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
+  // A topic that leaves out changes between its hunks says so: those lines are not the after side's alone.
+  const label = part.gap.opaque ? OPAQUE : known ? `${lines(hidden)} hidden` : 'More lines may follow';
   const { gutter, body } = onReveal
     ? gapControls(part, status, reveal, onRetry)
-    : { gutter: undefined, body: <span className="diff-gap-count">{known ? `${lines(hidden)} hidden` : null}</span> };
+    : {
+        gutter: undefined,
+        body: <span className="diff-gap-count">{part.gap.opaque ? OPAQUE : known ? `${lines(hidden)} hidden` : null}</span>,
+      };
   const located = !!scope || (!!fileOnly && !!fileName);
   return (
     <div
@@ -564,6 +570,12 @@ function GapBar({
     </div>
   );
 }
+
+/**
+ * The element a file's diff scrolls in: Changes' stream, or an Explanation topic's code pane or document, which mark
+ * themselves `data-diff-scroller`. File and hunk headers stick to its top.
+ */
+export const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
 
 /** A probe that finds no line (a slice still mounting, a comment) looks again on this many following frames. */
 const MISSED_PROBES = 30;
@@ -715,6 +727,7 @@ export function ChangesDiff<A>({
   onShowDefinition,
   stickyUnder,
   scopeAt,
+  canReveal,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -743,6 +756,8 @@ export function ChangesDiff<A>({
    * undefined where the file's structure says nothing.
    */
   scopeAt?: (point: LinePoint) => readonly SyntaxDefinition[] | undefined;
+  /** Whether a gap can show its lines; by default every gap can when `onReveal` is set. */
+  canReveal?: (gap: GapBarPart['gap']) => boolean;
 }) {
   const stableOptions = useStableOptions({
     ...options,
@@ -878,7 +893,7 @@ export function ChangesDiff<A>({
   useEffect(() => {
     const element = root.current;
     const header = stickyUnder?.current;
-    const scroller = element?.closest<HTMLElement>('.commit-diff-stream');
+    const scroller = element?.closest<HTMLElement>(DIFF_SCROLLER);
     if (!element || !header || !scroller) return;
     let height: number | undefined;
     let written = headerHeight;
@@ -1000,7 +1015,7 @@ export function ChangesDiff<A>({
           key={`gap-${block.gap.index}`}
           part={block}
           status={status}
-          onReveal={onReveal}
+          onReveal={!canReveal || canReveal(block.gap) ? onReveal : undefined}
           onRetry={onRetry}
           scope={scopes?.get(key)}
           fileOnly={!!structure && changedHunks.has(key) && !scopes?.get(key)}
@@ -1011,7 +1026,13 @@ export function ChangesDiff<A>({
           onShowDefinition={onShowDefinition}
         />
       ) : (
-        <TrailingBar key={`gap-${block.gap.index}`} part={block} status={status} onReveal={onReveal} onRetry={onRetry} />
+        <TrailingBar
+          key={`gap-${block.gap.index}`}
+          part={block}
+          status={status}
+          onReveal={!canReveal || canReveal(block.gap) ? onReveal : undefined}
+          onRetry={onRetry}
+        />
       );
       // A bar below the last hunk heads nothing.
       if (block.below) open(key, bar);

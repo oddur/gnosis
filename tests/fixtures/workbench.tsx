@@ -8,7 +8,7 @@ import { markdownBefore, markdownAfter, markdownFiles } from './markdown-review'
 import { prBadgePreview } from '../../lib/pr-badge-preview';
 import { fileFilterMocks, filterFixtureFiles } from './file-filters';
 import { diffGapContents, diffGapFiles } from './diff-gaps';
-import { syntaxLazyFiles, syntaxScopeContents, syntaxScopeFiles, syntaxSpanFiles } from './syntax-scope';
+import { scopeAfter, syntaxLazyFiles, syntaxScopeContents, syntaxScopeFiles, syntaxSpanFiles } from './syntax-scope';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
@@ -181,6 +181,41 @@ if (new URLSearchParams(location.search).has('markdown-explanation')) {
       { filePath: path, language: 'markdown', renderedHtml: '', hunkHeader: '@@ -80,1 +82,1 @@', content: '-Old warning.\n+Stop after the final attempt.' },
     ], reviewChecks: [], explainer: undefined, explainerIdea: undefined, mermaidDiagram: undefined, d2Diagram: undefined,
   }];
+}
+// Explanation diff parity (#157 parity, tests/explanation-parity-browser.ts): the first topic shows two of the four
+// hunks of the syntax-scope fixture's src/scope.ts, which Changes shows whole with `?syntax-scope`.
+const parityScenario = new URLSearchParams(location.search).has('explanation-parity');
+if (parityScenario) {
+  const path = prefix + 'src/scope.ts';
+  const patch = syntaxScopeFiles.find((file) => file.path === 'src/scope.ts')?.patch ?? '';
+  const hunks = patch.split(/\n(?=@@)/).map((hunk) => {
+    const [header, ...body] = hunk.split('\n');
+    return { filePath: path, language: 'typescript', renderedHtml: '', hunkHeader: header, content: body.join('\n') };
+  });
+  const flush = scopeAfter.indexOf('    total += 30 * 2;') + 1;
+  review.changedFiles = [{ filename: path, status: 'modified', additions: 4, deletions: 4 }];
+  review.slides[0] = {
+    ...review.slides[0],
+    title: 'Trim names and double the flush step',
+    narrative: 'Paths now trim each name before joining it. The bridge doubles one step of its flush total.',
+    affectedFiles: [path],
+    fileSummaries: [{ filePath: path, summary: 'Trims names before joining paths and doubles one flush step.' }],
+    inlineExplanations: [
+      {
+        filePath: path,
+        line: flush,
+        side: 'RIGHT',
+        code: '    total += 30 * 2;',
+        text: 'Doubling only the 30th step changes the total by 30; every other step is unchanged.',
+      },
+    ],
+    diffHunks: [hunks[0], hunks[1]],
+    reviewChecks: [],
+    explainer: undefined,
+    explainerIdea: undefined,
+    mermaidDiagram: undefined,
+    d2Diagram: undefined,
+  };
 }
 const history: ReviewHistoryEntry[] = [
   {
@@ -1111,7 +1146,9 @@ for (const topic of review.slides)
     hunk.renderedHtml = await renderDiffHunk(
       hunk.content,
       hunk.language,
-      polishScenario ? 'aurora-x' : 'github-dark',
+      // The app renders saved hunks in the reader's code theme (main.ts reRenderAllHunks); the parity check compares
+      // the topic's palette with Changes', so it does too.
+      polishScenario ? 'aurora-x' : parityScenario ? prefs.codeTheme : 'github-dark',
       hunk.hunkHeader
     );
 const { initializeDiffHighlighter } = await import('../../lib/diff-highlighter');

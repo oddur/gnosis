@@ -1767,14 +1767,20 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 
 /* Persistent context and task-based controls in the review workbench. */
 /* Each file group is its own stacking context under content-visibility, so the header only has to clear Pierre's own layers (z-index up to 4). */
-.review-file-context { position:sticky; top:0; z-index:5; padding:9px 12px; background:var(--card); border:1px solid var(--border); border-radius:5px 5px 0 0; }
-.review-file-heading { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
-.review-file-identity { display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 180px; }
-.review-file-details { display:flex; align-items:center; gap:10px; color:var(--muted-foreground); font-size:var(--type-caption); white-space:nowrap; }
-.review-file-status { padding:1px 5px; border-radius:3px; background:var(--muted); color:var(--muted-foreground); }
-.review-file-status[data-status=added] { color:var(--color-success); background:color-mix(in srgb,var(--color-success) 10%,var(--card)); }
-.review-file-status[data-status=deleted] { color:var(--color-danger); background:color-mix(in srgb,var(--color-danger) 10%,var(--card)); }
-.review-file-comments { padding:1px 5px; border-radius:3px; background:var(--accent); color:var(--accent-foreground); font-variant-numeric:tabular-nums; }
+/* Explanation topics show each file as Changes does (ReviewFileHeader, ReviewDiff): Changes' code-tier file header,
+   pinned to the top of the topic's scroller ([data-diff-scroller]), with Changes' own diff under it and its hunk headers
+   pinned under the file header. The topic's summary of the file reads between them in the reading tier and scrolls
+   away. The frame clips without scrolling, so the headers still pin. */
+.review-file-group { border:1px solid var(--border); border-radius:6px; overflow:clip; overflow-clip-margin:8px; background:var(--card); }
+.review-file-group > .changes-file-header { position:sticky; top:0; z-index:5; }
+.review-file-group > .changes-file-context { padding:6px 12px; border-bottom:1px solid var(--border); }
+.review-file-group .source-attribution { padding:0; border:0; background:transparent; color:var(--foreground); font-weight:600; white-space:nowrap; }
+.review-file-notes { padding:8px 14px 10px; border-bottom:1px solid var(--border); }
+.review-file-group .github-discussion-toolbar { border-inline:0; border-bottom:1px solid var(--border); }
+.changes-file-header .review-file-expand { margin-left:-4px; color:var(--file-muted); }
+.changes-file-header .review-file-expand:hover { color:var(--file-fg); background:var(--file-hover); }
+.changes-file-header .review-file-expand:focus-visible { outline:2px solid var(--code-ring); outline-offset:1px; }
+.changes-file-header .review-file-comments { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 6px; border:1px solid var(--file-control-line); border-radius:4px; color:var(--file-fg); font-variant-numeric:tabular-nums; }
 .review-context-action { color:var(--ring); }
 .review-context-action:hover { color:var(--accent-foreground); }
 .diff-context-button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-width:24px; min-height:24px; padding:2px 5px; border-radius:4px; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
@@ -1908,13 +1914,9 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    (#353). Each holds its estimated height until it is first laid out; `auto` then keeps its real one. */
 .changes-slice { content-visibility:auto; overflow-clip-margin:8px; }
 .changes-slice > diffs-container { display:block; }
-.review-file-counts { display:inline-flex; gap:8px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
-.review-file-summary { margin-top:6px; font-size:var(--type-body); line-height:1.55; overflow-wrap:anywhere; }
-.review-file-history { display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:5px; font-size:var(--type-caption); color:var(--muted-foreground); }
-.review-file-context .source-attribution { padding:0; border:0; background:transparent; color:var(--foreground); font-weight:600; white-space:nowrap; }
-.review-file-context + div { border-top-left-radius:0; border-top-right-radius:0; }
-.review-file-group .line { scroll-margin-top:48px; }
-.review-file-context[data-collapsed=true] { border-radius:5px; }
+.review-file-summary + .review-file-history { margin-top:5px; }
+.review-file-summary { max-width:72ch; font-size:var(--type-body); line-height:1.55; overflow-wrap:anywhere; }
+.review-file-history { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:var(--type-caption); color:var(--muted-foreground); }
 /* Repeated control glyphs are CSS masks: one element each instead of an SVG subtree. Same lucide paths. */
 .icon-mask { display:inline-block; flex-shrink:0; width:var(--icon-size,14px); height:var(--icon-size,14px); background:currentColor; -webkit-mask:var(--icon) center/contain no-repeat; mask:var(--icon) center/contain no-repeat; }
 .icon-chevrons-up-down { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E"); }
@@ -1926,9 +1928,6 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .icon-chevron-down { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
 .icon-code-xml { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m18 16 4-4-4-4'/%3E%3Cpath d='m6 8-4 4 4 4'/%3E%3Cpath d='m14.5 4-5 16'/%3E%3C/svg%3E"); }
 .review-file-expand { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:24px; height:24px; border-radius:4px; color:var(--muted-foreground); }
-.review-file-expand:hover,.review-file-viewed:hover { background:var(--accent); color:var(--accent-foreground); }
-.review-file-viewed { display:inline-flex; align-items:center; gap:6px; padding:3px 5px; border-radius:4px; cursor:pointer; color:var(--foreground); }
-.review-file-viewed input { accent-color:var(--primary); width:14px; height:14px; cursor:pointer; }
 .queue-row-main:focus-visible { outline:2px solid var(--ring); outline-offset:4px; border-radius:2px; }
 .saved-briefing { margin-top:20px; padding-top:4px; border-top:1px solid var(--border); }
 .briefing-status button,.member-status-error button { color:var(--ring); margin-top:8px; font-size:var(--type-control); }
@@ -2342,7 +2341,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .file-path-link { min-height:24px; border-radius:3px; }
 .file-path-link:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 @media (pointer:coarse) {
-  .file-path-link,.review-file-expand,.review-file-viewed { min-height:44px; }
+  .file-path-link,.review-file-expand { min-height:44px; }
   .review-file-expand { min-width:44px; }
 }
 @media (max-width:620px) {
@@ -3378,7 +3377,6 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 
 /* Topic previews share the file header; their toolbar stays within the code pane. */
 .review-file-discussion .markdown-review-toolbar { position:static; }
-.review-file-details:has(.markdown-view-switch) { flex-wrap:wrap; }
 .review-file-discussion .markdown-review-document { padding:16px 24px; }
 .review-file-discussion .markdown-review-notice { margin:0; }
 
@@ -4983,8 +4981,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
    real height. The clip margin keeps focus rings and edge controls visible under paint containment. */
 .explanation-document > :is(.explanation-introduction,.explanation-section,.explanation-ending) { content-visibility:auto;contain-intrinsic-block-size:auto 900px; }
 .explanation-document .review-file-group { content-visibility:auto;contain-intrinsic-block-size:auto 480px;overflow-clip-margin:8px; }
-.explanation-document .review-diff > .review-context-hunk { content-visibility:auto;contain-intrinsic-block-size:auto 400px; }
-.explanation-document :is(.review-diff,.review-context-hunk) > diffs-container { display:block;content-visibility:auto;contain-intrinsic-block-size:auto 200px; }
 .explanation-section:not([data-has-code]) { grid-template-columns:minmax(0,1fr); }
 .explanation-section-text { max-width:72ch; }
 .explanation-document .review-narrative { padding:0;gap:16px; }

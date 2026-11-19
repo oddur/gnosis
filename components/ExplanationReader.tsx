@@ -200,6 +200,7 @@ export function ExplanationReader({
   const document = (
     <div
       className="explanation-document"
+      data-diff-scroller=""
       ref={documentRef}
       onScroll={trackReading}
       onWheelCapture={() => {

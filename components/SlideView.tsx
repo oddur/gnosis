@@ -8,13 +8,13 @@ import { imageMimeType } from '../lib/review-images';
 import { sourceForPath } from '../lib/workbench';
 import { buildFileUrlBase } from '../lib/github-url';
 import type { ReviewGuide } from '../lib/types';
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { ArrowRight, Check, Copy, CopyX } from 'lucide-react';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { Button } from '@/components/ui/button';
-import { findReviewLine } from './ReviewDiff';
+import { findReviewLine, reviewDiffTheme } from './ReviewDiff';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
 import { ReviewFileDiscussion } from './ReviewFileDiscussion';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
@@ -482,6 +482,8 @@ export function SlideView({
   const allFilesViewed = groupedHunks.length > 0 && groupedHunks.every(({ filePath }) => viewedFiles?.has(filePath));
   const isLastTopic = slideNumber === totalSlides;
   const rightPanelRef = useRef<HTMLDivElement>(null);
+  // Each file's header, for its hunk headers to pin under (ChangesDiff).
+  const headerRefs = useRef(new Map<string, RefObject<HTMLElement | null>>());
   const fileContentId = useId();
   const [fileExpansion, setFileExpansion] = useSessionDraft<Record<string, boolean>>(`file-expansion:${slide.id}`, {});
   const [explanationNotice, setExplanationNotice] = useState('');
@@ -847,6 +849,9 @@ export function SlideView({
         const expanded = fileExpansion[filePath] ?? !viewed;
         const contentId = `${fileContentId}-${index}`;
         const lfsResource = hunks.some((hunk) => hunk.content.includes(LFS_VERSION));
+        const codeTheme = reviewDiffTheme(hunks);
+        let headerRef = headerRefs.current.get(filePath);
+        if (!headerRef) headerRefs.current.set(filePath, (headerRef = { current: null }));
         const fileDiff = (
           <ReviewFileDiscussion
             inlineExplanations={
@@ -866,6 +871,7 @@ export function SlideView({
             pendingComments={pendingComments}
             slideIndex={slideNumber}
             commentCallbacks={commentCallbacks}
+            stickyUnder={headerRef}
           />
         );
 
@@ -874,11 +880,14 @@ export function SlideView({
             key={filePath}
             className="review-file-group flex flex-col gap-0"
             data-file-path={filePath}
+            data-code-theme={codeTheme}
             style={{
               containIntrinsicBlockSize: `auto ${expanded ? (fileEstimates.get(filePath) ?? 48) : 48}px`,
             }}
           >
             <ReviewFileHeader
+              headerRef={headerRef}
+              codeTheme={codeTheme}
               markdownPreview={isMarkdownFile(filePath) && !lfsResource}
               expanded={expanded}
               contentId={contentId}
@@ -895,6 +904,7 @@ export function SlideView({
                   : undefined
               }
               filePath={origin?.path ?? filePath}
+              previousPath={fm?.previousFilename && review ? sourceForPath(review, fm.previousFilename).path : fm?.previousFilename}
               hunks={hunks}
               gitFileUrlBase={sourceUrl}
               metadata={fm}
@@ -1004,7 +1014,7 @@ export function SlideView({
           </div>
         </div>
         <div hidden={narrowPane !== 'code'} className="flex-1 min-h-0 overflow-hidden">
-          <div {...codeScroll} hidden={!!rightSlot} className="h-full overflow-y-auto">
+          <div {...codeScroll} hidden={!!rightSlot} className="h-full overflow-y-auto" data-diff-scroller="">
             {diffContent}
           </div>
           {rightSlot && <div className="review-tool-slot">{rightSlot}</div>}
@@ -1023,7 +1033,7 @@ export function SlideView({
         </Panel>
         <PanelResizeHandle className="w-px bg-border hover:bg-[var(--ring)]/40 transition-colors cursor-col-resize" />
         <Panel defaultSize={60} minSize={30} className="overflow-hidden min-h-0">
-          <div {...codeScroll} hidden={!!rightSlot} className="h-full overflow-y-auto">
+          <div {...codeScroll} hidden={!!rightSlot} className="h-full overflow-y-auto" data-diff-scroller="">
             {diffContent}
           </div>
           {rightSlot && <div className="review-tool-slot">{rightSlot}</div>}
@@ -1036,7 +1046,7 @@ export function SlideView({
   // single scrollable column. Ideal for complex sections where both
   // the narrative and the diff need horizontal space.
   return (
-    <div {...focusScroll} className="flex-1 overflow-y-auto">
+    <div {...focusScroll} className="flex-1 overflow-y-auto" data-diff-scroller="">
       {narrativeContent}
       <div className="border-t border-border">{diffContent}</div>
     </div>
