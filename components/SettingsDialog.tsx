@@ -13,6 +13,8 @@ import { HarnessEnvironmentSettings } from './HarnessEnvironmentSettings';
 import { GITHUB_CACHE_SIZES_MB, DEFAULT_GITHUB_CACHE_MB, normalizeGitHubCacheMB } from '../lib/github-cache-settings';
 import { SearchableSelect } from './SearchableSelect';
 import { DEFAULT_MENUBAR_SETTINGS, menubarSettings, type MenubarSettings } from '../lib/menubar-settings';
+import { DEFAULT_CODE_INTELLIGENCE, codeIntelligenceSettings, type CodeIntelligenceSettings as CodeIntelligenceSettingsValue } from '../lib/code-intelligence';
+import { CodeIntelligenceSettings } from './CodeIntelligenceSettings';
 import { Button } from './ui/button';
 import { Toggle, SettingRow } from './SettingsControls';
 import { DiagnosticsSettings } from './DiagnosticsSettings';
@@ -211,6 +213,7 @@ export function SettingsDialog({
   const [notificationPrefs, setNotificationPrefs] = useState<SavedNotificationPreferences>(() => normalizeNotificationPreferences({}));
   const [trayEnabled, setTrayEnabled] = useState(true);
   const [menubar, setMenubar] = useState<MenubarSettings>(DEFAULT_MENUBAR_SETTINGS);
+  const [codeIntelligence, setCodeIntelligence] = useState<CodeIntelligenceSettingsValue>(DEFAULT_CODE_INTELLIGENCE);
   const [predictNavigation, setPredictNavigation] = useState(true);
   const [preloadAmount, setPreloadAmount] = useState<PreloadAmount>('normal');
   const [prepareQueue, setPrepareQueue] = useState(true);
@@ -288,6 +291,7 @@ export function SettingsDialog({
         setNotificationPrefs(normalizeNotificationPreferences(prefs));
         setTrayEnabled(prefs.trayEnabled);
         setMenubar(menubarSettings(prefs));
+        setCodeIntelligence(codeIntelligenceSettings(prefs));
         const preloads = preloadSettings(prefs);
         setPredictNavigation(preloads.predictNavigation);
         setPreloadAmount(preloads.amount);
@@ -870,6 +874,13 @@ export function SettingsDialog({
                     : 'Changes take effect after you quit and reopen Gnosis.'}
                 </span>
               </div>
+              <CodeIntelligenceSettings
+                value={codeIntelligence}
+                onChange={(next) => {
+                  setCodeIntelligence(next);
+                  saveField({ codeIntelligence: next });
+                }}
+              />
             </Tabs.Content>
             <Tabs.Content value="notifications" className="settings-panel">
               <NotificationSettings

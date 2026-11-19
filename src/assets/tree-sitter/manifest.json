@@ -1,0 +1,171 @@
+{
+  "generatedBy": "scripts/vendor-tree-sitter.mjs",
+  "packages": [
+    {
+      "name": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "license": "MIT",
+      "integrity": "sha512-e04JUUKxTT53/x3Uq1zIL45DoYKVfHH4CZqwgZhPg5qYROl5nQjV+85ruFzFGZxu+QeFVbRTPDRnqL9UbU4VeA==",
+      "repository": "git+https://github.com/tree-sitter/tree-sitter-typescript.git",
+      "files": {
+        "typescript.wasm": {
+          "from": "tree-sitter-typescript.wasm",
+          "bytes": 1413849,
+          "sha256": "778025db5a8be0e70f8ccc3671e486dfeddd048c25d9e8a70c26de2e1bf6f97d"
+        },
+        "tsx.wasm": {
+          "from": "tree-sitter-tsx.wasm",
+          "bytes": 1445638,
+          "sha256": "79e5da75ea62855a0cd67177685f0164eac87d5f630b3cbe1e0a099751ad30f8"
+        },
+        "typescript-tags.scm": {
+          "from": "queries/tags.scm",
+          "bytes": 573,
+          "sha256": "b391288bcc71b513a5df7c9bb232d8bc7418d7e274b125aa0aa4bdd6121a0338"
+        }
+      }
+    },
+    {
+      "name": "tree-sitter-javascript",
+      "version": "0.25.0",
+      "license": "MIT",
+      "integrity": "sha512-1fCbmzAskZkxcZzN41sFZ2br2iqTYP3tKls1b/HKGNPQUVOpsUxpmGxdN/wMqAk3jYZnYBR1dd/y/0avMeU7dw==",
+      "repository": "git+https://github.com/tree-sitter/tree-sitter-javascript.git",
+      "files": {
+        "javascript.wasm": {
+          "from": "tree-sitter-javascript.wasm",
+          "bytes": 411770,
+          "sha256": "5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240"
+        },
+        "javascript-tags.scm": {
+          "from": "queries/tags.scm",
+          "bytes": 2218,
+          "sha256": "6ef988cce5a428a15b5460e3ee96f1478705f965fc6e848a91a18bfa6c6f0212"
+        }
+      }
+    },
+    {
+      "name": "tree-sitter-rust",
+      "version": "0.24.0",
+      "license": "MIT",
+      "integrity": "sha512-NWemUDf629Tfc90Y0Z55zuwPCAHkLxWnMf2RznYu4iBkkrQl2o/CHGB7Cr52TyN5F1DAx8FmUnDtCy9iUkXZEQ==",
+      "repository": "git+https://github.com/tree-sitter/tree-sitter-rust.git",
+      "files": {
+        "rust.wasm": {
+          "from": "tree-sitter-rust.wasm",
+          "bytes": 1102547,
+          "sha256": "f65f354215611fd94ad34134b3427eb3d58cbb745df7b6509ba722184db73d57"
+        },
+        "rust-tags.scm": {
+          "from": "queries/tags.scm",
+          "bytes": 1194,
+          "sha256": "f22867fdebde5cb091861c08d34690dc2540f4318068bf81be9f6b0d348ab8c1"
+        }
+      }
+    },
+    {
+      "name": "tree-sitter-go",
+      "version": "0.25.0",
+      "license": "MIT",
+      "integrity": "sha512-APBc/Dq3xz/e35Xpkhb1blu5UgW+2E3RyGWawZSCNcbGwa7jhSQPS8KsUupuzBla8PCo8+lz9W/JDJjmfRa2tw==",
+      "repository": "git+https://github.com/tree-sitter/tree-sitter-go.git",
+      "files": {
+        "go.wasm": {
+          "from": "tree-sitter-go.wasm",
+          "bytes": 217182,
+          "sha256": "9504573f352b20be7f2f1911754d710622aedc15afff16d5ed8fb5645681aee7"
+        },
+        "go-tags.scm": {
+          "from": "queries/tags.scm",
+          "bytes": 1097,
+          "sha256": "d1a9b1f678fe0278b85054e2dc56a28ef26aa478b8c88fb2b0dd83cdcdb9db35"
+        }
+      }
+    },
+    {
+      "name": "tree-sitter-python",
+      "version": "0.25.0",
+      "license": "MIT",
+      "integrity": "sha512-eCmJx6zQa35GxaCtQD+wXHOhYqBxEL+bp71W/s3fcDMu06MrtzkVXR437dRrCrbrDbyLuUDJpAgycs7ncngLXw==",
+      "repository": "git+https://github.com/tree-sitter/tree-sitter-python.git",
+      "files": {
+        "python.wasm": {
+          "from": "tree-sitter-python.wasm",
+          "bytes": 457883,
+          "sha256": "16108b50df4ee9a30168794252ab55e7c93bfc5765d7fa0aa3e335752c515f47"
+        },
+        "python-tags.scm": {
+          "from": "queries/tags.scm",
+          "bytes": 350,
+          "sha256": "d0f3e577878167bfabc30e526e497bce58d1699b9bcabf8ab3a50698efb5ca3e"
+        }
+      }
+    },
+    {
+      "name": "tree-sitter-java",
+      "version": "0.23.5",
+      "license": "MIT",
+      "integrity": "sha512-Yju7oQ0Xx7GcUT01mUglPP+bYfvqjNCGdxqigTnew9nLGoII42PNVP3bHrYeMxswiCRM0yubWmN5qk+zsg0zMA==",
+      "repository": "git+https://github.com/tree-sitter/tree-sitter-java.git",
+      "files": {
+        "java.wasm": {
+          "from": "tree-sitter-java.wasm",
+          "bytes": 414641,
+          "sha256": "4fdeac4ca6ca089f06c6f7e562abcac1733cd465728cc7031ebb73c2019122c4"
+        },
+        "java-tags.scm": {
+          "from": "queries/tags.scm",
+          "bytes": 499,
+          "sha256": "bcb22147b8582d92743fc973864cefb894a4c12b3957f16f3d472b2ec7cd4c49"
+        }
+      }
+    },
+    {
+      "name": "tree-sitter-c-sharp",
+      "version": "0.24.0",
+      "license": "MIT",
+      "integrity": "sha512-M7VLq8mZEmPz3HNyocw484Pdai/DdSycrSlFrLqzjmhUPqhph3VellWbtx9mWcyTXgHWpNQzymFDrLt8IIna5w==",
+      "repository": "git+https://github.com/tree-sitter/tree-sitter-c-sharp.git",
+      "files": {
+        "csharp.wasm": {
+          "from": "tree-sitter-c_sharp.wasm",
+          "bytes": 7252213,
+          "sha256": "e137386fcdfc2562a058f8048c76ab77b0663a318cb62d8026cd4d2e94944231"
+        },
+        "csharp-tags.scm": {
+          "from": "queries/tags.scm",
+          "bytes": 848,
+          "sha256": "4ed08da0162ecd48206ac34bebe7ea9757a8c7b617f6ad8f70c168d685d514fe"
+        }
+      }
+    },
+    {
+      "name": "tree-sitter-json",
+      "version": "0.24.8",
+      "license": "MIT",
+      "integrity": "sha512-Tc9ZZYwHyWZ3Tt1VEw7Pa2scu1YO7/d2BCBbKTx5hXwig3UfdQjsOPkPyLpDJOn/m1UBEWYAtSdGAwCSyagBqQ==",
+      "repository": "git+https://github.com/tree-sitter/tree-sitter-json.git",
+      "files": {
+        "json.wasm": {
+          "from": "tree-sitter-json.wasm",
+          "bytes": 5596,
+          "sha256": "d2119fb98d5912719b13f9458574f8608d2d29dfbe45f6be1f860ea1fe2a2405"
+        }
+      }
+    },
+    {
+      "name": "@tree-sitter-grammars/tree-sitter-yaml",
+      "version": "0.7.1",
+      "license": "MIT",
+      "integrity": "sha512-AynBwkIoQCTgjDR33bDUp9Mqq+YTco0is3n5hRApMqG9of/6A4eQsfC1/uSEeHSUyMQSYawcAWamsexnVpIP4Q==",
+      "repository": "git+https://github.com/tree-sitter-grammars/tree-sitter-yaml.git",
+      "files": {
+        "yaml.wasm": {
+          "from": "tree-sitter-yaml.wasm",
+          "bytes": 189255,
+          "sha256": "e752dc21c3591df9b45692fe417d101f45d1828c28c44d79005f4066dc7e4e91"
+        }
+      }
+    }
+  ]
+}

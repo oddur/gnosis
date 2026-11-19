@@ -89,6 +89,7 @@
   "stars": 10,
   "sync": 10,
   "sync-health": 15,
+  "syntax-scope": 30,
   "target-branch": 7,
   "threads": 13,
   "typography": 6,

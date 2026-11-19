@@ -1789,7 +1789,44 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .diff-gap-text { padding-inline:6px 8px; color:var(--foreground); }
 .diff-gap-message { padding-inline:4px; color:var(--foreground); overflow-wrap:anywhere; }
 .diff-gap-loading { margin-left:auto; padding-right:4px; }
-.changes-diff > diffs-container { display:block; }
+/* The enclosing definition of the hunk below a bar (#393), at the bar's end in its own caption type. */
+.diff-gap-scope { display:inline-flex; align-items:center; gap:2px; min-width:0; max-width:100%; margin-left:auto; }
+/* Its breadcrumb: muted crumbs, the innermost in the text colour. A crumb that reveals its definition is a button
+   that reads as text until hovered. */
+.diff-gap-symbol { display:inline-flex; align-items:baseline; min-width:0; overflow:hidden; padding-inline:6px 2px; white-space:nowrap; }
+.diff-gap-crumb-group { display:inline-flex; align-items:baseline; min-width:0; }
+.diff-gap-crumb-group:last-child { overflow:hidden; }
+.diff-gap-crumb-separator { padding-inline:5px; opacity:.7; }
+.diff-gap-crumb { min-width:0; overflow:hidden; text-overflow:ellipsis; color:inherit; font:inherit; }
+.diff-gap-crumb code { font-family:var(--font-mono); font-size:inherit; }
+.diff-gap-crumb[data-innermost] { color:var(--foreground); }
+button.diff-gap-crumb { padding:0; border:0; border-radius:3px; background:none; cursor:pointer; }
+button.diff-gap-crumb:hover { color:var(--foreground); text-decoration:underline; text-underline-offset:2px; }
+button.diff-gap-crumb:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+.diff-gap-scope + .diff-gap-loading { margin-left:0; }
+/* Until the file's definitions arrive, the hunk header's text from the patch: quieter, as a guess. */
+.diff-gap-scope[data-provisional] .diff-gap-crumb[data-innermost] { color:inherit; }
+/* Beside the location: the structure is loading, or failed to load. */
+.diff-gap-structure { display:inline-flex; align-items:center; gap:2px; padding-inline:4px 2px; white-space:nowrap; }
+.diff-gap-structure .loading-indicator { font-size:inherit; }
+.diff-gap-controls { display:contents; }
+/* Where a hunk of a file with no structure is, by its lines, in the breadcrumb's place. */
+.diff-gap-range { margin-left:auto; padding-inline:6px 2px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+/* Each hunk's header pins under the file header while its hunk is on screen, and the next hunk's header pushes it
+   away (#395). ChangesDiff sets --diff-file-header-height from a ResizeObserver; the header sits 1 px higher, so the
+   file header's bottom border covers its top one. Lines and controls scrolled to land below both headers. */
+.changes-diff { --diff-sticky-offset:calc(var(--diff-file-header-height, 0px) + 40px); }
+.diff-hunk > .diff-gap[data-hunk-header] { position:sticky; top:calc(var(--diff-file-header-height, 0px) - 1px); z-index:1; }
+/* Pinned, a header shows only where the reader is: expanding from it would move the lines under the reader. The
+   controls keep their space, so pinning changes nothing's size, stay in the tab order, and come back while focus is
+   inside the bar. */
+.diff-gap[data-stuck]:not(:focus-within) :is(.diff-gap-controls > *, [data-show-definition], .diff-gap-loading) { opacity:0; pointer-events:none; }
+.diff-gap[data-stuck]:not(:focus-within) button.diff-gap-crumb { pointer-events:none; }
+.changes-diff :is(button, a, input, textarea, select, [tabindex]) { scroll-margin-top:var(--diff-sticky-offset); }
+.changes-diff .diff-gap[data-hunk-header] :is(button, a, [tabindex]) { scroll-margin-top:var(--diff-file-header-height, 0px); }
+.feedback-full-file .diff-hunk > .diff-gap[data-hunk-header] { position:static; }
+.feedback-full-file .changes-diff { --diff-sticky-offset:0px; }
+.diff-hunk > diffs-container { display:block; }
 /* Slices of a long hunk outside the viewport skip style, layout and paint, and stay in the DOM for find in page
    (#353). Each holds its estimated height until it is first laid out; `auto` then keeps its real one. */
 .changes-slice { content-visibility:auto; overflow-clip-margin:8px; }
@@ -4025,6 +4062,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .settings-group { display:flex; flex-direction:column; gap:16px; }
 .settings-group + .settings-group { border-top:1px solid var(--border); padding-top:20px; }
 .settings-group h2 { font-size:var(--type-section-title); font-weight:650; line-height:1.4; margin:0 0 4px; }
+/* Settings › Appearance › Code intelligence: one row per bundled language, its grammar size beside its name. */
+.settings-code-languages ul { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:2px 24px; margin:6px 0 0; padding:0; list-style:none; }
+.settings-code-language { display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:12px; min-height:32px; }
+.settings-code-language .settings-description { font-variant-numeric:tabular-nums; }
+.settings-code-languages[data-disabled] ul { opacity:.55; }
 .settings-repositories { overflow: hidden; gap: 16px; }
 .repository-panel-heading { display: flex; align-items: flex-start; gap: 16px; justify-content: space-between; }
 .repository-panel-heading h2 { font-size: var(--type-section-title); font-weight: 650; margin-bottom: 4px; }

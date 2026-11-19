@@ -1,5 +1,7 @@
 import { fileRevisionKey, inspectionRank, type InspectionMode, type PrFileContents, type PrFileRequest, type PrFileSide } from './pr-changes';
 
+/** After sides read alone, for gap reveals and hunk scopes (#393), which prefetch up to 300 files of the open PR. */
+const AFTER_ENTRIES = 400;
 /** Keep opened immutable revisions in the renderer: revisits need no IPC or network round trip. */
 export function createPrFileCache(
   load: (request: PrFileRequest, background?: InspectionMode) => Promise<PrFileContents>,
@@ -81,7 +83,7 @@ export function createPrFileCache(
   }
   // After sides read alone, to reveal context gaps (#299). A file whose both sides are cached answers from them.
   const afters = new Map<string, { value: PrFileSide; bytes: number; url: string; at: number }>();
-  const afterPending = new Map<string, Promise<PrFileSide>>();
+  const afterPending = new Map<string, { promise: Promise<PrFileSide>; background: InspectionMode }>();
   let afterBytes = 0;
   const peekAfter = (r: PrFileRequest) => {
     const full = peek(r);
@@ -94,11 +96,13 @@ export function createPrFileCache(
     const known = peekAfter(r);
     if (known) return Promise.resolve(known);
     const key = keyFor(r);
+    // As for whole files, a pending read is joined only by a caller of the same or lower rank: a reveal does not wait
+    // behind a background read for hunk scopes (#393). Main joins the two reads and promotes the work.
     const full = pending.get(`${key}:false`);
-    if (full) return full.promise.then((value) => value.after);
+    if (full && inspectionRank(full.background) >= inspectionRank(background)) return full.promise.then((value) => value.after);
     if (!loadAfter) return read(r, background).then((value) => value.after);
     const existing = afterPending.get(key);
-    if (existing) return existing;
+    if (existing && inspectionRank(existing.background) >= inspectionRank(background)) return existing.promise;
     const generation = epoch;
     const promise = loadAfter(r, background)
       .then((value) => {
@@ -109,7 +113,7 @@ export function createPrFileCache(
           afters.set(key, { value, bytes: size, url: r.url, at: now() });
           afterBytes += size;
           for (const [oldKey, old] of afters) {
-            if (afterBytes <= maxBytes / 2 && afters.size <= 32) break;
+            if (afterBytes <= maxBytes / 2 && afters.size <= AFTER_ENTRIES) break;
             afters.delete(oldKey);
             afterBytes -= old.bytes;
           }
@@ -117,9 +121,9 @@ export function createPrFileCache(
         return value;
       })
       .finally(() => {
-        if (afterPending.get(key) === promise) afterPending.delete(key);
+        if (afterPending.get(key)?.promise === promise) afterPending.delete(key);
       });
-    afterPending.set(key, promise);
+    afterPending.set(key, { promise, background });
     return promise;
   }
   return {

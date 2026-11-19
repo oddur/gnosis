@@ -1,16 +1,19 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { processFile, type DiffLineAnnotation, type FileDiffOptions } from '@pierre/diffs';
 import {
   GAP_STEP,
   estimateSliceHeight,
   hunkSlices,
   type DiffSlice,
+  hunkRange,
   type GapDirection,
   type GapPart,
 } from '../lib/diff-gaps';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
+import { revealLabel, spokenChain, visibleCrumbs, type HunkScope } from '../lib/hunk-scopes';
+import { definitionLines, type DefinitionReveal } from '../lib/syntax-scope';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
 export type GapStatus =
@@ -33,6 +36,8 @@ const CHANGES_CSS = `[data-code] {
   scrollbar-color: color-mix(in srgb, var(--muted-foreground) 60%, var(--background)) transparent;
   padding-bottom: var(--diffs-gap-block, var(--diffs-gap-fallback));
 }
+/* A line scrolled to lands below the file header and its hunk's pinned header (#395). */
+[data-line] { scroll-margin-top: var(--diff-sticky-offset, 0px); }
 ${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
 const diffStyle = {
@@ -41,6 +46,7 @@ const diffStyle = {
   '--diffs-line-height': 'var(--leading-code)',
 };
 const lines = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'}`;
+
 
 /**
  * Pierre re-renders a diff whenever its options differ, and compares callbacks by identity. Callbacks forward to
@@ -147,16 +153,147 @@ function batch(slices: DiffSlice[], from: number): DiffSlice[] {
   return result;
 }
 
+/**
+ * Where the hunk below a bar is (#393): a breadcrumb of the file and every definition around the hunk, such as
+ * `store.rs › impl StoreBridge › fn save`, and the action that shows the innermost one. A long chain keeps the file
+ * and the innermost two crumbs, with "…" for the middle; the whole chain is the tooltip and the accessible label.
+ * Each crumb whose definition is not all on screen reveals it: whole up to the cap, else its signature. The crumbs sit
+ * at the bar's end in the bar's own type, so they add no height and move nothing when they arrive.
+ */
+function HunkScopeLabel({
+  scope,
+  file,
+  onShow,
+}: {
+  scope: HunkScope;
+  file: string;
+  onShow?: (reveal: DefinitionReveal) => void;
+}) {
+  const lines = definitionLines(scope.definition);
+  const signature = scope.reveal?.kind === 'signature';
+  const spoken = spokenChain(file, scope.chain);
+  const crumbs = visibleCrumbs(scope.chain);
+  const innermost = scope.chain.at(-1);
+  const separator = (
+    <span className="diff-gap-crumb-separator" aria-hidden="true">
+      ›
+    </span>
+  );
+  return (
+    <span
+      className="diff-gap-scope"
+      data-scope-kind={scope.provisional ? 'provisional' : scope.definition.kind}
+      data-provisional={scope.provisional || undefined}
+    >
+      <span className="diff-gap-symbol" role="group" aria-label={spoken} title={spoken}>
+        <span className="diff-gap-crumb" data-crumb-file="">
+          {file}
+        </span>
+        {crumbs.map((crumb, index) => {
+          if (crumb === 'more')
+            return (
+              <span key="more" className="diff-gap-crumb-group">
+                {separator}
+                <span className="diff-gap-crumb" aria-hidden="true">
+                  …
+                </span>
+              </span>
+            );
+          const last = crumb === innermost;
+          const text = <code>{crumb.definition.crumb}</code>;
+          const { reveal } = crumb;
+          return (
+            <span key={index} className="diff-gap-crumb-group">
+              {separator}
+              {reveal && onShow ? (
+                <button
+                  type="button"
+                  className="diff-gap-crumb"
+                  data-crumb=""
+                  data-innermost={last || undefined}
+                  title={revealLabel({ definition: crumb.definition, reveal })}
+                  onClick={() => onShow(reveal)}
+                >
+                  {text}
+                </button>
+              ) : (
+                <span className="diff-gap-crumb" data-crumb="" data-innermost={last || undefined}>
+                  {text}
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </span>
+      {scope.reveal && onShow && (
+        <button
+          type="button"
+          className="diff-context-button diff-gap-text"
+          data-show-definition=""
+          title={signature ? `This ${lines.toLocaleString()}-line definition is too long to show whole; this shows its signature.` : undefined}
+          onClick={() => scope.reveal && onShow(scope.reveal)}
+        >
+          <span className="icon-mask icon-unfold-vertical" aria-hidden="true" />
+          {revealLabel(scope)}
+        </button>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The file as the whole location, for a hunk outside every definition (imports, top-level statements). Shown only once
+ * the file is parsed, so a lone file name always means "top level", never "not known yet".
+ */
+function FileScopeLabel({ file }: { file: string }) {
+  return (
+    <span className="diff-gap-scope" data-scope-kind="file">
+      <span className="diff-gap-symbol" role="group" aria-label={`In ${file}, outside any definition`} title={`${file}, outside any definition`}>
+        <span className="diff-gap-crumb" data-crumb-file="" data-innermost="">
+          {file}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+function RangeLabel({ range }: { range: string }) {
+  return (
+    <span className="diff-gap-range" data-hunk-range="">
+      {range}
+    </span>
+  );
+}
+
 function GapBar({
   part,
   status,
   onReveal,
   onRetry,
+  scope,
+  fileName,
+  fileOnly,
+  note,
+  range,
+  header,
+  onShowDefinition,
 }: {
   part: GapBarPart;
   status: GapStatus;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
   onRetry?: () => void;
+  scope?: HunkScope;
+  /** The hunk below sits outside every definition of a parsed file: the file alone is its location. */
+  fileOnly?: boolean;
+  /** The file's name, the breadcrumb's first crumb. */
+  fileName?: string;
+  /** Beside the location: the structure is loading, or failed to load. */
+  note?: ReactNode;
+  /** The hunk below's lines, shown when the file has no structure to name it by. */
+  range?: string;
+  /** The bar heads the hunk below and sticks while the hunk is on screen (#395). */
+  header?: boolean;
+  onShowDefinition?: (reveal: DefinitionReveal) => void;
 }) {
   const { hidden, above, below } = part;
   const known = hidden !== undefined;
@@ -226,8 +363,24 @@ function GapBar({
       </>
     );
   return (
-    <div className="diff-gap" role="group" aria-label={label} aria-busy={busy || undefined} data-gap={part.gap.index}>
-      {body}
+    <div
+      className="diff-gap"
+      role="group"
+      aria-label={label}
+      aria-busy={busy || undefined}
+      data-gap={part.gap.index}
+      data-hunk-header={header || undefined}
+    >
+      {/* Hidden, not removed, while the bar is pinned, so pinning never changes its height. */}
+      <span className="diff-gap-controls">{body}</span>
+      {scope ? (
+        <HunkScopeLabel scope={scope} file={fileName ?? ''} onShow={onShowDefinition} />
+      ) : fileOnly && fileName ? (
+        <FileScopeLabel file={fileName} />
+      ) : range ? (
+        <RangeLabel range={range} />
+      ) : null}
+      {(scope || (fileOnly && fileName)) && note}
       {busy && (
         <LoadingIndicator className="diff-gap-loading" announce={false}>
           Loading lines…
@@ -236,6 +389,13 @@ function GapBar({
     </div>
   );
 }
+
+/**
+ * The last file header's height. Files in a stream share their header's layout, so a diff renders with this height
+ * from the start, and measuring its own header changes nothing: setting the property later would restyle every line
+ * of the diff (#366).
+ */
+let lastFileHeaderHeight: number | undefined;
 
 /** Rows mounted with the first render, and in each task after it, nearest the viewport first. */
 const ROWS_PER_TASK = 200;
@@ -261,6 +421,11 @@ export function ChangesDiff<A>({
   onRetry,
   target,
   lineCount,
+  scopes,
+  structure,
+  scopeNote,
+  onShowDefinition,
+  stickyUnder,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -275,6 +440,15 @@ export function ChangesDiff<A>({
   target?: { side: 'before' | 'after'; line: number };
   /** The highest line number in the file, so every slice's gutter has the same width. */
   lineCount: number;
+  /** The file is parsed: hunks outside every definition show the file as their location. */
+  structure?: boolean;
+  /** Each hunk's enclosing definition, by part key (lib/hunk-scopes.ts). */
+  scopes?: ReadonlyMap<string, HunkScope>;
+  /** Shown beside each hunk's location: the structure is loading, or failed to load. */
+  scopeNote?: ReactNode;
+  onShowDefinition?: (reveal: DefinitionReveal) => void;
+  /** The file's sticky header: each hunk's header pins right below it (#395). */
+  stickyUnder?: RefObject<HTMLElement | null>;
 }) {
   const stableOptions = useStableOptions({
     ...options,
@@ -296,12 +470,20 @@ export function ChangesDiff<A>({
       const id = `${part.key}|${hunk.oldStart}|${hunk.newStart}|${hunk.rows.length}|${hunk.noEofOld}|${hunk.noEofNew}`;
       const slices = cache.current.get(id) ?? hunkSlices(part.key, hunk, file, parse);
       next.set(id, slices);
-      return { kind: 'hunk' as const, key: part.key, slices };
+      return {
+        kind: 'hunk' as const,
+        key: part.key,
+        slices,
+        changed: part.hunk.rows.some((row) => row.type !== ' '),
+        range: hunkRange(hunk),
+      };
     });
     cache.current = next;
     return result;
   }, [parts, file.name, file.prevName, file.status]);
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
+  // Hunks with a change: pinned context (a definition's signature) is not a location of its own.
+  const changedHunks = useMemo(() => new Set(blocks.flatMap((block) => (block.kind === 'hunk' && block.changed ? [block.key] : []))), [blocks]);
   const progressive = slices.length > MANY_DIFFS || (slices.length > 1 && slices.some((slice) => slice.key.includes(':')));
   const split = layout === 'split' && file.status !== 'added' && file.status !== 'deleted';
   const style = useMemo(
@@ -371,16 +553,126 @@ export function ChangesDiff<A>({
     return whenIdle(() => setMounted((current) => new Set([...current, ...next.map((slice) => slice.key)])));
   }, [progressive, slices, mounted, nearVersion]);
 
+  // Pinned hunk headers (#395). CSS sticky does the pinning; this only marks a pinned header, so its expand controls
+  // can step aside. The file header's height comes from a ResizeObserver, never a layout read, and sets both the
+  // headers' `top` and the line below which one counts as pinned. A pinned header sits 1 px under the file header,
+  // which covers its top border, so it is the one header that crosses that line and is not wholly below it.
+  const stuck = useRef<IntersectionObserver>(undefined);
+  const [headerHeight] = useState(() => lastFileHeaderHeight);
+  const observeHeaders = () => {
+    const observer = stuck.current;
+    if (!observer || !root.current) return;
+    observer.disconnect();
+    for (const header of root.current.querySelectorAll('[data-hunk-header]')) observer.observe(header);
+  };
+  useEffect(() => {
+    const element = root.current;
+    const header = stickyUnder?.current;
+    const scroller = element?.closest<HTMLElement>('.commit-diff-stream');
+    if (!element || !header || !scroller) return;
+    let height: number | undefined;
+    let written = headerHeight;
+    const resize = new ResizeObserver((entries) => {
+      const next = Math.round(entries[entries.length - 1].borderBoxSize[0].blockSize);
+      if (next === height) return;
+      height = lastFileHeaderHeight = next;
+      if (next !== written) element.style.setProperty('--diff-file-header-height', `${(written = next)}px`);
+      stuck.current?.disconnect();
+      stuck.current = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            const top = entry.rootBounds?.top ?? 0;
+            const pinned = entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top;
+            entry.target.toggleAttribute('data-stuck', pinned);
+          }
+        },
+        { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: [0, 1] }
+      );
+      observeHeaders();
+    });
+    resize.observe(header);
+    return () => {
+      resize.disconnect();
+      stuck.current?.disconnect();
+      stuck.current = undefined;
+    };
+  }, [stickyUnder]);
+  // Revealed lines re-create bars: watch the current ones.
+  useEffect(observeHeaders, [blocks, structure]);
+
+  const name = file.name.slice(file.name.lastIndexOf('/') + 1);
+  // An added or deleted file is one hunk: the file header already says where it is.
+  const whole = file.status === 'added' || file.status === 'deleted';
   const content: ReactNode[] = [];
+  // Each hunk is a section with its header bar first, so the header sticks only while its hunk is on screen and the
+  // next hunk's header pushes it away (#395).
+  let section: { key: string; children: ReactNode[] } | undefined;
+  const close = () => {
+    if (section)
+      content.push(
+        <div key={section.key} className="diff-hunk">
+          {section.children}
+        </div>
+      );
+    section = undefined;
+  };
+  const open = (key: string, header?: ReactNode) => {
+    close();
+    section = { key: `hunk-${key}`, children: header ? [header] : [] };
+    return section;
+  };
   let previous: 'gap' | 'hunk' | undefined;
-  for (const block of blocks) {
+  blocks.forEach((block, index) => {
     if (block.kind === 'gap') {
-      content.push(<GapBar key={`gap-${block.gap.index}`} part={block} status={status} onReveal={onReveal} onRetry={onRetry} />);
+      const key = `h${block.gap.index}`;
+      const next = block.below ? blocks[index + 1] : undefined;
+      const bar = (
+        <GapBar
+          key={`gap-${block.gap.index}`}
+          part={block}
+          status={status}
+          onReveal={onReveal}
+          onRetry={onRetry}
+          scope={block.below ? scopes?.get(key) : undefined}
+          fileOnly={!!structure && block.below && changedHunks.has(key) && !scopes?.get(key)}
+          fileName={name}
+          note={scopeNote}
+          range={!structure && next?.kind === 'hunk' && next.changed ? next.range : undefined}
+          header={block.below}
+          onShowDefinition={onShowDefinition}
+        />
+      );
+      // A bar below the last hunk heads nothing.
+      if (block.below) open(key, bar);
+      else {
+        close();
+        content.push(bar);
+      }
       previous = 'gap';
-      continue;
+      return;
     }
-    // Hunks that a patch leaves apart without a gap to reveal are still marked apart.
-    if (previous === 'hunk') content.push(<div key={`between-${block.key}`} className="diff-gap" data-static="" aria-hidden="true" />);
+    // A hunk with no bar above it (the file's first lines, or hunks a patch leaves apart without a gap) still gets a
+    // header that says where it is: once the file is parsed, its definitions or the file alone at the top level, and
+    // until then, or in a language with no structure, its lines.
+    let current = section;
+    if (previous !== 'gap' && block.changed && (structure || !whole)) {
+      const scope = structure ? scopes?.get(block.key) : undefined;
+      current = open(
+        block.key,
+        structure ? (
+          <div key={`scope-${block.key}`} className="diff-gap" data-scope-line="" data-hunk-header="">
+            {scope ? <HunkScopeLabel scope={scope} file={name} onShow={onShowDefinition} /> : <FileScopeLabel file={name} />}
+            {scopeNote}
+          </div>
+        ) : (
+          <div key={`scope-${block.key}`} className="diff-gap" data-range-line="" data-hunk-header="">
+            <RangeLabel range={block.range} />
+          </div>
+        )
+      );
+    } else if (previous === 'hunk' && current)
+      current.children.push(<div key={`between-${block.key}`} className="diff-gap" data-static="" aria-hidden="true" />);
+    current ??= open(block.key);
     previous = 'hunk';
     for (const slice of block.slices) {
       const diff = (
@@ -394,12 +686,12 @@ export function ChangesDiff<A>({
         />
       );
       if (!progressive) {
-        content.push(diff);
+        current.children.push(diff);
         continue;
       }
       const height = estimateSliceHeight(split ? slice.splitRows : slice.unifiedRows);
       const shown = mounted.has(slice.key);
-      content.push(
+      current.children.push(
         <div
           key={slice.key}
           className="changes-slice"
@@ -411,9 +703,15 @@ export function ChangesDiff<A>({
         </div>
       );
     }
-  }
+  });
+  close();
   return (
-    <div ref={root} className="changes-diff" data-progressive={progressive || undefined}>
+    <div
+      ref={root}
+      className="changes-diff"
+      data-progressive={progressive || undefined}
+      style={headerHeight === undefined ? undefined : ({ '--diff-file-header-height': `${headerHeight}px` } as CSSProperties)}
+    >
       {content}
     </div>
   );

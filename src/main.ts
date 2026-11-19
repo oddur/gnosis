@@ -162,6 +162,7 @@ import { createMenubarPanel } from './menubar-window';
 import { createStateSignature } from './tray-signature';
 import { buildMenubarState, menubarSignalRequests, menubarTooltip, type MenubarState } from '../lib/menubar-state';
 import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
+import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
@@ -1678,6 +1679,7 @@ function readPreferencesFile(): Preferences {
     stored.repositoryBriefingDailyLimit = normalizeBriefingLimit(stored.repositoryBriefingDailyLimit);
     stored.githubCacheSizeMB = normalizeGitHubCacheMB(stored.githubCacheSizeMB);
     stored.prInactivityDays = normalizePrInactivityDays(stored.prInactivityDays);
+    stored.codeIntelligence = codeIntelligenceSettings(stored);
     Object.assign(stored, normalizePreloadPreferences(stored));
     const selection = normalizeModelSelection(stored.provider, stored.model);
     const proactive = normalizeModelSelection(stored.proactiveProvider, stored.proactiveModel, true);
@@ -1697,7 +1699,7 @@ function readPreferencesFile(): Preferences {
 function savePreferences(prefs: Preferences): void {
   const file = getPreferencesPath(), temporary = file + '.tmp';
   try {
-  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), menubarSettings: menubarSettings(prefs), ...normalizePreloadPreferences(prefs) }, null, 2));
+  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), menubarSettings: menubarSettings(prefs), codeIntelligence: codeIntelligenceSettings(prefs), ...normalizePreloadPreferences(prefs) }, null, 2));
     fs.renameSync(temporary, file);
   } finally { fs.rmSync(temporary, { force: true }); preferencesFile.clear(); }
 }
@@ -5045,17 +5047,19 @@ const withKnownMember = (url: string, refresh: boolean, options: InspectionLoadO
  * A user read is interactive; queue preparation is background and automatic; a prediction is foreground, never
  * interactive, unpaced, and charged to the predicted budget under its destination kind.
  */
-function inspectionPriority<T>(mode: { background?: boolean; predicted?: unknown }, operation: () => T): T {
+function inspectionPriority<T>(mode: { background?: boolean; predicted?: unknown; view?: boolean }, operation: () => T): T {
   if (mode.background) return withGitHubPriority('background', operation);
+  // A file on screen (hunk scopes, #393): ahead of queue work, as hover intent is, without an interactive slot.
+  if (mode.view) return withGitHubPriority('foreground', operation, { automatic: false });
   if (mode.predicted !== undefined) {
     if (!predictionsEnabled()) throw new Error('Preloading likely next pages is off.');
     return withGitHubPriority('foreground', operation, { automatic: false, predicted: predictionLabel(mode.predicted) });
   }
   return withGitHubPriority('interactive', operation);
 }
-/** File and comparison reads pass `true` for queue preparation or `{ predicted }` for a prediction. */
-const inspectionMode = (value: unknown): { background?: boolean; predicted?: string } =>
-  value === true ? { background: true } : value && typeof value === 'object' && 'predicted' in value
+/** File and comparison reads pass `true` for queue preparation, `'view'` for a view read, or `{ predicted }` for a prediction. */
+const inspectionMode = (value: unknown): { background?: boolean; predicted?: string; view?: boolean } =>
+  value === true ? { background: true } : value === 'view' ? { view: true } : value && typeof value === 'object' && 'predicted' in value
     ? { predicted: predictionLabel((value as { predicted: unknown }).predicted) } : {};
 ipcMain.handle('stack-changes', (event, subject: ReviewSubject, refresh: boolean, options: InspectionLoadOptions = {}) =>
   inspectionPriority(options, () => runInspection(event, options, async signal => {

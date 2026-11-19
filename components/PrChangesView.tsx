@@ -15,7 +15,9 @@ import { PrFileInspection, changeFileKey as viewKey, type ChangeFileEntry as Ent
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { DiffWorkerPool, diffThemeName } from '../lib/diff-worker-pool';
 import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useSyntaxPrefetch } from '../lib/use-syntax-contents';
+import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import {
   fileIsReady,
   prepareFile,
@@ -186,8 +188,9 @@ export function PrChangesView({
         provider: preferences.provider,
         model: preferences.model,
         codeTheme: preferences.codeTheme,
+        codeIntelligence: preferences.codeIntelligence,
       })),
-    [preferences.provider, preferences.model, preferences.codeTheme, preferences.diffLayout, preferences.diffAppearance]
+    [preferences.provider, preferences.model, preferences.codeTheme, preferences.diffLayout, preferences.diffAppearance, preferences.codeIntelligence]
   );
   const progress = useFileProgress();
   const discussion = usePrDiscussions(commit ? [] : subject.members.map((member) => member.url));
@@ -363,6 +366,15 @@ export function PrChangesView({
     await filters.update({ filters: { hideGenerated: false, hideTests: false, hiddenExtensions: [] } });
   };
   const viewedSignature = visible.map((e) => (progress.isFileViewed(viewKey(e)) ? '1' : '0')).join('');
+  // Hunk scopes (#393): every supported file's contents load in the background, in diff order, while this view is
+  // open, after the reads of files in view. Closing the view stops it.
+  const prefetchOwner = useId();
+  const scopeFiles = useMemo(
+    () => visible.map((e) => ({ key: viewKey(e), snapshot: e.snapshot, file: e.file })),
+    [entries, visibleSignature]
+  );
+  const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
+  useSyntaxPrefetch(prefetchOwner, scopeFiles, (file) => progress.isFileViewed(file.key), codeSettings);
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]

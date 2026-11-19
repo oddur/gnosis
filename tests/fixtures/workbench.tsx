@@ -8,6 +8,7 @@ import { markdownBefore, markdownAfter, markdownFiles } from './markdown-review'
 import { prBadgePreview } from '../../lib/pr-badge-preview';
 import { fileFilterMocks, filterFixtureFiles } from './file-filters';
 import { diffGapContents, diffGapFiles } from './diff-gaps';
+import { syntaxLazyFiles, syntaxScopeContents, syntaxScopeFiles } from './syntax-scope';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
@@ -616,6 +617,8 @@ const mocks = {
         {path:'.github/workflows/seed_job_seed-api-portal-tests.yaml',status:'modified' as const,additions:3,deletions:1,changeId:'workflow-portal-v1'},
         {path:'.github/workflows/seed_job_seed_api.yaml',status:'modified' as const,additions:2,deletions:2,changeId:'workflow-api-v1'},
       ] : []),
+      ...(new URLSearchParams(location.search).has('syntax-scope') ? syntaxScopeFiles : []),
+      ...(new URLSearchParams(location.search).has('syntax-lazy') ? syntaxLazyFiles : []),
       {path:'src/worker.ts',status:'modified' as const,additions:1,deletions:1,changeId:'worker-v1',patch:'@@ -33,7 +33,7 @@\n const value32 = 32;\n const value33 = 33;\n const value34 = 34;\n-const value35 = 35;\n+const value35 = 36;\n const value36 = 36;\n const value37 = 37;\n const value38 = 38;'},
       {path:'src/new.ts',status:'added' as const,additions:2,deletions:0,changeId:'new-v1'},
       {path:'src/old.ts',status:'deleted' as const,additions:0,deletions:2,changeId:'old-v1'},
@@ -635,7 +638,7 @@ const mocks = {
     return {...snapshot, comparison:selection,comparisonBase:parent,metadata:{...snapshot.metadata,baseSha:parent,headSha:selection.lastSha}};
   },
   getPrChangeFile: (request: import('../../lib/pr-changes').PrFileRequest) => {
-    const gapFile = diffGapContents(request.path);
+    const gapFile = diffGapContents(request.path) ?? syntaxScopeContents(request.path);
     if (gapFile) return Promise.resolve(gapFile);
     if (new URLSearchParams(location.search).has('markdown-review')) return Promise.resolve({ before: request.path.endsWith('/new.md') ? { kind: 'absent' as const } : { kind: 'text' as const, content: markdownBefore }, after: request.path.endsWith('/removed.md') ? { kind: 'absent' as const } : { kind: 'text' as const, content: markdownAfter } });
     if(request.path.endsWith('.svg')) {const image={kind:'image' as const,dataUrl:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="140"><rect width="300" height="140" fill="#5076b8"/><text x="30" y="75" fill="white">Queue flow</text></svg>')};return Promise.resolve({before:image,after:image});}

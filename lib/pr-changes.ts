@@ -48,17 +48,24 @@ export interface InspectionRevision {
   headSha: string;
 }
 /**
- * How a read is scheduled: `false` for the reader's own request, `true` for queue preparation, or `{ predicted }` for
- * a navigation prediction labelled by destination kind, such as `pr-tab:changes`.
+ * How a read is scheduled: `false` for the reader's own request, `true` for queue preparation, `'view'` for a read the
+ * view makes for a file on or near the screen (foreground, outside automatic pacing, never in an interactive slot:
+ * hunk scopes, #393), or `{ predicted }` for a navigation prediction labelled by destination kind, such as
+ * `pr-tab:changes`.
  */
-export type InspectionMode = boolean | { predicted: string };
-/** User reads outrank predictions, which outrank queue preparation. A pending read is reused only by a lower rank. */
+export type InspectionMode = boolean | 'view' | { predicted: string };
+/**
+ * User reads outrank view reads and predictions, which outrank queue preparation. A pending read is reused only by a
+ * lower or equal rank.
+ */
 export const inspectionRank = (mode: InspectionMode = false) => (mode === false ? 2 : mode === true ? 0 : 1);
 export interface InspectionLoadOptions {
   requestId?: string;
   background?: boolean;
   /** A navigation prediction, labelled by destination kind. Foreground, never interactive, predicted budget. */
   predicted?: string;
+  /** A view read: foreground, never interactive, charged to the user like hover intent. */
+  view?: boolean;
   revision?: Pick<InspectionRevision, 'baseSha' | 'headSha'>;
 }
 export type PrFileSide =

@@ -13,6 +13,9 @@ export default defineConfig({
     createHash('sha256').update(__dirname).digest('hex').slice(0, 16)
   ),
   plugins: [react(), tailwindcss()],
+  // Inline workers are classic scripts, so each must be one chunk. web-tree-sitter's Node-only `import('fs/promises')`
+  // would otherwise split the syntax worker (#393).
+  worker: { rollupOptions: { output: { inlineDynamicImports: true } } },
   optimizeDeps: {
     include: [
       '@base-ui/react/toast',
@@ -22,6 +25,8 @@ export default defineConfig({
       'shiki',
       'shiki/langs',
       'shiki/themes',
+      // The syntax worker's runtime (#393): found late, it would reload the page mid-session.
+      'web-tree-sitter',
     ],
   },
   resolve: {

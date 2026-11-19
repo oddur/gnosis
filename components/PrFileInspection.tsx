@@ -31,15 +31,25 @@ import {
   gapContaining,
   hunksFromDiff,
   matchesAfter,
+  pinLines,
   revealGap,
+  revealSpan,
   revealedParts,
   shownLines,
   shownSelection,
+  withPins,
   type GapDirection,
   type GapPart,
   type GapReveals,
 } from '../lib/diff-gaps';
 import { ChangesDiff, type GapStatus } from './ChangesDiff';
+import { hunkScopes, provisionalScopes } from '../lib/hunk-scopes';
+import type { DefinitionReveal } from '../lib/syntax-scope';
+import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
+import { applyCodeIntelligence, useSyntaxContents } from '../lib/use-syntax-contents';
+import { codeIntelligenceSettings, pathEnabled } from '../lib/code-intelligence';
+import { syntaxContentsPlan } from '../lib/syntax-contents';
+import { keepDiffLineInView } from '../lib/diff-layout';
 import { diffThemeName } from '../lib/diff-worker-pool';
 import type { Preferences } from '../lib/types';
 import type { usePrDiscussions } from '../lib/use-pr-discussions';
@@ -67,6 +77,7 @@ const isUnsupportedPreview = (message: string) =>
   /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
 
 const NO_REVEALS: GapReveals = {};
+const NO_PINS: readonly (readonly [number, number])[] = [];
 
 function isBeforeDiffLine(line: HTMLElement) {
   if (line.dataset.lineType === 'change-addition') return false;
@@ -131,6 +142,7 @@ export function PrFileInspection({
   const sourceJump = useRef<MarkdownLocation | undefined>(undefined);
   const previewJump = useRef<MarkdownLocation | undefined>(undefined);
   const sectionRef = useRef<HTMLElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
   const [markdownResult, setMarkdownResult] = useState<{ key: string; value: MarkdownReview }>();
   const [markdownError, setMarkdownError] = useState<{ key: string; message: string }>();
   const [markdownAttempt, setMarkdownAttempt] = useState(0);
@@ -226,21 +238,115 @@ export function PrFileInspection({
   const after = useMemo(() => (afterText === undefined ? undefined : afterLines(afterText)), [afterText]);
   const afterMatches = useMemo(() => (after && gapHunks ? matchesAfter(gapHunks, after) : undefined), [after, gapHunks]);
   const expandable = entry.file.status !== 'added' && entry.file.status !== 'deleted' && !contents?.lfs;
+  // A long definition's signature, shown above its hunk, is a hunk of unchanged lines inside a gap (#393).
+  const [pinned, setPinned] = useState<{ key: string; value: readonly (readonly [number, number])[] }>();
+  const pins = pinned?.key === activeKey ? pinned.value : NO_PINS;
+  const hunks = useMemo(
+    () => (gapHunks && after && afterMatches && pins.length ? withPins(gapHunks, pins, after) : gapHunks),
+    [gapHunks, after, afterMatches, pins]
+  );
   const gaps = useMemo(
-    () => (expandable && gapHunks ? diffGaps(gapHunks, afterMatches && after ? after.length : undefined) : undefined),
-    [expandable, gapHunks, afterMatches, after]
+    () => (expandable && hunks ? diffGaps(hunks, afterMatches && after ? after.length : undefined) : undefined),
+    [expandable, hunks, afterMatches, after]
   );
   const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
   const reveals = gapReveals?.key === activeKey ? gapReveals.value : NO_REVEALS;
   const parts = useMemo(
     (): GapPart[] | undefined =>
-      gapHunks &&
+      hunks &&
       (gaps
-        ? revealedParts(gapHunks, gaps, reveals, afterMatches ? after : undefined)
-        : gapHunks.map((hunk, index) => ({ kind: 'hunk' as const, key: `h${index}`, hunk }))),
-    [gapHunks, gaps, reveals, afterMatches, after]
+        ? revealedParts(hunks, gaps, reveals, afterMatches ? after : undefined)
+        : hunks.map((hunk, index) => ({ kind: 'hunk' as const, key: `h${index}`, hunk }))),
+    [hunks, gaps, reveals, afterMatches, after]
   );
   const shown = useMemo(() => (parts ? shownLines(parts) : undefined), [parts]);
+  // Enclosing definitions (#393), from text this view already has: the after side gaps reveal from, and the before
+  // side when both sides are loaded. A file without a grammar, or with a stale after side, shows as before.
+  // The old side is parsed only for hunks that delete lines and add none.
+  const onlyDeletes = useMemo(
+    () => !!gapHunks?.some((hunk) => hunk.rows.some((row) => row.type === '-') && !hunk.rows.some((row) => row.type === '+')),
+    [gapHunks]
+  );
+  // Settings › Appearance › Code intelligence: a language that is off shows as a file without a grammar.
+  const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
+  useEffect(() => applyCodeIntelligence(codeSettings), [codeSettings]);
+  const structure = pathEnabled(codeSettings, entry.file.path);
+  const beforeText =
+    onlyDeletes && contents?.before.kind === 'text' && pathEnabled(codeSettings, entry.file.previousPath ?? entry.file.path)
+      ? contents.before.content
+      : undefined;
+  // Most files of a large PR have only their patch here. Once the diff is near the view, its contents load in the
+  // background for its scopes, ahead of the PR's prefetch (lib/use-syntax-contents.ts): the after side, as a gap
+  // reveal reads it, and both sides for hunks that only delete. Contents already cached are not read again.
+  const scopePlan = useMemo(
+    () => syntaxContentsPlan(entry.snapshot, entry.file, (path) => pathEnabled(codeSettings, path)),
+    [entry.snapshot, entry.file, codeSettings]
+  );
+  const scopeFile = useMemo(() => ({ key: activeKey, snapshot: entry.snapshot, file: entry.file }), [activeKey, entry.snapshot, entry.file]);
+  const structureRead = useSyntaxContents(
+    sectionRef,
+    scopePlan && expandable && !collapsed && !!preview && !!gaps && !unchangedMove && (scopePlan.both ? !contents : !afterSide)
+      ? scopeFile
+      : undefined
+  );
+  const definitions = useSyntaxDefinitions({
+    key: activeKey,
+    url: entry.snapshot.url,
+    path: entry.file.path,
+    previousPath: entry.file.previousPath,
+    after: afterText,
+    before: beforeText,
+    enabled: structure && expandable && !collapsed && !!gaps && afterMatches === true,
+  });
+  const scopes = useMemo(
+    () => (parts && shown && definitions.after ? hunkScopes(parts, gaps, definitions, shown.after) : undefined),
+    [parts, gaps, definitions.after, definitions.before, shown]
+  );
+  // Until the definitions arrive, each hunk's location is its patch header's text, as GitHub shows it, or the file.
+  const structurePending =
+    structureRead.state === 'loading' || (structureRead.state === 'idle' && !!definitions.parsing);
+  const provisional = useMemo(
+    () =>
+      !scopes && parts && gaps && scopePlan && expandable && !unchangedMove && afterMatches !== false
+        ? provisionalScopes(parts, entry.file.patch)
+        : undefined,
+    [scopes, parts, gaps, scopePlan, expandable, unchangedMove, afterMatches, entry.file.patch]
+  );
+  const shownScopes = scopes ?? provisional;
+  const scopeNote = scopes ? undefined : structureRead.state === 'failed' ? (
+    <span className="diff-gap-structure" data-structure="failed">
+      <span className="diff-gap-message">Couldn’t load structure.</span>
+      <button type="button" className="diff-context-button diff-gap-text" onClick={structureRead.retry}>
+        Try again
+      </button>
+    </span>
+  ) : structurePending && provisional ? (
+    <span className="diff-gap-structure" data-structure="loading">
+      <LoadingIndicator announce={false}>Loading structure…</LoadingIndicator>
+    </span>
+  ) : undefined;
+  const showDefinition = (plan: DefinitionReveal) => {
+    if (!gaps || !hunks) return;
+    if (plan.kind === 'whole') {
+      setGapReveals({ key: activeKey, value: revealSpan(reveals, gaps, plan.start, plan.end) });
+      return;
+    }
+    const next = pinLines(hunks, gaps, reveals, plan.start, plan.end);
+    if (next.pin) setPinned({ key: activeKey, value: [...pins, next.pin] });
+    setGapReveals({ key: activeKey, value: next.reveals });
+  };
+  // Short definitions show whole once their scopes are known, keeping the line at the top of the view in place.
+  const autoOpened = useRef<string>(undefined);
+  useEffect(() => {
+    if (!scopes || !gaps || autoOpened.current === activeKey) return;
+    autoOpened.current = activeKey;
+    let next = reveals;
+    for (const scope of scopes.values())
+      if (scope.opens && scope.reveal?.kind === 'whole') next = revealSpan(next, gaps, scope.reveal.start, scope.reveal.end);
+    if (next === reveals) return;
+    if (sectionRef.current) keepDiffLineInView(sectionRef.current);
+    setGapReveals({ key: activeKey, value: next });
+  }, [scopes]);
   const lineCount = useMemo(
     () => Math.max(after?.length ?? 0, ...(gapHunks ?? []).map((hunk) => Math.max(hunk.oldStart, hunk.newStart) + hunk.rows.length)),
     [after, gapHunks]
@@ -256,9 +362,9 @@ export function PrFileInspection({
             ? { kind: 'loading' }
             : { kind: 'idle' };
   const revealLines = (gap: NonNullable<typeof gaps>[number], direction: GapDirection) => {
-    if (!gapHunks) return;
+    if (!hunks) return;
     const key = activeKey,
-      count = gapHunks.length;
+      count = hunks.length;
     setGapReveals((previous) => ({
       key,
       value: revealGap(previous?.key === key ? previous.value : NO_REVEALS, gap, count, direction),
@@ -619,7 +725,7 @@ export function PrFileInspection({
     changeMarkdownView({ mode });
   }
   const fileHeader = (
-    <header className="changes-file-header">
+    <header ref={headerRef} className="changes-file-header">
       <div>
         {!commit && !combined && (
           <span className="changes-source">
@@ -835,6 +941,11 @@ export function PrFileInspection({
                   renderAnnotation={comments.renderAnnotation}
                   status={gapStatus}
                   onReveal={gaps ? (part, direction) => revealLines(part.gap, direction) : undefined}
+                  scopes={shownScopes}
+                  structure={!!shownScopes}
+                  scopeNote={scopeNote}
+                  onShowDefinition={showDefinition}
+                  stickyUnder={headerRef}
                   onRetry={() => readAfter(true)}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}

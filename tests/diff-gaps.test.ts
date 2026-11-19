@@ -6,6 +6,7 @@ import {
   diffGaps,
   gapContaining,
   gapSize,
+  hunkRange,
   hunkSlices,
   hunksFromDiff,
   matchesAfter,
@@ -235,4 +236,12 @@ void test('a selection across hidden lines numbers each shown line', () => {
   const shown = shownLines(revealedParts(hunks, gaps, {}, lines));
   assert.equal(shownSelection(shown.after, 47, 49), 'export const g47 = 47;\nexport const g48 = 48;\nexport const g49 = 49;');
   assert.equal(shownSelection(shown.after, 54, 56), '54: export const g53 = 53;');
+});
+
+test('a hunk names its lines for a pinned header without structure (#395)', () => {
+  const rows = (types: string) => [...types].map((type) => ({ type: type as ' ' | '+' | '-', text: '' }));
+  assert.equal(hunkRange({ oldStart: 120, newStart: 120, rows: rows(' -+-+ ') }), 'Lines 120–123');
+  assert.equal(hunkRange({ oldStart: 4, newStart: 4, rows: rows('+') }), 'Line 4');
+  assert.equal(hunkRange({ oldStart: 9, newStart: 9, rows: rows('---') }), 'Old lines 9–11');
+  assert.equal(hunkRange({ oldStart: 1200, newStart: 1201, rows: rows(' '.repeat(10)) }), 'Lines 1,201–1,210');
 });

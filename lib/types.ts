@@ -432,6 +432,8 @@ export interface Preferences {
   diffLayout: 'unified' | 'split';
   stackChangesMode?: 'combined' | 'by-pr';
   diffAppearance?: import('./review-diff').DiffAppearance;
+  /** Settings › Appearance › Code intelligence. See lib/code-intelligence.ts. */
+  codeIntelligence?: import('./code-intelligence').CodeIntelligencePreferences;
   showInlineExplanations?: boolean;
   includeAllFiles: boolean;
   reviewSignature: boolean;
