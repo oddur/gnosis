@@ -142,7 +142,7 @@ void app.whenReady().then(async () => {
       win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     }
     await sleep(100);
-    await wait(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).length>0`, 60);
+    await wait(`window.deepAll('[data-here]',document.querySelector(${JSON.stringify(root)})).length>0`, 60);
     await settle();
     const after = await jumpState(root, text);
     console.log(`${surface}: ${label}`, JSON.stringify({ before: { ...before, crumbs: undefined }, after: { ...after, crumbs: undefined } }));
@@ -161,17 +161,22 @@ void app.whenReady().then(async () => {
     if (keyboard) assert.equal(after.active, label, `${surface}: focus stays on the pinned crumb`);
     // Where it landed flashes, as a review check's line does: the line, or the gap bar standing in for it.
     const still = await js<boolean>(`matchMedia('(prefers-reduced-motion: reduce)').matches`);
-    const flashed = await js<{ kind: string; anim: string; outline: string }[]>(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).map(e=>{const c=getComputedStyle(e);
-      return {kind:e.matches('[data-line]')?'line':e.matches('.diff-gap')?'bar':'other',anim:c.animationName,outline:c.outlineStyle}})`);
-    console.log(`${surface}: flash`, JSON.stringify(flashed));
+    const flashed = await js<{ kind: string; anim: string; band: string; gutter: boolean | null }[]>(`(()=>{const marks=root=>window.deepAll('[data-here]',root).filter(e=>!e.matches('[data-column-number],[data-gutter-buffer]')&&e.getAttribute('data-here-part')!=='body').map(e=>{const bar=e.matches('.diff-gap');const c=getComputedStyle(e,bar?'::before':'::after');const r=e.getBoundingClientRect();
+        const i=e.getAttribute('data-line-index');const col=e.closest('[data-deletions],[data-additions]')??e.closest('[data-code]');const g=i!==null&&col?col.querySelector('[data-column-number][data-line-index="'+i+'"]'):null;
+        return {kind:e.matches('[data-line]')?'line':bar?'bar':'other',text:e.textContent.trim().slice(0,40),anim:c.animationName.replace(/-[ab]$/,''),band:c.backgroundColor,gutter:g?g.getAttribute('data-here')!==null:null,
+          edge:g?getComputedStyle(g,'::after').boxShadow:bar?c.boxShadow:null,top:Math.round(r.top),height:Math.round(r.height)}});return marks(document.querySelector(${JSON.stringify(root)}))})()`);
+    console.log(`${surface}: here`, JSON.stringify(flashed));
+    // The whole definition is marked, its signature most and the rest of it more softly (lib/diff-here.ts).
+    const body = await js<number>(`window.deepAll('[data-line][data-here][data-here-part=body]',document.querySelector(${JSON.stringify(root)})).length`);
+    assert.ok(body > 0, `${surface}: the rest of the definition is marked too: ${body} rows`);
     assert.deepEqual(
-      flashed.map((f) => [f.kind, f.anim, ...(still ? [f.outline] : [])]),
-      [['line', still ? 'none' : 'check-flash', ...(still ? ['solid'] : [])]],
-      `${surface}: where the jump landed flashes${still ? ', still under reduced motion' : ''}`
+      flashed.map((f) => [f.kind, f.anim, f.gutter, ...(still ? [f.band] : [])]),
+      [['line', still ? 'none' : 'gnosis-here-band', true, ...(still ? ['rgba(47, 85, 212, 0.22)'] : [])]],
+      `${surface}: where the jump landed is marked here${still ? ', still under reduced motion' : ''}`
     );
-    await sleep(1700);
+    await sleep(2100);
     const done = await jumpState(root, text);
-    assert.equal(await js<number>(`window.deepAll('[data-jumped]',document.querySelector(${JSON.stringify(root)})).length`), 0, `${surface}: the flash ends`);
+    assert.equal(await js<number>(`window.deepAll('[data-here]',document.querySelector(${JSON.stringify(root)})).length`), 0, `${surface}: the band ends`);
     assert.equal(done.line, after.line, `${surface}: the flash moved nothing`);
     assert.equal(done.lines, after.lines, `${surface}: nothing was revealed`);
     return after;
@@ -238,6 +243,16 @@ void app.whenReady().then(async () => {
     await checkJump('Changes', changesRow, 'Go to function flush', 'flush(): number {', true);
     await js('document.activeElement?.blur()');
 
+    // ── A stale topic diff refreshes by itself, through the same model as Changes ──
+    // The topic's first read of src/scope.ts (both sides) disagrees with its saved hunks on the line it explains. The PR's changes
+    // refresh once at the view tier, the file reads again, and the topic then shows as in Changes. Queue preparation
+    // does not read the file, so the first read is the topic's.
+    await js(`(async()=>{window.changeReads=[];window.scopeReads=0;window.corruptScope=1;
+      const corrupt=(path,side)=>{if(path!=='src/scope.ts'||side?.kind!=='text')return side;window.scopeReads++;if(window.corruptScope<1)return side;window.corruptScope--;return {...side,content:side.content.replace('total += 30 * 2','total += 30 * 3')}};
+      {const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=async(r,...rest)=>{if(rest[0]===true&&r.path==='src/scope.ts')throw Error('Not prepared in this check');const v=await read(r,...rest);return {...v,after:corrupt(r.path,v.after)}};}
+      {const read=window.electronAPI.getPrChanges;window.electronAPI.getPrChanges=(url,refresh,options)=>{if(refresh)window.changeReads.push({view:!!options?.view,recheck:options?.recheck?.paths??null});return read(url,refresh,options)};}
+      (await import('/lib/inspection-cache.ts')).inspectionFiles.clear()})()`);
+
     // ── The topic: the same file, two of its hunks ──
     await click('Review queue');
     await wait("!!document.querySelector('.queue-row-main')");
@@ -251,6 +266,8 @@ void app.whenReady().then(async () => {
     // The parity this suite guards: the topic renders Changes' diff, not a diff of its own.
     assert.equal(await js(`!!document.querySelector(${JSON.stringify(topic)}+' .changes-file-header')`), true, 'The topic uses the code-tier file header');
     assert.equal(await js(`document.querySelectorAll(${JSON.stringify(topic)}+' :is(.review-context-hunk,.diff-context-gap,.review-file-context)').length`), 0, 'No topic-only diff chrome');
+    // The topic read the file out of step, refreshed once, and is done refreshing.
+    await wait(`window.corruptScope===0&&window.changeReads.length===1&&!document.querySelector(${JSON.stringify(topic)}).textContent.includes('Updating to the latest version')`, 500);
     await wait(`window.headers(document.querySelector(${JSON.stringify(topic)})).filter(h=>h.crumbs).length>=2`, 500);
     await settle();
     const slide = await js<Header[]>(`window.headers(document.querySelector(${JSON.stringify(topic)}))`);
@@ -265,6 +282,9 @@ void app.whenReady().then(async () => {
       assert.equal(header.show, twin.show, `The same definition action: ${header.crumbs}`);
     }
     assert.match(slide.map((h) => h.crumbs).join('\n'), /StoreBridge › .*flush/, 'Breadcrumbs reach the method');
+    assert.equal(await js('window.corruptScope'), 0, 'The topic read the file out of step with its hunks');
+    assert.deepEqual(await js('window.changeReads'), [{ view: true, recheck: ['src/scope.ts'] }], 'One automatic refresh at the view tier');
+    assert.ok(await js<boolean>(`!document.querySelector(${JSON.stringify(topic)}).textContent.match(/Couldn’t match|Updating to the latest|changed on GitHub/)`), 'The topic recovered');
     // Between the topic's hunks: a gap bar, as in Changes.
     assert.ok(await js(`!!document.querySelector(${JSON.stringify(topic)}+' .diff-gap[data-gap]')`), 'Gap bars between hunks');
     const slidePalette = await js<Palette>(`window.palette(document.querySelector(${JSON.stringify(topic)}))`);
@@ -305,7 +325,7 @@ void app.whenReady().then(async () => {
     await pinTopic();
     await checkJump('Topic', topic, 'Go to class StoreBridge', 'export class StoreBridge {', false, { between: 'private items = new Map', above: 'export const before29' });
     await capture('explanation-crumb-jump', region('.explanation-document', 0, 260));
-    // With reduced motion, the flash is a still outline.
+    // With reduced motion, the band is still.
     await pinTopic();
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });

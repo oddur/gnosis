@@ -2,21 +2,25 @@ import { SYNTAX_LANGUAGES, syntaxLanguage, type SyntaxLanguage } from './syntax-
 
 /**
  * Settings › Appearance › Code intelligence (#393): whether diffs show code structure (hunk breadcrumbs, "Show whole
- * function" and opening short definitions), and for which languages. Pure, so main, the renderer and unit tests share
+ * function" and the file's outline of changed symbols), whether a short definition around a change shows whole (show
+ * scope, lib/show-scope.ts), and for which languages. Pure, so main, the renderer and unit tests share
  * one reading of `preferences.json`. A language that is off is never read for its scopes, never parsed, and its diffs
  * show as they would without a grammar. Languages Gnosis adds later are on: the setting lists those turned off.
  */
 export interface CodeIntelligencePreferences {
   /** "Show code structure in diffs". Undefined means on. */
   enabled?: boolean;
+  /** "Show the whole function or class when it's short". Undefined means on. */
+  showScope?: boolean;
   /** Languages turned off. */
   disabled?: string[];
 }
 export interface CodeIntelligenceSettings {
   enabled: boolean;
+  showScope: boolean;
   disabled: SyntaxLanguage[];
 }
-export const DEFAULT_CODE_INTELLIGENCE: Readonly<CodeIntelligenceSettings> = { enabled: true, disabled: [] };
+export const DEFAULT_CODE_INTELLIGENCE: Readonly<CodeIntelligenceSettings> = { enabled: true, showScope: true, disabled: [] };
 
 /** The setting as saved, with unknown languages and repeats dropped, in the order Settings lists languages. */
 export function codeIntelligenceSettings(preferences: unknown): CodeIntelligenceSettings {
@@ -28,6 +32,7 @@ export function codeIntelligenceSettings(preferences: unknown): CodeIntelligence
   const disabled = Array.isArray(raw.disabled) ? new Set(raw.disabled.filter((v) => typeof v === 'string')) : new Set();
   return {
     enabled: raw.enabled !== false,
+    showScope: raw.showScope !== false,
     disabled: SYNTAX_LANGUAGES.filter((language) => disabled.has(language)),
   };
 }

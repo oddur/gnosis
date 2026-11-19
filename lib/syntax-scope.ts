@@ -567,15 +567,11 @@ export function definitionChain(definitions: readonly SyntaxDefinition[], inner:
 export const enclosingPoint = (definitions: readonly SyntaxDefinition[], line: number) =>
   enclosingDefinition(definitions, Math.max(1, line - 1), line);
 
-/** A definition this short opens whole by default. */
-export const OPEN_BY_DEFAULT_LINES = 40;
 /** "Show whole function" shows at most this many lines of a definition; longer ones show their signature. */
 export const WHOLE_DEFINITION_LINES = 150;
 
 export const definitionLines = (definition: Pick<SyntaxDefinition, 'start' | 'end'>) =>
   definition.end - definition.start + 1;
-export const opensByDefault = (definition: Pick<SyntaxDefinition, 'start' | 'end'>, limit = OPEN_BY_DEFAULT_LINES) =>
-  definitionLines(definition) <= limit;
 
 /**
  * What "Show whole function" reveals around a hunk: the whole definition, or, past `cap` lines, its signature and the

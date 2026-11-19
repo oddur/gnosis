@@ -21,6 +21,9 @@ export function createPrFileCache(
   let forgets = 0;
   const forgottenAt = new Map<string, number>();
   const keeps = (url: string, since: number) => (forgottenAt.get(url) ?? -1) <= since;
+  // A dropped file (its contents did not match its patch) keeps nothing from reads that started before the drop.
+  const drops = new Map<string, number>();
+  const dropsOf = (key: string) => drops.get(key) ?? 0;
   const settled = () => {
     if (!pending.size && !afterPending.size) forgottenAt.clear();
   };
@@ -51,7 +54,8 @@ export function createPrFileCache(
       existing = pending.get(pendingKey);
     if (existing && inspectionRank(existing.background) >= inspectionRank(background)) return existing.promise;
     const generation = epoch,
-      since = forgets;
+      since = forgets,
+      dropped = dropsOf(key);
     const promise = load(r, background)
       .then((value) => {
         const current = saved.get(key)?.value;
@@ -67,7 +71,7 @@ export function createPrFileCache(
             n + (side.kind === 'text' ? side.content.length * 2 : side.kind === 'image' ? side.dataUrl.length * 2 : 0),
           0
         );
-        if (generation === epoch && keeps(r.url, since) && size <= maxBytes) {
+        if (generation === epoch && keeps(r.url, since) && dropped === dropsOf(key) && size <= maxBytes) {
           bytes -= saved.get(key)?.bytes ?? 0;
           saved.set(key, { value, bytes: size, url: r.url, at: now() });
           bytes += size;
@@ -115,11 +119,12 @@ export function createPrFileCache(
     const existing = afterPending.get(key);
     if (existing && inspectionRank(existing.background) >= inspectionRank(background)) return existing.promise;
     const generation = epoch,
-      since = forgets;
+      since = forgets,
+      dropped = dropsOf(key);
     const promise = loadAfter(r, background)
       .then((value) => {
         const size = value.kind === 'text' ? value.content.length * 2 : 0;
-        if (generation === epoch && keeps(r.url, since) && size <= maxBytes / 2) {
+        if (generation === epoch && keeps(r.url, since) && dropped === dropsOf(key) && size <= maxBytes / 2) {
           afterBytes -= afters.get(key)?.bytes ?? 0;
           afters.delete(key);
           afters.set(key, { value, bytes: size, url: r.url, at: now() });
@@ -163,6 +168,29 @@ export function createPrFileCache(
           afterBytes -= entry.bytes;
         }
     },
+    /**
+     * Drops one file's saved contents, both sides and the after side alone, so the next read asks main again. Reads
+     * in flight still answer their callers, and keep nothing; later reads do not join them.
+     */
+    drop(r: PrFileRequest) {
+      const key = keyFor(r);
+      drops.set(key, dropsOf(key) + 1);
+      const entry = saved.get(key);
+      if (entry) {
+        saved.delete(key);
+        bytes -= entry.bytes;
+      }
+      const after = afters.get(key);
+      if (after) {
+        afters.delete(key);
+        afterBytes -= after.bytes;
+      }
+      pending.delete(`${key}:false`);
+      pending.delete(`${key}:true`);
+      afterPending.delete(key);
+    },
+    /** The key a file's contents are saved under: its revision key, with the comparison it belongs to. */
+    keyFor,
     peek,
     read,
     peekAfter,
@@ -177,6 +205,7 @@ export function createPrFileCache(
       afters.clear();
       afterPending.clear();
       forgottenAt.clear();
+      drops.clear();
       afterBytes = 0;
       priorities.clear();
       bytes = 0;

@@ -17,10 +17,14 @@ import {
   type HunkRange,
 } from '../lib/diff-gaps';
 import { applyCodePalette } from '../lib/diff-code-palette';
+import { HERE_CSS, clearHere, markHere, markSection } from '../lib/diff-here';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
-import { jumpLabel, revealLabel, spokenChain, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
+import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
+import type { ScopeRail } from '../lib/show-scope';
+import type { ChangedSymbol } from '../lib/symbol-outline';
+import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 
@@ -29,8 +33,15 @@ export type GapStatus =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  /** The after text no longer matches the patch. */
-  | { kind: 'stale' };
+  /** The after text no longer matches the patch, and the view cannot refresh it (a local review). */
+  | { kind: 'stale' }
+  /** The after text did not match the patch: the PR's changes and the file are loading again (useDiffFileModel). */
+  | { kind: 'refreshing' }
+  /** Still no match after that refresh, at the same revision. The reader can refresh again (`onRetry`). */
+  | { kind: 'mismatch' };
+/** The statuses a gap bar shows instead of its reveal controls. */
+const blocked = (status: GapStatus) =>
+  status.kind === 'stale' || status.kind === 'error' || status.kind === 'refreshing' || status.kind === 'mismatch';
 
 const parse = (patch: string) => processFile(patch, { throwOnError: true });
 /**
@@ -47,13 +58,24 @@ const CHANGES_CSS = `[data-code] {
 }
 /* A line scrolled to lands below the file header and its hunk's pinned header (#395). */
 [data-line] { scroll-margin-top: var(--diff-sticky-offset, 0px); }
-/* The line a pinned crumb jumped to flashes as a review check's line does (ReviewDiff's check-flash), inside its own
-   box so nothing moves (#417). Reduced motion: a still outline until ChangesDiff removes it. */
-[data-line][data-jumped] { animation: check-flash 1.6s ease-out; outline-offset: -2px; }
-@keyframes check-flash { from { outline: 2px solid var(--ring); } to { background-color: transparent; } }
-@media (prefers-reduced-motion: reduce) { [data-line][data-jumped] { animation: none; outline: 2px solid var(--ring); } }
+/* Where a jump or a review check took the reader (lib/diff-here.ts). */
+${HERE_CSS}
+/* Show scope (lib/show-scope.ts): a definition shown whole because it is short has a quiet rail beside its line
+   numbers, a bracket from its signature to its last line, so its extent reads at a glance while its lines keep their own
+   colours. The rail is a background of the gutter cell, under the numbers, so it costs no element and moves nothing. */
+[data-column-number][data-scope-rail] {
+  --scope-rail: rgb(155 184 255 / 42%);
+  background-repeat: no-repeat;
+  background-image: linear-gradient(var(--scope-rail), var(--scope-rail)), linear-gradient(var(--scope-rail), var(--scope-rail));
+  background-size: 2px 100%, 0 0;
+  background-position: 3px 0, 3px 0;
+}
+[data-column-number][data-scope-rail=start] { background-size: 2px calc(100% - 0.5lh + 1px), 7px 2px; background-position: 3px 100%, 3px calc(0.5lh - 1px); }
+[data-column-number][data-scope-rail=end] { background-size: 2px calc(0.5lh + 1px), 7px 2px; background-position: 3px 0, 3px calc(0.5lh - 1px); }
+[data-column-number][data-scope-rail=only] { background-size: 7px 2px, 0 0; background-position: 3px calc(0.5lh - 1px), 0 0; }
 ${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
+const NO_RAILS: readonly ScopeRail[] = [];
 const diffStyle = {
   '--diffs-font-family': 'var(--font-mono)',
   '--diffs-font-size': 'var(--type-code)',
@@ -254,8 +276,37 @@ function HunkScopeLabel({
   );
 }
 
-/** "Show whole function": the innermost definition, among the bar's controls on the right. */
-function ShowDefinition({ scope, onShow }: { scope?: HunkScope; onShow?: (reveal: DefinitionReveal) => void }) {
+/**
+ * "Show whole function": the innermost definition, right after the breadcrumb. Where show scope showed a definition
+ * whole (lib/show-scope.ts), "Collapse function" takes the hunk back to plain context.
+ */
+function ShowDefinition({
+  scope,
+  onShow,
+  onCollapse,
+}: {
+  scope?: HunkScope;
+  onShow?: (reveal: DefinitionReveal) => void;
+  onCollapse?: (key: string) => void;
+}) {
+  // A definition the rule showed offers to collapse, even when a long stretch of it stays hidden between two of its
+  // hunks: that stretch's own gap bar shows it.
+  if (scope?.shown && onCollapse) {
+    const { key, definition } = scope.shown;
+    const noun = definitionNoun(definition);
+    return (
+      <button
+        type="button"
+        className="diff-context-button diff-gap-text"
+        data-collapse-scope=""
+        title={`This ${definitionLines(definition).toLocaleString()}-line ${noun} shows whole because it is short. Show only the change and its context.`}
+        onClick={() => onCollapse(key)}
+      >
+        <span className="icon-mask icon-fold-vertical" aria-hidden="true" />
+        <span className="diff-gap-label">Collapse {noun}</span>
+      </button>
+    );
+  }
   if (!scope?.reveal || !onShow) return null;
   const signature = scope.reveal.kind === 'signature';
   return (
@@ -381,6 +432,29 @@ function gapControls(part: GapBarPart, status: GapStatus, reveal: (direction: Ga
         </span>
       ),
     };
+  if (status.kind === 'refreshing')
+    return {
+      body: (
+        <LoadingIndicator className="diff-gap-loading" announce={false}>
+          Updating to the latest version…
+        </LoadingIndicator>
+      ),
+    };
+  if (status.kind === 'mismatch')
+    return {
+      body: (
+        <>
+          <span className="diff-gap-message" role="status">
+            Couldn’t match this file to its diff.
+          </span>
+          {onRetry && (
+            <button type="button" className="diff-context-button diff-gap-text" onClick={onRetry}>
+              Refresh
+            </button>
+          )}
+        </>
+      ),
+    };
   if (status.kind === 'error')
     return {
       body: (
@@ -461,12 +535,11 @@ function TrailingBar({
 }) {
   const { hidden } = part;
   const known = hidden !== undefined;
-  const busy = status.kind === 'loading';
+  const busy = status.kind === 'loading' || status.kind === 'refreshing';
   const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
   const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines may follow';
   let body: ReactNode;
-  if (onReveal && (status.kind === 'stale' || status.kind === 'error'))
-    body = gapControls(part, status, () => () => {}, onRetry).body;
+  if (onReveal && blocked(status)) body = gapControls(part, status, () => () => {}, onRetry).body;
   else
     body = (
       <>
@@ -486,7 +559,7 @@ function TrailingBar({
             </button>
           </>
         )}
-        {busy && (
+        {status.kind === 'loading' && (
           <LoadingIndicator className="diff-gap-loading" announce={false}>
             Loading lines…
           </LoadingIndicator>
@@ -515,6 +588,7 @@ function GapBar({
   counts,
   onShowDefinition,
   plain,
+  onCollapseScope,
 }: {
   part: GapBarPart;
   status: GapStatus;
@@ -534,10 +608,11 @@ function GapBar({
   /** What the hunk below changes. */
   counts?: HunkCounts;
   onShowDefinition?: (reveal: DefinitionReveal) => void;
+  onCollapseScope?: (key: string) => void;
 }) {
   const { hidden } = part;
   const known = hidden !== undefined;
-  const busy = status.kind === 'loading';
+  const busy = status.kind === 'loading' || status.kind === 'refreshing';
   const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
   // A topic that leaves out changes between its hunks says so: those lines are not the after side's alone.
   const opaque = plain && part.gap.opaque ? (known ? `${lines(hidden)} hidden` : 'Lines hidden') : OPAQUE;
@@ -563,6 +638,7 @@ function GapBar({
       aria-busy={busy || undefined}
       data-gap={part.gap.index}
       data-hunk-header=""
+      data-message={(onReveal && blocked(status)) || undefined}
     >
       <HeaderRow
         gutter={gutter}
@@ -577,7 +653,7 @@ function GapBar({
           <>
             {body}
             {located && note}
-            {busy && (
+            {status.kind === 'loading' && (
               <LoadingIndicator className="diff-gap-loading" announce={false}>
                 Loading lines…
               </LoadingIndicator>
@@ -587,7 +663,7 @@ function GapBar({
         range={range}
         counts={counts}
         live
-        action={<ShowDefinition scope={scope} onShow={onShowDefinition} />}
+        action={<ShowDefinition scope={scope} onShow={onShowDefinition} onCollapse={onCollapseScope} />}
       />
     </div>
   );
@@ -598,6 +674,9 @@ function GapBar({
  * themselves `data-diff-scroller`. File and hunk headers stick to its top.
  */
 export const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
+
+/** The pinned state's thresholds: 0, 5%, 10%… 100% of a header in view (see the observer in ChangesDiff). */
+const STUCK_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i / 20);
 
 /** A probe that finds no line (a slice still mounting, a comment) looks again on this many following frames. */
 const MISSED_PROBES = 30;
@@ -648,6 +727,7 @@ function followReader(
   if (slot && chain && previous !== scopeKey) {
     // A crumb with focus stays focused across the rewrite: on its definition's crumb, or else the innermost.
     const focused = slot.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.start ?? '' : undefined;
+    closeFolded(bar);
     slot.replaceChildren(...liveCrumbs(chain, point.side));
     slot.setAttribute(
       'aria-label',
@@ -694,6 +774,8 @@ function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side'])
     crumb.dataset.jump = '';
     crumb.dataset.side = side;
     crumb.dataset.start = String(definition.start);
+    crumb.dataset.signatureEnd = String(definition.signatureEnd);
+    crumb.dataset.end = String(definition.end);
     crumb.setAttribute('aria-label', jumpLabel(definition));
     crumb.title = jumpLabel(definition);
     const code = make('code', '');
@@ -710,7 +792,15 @@ function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side'])
     return group;
   });
   if (chain.length < 2) return groups;
-  return [decorative(make('span', 'diff-gap-more', '…')), ...groups];
+  // Folded crumbs are still reachable: "…" opens them as a list under the bar (openFolded).
+  const more = make('button', 'diff-gap-more', '…') as HTMLButtonElement;
+  more.type = 'button';
+  more.dataset.more = '';
+  more.setAttribute('aria-haspopup', 'true');
+  more.setAttribute('aria-expanded', 'false');
+  more.setAttribute('aria-label', 'Show the folded levels');
+  more.title = 'Show the folded levels';
+  return [more, ...groups];
 }
 
 /** Frames a pinned crumb's jump waits at most for its reveal to render before it scrolls: a reveal the view cannot
@@ -721,9 +811,58 @@ const jumpDuration = (distance: number, screen: number) => 250 + 200 * Math.min(
 /** Exponential ease-out, reaching 1 at 1. */
 const easeOut = (t: number) => (t >= 1 ? 1 : 1 - 2 ** (-10 * t));
 
-/** A jumped-to line flashes for as long as a review check's line does (ReviewDiff); still, under reduced motion. */
-const JUMP_FLASH_MS = 1600;
-const JUMP_FLASH_STILL_MS = 1500;
+/**
+ * Marks the rows of each definition shown whole by show scope (lib/show-scope.ts) for its rail: `start` on its first
+ * line, `end` on its last, `mid` between, on the new side's rows and their gutter cells. Deleted rows inside it carry
+ * the rail through. Attributes change only where they differ, so a pass over a diff that is already marked writes
+ * nothing; a diff with no rails and none marked costs one query.
+ */
+function markRails(host: Element, rails: readonly ScopeRail[]) {
+  const root = host.shadowRoot;
+  if (!root) return;
+  if (!rails.length && !root.querySelector('[data-scope-rail]')) return;
+  const gutters = new Map<string, Element>();
+  for (const cell of root.querySelectorAll('[data-column-number]'))
+    if (!cell.closest('[data-deletions]')) gutters.set(cell.getAttribute('data-line-index') ?? '', cell);
+  const write = (element: Element | undefined, value: string | undefined) => {
+    if (!element || element.getAttribute('data-scope-rail') === (value ?? null)) return;
+    if (value) element.setAttribute('data-scope-rail', value);
+    else element.removeAttribute('data-scope-rail');
+  };
+  let open: ScopeRail | undefined;
+  for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
+    if (row.closest('[data-deletions]')) continue;
+    let value: string | undefined;
+    if (row.dataset.lineType === 'change-deletion') value = open ? 'mid' : undefined;
+    else {
+      const line = Number(row.dataset.line);
+      const rail = rails.find((r) => line >= r.start && line <= r.end);
+      value = !rail ? undefined : rail.start === rail.end ? 'only' : line === rail.start ? 'start' : line === rail.end ? 'end' : 'mid';
+      open = rail && line < rail.end ? rail : undefined;
+    }
+    write(row, value);
+    write(gutters.get(row.getAttribute('data-line-index') ?? ''), value);
+  }
+}
+
+/** A definition's signature is marked "here" with its first line, up to this many lines. */
+const MAX_HERE_LINES = 12;
+
+/** Where to take the reader in a file's diff (#417, #394): a line on one side, in that side's numbers. */
+export interface DiffDestination {
+  side: LinePoint['side'];
+  line: number;
+  /** New lines to reveal first, if any are hidden: a crumb reveals from its definition down to the reader. */
+  reveal?: readonly [number, number];
+  /** The lines to mark "here", on `side`: by default the line alone, a definition's whole signature for a crumb. */
+  here?: readonly [number, number];
+  /** The definition the line starts, on `side`: the whole of it is marked, its signature (`here`) most. */
+  section?: readonly [number, number];
+}
+/** What a view holds to take the reader to a line of the file's diff, as a pinned crumb does. */
+export interface DiffNavigator {
+  goTo(destination: DiffDestination): void;
+}
 
 /** What the reader does to scroll: any of these stops a pinned crumb's jump from correcting the view (#417). */
 const READER_SCROLLS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
@@ -742,6 +881,40 @@ function lineElement(scope: ParentNode, side: LinePoint['side'], line: number): 
       if (Number(own ? row.dataset.line : row.dataset.altLine) === line) return row;
     }
   return undefined;
+}
+
+/**
+ * Opens the levels a narrow pinned breadcrumb folded into "…" (#417): a list under the bar, outermost first, of the
+ * same crumbs, which go where theirs go. Escape, a jump, or the reader moving on closes it.
+ */
+function openFolded(more: HTMLElement) {
+  const bar = more.closest<HTMLElement>('[data-hunk-header]');
+  const slot = more.closest<HTMLElement>('.diff-gap-live');
+  if (!bar || !slot) return;
+  if (closeFolded(bar)) return;
+  const menu = document.createElement('div');
+  menu.className = 'diff-gap-folded';
+  menu.setAttribute('role', 'group');
+  menu.setAttribute('aria-label', 'Folded levels');
+  for (const crumb of slot.querySelectorAll<HTMLElement>(':scope > .diff-gap-crumb-group[data-collapsed] > button[data-jump]')) {
+    const item = crumb.cloneNode(true) as HTMLElement;
+    item.removeAttribute('data-innermost');
+    menu.append(item);
+  }
+  if (!menu.childElementCount) return;
+  menu.style.left = `${Math.round(more.getBoundingClientRect().left - bar.getBoundingClientRect().left)}px`;
+  bar.append(menu);
+  bar.setAttribute('data-folded-open', '');
+  more.setAttribute('aria-expanded', 'true');
+  menu.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
+}
+/** Closes a bar's list of folded levels; whether one was open. */
+function closeFolded(bar: Element): boolean {
+  const menu = bar.querySelector(':scope > .diff-gap-folded');
+  bar.removeAttribute('data-folded-open');
+  bar.querySelector('.diff-gap-live > [data-more]')?.setAttribute('aria-expanded', 'false');
+  menu?.remove();
+  return !!menu;
 }
 
 /** Focuses a pinned crumb without scrolling: the one for the definition starting at `start` if it shows, else the
@@ -816,6 +989,10 @@ export function ChangesDiff<A>({
   scopeAt,
   canReveal,
   plainGaps,
+  navigator,
+  rails = NO_RAILS,
+  onCollapseScope,
+  outline,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -848,14 +1025,29 @@ export function ChangesDiff<A>({
   canReveal?: (gap: GapBarPart['gap']) => boolean;
   /** Gaps name only their hidden lines: Feedback shows a comment's excerpt, not a topic's chosen hunks. */
   plainGaps?: boolean;
+  /** Set while the diff can take the reader to a line, as its pinned crumbs do: the file's outline uses it. */
+  navigator?: RefObject<DiffNavigator | null>;
+  /** Definitions shown whole by show scope (lib/show-scope.ts), for their rails. */
+  rails?: readonly ScopeRail[];
+  /** Takes a definition shown whole by show scope back to plain context. */
+  onCollapseScope?: (key: string) => void;
+  /** The file's outline of changed symbols (#394), above its first hunk. */
+  outline?: Omit<OutlineProps, 'onGo'>;
 }) {
+  const latestRails = useRef(rails);
+  latestRails.current = rails;
   const stableOptions = useStableOptions({
     ...options,
     // One text node per line (lib/diff-token-flatten.ts).
     ...({ [FLAT_TOKENS]: true } as object),
     hunkSeparators: 'simple',
     unsafeCSS: options.unsafeCSS ? `${options.unsafeCSS}\n${CHANGES_CSS}` : CHANGES_CSS,
-  });
+    // Each rendered diff marks its rows for show scope's rails.
+    onPostRender: (node: HTMLElement, ...rest: unknown[]) => {
+      (options.onPostRender as ((node: HTMLElement, ...rest: unknown[]) => void) | undefined)?.(node, ...rest);
+      markRails(node, latestRails.current);
+    },
+  } as FileDiffOptions<A, undefined>);
   const latestRender = useRef(renderAnnotation);
   latestRender.current = renderAnnotation;
   const [stableRender] = useState(() => (annotation: DiffLineAnnotation<A>) => latestRender.current(annotation));
@@ -983,6 +1175,22 @@ export function ChangesDiff<A>({
   const latestName = useRef('');
   latestName.current = file.name.slice(file.name.lastIndexOf('/') + 1);
   const follow = useRef<() => void>(undefined);
+  // The diff's own navigator, for its outline.
+  const own = useRef<DiffNavigator | null>(null);
+  // An outline symbol goes where its crumb would (#394): its definition's first line, revealing every hidden line from
+  // there down to its first change, and nothing above it; its signature is marked "here".
+  const goToSymbol = ({ definition, side, first }: ChangedSymbol) => {
+    const parts = latestParts.current;
+    const from = newLineAt(parts, side, definition.start);
+    const to = newLineAt(parts, first.side, first.line);
+    own.current?.goTo({
+      side,
+      line: definition.start,
+      reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
+      here: [definition.start, Math.max(definition.start, definition.signatureEnd)],
+      section: [definition.start, definition.end],
+    });
+  };
   const observeHeaders = () => {
     const observer = stuck.current;
     if (!observer || !root.current) return;
@@ -1039,69 +1247,71 @@ export function ChangesDiff<A>({
         (entries) => {
           for (const entry of entries) {
             const top = entry.rootBounds?.top ?? 0;
-            const stuckNow = entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top;
-            entry.target.toggleAttribute('data-stuck', stuckNow);
-            if (stuckNow) pinned.add(entry.target as HTMLElement);
-            else {
-              pinned.delete(entry.target as HTMLElement);
-              entry.target.removeAttribute('data-live-focus');
-            }
+            mark(entry.target, entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top);
           }
-          for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
-          listen(pinned.size > 0);
-          if (pinned.size) schedule();
+          settled();
         },
-        { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: [0, 1] }
+        // A threshold every 5%: a header is partly in view both while it enters at the bottom and while it is pinned,
+        // so a jump straight from one to the other, such as to a line of a file never shown, crosses one of them.
+        { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: STUCK_THRESHOLDS }
       );
       observeHeaders();
     });
     resize.observe(header);
+    const mark = (target: Element, stuckNow: boolean) => {
+      target.toggleAttribute('data-stuck', stuckNow);
+      if (stuckNow) pinned.add(target as HTMLElement);
+      else {
+        pinned.delete(target as HTMLElement);
+        target.removeAttribute('data-live-focus');
+        closeFolded(target);
+      }
+    };
+    const settled = () => {
+      for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
+      listen(pinned.size > 0);
+      if (pinned.size) schedule();
+    };
+    // Once any scroll ends, however the reader arrived (a jump, a review check, a deep link, the outline), the pinned
+    // state is read from the headers' boxes, for the one case the thresholds cannot see: a header partly in view by
+    // exactly as much before a jump as after it. One read of this diff's box, and of its headers' when it is in view.
+    const recheck = () => {
+      if (height === undefined) return;
+      const view = scroller.getBoundingClientRect();
+      const box = element.getBoundingClientRect();
+      if (box.bottom <= view.top || box.top >= view.bottom) return;
+      const line = view.top + height;
+      for (const bar of element.querySelectorAll('[data-hunk-header]')) {
+        const r = bar.getBoundingClientRect();
+        const stuckNow = r.bottom > line && r.top < view.bottom && r.top < line;
+        if (stuckNow !== bar.hasAttribute('data-stuck')) mark(bar, stuckNow);
+      }
+      settled();
+    };
+    scroller.addEventListener('scrollend', recheck, { passive: true });
 
-    // A pinned crumb goes to its definition's first line (#417): it reveals the lines between that line and the reader,
-    // then scrolls the line right under the pinned headers. A line that stays hidden (a topic without it) is stood in
-    // for by its gap's bar. A line in a slice not laid out yet is aimed at by its estimated place until it mounts. The
-    // reader's wheel, touch, pointer or key stops the scroll. The pinned breadcrumb then follows the reader as after
-    // any scroll.
+    // Going to a line (#417): a pinned crumb, or a symbol of the file's outline (#394). Whatever must show is revealed
+    // first; then the line scrolls right under the pinned headers, with an eased move. A line that stays hidden (a topic
+    // without it) is stood in for by its gap's bar. A line in a slice not laid out yet is aimed at by its estimated
+    // place until it mounts. The reader's wheel, touch, pointer or key stops the scroll. Where it lands is marked "here"
+    // (lib/diff-here.ts), and the pinned breadcrumb then follows the reader as after any scroll.
     let jumpFrame = 0;
+    let jumpId = 0;
     const stopJump = () => {
       cancelAnimationFrame(jumpFrame);
       jumpFrame = 0;
       for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
     };
-    // Where a jump landed flashes, as a review check's line does, so the reader finds it: the line, or the gap bar
-    // standing in for it. Visual only. A new jump ends the last flash; reduced motion shows it still, a little shorter.
-    let flashed: { target: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined;
-    const unflash = () => {
-      if (!flashed) return;
-      clearTimeout(flashed.timer);
-      flashed.target.removeAttribute('data-jumped');
-      flashed = undefined;
-    };
-    const flash = (target: HTMLElement) => {
-      unflash();
-      target.setAttribute('data-jumped', '');
-      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-      flashed = { target, timer: setTimeout(unflash, still ? JUMP_FLASH_STILL_MS : JUMP_FLASH_MS) };
-    };
-    const jump = (crumb: HTMLElement, keyboard: boolean) => {
+    const goTo = ({ side, line: start, reveal, here = [start, start], section, onLanded }: DiffDestination & { onLanded?: () => void }) => {
       stopJump();
-      unflash();
-      const bar = crumb.closest<HTMLElement>('[data-hunk-header]');
-      const start = Number(crumb.dataset.start);
-      if (!bar || !start) return;
-      const side: LinePoint['side'] = crumb.dataset.side === 'before' ? 'before' : 'after';
-      // Every bar has the same height; the clicked one may go when the reveal joins its hunk to the one above.
-      const barHeight = bar.offsetHeight;
-      // Reveal first: every hidden line from the definition's first line down to where the reader is, as Show whole
-      // function does, and nothing above it. Reveals are in new numbers.
-      const [readerSide, readerLine] = (bar.getAttribute('data-live-key') ?? '').split(':');
+      clearHere();
+      const id = ++jumpId;
+      // Every bar has the same height, pinned or not.
+      const barHeight = element.querySelector<HTMLElement>('[data-hunk-header]')?.offsetHeight ?? 0;
       const parts = latestParts.current;
-      const from = newLineAt(parts, side, start);
-      const to = newLineAt(parts, readerSide === 'before' ? 'before' : 'after', Number(readerLine));
-      const revealing =
-        from !== undefined && to !== undefined && from < to && hiddenBetween(parts, from, to - 1) ? parts : undefined;
-      if (revealing && from !== undefined && to !== undefined) latestShow.current?.({ kind: 'whole', start: from, end: to - 1 });
-      // What the jump lands on, for the flash.
+      const revealing = reveal && reveal[0] <= reveal[1] && hiddenBetween(parts, reveal[0], reveal[1]) ? parts : undefined;
+      if (revealing && reveal) latestShow.current?.({ kind: 'whole', start: reveal[0], end: reveal[1] });
+      // What the jump lands on, for the "here" mark.
       let landed: HTMLElement | undefined;
       // Where the place is (`y`) and where it should be (`to`), in viewport pixels, found anew each frame: the reveal
       // and late slices move it.
@@ -1147,6 +1357,7 @@ export function ChangesDiff<A>({
       let still = 0;
       const step = (now: number) => {
         jumpFrame = 0;
+        if (id !== jumpId) return;
         // The revealed lines render first; scroll anchoring keeps the reader's lines in place meanwhile.
         if (revealing && latestParts.current === revealing && waited++ < REVEAL_WAIT_FRAMES) {
           jumpFrame = requestAnimationFrame(step);
@@ -1178,42 +1389,119 @@ export function ChangesDiff<A>({
         }
         stopJump();
         where();
-        if (landed?.isConnected) flash(landed);
-        // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
-        if (!keyboard) return;
-        const slot = [...pinned].find((b) => b.isConnected && b.dataset.live === 'scope')?.querySelector<HTMLElement>('.diff-gap-live');
-        if (slot && !slot.contains(document.activeElement)) focusCrumb(slot, String(start));
+        if (landed?.isConnected && section && landed.matches('[data-line]')) {
+          // A definition is marked whole, in both columns of a split diff, with the gap bars inside it.
+          const [first, last] = section;
+          const bars = latestParts.current.flatMap((part) => {
+            if (part.kind !== 'gap' || part.end === undefined) return [];
+            const offset = side === 'before' ? part.gap.oldOffset : 0;
+            if (part.start + offset <= first || part.end + offset >= last) return [];
+            const bar = element.querySelector(`[data-gap="${part.gap.index}"]`);
+            return bar ? [bar] : [];
+          });
+          markSection(element.querySelectorAll('diffs-container'), { side, start: first, end: last, signatureEnd: here[1] }, bars);
+        } else if (landed?.isConnected) {
+          // A line is marked with the rest of `here` on its side, such as a definition's whole signature; a bar alone.
+          const rows: HTMLElement[] = [landed];
+          if (landed.matches('[data-line]'))
+            for (let n = start + 1; n <= here[1] && n < start + MAX_HERE_LINES; n++) {
+              const row = lineElement(element, side, n);
+              if (row) rows.push(row);
+            }
+          markHere(rows);
+        }
+        onLanded?.();
       };
       for (const type of READER_SCROLLS) scroller.addEventListener(type, stopJump, { passive: true });
       step(performance.now());
     };
+    // A pinned crumb goes to its definition's first line (#417): it reveals every hidden line from there down to where
+    // the reader is, as Show whole function does, and nothing above it. Reveals are in new numbers. The definition's
+    // signature is marked with its first line.
+    const jump = (crumb: HTMLElement, keyboard: boolean) => {
+      const bar = crumb.closest<HTMLElement>('[data-hunk-header]');
+      const start = Number(crumb.dataset.start);
+      if (!bar || !start) return;
+      const side: LinePoint['side'] = crumb.dataset.side === 'before' ? 'before' : 'after';
+      const [readerSide, readerLine] = (bar.getAttribute('data-live-key') ?? '').split(':');
+      const parts = latestParts.current;
+      const from = newLineAt(parts, side, start);
+      const to = newLineAt(parts, readerSide === 'before' ? 'before' : 'after', Number(readerLine));
+      goTo({
+        side,
+        line: start,
+        reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
+        here: [start, Math.max(start, Number(crumb.dataset.signatureEnd) || start)],
+        section: [start, Math.max(start, Number(crumb.dataset.end) || start)],
+        // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
+        onLanded: keyboard
+          ? () => {
+              const slot = [...pinned].find((b) => b.isConnected && b.dataset.live === 'scope')?.querySelector<HTMLElement>('.diff-gap-live');
+              if (slot && !slot.contains(document.activeElement)) focusCrumb(slot, String(start));
+            }
+          : undefined,
+      });
+    };
+    const navigation: DiffNavigator = { goTo };
+    own.current = navigation;
+    if (navigator) navigator.current = navigation;
     const onClick = (event: MouseEvent) => {
-      const crumb = (event.target as Element | null)?.closest<HTMLElement>('.diff-gap-live button[data-jump]');
-      if (crumb && element.contains(crumb)) jump(crumb, event.detail === 0);
+      const target = event.target as Element | null;
+      const more = target?.closest<HTMLElement>('.diff-gap-live button[data-more]');
+      if (more && element.contains(more)) {
+        openFolded(more);
+        return;
+      }
+      const crumb = target?.closest<HTMLElement>(':is(.diff-gap-live, .diff-gap-folded) button[data-jump]');
+      if (!crumb || !element.contains(crumb)) return;
+      const bar = crumb.closest('[data-hunk-header]');
+      const folded = !!crumb.closest('.diff-gap-folded');
+      jump(crumb, event.detail === 0);
+      if (folded && bar) {
+        closeFolded(bar);
+        // From the keyboard, focus goes back to the breadcrumb, as for a crumb that showed.
+        if (event.detail === 0) bar.querySelector<HTMLElement>('.diff-gap-live [data-more]')?.focus({ preventScroll: true });
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const bar = (event.target as Element | null)?.closest('[data-hunk-header][data-folded-open]');
+      if (!bar || !closeFolded(bar)) return;
+      event.stopPropagation();
+      bar.querySelector<HTMLElement>('.diff-gap-live [data-more]')?.focus({ preventScroll: true });
     };
     // Focus on a pinned crumb keeps the header pinned-looking: focus elsewhere in it brings back its own location and
     // its controls, which act on the hunk.
     const onFocus = (event: FocusEvent) => {
-      const slot = (event.target as Element | null)?.closest('.diff-gap-live');
+      const slot = (event.target as Element | null)?.closest('.diff-gap-live, .diff-gap-folded');
       const into = event.type === 'focusin' || (event.relatedTarget instanceof Node && !!slot?.contains(event.relatedTarget));
       slot?.closest('[data-hunk-header]')?.toggleAttribute('data-live-focus', into);
     };
     element.addEventListener('click', onClick);
+    element.addEventListener('keydown', onKey);
     element.addEventListener('focusin', onFocus);
     element.addEventListener('focusout', onFocus);
     return () => {
       resize.disconnect();
+      scroller.removeEventListener('scrollend', recheck);
       stuck.current?.disconnect();
       stuck.current = undefined;
       listen(false);
       follow.current = undefined;
+      if (navigator?.current === navigation) navigator.current = null;
+      if (own.current === navigation) own.current = null;
       stopJump();
-      unflash();
+      clearHere();
       element.removeEventListener('click', onClick);
+      element.removeEventListener('keydown', onKey);
       element.removeEventListener('focusin', onFocus);
       element.removeEventListener('focusout', onFocus);
     };
   }, [stickyUnder]);
+  // New rails mark the diffs already rendered.
+  useEffect(() => {
+    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markRails(host, rails);
+  }, [rails]);
   // New definitions name the reader's place anew.
   useEffect(() => follow.current?.(), [scopeAt]);
   // Breadcrumbs fold to fit their bar: again whenever the bars' width or their crumbs change.
@@ -1277,6 +1565,7 @@ export function ChangesDiff<A>({
           counts={next?.kind === 'hunk' && next.changed ? next.counts : undefined}
           onShowDefinition={onShowDefinition}
           plain={plainGaps}
+          onCollapseScope={onCollapseScope}
         />
       ) : (
         <TrailingBar
@@ -1320,7 +1609,7 @@ export function ChangesDiff<A>({
               )
             }
             controls={structure && scopeNote}
-            action={structure && <ShowDefinition scope={scope} onShow={onShowDefinition} />}
+            action={structure && <ShowDefinition scope={scope} onShow={onShowDefinition} onCollapse={onCollapseScope} />}
             range={block.range}
             counts={block.counts}
             live
@@ -1372,6 +1661,7 @@ export function ChangesDiff<A>({
       data-line-numbers={options.disableLineNumbers ? 'off' : undefined}
       style={rootStyle}
     >
+      {outline && <DiffOutline {...outline} onGo={goToSymbol} />}
       {content}
     </div>
   );

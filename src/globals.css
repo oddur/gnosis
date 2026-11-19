@@ -558,8 +558,9 @@
 
 /* ─── Check suggestion jump highlight ────────────────────────── */
 
-/* When a reviewer clicks a "What to check" hint, the target diff
-   line gets this class briefly. The ::after overlays the line with a
+/* When a reviewer opens code from the explanation and it lands on a
+   whole file rather than a line, the file gets this class briefly. A
+   line is marked "here" instead (lib/diff-here.ts). The ::after overlays the line with a
    claret wash that fades to zero — a page-turning blink rather than
    a pulsing highlight. isolation:isolate keeps the overlay contained
    if the target happens to be inside another stacking context. */
@@ -1847,6 +1848,23 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .diff-gap-crumb-group[data-collapsed] { display:none; }
 .diff-gap-more { display:none; flex:none; color:var(--diff-header-muted); }
 [data-collapsed] > .diff-gap-more { display:inline; }
+/* Pinned, "…" is a button that opens the folded levels as a list under the bar, so a narrow breadcrumb's outer
+   definitions stay a click away (ChangesDiff's openFolded). */
+.diff-gap-live button.diff-gap-more { position:relative; padding:0 3px; margin-left:-3px; border:0; border-radius:3px; background:none; font:inherit; cursor:pointer; }
+.diff-gap-live button.diff-gap-more::after { content:''; position:absolute; inset:50% -3px auto; height:24px; translate:0 -50%; }
+.diff-gap-live button.diff-gap-more:hover, .diff-gap-live button.diff-gap-more[aria-expanded=true] { color:var(--diff-header-fg); background:var(--diff-header-hover); }
+.diff-gap-live button.diff-gap-more:focus-visible, .diff-gap-folded button.diff-gap-crumb:focus-visible { outline:2px solid var(--code-ring); outline-offset:-2px; }
+.diff-gap-folded {
+  position:absolute; top:calc(100% + 2px); z-index:2; display:flex; flex-direction:column; align-items:stretch; gap:2px;
+  min-width:180px; max-width:min(440px, calc(100% - 24px)); padding:4px; border:1px solid var(--diff-header-line); border-radius:6px;
+  background:var(--diff-header-bg); box-shadow:0 8px 20px -8px rgb(0 0 0 / 60%);
+}
+.diff-gap-folded button.diff-gap-crumb { display:block; min-height:26px; padding:0 8px; border-radius:4px; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.diff-gap-folded button.diff-gap-crumb:hover { background:var(--diff-header-hover); text-decoration:none; }
+@media (prefers-reduced-motion: no-preference) {
+  .diff-gap-folded { animation:diff-gap-folded-in 140ms cubic-bezier(0.16, 1, 0.3, 1); }
+}
+@keyframes diff-gap-folded-in { from { opacity:0; translate:0 -4px; } }
 .diff-gap-crumb-separator { padding-inline:1ch; color:var(--diff-header-muted); }
 .diff-gap-crumb { min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--diff-header-fg); font:inherit; }
 .diff-gap-crumb code { font:inherit; }
@@ -1883,11 +1901,44 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-gap-where { align-self:stretch; }
 .diff-gap-live { align-self:stretch; align-items:center; }
 .diff-gap-live button.diff-gap-crumb::after { inset:50% 0 auto; height:24px; translate:0 -50%; }
-/* A jump whose line is hidden lands on its gap's bar, which flashes as a jumped-to line does (ChangesDiff's
-   check-flash), with an outline inside its box so nothing moves. */
-.diff-gap[data-jumped] { animation:check-flash 1.6s ease-out; outline-offset:-2px; }
-@keyframes check-flash { from { outline:2px solid var(--ring); } to { background-color:var(--diff-header-bg); } }
-@media (prefers-reduced-motion: reduce) { .diff-gap[data-jumped] { animation:none; outline:2px solid var(--ring); } }
+/* A jump whose line is hidden lands on its gap's bar, which is marked "here" as a line is (lib/diff-here.ts): a band
+   in the code tier's blue under its text, with a bar on its left edge, that blooms, settles and fades. Nothing moves. */
+.diff-gap[data-here] { isolation:isolate; }
+.diff-gap[data-here]:not([data-hunk-header]) { position:relative; }
+.diff-gap[data-here]::before {
+  content:''; position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background-color:rgb(47 85 212 / 0%); animation:2s linear forwards gnosis-here-bar;
+}
+.diff-gap[data-here=b]::before { animation-name:gnosis-here-bar-b; }
+@keyframes gnosis-here-bar {
+  0% { background-color:rgb(47 85 212 / 38%); box-shadow:inset 3px 0 0 var(--code-ring); animation-timing-function:cubic-bezier(0.33, 0, 0.2, 1); }
+  38%, 72% { background-color:rgb(47 85 212 / 22%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  72% { animation-timing-function:cubic-bezier(0.4, 0, 0.6, 1); }
+  100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
+}
+@keyframes gnosis-here-bar-b {
+  0% { background-color:rgb(47 85 212 / 38%); box-shadow:inset 3px 0 0 var(--code-ring); animation-timing-function:cubic-bezier(0.33, 0, 0.2, 1); }
+  38%, 72% { background-color:rgb(47 85 212 / 22%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  72% { animation-timing-function:cubic-bezier(0.4, 0, 0.6, 1); }
+  100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
+}
+/* Inside a marked section, a gap bar takes the section's softer band, with the bar running through it. */
+.diff-gap[data-here][data-here-part=body]::before { animation-name:gnosis-here-bar-body; }
+.diff-gap[data-here=b][data-here-part=body]::before { animation-name:gnosis-here-bar-body-b; }
+@keyframes gnosis-here-bar-body {
+  0%, 14% { background-color:rgb(47 85 212 / 18%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  38%, 72% { background-color:rgb(47 85 212 / 12%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
+}
+@keyframes gnosis-here-bar-body-b {
+  0%, 14% { background-color:rgb(47 85 212 / 18%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  38%, 72% { background-color:rgb(47 85 212 / 12%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  100% { background-color:rgb(47 85 212 / 0%); box-shadow:inset 3px 0 0 rgb(155 184 255 / 0%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .diff-gap[data-here]::before { animation:none; background-color:rgb(47 85 212 / 22%); box-shadow:inset 3px 0 0 var(--code-ring); }
+  .diff-gap[data-here][data-here][data-here-part=body]::before { animation:none; background-color:rgb(47 85 212 / 12%); }
+}
 /* The lines after a file's last hunk: one code line, on the code's background under a hairline, the action at the
    code's text column. */
 .diff-gap[data-trailing] { min-height:var(--leading-code); padding:0; background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }
@@ -1896,6 +1947,64 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-gap-trailing .diff-gap-text { padding-inline:4px; color:var(--diff-header-fg); text-decoration:underline; text-decoration-color:var(--diff-header-muted); text-underline-offset:3px; }
 .diff-gap-trailing .diff-context-button { position:relative; }
 .diff-gap-trailing .diff-context-button::after { content:''; position:absolute; inset:-2px 0; }
+/* A file's outline of changed symbols (#394, DiffOutline): one quiet code line between the file header and the first
+   hunk, on the code's background with a hairline under it, as the trailing bar is. What the changes touch, each symbol
+   marked added, modified or removed by icon as well as colour, and how many the reviewer has ticked. Expanded, a list
+   with a Viewed tick per symbol, its parents and what it changes. Collapsed, the symbols that fit show on one line:
+   the rest wrap out of sight, so the bar never grows and nothing below it moves. */
+.diff-outline {
+  --outline-bg:var(--diff-code-bg, #22272e);
+  --outline-fg:var(--diff-code-fg, #c5ccd6);
+  --outline-muted:var(--diff-code-muted, color-mix(in oklab, var(--outline-fg) 78%, var(--outline-bg)));
+  --outline-line:color-mix(in oklab, var(--outline-fg) 16%, var(--outline-bg));
+  --outline-hover:color-mix(in oklab, var(--outline-fg) 10%, var(--outline-bg));
+  container:diff-outline / inline-size;
+  background:var(--outline-bg); color:var(--outline-muted); border-bottom:1px solid var(--outline-line);
+  font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code);
+}
+.diff-outline-bar { display:flex; align-items:center; gap:0 16px; min-width:0; height:calc(var(--leading-code) * 1.75); padding:0 12px 0 6px; }
+.diff-outline-toggle { display:inline-flex; flex:none; align-items:center; gap:6px; min-height:24px; padding:0 8px 0 4px; border-radius:4px; color:var(--outline-fg); font:inherit; white-space:nowrap; }
+.diff-outline-toggle:hover { background:var(--outline-hover); }
+.diff-outline-chevron { flex:none; color:var(--outline-muted); transition:rotate 180ms cubic-bezier(0.16, 1, 0.3, 1); }
+.diff-outline[data-expanded] .diff-outline-chevron { rotate:90deg; }
+.diff-outline-summary { white-space:nowrap; }
+.diff-outline-quiet { padding-left:26px; color:var(--outline-muted); }
+.diff-outline-chips { display:flex; flex:1 1 auto; flex-wrap:wrap; align-items:center; gap:0 16px; min-width:0; height:var(--leading-code); margin:0; padding:0; overflow:hidden; list-style:none; }
+.diff-outline-chip { display:inline-flex; flex:none; align-items:center; gap:5px; height:var(--leading-code); white-space:nowrap; }
+.diff-outline-marker { flex:none; }
+.diff-outline-marker[data-change=added] { color:var(--diff-code-added, var(--code-added)); }
+.diff-outline-marker[data-change=modified] { color:var(--code-modified); }
+.diff-outline-marker[data-change=removed] { color:var(--diff-code-deleted, var(--code-deleted)); }
+.diff-outline-go { position:relative; padding:0; border:0; border-radius:3px; background:none; color:var(--outline-fg); font:inherit; cursor:pointer; }
+/* Targets reach 24px tall past the text, so the bar keeps its height. */
+.diff-outline-go::after { content:''; position:absolute; inset:50% -3px auto; height:24px; translate:0 -50%; }
+.diff-outline-go code { font:inherit; }
+.diff-outline-go:hover { text-decoration:underline; text-decoration-color:var(--outline-muted); text-underline-offset:3px; }
+.diff-outline [data-viewed] > .diff-outline-go { color:var(--outline-muted); }
+.diff-outline-check { flex:none; color:var(--outline-muted); }
+.diff-outline-more { position:relative; padding:0; color:var(--outline-muted); font:inherit; text-decoration:underline; text-decoration-color:var(--outline-line); text-underline-offset:3px; }
+.diff-outline-more:hover { color:var(--outline-fg); }
+.diff-outline-more::after { content:''; position:absolute; inset:50% -3px auto; height:24px; translate:0 -50%; }
+.diff-outline-end { display:flex; flex:none; align-items:center; gap:10px; margin-left:auto; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.diff-outline-mark { min-height:24px; padding:0 8px; border:1px solid var(--outline-line); border-radius:4px; color:var(--outline-fg); font:inherit; }
+.diff-outline-mark:hover { background:var(--outline-hover); }
+.diff-outline :is(button, input):focus-visible { outline:2px solid var(--code-ring); outline-offset:1px; }
+.diff-outline-list { display:flex; flex-direction:column; margin:0; padding:0 12px 6px 6px; list-style:none; }
+.diff-outline-row { display:flex; align-items:center; gap:8px; min-width:0; min-height:28px; }
+.diff-outline-tick-target { display:inline-grid; flex:none; place-items:center; width:24px; height:24px; cursor:pointer; }
+.diff-outline-tick { appearance:none; display:inline-grid; place-content:center; width:15px; height:15px; margin:0; border:1.5px solid var(--diff-file-control, color-mix(in oklab, var(--outline-fg) 55%, var(--outline-bg))); border-radius:4px; background:transparent; cursor:pointer; }
+.diff-outline-tick::before { content:''; width:9px; height:9px; background:var(--outline-bg); clip-path:polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%); transform:scale(0); transition:transform 120ms cubic-bezier(0.16, 1, 0.3, 1); }
+.diff-outline-tick:checked { border-color:var(--code-ring); background:var(--code-ring); }
+.diff-outline-tick:checked::before { transform:scale(1); }
+.diff-outline-tick:disabled { cursor:default; opacity:.6; }
+.diff-outline-parents { min-width:0; overflow:hidden; color:var(--outline-muted); text-overflow:ellipsis; white-space:nowrap; }
+.diff-outline-counts { display:inline-flex; flex:none; gap:.5ch; margin-left:auto; font-variant-numeric:tabular-nums; }
+@container diff-outline (width < 560px) {
+  .diff-outline-parents { display:none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .diff-outline-chevron, .diff-outline-tick::before { transition:none; }
+}
 /* Narrow, the bar gives way before the breadcrumb does: the count goes, the actions keep their icons and their names
    for screen readers, and below that the file's own name, which the file header above already shows. */
 @container diff-gap (width < 640px) {
@@ -1916,6 +2025,10 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    inside the bar. */
 .diff-gap[data-stuck] { box-shadow:var(--diff-header-shadow); }
 .diff-gap[data-stuck]:is(:not(:focus-within), [data-live-focus]) :is(.diff-gap-gutter > *, .diff-gap-act > *, .diff-gap-controls > :not(.diff-gap-structure)) { opacity:0; pointer-events:none; }
+/* Following the reader, the pinned breadcrumb takes the room of the hidden action and controls, so outer levels fold
+   only when the bar is truly narrow. They keep their place in the tab order, and come back with focus. A bar showing a
+   message keeps its room: the message may wrap, and pinning never changes the bar's height. */
+.diff-gap[data-stuck][data-live]:not([data-message]):is(:not(:focus-within), [data-live-focus]) :is(.diff-gap-act, .diff-gap-controls) { max-width:0; overflow:hidden; }
 /* The hunk's own crumbs reveal; pinned, only the reader's crumbs act, and they only scroll. */
 .diff-gap[data-stuck]:not(:focus-within) .diff-gap-scope button.diff-gap-crumb { pointer-events:none; }
 .changes-diff :is(button, a, input, textarea, select, [tabindex]) { scroll-margin-top:var(--diff-sticky-offset); }
@@ -2541,6 +2654,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 /* The path keeps room to name the file: when the actions leave it less than this (a narrow Commits pane with the
    Markdown switch), they wrap to a second row instead of squeezing the path to nothing. */
 .changes-file-title { display:flex; align-items:baseline; gap:12px; flex:1 1 auto; min-width:min(100%, 260px); }
+/* The file's type icon leads the path, centred on its line; the path keeps its own gap to the counts. */
+.changes-file-title > .file-type-icon { align-self:center; margin-right:-4px; }
 .changes-file-header h2 { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); font-weight:400; }
 /* The path's parts are the heading's own flex items, so they give way in order: the old folders, the new folders,
    the old name, and the new name last. */

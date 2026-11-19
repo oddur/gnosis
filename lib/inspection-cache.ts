@@ -2,7 +2,7 @@ import { clearStackChanges, forgetStackChanges, stackLastUses } from './stack-in
 import { clearMarkdownReviews } from './markdown-review-cache';
 import { createPrFileCache } from './pr-file-cache';
 import { commitSelectionKey, type CommitSelection } from './pr-commits';
-import { fileRevisionKey, inspectionRank, type InspectionMode, type PrChanges, type PrChangeFile } from './pr-changes';
+import { fileRevisionKey, inspectionRank, type InspectionMode, type PrChanges, type PrChangeFile, type PrFileRequest } from './pr-changes';
 import type { FileDiffMetadata } from '@pierre/diffs';
 import { createPrInspectionCache } from './pr-inspection-cache';
 import type { PrCommits } from './pr-commits';
@@ -46,7 +46,7 @@ export const latestCommitSelection = (list: PrCommits): CommitSelection | undefi
 
 export const inspectionData = createPrInspectionCache({
   restore: revisions => window.electronAPI.getPreparedInventories(revisions),
-  changes: (r, refresh, mode, signal) => inventory(signal, requestId => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, ...loadMode(mode), requestId })),
+  changes: (r, refresh, mode, signal, recheck) => inventory(signal, requestId => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, ...loadMode(mode), requestId, ...(recheck ? { recheck } : {}) })),
   commits: (r, refresh, mode, signal) => inventory(signal, requestId => window.electronAPI.getPrCommits(r.url, refresh, { revision: r, ...loadMode(mode), requestId })),
   file: (snapshot, file, mode = true) => inspectionFiles.read(inspectionFileRequest(snapshot, file), mode),
   // A patch preview shows code at once; Markdown needs its contents to render.
@@ -206,6 +206,15 @@ export function forgetInspection(urls: Iterable<string>) {
   for (const listener of forgetListeners) listener(set);
   comparisons.prune((snapshot) => set.has(snapshot.url));
   previews.prune((preview) => set.has(preview.url));
+}
+/**
+ * Drops what the renderer holds for one file: its contents and its parsed patch. For a file whose contents did not
+ * match its patch (lib/stale-diff-refresh.ts), so both read again once the PR's changes are refreshed.
+ */
+export function dropInspectionFile(request: PrFileRequest) {
+  const key = inspectionFiles.keyFor(request);
+  inspectionFiles.drop(request);
+  previews.prune((_value, _at, id) => id.startsWith(`${key}:context:`));
 }
 /** Drops the PRs nothing has read for `idleMs`. Use is per PR: reading one file keeps all of its PR's entries. */
 export function sweepIdleInspection(now = Date.now(), idleMs = RENDERER_IDLE_MS) {

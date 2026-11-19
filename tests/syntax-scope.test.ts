@@ -5,7 +5,6 @@ import { before, test } from 'node:test';
 import { structuredPatch } from 'diff';
 import * as TreeSitter from 'web-tree-sitter';
 import {
-  OPEN_BY_DEFAULT_LINES,
   WHOLE_DEFINITION_LINES,
   createSyntaxEngine,
   definitionChain,
@@ -13,12 +12,12 @@ import {
   definitionReveal,
   enclosingDefinition,
   enclosingPoint,
-  opensByDefault,
   syntaxLanguage,
   type SyntaxDefinition,
   type SyntaxLanguage,
 } from '../lib/syntax-scope';
 import { diffGaps, pinLines, revealSpan, revealedParts, shownLines, withPins, type GapHunk } from '../lib/diff-gaps';
+import { showScopePlan } from '../lib/show-scope';
 import {
   chainAt,
   hunkHeaderText,
@@ -543,12 +542,6 @@ void test('The cap: whole up to 150 lines, the signature beyond', () => {
   assert.deepEqual(definitionReveal(at(400, 30)), { kind: 'signature', start: 100, end: 109 });
 });
 
-void test('The default-open rule: up to 40 lines', () => {
-  assert.equal(OPEN_BY_DEFAULT_LINES, 40);
-  assert.equal(opensByDefault({ start: 1, end: 40 }), true);
-  assert.equal(opensByDefault({ start: 1, end: 41 }), false);
-});
-
 /** The hunks of a patch between two versions, as the gap model reads them. */
 function hunksOf(beforeLines: string[], afterLines: string[]): GapHunk[] {
   const patch = structuredPatch('a', 'b', `${beforeLines.join('\n')}\n`, `${afterLines.join('\n')}\n`, '', '', {
@@ -563,7 +556,7 @@ function hunksOf(beforeLines: string[], afterLines: string[]): GapHunk[] {
   }));
 }
 
-void test('Hunk scopes in a TypeScript file: default open, Show whole function, and the signature past the cap', async () => {
+void test('Hunk scopes in a TypeScript file: show scope, Show whole function, and the signature past the cap', async () => {
   const after = await definitions('typescript', `${scopeAfter.join('\n')}\n`);
   const hunks = hunksOf(scopeBefore, scopeAfter);
   assert.equal(hunks.length, 4);
@@ -576,9 +569,12 @@ void test('Hunk scopes in a TypeScript file: default open, Show whole function, 
     [...scopes.values()].map((s) => s.definition.label),
     ['resolvePaths()', 'StoreBridge.flush()', 'migrate()', 'it("joins names")']
   );
+  // Show scope (lib/show-scope.ts): resolvePaths costs a line above and one below; the 63-line flush() and the
+  // 205-line migrate() cost far more; the test already shows whole.
+  const plan = showScopePlan(parts, gaps, { after });
   assert.deepEqual(
-    [...scopes.values()].map((s) => s.opens),
-    [true, false, false, true]
+    plan.map((scope) => [scope.definition.label, scope.spans]),
+    [['resolvePaths()', [[4, 4], [12, 12]]]]
   );
   assert.equal(revealLabel(byKey('h1')), 'Show whole function');
   assert.deepEqual(
@@ -587,9 +583,8 @@ void test('Hunk scopes in a TypeScript file: default open, Show whole function, 
   );
   assert.equal(byKey('h2').reveal?.kind, 'signature');
   assert.equal(revealLabel(byKey('h2')), 'Show function signature');
-  // Opening the short ones by default reveals each definition and nothing else.
-  for (const scope of scopes.values())
-    if (scope.opens && scope.reveal) reveals = revealSpan(reveals, gaps, scope.reveal.start, scope.reveal.end);
+  // Showing them reveals each definition and nothing else.
+  for (const scope of plan) for (const [start, end] of scope.spans) reveals = revealSpan(reveals, gaps, start, end);
   parts = revealedParts(hunks, gaps, reveals, scopeAfter);
   let shown = shownLines(parts).after;
   const resolve = byKey('h0').definition;
@@ -632,13 +627,13 @@ void test('Hunk scopes in a Rust file, with deleted lines looked up in the old t
   const parts = revealedParts(hunks, gaps, {}, storeAfter);
   const scopes = hunkScopes(parts, gaps, { after, before: beforeDefinitions }, shownLines(parts).after);
   assert.deepEqual(
-    [...scopes.values()].map((s) => [s.definition.label, s.side, s.opens]),
+    [...scopes.values()].map((s) => [s.definition.label, s.side]),
     [
-      ['impl StoreBridge', 'after', false],
-      ['StoreBridge.save()', 'after', false],
-      ['trait Bridge', 'after', true],
-      ['cleanup()', 'before', true],
-      ['test saves_items()', 'after', true],
+      ['impl StoreBridge', 'after'],
+      ['StoreBridge.save()', 'after'],
+      ['trait Bridge', 'after'],
+      ['cleanup()', 'before'],
+      ['test saves_items()', 'after'],
     ]
   );
   assert.equal(revealLabel([...scopes.values()][0]), 'Show whole impl block');
@@ -733,7 +728,6 @@ void test('Provisional crumbs: the hunk header text from the patch, until the de
   const scope = defined(scopes.get('h0'));
   assert.equal(scope.provisional, true);
   assert.equal(scope.reveal, undefined, 'Nothing reveals from a header');
-  assert.equal(scope.opens, false);
   assert.deepEqual(scope.chain.map((crumb) => [crumb.definition.crumb, crumb.provisional]), [['pub fn handler_3(&self) -> u32', true]]);
   assert.equal(spokenChain('h003.rs', scope.chain), 'In h003.rs, pub fn handler_3(&self) -> u32');
 

@@ -1,6 +1,6 @@
 import { inspectionFailure } from './inspection-batch';
 import type { ActivityTask } from './activity';
-import { changesRevision, inspectionRank, type InspectionMode, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
+import { changesRevision, inspectionRank, type InspectionMode, type InspectionRecheck, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { PrCommits, PrCommit } from './pr-commits';
 import { createSharedRead, readError } from './shared-read';
 import { approximateBytes, createByteCache } from './byte-cache';
@@ -17,7 +17,7 @@ export interface PreparedInventories {
 }
 interface Dependencies {
   restore?: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;
-  changes: (revision: InspectionRevision, refresh: boolean, background: InspectionMode, signal?: AbortSignal) => Promise<PrChanges>;
+  changes: (revision: InspectionRevision, refresh: boolean, background: InspectionMode, signal?: AbortSignal, recheck?: InspectionRecheck) => Promise<PrChanges>;
   commits: (revision: InspectionRevision, refresh: boolean, background: InspectionMode, signal?: AbortSignal) => Promise<PrCommits>;
   file: (snapshot: PrChanges, file: PrChangeFile, background?: InspectionMode) => Promise<unknown>;
   /** Whether a file can show without a request, from its saved contents or its patch. */
@@ -115,18 +115,19 @@ export function createPrInspectionCache(deps: Dependencies) {
     revision: InspectionRevision,
     refresh = false,
     background: InspectionMode = false,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    recheck?: InspectionRecheck
   ): Promise<T> {
     if (signal?.aborted) return Promise.reject(readError(signal.reason));
     const saved = values.get(key(revision))?.[kind];
-    if (saved && !refresh) return Promise.resolve(saved as T);
-    const id = `${kind}:${key(revision)}:${refresh}`;
+    if (saved && !refresh && !recheck) return Promise.resolve(saved as T);
+    const id = `${kind}:${key(revision)}:${refresh}${recheck ? `:${changesRevision(recheck)}:${recheck.paths.join('\n')}` : ''}`;
     const previous = pending.get(id);
     // A higher rank sends its own read; main joins the two and promotes the work.
     if (previous && !previous.task.signal.aborted && inspectionRank(previous.background) >= inspectionRank(background))
       return previous.task.read(signal) as Promise<T>;
     const generation = epoch;
-    const task = createSharedRead(sharedSignal => deps[kind](revision, refresh, background, sharedSignal)
+    const task = createSharedRead(sharedSignal => (kind === 'changes' ? deps.changes(revision, refresh, background, sharedSignal, recheck) : deps.commits(revision, refresh, background, sharedSignal))
       .then((value) => {
         if (generation === epoch) remember(value, kind);
         return value;
@@ -137,8 +138,9 @@ export function createPrInspectionCache(deps: Dependencies) {
     pending.set(id, { task, background });
     return task.read(signal) as Promise<T>;
   }
-  const readChanges = (r: InspectionRevision, refresh = false, background: InspectionMode = false, signal?: AbortSignal) =>
-    read<PrChanges>('changes', r, refresh, background, signal);
+  /** With `recheck`, the PR's files are listed again even at a saved revision (a stale diff, lib/stale-diff-refresh.ts). */
+  const readChanges = (r: InspectionRevision, refresh = false, background: InspectionMode = false, signal?: AbortSignal, recheck?: InspectionRecheck) =>
+    read<PrChanges>('changes', r, refresh, background, signal, recheck);
   const readCommits = (r: InspectionRevision, refresh = false, background: InspectionMode = false, signal?: AbortSignal) =>
     read<PrCommits>('commits', r, refresh, background, signal);
   /** Committed predictions read at most `files` bodies; one when GitHub's inventory is incomplete or patches were dropped. */

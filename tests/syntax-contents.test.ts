@@ -281,27 +281,30 @@ void test('What a file’s scopes need: the after side, both sides for deletion-
 });
 
 void test('Code intelligence settings: saved values are normalized, and a language that is off is never read', () => {
-  assert.deepEqual(codeIntelligenceSettings(undefined), { enabled: true, disabled: [] });
-  assert.deepEqual(codeIntelligenceSettings({ codeIntelligence: 'yes' }), { enabled: true, disabled: [] });
+  assert.deepEqual(codeIntelligenceSettings(undefined), { enabled: true, showScope: true, disabled: [] });
+  assert.deepEqual(codeIntelligenceSettings({ codeIntelligence: 'yes' }), { enabled: true, showScope: true, disabled: [] });
   assert.deepEqual(
     codeIntelligenceSettings({ codeIntelligence: { enabled: 0, disabled: ['yaml', 'cobol', 'rust', 'rust', 7] } }),
-    { enabled: true, disabled: ['rust', 'yaml'] },
+    { enabled: true, showScope: true, disabled: ['rust', 'yaml'] },
     'Unknown languages and repeats are dropped, in Settings order; only false turns the switch off'
   );
   assert.equal(codeIntelligenceSettings({ codeIntelligence: { enabled: false } }).enabled, false);
+  // Show scope (lib/show-scope.ts) is on unless turned off.
+  assert.equal(codeIntelligenceSettings({ codeIntelligence: { showScope: false } }).showScope, false);
+  assert.equal(codeIntelligenceSettings({ codeIntelligence: { showScope: 0 } }).showScope, true);
   const rustOff = withLanguage(DEFAULT_CODE_INTELLIGENCE, 'rust', false);
   assert.deepEqual(rustOff.disabled, ['rust']);
   assert.deepEqual(withLanguage(rustOff, 'rust', true).disabled, []);
   assert.equal(languageEnabled(rustOff, 'rust'), false);
   assert.equal(languageEnabled(rustOff, 'typescript'), true);
-  assert.equal(languageEnabled({ enabled: false, disabled: [] }, 'typescript'), false, 'The master switch');
+  assert.equal(languageEnabled({ enabled: false, showScope: true, disabled: [] }, 'typescript'), false, 'The master switch');
   assert.equal(pathEnabled(rustOff, 'notes.rb'), false, 'No grammar');
   // The effect: no plan, so no view read, no prefetch and nothing to parse.
   const change = '@@ -1,3 +1,3 @@\n a\n-b\n+c\n d';
   const allowed = (settings: typeof rustOff) => (path: string) => pathEnabled(settings, path);
   assert.equal(syntaxContentsPlan({}, file('src/a.rs', change), allowed(rustOff)), undefined);
   assert.ok(syntaxContentsPlan({}, file('src/a.ts', change), allowed(rustOff)));
-  assert.equal(syntaxContentsPlan({}, file('src/a.ts', change), allowed({ enabled: false, disabled: [] })), undefined);
+  assert.equal(syntaxContentsPlan({}, file('src/a.ts', change), allowed({ enabled: false, showScope: true, disabled: [] })), undefined);
   // A rename from a language that is off reads only the new side.
   const deletion = '@@ -1,3 +1,2 @@\n a\n-b\n d';
   assert.equal(syntaxContentsPlan({}, file('src/a.ts', deletion, { previousPath: 'src/a.rs' }), allowed(rustOff))?.both, false);

@@ -2,6 +2,7 @@ import manifest from '../src/assets/tree-sitter/manifest.json';
 import { SYNTAX_LANGUAGES, type SyntaxLanguage } from '../lib/syntax-scope';
 import { LANGUAGE_NAMES, withLanguage, type CodeIntelligenceSettings as Settings } from '../lib/code-intelligence';
 import { SettingRow, Toggle } from './SettingsControls';
+import { SCOPE_CONTEXT_BUDGET } from '../lib/show-scope';
 
 /** Each bundled grammar's size, from the vendored manifest (scripts/vendor-tree-sitter.mjs). */
 const GRAMMAR_BYTES = new Map<string, number>(
@@ -28,12 +29,23 @@ export function CodeIntelligenceSettings({ value, onChange }: { value: Settings;
       </h3>
       <SettingRow
         label="Show code structure in diffs"
-        description="Name the function or class around each change, offer Show whole function, and open short definitions whole."
+        description="Name the function or class around each change, offer Show whole function, and list the symbols each file changes."
       >
         <Toggle
           checked={value.enabled}
           ariaLabel="Show code structure in diffs"
           onChange={() => onChange({ ...value, enabled: !value.enabled })}
+        />
+      </SettingRow>
+      <SettingRow
+        label="Show the whole function or class when it’s short"
+        description={`When at most ${SCOPE_CONTEXT_BUDGET} more lines above and below a change complete the function, method or class around it, show all of it, marked by a rail beside the line numbers. Collapse it on any hunk.`}
+      >
+        <Toggle
+          checked={value.enabled && value.showScope}
+          disabled={!value.enabled}
+          ariaLabel="Show the whole function or class when it’s short"
+          onChange={() => onChange({ ...value, showScope: !value.showScope })}
         />
       </SettingRow>
       <div className="settings-code-languages" role="group" aria-label="Languages" data-disabled={!value.enabled || undefined}>
