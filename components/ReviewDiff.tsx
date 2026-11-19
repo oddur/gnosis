@@ -5,7 +5,7 @@ import type { GitHubReviewThread } from '../lib/review-threads';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
 import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
-import { DEFAULT_DIFF_APPEARANCE, diffContextLines, type DiffAppearance } from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
 import { reviewGapHunks, type ReviewPin } from '@/lib/review-gap-hunks';
 import { fileRevisionKey, type PrChangeFile, type PrChanges, type PrFileRequest } from '@/lib/pr-changes';
 import { currentCodeIntelligence } from '@/lib/use-syntax-contents';
@@ -76,7 +76,7 @@ export function ReviewDiff({
   filePath,
   hunks,
   pinnedLines,
-  fileStatus,
+  fileStatus: knownStatus,
   diffLayout,
   appearance = DEFAULT_DIFF_APPEARANCE,
   pendingComments = [],
@@ -90,6 +90,14 @@ export function ReviewDiff({
   active = true,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
+  // Without the file's status, a topic whose saved hunks add (or delete) the whole file is an added (or deleted) file,
+  // shown as Changes shows one: unified, and whole.
+  const fileStatus = useMemo(() => {
+    if (knownStatus || !hunks.length) return knownStatus;
+    const prepared = hunks.map((hunk) => prepareReviewHunk(hunk));
+    if (!prepared.every((p) => p?.singleSide)) return undefined;
+    return prepared.every((p) => p?.lines.every((line) => line.type === 'add')) ? 'added' : 'deleted';
+  }, [knownStatus, hunks]);
   const fileComments = useMemo(() => pendingComments.filter((c) => c.filePath === filePath), [pendingComments, filePath]);
   const notes = useMemo(() => inlineExplanations.filter((note) => note.filePath === filePath), [inlineExplanations, filePath]);
   // Lines the topic points at stay in view, with context around them: checks, threads, notes and drafts.
