@@ -362,6 +362,18 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.activeElement?.getAttribute('aria-pressed')"), 'true');
     await press('Enter');
     await wait("!!document.querySelector('.stack-overview')");
+    // The topics' files read as their saved hunks say, with 80 unchanged lines below, so Show all reveals the file
+    // itself. The fixture's generic contents do not match these hunks: the file would be refreshed as stale, and what
+    // Show all reveals would depend on how far that refresh got when the check looks.
+    await js(`(async()=>{const tail=['// Dispatch context 1','// Dispatch context 2',...Array.from({length:80},(_,i)=>'export const limit'+i+' = '+i+';')];
+      const after=['// Preserve producer order.','export async function dispatch(command) {','  const slot = await queue.acquire();','  try {','    return await worker.run(command);','  } finally {','    slot.release();','  }','}',...tail];
+      const before=[after[0],after[1],'  return worker.run(command);','}',...tail];
+      const text=lines=>lines.join('\\n')+'\\n';const topic=p=>/src\\/(command-queue|batch-scheduler)\\.ts$/.test(p);
+      const read=window.electronAPI.getPrChangeFile,readAfter=window.electronAPI.getPrChangeFileAfter;
+      window.electronAPI.getPrChangeFile=(r,...rest)=>topic(r.path)?Promise.resolve({before:{kind:'text',content:text(before)},after:{kind:'text',content:text(after)}}):read(r,...rest);
+      window.electronAPI.getPrChangeFileAfter=(r,...rest)=>topic(r.path)?Promise.resolve({kind:'text',content:text(after)}):readAfter(r,...rest);
+      // Contents read before this point are the generic ones.
+      (await import('/lib/inspection-cache.ts')).inspectionFiles.clear()})()`);
     await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.explanation-reader')");
     await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
@@ -376,7 +388,13 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.review-diff .diff-gap button')].filter(b=>['Show all','Show'].includes(b.textContent.trim())).forEach(b=>b.click())"
     );
-    await wait("document.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]').length > 60");
+    await wait("document.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]').length > 60").catch(async (error: unknown) => {
+      console.log('Topic reveal, timed out:', JSON.stringify(await js(`(async()=>({groups:[...document.querySelectorAll('.review-file-group')].map(g=>({path:g.dataset.filePath,
+        bars:[...g.querySelectorAll('.diff-gap')].map(b=>b.textContent.trim().slice(0,80)),lines:[...g.querySelectorAll('diffs-container')].map(c=>c.shadowRoot?.querySelectorAll('[data-line]').length),
+        text:[...g.querySelectorAll('diffs-container')].map(c=>[...(c.shadowRoot?.querySelectorAll('[data-line]')??[])].map(l=>l.textContent).join('|'))})),
+        stale:(await import('/lib/use-stale-diff-refresh.ts')).staleDiffRefresh.stats()}))()`)));
+      throw error;
+    });
     await js("(()=>{const pane=document.querySelector('.explanation-document');const header=document.querySelector('.review-file-group > .changes-file-header');pane.scrollTop+=header.getBoundingClientRect().top-pane.getBoundingClientRect().top+100})()");
     await new Promise(r=>setTimeout(r,100));
     const sticky = await js<{ offset: number; text: string }>(`(() => {

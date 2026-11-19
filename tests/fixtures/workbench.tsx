@@ -710,7 +710,7 @@ const mocks = {
       ...(new URLSearchParams(location.search).has('syntax-scope') ? syntaxScopeFiles : []),
       ...(new URLSearchParams(location.search).has('syntax-lazy') ? syntaxLazyFiles : []),
       ...(new URLSearchParams(location.search).has('syntax-span') ? syntaxSpanFiles : []),
-      ...(new URLSearchParams(location.search).has('syntax-large') ? syntaxLargeFiles : []),
+      ...(new URLSearchParams(location.search).has('syntax-large') ? syntaxLargeFiles() : []),
       ...(new URLSearchParams(location.search).has('breadcrumb-nav') ? breadcrumbNavFiles : []),
       ...(new URLSearchParams(location.search).has('noise-filter') ? noiseFilterFiles : []),
       // A file renamed into a long path, for the file header's left-collapsing path and its rename display.

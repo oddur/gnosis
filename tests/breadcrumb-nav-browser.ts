@@ -910,8 +910,35 @@ void app.whenReady().then(async () => {
     assert.ok((await js<string[]>(`window.rails(${JSON.stringify(slideScoped)})`)).includes('2:start'), 'Topic: with its rail');
     assert.ok((await js<string[]>(`window.headerActions(${JSON.stringify(slideScoped)})`)).includes('Collapse class'), 'Topic: and Collapse');
     const slideOutline = topicFile('src/nav/outline.ts');
+    // The reader comes to the file: a topic's file far from the view loads its structure as it nears it.
+    console.log(
+      'Topic files:',
+      JSON.stringify(await js(`[...document.querySelectorAll('[data-explanation-section="1"] .review-file-group')].map(g=>[g.dataset.filePath.replace(/^.*\\/nav\\//,''),Math.round(g.getBoundingClientRect().top),Math.round(g.getBoundingClientRect().height)])`))
+    );
+    await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideOutline)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+    await settle();
     await wait(`window.outline(${JSON.stringify(slideOutline)})?.chips.length===4||window.outline(${JSON.stringify(slideOutline)})?.rows.length===4`, 500).catch(async (error: unknown) => {
-      console.log('TOPIC OUTLINE DEBUG', JSON.stringify(await js(`({outline:window.outline(${JSON.stringify(slideOutline)}),groups:[...document.querySelectorAll('.review-file-group')].map(g=>g.dataset.filePath),top:document.querySelector(${JSON.stringify(slideOutline)})?.getBoundingClientRect().top})`)));
+      console.log(
+        'Topic outline, timed out:',
+        JSON.stringify(
+          await js(`(async()=>{const client=await import('/lib/syntax-scope-client.ts');const traces=(await import('/lib/structure-trace.ts')).structureTraces();
+            return {outline:window.outline(${JSON.stringify(slideOutline)}),top:document.querySelector(${JSON.stringify(slideOutline)})?.getBoundingClientRect().top,
+              definitions:client.definitionStats(),traces:Object.entries(traces).filter(([k])=>k.includes('outline.ts')),
+              timings:client.syntaxTimings.filter(t=>t.key.includes('outline.ts')).map(t=>({key:t.key,priority:t.priority,cached:t.cached})),
+              scopes:[...document.querySelector(${JSON.stringify(slideOutline)}).querySelectorAll('.diff-gap-scope')].map(e=>e.hasAttribute('data-provisional')?'provisional':'parsed'),
+              notes:[...document.querySelector(${JSON.stringify(slideOutline)}).querySelectorAll('[data-structure]')].map(e=>e.dataset.structure),
+              lines:window.deepAll('[data-line]',document.querySelector(${JSON.stringify(slideOutline)})).length,
+              bars:[...document.querySelector(${JSON.stringify(slideOutline)}).querySelectorAll('.diff-gap')].map(b=>b.textContent.trim().slice(0,90)),
+              topicCached:await (async()=>{const files=(await import('/lib/inspection-cache.ts')).inspectionFiles;const r={url:'https://github.com/klang/engine/pull/121',path:'src/nav/outline.ts',baseSha:'base-1',headSha:'head-1'};
+                return {both:!!files.peek(r),after:!!files.peekAfter(r)}})(),
+              cached:await (async()=>{const files=(await import('/lib/inspection-cache.ts')).inspectionFiles;const r={url:'https://github.com/klang/engine/pull/150',path:'src/nav/outline.ts',baseSha:'base-0',headSha:'head-0'};
+                return {both:!!files.peek(r),after:!!files.peekAfter(r)}})(),
+              memo:!!client.peekDefinitions('["https://github.com/klang/engine/pull/150","src/nav/outline.ts","base-0","head-0"]:after')}})()`)
+        )
+      );
+      await js(`(()=>{const s=window.q('${DOC}');s.scrollTop+=window.q(${JSON.stringify(slideOutline)}).getBoundingClientRect().top-s.getBoundingClientRect().top})()`);
+      await sleep(3000);
+      console.log('Topic outline, once in view:', JSON.stringify(await js(`window.outline(${JSON.stringify(slideOutline)})`)));
       throw error;
     });
     const topicOutline = await js<{ summary: string; chips: string[] }>(`window.outline(${JSON.stringify(slideOutline)})`);

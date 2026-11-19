@@ -82,22 +82,28 @@ export function largeFile(file: number): { path: string; before: string[]; after
   return { path: `src/large/${folder}/f${String(file).padStart(3, '0')}.${extension}`, before, after, deletes };
 }
 
-const LARGE = Array.from({ length: LARGE_FILES }, (_, i) => largeFile(i));
-const BY_PATH = new Map(LARGE.map((file) => [file.path, file]));
-export const syntaxLargeFiles: PrChangeFile[] = LARGE.map(({ path, before, after }, i) => {
-  const patch = patchOf(before, after, { headers: true });
-  const lines = patch.split('\n');
-  return {
-    path,
-    status: 'modified' as const,
-    additions: lines.filter((line) => line.startsWith('+')).length,
-    deletions: lines.filter((line) => line.startsWith('-')).length,
-    changeId: `large-${i}`,
-    patch,
-  };
-});
+// Built on first use: making 168 files and their patches takes a while, and every workbench page imports this.
+let large: Map<string, ReturnType<typeof largeFile>> | undefined;
+const files = () => (large ??= new Map(Array.from({ length: LARGE_FILES }, (_, i) => largeFile(i)).map((file) => [file.path, file])));
+let changes: PrChangeFile[] | undefined;
+/** The fixture's files, as the PR's changes list them. */
+export function syntaxLargeFiles(): PrChangeFile[] {
+  return (changes ??= [...files().values()].map(({ path, before, after }, i) => {
+    const patch = patchOf(before, after, { headers: true });
+    const lines = patch.split('\n');
+    return {
+      path,
+      status: 'modified' as const,
+      additions: lines.filter((line) => line.startsWith('+')).length,
+      deletions: lines.filter((line) => line.startsWith('-')).length,
+      changeId: `large-${i}`,
+      patch,
+    };
+  }));
+}
 const text = (lines: string[]) => `${lines.join('\n')}\n`;
 export function syntaxLargeContents(path: string): PrFileContents | undefined {
-  const file = BY_PATH.get(path);
+  if (!path.startsWith('src/large/')) return undefined;
+  const file = files().get(path);
   return file && { before: { kind: 'text', content: text(file.before) }, after: { kind: 'text', content: text(file.after) } };
 }
