@@ -301,6 +301,75 @@ export function knownLines(lines: readonly (string | undefined)[], start: number
   return true;
 }
 
+/**
+ * Where a line of one side is among a diff's parts (#417): a row of a hunk, or hidden in a gap, whose bar stands in
+ * for it. A line that neither shows nor hides, such as one past the file's end, gives the nearest shown row or gap
+ * above it, and `top` when nothing is above it. Nothing is revealed to find it.
+ */
+export type LinePlace =
+  | { kind: 'row'; key: string; row: number; line: number }
+  | { kind: 'gap'; gap: number }
+  | { kind: 'top' };
+export function placeOfLine(parts: readonly GapPart[], side: 'before' | 'after', line: number): LinePlace {
+  let above: LinePlace = { kind: 'top' };
+  for (const part of parts) {
+    if (part.kind === 'gap') {
+      // A gap's hidden lines in the side's numbers; an opaque gap's old numbers are not known.
+      const offset = side === 'before' ? part.gap.oldOffset : 0;
+      const start = part.start + offset,
+        end = part.end === undefined ? Infinity : part.end + offset;
+      if (start > line) return above;
+      if (start > end) continue;
+      if (line <= end) return { kind: 'gap', gap: part.gap.index };
+      above = { kind: 'gap', gap: part.gap.index };
+      continue;
+    }
+    let oldLine = part.hunk.oldStart,
+      newLine = part.hunk.newStart;
+    for (const [row, { type }] of part.hunk.rows.entries()) {
+      const shows = side === 'before' ? type !== '+' : type !== '-';
+      const at = side === 'before' ? oldLine : newLine;
+      if (type !== '+') oldLine++;
+      if (type !== '-') newLine++;
+      if (!shows) continue;
+      if (at === line) return { kind: 'row', key: part.key, row, line };
+      if (at > line) return above;
+      above = { kind: 'row', key: part.key, row, line: at };
+    }
+  }
+  return above;
+}
+
+/**
+ * A line of one side as a new line, for reveals, which are in new numbers: an old line hidden in a gap maps through
+ * the gap's offset, and a deleted row maps to the new line where it sits. Undefined where the parts do not say.
+ */
+export function newLineAt(parts: readonly GapPart[], side: 'before' | 'after', line: number): number | undefined {
+  if (side === 'after') return line;
+  for (const part of parts) {
+    if (part.kind === 'gap') {
+      const offset = part.gap.oldOffset;
+      if (line >= part.start + offset && (part.end === undefined || line <= part.end + offset)) return line - offset;
+      continue;
+    }
+    let oldLine = part.hunk.oldStart,
+      newLine = part.hunk.newStart;
+    for (const { type } of part.hunk.rows) {
+      if (type !== '+' && oldLine === line) return newLine;
+      if (type !== '+') oldLine++;
+      if (type !== '-') newLine++;
+    }
+  }
+  return undefined;
+}
+
+/** Whether any line from new line `start` to `end` is hidden in a gap that can show it. */
+export function hiddenBetween(parts: readonly GapPart[], start: number, end: number): boolean {
+  return parts.some(
+    (part) => part.kind === 'gap' && !!part.hidden && part.start <= end && (part.end === undefined || part.end >= start)
+  );
+}
+
 /** The gap that hides a line, if any. Before-side lines map through the gap's offset. */
 export function gapContaining(gaps: DiffGap[], side: 'before' | 'after', line: number): DiffGap | undefined {
   return gaps.find((gap) => {

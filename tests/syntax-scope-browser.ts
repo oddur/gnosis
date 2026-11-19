@@ -21,6 +21,10 @@ import { app, BrowserWindow } from 'electron';
  *   header sits right under the file header with its breadcrumb, and hides its expand controls; the next hunk's header
  *   replaces it; a line scrolled to lands below both headers; a file with no grammar pins its hunks' line ranges. At a
  *   narrow width the file header wraps taller and the hunk header still sits right under it.
+ * - Pinned crumbs (#417) are buttons: a click, Enter or Space scrolls the definition's first line right under the pinned
+ *   headers, or, hidden in a gap, its gap's bar into the pinned place, revealing nothing; deleted lines use the old
+ *   file's definitions; a sliced hunk's far slice lands as exactly. Tab reaches them, focus stays on them, and the
+ *   header keeps its height.
  */
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -958,6 +962,278 @@ void app.whenReady().then(async () => {
     assert.deepEqual(following.longTasks, [], 'Following the reader adds no long task');
     assert.ok(following.places > 10, `The header follows line by line: ${following.places}`);
     await shot('follow-alpha', '.commit-diff-stream');
+
+    // ═══ A pinned crumb goes to its definition (#417): it reveals the lines down to the reader, and scrolls there ═══
+    // `src/runner.ts`: run() inside class ProductionRunner, whose first line is hidden in the gap above run()'s hunk.
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='runner.ts').click()");
+    await wait(`window.symbols('src/runner.ts').length>=1`);
+    await sleep(1200);
+    // The diff's own width, not the window's: Windows CI desktops are 1024 px wide.
+    await js(`window.stickyRow('src/runner.ts').querySelector('.changes-diff').style.width='680px';void 0`);
+    await js(`window.jumpState=p=>{const row=window.stickyRow(p);const file=row.querySelector('.changes-file-header').getBoundingClientRect();
+        const h=row.querySelector('[data-hunk-header][data-stuck]');const r=h?.getBoundingClientRect();const active=document.activeElement;
+        return {file:Math.round(file.bottom),stuck:!!h,live:h?.dataset.live??null,top:r?Math.round(r.top):null,bottom:r?Math.round(r.bottom):null,height:r?Math.round(r.height):null,
+          lines:window.deepAll('[data-line]',row).length,hidden:[...row.querySelectorAll('.diff-gap[data-gap]')].map(g=>g.getAttribute('aria-label')).join('|'),
+          crumbs:h?[...h.querySelectorAll('.diff-gap-live button[data-jump]')].map(b=>({label:b.getAttribute('aria-label'),side:b.dataset.side,shown:getComputedStyle(b).visibility,
+            hit:Math.round(parseFloat(getComputedStyle(b,'::after').height)),tab:b.tabIndex})):[],
+          hidden_slot:h?.querySelector('.diff-gap-live')?.getAttribute('aria-hidden')??null,slotLabel:h?.querySelector('.diff-gap-live')?.getAttribute('aria-label')??null,
+          active:active?.matches?.('.diff-gap-live button[data-jump]')?active.getAttribute('aria-label'):null,
+          ring:active?.matches?.(':focus-visible')?getComputedStyle(active).outlineStyle:null}};
+      window.lineTop=(p,text,deleted)=>{const l=window.deepAll('[data-line]',window.stickyRow(p)).find(e=>e.textContent.includes(text)&&(e.dataset.lineType==='change-deletion')===!!deleted&&e.getBoundingClientRect().height>0);return l?Math.round(l.getBoundingClientRect().top):null};
+      window.sectionTop=(p,i)=>Math.round(window.stickyRow(p).querySelectorAll('.diff-hunk')[i].getBoundingClientRect().top);
+      // Scrolls the line with \`text\` to right under the pinned file and hunk headers, where the pinned header names it.
+      window.pinAt=async(p,text,deleted)=>{const s=window.stream();let l;
+        // Files above mount and settle their heights as they come near: aim again until the line holds still.
+        // A wheel event ends any hold on the view, as the reader's own scrolling does.
+        for(let i=0,still=0;i<80&&still<5;i++){l=window.deepAll('[data-line]',window.stickyRow(p)).find(e=>e.textContent.includes(text)&&(e.dataset.lineType==='change-deletion')===!!deleted&&e.getBoundingClientRect().height>0);
+          if(!l)throw Error('No line '+text+' in '+p);const row=window.stickyRow(p);const under=row.querySelector('.changes-file-header').getBoundingClientRect().bottom-1+row.querySelector('[data-hunk-header]').offsetHeight;const off=l.getBoundingClientRect().top-under;
+          if(Math.abs(off)>1){s.dispatchEvent(new WheelEvent('wheel'));s.scrollTop+=off;still=0}else still++;
+          for(let f=0;f<2;f++)await new Promise(r=>requestAnimationFrame(r));await new Promise(r=>setTimeout(r,40))}
+        await new Promise(r=>setTimeout(r,100));
+        return {line:Math.round(l.getBoundingClientRect().top-s.getBoundingClientRect().top),scrollTop:Math.round(s.scrollTop),max:s.scrollHeight-s.clientHeight}};
+      // What a jump flashed (#417): the line or gap bar marked data-jumped, its animation, outline and box.
+      window.jumped=p=>window.deepAll('[data-jumped]',window.stickyRow(p)).map(e=>{const c=getComputedStyle(e);const r=e.getBoundingClientRect();
+        return {kind:e.matches('[data-line]')?'line':e.matches('.diff-gap')?'bar':'other',text:e.textContent.trim().slice(0,40),anim:c.animationName,outline:c.outlineStyle,top:Math.round(r.top),height:Math.round(r.height)}});
+      // Distinct shown lines whose text has \`text\`, by their number.
+      window.shownCount=(p,text)=>new Set(window.deepAll('[data-line]',window.stickyRow(p)).filter(e=>e.textContent.includes(text)&&e.getBoundingClientRect().height>0).map(e=>e.textContent)).size;
+      // The stream's scrollTop each frame, for 90 frames, into window.__samples.
+      window.sampleScroll=()=>{const s=window.stream();const v=[];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
+      window.crumbCenter=(p,label)=>{const b=[...window.stickyRow(p).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===label);
+        if(!b)throw Error('No pinned crumb '+label);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};void 0`);
+    type Jump = {
+      file: number;
+      stuck: boolean;
+      live: string | null;
+      top: number | null;
+      bottom: number | null;
+      height: number | null;
+      lines: number;
+      hidden: string;
+      crumbs: { label: string; side: string; shown: string; hit: number; tab: number }[];
+      hidden_slot: string | null;
+      slotLabel: string | null;
+      active: string | null;
+      ring: string | null;
+    };
+    type Flash = { kind: string; text: string; anim: string; outline: string; top: number; height: number };
+    const jumpState = (path: string) => js<Jump>(`window.jumpState(${JSON.stringify(path)})`);
+    // A jump ends with its flash.
+    const afterJump = async () => {
+      await sleep(100);
+      await wait(`window.deepAll('[data-jumped]',window.stream()).length>0`, 60);
+      await settle();
+    };
+    const clickCrumb = async (path: string, label: string) => {
+      const point = await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(path)},${JSON.stringify(label)})`);
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+      win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      await afterJump();
+    };
+    const press = async (keyCode: string, char?: string, modifiers: ('shift')[] = []) => {
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+      if (char) win.webContents.sendInputEvent({ type: 'char', keyCode: char, modifiers });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+      await sleep(60);
+    };
+    const CLASS = 'Go to class ProductionRunner';
+    const RUN = 'Go to function run';
+    console.log('Pinning inside run():', JSON.stringify(await js(`window.pinAt('src/runner.ts','value += 50 * 2;')`)));
+    await wait(`window.jumpState('src/runner.ts').crumbs.length===2`);
+    const pinned = await jumpState('src/runner.ts');
+    console.log('Pinned inside run():', JSON.stringify(pinned));
+    assert.ok(pinned.stuck && pinned.live === 'scope', `The header is pinned and follows the reader: ${JSON.stringify(pinned)}`);
+    assert.deepEqual(pinned.crumbs.map((c) => c.label), [CLASS, RUN], 'Each pinned crumb is a button named for where it goes');
+    assert.ok(pinned.crumbs.every((c) => c.shown === 'visible' && c.tab === 0), 'The pinned crumbs show and are in the tab order');
+    assert.ok(pinned.crumbs.every((c) => c.hit >= 24), `Each pinned crumb's target is at least 24 px tall: ${JSON.stringify(pinned.crumbs)}`);
+    assert.equal(pinned.hidden_slot, null, 'The pinned crumbs are not hidden from screen readers');
+    assert.match(pinned.slotLabel ?? '', /^In runner\.ts, class ProductionRunner, function run$/, 'The pinned location has the hunk breadcrumb’s label');
+    await shot('crumb-jump-before', '.commit-diff-stream');
+    // The class's first line is hidden in the gap above run()'s hunk: the click shows every line from it down to the
+    // hunk, and nothing above it, then scrolls it right under the pinned header, and it flashes.
+    assert.equal(pinned.hidden, '20 lines hidden|3 lines hidden', 'The class line starts hidden');
+    await clickCrumb('src/runner.ts', CLASS);
+    const toClass = await jumpState('src/runner.ts');
+    const classTop = await js<number>(`window.lineTop('src/runner.ts','export class ProductionRunner {')`);
+    console.log('After the class crumb:', JSON.stringify({ ...toClass, crumbs: undefined }), 'line at', classTop);
+    assert.ok(toClass.bottom !== null && Math.abs(classTop - toClass.bottom) <= 2, `The class's first line sits right under the pinned header: ${classTop} vs ${toClass.bottom}`);
+    assert.equal(toClass.hidden, '1 line hidden|3 lines hidden', 'Every line from the class line down shows; the line above it stays hidden');
+    assert.equal(await js<number>(`window.shownCount('src/runner.ts','readonly slot')`), 18, 'All the lines between the class line and the hunk show');
+    assert.equal(await js<number>(`window.shownCount('src/runner.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
+    assert.ok(toClass.lines > pinned.lines, 'The lines were revealed');
+    assert.equal(toClass.height, pinned.height, 'Pinning never changes the header’s height');
+    const classFlash = await js<Flash[]>(`window.jumped('src/runner.ts')`);
+    console.log('Flash after the class crumb:', JSON.stringify(classFlash));
+    assert.deepEqual(classFlash.map((f) => [f.kind, f.anim, f.text]), [['line', 'check-flash', 'export class ProductionRunner {']], 'The class line flashes');
+    await shot('crumb-jump-after-class', '.commit-diff-stream');
+    // From the keyboard: Enter on the innermost crumb goes to run()'s first line, under the pinned headers; focus stays.
+    await js(`window.pinAt('src/runner.ts','value += 60 * 2;')`);
+    await js('document.activeElement?.blur()');
+    await wait(`window.jumpState('src/runner.ts').crumbs.length===2`);
+    // Tab reaches the pinned crumbs: into the outer one, then on to the innermost.
+    await js(`[...window.stickyRow('src/runner.ts').querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(CLASS)}).focus()`);
+    await press('Tab');
+    const crumbFocus = await jumpState('src/runner.ts');
+    assert.equal(crumbFocus.active, RUN, 'Tab moves to the innermost pinned crumb');
+    assert.ok(crumbFocus.stuck && crumbFocus.live === 'scope' && crumbFocus.crumbs.every((c) => c.shown === 'visible'), `Focus keeps the pinned crumbs: ${JSON.stringify(crumbFocus)}`);
+    assert.ok(crumbFocus.ring && crumbFocus.ring !== 'none', `The focus ring shows: ${crumbFocus.ring}`);
+    await press('Enter', '\r');
+    await afterJump();
+    const toRun = await jumpState('src/runner.ts');
+    const runTop = await js<number>(`window.lineTop('src/runner.ts','run(input: number): number {')`);
+    console.log('After Enter on run():', JSON.stringify({ ...toRun, crumbs: undefined }), 'line at', runTop);
+    assert.ok(toRun.stuck && toRun.bottom !== null && Math.abs(runTop - toRun.bottom) <= 2, `run()'s first line sits right under the pinned header: ${runTop} vs ${toRun.bottom}`);
+    assert.equal(toRun.active, RUN, 'Focus stays on the pinned crumb');
+    assert.equal(toRun.lines, toClass.lines, 'Nothing more was revealed: run()’s first line showed');
+    assert.equal(toRun.height, pinned.height, 'The header keeps its height');
+    // The line it landed on flashes, as a review check's line does, and only that line; nothing moves.
+    const runFlash = await js<Flash[]>(`window.jumped('src/runner.ts')`);
+    console.log('Flash after Enter on run():', JSON.stringify(runFlash));
+    assert.equal(runFlash.length, 1, `Only the line jumped to flashes; the bar's flash ended: ${JSON.stringify(runFlash)}`);
+    assert.deepEqual([runFlash[0].kind, runFlash[0].anim], ['line', 'check-flash'], 'The line flashes');
+    assert.match(runFlash[0].text, /run\(input: number\): number \{/, 'It is the definition’s first line');
+    assert.equal(runFlash[0].top, runTop, 'The flash moves nothing');
+    await sleep(1700);
+    assert.deepEqual(await js(`window.jumped('src/runner.ts')`), [], 'The flash ends');
+    assert.equal(await js<number>(`window.lineTop('src/runner.ts','run(input: number): number {')`), runTop, 'and nothing moved');
+    assert.equal((await jumpState('src/runner.ts')).lines, toClass.lines, 'Nothing was revealed');
+    // Reduced motion: a still outline for a moment, with no animation.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    assert.equal(await js(`matchMedia('(prefers-reduced-motion: reduce)').matches`), true, 'Reduced motion is emulated');
+    await press('Enter', '\r');
+    await afterJump();
+    const stillFlash = await js<Flash[]>(`window.jumped('src/runner.ts')`);
+    console.log('Flash with reduced motion:', JSON.stringify(stillFlash));
+    assert.deepEqual(stillFlash.map((f) => [f.kind, f.anim, f.outline]), [['line', 'none', 'solid']], 'Reduced motion: a still outline, no animation');
+    await sleep(1500);
+    assert.deepEqual(await js(`window.jumped('src/runner.ts')`), [], 'The still outline goes too');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+    win.webContents.debugger.detach();
+    await shot('crumb-jump-keyboard', '.commit-diff-stream');
+    // Mid-flash, light and dark: Enter again on the same crumb flashes the line again.
+    if (process.env.GNOSIS_SYNTAX_SCOPE_SHOT)
+      for (const dark of [false, true]) {
+        await js(`document.documentElement.classList.toggle('dark',${dark})`);
+        await settle();
+        await press('Enter', '\r');
+        await wait(`window.jumped('src/runner.ts').length>0`, 50);
+        await sleep(120);
+        const r = await js<{ x: number; y: number; width: number; height: number }>(
+          `(()=>{const b=document.querySelector('.commit-diff-stream').getBoundingClientRect();return {x:Math.round(b.left),y:Math.round(b.top),width:Math.round(b.width),height:220}})()`
+        );
+        console.log(`SHOT crumb-jump-flash-${dark ? 'dark' : 'light'} ${(await win.webContents.capturePage(r)).toPNG().toString('base64')}`);
+      }
+    await js(`document.documentElement.classList.toggle('dark',false)`);
+    // Shift+Tab reaches the class crumb; Space goes there.
+    await press('Tab', undefined, ['shift']);
+    assert.equal((await jumpState('src/runner.ts')).active, CLASS, 'Shift+Tab moves to the outer pinned crumb');
+    await press('Space', ' ');
+    await afterJump();
+    const bySpace = await js<number>(`window.lineTop('src/runner.ts','export class ProductionRunner {')`);
+    const spaced = await jumpState('src/runner.ts');
+    assert.ok(spaced.bottom !== null && Math.abs(bySpace - spaced.bottom) <= 2, `Space goes to the class line too: ${bySpace} vs ${spaced.bottom}`);
+    assert.equal(spaced.lines, toClass.lines, 'Nothing more was revealed');
+    await js('document.activeElement?.blur()');
+    // A hunk that only deletes (`src/pruner.ts`): a deleted line is named by the old file's definitions, and its
+    // crumbs go to their first lines by their old numbers: prune()'s shows, Pruner's is revealed from the gap above.
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='pruner.ts').click()");
+    await wait(`window.symbols('src/pruner.ts').length>=1`);
+    await sleep(1200);
+    await js(`window.stickyRow('src/pruner.ts').querySelector('.changes-diff').style.width='680px';void 0`);
+    await js(`window.pinAt('src/pruner.ts','n += 50;',true)`);
+    await wait(`window.jumpState('src/pruner.ts').crumbs.length===2`);
+    const inOld = await jumpState('src/pruner.ts');
+    console.log('Pinned on a deleted line in prune():', JSON.stringify(inOld.crumbs));
+    assert.deepEqual(
+      inOld.crumbs.map((c) => [c.label, c.side]),
+      [['Go to class Pruner', 'before'], ['Go to function prune', 'before']],
+      'Deleted lines use the old side’s definitions'
+    );
+    await clickCrumb('src/pruner.ts', 'Go to function prune');
+    const toPrune = await jumpState('src/pruner.ts');
+    const pruneTop = await js<number>(`window.lineTop('src/pruner.ts','prune(): number {')`);
+    assert.ok(toPrune.bottom !== null && Math.abs(pruneTop - toPrune.bottom) <= 2, `prune()'s first line sits right under the pinned header: ${pruneTop} vs ${toPrune.bottom}`);
+    assert.equal(toPrune.lines, inOld.lines, 'Nothing was revealed');
+    await js(`window.pinAt('src/pruner.ts','n += 70;',true)`);
+    await clickCrumb('src/pruner.ts', 'Go to class Pruner');
+    const toPruner = await jumpState('src/pruner.ts');
+    const prunerTop = await js<number>(`window.lineTop('src/pruner.ts','export class Pruner {')`);
+    assert.ok(toPruner.bottom !== null && Math.abs(prunerTop - toPruner.bottom) <= 2, `Pruner's first line sits right under the pinned header: ${prunerTop} vs ${toPruner.bottom}`);
+    assert.equal(await js<number>(`window.shownCount('src/pruner.ts','readonly mark')`), 18, 'All the lines between the class line and the hunk show');
+    assert.equal(await js<number>(`window.shownCount('src/pruner.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
+    assert.match(toPruner.hidden, /^1 line hidden\|/, `Only the line above the class stays hidden: ${toPruner.hidden}`);
+    assert.deepEqual((await js<Flash[]>(`window.jumped('src/pruner.ts')`)).map((f) => f.text), ['export class Pruner {'], 'The class line flashes');
+    // A sliced hunk (#353): the target's slice is far above, outside the viewport, and lands as exactly.
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='sticky.ts').click()");
+    await wait(`window.symbols('src/sticky.ts').length>=2`);
+    await sleep(1200);
+    await js(`window.pinAt('src/sticky.ts','value -= 190 * 2;')`);
+    await wait(`window.jumpState('src/sticky.ts').crumbs.length>0`);
+    const inSecond = await jumpState('src/sticky.ts');
+    assert.ok(inSecond.crumbs.some((c) => c.label === 'Go to function second'), `Pinned in second(): ${JSON.stringify(inSecond.crumbs)}`);
+    await clickCrumb('src/sticky.ts', 'Go to function second');
+    const toSecond = await jumpState('src/sticky.ts');
+    const secondTop = await js<number>(`window.lineTop('src/sticky.ts','export function second(')`);
+    assert.ok(toSecond.bottom !== null && Math.abs(secondTop - toSecond.bottom) <= 2, `second()'s first line sits right under the pinned header: ${secondTop} vs ${toSecond.bottom}`);
+    assert.equal(toSecond.hidden, inSecond.hidden, 'Nothing was revealed');
+    assert.equal(toSecond.height, inSecond.height, 'The header keeps its height');
+    // A large reveal (`src/far.ts`): 230 hidden lines between the class line and work(). The jump reveals them, then
+    // eases there over several frames, with no long task, and lands on the class line.
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='far.ts').click()");
+    await wait(`window.symbols('src/far.ts').length>=1`);
+    await sleep(1200);
+    await js(`window.stickyRow('src/far.ts').querySelector('.changes-diff').style.width='680px';void 0`);
+    await js(`window.pinAt('src/far.ts','total += 40 * 2;')`);
+    await wait(`window.jumpState('src/far.ts').crumbs.length===2`);
+    const inWork = await jumpState('src/far.ts');
+    assert.match(inWork.hidden, /^231 lines hidden/, `The class line starts 231 lines into the hidden gap: ${inWork.hidden}`);
+    await js('window.__longTasks=[];window.sampleScroll()');
+    const revealStart = Date.now();
+    await clickCrumb('src/far.ts', 'Go to class FarRunner');
+    const revealMs = Date.now() - revealStart;
+    await wait('window.__samples.length>=90');
+    const toFar = await jumpState('src/far.ts');
+    const farTop = await js<number>(`window.lineTop('src/far.ts','export class FarRunner {')`);
+    const samples = await js<number[]>('window.__samples');
+    const steps = samples.filter((v, i) => i > 0 && v !== samples[i - 1]).length;
+    const longTasks = await js<{ duration: number }[]>('window.__longTasks');
+    console.log('Large reveal:', JSON.stringify({ revealMs, steps, longTasks: longTasks.map((t) => Math.round(t.duration)), hidden: toFar.hidden, lines: [inWork.lines, toFar.lines] }));
+    assert.ok(toFar.bottom !== null && Math.abs(farTop - toFar.bottom) <= 2, `The class line sits right under the pinned header after the reveal: ${farTop} vs ${toFar.bottom}`);
+    assert.equal(await js<number>(`window.shownCount('src/far.ts','readonly far')`), 230, 'All 230 lines between the class line and the hunk show');
+    assert.equal(await js<number>(`window.shownCount('src/far.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
+    assert.ok(steps >= 4, `The scroll eases over several frames: ${JSON.stringify(samples)}`);
+    assert.deepEqual(longTasks.map((t) => Math.round(t.duration)), [], 'Revealing 230 lines and easing there leaves no long task');
+    assert.deepEqual((await js<Flash[]>(`window.jumped('src/far.ts')`)).map((f) => f.text), ['export class FarRunner {'], 'The class line flashes');
+    // The reader's wheel stops the scroll part way.
+    await js(`window.pinAt('src/far.ts','total += 50 * 2;')`);
+    await wait(`window.jumpState('src/far.ts').crumbs.length===2`);
+    const beforeCancel = await js<number>('Math.round(window.stream().scrollTop)');
+    const cancelAt = await js<{ x: number; y: number }>(`window.crumbCenter('src/far.ts','Go to class FarRunner')`);
+    // Three frames into the jump's scroll, a wheel event.
+    await js(`(()=>{const s=window.stream();s.addEventListener('scroll',()=>{let n=0;const t=()=>{if(++n===3)s.dispatchEvent(new WheelEvent('wheel'));else requestAnimationFrame(t)};requestAnimationFrame(t)},{once:true})})()`);
+    win.webContents.sendInputEvent({ type: 'mouseDown', x: cancelAt.x, y: cancelAt.y, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({ type: 'mouseUp', x: cancelAt.x, y: cancelAt.y, button: 'left', clickCount: 1 });
+    await sleep(900);
+    const cancelled = await js<number>('Math.round(window.stream().scrollTop)');
+    const stillFar = await js<number>(`window.lineTop('src/far.ts','export class FarRunner {')`);
+    console.log('Cancelled jump:', JSON.stringify({ beforeCancel, cancelled, classLine: stillFar }));
+    assert.ok(stillFar === null || Math.abs(stillFar - (inWork.bottom ?? 0)) > 50, 'Wheel input stops the scroll before it lands');
+    assert.deepEqual(await js(`window.jumped('src/far.ts')`), [], 'A stopped jump does not flash');
+    // Reduced motion: the jump lands in one frame.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await js(`window.pinAt('src/far.ts','total += 40 * 2;')`);
+    await wait(`window.jumpState('src/far.ts').crumbs.length===2`);
+    await js('window.sampleScroll()');
+    await clickCrumb('src/far.ts', 'Go to class FarRunner');
+    await wait('window.__samples.length>=90');
+    const instant = await js<number[]>('window.__samples');
+    const moves = instant.filter((v, i) => i > 0 && v !== instant[i - 1]);
+    console.log('Reduced-motion jump scrollTops:', JSON.stringify(moves));
+    assert.ok(moves.length >= 1 && Math.abs(moves[0] - instant.at(-1)!) <= 2, `Reduced motion: the first move lands: ${JSON.stringify(moves)}`);
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+    win.webContents.debugger.detach();
 
     // ═══ Pinned hunk headers in the stack's Changes (#395) ═══
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);

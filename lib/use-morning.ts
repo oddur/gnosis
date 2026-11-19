@@ -1,22 +1,29 @@
 import { useEffect, useMemo, useState } from 'react';
-import { isAutomationActor, sameLogin } from './github-actors';
+import { isAutomationActor } from './github-actors';
 import { isPendingComment, type GitHubReviewThreads } from './review-threads';
 import { isResponseThread } from './response-needed';
 import type { OverviewView } from './use-overview';
 import type { SinceEvent } from './since-log';
 import type { RereviewTarget } from './rereview-lines';
-import type { QueueSignals } from './queue-signals';
+import { viewerReview, type QueueSignals } from './queue-signals';
+import type { QueueItem } from './workbench';
 
 /** "Since yesterday" reads the log again this often while the page shows. Local only. */
 const SINCE_REFRESH_MS = 60_000;
 const DAY_MS = 86_400_000;
 
-/** Your latest submitted review of a PR and the commit it was on, from its status. */
+/** Your latest submitted review of a PR on GitHub and the commit it was on, from its status. */
 export function reviewedCommit(signals: QueueSignals | undefined, login: string): string | undefined {
-  const reviews = [...(signals?.opinions ?? []), ...(signals?.latestReview ? [signals.latestReview] : [])].filter(
-    (review) => sameLogin(review.author, login) && review.state !== 'PENDING' && review.state !== 'DISMISSED' && !!review.headSha
-  );
-  return reviews.sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt)).at(0)?.headSha ?? undefined;
+  return viewerReview(signals, login)?.headSha ?? undefined;
+}
+/**
+ * The commit "+N lines since your review" counts from: the one main found for your latest review of the PR (the
+ * newer of the saved Gnosis review and your GitHub review), else your GitHub review's from status. Undefined when
+ * the commit is not known: the row then says "updated since your review" without a count.
+ */
+export function rereviewFrom(item: Pick<QueueItem, 'sinceReview'>, signals: QueueSignals | undefined, url: string, login: string): string | undefined {
+  if (item.sinceReview) return (item.sinceReview[url] as { from: string | null } | undefined)?.from ?? undefined;
+  return reviewedCommit(signals, login);
 }
 /** The thread waiting on your reply, from a saved discussion: who wrote last and what. */
 export function waitingReply(discussion: GitHubReviewThreads | undefined, login: string, author: string): { author: string; text: string } | undefined {
@@ -60,7 +67,7 @@ export function useMorningExtras(view: OverviewView, login: string | null, visib
     const list: RereviewTarget[] = review
       .filter((row) => row.reasons.includes('updated-since-review'))
       .flatMap((row) => {
-        const reviewed = reviewedCommit(view.statusOf(row.focus), login);
+        const reviewed = rereviewFrom(row.item, view.statusOf(row.focus), row.focus.url, login);
         return reviewed && reviewed !== row.focus.headSha ? [{ url: row.focus.url, from: reviewed, to: row.focus.headSha }] : [];
       })
       .slice(0, 10);

@@ -2239,6 +2239,8 @@ async function fetchPrStatus(prUrl: string, force = false, expectedHead?: string
     if (getResolvedToken() !== token) return null;
     workbench.updatePrMetadata(metadata);
     if (cachedLogin && status.signals && workbench.observeReadSignals(cachedLogin, [status.signals])) readStateChanged();
+    // A review the reader made on GitHub changes "updated since your review": rebuild the queue.
+    if (cachedLogin && status.signals && workbench.ownReviewsChanged(cachedLogin, [optimistic.signals(status.signals)])) notifyLocalChange('workbench-changed');
   } catch (error) {
     console.warn('Could not update the saved starred PR metadata:', error);
   }
@@ -3844,7 +3846,10 @@ ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[
     () => getQueueSignals(getGitHubClient(token), requests, options), { automatic: !options?.force });
   if (account && workbench.observeReadSignals(account, values)) readStateChanged();
   for (const value of values) optimistic.observe(value.url, 'signals', value);
-  return values.map(optimistic.signals);
+  const shown = values.map(optimistic.signals);
+  // A review the reader made on GitHub changes "updated since your review": rebuild the queue.
+  if (account && workbench.ownReviewsChanged(account, shown)) notifyLocalChange('workbench-changed');
+  return shown;
 });
 handleInteractive('get-github-profile', (_event, login:string) => {
   const token=getResolvedToken();
@@ -4009,7 +4014,7 @@ handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   // reconciles the review decision and the reviewer list with GitHub.
   if (account) {
     workbench.noteOwnReview(account, req.prUrl, req.comments.length - result.droppedCommentCount, result.reviewUrl);
-    workbench.reviewSubmitted(account, req.prUrl);
+    workbench.reviewSubmitted(account, req.prUrl, req.headSha);
     // The review it asked for is done.
     notifications.resolved(req.prUrl, ['review-requested', 'team-review-requested']);
     notifyLocalChange('workbench-changed');
