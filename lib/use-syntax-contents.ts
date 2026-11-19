@@ -50,8 +50,24 @@ if (typeof window !== 'undefined') {
   (window as { electronAPI?: Partial<Window['electronAPI']> }).electronAPI?.onPreferencesChanged?.(fromPreferences);
 }
 
-/** How long a file stays near the view before its read is queued, so files that only flash past are not read. */
-const SETTLE_MS = 150;
+/**
+ * How long a file stays near the view, with the view still, before its read is queued, so files that only flash past
+ * are not read. Scrolling restarts the wait: on a slow machine a fast scroll can leave each file near the view for
+ * longer than this, so time near the view alone is not enough.
+ */
+const SETTLE_MS = 250;
+let lastScrollAt = 0;
+/** Runs `run` once the view has been still for SETTLE_MS; the returned function cancels it. */
+function whenSettled(run: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout>;
+  const check = () => {
+    const wait = lastScrollAt + SETTLE_MS - Date.now();
+    if (wait > 0) timer = setTimeout(check, wait);
+    else run();
+  };
+  timer = setTimeout(check, SETTLE_MS);
+  return () => clearTimeout(timer);
+}
 /** Near the view: within a viewport above or below it. Rows outside the virtualizer's range are not mounted. */
 const NEAR = '100% 0px';
 /** Files read as view reads as soon as a PR's Changes opens, before any of them is near the view. */
@@ -111,6 +127,13 @@ if (typeof window !== 'undefined') {
   for (const type of ['wheel', 'keydown', 'input', 'touchmove'] as const)
     window.addEventListener(type, pause, { capture: true, passive: true });
   document.addEventListener('scroll', pause, { capture: true, passive: true });
+  document.addEventListener(
+    'scroll',
+    () => {
+      lastScrollAt = Date.now();
+    },
+    { capture: true, passive: true }
+  );
   let hiddenTimer: ReturnType<typeof setTimeout> | undefined,
     stopped = false;
   const visibility = () => {
@@ -219,15 +242,15 @@ export function useSyntaxContents(
     if (!plan) return;
     const { key } = want;
     let cancel = () => {};
-    const timer = setTimeout(() => {
+    const stopWaiting = whenSettled(() => {
       cancel = syntaxContents.request(
         syntaxContentsJob(want, plan),
         () => setResult({ key, state: 'done' }),
         (failure) => setResult({ key, state: failure.retryable ? 'failed' : 'refused' })
       );
-    }, SETTLE_MS);
+    });
     return () => {
-      clearTimeout(timer);
+      stopWaiting();
       cancel();
     };
   }, [want?.key, near, attempt]);
