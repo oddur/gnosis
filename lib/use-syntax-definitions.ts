@@ -1,6 +1,7 @@
 import { useEffect, useState, type RefObject } from 'react';
 import { syntaxLanguage, type SyntaxDefinition } from './syntax-scope';
 import { peekDefinitions, readDefinitions } from './syntax-scope-client';
+import { whenSettled } from './use-syntax-contents';
 import type { SyntaxPriority } from './syntax-parse-queue';
 
 export interface FileDefinitions {
@@ -51,6 +52,7 @@ export function useSyntaxDefinitions({
   useEffect(() => {
     if (!afterLanguage && !beforeLanguage) return;
     let cancelled = false;
+    const shows: (() => void)[] = [];
     const read = (side: 'after' | 'before') => {
       const language = side === 'after' ? afterLanguage : beforeLanguage;
       const text = side === 'after' ? after : before;
@@ -58,14 +60,16 @@ export function useSyntaxDefinitions({
       void readDefinitions({ key: side === 'after' ? afterKey : beforeKey, url, language, text, priority: priority?.current ?? 'view' })
         .catch(() => undefined)
         .then((value) => {
+          // Shown once the reader stops scrolling, if they are: a parse that lands mid-scroll renders after it.
           if (!cancelled)
-            setState((previous) => ({ ...(previous?.id === id ? previous : { id }), [side]: { value } }));
+            shows.push(whenSettled(() => setState((previous) => ({ ...(previous?.id === id ? previous : { id }), [side]: { value } }))));
         });
     };
     read('after');
     read('before');
     return () => {
       cancelled = true;
+      for (const cancel of shows) cancel();
     };
   }, [id, after, before]);
   if (!afterLanguage && !beforeLanguage) return NONE;

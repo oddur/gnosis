@@ -65,8 +65,12 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
  */
 const SETTLE_MS = 150;
 let lastScrollAt = 0;
-/** Runs `run` once the view has been still for SETTLE_MS; the returned function cancels it. */
-function whenSettled(run: () => void): () => void {
+/**
+ * Runs `run` once the view has been still for SETTLE_MS, at once when it already is; the returned function cancels it.
+ * Reads wait for it, and so do the renders that show structure that lands while the reader scrolls: they would add
+ * work to the frames of the scroll.
+ */
+export function whenSettled(run: () => void): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancelled = false;
   const check = () => {
@@ -305,7 +309,15 @@ export function useSyntaxContents(
   useEffect(() => {
     if (!want) return;
     const { key } = want;
-    return syntaxContents.watch(key, () => setResult({ key, state: 'done' }));
+    let show = () => {};
+    const stop = syntaxContents.watch(key, () => {
+      show();
+      show = whenSettled(() => setResult({ key, state: 'done' }));
+    });
+    return () => {
+      stop();
+      show();
+    };
   }, [want?.key]);
   useEffect(() => {
     const target = element.current;
