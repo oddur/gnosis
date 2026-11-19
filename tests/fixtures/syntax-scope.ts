@@ -285,7 +285,44 @@ const spanBefore = [
 const spanAfter = spanBefore
   .map((line) => line.replace(/^  value ([+-])= (\d+);$/, '  value $1= $2 * 2;'))
   .flatMap((line, i, all) => (all[i - 1] === 'export function beta(input: number): number {' ? [line, '  value = value | 0;'] : [line]));
-const SPAN: Record<string, [string[], string[]]> = { 'src/span.ts': [spanBefore, spanAfter] };
+/**
+ * Also in `?syntax-span`: a long method inside a class, for a pinned crumb that scrolls to its definition (#417). The
+ * class's first line is hidden in the gap above the method's hunk; the method's first line shows.
+ */
+const runnerBefore = [
+  '// Pinned crumb fixture: a long method inside a class.',
+  'export class ProductionRunner {',
+  '  private count = 0;',
+  ...Array.from({ length: 18 }, (_, i) => `  readonly slot${i} = ${i};`),
+  '  run(input: number): number {',
+  '    let value = input;',
+  ...Array.from({ length: 80 }, (_, i) => `    value += ${i};`),
+  '    return value;',
+  '  }',
+  '  label(): string {',
+  "    return 'runner';",
+  '  }',
+  '}',
+];
+const runnerAfter = runnerBefore.map((line) => line.replace(/^ {4}value \+= (\d+);$/, '    value += $1 * 2;'));
+/** And a hunk that only deletes, so its deleted lines are named by the old file's definitions, in old numbers. */
+const prunerBefore = [
+  '// Pinned crumb fixture: a method that only loses lines.',
+  'export class Pruner {',
+  ...Array.from({ length: 18 }, (_, i) => `  readonly mark${i} = ${i};`),
+  '  prune(): number {',
+  '    let n = 0;',
+  ...Array.from({ length: 80 }, (_, i) => `    n += ${i};`),
+  '    return n;',
+  '  }',
+  '}',
+];
+const prunerAfter = prunerBefore.filter((line) => !/^ {4}n \+= \d*[02468];$/.test(line));
+const SPAN: Record<string, [string[], string[]]> = {
+  'src/span.ts': [spanBefore, spanAfter],
+  'src/runner.ts': [runnerBefore, runnerAfter],
+  'src/pruner.ts': [prunerBefore, prunerAfter],
+};
 export const syntaxSpanFiles: PrChangeFile[] = changeFiles(SPAN, 'span');
 
 /**

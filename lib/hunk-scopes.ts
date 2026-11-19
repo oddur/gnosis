@@ -253,3 +253,6 @@ export function chainAt(
 /** The whole breadcrumb in words: "In build_api_routes.rs, impl GameplayClient, function list_badge_grants". */
 export const spokenChain = (file: string, chain: readonly ScopeCrumb[]) =>
   [`In ${file}`, ...chain.map((crumb) => (crumb.provisional ? crumb.definition.crumb : spokenDefinition(crumb.definition)))].join(', ');
+
+/** A pinned breadcrumb's crumb, as a button's name (#417): "Go to class ProductionProcessRunner". */
+export const jumpLabel = (definition: SyntaxDefinition) => `Go to ${spokenDefinition(definition)}`;

@@ -2,11 +2,13 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSPr
 import { processFile, type DiffLineAnnotation, type FileDiffOptions } from '@pierre/diffs';
 import {
   GAP_STEP,
+  SLICE_CHROME,
   estimateSliceHeight,
   hunkSlices,
   type DiffSlice,
   hunkCounts,
   hunkRange,
+  placeOfLine,
   type GapDirection,
   type GapPart,
   type HunkCounts,
@@ -16,7 +18,8 @@ import { applyCodePalette } from '../lib/diff-code-palette';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
-import { revealLabel, spokenChain, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
+import { jumpLabel, revealLabel, spokenChain, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
+import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
@@ -312,8 +315,10 @@ function CountsLabel({ counts }: { counts: HunkCounts }) {
  * A hunk header's contents, in DOM order as on screen: the expand chevrons in the line-number gutter, the breadcrumb
  * from the code's text column, the bar's other controls, and what the hunk changes and its lines at the end. Pinned,
  * the breadcrumb and the lines follow the reader: ChangesDiff writes the location of the top line in view into the
- * `-live` slots, which sit over the hunk's own in the same grid cell, so the swap never changes the bar's size. They are
- * hidden from screen readers, which keep the hunk's own location; nothing is announced as the reader scrolls.
+ * `-live` slots, which sit over the hunk's own in the same grid cell, so the swap never changes the bar's size. Only
+ * the shown one of the two locations is in the tab order and the accessibility tree: pinned, the reader's crumbs are
+ * buttons that scroll to their definitions (#417). Nothing is announced as the reader scrolls: there is no live
+ * region, and the reader's line stays hidden from screen readers.
  */
 function HeaderRow({
   gutter,
@@ -339,7 +344,7 @@ function HeaderRow({
       <span className="diff-gap-gutter">{gutter}</span>
       <span className="diff-gap-where">
         {location}
-        {live && <span className="diff-gap-live" aria-hidden="true" />}
+        {live && <span className="diff-gap-live" role="group" />}
       </span>
       {action && <span className="diff-gap-act">{action}</span>}
       {/* Hidden, not removed, while the bar is pinned, so pinning never changes its height. */}
@@ -593,7 +598,8 @@ const MISSED_PROBES = 30;
  */
 function followReader(
   bar: HTMLElement,
-  scopeAt: ((point: LinePoint) => readonly SyntaxDefinition[] | undefined) | undefined
+  scopeAt: ((point: LinePoint) => readonly SyntaxDefinition[] | undefined) | undefined,
+  file: string
 ): boolean {
   const where = bar.querySelector<HTMLElement>('.diff-gap-where');
   const section = bar.parentElement;
@@ -616,27 +622,52 @@ function followReader(
   const chain = scopeAt?.(point);
   const previous = bar.getAttribute('data-live-key')?.split(':')[2];
   // A deleted line without the old file's definitions keeps the place named last: it sits among the same lines.
-  const scopeKey = chain ? chain.map((d) => d.start).join(',') : before && previous !== undefined ? previous : '-';
+  // The side is part of the place: each crumb jumps to its definition's first line in its side's numbers (#417).
+  const scopeKey = chain
+    ? `${point.side[0]}${chain.map((d) => d.start).join(',')}`
+    : before && previous !== undefined
+      ? previous
+      : '-';
   const key = `${point.side}:${number}:${scopeKey}`;
   if (bar.getAttribute('data-live-key') === key) return true;
   bar.setAttribute('data-live-key', key);
   const lineSlot = bar.querySelector('.diff-gap-live-line');
   if (lineSlot) lineSlot.textContent = before ? `old L${number}` : `L${number}`;
-  const slot = bar.querySelector('.diff-gap-live');
+  const slot = bar.querySelector<HTMLElement>('.diff-gap-live');
   if (slot && chain && previous !== scopeKey) {
-    slot.replaceChildren(...liveCrumbs(chain));
-    fitCrumbs([slot as HTMLElement]);
+    // A crumb with focus stays focused across the rewrite: on its definition's crumb, or else the innermost.
+    const focused = slot.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.start ?? '' : undefined;
+    slot.replaceChildren(...liveCrumbs(chain, point.side));
+    slot.setAttribute(
+      'aria-label',
+      chain.length ? spokenChain(file, chain.map((definition) => ({ definition }))) : `In ${file}, outside any definition`
+    );
+    fitCrumbs([slot]);
+    if (focused !== undefined) {
+      // Removing the focused crumb may leave the bar matching :focus-within; the mark keeps the crumbs shown.
+      bar.setAttribute('data-live-focus', '');
+      focusCrumb(slot, focused);
+      if (!slot.contains(document.activeElement)) bar.removeAttribute('data-live-focus');
+    }
   }
   if (chain || scopeKey === '-') bar.setAttribute('data-live', chain ? 'scope' : 'line');
   return true;
 }
 
-/** A chain as the breadcrumb shows it, as plain elements: the innermost two crumbs, "…" before, or "top level". */
-function liveCrumbs(chain: readonly SyntaxDefinition[]): Node[] {
+/**
+ * A chain as the breadcrumb shows it, the whole chain folding from the outside like the hunk's own, or "top level".
+ * Each crumb is a button that scrolls to its definition's first line, in `side`'s numbers (#417); "…" and the
+ * separators are hidden from screen readers.
+ */
+function liveCrumbs(chain: readonly SyntaxDefinition[], side: LinePoint['side']): Node[] {
   const make = (tag: string, className: string, text?: string) => {
     const element = document.createElement(tag);
     element.className = className;
     if (text !== undefined) element.textContent = text;
+    return element;
+  };
+  const decorative = (element: HTMLElement) => {
+    element.setAttribute('aria-hidden', 'true');
     return element;
   };
   if (!chain.length) {
@@ -644,30 +675,57 @@ function liveCrumbs(chain: readonly SyntaxDefinition[]): Node[] {
     top.setAttribute('data-top-level', '');
     return [top];
   }
-  const shown: readonly (SyntaxDefinition | 'more')[] = chain;
-  const groups = shown.map((definition, index) => {
+  const groups = chain.map((definition, index) => {
     const group = make('span', 'diff-gap-crumb-group');
-    if (index > 0) group.append(make('span', 'diff-gap-crumb-separator', '›'));
-    const crumb = make('span', 'diff-gap-crumb');
-    if (definition === 'more') crumb.textContent = '…';
-    else {
-      const code = make('code', '');
-      const keyword = definition.crumbKeyword;
-      if (keyword && definition.crumb.startsWith(`${keyword} `))
-        code.append(make('span', 'diff-gap-kind', keyword), ` ${definition.crumb.slice(keyword.length + 1)}`);
-      else code.textContent = definition.crumb;
-      crumb.append(code);
-      if (index === shown.length - 1) {
-        crumb.setAttribute('data-innermost', '');
-        group.setAttribute('data-last', '');
-      }
+    if (index > 0) group.append(decorative(make('span', 'diff-gap-crumb-separator', '›')));
+    const crumb = make('button', 'diff-gap-crumb') as HTMLButtonElement;
+    crumb.type = 'button';
+    crumb.dataset.jump = '';
+    crumb.dataset.side = side;
+    crumb.dataset.start = String(definition.start);
+    crumb.setAttribute('aria-label', jumpLabel(definition));
+    crumb.title = jumpLabel(definition);
+    const code = make('code', '');
+    const keyword = definition.crumbKeyword;
+    if (keyword && definition.crumb.startsWith(`${keyword} `))
+      code.append(make('span', 'diff-gap-kind', keyword), ` ${definition.crumb.slice(keyword.length + 1)}`);
+    else code.textContent = definition.crumb;
+    crumb.append(code);
+    if (index === chain.length - 1) {
+      crumb.setAttribute('data-innermost', '');
+      group.setAttribute('data-last', '');
     }
     group.append(crumb);
     return group;
   });
   if (chain.length < 2) return groups;
-  const more = make('span', 'diff-gap-more', '…');
-  return [more, ...groups];
+  return [decorative(make('span', 'diff-gap-more', '…')), ...groups];
+}
+
+/** What the reader does to scroll: any of these stops a pinned crumb's jump from correcting the view (#417). */
+const READER_SCROLLS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+
+/**
+ * The row of a line on one side, in the diffs under `scope`: deleted rows and the old column's rows carry old
+ * numbers in `data-line`, the rest new ones, with the other side's number in `data-alt-line`.
+ */
+function lineElement(scope: ParentNode, side: LinePoint['side'], line: number): HTMLElement | undefined {
+  const selector = `[data-line="${line}"], [data-alt-line="${line}"]`;
+  for (const host of scope.querySelectorAll('diffs-container'))
+    for (const row of host.shadowRoot?.querySelectorAll<HTMLElement>(selector) ?? []) {
+      const type = row.dataset.lineType;
+      if (type === (side === 'before' ? 'change-addition' : 'change-deletion')) continue;
+      const own = type === 'change-addition' || type === 'change-deletion' || (side === 'before') === !!row.closest('[data-deletions]');
+      if (Number(own ? row.dataset.line : row.dataset.altLine) === line) return row;
+    }
+  return undefined;
+}
+
+/** Focuses a pinned crumb without scrolling: the one for the definition starting at `start` if it shows, else the
+ * innermost, which never folds. */
+function focusCrumb(slot: HTMLElement, start: string) {
+  const crumbs = [...slot.querySelectorAll<HTMLElement>(':scope > .diff-gap-crumb-group:not([data-collapsed]) > button[data-jump]')];
+  (crumbs.find((crumb) => crumb.dataset.start === start) ?? crumbs.at(-1))?.focus({ preventScroll: true });
 }
 
 /**
@@ -889,6 +947,13 @@ export function ChangesDiff<A>({
   const stuck = useRef<IntersectionObserver>(undefined);
   const latestScopeAt = useRef(scopeAt);
   latestScopeAt.current = scopeAt;
+  // What a pinned crumb's jump reads when clicked (#417).
+  const latestParts = useRef(parts);
+  latestParts.current = parts;
+  const latestBlocks = useRef(blocks);
+  latestBlocks.current = blocks;
+  const latestName = useRef('');
+  latestName.current = file.name.slice(file.name.lastIndexOf('/') + 1);
   const follow = useRef<() => void>(undefined);
   const observeHeaders = () => {
     const observer = stuck.current;
@@ -915,7 +980,7 @@ export function ChangesDiff<A>({
       let missed = false;
       for (const bar of pinned)
         if (!bar.isConnected) pinned.delete(bar);
-        else if (!followReader(bar, latestScopeAt.current)) missed = true;
+        else if (!followReader(bar, latestScopeAt.current, latestName.current)) missed = true;
       if (missed && retries-- > 0) frame = requestAnimationFrame(probe);
     };
     const schedule = () => {
@@ -949,7 +1014,10 @@ export function ChangesDiff<A>({
             const stuckNow = entry.isIntersecting && entry.intersectionRatio < 1 && entry.boundingClientRect.top < top;
             entry.target.toggleAttribute('data-stuck', stuckNow);
             if (stuckNow) pinned.add(entry.target as HTMLElement);
-            else pinned.delete(entry.target as HTMLElement);
+            else {
+              pinned.delete(entry.target as HTMLElement);
+              entry.target.removeAttribute('data-live-focus');
+            }
           }
           for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
           listen(pinned.size > 0);
@@ -960,12 +1028,100 @@ export function ChangesDiff<A>({
       observeHeaders();
     });
     resize.observe(header);
+
+    // A pinned crumb scrolls to its definition's first line, right under the pinned headers, and reveals nothing
+    // (#417). A line hidden in a gap is stood in for by its gap's bar. A line in a slice not laid out yet is scrolled
+    // to by its estimated place first, then corrected each frame until it holds still, MISSED_PROBES frames at most,
+    // unless the reader scrolls first. The pinned breadcrumb then follows the reader as after any scroll.
+    let jumpFrame = 0;
+    const stopJump = () => {
+      cancelAnimationFrame(jumpFrame);
+      jumpFrame = 0;
+      for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
+    };
+    const jump = (crumb: HTMLElement, keyboard: boolean) => {
+      stopJump();
+      const bar = crumb.closest<HTMLElement>('[data-hunk-header]');
+      const start = Number(crumb.dataset.start);
+      if (!bar || !start) return;
+      const side: LinePoint['side'] = crumb.dataset.side === 'before' ? 'before' : 'after';
+      const place = placeOfLine(latestParts.current, side, start);
+      // Where the place is (`y`) and where it should be (`to`), in viewport pixels.
+      const where = (): { y: number; to: number; exact: boolean } | undefined => {
+        // A pinned hunk header's top: 1 px under the file header, which covers its top border.
+        const top = header.getBoundingClientRect().bottom - 1;
+        const under = top + bar.offsetHeight;
+        if (place.kind === 'top') return { y: element.getBoundingClientRect().top, to: top + 1, exact: true };
+        if (place.kind === 'gap') {
+          const gapBar = element.querySelector<HTMLElement>(`[data-gap="${place.gap}"]`);
+          if (!gapBar) return undefined;
+          // A bar that heads a hunk pins at `top`; where it sits unpinned is its section's top.
+          const section = gapBar.matches('[data-hunk-header]') ? gapBar.parentElement : null;
+          return section
+            ? { y: section.getBoundingClientRect().top, to: top, exact: true }
+            : { y: gapBar.getBoundingClientRect().top, to: under, exact: true };
+        }
+        const block = latestBlocks.current.find((b) => b.kind === 'hunk' && b.key === place.key);
+        if (block?.kind !== 'hunk' || !block.slices.length) return undefined;
+        const index = Math.min(block.slices.length - 1, Math.floor(place.row / HUNK_SLICE_SIZE));
+        const slice = block.slices[block.slices.length > 1 ? index : 0];
+        const holder = element.querySelector<HTMLElement>(`[data-slice="${CSS.escape(slice.key)}"]`);
+        const line = lineElement(holder ?? element, side, place.line);
+        if (line) return { y: line.getBoundingClientRect().top, to: under, exact: true };
+        if (!holder) return undefined;
+        // Not mounted yet: mount it now, and aim at the row's estimated place meanwhile.
+        setMounted((current) => (current.has(slice.key) ? current : new Set([...current, slice.key])));
+        const row = block.slices.length > 1 ? place.row - index * HUNK_SLICE_SIZE : place.row;
+        return { y: holder.getBoundingClientRect().top + SLICE_CHROME / 2 + row * CODE_LINE_HEIGHT, to: under, exact: false };
+      };
+      let frames = 0;
+      let still = 0;
+      const step = () => {
+        jumpFrame = 0;
+        const at = where();
+        if (at) {
+          const from = scroller.scrollTop;
+          if (Math.abs(at.y - at.to) > 1) scroller.scrollTo({ top: from + at.y - at.to, behavior: 'instant' });
+          // Still: in place, or as far as the view scrolls.
+          still = at.exact && Math.abs(scroller.scrollTop - from) < 1 ? still + 1 : 0;
+        }
+        if (still < 2 && frames++ < MISSED_PROBES) {
+          jumpFrame = requestAnimationFrame(step);
+          return;
+        }
+        stopJump();
+        // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
+        if (!keyboard) return;
+        const slot = [...pinned].find((b) => b.isConnected && b.dataset.live === 'scope')?.querySelector<HTMLElement>('.diff-gap-live');
+        if (slot && !slot.contains(document.activeElement)) focusCrumb(slot, String(start));
+      };
+      for (const type of READER_SCROLLS) scroller.addEventListener(type, stopJump, { passive: true });
+      step();
+    };
+    const onClick = (event: MouseEvent) => {
+      const crumb = (event.target as Element | null)?.closest<HTMLElement>('.diff-gap-live button[data-jump]');
+      if (crumb && element.contains(crumb)) jump(crumb, event.detail === 0);
+    };
+    // Focus on a pinned crumb keeps the header pinned-looking: focus elsewhere in it brings back its own location and
+    // its controls, which act on the hunk.
+    const onFocus = (event: FocusEvent) => {
+      const slot = (event.target as Element | null)?.closest('.diff-gap-live');
+      const into = event.type === 'focusin' || (event.relatedTarget instanceof Node && !!slot?.contains(event.relatedTarget));
+      slot?.closest('[data-hunk-header]')?.toggleAttribute('data-live-focus', into);
+    };
+    element.addEventListener('click', onClick);
+    element.addEventListener('focusin', onFocus);
+    element.addEventListener('focusout', onFocus);
     return () => {
       resize.disconnect();
       stuck.current?.disconnect();
       stuck.current = undefined;
       listen(false);
       follow.current = undefined;
+      stopJump();
+      element.removeEventListener('click', onClick);
+      element.removeEventListener('focusin', onFocus);
+      element.removeEventListener('focusout', onFocus);
     };
   }, [stickyUnder]);
   // New definitions name the reader's place anew.

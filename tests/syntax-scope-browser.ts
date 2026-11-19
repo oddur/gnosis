@@ -21,6 +21,10 @@ import { app, BrowserWindow } from 'electron';
  *   header sits right under the file header with its breadcrumb, and hides its expand controls; the next hunk's header
  *   replaces it; a line scrolled to lands below both headers; a file with no grammar pins its hunks' line ranges. At a
  *   narrow width the file header wraps taller and the hunk header still sits right under it.
+ * - Pinned crumbs (#417) are buttons: a click, Enter or Space scrolls the definition's first line right under the pinned
+ *   headers, or, hidden in a gap, its gap's bar into the pinned place, revealing nothing; deleted lines use the old
+ *   file's definitions; a sliced hunk's far slice lands as exactly. Tab reaches them, focus stays on them, and the
+ *   header keeps its height.
  */
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -958,6 +962,165 @@ void app.whenReady().then(async () => {
     assert.deepEqual(following.longTasks, [], 'Following the reader adds no long task');
     assert.ok(following.places > 10, `The header follows line by line: ${following.places}`);
     await shot('follow-alpha', '.commit-diff-stream');
+
+    // ═══ A pinned crumb scrolls to its definition, revealing nothing (#417) ═══
+    // `src/runner.ts`: run() inside class ProductionRunner, whose first line is hidden in the gap above run()'s hunk.
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='runner.ts').click()");
+    await wait(`window.symbols('src/runner.ts').length>=1`);
+    await sleep(1200);
+    // The diff's own width, not the window's: Windows CI desktops are 1024 px wide.
+    await js(`window.stickyRow('src/runner.ts').querySelector('.changes-diff').style.width='680px';void 0`);
+    await js(`window.jumpState=p=>{const row=window.stickyRow(p);const file=row.querySelector('.changes-file-header').getBoundingClientRect();
+        const h=row.querySelector('[data-hunk-header][data-stuck]');const r=h?.getBoundingClientRect();const active=document.activeElement;
+        return {file:Math.round(file.bottom),stuck:!!h,live:h?.dataset.live??null,top:r?Math.round(r.top):null,bottom:r?Math.round(r.bottom):null,height:r?Math.round(r.height):null,
+          lines:window.deepAll('[data-line]',row).length,hidden:[...row.querySelectorAll('.diff-gap[data-gap]')].map(g=>g.getAttribute('aria-label')).join('|'),
+          crumbs:h?[...h.querySelectorAll('.diff-gap-live button[data-jump]')].map(b=>({label:b.getAttribute('aria-label'),side:b.dataset.side,shown:getComputedStyle(b).visibility,
+            hit:Math.round(parseFloat(getComputedStyle(b,'::after').height)),tab:b.tabIndex})):[],
+          hidden_slot:h?.querySelector('.diff-gap-live')?.getAttribute('aria-hidden')??null,slotLabel:h?.querySelector('.diff-gap-live')?.getAttribute('aria-label')??null,
+          active:active?.matches?.('.diff-gap-live button[data-jump]')?active.getAttribute('aria-label'):null,
+          ring:active?.matches?.(':focus-visible')?getComputedStyle(active).outlineStyle:null}};
+      window.lineTop=(p,text,deleted)=>{const l=window.deepAll('[data-line]',window.stickyRow(p)).find(e=>e.textContent.includes(text)&&(e.dataset.lineType==='change-deletion')===!!deleted&&e.getBoundingClientRect().height>0);return l?Math.round(l.getBoundingClientRect().top):null};
+      window.sectionTop=(p,i)=>Math.round(window.stickyRow(p).querySelectorAll('.diff-hunk')[i].getBoundingClientRect().top);
+      // Scrolls the line with \`text\` to right under the pinned file and hunk headers, where the pinned header names it.
+      window.pinAt=async(p,text,deleted)=>{const s=window.stream();let l;
+        // Files above mount and settle their heights as they come near: aim again until the line holds still.
+        // A wheel event ends any hold on the view, as the reader's own scrolling does.
+        for(let i=0,still=0;i<80&&still<5;i++){l=window.deepAll('[data-line]',window.stickyRow(p)).find(e=>e.textContent.includes(text)&&(e.dataset.lineType==='change-deletion')===!!deleted&&e.getBoundingClientRect().height>0);
+          if(!l)throw Error('No line '+text+' in '+p);const row=window.stickyRow(p);const under=row.querySelector('.changes-file-header').getBoundingClientRect().bottom-1+row.querySelector('[data-hunk-header]').offsetHeight;const off=l.getBoundingClientRect().top-under;
+          if(Math.abs(off)>1){s.dispatchEvent(new WheelEvent('wheel'));s.scrollTop+=off;still=0}else still++;
+          for(let f=0;f<2;f++)await new Promise(r=>requestAnimationFrame(r));await new Promise(r=>setTimeout(r,40))}
+        await new Promise(r=>setTimeout(r,100));
+        return {line:Math.round(l.getBoundingClientRect().top-s.getBoundingClientRect().top),scrollTop:Math.round(s.scrollTop),max:s.scrollHeight-s.clientHeight}};
+      window.crumbCenter=(p,label)=>{const b=[...window.stickyRow(p).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===label);
+        if(!b)throw Error('No pinned crumb '+label);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};void 0`);
+    type Jump = {
+      file: number;
+      stuck: boolean;
+      live: string | null;
+      top: number | null;
+      bottom: number | null;
+      height: number | null;
+      lines: number;
+      hidden: string;
+      crumbs: { label: string; side: string; shown: string; hit: number; tab: number }[];
+      hidden_slot: string | null;
+      slotLabel: string | null;
+      active: string | null;
+      ring: string | null;
+    };
+    const jumpState = (path: string) => js<Jump>(`window.jumpState(${JSON.stringify(path)})`);
+    const afterJump = async () => {
+      await sleep(350);
+      await settle();
+    };
+    const clickCrumb = async (path: string, label: string) => {
+      const point = await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(path)},${JSON.stringify(label)})`);
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+      win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      await afterJump();
+    };
+    const press = async (keyCode: string, char?: string, modifiers: ('shift')[] = []) => {
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+      if (char) win.webContents.sendInputEvent({ type: 'char', keyCode: char, modifiers });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+      await sleep(60);
+    };
+    const CLASS = 'Go to class ProductionRunner';
+    const RUN = 'Go to function run';
+    console.log('Pinning inside run():', JSON.stringify(await js(`window.pinAt('src/runner.ts','value += 50 * 2;')`)));
+    await wait(`window.jumpState('src/runner.ts').crumbs.length===2`);
+    const pinned = await jumpState('src/runner.ts');
+    console.log('Pinned inside run():', JSON.stringify(pinned));
+    assert.ok(pinned.stuck && pinned.live === 'scope', `The header is pinned and follows the reader: ${JSON.stringify(pinned)}`);
+    assert.deepEqual(pinned.crumbs.map((c) => c.label), [CLASS, RUN], 'Each pinned crumb is a button named for where it goes');
+    assert.ok(pinned.crumbs.every((c) => c.shown === 'visible' && c.tab === 0), 'The pinned crumbs show and are in the tab order');
+    assert.ok(pinned.crumbs.every((c) => c.hit >= 24), `Each pinned crumb's target is at least 24 px tall: ${JSON.stringify(pinned.crumbs)}`);
+    assert.equal(pinned.hidden_slot, null, 'The pinned crumbs are not hidden from screen readers');
+    assert.match(pinned.slotLabel ?? '', /^In runner\.ts, class ProductionRunner, function run$/, 'The pinned location has the hunk breadcrumb’s label');
+    await shot('crumb-jump-before', '.commit-diff-stream');
+    // The class's first line is hidden: the click lands on its gap's bar, the run() hunk's own header, pinned in place.
+    await clickCrumb('src/runner.ts', CLASS);
+    const toClass = await jumpState('src/runner.ts');
+    const classBar = await js<number>(`window.sectionTop('src/runner.ts',0)`);
+    console.log('After the class crumb:', JSON.stringify({ ...toClass, crumbs: undefined }), 'bar at', classBar);
+    assert.ok(Math.abs(classBar - (toClass.file - 1)) <= 1, `The class's gap bar sits right under the file header: ${classBar} vs ${toClass.file}`);
+    assert.equal(toClass.lines, pinned.lines, 'Nothing was revealed');
+    assert.equal(toClass.hidden, pinned.hidden, 'Every gap still hides what it hid');
+    assert.equal(toClass.height, pinned.height, 'Pinning never changes the header’s height');
+    await shot('crumb-jump-after-class', '.commit-diff-stream');
+    // From the keyboard: Enter on the innermost crumb goes to run()'s first line, under the pinned headers; focus stays.
+    await js(`window.pinAt('src/runner.ts','value += 60 * 2;')`);
+    await js('document.activeElement?.blur()');
+    await wait(`window.jumpState('src/runner.ts').crumbs.length===2`);
+    // Tab reaches the pinned crumbs: into the outer one, then on to the innermost.
+    await js(`[...window.stickyRow('src/runner.ts').querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(CLASS)}).focus()`);
+    await press('Tab');
+    const crumbFocus = await jumpState('src/runner.ts');
+    assert.equal(crumbFocus.active, RUN, 'Tab moves to the innermost pinned crumb');
+    assert.ok(crumbFocus.stuck && crumbFocus.live === 'scope' && crumbFocus.crumbs.every((c) => c.shown === 'visible'), `Focus keeps the pinned crumbs: ${JSON.stringify(crumbFocus)}`);
+    assert.ok(crumbFocus.ring && crumbFocus.ring !== 'none', `The focus ring shows: ${crumbFocus.ring}`);
+    await press('Enter', '\r');
+    await afterJump();
+    const toRun = await jumpState('src/runner.ts');
+    const runTop = await js<number>(`window.lineTop('src/runner.ts','run(input: number): number {')`);
+    console.log('After Enter on run():', JSON.stringify({ ...toRun, crumbs: undefined }), 'line at', runTop);
+    assert.ok(toRun.stuck && toRun.bottom !== null && Math.abs(runTop - toRun.bottom) <= 2, `run()'s first line sits right under the pinned header: ${runTop} vs ${toRun.bottom}`);
+    assert.equal(toRun.active, RUN, 'Focus stays on the pinned crumb');
+    assert.equal(toRun.lines, pinned.lines, 'Nothing was revealed');
+    assert.equal(toRun.height, pinned.height, 'The header keeps its height');
+    await shot('crumb-jump-keyboard', '.commit-diff-stream');
+    // Shift+Tab reaches the class crumb; Space goes there.
+    await press('Tab', undefined, ['shift']);
+    assert.equal((await jumpState('src/runner.ts')).active, CLASS, 'Shift+Tab moves to the outer pinned crumb');
+    await press('Space', ' ');
+    await afterJump();
+    const bySpace = await js<number>(`window.sectionTop('src/runner.ts',0)`);
+    const spaced = await jumpState('src/runner.ts');
+    assert.ok(Math.abs(bySpace - (spaced.file - 1)) <= 1, `Space goes to the class's gap bar too: ${bySpace} vs ${spaced.file}`);
+    assert.equal(spaced.lines, pinned.lines, 'Nothing was revealed');
+    await js('document.activeElement?.blur()');
+    // A hunk that only deletes (`src/pruner.ts`): a deleted line is named by the old file's definitions, and its
+    // crumbs go to their first lines by their old numbers: prune()'s shows, Pruner's is hidden in the gap above.
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='pruner.ts').click()");
+    await wait(`window.symbols('src/pruner.ts').length>=1`);
+    await sleep(1200);
+    await js(`window.stickyRow('src/pruner.ts').querySelector('.changes-diff').style.width='680px';void 0`);
+    await js(`window.pinAt('src/pruner.ts','n += 50;',true)`);
+    await wait(`window.jumpState('src/pruner.ts').crumbs.length===2`);
+    const inOld = await jumpState('src/pruner.ts');
+    console.log('Pinned on a deleted line in prune():', JSON.stringify(inOld.crumbs));
+    assert.deepEqual(
+      inOld.crumbs.map((c) => [c.label, c.side]),
+      [['Go to class Pruner', 'before'], ['Go to function prune', 'before']],
+      'Deleted lines use the old side’s definitions'
+    );
+    await clickCrumb('src/pruner.ts', 'Go to function prune');
+    const toPrune = await jumpState('src/pruner.ts');
+    const pruneTop = await js<number>(`window.lineTop('src/pruner.ts','prune(): number {')`);
+    assert.ok(toPrune.bottom !== null && Math.abs(pruneTop - toPrune.bottom) <= 2, `prune()'s first line sits right under the pinned header: ${pruneTop} vs ${toPrune.bottom}`);
+    assert.equal(toPrune.lines, inOld.lines, 'Nothing was revealed');
+    await js(`window.pinAt('src/pruner.ts','n += 70;',true)`);
+    await clickCrumb('src/pruner.ts', 'Go to class Pruner');
+    const toPruner = await jumpState('src/pruner.ts');
+    const prunerBar = await js<number>(`window.sectionTop('src/pruner.ts',0)`);
+    assert.ok(Math.abs(prunerBar - (toPruner.file - 1)) <= 1, `Pruner's gap bar sits right under the file header: ${prunerBar} vs ${toPruner.file}`);
+    assert.equal(toPruner.lines, inOld.lines, 'Nothing was revealed');
+    assert.equal(toPruner.hidden, inOld.hidden, 'Every gap still hides what it hid');
+    // A sliced hunk (#353): the target's slice is far above, outside the viewport, and lands as exactly.
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='sticky.ts').click()");
+    await wait(`window.symbols('src/sticky.ts').length>=2`);
+    await sleep(1200);
+    await js(`window.pinAt('src/sticky.ts','value -= 190 * 2;')`);
+    await wait(`window.jumpState('src/sticky.ts').crumbs.length>0`);
+    const inSecond = await jumpState('src/sticky.ts');
+    assert.ok(inSecond.crumbs.some((c) => c.label === 'Go to function second'), `Pinned in second(): ${JSON.stringify(inSecond.crumbs)}`);
+    await clickCrumb('src/sticky.ts', 'Go to function second');
+    const toSecond = await jumpState('src/sticky.ts');
+    const secondTop = await js<number>(`window.lineTop('src/sticky.ts','export function second(')`);
+    assert.ok(toSecond.bottom !== null && Math.abs(secondTop - toSecond.bottom) <= 2, `second()'s first line sits right under the pinned header: ${secondTop} vs ${toSecond.bottom}`);
+    assert.equal(toSecond.hidden, inSecond.hidden, 'Nothing was revealed');
+    assert.equal(toSecond.height, inSecond.height, 'The header keeps its height');
 
     // ═══ Pinned hunk headers in the stack's Changes (#395) ═══
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&syntax-scope`);

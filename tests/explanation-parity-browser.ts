@@ -13,6 +13,7 @@ import { app, BrowserWindow } from 'electron';
  * - The topic's file header is Changes' code-tier header with the same palette; its hunk headers use the same colours.
  * - Show whole function reveals the method in the topic; a header pins under the file header while the topic's code
  *   scrolls in the explanation document; the inline explanation and a draft comment sit on their line.
+ * - In both, a pinned crumb scrolls to its definition by mouse and by keyboard, revealing nothing (#417).
  *
  * With GNOSIS_PARITY_SHOTS=1 it prints `PARITYSHOT <name> <base64 PNG>` lines of both surfaces, light and dark.
  */
@@ -99,6 +100,50 @@ void app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     await sleep(150);
   };
+  type Jump = { file: number; bottom: number | null; height: number | null; section: number | null; lines: number; hidden: string; line: number | null; active: string | null; crumbs: string[] };
+  /** The pinned header in `root` and the first shown line with `text`, for a pinned crumb's jump (#417). */
+  const jumpState = (root: string, text: string) =>
+    js<Jump>(`(()=>{const g=document.querySelector(${JSON.stringify(root)});const file=g.querySelector('.changes-file-header').getBoundingClientRect();
+      const h=g.querySelector('.diff-gap[data-hunk-header][data-stuck]');const r=h?.getBoundingClientRect();
+      const l=window.deepAll('[data-line]',g).find(e=>e.textContent.includes(${JSON.stringify(text)})&&e.dataset.lineType!=='change-deletion'&&e.getBoundingClientRect().height>0);
+      const a=document.activeElement;
+      return {file:Math.round(file.bottom),bottom:r?Math.round(r.bottom):null,height:r?Math.round(r.height):null,section:h?Math.round(h.parentElement.getBoundingClientRect().top):null,
+        lines:window.deepAll('[data-line]',g).length,hidden:[...g.querySelectorAll('.diff-gap[data-gap]')].map(e=>e.getAttribute('aria-label')).join('|'),
+        line:l?Math.round(l.getBoundingClientRect().top):null,active:a?.matches?.('.diff-gap-live button[data-jump]')?a.getAttribute('aria-label'):null,
+        crumbs:h?[...h.querySelectorAll('.diff-gap-live button[data-jump]')].map(b=>b.getAttribute('aria-label')):[]}})()`);
+  /**
+   * Clicks (or, from the keyboard, focuses and presses Enter on) the pinned crumb `label` in `root`, and checks that
+   * the definition's first line (`text`) lands right under the pinned header, or, hidden in a gap, its gap's bar
+   * pinned in place; that nothing was revealed; and that the header kept its height.
+   */
+  const checkJump = async (surface: string, root: string, label: string, text: string, keyboard: boolean) => {
+    const before = await jumpState(root, text);
+    assert.ok(before.crumbs.includes(label), `${surface}: the pinned header has the crumb ${label}: ${JSON.stringify(before.crumbs)}`);
+    if (keyboard) {
+      await js(`[...document.querySelectorAll(${JSON.stringify(root + ' [data-stuck] .diff-gap-live button[data-jump]')})].find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)}).focus()`);
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+      win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+    } else {
+      const point = await js<{ x: number; y: number }>(`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(root + ' [data-stuck] .diff-gap-live button[data-jump]')})].find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)});
+        const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`);
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+      win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+    }
+    await sleep(350);
+    await settle();
+    const after = await jumpState(root, text);
+    console.log(`${surface}: ${label}`, JSON.stringify({ before: { ...before, crumbs: undefined }, after: { ...after, crumbs: undefined } }));
+    if (after.line !== null)
+      assert.ok(after.bottom !== null && Math.abs(after.line - after.bottom) <= 2, `${surface}: the definition's first line sits right under the pinned header`);
+    else assert.ok(after.section !== null && Math.abs(after.section - (after.file - 1)) <= 1, `${surface}: the gap bar that hides it sits right under the file header`);
+    assert.equal(after.lines, before.lines, `${surface}: nothing was revealed`);
+    assert.equal(after.hidden, before.hidden, `${surface}: every gap still hides what it hid`);
+    assert.equal(after.height, before.height, `${surface}: the header keeps its height`);
+    if (keyboard) assert.equal(after.active, label, `${surface}: focus stays on the pinned crumb`);
+    return after;
+  };
   type Header = { parts: string[]; crumbs: string; range?: string; counts?: string; show?: string };
   type Palette = { file: string; fileText: string; hunk: string; hunkText: string; added: string; keyword: string };
   try {
@@ -149,6 +194,17 @@ void app.whenReady().then(async () => {
     await settle();
     await wait(`!!document.querySelector(${JSON.stringify(changesRow)}+' .diff-gap[data-hunk-header][data-stuck]')`);
     await capture('changes-pinned', region('.commit-diff-stream', 0, 260));
+    // A pinned crumb scrolls to its definition and reveals nothing (#417), by mouse and by keyboard.
+    const pinChanges = async () => {
+      await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const l=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(changesRow)})).find(e=>e.textContent.includes('total += 40;'));s.scrollTop+=l.getBoundingClientRect().top-s.getBoundingClientRect().top-200})()`);
+      await settle();
+      await wait(`!!document.querySelector(${JSON.stringify(changesRow)}+' .diff-gap[data-hunk-header][data-stuck][data-live=scope]')`);
+    };
+    await pinChanges();
+    await checkJump('Changes', changesRow, 'Go to class StoreBridge', 'export class StoreBridge {', false);
+    await pinChanges();
+    await checkJump('Changes', changesRow, 'Go to function flush', 'flush(): number {', true);
+    await js('document.activeElement?.blur()');
 
     // ── The topic: the same file, two of its hunks ──
     await click('Review queue');
@@ -208,6 +264,18 @@ void app.whenReady().then(async () => {
       return {scroller:Math.round(document.querySelector('.explanation-document').getBoundingClientRect().top),file:Math.round(g.querySelector('.changes-file-header').getBoundingClientRect().bottom),hunk:Math.round(g.querySelector('.diff-gap[data-stuck]').getBoundingClientRect().top)}})()`);
     assert.ok(Math.abs(pinned.hunk - pinned.file + 1) <= 1, `The hunk header pins right under the file header: ${JSON.stringify(pinned)}`);
     await capture('explanation-pinned', region('.explanation-document', 0, 260));
+    // The same pinned crumbs in the topic, inside the explanation document's scroller (#417).
+    const pinTopic = async () => {
+      await js(`(()=>{const s=document.querySelector('.explanation-document');const l=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(topic)})).find(e=>e.textContent.includes('total += 40;'));s.scrollTop+=l.getBoundingClientRect().top-s.getBoundingClientRect().top-200})()`);
+      await settle();
+      await wait(`!!document.querySelector(${JSON.stringify(topic)}+' .diff-gap[data-hunk-header][data-stuck][data-live=scope]')`);
+    };
+    await pinTopic();
+    await checkJump('Topic', topic, 'Go to class StoreBridge', 'export class StoreBridge {', false);
+    await capture('explanation-crumb-jump', region('.explanation-document', 0, 260));
+    await pinTopic();
+    await checkJump('Topic', topic, 'Go to function flush', 'flush(): number {', true);
+    await js('document.activeElement?.blur()');
     assert.deepEqual(errors, []);
     if (shots) await sideBySide();
     console.log('Explanation parity checks passed');
