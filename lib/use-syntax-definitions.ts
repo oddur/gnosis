@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import { syntaxLanguage, type SyntaxDefinition } from './syntax-scope';
 import { peekDefinitions, readDefinitions } from './syntax-scope-client';
+import { whenSettled } from './use-syntax-contents';
 import type { SyntaxPriority } from './syntax-parse-queue';
 
 export interface FileDefinitions {
@@ -18,8 +19,8 @@ const NONE: FileDefinitions = {};
  * has is parsed, so this adds no reads. Known definitions return in the same render; others arrive later, each side
  * on its own: the after side names the hunks, so the breadcrumbs show as soon as it is parsed, and the old side, which
  * the outline and hunks that only delete use, follows. A file without a grammar, or whose parse fails, has none.
- * `priority` is where the file is (lib/syntax-parse-queue.ts); a file that comes on screen asks again, and its parse
- * moves up.
+ * `priority` is where the file is (lib/syntax-parse-queue.ts); a file that comes on screen moves its waiting parse up
+ * without rendering (`raiseDefinitions`).
  */
 export function useSyntaxDefinitions({
   key,
@@ -29,7 +30,7 @@ export function useSyntaxDefinitions({
   after,
   before,
   enabled,
-  priority = 'view',
+  priority,
 }: {
   key: string;
   url: string;
@@ -38,7 +39,8 @@ export function useSyntaxDefinitions({
   after?: string;
   before?: string;
   enabled: boolean;
-  priority?: SyntaxPriority;
+  /** Where the file is when its parse is asked for; a later move raises it (`raiseDefinitions`), with no render. */
+  priority?: RefObject<SyntaxPriority>;
 }): FileDefinitions {
   const afterLanguage = enabled && after !== undefined ? syntaxLanguage(path) : undefined;
   const beforeLanguage = enabled && before !== undefined ? syntaxLanguage(previousPath ?? path) : undefined;
@@ -50,23 +52,26 @@ export function useSyntaxDefinitions({
   useEffect(() => {
     if (!afterLanguage && !beforeLanguage) return;
     let cancelled = false;
+    const shows: (() => void)[] = [];
     const read = (side: 'after' | 'before') => {
       const language = side === 'after' ? afterLanguage : beforeLanguage;
       const text = side === 'after' ? after : before;
       if (!language || text === undefined) return;
-      void readDefinitions({ key: side === 'after' ? afterKey : beforeKey, url, language, text, priority })
+      void readDefinitions({ key: side === 'after' ? afterKey : beforeKey, url, language, text, priority: priority?.current ?? 'view' })
         .catch(() => undefined)
         .then((value) => {
+          // Shown once the reader stops scrolling, if they are: a parse that lands mid-scroll renders after it.
           if (!cancelled)
-            setState((previous) => ({ ...(previous?.id === id ? previous : { id }), [side]: { value } }));
+            shows.push(whenSettled(() => setState((previous) => ({ ...(previous?.id === id ? previous : { id }), [side]: { value } }))));
         });
     };
     read('after');
     read('before');
     return () => {
       cancelled = true;
+      for (const cancel of shows) cancel();
     };
-  }, [id, after, before, priority]);
+  }, [id, after, before]);
   if (!afterLanguage && !beforeLanguage) return NONE;
   const current = state?.id === id ? state : undefined;
   const afterDefinitions = afterLanguage ? (current?.after ? current.after.value : peekDefinitions(afterKey)) : undefined;

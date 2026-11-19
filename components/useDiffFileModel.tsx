@@ -22,7 +22,9 @@ import {
 } from '../lib/diff-gaps';
 import { chainAt, hunkScopes, provisionalScopes, type HunkScope, type LinePoint } from '../lib/hunk-scopes';
 import type { DefinitionReveal, SyntaxDefinition } from '../lib/syntax-scope';
+import type { SyntaxPriority } from '../lib/syntax-parse-queue';
 import { useSyntaxDefinitions } from '../lib/use-syntax-definitions';
+import { raiseDefinitions, raiseNoise } from '../lib/syntax-scope-client';
 import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-syntax-contents';
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
@@ -239,7 +241,7 @@ export function useDiffFileModel({
   );
   const parseable = structure && active && (whole ? !!baseHunks : expandable && !!gaps);
   // Files on screen parse first, then files near the view, then the rest (lib/syntax-parse-queue.ts).
-  const tier = useViewTier(sectionRef, parseable);
+  const tier = useRef<SyntaxPriority>('near');
   const definitions = useSyntaxDefinitions({
     key: fileKey,
     url: request?.url ?? '',
@@ -262,6 +264,13 @@ export function useDiffFileModel({
     enabled: noiseOn && structure && active && !wholeSide && afterMatches === true,
     priority: tier,
     whole: !partial,
+  });
+  // Where the file is matters only while a side of it, or its comparison, waits: then it is watched, and a move
+  // raises it.
+  useViewTier(sectionRef, parseable && !!(definitions.parsing || definitions.beforeParsing || noise.pending), tier, (place) => {
+    raiseDefinitions(`${fileKey}:after`, place);
+    raiseDefinitions(`${fileKey}:before`, place);
+    if (noise.key) raiseNoise(noise.key, place);
   });
   // What the reader opened stays open for the session, though the file's diff unmounts as it scrolls away.
   const [shownNoise, setShownNoise] = useState<{ key: string; value: ReadonlySet<string> }>();

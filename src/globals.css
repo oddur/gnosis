@@ -2684,7 +2684,9 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-file-header[data-status=renamed] { --file-status:var(--code-renamed); }
 /* The path keeps room to name the file: when the actions leave it less than this (a narrow Commits pane with the
    Markdown switch), they wrap to a second row instead of squeezing the path to nothing. */
-.changes-file-title { display:flex; align-items:baseline; gap:12px; flex:1 1 auto; min-width:min(100%, 260px); }
+/* The title grows from nothing (flex-basis 0), so a long path never claims the row: it shortens from the left first,
+   and the actions only wrap below when the title would get less than 260px. */
+.changes-file-title { display:flex; align-items:baseline; gap:12px; flex:1 1 0; min-width:min(100%, 260px); }
 /* The file's type icon leads the path, centred on its line; the path keeps its own gap to the counts. */
 .changes-file-title > .file-type-icon { align-self:center; margin-right:-4px; }
 .changes-file-header h2 { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); font-weight:400; }

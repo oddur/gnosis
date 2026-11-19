@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import {
   createSyntaxContentsScheduler,
   syntaxContentsDiagnostics,
@@ -66,8 +66,12 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
  */
 const SETTLE_MS = 150;
 let lastScrollAt = 0;
-/** Runs `run` once the view has been still for SETTLE_MS; the returned function cancels it. */
-function whenSettled(run: () => void): () => void {
+/**
+ * Runs `run` once the view has been still for SETTLE_MS, at once when it already is; the returned function cancels it.
+ * Reads wait for it, and so do the renders that show structure that lands while the reader scrolls: they would add
+ * work to the frames of the scroll.
+ */
+export function whenSettled(run: () => void): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancelled = false;
   const check = () => {
@@ -262,16 +266,30 @@ export function warmPredictedSyntax(files: readonly SyntaxFile[]) {
 /**
  * Where a file's diff is, for the order of parses (lib/syntax-parse-queue.ts): on screen (`view`), within a viewport
  * of it (`near`), or further (`prefetch`). Until the first observation it is `near`: it was just mounted, so close.
+ * The place is kept in `tier` and `onChange` hears of each change, so a file crossing the view while the reader
+ * scrolls renders nothing: only a parse that still waits is told to move. Watched only while `enabled`, which a file
+ * whose structure is parsed is not; it is `near` again while not watched.
  */
-export function useViewTier(element: RefObject<HTMLElement | null>, enabled: boolean): SyntaxPriority {
-  const [tier, setTier] = useState<SyntaxPriority>('near');
+export function useViewTier(
+  element: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  tier: { current: SyntaxPriority },
+  onChange: (tier: SyntaxPriority) => void
+) {
+  const changed = useRef(onChange);
+  changed.current = onChange;
   useEffect(() => {
     const target = element.current;
     if (!enabled || !target || typeof IntersectionObserver === 'undefined') return;
     const root = target.closest('.commit-diff-stream, [data-diff-scroller]');
     let onScreen = false,
       near = true;
-    const update = () => setTier(onScreen ? 'view' : near ? 'near' : 'prefetch');
+    const update = () => {
+      const next: SyntaxPriority = onScreen ? 'view' : near ? 'near' : 'prefetch';
+      if (next === tier.current) return;
+      tier.current = next;
+      changed.current(next);
+    };
     const screen = new IntersectionObserver(
       (entries) => {
         onScreen = entries[entries.length - 1].isIntersecting;
@@ -291,9 +309,9 @@ export function useViewTier(element: RefObject<HTMLElement | null>, enabled: boo
     return () => {
       screen.disconnect();
       around.disconnect();
+      tier.current = 'near';
     };
   }, [enabled]);
-  return tier;
 }
 
 /** Where a file's scope contents are: being read, read, or not readable; `retry` asks again after a failure. */
@@ -319,7 +337,15 @@ export function useSyntaxContents(
   useEffect(() => {
     if (!want) return;
     const { key } = want;
-    return syntaxContents.watch(key, () => setResult({ key, state: 'done' }));
+    let show = () => {};
+    const stop = syntaxContents.watch(key, () => {
+      show();
+      show = whenSettled(() => setResult({ key, state: 'done' }));
+    });
+    return () => {
+      stop();
+      show();
+    };
   }, [want?.key]);
   useEffect(() => {
     const target = element.current;

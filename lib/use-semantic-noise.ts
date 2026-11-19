@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore, type RefObject } from 'react';
 import { syntaxLanguage } from './syntax-scope';
 import { noiseKey, onNoise, peekFileNoise, peekNoise, readNoise } from './syntax-scope-client';
 import { blockKey, fileNoise, noiseLabel, type NoiseBlock, type NoiseFilter, type NoiseKind } from './semantic-noise';
@@ -28,17 +28,18 @@ export function useSemanticNoise({
   after?: string;
   hunks?: GapHunk[];
   enabled: boolean;
-  priority: SyntaxPriority;
+  /** Where the file is, as the view last saw it (lib/syntax-parse-queue.ts); a move raises a waiting comparison. */
+  priority: RefObject<SyntaxPriority>;
   /** The hunks are the file's whole diff, not an Explanation topic's few. */
   whole: boolean;
-}): { blocks?: readonly NoiseBlock[]; kinds: ReadonlyMap<string, NoiseKind> } {
+}): { blocks?: readonly NoiseBlock[]; kinds: ReadonlyMap<string, NoiseKind>; key?: string; pending: boolean } {
   const language = enabled && after !== undefined && hunks?.length ? syntaxLanguage(path) : undefined;
   const key = language && hunks ? noiseKey(fileKey, hunks) : undefined;
   const [state, setState] = useState<{ key: string; blocks?: NoiseBlock[] }>();
   useEffect(() => {
     if (!key || !language || after === undefined || !hunks) return;
     let cancelled = false;
-    void readNoise({ fileKey, url, language, text: after, hunks, priority, whole })
+    void readNoise({ fileKey, url, language, text: after, hunks, priority: priority.current ?? 'view', whole })
       .catch(() => undefined)
       .then((blocks) => {
         if (!cancelled) setState({ key, blocks });
@@ -46,10 +47,11 @@ export function useSemanticNoise({
     return () => {
       cancelled = true;
     };
-  }, [key, after, priority]);
-  const blocks = !key ? undefined : state?.key === key ? state.blocks : peekNoise(key);
+  }, [key, after]);
+  const settled = !!key && state?.key === key;
+  const blocks = !key ? undefined : settled ? state.blocks : peekNoise(key);
   const kinds = useMemo(() => (blocks ? new Map(blocks.map((block) => [blockKey(block), block.kind])) : NO_KINDS), [blocks]);
-  return { blocks, kinds };
+  return { blocks, kinds, key, pending: !!key && !settled && !blocks };
 }
 
 

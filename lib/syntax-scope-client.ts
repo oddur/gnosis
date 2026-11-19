@@ -273,6 +273,18 @@ export function readDefinitions(request: {
   return promise;
 }
 
+/**
+ * Moves a file side's waiting parse up to `priority`, as asking for it again would, without a caller to answer. A
+ * side that is parsed, or not asked for, is left alone.
+ */
+export function raiseDefinitions(key: string, priority: SyntaxPriority) {
+  const existing = pending.get(key);
+  if (!existing || higherPriority(existing.priority, priority) === existing.priority) return;
+  existing.priority = priority;
+  const { lane } = existing;
+  if (lane) void workers.get(lane)?.then((instance) => instance?.postMessage({ type: 'priority', key, priority } satisfies SyntaxRequest));
+}
+
 /** Drops these PRs' definitions here and in the worker, with the rest of their inspection data (#355). */
 export function forgetDefinitions(urls: ReadonlySet<string>) {
   for (const [key, entry] of memo) if (urls.has(entry.url)) memo.delete(key);
@@ -433,6 +445,13 @@ export function readNoise(request: {
     }
   );
   return promise;
+}
+/** A waiting comparison moves up to `priority`, as its file comes nearer the view (raiseDefinitions). */
+export function raiseNoise(key: string, priority: SyntaxPriority) {
+  const existing = noisePending.get(key);
+  if (!existing || higherPriority(existing.priority, priority) === existing.priority) return;
+  existing.priority = priority;
+  void workers.get(existing.lane)?.then((instance) => instance?.postMessage({ type: 'priority', key, priority } satisfies SyntaxRequest));
 }
 function forgetNoise(urls?: ReadonlySet<string>) {
   for (const [key, entry] of noiseMemo) if (!urls || urls.has(entry.url)) noiseMemo.delete(key);
