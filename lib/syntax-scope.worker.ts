@@ -69,6 +69,11 @@ export type SyntaxRequest =
       priority: SyntaxPriority;
       side: 'symbols';
     }
+  /**
+   * A conflict result and its sides, checked before Gnosis calls a conflict merged (lib/conflict-verify.ts): the
+   * definitions and whether the text parses. Not cached, and not queued: the conflict dialog covers every diff.
+   */
+  | { type: 'check'; id: number; language: SyntaxLanguage; text: string; runtimeUrl: string; grammarUrl: string }
   /** A PR's moves, from its files' fingerprints: matched in the queue, below every parse. */
   | { type: 'moves'; id: number; files: MoveFile[] }
   /** The view came nearer a file whose parse waits: it moves up to `priority`. */
@@ -110,6 +115,7 @@ export type SyntaxResponse =
       timing: { ms: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority; parses?: number };
     }
   | { id: number; moves: MovesResult }
+  | { id: number; check: { definitions: SyntaxDefinition[]; errors: boolean } }
   | { id: number; error: string }
   | { id: number; taken: boolean };
 
@@ -298,6 +304,15 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
       if (!warming.includes(language)) warming.push(language);
     }
     void drain();
+    return;
+  }
+  if (message.type === 'check') {
+    runtimeUrl ||= message.runtimeUrl;
+    grammarUrls.set(message.language, message.grammarUrl);
+    engine.definitions(message.language, message.text).then(
+      ({ definitions, errors }) => self.postMessage({ id: message.id, check: { definitions, errors } } satisfies SyntaxResponse),
+      (error: unknown) => self.postMessage({ id: message.id, ...failed(error) } satisfies SyntaxResponse)
+    );
     return;
   }
   if (message.type === 'moves') {

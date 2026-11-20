@@ -1,0 +1,9 @@
+{
+  "description": "Mergiraf never returns; the service kills it after its process timeout.",
+  "language": "typescript",
+  "category": "failure/mergiraf",
+  "mergiraf": "hang",
+  "expected": {
+    "src/math.ts": "decide"
+  }
+}

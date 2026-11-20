@@ -10,16 +10,22 @@ import {
 } from 'react';
 import { File, MultiFileDiff } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
-import { Check, ChevronsUpDown, Undo2 } from 'lucide-react';
+import { Check, CheckCheck, ChevronsUpDown, CircleAlert, CircleHelp, Undo2 } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   applyChoices,
   chosenText,
   conflictModel,
   type BlockChoice,
+  type BlockPick,
   type ConflictBlock,
   type ConflictLabels,
 } from '../lib/conflict-blocks';
+import type { ConflictProposal } from '../lib/conflict-resolution';
+import type { Verdict } from '../lib/conflict-verify';
+
+const proposalWhat = (proposal: ConflictProposal) =>
+  proposal.source === 'rerere' ? 'Same as you resolved before' : 'Combined both sides’ changes';
 
 const baseOptions = {
   theme: { dark: 'pierre-dark', light: 'pierre-light' },
@@ -116,20 +122,130 @@ function Block({
   disabled,
   onChoose,
   onUndo,
+  proposal,
+  verdict,
 }: {
   name: string;
   block: ConflictBlock;
   index: number;
   total: number;
-  choice: BlockChoice | undefined;
+  choice: BlockPick | undefined;
   labels: ConflictLabels;
   shortcuts: boolean;
   disabled: boolean;
-  onChoose: (choice: BlockChoice) => void;
+  onChoose: (choice: BlockPick) => void;
   onUndo?: () => void;
+  proposal?: ConflictProposal | null;
+  /** The file's checks; undefined while they run. */
+  verdict?: Verdict;
 }) {
   const title = `Conflict ${index + 1} of ${total}`;
-  if (choice)
+  const actions = (
+    <div className="conflict-block-actions" role="group" aria-label={`Choose for conflict ${index + 1}`}>
+      {(['ours', 'theirs', 'both'] as const).map((value) => (
+        <Button
+          key={value}
+          size="sm"
+          variant="outline"
+          disabled={disabled}
+          data-choice={value}
+          aria-keyshortcuts={shortcuts ? choiceKeys[value] : undefined}
+          title={value === 'both' ? `${labels.ours} first, then ${labels.theirs}. Check for duplicates.` : undefined}
+          onClick={() => onChoose(value)}
+        >
+          {labels.keep[value]}
+          {shortcuts && (
+            <kbd className="kbd" aria-hidden="true">
+              {choiceKeys[value]}
+            </kbd>
+          )}
+        </Button>
+      ))}
+      {proposal && choice !== 'proposal' && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled}
+          data-choice="proposal"
+          onClick={() => onChoose('proposal')}
+        >
+          Use the proposal
+        </Button>
+      )}
+    </div>
+  );
+  const undo = onUndo && (
+    <Button
+      size="xs"
+      variant="ghost"
+      disabled={disabled}
+      onClick={onUndo}
+      aria-label={`Undo and decide conflict ${index + 1} yourself`}
+    >
+      <Undo2 aria-hidden="true" />
+      Undo
+    </Button>
+  );
+  if (choice === 'proposal' && proposal) {
+    const merged = !!verdict?.merged;
+    const note = verdict?.note ?? 'Checking the result…';
+    const what = proposalWhat(proposal);
+    // Merged: one line, collapsed. Check: the proposal and both sides, with the Keep actions to override it.
+    return merged ? (
+      <section
+        className="conflict-block"
+        data-state="proposal"
+        data-bucket="merged"
+        data-conflict-index={index}
+        tabIndex={-1}
+        aria-label={`${title}. Merged: ${what}. ${note}`}
+      >
+        <div className="conflict-kept">
+          <CheckCheck size={14} aria-hidden="true" />
+          <span>Merged · {what}</span>
+          {undo && <span aria-hidden="true">·</span>}
+          {undo}
+        </div>
+        <details className="conflict-ancestor conflict-merged-detail">
+          <summary>{note} Show the result</summary>
+          <CodeSnippet name={name} text={proposal.text} />
+        </details>
+      </section>
+    ) : (
+      <section
+        className="conflict-block"
+        data-state="proposal"
+        data-bucket="check"
+        data-conflict-index={index}
+        tabIndex={0}
+        aria-label={`${title}, line ${block.line}. Check: ${what}. ${note}`}
+      >
+        <header className="conflict-block-header">
+          <strong>{title}</strong>
+          <span className="conflict-bucket" data-bucket="check">
+            <CircleHelp size={13} aria-hidden="true" />
+            Check · {what}
+          </span>
+          <span>{note}</span>
+          {undo}
+        </header>
+        {proposal.text ? (
+          <CodeSnippet name={name} text={proposal.text} />
+        ) : (
+          <p className="conflict-side-empty">No lines</p>
+        )}
+        <details className="conflict-ancestor">
+          <summary>Both sides</summary>
+          <div className="conflict-sides">
+            <Side name={name} side="ours" label={labels.ours} text={block.ours} />
+            <Side name={name} side="theirs" label={labels.theirs} text={block.theirs} />
+          </div>
+        </details>
+        {actions}
+      </section>
+    );
+  }
+  if (choice && choice !== 'proposal')
     return (
       <section
         className="conflict-block"
@@ -174,6 +290,10 @@ function Block({
     >
       <header className="conflict-block-header">
         <strong>{title}</strong>
+        <span className="conflict-bucket" data-bucket="decide">
+          <CircleAlert size={13} aria-hidden="true" />
+          Decide
+        </span>
         <span>Line {block.line}</span>
       </header>
       <div className="conflict-sides">
@@ -186,27 +306,7 @@ function Block({
           {block.base ? <CodeSnippet name={name} text={block.base} /> : <p className="conflict-side-empty">No lines</p>}
         </details>
       )}
-      <div className="conflict-block-actions" role="group" aria-label={`Choose for conflict ${index + 1}`}>
-        {(['ours', 'theirs', 'both'] as const).map((value) => (
-          <Button
-            key={value}
-            size="sm"
-            variant="outline"
-            disabled={disabled}
-            data-choice={value}
-            aria-keyshortcuts={shortcuts ? choiceKeys[value] : undefined}
-            title={value === 'both' ? `${labels.ours} first, then ${labels.theirs}. Check for duplicates.` : undefined}
-            onClick={() => onChoose(value)}
-          >
-            {labels.keep[value]}
-            {shortcuts && (
-              <kbd className="kbd" aria-hidden="true">
-                {choiceKeys[value]}
-              </kbd>
-            )}
-          </Button>
-        ))}
-      </div>
+      {actions}
     </section>
   );
 }
@@ -233,10 +333,15 @@ export function ConflictView({
   shortcuts = false,
   handle,
   onAllResolved,
+  proposals,
+  verdict,
 }: {
   name: string;
   original: string;
   contents: string;
+  /** What preparation resolved, per block, and its checks (lib/conflict-verify.ts). */
+  proposals?: readonly (ConflictProposal | null)[];
+  verdict?: Verdict;
   labels: ConflictLabels;
   onChange: (contents: string) => void;
   disabled?: boolean;
@@ -246,17 +351,19 @@ export function ConflictView({
   onAllResolved?: () => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
-  const model = useMemo(() => conflictModel(original, contents), [original, contents]);
+  const model = useMemo(() => conflictModel(original, contents, proposals), [original, contents, proposals]);
   const total = model.segments.filter((s) => s.kind === 'conflict').length;
   const pendingFocus = useRef<{ after?: number; at?: number }>(undefined);
-  const openBlocks = () => [...(root.current?.querySelectorAll<HTMLElement>('.conflict-block[data-state=open]') ?? [])];
+  // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
+  const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
+  const openBlocks = () => [...(root.current?.querySelectorAll<HTMLElement>(pendingSelector) ?? [])];
   const indexOf = (element: Element | null) =>
     Number(element?.closest('[data-conflict-index]')?.getAttribute('data-conflict-index') ?? -1);
-  function choose(index: number, choice: BlockChoice | undefined) {
+  function choose(index: number, choice: BlockPick | undefined) {
     const next = [...model.choices];
     next[index] = choice;
     pendingFocus.current = choice ? { after: index } : { at: index };
-    onChange(applyChoices(model.segments, next));
+    onChange(applyChoices(model.segments, next, proposals));
   }
   useEffect(() => {
     const pending = pendingFocus.current;
@@ -288,7 +395,7 @@ export function ConflictView({
       choose(choice) {
         if (disabled) return false;
         const blocks = openBlocks();
-        const active = document.activeElement?.closest<HTMLElement>('.conflict-block[data-state=open]');
+        const active = document.activeElement?.closest<HTMLElement>(pendingSelector);
         const target = active && blocks.includes(active) ? active : blocks.at(0);
         if (!target) return false;
         choose(indexOf(target), choice);
@@ -326,6 +433,8 @@ export function ConflictView({
             shortcuts={shortcuts}
             disabled={disabled}
             onChoose={(choice) => choose(segment.index, choice)}
+            proposal={proposals?.[segment.index]}
+            verdict={verdict}
             onUndo={model.undoable ? () => choose(segment.index, undefined) : undefined}
           />
         )

@@ -1,0 +1,19 @@
+{
+  "description": "The contributor branch made cargo run use target/release for release builds, master renamed root to bin for the executable name; the human kept the release-dir logic and used bin.get_name().",
+  "language": "rust",
+  "category": "real",
+  "source": {
+    "repo": "rust-lang/cargo",
+    "license": "MIT OR Apache-2.0",
+    "merge": "c5d0d21ea4b1ec36cfe267848e5e359cd20d264c",
+    "ours": "37eba4539525cee94c75fd8de753787f7e98d9ca",
+    "theirs": "12b5c0cd86831bf02b94fc4efd77a6ea888909ce",
+    "base": "bd2fd92e9fa4836212388298d91bfb11a4a7533f",
+    "url": "https://github.com/rust-lang/cargo/commit/c5d0d21ea4b1ec36cfe267848e5e359cd20d264c",
+    "direction": "ours=P2 (merged-in feature branch), theirs=P1",
+    "mergeSubject": "Merge remote-tracking branch 'cmr/master'"
+  },
+  "expected": {
+    "src/cargo/ops/cargo_run.rs": "any"
+  }
+}

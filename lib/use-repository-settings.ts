@@ -8,6 +8,8 @@ export interface RepositoryContextValue {
   /** The level that applies to a repository's notifications, and whether the repository sets it itself. */
   notificationLevel?: (repo: string) => { level: RepositoryNotificationLevel; explicit: boolean };
   setNotificationLevel?: (repo: string, level: RepositoryNotificationLevel) => Promise<void>;
+  /** Resolve conflicts' "Show me every merged conflict". On removes the setting, since on is the default. */
+  setShowMergedConflicts?: (repo: string, show: boolean) => Promise<void>;
   /** "Allow notifications from this bot". */
   allowBotNotifications?: (login: string) => Promise<void>;
   botNotificationsAllowed?: (login: string) => boolean;

@@ -1,0 +1,8 @@
+{
+  "description": "The PR renames src/old.ts to src/new.ts; main edits src/old.ts. Git follows the rename.",
+  "language": "typescript",
+  "category": "files/rename",
+  "expected": {
+    "src/new.ts": "clean"
+  }
+}

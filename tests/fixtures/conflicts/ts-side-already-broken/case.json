@@ -1,0 +1,8 @@
+{
+  "description": "Main’s side does not parse (a stray brace). The parse check is skipped when a side has errors, so only the definition checks run.",
+  "language": "typescript",
+  "category": "failure/parse",
+  "expected": {
+    "src/math.ts": "any"
+  }
+}

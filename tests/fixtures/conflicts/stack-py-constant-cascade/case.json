@@ -1,0 +1,19 @@
+{
+  "description": "A 3-PR stack. Main and PR 1 change the same constant and PR 1 takes main’s value; PR 2 had changed it again, so the decision cascades to PR 2. PR 3 only changes another line.",
+  "language": "python",
+  "category": "stack",
+  "stack": [
+    "pr1",
+    "pr2",
+    "pr3"
+  ],
+  "steps": {
+    "pr1": {
+      "lab/limits.py": "any-but-merged"
+    },
+    "pr2": {
+      "lab/limits.py": "any-but-merged"
+    },
+    "pr3": {}
+  }
+}

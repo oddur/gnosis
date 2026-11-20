@@ -1,0 +1,8 @@
+[package]
+name = "lab"
+version = "0.1.0"
+
+[dependencies]
+serde = "1"
+anyhow = "1"
+tokio = "1"

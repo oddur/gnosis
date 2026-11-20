@@ -42,6 +42,7 @@ const settingNames = {
   icon: 'icon',
   color: 'color',
   notifications: 'notifications',
+  showMergedConflicts: 'merged conflicts',
 };
 export function RepositorySettingsEditor({
   repo,

@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different declaration to the same rule. Neither Mergiraf nor Gnosis has a CSS grammar.",
+  "language": "css",
+  "category": "files/no-grammar",
+  "expected": {
+    "styles/button.css": "decide"
+  }
+}

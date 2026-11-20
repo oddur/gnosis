@@ -110,6 +110,8 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
           symbolTimings.get(response.id)?.(response.timing);
         } else if ('moves' in response) {
           (entry.resolve as (value: MovesResult) => void)(response.moves);
+        } else if ('check' in response) {
+          (entry.resolve as (value: { definitions: SyntaxDefinition[]; errors: boolean }) => void)(response.check);
         } else {
           (entry.resolve as (value: SyntaxDefinition[]) => void)(response.definitions);
           timings.get(response.id)?.(response.timing);
@@ -620,6 +622,34 @@ export function readMoves(files: MoveFile[]): Promise<MovesResult> {
         const id = ++nextId;
         waiting.set(id, { resolve: resolve as (value: never) => void, reject });
         instance.postMessage({ type: 'moves', id, files } satisfies SyntaxRequest);
+      })
+  );
+}
+
+/**
+ * Parses a text in the worker for the conflict checks (lib/conflict-verify.ts): its definitions, and whether it has
+ * a parse error. Rejects for a language that is off in Settings, a text over the parse limit, or no worker.
+ */
+export function checkSyntax(language: SyntaxLanguage, text: string): Promise<{ definitions: SyntaxDefinition[]; errors: boolean }> {
+  if (!languageAllowed(language)) return Promise.reject(Error('This language is off in Settings'));
+  if (text.length > SYNTAX_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to parse'));
+  return start('front').then(
+    (instance) =>
+      new Promise((resolve, reject) => {
+        if (!instance) {
+          reject(Error('The syntax worker is not available'));
+          return;
+        }
+        const id = ++nextId;
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+        instance.postMessage({
+          type: 'check',
+          id,
+          language,
+          text,
+          runtimeUrl: absolute(runtimeWasm),
+          grammarUrl: absolute(GRAMMARS[language]),
+        } satisfies SyntaxRequest);
       })
   );
 }

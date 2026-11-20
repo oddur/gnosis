@@ -1,0 +1,8 @@
+{
+  "description": "Both sides edit different, adjacent statements of one function.",
+  "language": "python",
+  "category": "structure/edit-same-function",
+  "expected": {
+    "lab/parse.py": "merged"
+  }
+}

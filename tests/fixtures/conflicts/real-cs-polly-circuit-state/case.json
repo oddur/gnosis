@@ -1,0 +1,19 @@
+{
+  "description": "The feature branch switched _blockedTill to ticks (DateTime.MinValue.Ticks), master reset _lastOutcome to null instead of a placeholder exception; the human combined both lines.",
+  "language": "csharp",
+  "category": "real",
+  "source": {
+    "repo": "App-vNext/Polly",
+    "license": "BSD-3-Clause",
+    "merge": "a93d16ea7b03d0c6526803830b906124d732f1e7",
+    "ours": "d0517a1ebefecd4f2e42055a927c03289a032424",
+    "theirs": "089e7b51bf9970668bb1ca87ad9ea6ed401dbaed",
+    "base": "3143412a47bcc34f6274d75b3bd814b3e1a68f25",
+    "url": "https://github.com/App-vNext/Polly/commit/a93d16ea7b03d0c6526803830b906124d732f1e7",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge remote-tracking branch 'refs/remotes/App-vNext/master' into b505pre-BreakerFixes"
+  },
+  "expected": {
+    "src/Polly.Shared/CircuitBreaker/CircuitStateController.cs": "any"
+  }
+}

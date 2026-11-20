@@ -4036,6 +4036,19 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-file-status[data-stage=resolved] { color:var(--color-warning);background:var(--status-warning-bg,color-mix(in srgb,var(--color-warning) 12%,var(--background))); }
 .conflict-file-status[data-stage=reviewed] { color:var(--color-success);background:var(--status-success-bg,color-mix(in srgb,var(--color-success) 10%,var(--background))); }
 
+/* Conflict buckets: Merged (checked), Check (a proposal to read), Decide (no safe proposal). Each has a label and an icon. */
+.conflict-summary { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 20px;padding:8px 24px;border-bottom:1px solid var(--border);font-size:var(--type-control); }
+.conflict-summary p { font-weight:600; }
+.conflict-summary label { display:inline-flex;align-items:center;gap:6px;color:var(--muted-foreground);font-size:var(--type-caption); }
+.conflict-bucket { display:inline-flex;align-items:center;gap:5px;width:fit-content;font-size:var(--type-caption);font-weight:600;white-space:nowrap; }
+.conflict-bucket[data-bucket=decide] { color:var(--color-danger); }
+.conflict-bucket[data-bucket=check] { color:var(--color-warning); }
+.conflict-bucket[data-bucket=merged] { color:var(--color-success); }
+.conflict-file-buckets { display:flex;flex-wrap:wrap;gap:4px; }
+.conflict-files .conflict-bucket { padding:1px 6px;border-radius:var(--radius-sm);background:var(--secondary); }
+.conflict-block[data-bucket=check] { border-color:color-mix(in srgb,var(--color-warning) 45%,var(--border)); }
+.conflict-block-header [data-slot=button] { margin-left:auto; }
+.conflict-merged-detail summary { color:var(--muted-foreground); }
 .conflict-help { padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--card);font-size:var(--type-control);line-height:1.6; }
 .conflict-help ol { margin:0;padding-left:20px;list-style:decimal;max-width:80ch; }
 .conflict-help li + li { margin-top:4px; }

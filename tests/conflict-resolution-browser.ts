@@ -947,6 +947,111 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
     assert.equal(await publishes(), 6);
     await click('Done');
+
+    // Buckets: preparation's proposals are checked with tree-sitter. Merged is collapsed, Check shows why, Decide is
+    // what is left. A proposal that loses main's new function stays in Check.
+    const three = 'export function three() {\n  return 3;\n}\n\n';
+    const four = 'export function four() {\n  return 4;\n}\n\n';
+    const two = 'export function two() {\n  return 2;\n}\n';
+    const retry = {
+      path: 'src/retry.ts',
+      base: `export function one() {\n  return 1;\n}\n\n${two}`,
+      ours: `export function one() {\n  return 10;\n}\n\n${three}${two}`,
+      theirs: `export function one() {\n  return 11;\n}\n\n${four}${two}`,
+      original: `export function one() {\n<<<<<<< feature/retry\n  return 10;\n||||||| ancestor\n  return 1;\n=======\n  return 11;\n>>>>>>> main\n}\n\n<<<<<<< feature/retry\n${three}||||||| ancestor\n=======\n${four}>>>>>>> main\n${two}`,
+      proposals: [null, { source: 'mergiraf', text: three }],
+      source: 'mergiraf',
+    };
+    const imports = {
+      path: 'src/imports.ts',
+      base: `import { a } from './a';\n\n${two}`,
+      ours: `import { a } from './a';\nimport { b } from './b';\n\n${two}`,
+      theirs: `import { a } from './a';\nimport { c } from './c';\n\n${two}`,
+      original: `import { a } from './a';\n<<<<<<< feature/retry\nimport { b } from './b';\n||||||| ancestor\n=======\nimport { c } from './c';\n>>>>>>> main\n\n${two}`,
+      proposals: [{ source: 'mergiraf', text: "import { b } from './b';\nimport { c } from './c';\n" }],
+      source: 'mergiraf',
+    };
+    const notes = {
+      path: 'docs/notes.md',
+      base: 'a\n',
+      ours: 'b\n',
+      theirs: 'c\n',
+      original: '<<<<<<< feature/retry\nb\n||||||| ancestor\na\n=======\nc\n>>>>>>> main\n',
+      proposals: [{ source: 'rerere', text: 'b\nc\n' }],
+      source: 'rerere',
+    };
+    const withResult = (f: { original: string; proposals: ({ text: string } | null)[] }) => ({
+      ...f,
+      mode: '100644',
+      resolved: false,
+      result: ((index) => f.original.replace(/<<<<<<<[\s\S]*?>>>>>>> main\n/g, (raw) => f.proposals[index++]?.text ?? raw))(0),
+    });
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],files:${JSON.stringify([retry, imports, notes].map(withResult))}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files conflict. 2 of 4 conflicts are merged and checked. 2 need you.'"
+    );
+    const showMerged = "[...document.querySelectorAll('.conflict-summary label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
+    assert.equal(await js(`${showMerged}.checked`), true, 'Merged conflicts still show for review by default');
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
+      ['1 to decide1 to check', '1 merged', '1 merged']
+    );
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-header').textContent`), /Decide/);
+    assert.equal(await js(`${block(1)}.dataset.bucket`), 'check');
+    assert.match(
+      await js<string>(`${block(1)}.querySelector('.conflict-block-header').textContent`),
+      /Check · Combined both sides’ changesexport function four\(\) \{ from main is missing from the result\./
+    );
+    // J and K visit both conflicts that need you: the one to decide and the one to check.
+    await js(`${block(0)}.focus()`);
+    await key('j');
+    assert.equal(await activeBlock(), '1');
+    await captureAll('buckets-check');
+    await js("[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span').textContent==='src/imports.ts').click()");
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /Merged · Combined both sides’ changes/);
+    assert.equal(await js(`${block(0)}.querySelector('details').open`), false, 'Merged starts collapsed');
+    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /The file parses\. Every line of both sides is accounted for\./);
+    assert.equal(await stage(), 'resolved', 'With the switch on, a Merged file still waits for your review');
+    await captureAll('buckets-merged');
+    // Off: files whose every conflict is Merged are marked reviewed for you. Nothing is pushed.
+    await js(`${showMerged}.click()`);
+    await wait(
+      "['src/imports.ts','docs/notes.md'].every(p=>window.conflictCalls.some(r=>r.kind==='save'&&r.resolved&&r.path===p))"
+    );
+    assert.equal(await js("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved&&r.path==='src/retry.ts')"), false);
+    assert.equal(await publishes(), 0);
+    await wait("document.querySelector('.conflict-file-title [data-stage]')?.dataset.stage==='reviewed'");
+    await captureAll('buckets-skip-review');
+    await js(`${showMerged}.click()`);
+    await wait(`${showMerged}.checked`);
+    // On is the default, so turning it back on removes the setting instead of saving true.
+    await wait(
+      "window.electronAPI.loadPreferences().then(p=>!p.repositorySettings?.['klang/engine'] || !('showMergedConflicts' in p.repositorySettings['klang/engine']))"
+    );
+    // Undo moves a Merged conflict to Decide with both sides.
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files conflict. 1 of 4 conflicts are merged and checked. 3 need you.'"
+    );
+    // Review probe: the proposal is one click away from Decide, and Reset file returns to the proposals.
+    await click('Use the proposal');
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await click('Reset file');
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    assert.equal(await exists('Reset file'), false, 'The proposals are the reset point');
+    assert.ok(await exists('Start from Git’s conflict'));
+    await click('Start from Git’s conflict');
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await click('Close');
     console.log(
       'Conflict workspace passed: labelled versions, per-block undo, shortcuts, review before mark, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'
     );

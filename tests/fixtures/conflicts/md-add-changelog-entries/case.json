@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different changelog entry under Unreleased. Mergiraf knows Markdown; Gnosis has no Markdown grammar to check the result.",
+  "language": "markdown",
+  "category": "files/no-grammar",
+  "expected": {
+    "CHANGELOG.md": "check"
+  }
+}

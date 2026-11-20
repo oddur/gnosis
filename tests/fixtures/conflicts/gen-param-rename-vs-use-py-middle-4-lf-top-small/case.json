@@ -1,0 +1,16 @@
+{
+  "description": "One side renames a parameter; the other adds a statement that uses the old name.",
+  "language": "python",
+  "category": "matrix/must-not-merge (generated sample)",
+  "pattern": "param-rename-vs-use",
+  "axes": {
+    "position": "middle",
+    "indent": "4",
+    "eol": "lf",
+    "nesting": "top",
+    "size": "small"
+  },
+  "expected": {
+    "lab/param-rename-vs-use.py": "any-but-merged"
+  }
+}

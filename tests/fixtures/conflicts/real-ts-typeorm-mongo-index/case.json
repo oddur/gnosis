@@ -1,0 +1,19 @@
+{
+  "description": "The feature branch built index options with Object.assign to omit expireAfterSeconds when undefined, master only reformatted the original one-line cast; the human kept the feature branch's version.",
+  "language": "typescript",
+  "category": "real",
+  "source": {
+    "repo": "typeorm/typeorm",
+    "license": "MIT",
+    "merge": "949bc1717b714186439ba435ffe0f4402805c1db",
+    "ours": "bdadf0b6dbce63ae08b6f6f4522a9f37894762d6",
+    "theirs": "87121eee5e00f55c69c4bfd1d46dc8c227bf9fc3",
+    "base": "bfbf7358061b4a287fb72730ee6635b3c0f5e011",
+    "url": "https://github.com/typeorm/typeorm/commit/949bc1717b714186439ba435ffe0f4402805c1db",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch 'master' of github.com:typeorm/typeorm into mongo-index"
+  },
+  "expected": {
+    "src/schema-builder/MongoSchemaBuilder.ts": "any"
+  }
+}

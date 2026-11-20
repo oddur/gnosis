@@ -7,3 +7,5 @@ coverage/
 package-lock.json
 *.min.js
 *.min.css
+# Conflict lab fixtures are byte-exact merge inputs.
+tests/fixtures/conflicts/

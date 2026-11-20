@@ -1,0 +1,8 @@
+{
+  "description": "The PR deletes a file that main edits.",
+  "language": "python",
+  "category": "files/delete-modify",
+  "expected": {
+    "lab/parse.py": "decide"
+  }
+}

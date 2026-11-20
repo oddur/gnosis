@@ -1,0 +1,9 @@
+{
+  "description": "Mergiraf’s own --timeout fires (forced to 1 ms), so it falls back to a line merge.",
+  "language": "typescript",
+  "category": "failure/mergiraf",
+  "mergiraf": "timeout",
+  "expected": {
+    "src/math.ts": "any"
+  }
+}

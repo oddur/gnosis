@@ -11,6 +11,16 @@ export interface ConflictFile {
   source: 'manual' | 'mergiraf' | 'agent' | 'rerere';
   explanation?: string;
   unsupported?: string;
+  /**
+   * What preparation resolved on its own, per conflict block of `original` (null: no safe proposal). `result` starts
+   * with these applied. The renderer checks them (lib/conflict-verify.ts) before it calls one Merged.
+   */
+  proposals?: (ConflictProposal | null)[];
+}
+/** One conflict block resolved during preparation: by your earlier resolution, or by structural merge. */
+export interface ConflictProposal {
+  source: 'rerere' | 'mergiraf';
+  text: string;
 }
 export interface ConflictSession {
   id: string;
