@@ -628,10 +628,11 @@ void app.whenReady().then(async () => {
     softOk(await js<boolean>(`(()=>{const r=document.activeElement.getBoundingClientRect();const b=document.querySelector('${P} .overview-body').getBoundingClientRect();return r.top>=b.top&&r.bottom<=b.bottom})()`), 'the row it links to is scrolled into view');
     // The same "…" menu on every PR line, in one column; Shift+F10 opens it on a chain line and a decision alike.
     await menusEverywhere('real4 1440');
-    const PR_MENU = ['Open', 'Snooze PR…', 'Mark as read', 'Copy link', 'Copy repository', 'Copy PR number', 'Open on GitHub'];
-    soft(await menuItems(row(`others|stacks|stack:klang/service-payment-bridge#383|${url('klang/service-payment-bridge', 384)}`)), PR_MENU, 'Shift+F10 on a chain line');
-    soft(await menuItems(`${section('decide')} [data-overview-prs="${url('klang/seed-launcher', 380)}"] [data-overview-row]`), PR_MENU, 'Shift+F10 on a Needs a decision line');
-    soft(await menuItems(row('others|stacks|stack:klang/service-payment-bridge#383')), ['Open', 'Snooze stack…', 'Mark as read'], 'Shift+F10 on a stack header');
+    // Every menu has the queue's star toggle, so a PR can be starred from the Overview.
+    const PR_MENU = (n: number) => ['Open', 'Snooze PR…', 'Mark as read', `Star PR #${n}`, 'Copy link', 'Copy repository', 'Copy PR number', 'Open on GitHub'];
+    soft(await menuItems(row(`others|stacks|stack:klang/service-payment-bridge#383|${url('klang/service-payment-bridge', 384)}`)), PR_MENU(384), 'Shift+F10 on a chain line');
+    soft(await menuItems(`${section('decide')} [data-overview-prs="${url('klang/seed-launcher', 380)}"] [data-overview-row]`), PR_MENU(380), 'Shift+F10 on a Needs a decision line');
+    soft(await menuItems(row('others|stacks|stack:klang/service-payment-bridge#383')), ['Open', 'Snooze stack…', 'Mark as read', 'Star all PRs in this stack'], 'Shift+F10 on a stack header');
     await noneTwice();
     await checksEverywhere();
     await linesComplete();
