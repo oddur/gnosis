@@ -15,6 +15,8 @@ npm run test:browser:docker                             # full suite, as on Linu
 - Never set `GNOSIS_BROWSER_ON_HOST=1` unless the user asks for a check on the host, such as the macOS-only `--navigation-swipe` check.
 - If Docker isn't running, tell the user. Don't fall back to running the checks on the host.
 
+**Browser checks wait for the screen to settle.** After an action, a check waits for a settled signal or for a condition the page reports, then reads layout or the DOM. Never read after a fixed sleep or a number of animation frames: a slow CI runner needs more of both, and the check fails at random. Wait on `waitSettled(contents, key)` from `tests/workbench-ready.ts` for a part that registers with `lib/test-settled.ts` (a virtualized list registers with `useVirtualizerSettled`), and add a key there when a check needs one. After `win.setSize`, wait until `innerWidth` shows the new size. Assert ordering on the order itself, such as the order the worker started its jobs in, never on milliseconds; report the milliseconds with `assertPerf`.
+
 ## Performance tests run locally only
 
 - CI does not enforce timing budgets. When `CI` is set, every suite still runs its functional assertions, and timing assertions only log their value against the budget.

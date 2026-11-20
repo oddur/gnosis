@@ -25,6 +25,7 @@ import { matchesQueueFilters } from '../../lib/queue-filters';
 import { normalizeQueueFilters, type QueueFilters } from '../../lib/queue-filters';
 import type { ActivityTask, ActivityAction } from '../../lib/activity';
 import { Profiler } from 'react';
+import { installSettledRegistry } from '../../lib/test-settled';
 import { createRoot } from 'react-dom/client';
 import { imageMocks } from './review-images';
 import { threadMocks } from './review-threads';
@@ -35,6 +36,8 @@ import { parsePauseRequest, pauseUntil } from '../../lib/notification-settings';
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
+// The browser checks wait on window.__gnosisSettled instead of sleeping (lib/test-settled.ts).
+installSettledRegistry();
 // Saved like the main process: full PRs, with summary rows in each snapshot.
 let fixtureMutes: { member: import('../../lib/workbench').ReviewMember; mutedAt: string }[] = JSON.parse(sessionStorage.getItem('fixture-mutes') ?? '[]');
 const fixtureMutedUrls = () => new Set(fixtureMutes.map(entry => entry.member.url));

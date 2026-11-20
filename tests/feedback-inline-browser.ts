@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { assertPerf } from './perf-budget';
@@ -154,9 +154,12 @@ void app.whenReady().then(async () => {
     await capture('new-since');
 
     // Collect the whole timeline by scrolling: one order across every kind of item.
-    const collected = await js<{ index: number; type: string; id?: string; at: string; text: string; node?: string; label?: string; role?: string }[]>(`(async()=>{
-      const t=document.querySelector('[data-feedback-scroller]');const seen=new Map();t.scrollTop=0;window.__railGaps=[];window.__nodeClones={};
-      for(let i=0;i<80;i++){await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    // Each step reads the rows once the virtualizer has measured them (waitSettled), then scrolls on.
+    await js("document.querySelector('[data-feedback-scroller]').scrollTop=0;window.__seen=new Map();window.__railGaps=[];window.__nodeClones={}");
+    for (let i = 0; i < 80; i++) {
+      await waitSettled(win.webContents, 'feedback-timeline');
+      const end = await js<boolean>(`(()=>{
+        const t=document.querySelector('[data-feedback-scroller]');const seen=window.__seen;
         const mounted=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index);
         for(const e of mounted){const n=e.querySelector(':scope > .timeline-indicator');
           if(n&&!window.__nodeClones[n.dataset.nodeKind])window.__nodeClones[n.dataset.nodeKind]=n.cloneNode(true);
@@ -165,8 +168,12 @@ void app.whenReady().then(async () => {
         for(let k=0;k+1<mounted.length;k++){const a=mounted[k],b=mounted[k+1];if(Number(b.dataset.index)!==Number(a.dataset.index)+1)continue;
           const sa=a.querySelector(':scope > .timeline-separator').getBoundingClientRect(),sb=b.querySelector(':scope > .timeline-separator').getBoundingClientRect();
           window.__railGaps.push(Math.abs(sb.top-sa.bottom)+Math.abs(sb.left-sa.left));}
-        if(t.scrollTop+t.clientHeight>=t.scrollHeight-2)break;t.scrollTop+=t.clientHeight*0.8;}
-      return [...seen.values()].sort((a,b)=>a.index-b.index)})()`);
+        if(t.scrollTop+t.clientHeight>=t.scrollHeight-2)return true;t.scrollTop+=t.clientHeight*0.8;return false})()`);
+      if (end) break;
+    }
+    const collected = await js<{ index: number; type: string; id?: string; at: string; text: string; node?: string; label?: string; role?: string }[]>(
+      '[...window.__seen.values()].sort((a,b)=>a.index-b.index)'
+    );
     // Every row has a rail node that names its kind in words, not colour alone.
     for (const row of collected) assert.ok(row.node && row.label && row.role === 'img', `Row ${row.index} (${row.type}) has a labelled node: ${JSON.stringify(row)}`);
     const nodeOf = (id: string) => collected.find((row) => row.id === id)?.node;
@@ -232,7 +239,7 @@ void app.whenReady().then(async () => {
     await js(`${big}.querySelector('.feedback-merge-toggle').click()`);
     await wait(`${big}?.querySelectorAll('.feedback-merge-group .feedback-commits > li').length===11`);
     // The row grew: the virtualizer measures it, and the rail runs on without a gap.
-    await sleep(300);
+    await waitSettled(win.webContents, 'feedback-timeline');
     const grown = await js<number[]>(`(()=>{const rows=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index);const out=[];
       for(let k=0;k+1<rows.length;k++){const a=rows[k],b=rows[k+1];if(Number(b.dataset.index)!==Number(a.dataset.index)+1)continue;const sa=a.querySelector(':scope > .timeline-separator').getBoundingClientRect(),sb=b.querySelector(':scope > .timeline-separator').getBoundingClientRect();out.push(Math.abs(sb.top-sa.bottom))}return out})()`);
     assert.ok(grown.length > 0 && Math.max(...grown) <= 1, `The rail stays continuous after a push opens: ${JSON.stringify(grown)}`);

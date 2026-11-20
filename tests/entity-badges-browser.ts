@@ -102,6 +102,8 @@ void app.whenReady().then(async () => {
     await wait(`document.querySelector('${branch}').dataset.copyState==='copied'`);
     await js("document.documentElement.classList.add('dark')");
     win.setSize(960, 720);
+    // The resize reaches the page later, after a moment that grows on a busy runner: read the layout once it has.
+    await wait('innerWidth<=960');
     await js("document.querySelector('.pr-metadata').scrollIntoView({block:'center'})");
     await capture('summary-narrow-dark');
     assert.equal(
@@ -116,6 +118,7 @@ void app.whenReady().then(async () => {
     );
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'), 'No horizontal overflow');
     win.setSize(1280, 800);
+    await wait('innerWidth>960');
     await js("document.documentElement.classList.remove('dark')");
     await click('Commits');
     await wait(
