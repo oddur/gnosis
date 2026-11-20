@@ -33,8 +33,10 @@ const run = (command, commandArgs) => {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // The image needs a Linux Mergiraf. Download it on the host into a cache that the Dockerfile copies in, so
 // a build does not need codeberg.org once the runtime for this version and architecture is cached.
-const dockerArch = (process.env.GNOSIS_DOCKER_PLATFORM?.split('/')[1] ??
-  spawnSync('docker', ['version', '--format', '{{.Server.Arch}}'], { encoding: 'utf8' }).stdout?.trim()) || 'amd64';
+const dockerArch =
+  (process.env.GNOSIS_DOCKER_PLATFORM?.split('/')[1] ??
+    spawnSync('docker', ['version', '--format', '{{.Server.Arch}}'], { encoding: 'utf8' }).stdout?.trim()) ||
+  'amd64';
 const mergirafArch = { amd64: 'x64', arm64: 'arm64' }[dockerArch];
 if (!mergirafArch) throw Error(`Unsupported Docker architecture for Mergiraf: ${dockerArch}`);
 const prepared = spawnSync(process.execPath, [path.join(root, 'scripts/prepare-mergiraf.mjs')], {
