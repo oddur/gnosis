@@ -4,6 +4,7 @@ import { noiseKey, onNoise, peekFileNoise, peekNoise, readNoise } from './syntax
 import { blockKey, fileNoise, noiseLabel, type NoiseBlock, type NoiseFilter, type NoiseKind } from './semantic-noise';
 import type { SyntaxPriority } from './syntax-parse-queue';
 import type { GapHunk } from './diff-gaps';
+import { whenSettled } from './use-syntax-contents';
 
 const NO_KINDS: ReadonlyMap<string, NoiseKind> = new Map();
 
@@ -39,13 +40,16 @@ export function useSemanticNoise({
   useEffect(() => {
     if (!key || !language || after === undefined || !hunks) return;
     let cancelled = false;
+    let show = () => {};
     void readNoise({ fileKey, url, language, text: after, hunks, priority: priority.current, whole })
       .catch(() => undefined)
       .then((blocks) => {
-        if (!cancelled) setState({ key, blocks });
+        // A comparison that lands while the reader scrolls renders once the scroll stops: it may fold hunks.
+        if (!cancelled) show = whenSettled(() => setState({ key, blocks }));
       });
     return () => {
       cancelled = true;
+      show();
     };
   }, [key, after]);
   const settled = !!key && state?.key === key;
@@ -77,6 +81,23 @@ export interface QuietSummary {
   /** Lines that show, in compared files. */
   shown: number;
 }
+/**
+ * Comparisons as they land, told once the view is still: while the reader scrolls, files compared one after another
+ * would each make every list of files go through its files again, in the frames of the scroll.
+ */
+function settledNoise(listener: () => void): () => void {
+  let pending: (() => void) | undefined;
+  const stop = onNoise(() => {
+    pending ??= whenSettled(() => {
+      pending = undefined;
+      listener();
+    });
+  });
+  return () => {
+    stop();
+    pending?.();
+  };
+}
 const EMPTY: QuietSummary = { files: new Map(), compared: 0, quiet: 0, touched: 0, lines: { whitespace: 0, formatting: 0, comments: 0 }, shown: 0 };
 const SEP = '\u0000';
 
@@ -101,7 +122,7 @@ export function useQuietSummary(
     }
     return rows.join('\n');
   };
-  const rowsText = useSyncExternalStore(onNoise, snapshot);
+  const rowsText = useSyncExternalStore(settledNoise, snapshot);
   return useMemo(() => {
     if (!rowsText) return EMPTY;
     const map = new Map<string, QuietFile>();

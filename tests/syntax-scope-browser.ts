@@ -999,8 +999,10 @@ void app.whenReady().then(async () => {
 
     // ── Fast scrolling through the PR: at most two reads at once, and files that only flash past are not read ──
     const beforeScroll = await js<number>('window.lazyReads.length');
+    // The scroll moves every frame, as a fast wheel or trackpad scroll does. (A throttled run of this check is #430:
+    // under heavy CPU throttling a file that comes near mid-scroll can be taken for one that came near without a scroll.)
     await js(`(async()=>{const s=document.querySelector('.commit-diff-stream');s.scrollTop=0;
-      for(let i=0;i<200&&s.scrollTop+s.clientHeight<s.scrollHeight;i++){s.scrollTop+=500;await new Promise(r=>setTimeout(r,16))}})()`);
+      for(let i=0;i<200&&s.scrollTop+s.clientHeight<s.scrollHeight;i++){s.scrollTop+=500;await new Promise(r=>requestAnimationFrame(()=>r()))}})()`);
     await sleep(1500);
     const scrolled = await js<number>('window.lazyReads.length');
     console.log(`Fast scroll: ${scrolled - beforeScroll} reads, at most ${await js<number>('window.maxInflight')} at once`);

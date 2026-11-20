@@ -303,18 +303,33 @@ void app.whenReady().then(async () => {
     // up far below the viewport once the block renders again. A fresh copy of the block has no remembered size.
     {
       const place = `Math.round(document.querySelector('[data-explanation-section="10"]').getBoundingClientRect().top)`;
+      // Each topic's height, the document's, and the large file's, so a move says which part changed.
+      const sizes = `JSON.stringify({top:${place},scroll:Math.round(document.querySelector('.explanation-document').scrollTop),height:document.querySelector('.explanation-document').scrollHeight,
+        topics:[...document.querySelectorAll('[data-explanation-section]')].map(e=>Math.round(e.getBoundingClientRect().height)),huge:Math.round(${huge}.getBoundingClientRect().height)})`;
+      // Only the skipped block may change during the check: on a slow runner, work that finds left (structure, quiet
+      // changes, stale-diff refreshes of the topics' files) can still be changing heights after the second above.
+      let last = '';
+      for (let i = 0, still = 0; i < 100 && still < 5; i++) {
+        const now = await js<string>(`JSON.stringify([...document.querySelectorAll('[data-explanation-section]')].map(e=>Math.round(e.getBoundingClientRect().height)))`);
+        still = now === last ? still + 1 : 0;
+        last = now;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const sizesBefore = await js<string>(sizes);
       const before = await js<number>(place);
       await js(`(()=>{const b=${huge};const copy=b.cloneNode(false);
         copy.style.contentVisibility='hidden';window.__skippedBlock=[b,copy];b.replaceWith(copy)})()`);
       await js(frames);
       const skipped = await js<number>(place);
+      const sizesSkipped = await js<string>(sizes);
       await js(`(()=>{const [b,copy]=window.__skippedBlock;copy.replaceWith(b);delete window.__skippedBlock})()`);
       await js(frames);
       const after = await js<number>(place);
       // An estimate is close, not exact: a few pixels per slice. Before the fix the match moved about 60,000px.
       assert.ok(
         Math.abs(skipped - before) <= 100 && Math.abs(after - before) <= 100,
-        `Topic 10 stays in place while the large file is skipped at its estimate: ${before}, then ${skipped} and ${after}`
+        `Topic 10 stays in place while the large file is skipped at its estimate: ${before}, then ${skipped} and ${after}\n` +
+          `before: ${sizesBefore}\nskipped: ${sizesSkipped}\nafter: ${await js<string>(sizes)}`
       );
     }
     win.webContents.stopFindInPage('clearSelection');
