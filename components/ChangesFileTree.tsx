@@ -15,6 +15,13 @@ const commentDecorationCSS = `
   [data-item-section="decoration"] > span[title*="comment" i] > span:last-child { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
   [data-item-section="decoration"] > span[title*="comment" i] > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
 `;
+/** The tree's short word for a quiet file's label (#396); a file of mixed kinds is "Quiet". */
+const TREE_WORDS: Record<string, string> = {
+  'Whitespace only': 'Spaces',
+  'Formatting only': 'Format',
+  Reformatted: 'Format',
+  'Comments only': 'Comments',
+};
 export interface ChangeTreeEntry {
   key: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
@@ -65,9 +72,9 @@ export function ChangesFileTree({
       const entry = current.current.entries.find((e) => e.key === item.path);
       if (!entry) return null;
       const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
-      // A file whose every change is quiet says so in words, muted, in place of its counts: the tree is narrow, and the
-      // counts stay in the tooltip and the file's header.
-      const quiet = !entry.viewed && entry.quiet ? (entry.quiet.endsWith('and comments') ? 'Quiet' : entry.quiet.replace(' only', '')) : undefined;
+      // A file whose every change is quiet says so in a short word, muted, in place of its counts: the tree is narrow,
+      // and the full label and the counts stay in the tooltip and the file's header.
+      const quiet = !entry.viewed && entry.quiet ? (TREE_WORDS[entry.quiet] ?? 'Quiet') : undefined;
       const count = entry.commentCount;
       // Files with comments get a count, and files whose comments could not be read get a dash. Nothing is
       // shown while comments load: a placeholder would be removed again for most files once they arrive,

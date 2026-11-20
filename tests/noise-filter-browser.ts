@@ -156,7 +156,7 @@ void app.whenReady().then(async () => {
       'The bar says how much it holds'
     );
     assert.match(await js<string>(`document.querySelector(${JSON.stringify(row('src/noise/format.ts') + ' .changes-file-counts')}).textContent`), /\+\d+.*−\d+/, 'The file keeps its +/− counts');
-    await wait(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='format.ts')?.textContent.includes('Whitespace')`);
+    await wait(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='format.ts')?.textContent.includes('Spaces')`);
     await wait(`!!document.querySelector('.changes-progress-quiet')`);
     assert.match(await js<string>(`document.querySelector('.changes-progress').textContent`), /0 \/ \d+ viewed · \d+ (quiet|whitespace-only) files?/, 'The progress counts it, quietly');
     await scrollTo(row('src/noise/format.ts'), 0);
@@ -168,7 +168,7 @@ void app.whenReady().then(async () => {
     assert.equal(await fileBar('src/noise/prettier.ts'), null, 'A file with a thread is not one bar');
     assert.equal(await shownText('src/noise/prettier.ts', 'import { join } from "node:path";'), true, 'The thread’s hunk shows');
     await wait(`[...document.querySelectorAll(${JSON.stringify(row('src/noise/prettier.ts'))}+' *')].some(e=>e.textContent==='Why double quotes here?')||window.deepAll('*',document.querySelector(${JSON.stringify(row('src/noise/prettier.ts'))})).some(e=>e.textContent==='Why double quotes here?')`);
-    await wait(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='prettier.ts')?.textContent.includes('Reformatted')`);
+    await wait(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='prettier.ts')?.textContent.includes('Format')`);
     await capture('file-tree', box('.changes-tree-pane', 0));
     // Showing the whitespace file puts every change back.
     await openFile('src/noise/format.ts');
