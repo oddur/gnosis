@@ -29,8 +29,8 @@ void test('every CI browser suite maps to its test file, so test:perf can find t
 
 void test('a test file uses the perf budgets through any import form, a re-export or a local helper', () => {
   assert.equal(usesPerfBudget('tests/group-subjects.test.ts'), true);
-  assert.equal(usesPerfBudget('tests/fixtures/perf-budget-import.ts'), true, "import from './perf-budget.ts'");
-  assert.equal(usesPerfBudget('tests/fixtures/perf-budget-reexport.ts'), true, 'export … from');
+  assert.equal(usesPerfBudget('tests/fixtures/perf-budget-import.ts'), true, 'an import with the .ts extension');
+  assert.equal(usesPerfBudget('tests/fixtures/perf-budget-reexport.ts'), true, 'a re-export');
   assert.equal(usesPerfBudget('tests/fixtures/perf-budget-helper.ts'), true, 'through a helper that re-exports it');
   assert.equal(usesPerfBudget('tests/workbench-browser.ts'), false);
 });
