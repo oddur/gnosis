@@ -1000,11 +1000,12 @@ void app.whenReady().then(async () => {
     // ── Fast scrolling through the PR: at most two reads at once, and files that only flash past are not read ──
     const beforeScroll = await js<number>('window.lazyReads.length');
     // At a sixth of the CPU, as on a slow runner: frames take longer than the settle wait, so the rule that a read waits
-    // for a still view must hold however far apart a scroll's frames are.
+    // for a still view must hold however far apart a scroll's frames are. The scroll moves every frame, as a fast wheel
+    // or trackpad scroll does: a 16 ms timer would fall behind the slowed frames and leave the view still between steps.
     if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 6 });
     await js(`(async()=>{const s=document.querySelector('.commit-diff-stream');s.scrollTop=0;
-      for(let i=0;i<200&&s.scrollTop+s.clientHeight<s.scrollHeight;i++){s.scrollTop+=500;await new Promise(r=>setTimeout(r,16))}})()`);
+      for(let i=0;i<200&&s.scrollTop+s.clientHeight<s.scrollHeight;i++){s.scrollTop+=500;await new Promise(r=>requestAnimationFrame(()=>r()))}})()`);
     await win.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 1 });
     await sleep(1500);
     const scrolled = await js<number>('window.lazyReads.length');
