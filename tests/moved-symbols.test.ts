@@ -5,6 +5,7 @@ import { describe, test } from 'node:test';
 import { structuredPatch } from 'diff';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine, syntaxLanguage, type SyntaxLanguage } from '../lib/syntax-scope';
+import { assertPerf } from './perf-budget';
 import {
   SAME_NAME,
   languageFamily,
@@ -654,6 +655,6 @@ void describe('moved symbols: the browser fixtures', () => {
     assert.equal(recall, 1, `Every move: missing ${expected.filter((move) => !found.includes(move)).join(', ')}`);
     assert.equal(result.capped, false);
     // Bounded: the match is a small part of the work, and well under a frame's budget per file.
-    assert.ok(result.ms < 250, `Matching took ${result.ms} ms`);
+    assertPerf('moved symbols: matching the large PR', result.ms, 250);
   });
 });

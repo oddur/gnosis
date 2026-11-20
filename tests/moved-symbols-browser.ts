@@ -2,6 +2,7 @@ import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { LARGE_MOVES, MOVE_FILES } from './fixtures/moved-symbols';
+import { assertPerf } from './perf-budget';
 
 /**
  * Moved and renamed symbols (#398). `?moved-symbols` (tests/fixtures/moved-symbols.ts) moves functions between files,
@@ -313,10 +314,8 @@ void app.whenReady().then(async () => {
       LARGE_MOVES,
       'Every move of the large PR is found, and nothing else'
     );
-    assert.ok(
-      families.every((f) => (f.matchMs ?? 0) < 100),
-      'Each match is one short task in the worker'
-    );
+    // Each match is one short task in the worker (tests/perf-budget.ts: enforced by npm run test:perf, reported on CI).
+    for (const f of families) assertPerf(`moved symbols: ${f.family} match in the worker`, f.matchMs ?? NaN, 100);
     assert.equal(errors.filter((e) => !/favicon/.test(e)).length, 0, errors.join('\n'));
     console.log('Moved symbols checks passed');
     app.exit(0);
