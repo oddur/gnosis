@@ -72,7 +72,7 @@ void test('the Claude-context probe needs two GraphQL queries and matches the RE
     const batched = fakeRepo(files);
     const actual = await getProjectClaudeContext(batched.octokit, 'o', 'r', 'ref', { unfiltered });
     assert.deepEqual(actual, expected);
-    assert.equal(batched.counts.graphql, 3, 'the tree query, the texts, then the root listing for CLAUDE.md’s mode');
+    assert.equal(batched.counts.graphql, 2, 'the tree query (root included), then the texts');
     assert.equal(batched.counts.getContent, 0);
     // Only the texts the probe reads: no notes.txt, settings.json or skill scripts.
     assert.deepEqual(batched.counts.blobPaths.sort(), [
@@ -86,7 +86,7 @@ void test('the Claude-context probe needs two GraphQL queries and matches the RE
 
   const none = fakeRepo({ 'README.md': 'hello' });
   assert.equal(await getProjectClaudeContext(none.octokit, 'o', 'r', 'ref'), null);
-  assert.equal(none.counts.graphql, 2, 'the tree query, then CLAUDE.md');
+  assert.equal(none.counts.graphql, 1, 'the tree query shows there is no CLAUDE.md and no .claude/');
   assert.equal(none.counts.getContent, 0);
 });
 

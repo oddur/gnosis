@@ -838,20 +838,26 @@ export function makeGithubClaudeIO(octokit: Octokit, owner: string, repo: string
 type ClaudeTreeEntry = { path: string; type: string; mode: number; object?: { entries?: ClaudeTreeEntry[] } | null };
 
 /**
- * The Claude-context probe's reads at `ref`, in two GraphQL queries. The first lists `.claude/` three levels deep,
- * names and modes only. The second reads the texts the probe uses: CLAUDE.md, `commands/*.md`, `agents/*.md` and
+ * The Claude-context probe's reads at `ref`, in two GraphQL queries. The first lists the root and `.claude/` three
+ * levels deep, names and modes only. The second reads the texts the probe uses: CLAUDE.md, `commands/*.md`, `agents/*.md` and
  * each `skills/<name>/SKILL.md`. Whatever they cannot settle exactly (a symlink, submodule, binary or large blob, a
  * failed alias or query) goes through the REST reads in `makeGithubClaudeIO`, which follow symlinks.
  */
 async function githubClaudeSnapshotIO(octokit: Octokit, owner: string, repo: string, ref: string): Promise<ClaudeContextIO> {
   const rest = makeGithubClaudeIO(octokit, owner, repo, ref);
   const entry = (inner: string) => `entries { path type mode${inner ? ` object { ${inner} }` : ''} }`;
-  type Response = { repository?: { root?: { __typename?: string; entries?: ClaudeTreeEntry[] } | null } | null };
+  type Response = {
+    repository?: {
+      root?: { __typename?: string; entries?: ClaudeTreeEntry[] } | null;
+      top?: { entries?: { name: string; type: string; mode: number }[] } | null;
+    } | null;
+  };
   let answer: AliasedAnswer<Response>;
   try {
     answer = await aliasedGraphql<Response>(
       octokit,
       `query($owner:String!,$name:String!){ rateLimit { cost } repository(owner:$owner,name:$name){
+        top: object(expression:${JSON.stringify(`${ref}:`)}) { ... on Tree { entries { name type mode } } }
         root: object(expression:${JSON.stringify(`${ref}:.claude`)}) { __typename ... on Tree { ${entry(
           `... on Tree { ${entry(`... on Tree { ${entry('')} }`)} }`
         )} } }
@@ -874,7 +880,14 @@ async function githubClaudeSnapshotIO(octokit: Octokit, owner: string, repo: str
           dir: entries.filter((e) => e.type === 'tree').map((e) => e.path),
         }
       : undefined;
-  const reads: BlobRequest[] = [{ owner, repo, ref, path: 'CLAUDE.md' }];
+  // CLAUDE.md's mode comes from the root listing above, so the texts take one more query, not two.
+  const reads: BlobRequest[] = [];
+  const top = answer.data.repository.top?.entries;
+  const md = top?.find((e) => e.name === 'CLAUDE.md');
+  if (!top) reads.push({ owner, repo, ref, path: 'CLAUDE.md' });
+  else if (md?.type === 'blob') reads.push({ owner, repo, ref, path: 'CLAUDE.md', mode: md.mode });
+  // Absent, or a directory: the contents API gives no text.
+  else texts.set('CLAUDE.md', null);
   const root = answer.data.repository.root;
   if (root === null || (root && root.__typename !== 'Tree')) listings.set('.claude', { file: [], dir: [] });
   else if (root?.entries) {
