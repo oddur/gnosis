@@ -36,6 +36,8 @@ export interface PrPeopleAccess {
   reason?: string;
   /** Review requests need an open PR; labels, assignees and the milestone don't. */
   canRequestReviews: boolean;
+  /** The PR was open when access was read. A change makes main read access again. */
+  open: boolean;
   reviewsReason?: string;
   author: string;
   viewer: string;
@@ -339,15 +341,22 @@ export function formatDueOn(dueOn: string): string {
   return day ? day.toLocaleDateString(undefined, { dateStyle: 'medium', timeZone: 'UTC' }) : 'Unknown';
 }
 /**
- * The calendar day a milestone is due. GitHub keeps a date only, as a timestamp at midnight somewhere: current
- * milestones read `T00:00:00Z`, older ones local midnight, such as `T05:00:00Z` (US Eastern) or `T07:00:00Z` and
- * `T08:00:00Z` (US Pacific), checked against public repositories. Midnight west of UTC lands before noon UTC on the
- * same day; midnight east of UTC lands in the afternoon of the day before. So the day is the UTC day twelve hours on.
- * Shown in UTC, it is the same day in every time zone.
+ * The calendar day a milestone is due. GitHub keeps a date only, as a timestamp at midnight in some zone: current
+ * milestones read `T00:00:00Z`; older ones local midnight, such as `T05:00:00Z` (US Eastern) or `T07:00:00Z` and
+ * `T08:00:00Z` (US Pacific), checked against public repositories.
+ *
+ * Midnight at offset −h lands at h:00Z on the day itself (00:00–12:00Z for offsets 0 to −12); midnight at offset +h
+ * lands at (24−h):00Z on the day before (10:00–23:00Z for +14 to +1). The two ranges overlap from 10:00 to 12:00Z, and
+ * there one timestamp stands for two days: −10 and +14 both give 10:00Z, −12 and +12 both 12:00Z. No rule can tell
+ * them apart, so the overlap goes to the populated zones: up to and including 10:00Z is the same day (Hawaii, −10),
+ * later is the next day (New Zealand summer +13 at 11:00Z, +12:45 at 11:15Z, +13:45 at 10:15Z). Only −11, −12 and +14,
+ * which few repositories use, read a day off.
  */
 export function dueOnDay(dueOn: string): Date | undefined {
   const at = Date.parse(dueOn);
   if (Number.isNaN(at)) return undefined;
-  const shifted = new Date(at + 12 * 60 * 60_000);
-  return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()));
+  const time = new Date(at);
+  const minutes = time.getUTCHours() * 60 + time.getUTCMinutes() + time.getUTCSeconds() / 60;
+  const next = minutes > 10 * 60 ? 1 : 0;
+  return new Date(Date.UTC(time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate() + next));
 }

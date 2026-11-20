@@ -133,15 +133,25 @@ function fixture(options: { permission?: string; archived?: boolean; owner?: str
   const published: string[] = [];
   const optimistic = createOptimisticService({ viewer: () => ({ login: 'oddur', avatarUrl: '' }), before: () => ({}), changed: (_u, kinds) => published.push(kinds.join('+')) });
   const shownDuringWrite: PrMetadata[] = [];
+  /** Runs while a write is in flight, such as the reader starting another edit. */
+  let duringWrite: (() => void | Promise<void>) | undefined;
   const refreshes: { action: GitHubWriteAction; urls: string[]; details: Omit<WriteDetails, 'before'>; failed?: boolean }[] = [];
   let clock = 1_000;
   const service = createPrMetadataWriteService({
     now: () => clock,
-    optimistic: (u, change, write) =>
-      optimistic.run(u, change, async () => {
-        shownDuringWrite.push(optimistic.metadata(metadata));
-        return write();
-      }),
+    optimistic: (u, change, write, options) =>
+      optimistic.run(
+        u,
+        change,
+        async () => {
+          shownDuringWrite.push(optimistic.metadata(metadata));
+          await duringWrite?.();
+          return write();
+        },
+        undefined,
+        options
+      ),
+    sequence: () => optimistic.layer.sequence(),
     refresh: async (action, urls, write, details) => {
       try {
         const value = await write();
@@ -156,6 +166,7 @@ function fixture(options: { permission?: string; archived?: boolean; owner?: str
   return {
     client, service, calls, queries, failures, metadata, optimistic, shownDuringWrite, refreshes, published,
     tick: (ms: number) => (clock += ms),
+    whileWriting: (run: () => void | Promise<void>) => (duringWrite = run),
     writes: () => calls.filter((c) => !c.method.startsWith('repos.') && c.method !== 'issues.listLabelsOnIssue' && c.method !== 'issues.getLabel'),
     /** Someone else labels the PR on GitHub. */
     labelOnGitHub: (name: string) => (prLabels = [...prLabels, name]),
@@ -469,7 +480,7 @@ void test('edits stack: a later edit replaces what an earlier one decided about 
 });
 
 void test('removing your own review request takes the PR out of Review requested, as a review does', () => {
-  const patch = { id: '1', key: 'k', url, viewer, startedAt: 0, status: 'pending', before: {}, settled: [], change: prPeopleChange(reviewers({ remove: ['oddur'] })) } as OptimisticPatch;
+  const patch = { id: '1', key: 'k', url, viewer, startedAt: 0, order: 1, status: 'pending', before: {}, settled: [], change: prPeopleChange(reviewers({ remove: ['oddur'] })) } as OptimisticPatch;
   const member = { ...base, requestedReviewers: ['oddur'], author: 'lena', role: 'review-requested' };
   const shown = applyToMetadata(patch, member as PrMetadata) as PrMetadata & { role?: string };
   assert.deepEqual([shown.requestedReviewers, shown.role], [[], 'watched']);
@@ -485,10 +496,94 @@ void test('a status read without a milestone means none, not the queue copy’s'
 
 void test('a due date is the day GitHub stored, whichever midnight it used, in every time zone', () => {
   const expected = new Date(Date.UTC(2026, 11, 1)).toLocaleDateString(undefined, { dateStyle: 'medium', timeZone: 'UTC' });
-  // Current milestones (microsoft/vscode, golang/go), US Eastern and US Pacific midnight (older milestones), and
-  // midnight east of UTC, which lands on the evening before.
-  for (const dueOn of ['2026-12-01T00:00:00Z', '2026-12-01T05:00:00Z', '2026-12-01T07:00:00Z', '2026-12-01T08:00:00Z', '2026-11-30T23:00:00Z', '2026-11-30T15:00:00Z'])
-    assert.equal(formatDueOn(dueOn), expected, dueOn);
+  /** Midnight on 1 December at a UTC offset in minutes, as GitHub stores it. */
+  const midnight = (offset: number) => new Date(Date.UTC(2026, 11, 1) - offset * 60_000).toISOString();
+  // −10 Hawaii, −8 Pacific, −5 Eastern, 0, +1, +9, +12:45 Chatham, +13 New Zealand summer, +13:45 Chatham summer.
+  for (const offset of [-10 * 60, -9.5 * 60, -8 * 60, -5 * 60, 0, 60, 9 * 60, 12 * 60 + 45, 13 * 60, 13 * 60 + 45])
+    assert.equal(formatDueOn(midnight(offset)), expected, `UTC${offset / 60}`);
+  // −12 is the same instant as +12, and +14 as −10: one timestamp, two days. The populated zones win.
+  assert.equal(midnight(-12 * 60), new Date(Date.UTC(2026, 11, 2) - 12 * 3_600_000).toISOString());
+  assert.equal(formatDueOn(midnight(12 * 60)), expected, '+12 (New Zealand winter) over −12 (uninhabited)');
+  assert.equal(midnight(14 * 60), new Date(Date.UTC(2026, 10, 30) + 10 * 3_600_000).toISOString());
+  assert.equal(formatDueOn(midnight(-10 * 60)), expected, '−10 (Hawaii) over +14 (Line Islands)');
+  assert.equal(formatDueOn('2026-12-01T00:00:00Z'), expected, 'The format current milestones use');
+});
+
+void test('a lookup after a 404 that fails keeps the labels already removed', async () => {
+  const f = fixture({ prLabels: ['bug', 'docs'] });
+  let removals = 0;
+  const remove = f.client.issues.removeLabel.bind(f.client.issues);
+  Object.assign(f.client.issues, {
+    removeLabel: (p: Parameters<typeof remove>[0]) => (++removals === 2 ? Promise.reject(fail('Not Found', 404)) : remove(p)),
+    listLabelsOnIssue: () => Promise.reject(fail('Bad gateway', 502)),
+  });
+  const result = await f.service.edit(f.client, { url, field: 'labels', add: [], remove: ['bug', 'docs'] });
+  assert.ok(result.status === 'partial');
+  assert.deepEqual([result.applied, result.remaining], [
+    { url, field: 'labels', add: [], remove: ['bug'] },
+    { url, field: 'labels', add: [], remove: ['docs'] },
+  ]);
+  assert.match(result.error, /Bad gateway/);
+});
+
+void test('the part of an edit GitHub took never supersedes an edit made while it ran', async () => {
+  const f = fixture();
+  f.failures.set('pulls.requestReviewers', fail('Reviews may only be requested from collaborators.'));
+  // While the first edit runs, the reader asks sam again; GitHub takes that one.
+  f.whileWriting(() => {
+    f.whileWriting(() => undefined);
+    const again = f.optimistic.layer.begin({ url, viewer, change: prPeopleChange(reviewers({ add: ['sam'] })) });
+    f.optimistic.layer.confirm(again.id);
+  });
+  await f.service.edit(f.client, reviewers({ add: ['outsider'], remove: ['sam'] }));
+  assert.deepEqual(f.optimistic.metadata(f.metadata).requestedReviewers, ['sam'], 'The later request for sam stands');
+  assert.ok(f.optimistic.layer.list().some((p) => p.change.action === 'edit-reviewers' && p.change.add.includes('sam')));
+});
+
+void test('a forget during an access read keeps that read from being saved', async () => {
+  const f = fixture();
+  // The first access read waits until the test releases it.
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let first = true;
+  const graphql = f.client.graphql.bind(f.client);
+  Object.assign(f.client, {
+    graphql: async (q: string, p: Record<string, unknown>) => {
+      if (/viewer\{login\}/.test(q) && first) {
+        first = false;
+        await held;
+      }
+      return graphql(q, p);
+    },
+  });
+  const stale = f.service.access(f.client, url);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  f.service.forget(f.client, [url]);
+  const fresh = f.service.access(f.client, url);
+  release();
+  await Promise.all([stale, fresh]);
+  await f.service.access(f.client, url);
+  assert.equal(f.queries.filter((q) => q.kind === 'access').length, 2, 'The read after forget is its own, and the stale one was not kept');
+});
+
+void test('sync seeing a PR close or merge forgets its access; an unchanged state keeps it', async () => {
+  const f = fixture();
+  await f.service.access(f.client, url);
+  f.service.observe(f.client, { url, state: 'open', merged: false });
+  await f.service.access(f.client, url);
+  assert.equal(f.queries.filter((q) => q.kind === 'access').length, 1);
+  f.service.observe(f.client, { url, state: 'closed', merged: true });
+  await f.service.access(f.client, url);
+  assert.equal(f.queries.filter((q) => q.kind === 'access').length, 2);
+});
+
+void test('a label deleted since the candidates were read is refused, not re-created', async () => {
+  const f = fixture();
+  await f.service.candidates(f.client, { url, field: 'labels' });
+  // `docs` is deleted on GitHub; the saved page still lists it.
+  Object.assign(f.client.issues, { getLabel: () => Promise.reject(fail('Not Found', 404)) });
+  await assert.rejects(f.service.edit(f.client, { url, field: 'labels', add: [{ name: 'docs' }], remove: [] }), /no label named “docs”/);
+  assert.deepEqual(f.writes(), []);
 });
 
 void test('a failed newer write leaves the earlier one as it was', () => {
@@ -601,4 +696,10 @@ void test('a palette command runs once after close, never after a later opening,
   after.set(() => Promise.reject(new Error('Picker unavailable')));
   await after.run();
   assert.deepEqual(reports, ['Picker unavailable']);
+});
+
+void test('both detail views show a milestone due date through the date-only formatter', async () => {
+  const { readFileSync } = await import('node:fs');
+  assert.match(readFileSync('components/ConversationSidebar.tsx', 'utf8'), /formatDueOn\(view\.milestone\.dueOn\)/);
+  assert.match(readFileSync('components/PrDetails.tsx', 'utf8'), /formatDueOn\(meta\.milestone\.dueOn\)/);
 });
