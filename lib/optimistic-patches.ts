@@ -686,6 +686,23 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
       patch.result = { ...patch.result, ...result };
       return patch;
     },
+    /**
+     * GitHub carried out `change` just now without a patch of its own, such as the part of an edit it took: confirmed
+     * patches on the same items stop applying them, so GitHub's next read shows the real result. Returns whether any
+     * patch changed.
+     */
+    applied(url: string, change: OptimisticChange): boolean {
+      let changed = false;
+      for (const older of [...patches.values()]) {
+        if (older.url !== url || older.status !== 'confirmed') continue;
+        const rest = supersededBy(older.change, change);
+        if (rest === older.change) continue;
+        changed = true;
+        if (!rest) patches.delete(older.key);
+        else older.change = rest;
+      }
+      return changed;
+    },
     /** The write failed: roll back. Returns the removed patch. */
     fail(id: string): OptimisticPatch | undefined {
       const patch = byId(id);

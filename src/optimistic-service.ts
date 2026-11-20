@@ -85,6 +85,10 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
       for (const patch of patches) if (layer.confirm(patch.id, details)) changed(patch.url, kinds);
       return value;
     },
+    /** GitHub carried out `change` without a patch of its own (`layer.applied`). */
+    applied(url: string, change: OptimisticChange) {
+      if (layer.applied(url, change)) changed(url, optimisticKinds(change));
+    },
     /** A copy read from GitHub. Patches it shows stop applying to its kind. */
     observe(url: string, kind: OptimisticKind, base: GitHubReviewThreads | PrMetadata | QueueSignals) {
       return layer.observe(url, kind, base);

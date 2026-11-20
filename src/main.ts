@@ -2238,6 +2238,9 @@ async function fetchPrStatus(prUrl: string, force = false, expectedHead?: string
   const { status, metadata } = await prStatus.read(getGitHubClient(token), prUrl, force, expectedHead);
   try {
     if (getResolvedToken() !== token) return null;
+    // Opened, closed or merged since the editors read access: they read it again (pr-metadata-write-service).
+    const lifecycle = status.lifecycle ?? (status.stale ? undefined : metadata);
+    if (lifecycle) prPeople.observe(getGitHubClient(token), { url: prUrl, state: lifecycle.state, merged: lifecycle.merged });
     workbench.updatePrMetadata(metadata);
     if (cachedLogin && status.signals && workbench.observeReadSignals(cachedLogin, [status.signals])) readStateChanged();
     // A review the reader made on GitHub changes "updated since your review": rebuild the queue.
@@ -4118,7 +4121,7 @@ const prMergeMonitor = createPrMergeMonitor({
 handleInteractive('get-pr-action-state', async (_event, url: string, force: boolean) => optimistic.actionState(await prActions.read(discussionClient(), url, force)));
 // Reviewers, assignees, labels and the milestone (src/pr-metadata-write-service.ts), through the optimistic layer and the write refresh.
 const PR_PEOPLE_ACCESS_ACTIONS = new Set<GitHubWriteAction>(['merge', 'merge-queue', 'stack-merged', 'close-pr', 'external']);
-const prPeople = createPrMetadataWriteService({ optimistic: (url, change, write, options) => optimistic.run(url, change, write, undefined, options), sequence: () => optimistic.layer.sequence(), refresh: gitHubWrite });
+const prPeople = createPrMetadataWriteService({ optimistic: (url, change, write) => optimistic.run(url, change, write), applied: (url, change) => optimistic.applied(url, change), refresh: gitHubWrite });
 handleInteractive('get-pr-people-access', (_event, url: string) => prPeople.access(discussionClient(), url));
 handleInteractive('get-pr-people-candidates', (_event, request: import('../lib/pr-people').PrPeopleCandidateRequest) => prPeople.candidates(discussionClient(), request));
 handleInteractive('edit-pr-people', (_event, edit: import('../lib/pr-people').PrPeopleEdit) => prPeople.edit(discussionClient(), edit));

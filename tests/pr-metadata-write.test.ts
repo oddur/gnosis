@@ -24,7 +24,7 @@ import {
   type PrPeopleEdit,
 } from '../lib/pr-people';
 import type { PrMetadata } from '../lib/types';
-import { createAfterClose } from '../lib/after-close';
+import { commandRunner, createAfterClose } from '../lib/after-close';
 
 const url = 'https://github.com/klang/engine/pull/7';
 type Failure = Error & { status?: number };
@@ -139,19 +139,13 @@ function fixture(options: { permission?: string; archived?: boolean; owner?: str
   let clock = 1_000;
   const service = createPrMetadataWriteService({
     now: () => clock,
-    optimistic: (u, change, write, options) =>
-      optimistic.run(
-        u,
-        change,
-        async () => {
-          shownDuringWrite.push(optimistic.metadata(metadata));
-          await duringWrite?.();
-          return write();
-        },
-        undefined,
-        options
-      ),
-    sequence: () => optimistic.layer.sequence(),
+    optimistic: (u, change, write) =>
+      optimistic.run(u, change, async () => {
+        shownDuringWrite.push(optimistic.metadata(metadata));
+        await duringWrite?.();
+        return write();
+      }),
+    applied: (u, change) => optimistic.applied(u, change),
     refresh: async (action, urls, write, details) => {
       try {
         const value = await write();
@@ -287,8 +281,9 @@ void test('a partial success keeps what GitHub took and returns the rest for Ret
   assert.ok(result.status === 'partial');
   assert.deepEqual([result.applied, result.remaining], [reviewers({ remove: ['sam'] }), reviewers({ add: ['outsider'] })]);
   assert.match(result.error, /collaborators/);
-  const shown = f.optimistic.metadata(f.metadata);
-  assert.deepEqual(shown.requestedReviewers, [], 'The removal stays on screen; the refused addition is gone');
+  // No optimistic copy of the applied part: the read after the write shows GitHub's own state.
+  assert.equal(f.optimistic.layer.list().length, 0);
+  assert.deepEqual(f.optimistic.metadata(f.metadata).requestedReviewers, ['sam']);
   // Retry sends only the remaining part.
   f.failures.clear();
   f.calls.length = 0;
@@ -303,7 +298,7 @@ void test('assignees: GitHub skipping some counts as a partial change, skipping 
   assert.deepEqual(result.applied, { url, field: 'assignees', add: ['dev-1'], remove: ['lena'] });
   assert.deepEqual(result.remaining, { url, field: 'assignees', add: ['ghost'], remove: [] });
   assert.match(result.error, /didn’t assign ghost/);
-  assert.deepEqual(f.optimistic.metadata(f.metadata).assignees, ['dev-1']);
+  assert.equal(f.optimistic.layer.list().length, 0, 'GitHub’s read shows the applied part, not a patch');
   const g = fixture();
   await assert.rejects(g.service.edit(g.client, { url, field: 'assignees', add: ['ghost'], remove: [] }), /didn’t assign ghost/);
   assert.deepEqual(g.optimistic.metadata(g.metadata).assignees, ['lena'], 'Rolled back');
@@ -480,7 +475,7 @@ void test('edits stack: a later edit replaces what an earlier one decided about 
 });
 
 void test('removing your own review request takes the PR out of Review requested, as a review does', () => {
-  const patch = { id: '1', key: 'k', url, viewer, startedAt: 0, order: 1, status: 'pending', before: {}, settled: [], change: prPeopleChange(reviewers({ remove: ['oddur'] })) } as OptimisticPatch;
+  const patch = { id: '1', key: 'k', url, viewer, startedAt: 0, status: 'pending', before: {}, settled: [], change: prPeopleChange(reviewers({ remove: ['oddur'] })) } as OptimisticPatch;
   const member = { ...base, requestedReviewers: ['oddur'], author: 'lena', role: 'review-requested' };
   const shown = applyToMetadata(patch, member as PrMetadata) as PrMetadata & { role?: string };
   assert.deepEqual([shown.requestedReviewers, shown.role], [[], 'watched']);
@@ -526,18 +521,20 @@ void test('a lookup after a 404 that fails keeps the labels already removed', as
   assert.match(result.error, /Bad gateway/);
 });
 
-void test('the part of an edit GitHub took never supersedes an edit made while it ran', async () => {
+void test('after a partial edit, GitHub’s order of steps decides, not the order the edits began', async () => {
   const f = fixture();
   f.failures.set('pulls.requestReviewers', fail('Reviews may only be requested from collaborators.'));
-  // While the first edit runs, the reader asks sam again; GitHub takes that one.
+  // While the first edit runs, the reader asks maya, and GitHub takes that before the first edit's steps.
   f.whileWriting(() => {
     f.whileWriting(() => undefined);
-    const again = f.optimistic.layer.begin({ url, viewer, change: prPeopleChange(reviewers({ add: ['sam'] })) });
+    const again = f.optimistic.layer.begin({ url, viewer, change: prPeopleChange(reviewers({ add: ['maya'] })) });
     f.optimistic.layer.confirm(again.id);
   });
-  await f.service.edit(f.client, reviewers({ add: ['outsider'], remove: ['sam'] }));
-  assert.deepEqual(f.optimistic.metadata(f.metadata).requestedReviewers, ['sam'], 'The later request for sam stands');
-  assert.ok(f.optimistic.layer.list().some((p) => p.change.action === 'edit-reviewers' && p.change.add.includes('sam')));
+  // The first edit's removal of maya runs after that request: on GitHub, maya ends up not requested.
+  const result = await f.service.edit(f.client, reviewers({ add: ['outsider'], remove: ['maya'] }));
+  assert.ok(result.status === 'partial');
+  assert.ok(!f.optimistic.metadata(f.metadata).requestedReviewers.includes('maya'), 'The earlier request no longer shows maya');
+  assert.equal(f.optimistic.layer.list().length, 0, 'Nothing left to override GitHub’s read');
 });
 
 void test('a forget during an access read keeps that read from being saved', async () => {
@@ -575,6 +572,41 @@ void test('sync seeing a PR close or merge forgets its access; an unchanged stat
   f.service.observe(f.client, { url, state: 'closed', merged: true });
   await f.service.access(f.client, url);
   assert.equal(f.queries.filter((q) => q.kind === 'access').length, 2);
+});
+
+void test('a PR closing while access is being read keeps that read from being saved', async () => {
+  const f = fixture();
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let first = true;
+  const graphql = f.client.graphql.bind(f.client);
+  Object.assign(f.client, {
+    graphql: async (q: string, p: Record<string, unknown>) => {
+      if (/viewer\{login\}/.test(q) && first) {
+        first = false;
+        await held;
+      }
+      return graphql(q, p);
+    },
+  });
+  f.service.observe(f.client, { url, state: 'open', merged: false });
+  const stale = f.service.access(f.client, url);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Nothing is saved yet; the read reports the PR open, but it closed meanwhile.
+  f.service.observe(f.client, { url, state: 'closed', merged: false });
+  release();
+  assert.equal((await stale).open, true);
+  await f.service.access(f.client, url);
+  assert.equal(f.queries.filter((q) => q.kind === 'access').length, 2, 'The open answer was not kept');
+});
+
+void test('label checks before a write skip the client’s saved answers', async () => {
+  const f = fixture({ prLabels: [] });
+  await f.service.edit(f.client, { url, field: 'labels', add: [{ name: 'docs' }], remove: ['bug'] });
+  for (const method of ['issues.getLabel', 'issues.listLabelsOnIssue']) {
+    const call = f.calls.find((c) => c.method === method);
+    assert.deepEqual(call?.params.headers, { 'cache-control': 'no-cache' }, method);
+  }
 });
 
 void test('a label deleted since the candidates were read is refused, not re-created', async () => {
@@ -702,4 +734,24 @@ void test('both detail views show a milestone due date through the date-only for
   const { readFileSync } = await import('node:fs');
   assert.match(readFileSync('components/ConversationSidebar.tsx', 'utf8'), /formatDueOn\(view\.milestone\.dueOn\)/);
   assert.match(readFileSync('components/PrDetails.tsx', 'utf8'), /formatDueOn\(meta\.milestone\.dueOn\)/);
+});
+
+void test('a command that runs after close waits while another palette action runs, like any command', () => {
+  let busy = true;
+  const ran: string[] = [];
+  const set: string[] = [];
+  let closed = 0;
+  const runCommand = commandRunner({
+    busy: () => busy,
+    run: () => ran.push('run'),
+    afterClose: { set: () => set.push('set') },
+    close: () => closed++,
+  });
+  runCommand({ perform: () => undefined, afterClose: true });
+  runCommand({ perform: () => undefined });
+  assert.deepEqual([ran, set, closed], [[], [], 0], 'Nothing starts while busy');
+  busy = false;
+  runCommand({ perform: () => undefined, afterClose: true });
+  runCommand({ perform: () => undefined });
+  assert.deepEqual([ran, set, closed], [['run'], ['set'], 1]);
 });

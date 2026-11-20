@@ -134,6 +134,14 @@ export function installPrPeopleFixture(mocks: Record<string, unknown>, items: Qu
     }
   }
 
+  /** The read after a write: GitHub's copy reaches the page and clears the patches it shows. */
+  function readGitHub() {
+    Object.assign(target, structuredClone(github));
+    service.observe(url, 'metadata', target);
+    service.observe(url, 'discussion', discussion());
+    publish(url, ['discussion', 'metadata']);
+    refreshed.forEach((listener) => listener({ action: 'edit-labels', urls: [url], phase: 'settled' }));
+  }
   const readQueue = mocks.workbenchQueue as () => Promise<WorkbenchQueue>;
   const overlay = async (read: Promise<WorkbenchQueue>) => {
     const queue = await read;
@@ -252,7 +260,9 @@ export function installPrPeopleFixture(mocks: Record<string, unknown>, items: Qu
         );
       } catch (error) {
         if (!partial) throw error;
-        await service.run(url, prPeopleChange(partial.applied), () => Promise.resolve());
+        // Like main: no patch for the part GitHub took; its read right after the write shows it.
+        service.applied(url, prPeopleChange(partial.applied));
+        readGitHub();
         record.results.push(partial);
         return partial;
       }
@@ -280,13 +290,7 @@ export function installPrPeopleFixture(mocks: Record<string, unknown>, items: Qu
         publish(url, ['metadata']);
         refreshed.forEach((listener) => listener({ action: 'close-pr', urls: [url], phase: 'settled' }));
       },
-      refresh: () => {
-        Object.assign(target, structuredClone(github));
-        service.observe(url, 'metadata', target);
-        service.observe(url, 'discussion', discussion());
-        publish(url, ['discussion', 'metadata']);
-        refreshed.forEach((listener) => listener({ action: 'edit-labels', urls: [url], phase: 'settled' }));
-      },
+      refresh: () => readGitHub(),
       patches: () => service.layer.list().map((patch) => `${patch.change.action}:${patch.status}`),
       failSearch: (query: string) => failingQueries.add(query),
       clearSearchFailures: () => failingQueries.clear(),

@@ -39,13 +39,10 @@ import type { PrLabel } from '../lib/types';
  */
 export interface PrMetadataWriteDeps {
   now?: () => number;
-  /**
-   * Shows `change` at once and rolls it back when the write throws: main's `optimistic.run`. `order` places the patch
-   * among all writes when it stands for a write that began earlier.
-   */
-  optimistic: <T>(url: string, change: OptimisticChange, write: () => Promise<T>, options?: { order: number }) => Promise<T>;
-  /** A place among all writes, taken when an edit begins: main's `optimistic.layer.sequence`. */
-  sequence: () => number;
+  /** Shows `change` at once and rolls it back when the write throws: main's `optimistic.run`. */
+  optimistic: <T>(url: string, change: OptimisticChange, write: () => Promise<T>) => Promise<T>;
+  /** GitHub carried out `change` without a patch: earlier confirmed patches on its items stop applying them. */
+  applied: (url: string, change: OptimisticChange) => void;
   /** Runs the write, then reads the PR again until it shows the change: main's `gitHubWrite`. */
   refresh: <T>(
     action: GitHubWriteAction,
@@ -159,6 +156,8 @@ export function validatePrPeopleEdit(input: unknown): PrPeopleEdit {
 }
 
 const writeAction = (field: PrPeopleField): GitHubWriteAction => `edit-${field}`;
+/** Past the client's saved GET answers, as lib/github.ts reads a PR fresh: these checks decide a write. */
+const NO_CACHE = { 'cache-control': 'no-cache' };
 const status = (error: unknown) => (error as { status?: number } | null)?.status;
 const message = (error: unknown) => githubWriteError(error).message || 'GitHub did not accept the change.';
 
@@ -204,6 +203,8 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     access: Map<string, PrPeopleAccess>;
     /** Bumped by `forget`: a read that began before it never stores its answer. */
     generation: Map<string, number>;
+    /** Whether each PR was open, as the latest fresh read of it said. */
+    observed: Map<string, boolean>;
     candidates: Map<string, { at: number; items: unknown[]; complete: boolean; failed?: boolean }>;
     pending: Map<string, Promise<unknown>>;
   }
@@ -211,7 +212,7 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
   const account = (client: Octokit) => {
     let a = accounts.get(client);
     if (!a) {
-      a = { access: new Map(), generation: new Map(), candidates: new Map(), pending: new Map() };
+      a = { access: new Map(), generation: new Map(), observed: new Map(), candidates: new Map(), pending: new Map() };
       accounts.set(client, a);
     }
     return a;
@@ -268,8 +269,9 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
         open: request.state === 'OPEN',
         checkedAt: now(),
       };
-      // Forgotten while the read ran (a merge or close, say): answer this caller, but keep nothing.
-      if ((a.generation.get(url) ?? 0) === generation) a.access.set(url, value);
+      // Forgotten while the read ran (a merge or close, say), or a fresher read disagrees: answer, but keep nothing.
+      const observed = a.observed.get(url);
+      if ((a.generation.get(url) ?? 0) === generation && (observed === undefined || observed === value.open)) a.access.set(url, value);
       return value;
     });
   }
@@ -497,7 +499,7 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
                   // 404 means the label is not on the PR, or GitHub could not find the PR: check which.
                   let current: { name: string }[] = [];
                   try {
-                    current = await client.paginate(client.issues.listLabelsOnIssue, { ...issue, per_page: 100 });
+                    current = await client.paginate(client.issues.listLabelsOnIssue, { ...issue, per_page: 100, headers: NO_CACHE });
                   } catch (checkError) {
                     stop(checkError);
                   }
@@ -548,7 +550,7 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     // An exact, uncached lookup: a saved candidate page can still list a label deleted since.
     for (const label of edit.add) {
       try {
-        await client.issues.getLabel({ owner: repo.owner, repo: repo.repo, name: label.name });
+        await client.issues.getLabel({ owner: repo.owner, repo: repo.repo, name: label.name, headers: NO_CACHE });
       } catch (error) {
         if (status(error) === 404) throw new Error(`${repo.full} has no label named “${label.name}”.`);
         throw error;
@@ -570,9 +572,6 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
         );
     }
     await assertLabelsExist(client, request);
-    // The edit's place among all writes: the part GitHub took, shown again after the write, keeps it, so it never
-    // overrides or supersedes an edit the reader made while this one ran.
-    const order = deps.sequence();
     const result = await deps.refresh(
       writeAction(request.field),
       [request.url],
@@ -580,14 +579,15 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
         try {
           return await deps.optimistic(request.url, prPeopleChange(request), async () => {
             const outcome = await apply(client, request);
-            // Rolled back as a whole, then the part GitHub took is shown again below.
             if (outcome.status === 'partial') throw new PartialEdit(outcome);
             return outcome;
-          }, { order });
+          });
         } catch (error) {
           if (!(error instanceof PartialEdit)) throw error;
-          // The part GitHub took stays on screen, and the refresh follows it up like any successful write.
-          await deps.optimistic(request.url, prPeopleChange(error.result.applied), () => Promise.resolve(), { order });
+          // GitHub took part of it. The optimistic change is gone; GitHub's own copy shows what happened: the refresh
+          // reads the PR at once and follows up, like any successful write, until it shows the part that was applied.
+          // Edits confirmed while this one ran came before its steps: they stop applying the items it changed.
+          deps.applied(request.url, prPeopleChange(error.result.applied));
           return error.result;
         }
       },
@@ -607,10 +607,16 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
       a.generation.set(url, (a.generation.get(url) ?? 0) + 1);
     }
   }
-  /** A fresh read of the PR, from sync or a change signal: a PR that opened, closed or merged since forgets its access. */
+  /**
+   * A fresh read of the PR, from sync, a change signal or a status read. A PR that opened, closed or merged since the
+   * last read or observation forgets its access, also while an access read is in flight: that read keeps nothing.
+   */
   function observe(client: Octokit, pr: { url: string; state: string; merged: boolean }) {
-    const saved = account(client).access.get(pr.url);
-    if (saved && saved.open !== (pr.state === 'open' && !pr.merged)) forget(client, [pr.url]);
+    const a = account(client);
+    const open = pr.state === 'open' && !pr.merged;
+    const known = a.access.get(pr.url)?.open ?? a.observed.get(pr.url);
+    a.observed.set(pr.url, open);
+    if (known !== undefined && known !== open) forget(client, [pr.url]);
   }
 
   return { access, candidates, edit, forget, observe };
