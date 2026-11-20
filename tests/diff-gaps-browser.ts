@@ -1,5 +1,5 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 
@@ -411,17 +411,17 @@ void app.whenReady().then(async () => {
     for (const [name, samples] of Object.entries(results)) {
       const worst = Math.max(...samples.map((s) => (accessibility ? (s.withoutAccessibility ?? s.longest) : s.longest)));
       const spent = accessibility ? `, ${Math.max(...samples.map((s) => s.accessibility ?? 0))} ms more of accessibility work (#366)` : '';
-      assert.ok(worst <= LONG_TASK_BUDGET, `${name}: the longest task was ${worst} ms${spent} (budget ${LONG_TASK_BUDGET} ms)`);
+      assertPerf(`diff gaps: longest task, ${name}`, worst, LONG_TASK_BUDGET, { detail: spent.slice(2) });
       assert.ok(samples.every((s) => s.shift === 0), `${name}: the first line in view moved: ${samples.map((s) => s.shift).join(', ')}`);
       const restyled = Math.max(...samples.map((s) => s.pageRestyles ?? 0));
       assert.ok(restyled <= PAGE_RESTYLE_LIMIT, `${name}: ${restyled} style recalculations of more than one slice (at most ${PAGE_RESTYLE_LIMIT}, #366)`);
       if (!accessibility) continue;
       const most = Math.max(...samples.map((s) => s.accessibilityTotal ?? 0));
-      assert.ok(most <= ACCESSIBILITY_BUDGET, `${name}: ${most} ms of accessibility work (budget ${ACCESSIBILITY_BUDGET} ms, #366)`);
+      assertPerf(`diff gaps: accessibility work, ${name} (#366)`, most, ACCESSIBILITY_BUDGET);
     }
     if (accessibility) {
       const most = Math.max(...scrolls.map((s) => s.accessibilityTotal ?? 0));
-      assert.ok(most <= SCROLL_ACCESSIBILITY_BUDGET, `A scroll pass took ${most} ms of accessibility work (budget ${SCROLL_ACCESSIBILITY_BUDGET} ms, #366)`);
+      assertPerf('diff gaps: accessibility work in one scroll pass (#366)', most, SCROLL_ACCESSIBILITY_BUDGET);
     }
     // A slice's placeholder height is its laid-out height, so mounting it moves nothing.
     const heights = await js<{ estimate: number; actual: number }[]>(`(()=>{

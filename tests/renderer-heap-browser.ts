@@ -321,6 +321,7 @@ void app.whenReady().then(async () => {
     console.log('Caches after the tabs closed:', JSON.stringify(closed.caches));
     console.log(`Idle sweep dropped ${idle.length} PRs:`, JSON.stringify(swept.caches));
     assert.deepEqual(errors, [], 'No renderer errors');
+    // Heap growth after a forced garbage collection is about leaks, not machine load, so these hold on CI too.
     assert.ok(
       peak.heapMB - baseline.heapMB < PEAK_OVER_BASELINE_MB,
       `The heap with ${KEEP_TABS} large PRs open stays within ${PEAK_OVER_BASELINE_MB} MB of the baseline: ${JSON.stringify(samples)}`

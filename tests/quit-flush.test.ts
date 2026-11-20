@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -41,24 +41,37 @@ void test('windows flush in parallel; hung windows cost one timeout together and
   const warn = console.warn;
   const warnings: string[] = [];
   console.warn = (message: string) => warnings.push(message);
-  const started = performance.now();
+  // Mocked timers, so the timeouts are counted in the test's own time, not the machine's.
+  mock.timers.enable({ apis: ['setTimeout'] });
+  // setImmediate is not mocked: waiting for it runs every pending promise callback.
+  const advance = async (ms: number) => {
+    mock.timers.tick(ms);
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
   try {
     let result: { flushed: number; timedOut: number } | undefined;
-    await saveWorkBeforeQuit({
+    let quit = false;
+    const quitting = saveWorkBeforeQuit({
       targets: [quick, slow, hung, alsoHung, gone],
       flush: async (targets) => (result = await rendererFlush.flush(targets)),
       close: saved('closed'),
-    });
-    const elapsed = performance.now() - started;
+    }).then(() => (quit = true));
+    await advance(120);
+    assert.deepEqual(order, ['quick saved', 'slow saved'], 'answering windows save at once');
+    await advance(179);
+    assert.equal(quit, false, 'hung windows get their whole timeout');
+    // Both hung windows time out together at 300 ms; one after the other would take 600 ms.
+    await advance(1);
+    assert.equal(quit, true, 'one timeout, not one per window');
+    await quitting;
     assert.deepEqual(order, ['quick saved', 'slow saved', 'closed']);
     assert.deepEqual(result, { flushed: 2, timedOut: 2 });
     assert.equal(gone.requests, 0, 'a destroyed window is not asked');
-    // Two hung windows one after the other would take 600 ms.
-    assert.ok(elapsed >= 290 && elapsed < 550, `one timeout, not one per window (${elapsed} ms)`);
     assert.match(warnings.join('\n'), /2 windows did not answer in time/);
     // A late answer from the hung window after the timeout is ignored.
     rendererFlush.acknowledge(3);
   } finally {
+    mock.timers.reset();
     console.warn = warn;
   }
 });
@@ -72,9 +85,13 @@ void test('a window that closes while it is asked does not hold up quit', async 
       throw new Error('Object has been destroyed');
     },
   };
-  const started = performance.now();
-  assert.deepEqual(await rendererFlush.flush([closing]), { flushed: 0, timedOut: 0 });
-  assert.ok(performance.now() - started < 100);
+  // With mocked timers, the flush must settle without its 5 s timeout firing.
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    assert.deepEqual(await rendererFlush.flush([closing]), { flushed: 0, timedOut: 0 });
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 void test('a scroll position saved just before quit is restored after relaunch', async () => {

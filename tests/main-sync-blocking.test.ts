@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import v8 from 'node:v8';
 import type { Octokit } from '@octokit/rest';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 import { setTimedSink } from '../lib/perf-trace';
 import { createWorkbenchService, type WorkbenchPreferences } from '../src/workbench-service';
 import { createMemoryStorage } from '../src/app-data-store';
@@ -81,7 +81,7 @@ void test('background changes on a large queue never block the main event loop f
     const { longTasks, eventLoopDelay } = mainLoopReport();
     const worst = Math.max(0, ...longTasks.map((t) => t.duration));
     console.log(`main event loop during 15 changes: longest block ${worst} ms, p99 ${eventLoopDelay.p99} ms; delta ${Math.max(...sizes)} bytes`);
-    assert.ok(worst < perfBudget(100), `The main event loop blocked for ${worst} ms: ${JSON.stringify(longTasks)}`);
+    assertPerf('main event loop: longest block during 15 sync changes', worst, perfBudget(100), { detail: JSON.stringify(longTasks) });
     assert.ok(Math.max(...sizes) < 200_000, 'Each change sends a small delta, not the whole queue');
     assert.ok(v8.serialize(held).length > 2_000_000, 'The full queue is the large payload the delta replaces');
   } finally {
@@ -153,10 +153,8 @@ void test('discovery batches on a queue of 3,000 PRs never block the main event 
     // A shared two-core runner adds the odd GC or scheduling stall to an otherwise quiet run, so check that blocking is
     // rare and short, not that no single task ever crosses the line.
     const over = durations.filter((d) => d >= perfBudget(100));
-    assert.ok(
-      over.length <= 1 && worst < perfBudget(250),
-      `The main event loop blocked for ${worst} ms (${over.length} tasks over ${perfBudget(100)} ms): ${JSON.stringify(longTasks)}`
-    );
+    assertPerf(`main event loop: tasks of ${perfBudget(100)} ms or more during discovery`, over.length, 1, { unit: 'tasks', detail: JSON.stringify(longTasks) });
+    assertPerf('main event loop: longest block during discovery', worst, perfBudget(250), { detail: JSON.stringify(longTasks) });
   } finally {
     stop();
     fs.rmSync(directory, { recursive: true, force: true });
