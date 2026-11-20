@@ -1973,6 +1973,8 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 /* The quiet changes summary in the Changes toolbar: one quiet chip, its count in tabular figures. */
 .quiet-chip-count { font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
 .quiet-chip[data-quiet-chip=on] .quiet-chip-count { color:inherit; }
+/* A narrow toolbar keeps its one row: the summary steps aside, and Diff appearance and `w` still reach the toggles. */
+@container changes-toolbar (max-width:900px) { .quiet-chip { display:none; } }
 .quiet-breakdown { display:flex; flex-direction:column; gap:4px; margin:0; padding:0; list-style:none; font-size:var(--type-caption); }
 .quiet-breakdown-row { display:flex; align-items:center; gap:8px; min-height:22px; }
 .quiet-breakdown-row svg { flex:none; color:var(--muted-foreground); }
