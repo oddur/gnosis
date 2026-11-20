@@ -16,6 +16,8 @@ import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
 import { traceStructure } from './structure-trace';
 import { higherPriority, type SyntaxPriority } from './syntax-parse-queue';
+import type { FilePrints, MoveFile, MovesResult } from './moved-symbols';
+import type { SymbolsInput } from './syntax-scope';
 
 /**
  * The page's side of the tree-sitter worker (#393). Grammars are assets of the renderer build, so they load offline
@@ -96,11 +98,18 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
         waiting.delete(response.id);
         if ('error' in response) {
           timings.delete(response.id);
+          noiseTimings.delete(response.id);
+          symbolTimings.delete(response.id);
           entry.reject(Error(response.error));
         }
         else if ('noise' in response) {
-          (entry.resolve as (value: NoiseBlock[]) => void)(response.noise);
+          (entry.resolve as (value: Comparison) => void)({ blocks: response.noise, symbols: response.symbols, symbolsError: response.symbolsError });
           noiseTimings.get(response.id)?.(response.timing);
+        } else if ('symbols' in response) {
+          (entry.resolve as (value: FilePrints) => void)(response.symbols);
+          symbolTimings.get(response.id)?.(response.timing);
+        } else if ('moves' in response) {
+          (entry.resolve as (value: MovesResult) => void)(response.moves);
         } else {
           (entry.resolve as (value: SyntaxDefinition[]) => void)(response.definitions);
           timings.get(response.id)?.(response.timing);
@@ -109,6 +118,12 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
       instance.onerror = (event) => {
         event.preventDefault();
         for (const entry of waiting.values()) entry.reject(Error('The syntax worker stopped'));
+        // Their timing callbacks hold the requests' texts: they go with them.
+        for (const id of waiting.keys()) {
+          timings.delete(id);
+          noiseTimings.delete(id);
+          symbolTimings.delete(id);
+        }
         waiting.clear();
         if (workers.get(lane) === started) workers.delete(lane);
       };
@@ -322,8 +337,20 @@ export const noiseClassifyTimings: (NoiseTiming & { key: string; language: Synta
  */
 export const NOISE_MAX_CHARACTERS = 400_000;
 type NoiseHunks = Extract<SyntaxRequest, { type: 'noise' }>['hunks'];
-const noiseMemo = new Map<string, { url: string; blocks: NoiseBlock[]; at: number }>();
-const noisePending = new Map<string, { url: string; promise: Promise<NoiseBlock[]>; priority: SyntaxPriority; lane: Lane }>();
+let symbolsWanted: (fileKey: string) => boolean = () => false;
+/** Which files' whole comparisons fingerprint moved symbols too (lib/moved-symbols-store.ts). */
+export function setSymbolsWanted(wanted: (fileKey: string) => boolean) {
+  symbolsWanted = wanted;
+}
+/** A comparison: its blocks, and the file's moved-symbol candidates for a whole file's (#398). */
+interface Comparison {
+  blocks: NoiseBlock[];
+  symbols?: FilePrints;
+  /** Why candidates asked for are absent: the blocks stand regardless. */
+  symbolsError?: string;
+}
+const noiseMemo = new Map<string, { url: string; blocks: NoiseBlock[]; symbols?: FilePrints; symbolsError?: string; at: number }>();
+const noisePending = new Map<string, { url: string; promise: Promise<Comparison>; priority: SyntaxPriority; lane: Lane; symbols: boolean }>();
 /** The newest whole-file comparison of each file revision, for views that list files (the file tree, the stats). */
 const noiseByFile = new Map<string, { url: string; blocks: NoiseBlock[] }>();
 const noiseListeners = new Set<() => void>();
@@ -358,7 +385,10 @@ export const peekFileNoise = (fileKey: string) => noiseByFile.get(fileKey)?.bloc
  * file's whole patch, so the file tree and the stats can use the result. Rejects when the language is off, the file
  * too large, or the worker not available: the caller then hides nothing.
  */
-export function readNoise(request: {
+export function readNoise(request: NoiseRequest): Promise<NoiseBlock[]> {
+  return compare(request).then((comparison) => comparison.blocks);
+}
+type NoiseRequest = {
   fileKey: string;
   url: string;
   language: SyntaxLanguage;
@@ -366,15 +396,26 @@ export function readNoise(request: {
   hunks: NoiseHunks;
   priority?: SyntaxPriority;
   whole?: boolean;
-}): Promise<NoiseBlock[]> {
+};
+/**
+ * A file's comparison, and with a whole file's, its moved-symbol candidates from the same two trees (#398): a file is
+ * parsed once for both, whichever asks first.
+ */
+function compare(request: NoiseRequest): Promise<Comparison> {
   if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
   const key = noiseKey(request.fileKey, request.hunks);
-  const known = peekNoise(key);
-  if (known) return Promise.resolve(known);
+  // A whole file's comparison also fingerprints moved symbols, for a file the moves store tracks and wants: not a
+  // commit range's, a stack comparison's, or a file of a language without functions.
+  const symbols = !!request.whole && symbolsWanted(request.fileKey);
+  const known = noiseMemo.get(key);
+  if (known && (!symbols || known.symbols || known.symbolsError)) {
+    known.at = Date.now();
+    return Promise.resolve({ blocks: known.blocks, symbols: known.symbols, symbolsError: known.symbolsError });
+  }
   if (request.text.length > NOISE_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));
   const priority = request.priority ?? 'view';
   const existing = noisePending.get(key);
-  if (existing) {
+  if (existing && (!symbols || existing.symbols)) {
     const raised = higherPriority(existing.priority, priority);
     if (raised !== existing.priority) {
       existing.priority = raised;
@@ -386,9 +427,10 @@ export function readNoise(request: {
   }
   // Comparisons stay in the front worker: they are few, and moving one between workers is not worth it.
   const lane: Lane = 'front';
+  const characters = request.text.length;
   const promise = start(lane).then(
     (instance) =>
-      new Promise<NoiseBlock[]>((resolve, reject) => {
+      new Promise<Comparison>((resolve, reject) => {
         if (!instance) {
           reject(Error('The syntax worker is not available'));
           return;
@@ -397,8 +439,10 @@ export function readNoise(request: {
         waiting.set(id, { resolve: resolve as (value: never) => void, reject });
         noiseTimings.set(id, (timing) => {
           noiseTimings.delete(id);
-          noiseClassifyTimings.push({ ...timing, key, language: request.language, characters: request.text.length });
+          noiseClassifyTimings.push({ ...timing, key, language: request.language, characters });
           if (noiseClassifyTimings.length > 50) noiseClassifyTimings.shift();
+          if (symbols) countSymbolRead(timing.classify, timing.wait, timing.parses);
+          else countParses(timing.parses);
         });
         const entry = noisePending.get(key);
         instance.postMessage({
@@ -417,15 +461,16 @@ export function readNoise(request: {
           grammarUrl: absolute(GRAMMARS[request.language]),
           priority: entry?.priority ?? priority,
           side: 'noise',
+          symbols,
         } satisfies SyntaxRequest);
       })
   );
-  noisePending.set(key, { url: request.url, promise, priority, lane });
+  noisePending.set(key, { url: request.url, promise, priority, lane, symbols });
   void promise.then(
-    (blocks) => {
+    ({ blocks, symbols: prints, symbolsError }) => {
       if (noisePending.get(key)?.promise !== promise) return;
       noisePending.delete(key);
-      noiseMemo.set(key, { url: request.url, blocks, at: Date.now() });
+      noiseMemo.set(key, { url: request.url, blocks, symbols: prints, symbolsError, at: Date.now() });
       for (const old of noiseMemo.keys()) {
         if (noiseMemo.size <= MEMO_ENTRIES) break;
         noiseMemo.delete(old);
@@ -469,3 +514,112 @@ addDiagnosticsSource('semanticNoise', () => ({
   comparing: noisePending.size,
   timings: noiseClassifyTimings.slice(-10),
 }));
+
+// ── Moved and renamed symbols (#398) ────────────────────────────────────────
+
+type SymbolTiming = Extract<SyntaxResponse, { symbols: unknown }>['timing'];
+const symbolTimings = new Map<number, (timing: SymbolTiming) => void>();
+/** Every fingerprint read since the page loaded: how many, and the worker time they took in all and at most. */
+export const symbolReadTotals = { reads: 0, ms: 0, maxMs: 0, waitMs: 0 };
+/** Files larger than this are not fingerprinted, as for the noise comparison: both sides parse in the one worker. */
+export const SYMBOLS_MAX_CHARACTERS = NOISE_MAX_CHARACTERS;
+
+/**
+ * A file's moved-symbol candidates, fingerprinted in the worker (lib/moved-symbols.ts). A modified file's come from its
+ * whole-file comparison's two trees (`compare`), so it is parsed once for both; an added or deleted file's one side is
+ * parsed below every other parse. One read per key at a time. Rejects when the language is off, the file too large,
+ * the hunks do not match the text, or the worker is not available. The caller keeps the result.
+ */
+export function readSymbols(request: {
+  key: string;
+  /** The file's revision key, under which its comparison is kept. */
+  fileKey: string;
+  url: string;
+  language: SyntaxLanguage;
+  input: SymbolsInput;
+  priority?: SyntaxPriority;
+}): Promise<FilePrints> {
+  const { input } = request;
+  // A whole-file comparison made or on its way already parses both sides: its trees give the candidates.
+  if (input.mode === 'modified') {
+    const key = noiseKey(request.fileKey, input.hunks);
+    const known = noiseMemo.get(key);
+    if (known?.symbols) return Promise.resolve(known.symbols);
+    if (known?.symbolsError) return Promise.reject(Error(known.symbolsError));
+    const pending = noisePending.get(key);
+    if (pending?.symbols)
+      return pending.promise.then(
+        (comparison) => comparison.symbols ?? Promise.reject(Error(comparison.symbolsError ?? 'The file does not match its diff'))
+      );
+  }
+  if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
+  if (input.text.length > SYMBOLS_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));
+  const known = symbolsPending.get(request.key);
+  if (known) return known;
+  // The timing record keeps the size, not the request: the text is not held once the worker has it.
+  const { key, language } = request;
+  const promise = start('front').then(
+    (instance) =>
+      new Promise<FilePrints>((resolve, reject) => {
+        if (!instance) {
+          reject(Error('The syntax worker is not available'));
+          return;
+        }
+        const id = ++nextId;
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+        symbolTimings.set(id, (timing) => {
+          symbolTimings.delete(id);
+          countSymbolRead(timing.ms, timing.wait, timing.parses);
+        });
+        instance.postMessage({
+          type: 'symbols',
+          id,
+          key,
+          url: request.url,
+          language,
+          input,
+          runtimeUrl: absolute(runtimeWasm),
+          grammarUrl: absolute(GRAMMARS[language]),
+          priority: request.priority ?? 'prefetch',
+          side: 'symbols',
+        } satisfies SyntaxRequest);
+      })
+  );
+  symbolsPending.set(key, promise);
+  const done = () => {
+    if (symbolsPending.get(key) === promise) symbolsPending.delete(key);
+  };
+  promise.then(done, done);
+  return promise;
+}
+const symbolsPending = new Map<string, Promise<FilePrints>>();
+/** Parses the worker made, as its last answer said (definitions, comparisons and moved symbols together). */
+let workerParses = 0;
+const countParses = (parses?: number) => {
+  if (parses !== undefined) workerParses = Math.max(workerParses, parses);
+};
+function countSymbolRead(ms: number, wait?: number, parses?: number) {
+  symbolReadTotals.reads++;
+  symbolReadTotals.ms += ms;
+  symbolReadTotals.maxMs = Math.max(symbolReadTotals.maxMs, ms);
+  symbolReadTotals.waitMs += wait ?? 0;
+  countParses(parses);
+}
+/** Parses the worker has made so far, for the cost checks. */
+export const syntaxWorkerParses = () => workerParses;
+
+/** A PR's moves, matched in the worker from its files' fingerprints, between two parses. */
+export function readMoves(files: MoveFile[]): Promise<MovesResult> {
+  return start('front').then(
+    (instance) =>
+      new Promise<MovesResult>((resolve, reject) => {
+        if (!instance) {
+          reject(Error('The syntax worker is not available'));
+          return;
+        }
+        const id = ++nextId;
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+        instance.postMessage({ type: 'moves', id, files } satisfies SyntaxRequest);
+      })
+  );
+}

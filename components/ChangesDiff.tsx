@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { processFile, type DiffLineAnnotation, type FileDiffOptions } from '@pierre/diffs';
 import {
   GAP_STEP,
@@ -27,9 +27,12 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
-import { Brush, Pilcrow, SquareSlash } from 'lucide-react';
+import { ArrowRightLeft, Brush, Pilcrow, SquareSlash } from 'lucide-react';
 import { blockKey, changeBlocks, hunkNoise, noiseLabel, type HunkNoise, type NoiseKind } from '../lib/semantic-noise';
-import type { DiffNoise } from './useDiffFileModel';
+import type { DiffMoves, DiffNoise } from './useDiffFileModel';
+import type { MoveMark } from '../lib/moved-symbols-store';
+import { MoveNavigation } from '../lib/use-moved-symbols';
+import { moveEditsLabel, moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
 export type GapStatus =
@@ -82,6 +85,12 @@ ${HERE_CSS}
   background-image: linear-gradient(color-mix(in srgb, var(--diffs-bg) 62%, transparent), color-mix(in srgb, var(--diffs-bg) 62%, transparent));
 }
 [data-noise-line] [data-diff-span] { background-color: transparent; }
+/* Moved symbols (#398): the lines a move carried over unchanged keep their text and lose most of their change colour,
+   so the move's real edits, which keep theirs, read first. */
+[data-line][data-moved-line], [data-column-number][data-moved-line] {
+  background-image: linear-gradient(color-mix(in srgb, var(--diffs-bg) 70%, transparent), color-mix(in srgb, var(--diffs-bg) 70%, transparent));
+}
+[data-moved-line] [data-diff-span] { background-color: transparent; }
 ${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
 const NO_RAILS: readonly ScopeRail[] = [];
@@ -861,13 +870,16 @@ function markRails(host: Element, rails: readonly ScopeRail[]) {
 }
 
 /**
- * Marks the changed rows of quiet blocks inside hunks that also change code (#396), by side and line (`a12`, `b9`),
- * on the rows and their gutter cells. Attributes change only where they differ.
+ * Marks changed rows by side and line (`a12`, `b9`) with an attribute, on the rows and their gutter cells: the quiet
+ * lines of hunks that also change code (#396, `data-noise-line`) and the lines a move carried over unchanged (#398,
+ * `data-moved-line`). One pass over the rows writes each attribute; attributes change only where they differ, and a
+ * diff with nothing to mark and nothing marked costs one query per attribute.
  */
-function markNoise(host: Element, lines: ReadonlySet<string>) {
+function markLines(host: Element, marks: readonly (readonly [attribute: string, lines: ReadonlySet<string>])[]) {
   const root = host.shadowRoot;
   if (!root) return;
-  if (!lines.size && !root.querySelector('[data-noise-line]')) return;
+  const live = marks.filter(([attribute, lines]) => lines.size || root.querySelector(`[${attribute}]`));
+  if (!live.length) return;
   const gutters = new Map<string, Element[]>();
   for (const cell of root.querySelectorAll('[data-column-number]')) {
     const index = cell.getAttribute('data-line-index') ?? '';
@@ -876,10 +888,77 @@ function markNoise(host: Element, lines: ReadonlySet<string>) {
   for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
     const type = row.dataset.lineType;
     const side = type === 'change-deletion' ? 'b' : type === 'change-addition' ? 'a' : undefined;
-    const on = !!side && lines.has(`${side}${row.dataset.line}`);
-    for (const element of [row, ...(gutters.get(row.getAttribute('data-line-index') ?? '') ?? [])].filter((e) => e.closest('[data-deletions]') === row.closest('[data-deletions]')))
-      if (element.hasAttribute('data-noise-line') !== on) element.toggleAttribute('data-noise-line', on);
+    const elements = [row, ...(gutters.get(row.getAttribute('data-line-index') ?? '') ?? [])].filter(
+      (e) => e.closest('[data-deletions]') === row.closest('[data-deletions]')
+    );
+    for (const [attribute, lines] of live) {
+      const on = !!side && lines.has(`${side}${row.dataset.line}`);
+      for (const element of elements) if (element.hasAttribute(attribute) !== on) element.toggleAttribute(attribute, on);
+    }
   }
+}
+
+/** A move's annotation: the metadata ChangesDiff gives its own rows among the caller's. */
+interface MoveAnnotation {
+  gnosisMove: MoveMark;
+}
+const isMoveAnnotation = (metadata: unknown): metadata is MoveAnnotation =>
+  !!metadata && typeof metadata === 'object' && 'gnosisMove' in metadata;
+
+/**
+ * Where a moved symbol came from, or went (#398), as one quiet code line under the line above it: "Moved from
+ * src/a.ts:12 · renamed from load · 2 lines edited". The place is a link that goes there: in this diff for a move
+ * within the file, else through the view's MoveNavigation. Without one, the place is plain text.
+ */
+function MoveNote({ mark, onGo }: { mark: MoveMark; onGo?: () => void }) {
+  const { other } = mark;
+  const into = mark.side === 'after';
+  const place = mark.sameFile ? `${other.side === 'before' ? 'old ' : ''}L${other.start}` : `${other.path}:${other.start}`;
+  const verb = into ? 'Moved from' : 'Moved to';
+  const edits = moveEditsLabel(mark);
+  const where = mark.sameFile ? `line ${other.start} of this file${other.side === 'before' ? ', old side' : ''}` : `${other.path}, line ${other.start}`;
+  const rename = mark.renamed ? `, renamed ${into ? 'from' : 'to'} ${other.name}` : '';
+  const how = mark.exact ? 'the same code' : `${Math.round(mark.similarity * 100)}% similar`;
+  return (
+    <div
+      className="diff-gap diff-move-note"
+      role="note"
+      aria-label={`${verb} ${where}${rename}, ${edits}`}
+      title={`${verb} ${where}${rename}. Matched by structure: ${how}.`}
+      data-trailing=""
+      data-move-note={mark.side}
+      data-move-exact={mark.exact || undefined}
+    >
+      {/* Spaces between the parts keep the note's text readable when copied; the flex gap lays it out. */}
+      <span className="diff-gap-trailing">
+        <ArrowRightLeft className="diff-noise-icon" size={13} strokeWidth={2} aria-hidden="true" />
+        <span className="diff-noise-label">{verb}</span>{' '}
+        {onGo ? (
+          <button type="button" className="diff-context-button diff-gap-text" data-move-jump="" aria-label={`Go to ${where}`} onClick={onGo}>
+            <code>{place}</code>
+          </button>
+        ) : (
+          <code className="diff-move-place">{place}</code>
+        )}{' '}
+        {mark.renamed && (
+          <>
+            <span className="diff-gap-dot" aria-hidden="true">
+              ·
+            </span>{' '}
+            <span className="diff-gap-count" data-move-rename="">
+              renamed {into ? 'from' : 'to'} <code>{other.name}</code>
+            </span>{' '}
+          </>
+        )}
+        <span className="diff-gap-dot" aria-hidden="true">
+          ·
+        </span>{' '}
+        <span className="diff-gap-count" data-move-edits={mark.edits?.changed.length}>
+          {edits}
+        </span>
+      </span>
+    </div>
+  );
 }
 
 /** A quiet run's icon: a pilcrow for whitespace, a brush for formatting, a slash for comments. */
@@ -1084,6 +1163,7 @@ export function ChangesDiff<A>({
   onCollapseScope,
   outline,
   noise,
+  moves,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1126,6 +1206,8 @@ export function ChangesDiff<A>({
   outline?: Omit<OutlineProps, 'onGo'>;
   /** Quiet changes (#396): hunks whose every change the reader hides show as a bar, and quiet lines among code dim. */
   noise?: DiffNoise;
+  /** Moved and renamed symbols (#398): a note above each one, and the lines it carried over unchanged dimmed. */
+  moves?: DiffMoves;
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1146,12 +1228,39 @@ export function ChangesDiff<A>({
     onPostRender: (node: HTMLElement, ...rest: unknown[]) => {
       (options.onPostRender as ((node: HTMLElement, ...rest: unknown[]) => void) | undefined)?.(node, ...rest);
       markRails(node, latestRails.current);
-      markNoise(node, latestNoiseLines.current);
+      markLines(node, [
+        ['data-noise-line', latestNoiseLines.current],
+        ['data-moved-line', latestMovedLines.current],
+      ]);
     },
   } as FileDiffOptions<A, undefined>);
   const latestRender = useRef(renderAnnotation);
   latestRender.current = renderAnnotation;
-  const [stableRender] = useState(() => (annotation: DiffLineAnnotation<A>) => latestRender.current(annotation));
+  const openMove = useContext(MoveNavigation);
+  const latestOpenMove = useRef(openMove);
+  latestOpenMove.current = openMove;
+  // A move's note goes to its other end: in this diff for a move within the file, else through the view.
+  const goToMove = (mark: MoveMark) => {
+    const { other } = mark;
+    if (mark.sameFile)
+      own.current?.goTo({
+        side: other.side,
+        line: other.start,
+        here: [other.start, Math.max(other.start, other.signatureEnd)],
+        section: [other.start, other.end],
+      });
+    else latestOpenMove.current?.({ url: other.url, headSha: other.headSha, path: other.diffPath, line: other.start, endLine: other.end, side: other.side });
+  };
+  const latestGoToMove = useRef(goToMove);
+  latestGoToMove.current = goToMove;
+  const [stableRender] = useState(() => (annotation: DiffLineAnnotation<A>) => {
+    const metadata: unknown = annotation.metadata;
+    if (isMoveAnnotation(metadata)) {
+      const mark = metadata.gnosisMove;
+      return <MoveNote mark={mark} onGo={mark.sameFile || latestOpenMove.current ? () => latestGoToMove.current(mark) : undefined} />;
+    }
+    return latestRender.current(annotation);
+  });
   // A revealed gap re-creates the hunks around it with equal rows; slices are reused by content.
   const cache = useRef(new Map<string, DiffSlice[]>());
   const blocks = useMemo(() => {
@@ -1191,6 +1300,12 @@ export function ChangesDiff<A>({
   }, [blocks]);
   const latestNoiseLines = useRef(noiseLines);
   latestNoiseLines.current = noiseLines;
+  // Lines each move carried over unchanged: dimmed, so its real edits read first.
+  // Each move's note heads its symbol (lib/moved-symbols-view.ts); only a symbol with a note shows as moved.
+  const noteLines = useMemo(() => moveNoteLines(parts, moves?.marks ?? []), [parts, moves?.marks]);
+  const movedLines = useMemo(() => movedLineKeys([...noteLines.keys()]), [noteLines]);
+  const latestMovedLines = useRef(movedLines);
+  latestMovedLines.current = movedLines;
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
   // Hunks with a change: pinned context (a definition's signature) is not a location of its own.
   const changedHunks = useMemo(() => new Set(blocks.flatMap((block) => (block.kind === 'hunk' && block.changed ? [block.key] : []))), [blocks]);
@@ -1228,6 +1343,26 @@ export function ChangesDiff<A>({
     }
     return result;
   }, [annotations, slices]);
+  const moveBySlice = useMemo(() => {
+    const result = new Map<string, DiffLineAnnotation<A>[]>();
+    if (!moves?.marks.length) return result;
+    for (const [mark, lineNumber] of noteLines) {
+      const side = mark.side === 'after' ? ('additions' as const) : ('deletions' as const);
+      const owner = slices.find((slice) => {
+        const [from, to] = side === 'deletions' ? slice.oldLines : slice.newLines;
+        return lineNumber >= from && lineNumber <= to;
+      });
+      const annotation = { side, lineNumber, metadata: { gnosisMove: mark } } as unknown as DiffLineAnnotation<A>;
+      if (owner) result.set(owner.key, [...(result.get(owner.key) ?? []), annotation]);
+    }
+    return result;
+  }, [noteLines, slices]);
+  const sliceAnnotations = useMemo(() => {
+    if (!moveBySlice.size) return bySlice;
+    const result = new Map(bySlice);
+    for (const [key, list] of moveBySlice) result.set(key, [...(result.get(key) ?? []), ...list]);
+    return result;
+  }, [bySlice, moveBySlice]);
   const targetKey = useMemo(() => {
     if (!target) return undefined;
     return slices.find((slice) => {
@@ -1630,8 +1765,11 @@ export function ChangesDiff<A>({
     if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markRails(host, rails);
   }, [rails]);
   useEffect(() => {
-    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markNoise(host, noiseLines);
+    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markLines(host, [['data-noise-line', noiseLines]]);
   }, [noiseLines]);
+  useEffect(() => {
+    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markLines(host, [['data-moved-line', movedLines]]);
+  }, [movedLines]);
   // New definitions name the reader's place anew.
   useEffect(() => follow.current?.(), [scopeAt]);
   // Breadcrumbs fold to fit their bar: again whenever the bars' width or their crumbs change.
@@ -1764,7 +1902,7 @@ export function ChangesDiff<A>({
           key={slice.key}
           slice={slice}
           options={stableOptions}
-          annotations={bySlice.get(slice.key) ?? NO_ANNOTATIONS}
+          annotations={sliceAnnotations.get(slice.key) ?? NO_ANNOTATIONS}
           renderAnnotation={stableRender}
           style={style}
         />

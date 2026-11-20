@@ -31,6 +31,8 @@ import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
 import { changedSymbols } from '../lib/symbol-outline';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
+import { useFileMoves } from '../lib/use-moved-symbols';
+import type { MoveMark } from '../lib/moved-symbols-store';
 import { blockKey, fileNoise, hidden, noiseFilterOn, type FileNoise, type NoiseFilter, type NoiseKind } from '../lib/semantic-noise';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { inspectionFiles } from '../lib/inspection-cache';
@@ -67,6 +69,13 @@ export interface DiffNoise {
   file?: FileNoise;
   /** Every change is hidden and the reader opened none: the file shows as one bar. */
   fileHidden: boolean;
+}
+/**
+ * The file's moved and renamed symbols (#398), for ChangesDiff: each symbol that came here or left, with its other end
+ * and its real edits. The same for every view of the file revision (lib/moved-symbols-store.ts).
+ */
+export interface DiffMoves {
+  marks: readonly MoveMark[];
 }
 /**
  * One file's diff as Changes and Explanation topics show it (#157 parity): hunks with the gaps between them, the
@@ -273,6 +282,9 @@ export function useDiffFileModel({
     raiseDefinitions(`${fileKey}:before`, place);
     if (noise.key) raiseNoise(noise.key, place);
   });
+  // Moved and renamed symbols (#398): the PR's moves land for every view of the file revision at once.
+  const fileMoves = useFileMoves(fileKey, structure || pathEnabled(codeSettings, previousPath ?? path));
+  const moves = useMemo((): DiffMoves | undefined => (fileMoves?.marks.length ? { marks: fileMoves.marks } : undefined), [fileMoves]);
   // What the reader opened stays open for the session, though the file's diff unmounts as it scrolls away.
   const [shownNoise, setShownNoise] = useState<{ key: string; value: ReadonlySet<string> }>();
   const noiseShown = shownNoise?.key === revealKey ? shownNoise.value : (openedNoise.get(revealKey) ?? NO_SHOWN_NOISE);
@@ -554,6 +566,7 @@ export function useDiffFileModel({
     quietSymbols,
     outlinePending,
     noise: diffNoise,
+    moves,
     gapStatus,
     revealLines,
     canReveal,
