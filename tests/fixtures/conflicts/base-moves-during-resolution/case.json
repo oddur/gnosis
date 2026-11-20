@@ -1,0 +1,14 @@
+{
+  "description": "Main moves while the conflict is open: its new commit adds another import in the same spot and changes a constant the PR also changed. The first resolution must carry over; the new conflict is sorted again.",
+  "language": "typescript",
+  "category": "base-move",
+  "steps": {
+    "before-move": {
+      "src/math.ts": "merged"
+    },
+    "after-move": {
+      "src/math.ts": "any",
+      "src/config.ts": "any-but-merged"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different method after add().",
+  "language": "java",
+  "category": "structure/both-add",
+  "expected": {
+    "src/main/java/lab/cart/Cart.java": "merged"
+  }
+}

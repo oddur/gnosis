@@ -1,5 +1,17 @@
-import { chosenText, conflictCount, inferChoices, parseConflicts, type ConflictSegment } from './conflict-blocks';
-import { hasConflictMarkers, type ConflictFile, type ConflictSession } from './conflict-resolution';
+import {
+  applyChoices,
+  chosenText,
+  conflictCount,
+  inferChoices,
+  parseConflicts,
+  type ConflictSegment,
+} from './conflict-blocks';
+import {
+  hasConflictMarkers,
+  type ConflictFile,
+  type ConflictProposal,
+  type ConflictSession,
+} from './conflict-resolution';
 
 /** Service errors. The workspace matches them to plain copy in `describeConflictError`. */
 export const HEAD_MOVED = 'The PR branch has new commits since you started. Nothing was pushed.';
@@ -32,13 +44,22 @@ export function revisionChange(draft: Revisions, live: LiveRevisions): RevisionC
   return live.baseSha === draft.baseSha ? 'none' : 'base-moved';
 }
 
+/** Bounds on the ways a resolver's output can be split around Git's blocks (blockResolutions). */
+const SPLIT_ENDS = 64;
+const SPLIT_BUDGET = 20_000;
+const tooMany = new Error('The result splits in too many ways.');
+
 /** Git's marker labels name commits, which change when the base moves. Blocks match on their text alone. */
 const blockKey = (segment: Extract<ConflictSegment, { kind: 'conflict' }>) =>
   JSON.stringify([segment.block.ours, segment.block.base ?? null, segment.block.theirs]);
+/** A file's conflict blocks by their text, so two merges with the same conflicts compare equal. */
+export const conflictKeys = (original: string) =>
+  JSON.stringify(parseConflicts(original).flatMap((s) => (s.kind === 'conflict' ? [blockKey(s)] : [])));
 
 /**
  * The text that replaced each conflict block in `result`, or undefined when the text around the blocks was edited
- * too. An entry is undefined when that block is still open in the result.
+ * too. An entry is undefined when that block is still open in the result, or when the result can be split in more
+ * than one way around it.
  */
 export function blockResolutions(segments: ConflictSegment[], result: string): (string | undefined)[] | undefined {
   // Whole-side choices are exact; free text between unchanged lines is the fallback for edits and suggestions.
@@ -47,44 +68,75 @@ export function blockResolutions(segments: ConflictSegment[], result: string): (
     return segments.flatMap((s) => {
       if (s.kind !== 'conflict') return [];
       const choice = choices[s.index];
-      return [choice ? chosenText(s.block, choice) : undefined];
+      return [choice && choice !== 'proposal' ? chosenText(s.block, choice) : undefined];
     });
-  const blocks = segments.filter((s) => s.kind === 'conflict').length;
-  const found: (string | undefined)[] = new Array<string | undefined>(blocks).fill(undefined);
-  const failed = new Set<string>();
-  const walk = (i: number, at: number): boolean => {
-    if (i === segments.length) return at === result.length;
-    const key = `${i}:${at}`;
-    if (failed.has(key)) return false;
-    const segment = segments[i];
-    if (segment.kind === 'text') {
-      if (result.startsWith(segment.text, at) && walk(i + 1, at + segment.text.length)) return true;
-    } else {
+  try {
+    // Every way the result can be split into the unchanged texts and the blocks between them. A block is known only
+    // when every split agrees on where it starts and ends: text between blocks such as a lone "\n" can match in
+    // several places, and the earliest match would cut a resolution short.
+    // A text that matches in many places (a lone newline in a long file) makes the splits explode: past these bounds the
+    // result counts as unsplittable, so its blocks get no proposal and nothing is carried.
+    let budget = SPLIT_BUDGET;
+    const ends = (i: number, at: number): number[] => {
+      if (--budget < 0) throw tooMany;
+      const segment = segments[i];
+      if (segment.kind === 'text') return result.startsWith(segment.text, at) ? [at + segment.text.length] : [];
       const next = segments.at(i + 1);
-      const ends: number[] = [];
-      if (!next) ends.push(result.length);
-      else if (next.kind === 'text') {
-        for (let end = result.indexOf(next.text, at); end >= 0; end = result.indexOf(next.text, end + 1))
-          ends.push(end);
+      if (!next) return [result.length];
+      const found: number[] = [];
+      if (next.kind === 'text') {
+        for (let end = result.indexOf(next.text, at); end >= 0; end = result.indexOf(next.text, end + 1)) {
+          found.push(end);
+          if (found.length > SPLIT_ENDS) throw tooMany;
+        }
       } else {
         // Two blocks with no text between them can only be split where a whole-side choice ends.
         for (const text of [
           segment.block.raw,
           ...(['ours', 'theirs', 'both'] as const).map((c) => chosenText(segment.block, c)),
         ])
-          if (result.startsWith(text, at)) ends.push(at + text.length);
+          if (result.startsWith(text, at)) found.push(at + text.length);
       }
-      for (const end of ends) {
-        const text = result.slice(at, end);
-        found[segment.index] = text === segment.block.raw ? undefined : text;
-        if (walk(i + 1, end)) return true;
+      return found;
+    };
+    const memo = new Map<string, boolean>();
+    const completes = (i: number, at: number): boolean => {
+      if (i === segments.length) return at === result.length;
+      const key = `${i}:${at}`;
+      let known = memo.get(key);
+      if (known === undefined) {
+        known = ends(i, at).some((end) => completes(i + 1, end));
+        memo.set(key, known);
       }
-      found[segment.index] = undefined;
+      return known;
+    };
+    if (!completes(0, 0)) return undefined;
+    const spans = new Map<number, Set<string>>();
+    let positions = new Set([0]);
+    for (let i = 0; i < segments.length; i++) {
+      const next = new Set<number>();
+      const segment = segments[i];
+      for (const at of positions)
+        for (const end of ends(i, at)) {
+          if (!completes(i + 1, end)) continue;
+          next.add(end);
+          if (segment.kind === 'conflict')
+            spans.set(segment.index, (spans.get(segment.index) ?? new Set()).add(`${at}:${end}`));
+        }
+      positions = next;
     }
-    failed.add(key);
-    return false;
-  };
-  return walk(0, 0) ? found : undefined;
+    return segments.flatMap((s) => {
+      if (s.kind !== 'conflict') return [];
+      const only = spans.get(s.index);
+      if (only?.size !== 1) return [undefined];
+      const [at, end] = [...only][0].split(':').map(Number);
+      const text = result.slice(at, end);
+      return [text === s.block.raw ? undefined : text];
+    });
+  } catch (error) {
+    if (error === tooMany) return undefined;
+    throw error;
+  }
 }
 
 export interface CarriedFile {
@@ -123,8 +175,9 @@ export function carryFile(old: ConflictFile | undefined, next: ConflictFile, kee
       if (segment.kind === 'text') return segment.text;
       const text = available.get(blockKey(segment))?.shift();
       if (text === undefined) {
+        // Not carried: the fresh merge's proposal for it, if any, as preparation left it. It still needs you.
         open++;
-        return segment.block.raw;
+        return next.proposals?.[segment.index]?.text ?? segment.block.raw;
       }
       reused++;
       return text;
@@ -163,4 +216,26 @@ export function relabelMarkers(text: string, sample: string) {
       return labels[char] + (/\r\n$/.test(line) ? '\r\n' : line.endsWith('\n') ? '\n' : '');
     })
     .join('');
+}
+
+/**
+ * A resolver's whole-file output as per-block proposals of Git's conflict. Undefined when the text outside the blocks
+ * differs from Git's merge (the resolver touched lines Git had merged) or when no block was resolved. A block the
+ * resolver left conflicted has no proposal.
+ */
+export function blockProposals(original: string, output: string, source: ConflictProposal['source']) {
+  const resolutions = blockResolutions(parseConflicts(original), output);
+  const proposals = resolutions?.map((text) =>
+    text === undefined || hasConflictMarkers(text) ? null : { source, text }
+  );
+  return proposals?.some(Boolean) ? proposals : undefined;
+}
+
+/** Git's conflict with these proposals in place; other blocks keep their markers. */
+export function withProposals(original: string, proposals: readonly (ConflictProposal | null)[]) {
+  return applyChoices(
+    parseConflicts(original),
+    proposals.map((p) => (p ? 'proposal' : undefined)),
+    proposals
+  );
 }

@@ -1,0 +1,8 @@
+{
+  "description": "Both sides change the same constant to different values.",
+  "language": "typescript",
+  "category": "semantic/same-constant",
+  "expected": {
+    "src/config.ts": "any-but-merged"
+  }
+}

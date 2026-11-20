@@ -1,0 +1,21 @@
+{
+  "description": "A 3-PR stack. Main and PR 1 both add an import in the same spot; PR 2 and PR 3 each add one more there, so the conflict cascades up the stack as each PR is updated.",
+  "language": "typescript",
+  "category": "stack",
+  "stack": [
+    "pr1",
+    "pr2",
+    "pr3"
+  ],
+  "steps": {
+    "pr1": {
+      "src/index.ts": "merged"
+    },
+    "pr2": {
+      "src/index.ts": "merged"
+    },
+    "pr3": {
+      "src/index.ts": "merged"
+    }
+  }
+}

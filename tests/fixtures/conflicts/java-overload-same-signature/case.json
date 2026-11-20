@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add Write(int) with different bodies: a duplicate overload.",
+  "language": "java",
+  "category": "semantic/overloads",
+  "expected": {
+    "src/main/java/lab/Log.java": "any-but-merged"
+  }
+}

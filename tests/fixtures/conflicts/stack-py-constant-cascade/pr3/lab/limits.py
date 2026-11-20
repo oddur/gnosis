@@ -1,0 +1,2 @@
+BATCH = 100
+WORKERS = 4

@@ -1,0 +1,9 @@
+{
+  "description": "Review probe: both sides kept the separator comment inside one coalesced conflict; the resolver drops it. Definitions all survive, so only line accounting catches it.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/run.ts": "any-but-merged"
+  }
+}

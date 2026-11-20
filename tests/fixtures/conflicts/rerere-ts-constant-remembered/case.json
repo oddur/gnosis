@@ -1,0 +1,14 @@
+{
+  "description": "A constant conflict resolved once comes back in a second PR. The remembered value is reused and checked.",
+  "language": "typescript",
+  "category": "rerere",
+  "rerere": true,
+  "steps": {
+    "first": {
+      "src/config.ts": "any-but-merged"
+    },
+    "second": {
+      "src/config.ts": "any"
+    }
+  }
+}

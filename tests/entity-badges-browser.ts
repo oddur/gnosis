@@ -90,6 +90,13 @@ void app.whenReady().then(async () => {
     );
     await capture('summary-light');
     const branch = '.pr-branches .entity-badge-branch';
+    // Beside the timeline the details column is narrow: the long branch name keeps its start and end.
+    assert.ok(
+      await js(
+        "(()=>{const b=document.querySelector('.pr-branches .entity-badge-branch'),start=b.querySelector('.entity-badge-start');return start.scrollWidth>start.clientWidth && b.getBoundingClientRect().right<=b.closest('aside').getBoundingClientRect().right+1})()"
+      ),
+      'Long names truncate in the middle without overflowing'
+    );
     await js(`window.copyFails=true;document.querySelector('${branch}').click()`);
     await wait(`document.querySelector('${branch}').dataset.copyState==='failed'`);
     assert.match(await js<string>(`document.querySelector('${branch} [role=status]').textContent`), /Could not copy/);
@@ -110,11 +117,13 @@ void app.whenReady().then(async () => {
       await js('window.copies.at(-1)'),
       'feature/streaming-worker-command-queue/cancellation-aware-backpressure'
     );
+    // Below 1100px the details become a strip above the timeline, and Details gets a row of its own there: the branch
+    // badge may show whole (branch badges take the room they have). Truncated or not, it never overflows.
     assert.ok(
       await js(
-        "(()=>{const b=document.querySelector('.pr-branches .entity-badge-branch'),start=b.querySelector('.entity-badge-start');return start.scrollWidth>start.clientWidth && b.getBoundingClientRect().right<=innerWidth})()"
+        "(()=>{const b=document.querySelector('.pr-branches .entity-badge-branch'),start=b.querySelector('.entity-badge-start'),dd=b.closest('dd');return b.getBoundingClientRect().right<=Math.min(innerWidth,dd.getBoundingClientRect().right+1)&&(start.scrollWidth>start.clientWidth||b.getBoundingClientRect().width<=dd.getBoundingClientRect().width+1)})()"
       ),
-      'Long names truncate in the middle without overflowing'
+      'Long names fit or truncate in the middle, without overflowing'
     );
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'), 'No horizontal overflow');
     win.setSize(1280, 800);

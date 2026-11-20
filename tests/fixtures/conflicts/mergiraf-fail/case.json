@@ -1,0 +1,9 @@
+{
+  "description": "Mergiraf crashes with exit code 134.",
+  "language": "typescript",
+  "category": "failure/mergiraf",
+  "mergiraf": "fail",
+  "expected": {
+    "src/math.ts": "decide"
+  }
+}

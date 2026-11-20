@@ -1,6 +1,7 @@
 import type { GitHubSyncKind } from './github-sync';
 import type { QueueSignals } from './queue-signals';
 import type { PrMetadata } from './types';
+import { metadataShows, type PrMetadataExpectation } from './pr-people';
 
 /**
  * Every GitHub write Gnosis makes, by what it changes. After a write, main marks the saved copies it made stale, reads
@@ -27,6 +28,10 @@ export type GitHubWriteAction =
   | 'comment-delete'
   | 'feedback-reply'
   | 'request-review'
+  | 'edit-reviewers'
+  | 'edit-assignees'
+  | 'edit-labels'
+  | 'edit-milestone'
   | 'rerun-checks'
   | 'push'
   | 'external';
@@ -46,7 +51,8 @@ export interface WriteObservation {
     | 'commentCount'
     | 'reviewCommentCount'
     | 'source'
-  >;
+  > &
+    Partial<Pick<PrMetadata, 'requestedTeams' | 'assignees' | 'labels' | 'milestone'>>;
   signals?: Pick<QueueSignals, 'headSha' | 'checks' | 'latestReview' | 'mine' | 'readiness' | 'comments'>;
   /** A REST copy read just before a comment write whose baseline came from GraphQL (`COUNTED_WRITES`). */
   restMetadata?: WriteObservation['metadata'];
@@ -58,6 +64,8 @@ export interface WriteDetails {
   reviewUrl?: string;
   /** The reviewer whose review was requested. */
   reviewer?: string;
+  /** What a people, label or milestone edit changed, which the PR read must show. */
+  expect?: PrMetadataExpectation;
   /** The signed-in account. */
   viewer?: string;
   /** When the write finished, in ms. */
@@ -158,6 +166,9 @@ export function startRestBaselines(
     }),
   ]).finally(() => clearTimeout(timer));
 }
+
+const editSeen = ({ metadata }: WriteObservation, details: WriteDetails) =>
+  !!metadata && (!details.expect || metadataShows(metadata, details.expect));
 
 export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   // The merge commit and the closed state can trail a confirmed merge.
@@ -262,6 +273,18 @@ export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
         metadata.requestedReviewers.some((login) => login.toLowerCase() === details.reviewer?.toLowerCase())),
     queue: true,
   },
+  // Reviewers, assignees, labels and the milestone, edited from the Summary details (lib/pr-people.ts). A review
+  // request moves the PR between queue sections; the others change rows, filters and the details column.
+  'edit-reviewers': {
+    kinds: ['metadata', 'signals', 'discussion'],
+    probes: ['metadata'],
+    seen: editSeen,
+    queue: true,
+  },
+  'edit-assignees': { kinds: ['metadata'], probes: ['metadata'], seen: editSeen, queue: true },
+  // Searches that filter by label or milestone catch up once GitHub shows the change.
+  'edit-labels': { kinds: ['metadata'], probes: ['metadata'], seen: editSeen, queue: true },
+  'edit-milestone': { kinds: ['metadata'], probes: ['metadata'], seen: editSeen, queue: true },
   // New runs start a moment after GitHub accepts a rerun.
   'rerun-checks': {
     kinds: ['checks', 'signals'],

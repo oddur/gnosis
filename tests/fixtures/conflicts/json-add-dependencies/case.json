@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different dependency at the end of package.json dependencies.",
+  "language": "json",
+  "category": "structure/both-add",
+  "expected": {
+    "package.json": "merged"
+  }
+}

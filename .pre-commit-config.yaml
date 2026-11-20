@@ -7,7 +7,7 @@ repos:
         language: system
         types: [file]
         files: \.(ts|tsx|js|jsx|mjs)$
-        exclude: ^(\.vite/|out/|build/|dist/|node_modules/)
+        exclude: ^(\.vite/|out/|build/|dist/|node_modules/|tests/fixtures/conflicts/)
         pass_filenames: true
 
       - id: prettier
@@ -16,7 +16,7 @@ repos:
         language: system
         types: [file]
         files: \.(ts|tsx|js|jsx|mjs|json|css|md|yml|yaml|html)$
-        exclude: ^(\.vite/|out/|build/|dist/|node_modules/|package-lock\.json)
+        exclude: ^(\.vite/|out/|build/|dist/|node_modules/|package-lock\.json|tests/fixtures/conflicts/)
         pass_filenames: true
 
       - id: trufflehog
@@ -30,11 +30,12 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^(\.vite/|out/|build/|dist/)
+        exclude: ^(\.vite/|out/|build/|dist/|tests/fixtures/conflicts/)
       - id: end-of-file-fixer
-        exclude: ^(\.vite/|out/|build/|dist/)
+        exclude: ^(\.vite/|out/|build/|dist/|tests/fixtures/conflicts/)
       - id: check-json
-        exclude: ^(\.vite/|out/|build/|dist/)
+        exclude: ^(\.vite/|out/|build/|dist/|tests/fixtures/conflicts/)
       - id: check-yaml
+        exclude: ^tests/fixtures/conflicts/
       - id: check-added-large-files
         args: ['--maxkb=1000']

@@ -60,7 +60,12 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
       urls: string | string[],
       change: OptimisticChange,
       write: () => Promise<T>,
-      result?: (value: T) => OptimisticResult
+      result?: (value: T) => OptimisticResult,
+      /**
+       * The part GitHub took when it took only part, from the write's value. The patch keeps showing that part, and
+       * patches confirmed while the write ran stop applying its items: GitHub carried them out after those.
+       */
+      narrow?: (value: T) => OptimisticChange | undefined
     ): Promise<T> {
       const viewer = deps.viewer();
       const targets = [...new Set(typeof urls === 'string' ? [urls] : urls)];
@@ -82,6 +87,13 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
       } catch {
         // The write succeeded. Matching by text replaces the optimistic copy instead.
       }
+      // What GitHub carried out: all of it, or the part it took. Patches confirmed while this write ran stop applying
+      // its items, before this patch is confirmed so `applied` leaves it alone.
+      const part = narrow?.(value);
+      for (const patch of patches) {
+        layer.applied(patch.url, part ?? change);
+        if (part) layer.narrow(patch.id, part);
+      }
       for (const patch of patches) if (layer.confirm(patch.id, details)) changed(patch.url, kinds);
       return value;
     },
@@ -101,12 +113,18 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
         isDraft: status.isDraft,
         autoMerge: status.autoMerge,
         requestedReviewers: status.requestedReviewers,
+        requestedTeams: status.requestedTeams,
+        labels: status.labels,
+        milestone: status.milestone,
       } as PrMetadata);
       return {
         ...status,
         isDraft: shown.isDraft,
         autoMerge: shown.autoMerge,
         requestedReviewers: shown.requestedReviewers,
+        requestedTeams: shown.requestedTeams,
+        labels: shown.labels,
+        milestone: shown.milestone,
         ...(metadata ? { metadata } : {}),
         ...(status.signals ? { signals: layer.signals(status.signals) } : {}),
       };

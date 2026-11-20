@@ -1,0 +1,8 @@
+{
+  "description": "Both sides change the same const to different values.",
+  "language": "csharp",
+  "category": "semantic/same-constant",
+  "expected": {
+    "src/Limits.cs": "any-but-merged"
+  }
+}

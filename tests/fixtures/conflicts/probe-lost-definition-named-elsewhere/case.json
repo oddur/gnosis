@@ -1,0 +1,9 @@
+{
+  "description": "Review probe: the resolver drops main's four() while an undecided conflict imports a name containing it. The loss must not be excused.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/numbers.ts": "any-but-merged"
+  }
+}

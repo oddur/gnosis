@@ -1,0 +1,8 @@
+{
+  "description": "Both sides edit different, adjacent statements of one function.",
+  "language": "typescript",
+  "category": "structure/edit-same-function",
+  "expected": {
+    "src/price.ts": "merged"
+  }
+}

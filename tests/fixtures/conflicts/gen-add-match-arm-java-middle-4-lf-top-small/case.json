@@ -1,0 +1,21 @@
+{
+  "description": "Both sides add a different case to the same switch or match.",
+  "language": "java",
+  "category": "matrix/auto (generated sample)",
+  "pattern": "add-match-arm",
+  "axes": {
+    "position": "middle",
+    "indent": "4",
+    "eol": "lf",
+    "nesting": "top",
+    "size": "small"
+  },
+  "expected": {
+    "lab/add-match-arm.java": "auto"
+  },
+  "acceptable": {
+    "lab/add-match-arm.java": [
+      "package lab;\n\npublic class Lab {\n    static int filler0(int value) {\n        return value + 0;\n    }\n\n    static int code(int k) {\n        switch (k) {\n            case 1:\n                return 10;\n            case 2:\n                return 20;\n            case 4:\n                return 40;\n            case 3:\n                return 30;\n            default:\n                return 0;\n        }\n    }\n\n    static int filler1(int value) {\n        return value + 1;\n    }\n}\n"
+    ]
+  }
+}

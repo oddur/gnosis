@@ -11,6 +11,11 @@ export interface AppCommand {
   group?: string;
   hint?: string;
   perform: () => void | Promise<void>;
+  /**
+   * Runs once the palette has closed and handed focus back, for commands that open something that takes focus, such
+   * as a picker beside the page.
+   */
+  afterClose?: boolean;
 }
 interface Center {
   open: () => void;

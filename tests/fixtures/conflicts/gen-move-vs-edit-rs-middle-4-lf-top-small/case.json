@@ -1,0 +1,16 @@
+{
+  "description": "One side moves a function below its neighbours; the other edits the function.",
+  "language": "rust",
+  "category": "matrix/auto (generated sample)",
+  "pattern": "move-vs-edit",
+  "axes": {
+    "position": "middle",
+    "indent": "4",
+    "eol": "lf",
+    "nesting": "top",
+    "size": "small"
+  },
+  "expected": {
+    "lab/move-vs-edit.rs": "auto"
+  }
+}

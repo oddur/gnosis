@@ -12,6 +12,7 @@ import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import type { PrActionState } from '../lib/pr-actions';
+import { blockBuckets } from '../lib/conflict-verify';
 const exec = promisify(execFile);
 async function fixture(
   t: TestContext,
@@ -719,6 +720,88 @@ void test('Mergiraf structurally combines both JSON edits, persists the proposal
   });
   assert.deepEqual(JSON.parse(await f.git('show', 'feature:settings.json')), { left: 1, right: 2 });
   assert.equal(await f.git('show', 'feature:from-main.txt'), 'Retain this clean base change.');
+});
+
+void test('preparation runs structural merge on every conflicted file and keeps each result a proposal per conflict', async (t) => {
+  const binary = path.resolve('resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf');
+  if (!(await fs.stat(binary).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const base = "import { a } from './a';\n\nexport function one() {\n  return 1;\n}\n";
+  const f = await fixture(
+    t,
+    false,
+    {
+      name: 'numbers.ts',
+      base,
+      ours: base.replace("'./a';\n", "'./a';\nimport { b } from './b';\n").replace('return 1;', 'return 10;'),
+      theirs: base.replace("'./a';\n", "'./a';\nimport { c } from './c';\n").replace('return 1;', 'return 11;'),
+    },
+    [
+      {
+        name: 'settings.json',
+        base: '{"left":0,"right":0}\n',
+        ours: '{"left":1,"right":0}\n',
+        theirs: '{"left":0,"right":2}\n',
+      },
+    ]
+  );
+  const ts = f.session.files.find((file) => file.path === 'numbers.ts');
+  const json = f.session.files.find((file) => file.path === 'settings.json');
+  assert.ok(ts && json);
+  // The imports combine; the two return values are a real conflict and stay as Git wrote them.
+  assert.equal(conflictCount(ts.original), 2);
+  assert.deepEqual(
+    ts.proposals?.map((p) => p && p.source),
+    ['mergiraf', null]
+  );
+  assert.match(ts.result, /import \{ b \} from '\.\/b';\nimport \{ c \} from '\.\/c';/);
+  assert.equal(conflictCount(ts.result), 1);
+  assert.deepEqual(JSON.parse(json.result), { left: 1, right: 2 });
+  assert.ok(
+    f.session.files.every((file) => !file.resolved),
+    'Proposals are never reviewed for you'
+  );
+  await assert.rejects(f.run({ kind: 'preview', id: f.session.id, version: f.session.version }), /every file reviewed/);
+
+  // Review probe: main moves while the draft waits. Files already in the session get their proposals again, so a
+  // proposal you kept stays a proposal, not a conflict you decided.
+  let session = f.session;
+  const kept = ts.result.replace(
+    /<<<<<<< [\s\S]*?>>>>>>> [^\n]*\n/,
+    parseConflicts(ts.original).flatMap((s) => (s.kind === 'conflict' ? [s.block.ours] : []))[1]
+  );
+  for (const [file, contents] of [
+    ['numbers.ts', kept],
+    ['settings.json', json.result],
+  ])
+    session = (
+      await f.run({ kind: 'save', id: session.id, version: session.version, path: file, contents, resolved: true })
+    ).session;
+  await f.git('checkout', 'main');
+  await fs.writeFile(path.join(f.remote, 'later.txt'), 'Another PR merged.\n');
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'Another PR merged');
+  f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  // Second review probe: conflicts that did not change keep their proposals; structural merge does not run again.
+  const binaryPath = f.deps.mergiraf;
+  let structural = 0;
+  f.deps.mergiraf = () => {
+    structural++;
+    return binaryPath();
+  };
+  const moved = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(structural, 0, 'Unchanged conflicts reuse their proposals');
+  assert.equal(moved.baseMoved?.conflicts, 0);
+  const after = moved.session.files.find((file) => file.path === 'numbers.ts');
+  assert.ok(after);
+  assert.equal(after.result, kept);
+  assert.deepEqual(
+    after.proposals?.map((p) => p && p.source),
+    ['mergiraf', null]
+  );
+  assert.deepEqual(blockBuckets(after, after.result, undefined), ['check', 'decided']);
 });
 
 void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {

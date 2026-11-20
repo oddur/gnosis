@@ -1,0 +1,11 @@
+{
+  "description": "Python is off in Settings, so the checks cannot parse the result and the proposal stays in Check.",
+  "language": "python",
+  "category": "failure/language-off",
+  "languagesOff": [
+    "python"
+  ],
+  "expected": {
+    "bank/account.py": "check"
+  }
+}

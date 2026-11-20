@@ -1,0 +1,8 @@
+{
+  "description": "The PR renames loadUser to findUser (and its caller); main edits the first line of its body.",
+  "language": "typescript",
+  "category": "structure/rename-vs-edit",
+  "expected": {
+    "src/users.ts": "any"
+  }
+}

@@ -19,6 +19,10 @@ export type ConflictSegment =
   | { kind: 'text'; text: string }
   | { kind: 'conflict'; index: number; block: ConflictBlock };
 export type BlockChoice = 'ours' | 'theirs' | 'both';
+/** A block's state in a draft: one side, both, or the proposal preparation made for it. */
+export type BlockPick = BlockChoice | 'proposal';
+/** Proposal texts by block index, as `ConflictFile.proposals` holds them. */
+export type BlockProposals = readonly ({ text: string } | null | undefined)[];
 
 const marker = (line: string, char: string) => new RegExp(`^\\${char}{7}(?:[ \\t].*)?\\r?\\n?$`).test(line);
 
@@ -93,14 +97,25 @@ export function chosenText(block: ConflictBlock, choice: BlockChoice) {
   return first + block.theirs;
 }
 
+const pickText = (
+  segment: Extract<ConflictSegment, { kind: 'conflict' }>,
+  pick: BlockPick | undefined,
+  proposals?: BlockProposals
+) =>
+  pick === 'proposal'
+    ? (proposals?.[segment.index]?.text ?? segment.block.raw)
+    : pick
+      ? chosenText(segment.block, pick)
+      : segment.block.raw;
+
 /** The file text for a set of choices; an open block keeps its markers. */
-export function applyChoices(segments: ConflictSegment[], choices: readonly (BlockChoice | undefined)[]) {
+export function applyChoices(
+  segments: ConflictSegment[],
+  choices: readonly (BlockPick | undefined)[],
+  proposals?: BlockProposals
+) {
   return segments
-    .map((segment) => {
-      if (segment.kind === 'text') return segment.text;
-      const choice = choices[segment.index];
-      return choice ? chosenText(segment.block, choice) : segment.block.raw;
-    })
+    .map((segment) => (segment.kind === 'text' ? segment.text : pickText(segment, choices[segment.index], proposals)))
     .join('');
 }
 
@@ -109,44 +124,73 @@ export function applyChoices(segments: ConflictSegment[], choices: readonly (Blo
  * Returns undefined when the draft was edited by hand or by a suggestion; the view then works on
  * the draft's own remaining markers.
  */
-export function inferChoices(segments: ConflictSegment[], contents: string): (BlockChoice | undefined)[] | undefined {
-  const choices: (BlockChoice | undefined)[] = [];
-  const failed = new Set<string>();
-  const options: (BlockChoice | undefined)[] = [undefined, 'ours', 'theirs', 'both'];
-  const walk = (i: number, at: number): boolean => {
-    if (i === segments.length) return at === contents.length;
-    const key = `${i}:${at}`;
-    if (failed.has(key)) return false;
-    const segment = segments[i];
-    if (segment.kind === 'text') {
-      if (contents.startsWith(segment.text, at) && walk(i + 1, at + segment.text.length)) return true;
-    } else {
-      for (const choice of options) {
-        const text = choice ? chosenText(segment.block, choice) : segment.block.raw;
-        if (!contents.startsWith(text, at)) continue;
-        choices[segment.index] = choice;
-        if (walk(i + 1, at + text.length)) return true;
-      }
-      choices[segment.index] = undefined;
-    }
-    failed.add(key);
-    return false;
+export function inferChoices(
+  segments: ConflictSegment[],
+  contents: string,
+  proposals?: BlockProposals
+): (BlockPick | undefined)[] | undefined {
+  // Options with the same text are one option: the proposal comes first, so one that equals a side is still the
+  // proposal that was checked.
+  const options = (segment: Extract<ConflictSegment, { kind: 'conflict' }>) => {
+    const seen = new Set<string>();
+    return (
+      [undefined, ...(proposals?.[segment.index] ? ['proposal' as const] : []), 'ours', 'theirs', 'both'] as const
+    )
+      .map((choice) => ({ choice, text: pickText(segment, choice, proposals) }))
+      .filter(({ text }) => {
+        if (seen.has(text)) return false;
+        seen.add(text);
+        return true;
+      });
   };
-  return walk(0, 0) ? choices : undefined;
+  // How many ways the draft splits into the segments, up to 2. Only one way may count: when two splits give a block
+  // different text, neither can be trusted, and the draft is treated as edited by hand.
+  const memo = new Map<string, number>();
+  const ways = (i: number, at: number): number => {
+    if (i === segments.length) return at === contents.length ? 1 : 0;
+    const key = `${i}:${at}`;
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    const segment = segments[i];
+    let n = 0;
+    if (segment.kind === 'text') n = contents.startsWith(segment.text, at) ? ways(i + 1, at + segment.text.length) : 0;
+    else
+      for (const { text } of options(segment)) {
+        if (contents.startsWith(text, at)) n += ways(i + 1, at + text.length);
+        if (n >= 2) break;
+      }
+    memo.set(key, Math.min(n, 2));
+    return Math.min(n, 2);
+  };
+  if (ways(0, 0) !== 1) return undefined;
+  const choices: (BlockPick | undefined)[] = [];
+  let at = 0;
+  segments.forEach((segment, i) => {
+    if (segment.kind === 'text') {
+      at += segment.text.length;
+      return;
+    }
+    const found = options(segment).find(
+      ({ text }) => contents.startsWith(text, at) && ways(i + 1, at + text.length) === 1
+    );
+    choices[segment.index] = found?.choice;
+    at += found?.text.length ?? 0;
+  });
+  return choices;
 }
 
 export interface ConflictModel {
   /** The text the blocks come from: the original conflict when Undo is available, else the draft. */
   source: string;
   segments: ConflictSegment[];
-  choices: (BlockChoice | undefined)[];
+  choices: (BlockPick | undefined)[];
   /** False when the draft no longer derives from the original blocks, so earlier choices cannot be undone. */
   undoable: boolean;
 }
 /** Blocks for the displayed draft, with Undo whenever the draft still derives from the original conflict. */
-export function conflictModel(original: string, contents: string): ConflictModel {
+export function conflictModel(original: string, contents: string, proposals?: BlockProposals): ConflictModel {
   const segments = parseConflicts(original);
-  const choices = segments.some((s) => s.kind === 'conflict') ? inferChoices(segments, contents) : undefined;
+  const choices = segments.some((s) => s.kind === 'conflict') ? inferChoices(segments, contents, proposals) : undefined;
   if (choices) return { source: original, segments, choices, undoable: true };
   const own = parseConflicts(contents);
   return { source: contents, segments: own, choices: [], undoable: false };

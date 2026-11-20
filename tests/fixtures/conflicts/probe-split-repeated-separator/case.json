@@ -1,0 +1,9 @@
+{
+  "description": "Review probe: the line between two conflicts also appears inside the resolver's output, so the output splits two ways. Neither conflict may be Merged.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/values.ts": "any-but-merged"
+  }
+}

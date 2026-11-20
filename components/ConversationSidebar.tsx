@@ -1,4 +1,5 @@
-import { CircleAlert, CircleCheck, Clock3, MessageSquare, MinusCircle, type LucideIcon } from 'lucide-react';
+import { CircleAlert, CircleCheck, Clock3, MessageSquare, Milestone, MinusCircle, Tag, UserRound, Users, type LucideIcon } from 'lucide-react';
+import { useState } from 'react';
 import { BranchBadge, CommitBadge, RepositoryBadge } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
 import { PrLabels } from './PrLabels';
@@ -8,6 +9,9 @@ import type { GitHubReviewThreads } from '../lib/review-threads';
 import type { PrStatus } from '../lib/types';
 import type { ReviewMember } from '../lib/workbench';
 import type { ReactNode } from 'react';
+import { PrPeopleAccessError, PrPeopleEditor, PrPeopleFailure, ReRequestFailure, ReRequestReview, usePrPeople } from './PrPeopleEditor';
+import { editList, fieldBlockedReason, formatDueOn, type PrPeopleField } from '../lib/pr-people';
+import { useCommandScope } from '../lib/command-center';
 
 type Verdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | 'PENDING';
 const VERDICTS: Record<Verdict, { icon: LucideIcon; label: string; tone: string }> = {
@@ -67,29 +71,97 @@ export function ConversationSidebar({
   onChecks: () => void;
 }) {
   const meta = status ?? m;
-  const reviewers = reviewerVerdicts(snapshot, meta.requestedReviewers);
+  // Reviewers, assignees, labels and the milestone, with the reader's edits in flight (components/PrPeopleEditor.tsx).
+  const people = usePrPeople(m, status);
+  const { view } = people;
+  const [editing, setEditing] = useState<PrPeopleField | null>(null);
+  // A palette command asks the field's editor to open; the editor applies the same checks as its button.
+  const [openRequest, setOpenRequest] = useState<{ field: PrPeopleField; n: number }>();
+  const editor = (field: PrPeopleField, reviewed?: { login: string; verdict: string; typename?: string }[]) => (
+    <PrPeopleEditor
+      field={field}
+      member={m}
+      people={people}
+      reviewed={reviewed}
+      open={editing === field}
+      editing={editing}
+      openRequest={openRequest}
+      onOpenChange={(open) => setEditing((current) => (open ? field : current === field ? null : current))}
+    />
+  );
+  // The discussion's copy of the review requests, with the same edits applied.
+  const requestedInDiscussion = people.pending.reduce(
+    (list, edit) => (edit.field === 'reviewers' ? editList(list, edit.add, edit.remove) : list),
+    snapshot?.feedback?.requestedReviewers ?? []
+  );
+  const shown = snapshot?.feedback ? { feedback: { ...snapshot.feedback, requestedReviewers: requestedInDiscussion } } : snapshot;
+  // Who reviewed, with GitHub's account type, so a bot is never offered a review request.
+  const typenames = new Map((snapshot?.feedback?.reviews ?? []).flatMap((review) => (review.author ? [[review.author.login.toLowerCase(), review.author.__typename]] : [])));
+  const reviewers = reviewerVerdicts(shown, view.requestedReviewers).map((reviewer) => ({ ...reviewer, typename: typenames.get(reviewer.login.toLowerCase()) }));
+  const requested = new Set([...view.requestedReviewers, ...requestedInDiscussion].map((login) => login.toLowerCase()));
+  const canEdit = !!people.access?.canEdit;
+  const command = (field: PrPeopleField, label: string, icon: LucideIcon, keywords: string) => ({
+    id: `pr-people:${field}`,
+    icon,
+    label,
+    keywords,
+    group: `PR #${m.number}`,
+    // The picker takes focus: it opens once the palette has closed and handed focus back.
+    afterClose: true,
+    perform: () => setOpenRequest((previous) => ({ field, n: (previous?.n ?? 0) + 1 })),
+  });
+  // Only the fields this account can change on this PR: no "Request reviewers…" on a closed PR.
+  const editable = (field: PrPeopleField) => !!people.access && !fieldBlockedReason(people.access, field);
+  useCommandScope(
+    'pr-people',
+    [
+      editable('reviewers') && command('reviewers', 'Request reviewers…', Users, 'reviewer review request re-request team people'),
+      editable('assignees') && command('assignees', 'Edit assignees…', UserRound, 'assignee assign people'),
+      editable('labels') && command('labels', 'Edit labels…', Tag, 'label tag'),
+      editable('milestone') && command('milestone', 'Set milestone…', Milestone, 'milestone release'),
+    ].filter((entry) => !!entry)
+  );
   return (
     <aside className="conversation-sidebar pr-metadata" aria-label={`Details for PR #${m.number}`}>
       {context}
-      <section>
-        <h2>Reviewers</h2>
-        {reviewers.length || meta.requestedTeams.length ? (
+      <section className="pr-people-section" data-field="reviewers">
+        <div className="pr-people-heading">
+          <h2>Reviewers</h2>
+          {editor('reviewers', reviewers)}
+        </div>
+        <PrPeopleAccessError people={people} />
+        {reviewers.length || view.requestedTeams.length ? (
           <ul className="conversation-reviewers">
-            {reviewers.map(({ login, verdict }) => {
-              const { icon: Icon, label, tone } = VERDICTS[verdict];
+            {reviewers.map(({ login, verdict, typename }) => {
+              // An earlier reviewer asked again: GitHub shows the request; the earlier verdict stays in the title.
+              const again = verdict !== 'PENDING' && requested.has(login.toLowerCase());
+              const { icon: Icon, label, tone } = again ? VERDICTS.PENDING : VERDICTS[verdict];
               return (
                 <li key={login}>
                   <GitHubAuthor login={login} />
-                  <span className="conversation-verdict" data-tone={tone}>
-                    <Icon size={13} aria-hidden="true" />
-                    {label}
+                  <span className="conversation-reviewer-state">
+                    <span
+                      className="conversation-verdict"
+                      data-tone={tone}
+                      title={again ? `${VERDICTS[verdict].label} earlier` : undefined}
+                    >
+                      <Icon size={13} aria-hidden="true" />
+                      {again ? 'Requested again' : label}
+                    </span>
+                    {verdict !== 'PENDING' && !again && (
+                      <ReRequestReview member={m} login={login} typename={typename} people={people} feedback={snapshot?.feedback} />
+                    )}
                   </span>
                 </li>
               );
             })}
-            {meta.requestedTeams.map((team) => (
+            {view.requestedTeams.map((team) => (
               <li key={team}>
-                <span>Team {team}</span>
+                <span className="pr-people-team" title={`Team ${team}`}>
+                  <Users size={13} aria-hidden="true" />
+                  <span>{team}</span>
+                  <span className="sr-only">(team)</span>
+                </span>
                 <span className="conversation-verdict" data-tone="review">
                   <Clock3 size={13} aria-hidden="true" />
                   Review requested
@@ -100,7 +172,57 @@ export function ConversationSidebar({
         ) : (
           <p className="conversation-empty-value">No reviewers yet</p>
         )}
+        <PrPeopleFailure url={m.url} field="reviewers" />
+        {reviewers.map(({ login }) => (
+          <ReRequestFailure key={login} url={m.url} login={login} />
+        ))}
       </section>
+      <section className="pr-people-section" data-field="assignees">
+        <div className="pr-people-heading">
+          <h2>Assignees</h2>
+          {editor('assignees')}
+        </div>
+        {view.assignees.length ? (
+          <span className="entity-badge-group">
+            {view.assignees.map((login) => (
+              <GitHubAuthor key={login} login={login} />
+            ))}
+          </span>
+        ) : (
+          <p className="conversation-empty-value">Unassigned</p>
+        )}
+        <PrPeopleFailure url={m.url} field="assignees" />
+      </section>
+      <section className="pr-people-section" data-field="labels">
+        <div className="pr-people-heading">
+          <h2>Labels</h2>
+          {editor('labels')}
+        </div>
+        {view.labels.length ? (
+          <PrLabels members={[{ labels: view.labels, labelDetails: view.labelDetails, repo: m.repo, number: m.number }]} />
+        ) : (
+          <p className="conversation-empty-value">None</p>
+        )}
+        <PrPeopleFailure url={m.url} field="labels" />
+      </section>
+      {(view.milestone || canEdit) && (
+        <section className="pr-people-section" data-field="milestone">
+          <div className="pr-people-heading">
+            <h2>Milestone</h2>
+            {editor('milestone')}
+          </div>
+          {view.milestone ? (
+            <p className="pr-people-milestone">
+              <Milestone size={13} aria-hidden="true" />
+              <span>{view.milestone.title}</span>
+              {view.milestone.dueOn && <span className="pr-people-due">Due {formatDueOn(view.milestone.dueOn)}</span>}
+            </p>
+          ) : (
+            <p className="conversation-empty-value">No milestone</p>
+          )}
+          <PrPeopleFailure url={m.url} field="milestone" />
+        </section>
+      )}
       <section>
         <h2>Checks</h2>
         {evidence ?? <p>{checks ? checkSummary(checks.checks) : 'Checks not loaded'}</p>}
@@ -117,20 +239,6 @@ export function ConversationSidebar({
             <BranchBadge branch={m.headBranch} repo={m.headRepo} />
             <span aria-label="into">→</span>
             <BranchBadge branch={m.baseBranch} repo={m.baseRepo} />
-          </dd>
-          <dt>Labels</dt>
-          <dd>{m.labels.length ? <PrLabels members={[m]} /> : 'None'}</dd>
-          <dt>Assignees</dt>
-          <dd>
-            {m.assignees?.length ? (
-              <span className="entity-badge-group">
-                {m.assignees.map((login) => (
-                  <GitHubAuthor key={login} login={login} />
-                ))}
-              </span>
-            ) : (
-              'Unassigned'
-            )}
           </dd>
           <dt>Commits</dt>
           <dd>{meta.commitCount}</dd>

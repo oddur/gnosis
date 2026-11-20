@@ -1,0 +1,19 @@
+{
+  "description": "Main ported the bad-environ test to the new ctx API and removed the IDNA host test, while stable deleted all three host tests at the end of the file; the human took stable's deletion and dropped the whole conflicted block.",
+  "language": "python",
+  "category": "real",
+  "source": {
+    "repo": "pallets/flask",
+    "license": "BSD-3-Clause",
+    "merge": "258d68b6ff5e2244386540f48b48bab90d6ab827",
+    "ours": "e4e4bf6543ac1f132afddb1ffd0bf02bea4c93f7",
+    "theirs": "a31e6b73469cb2bf7eb8f70b5ff21f710fd2e23c",
+    "base": "b21425d6df207fec0c47e9563faa10a2819984ca",
+    "url": "https://github.com/pallets/flask/commit/258d68b6ff5e2244386540f48b48bab90d6ab827",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch 'stable'"
+  },
+  "expected": {
+    "tests/test_reqctx.py": "any"
+  }
+}

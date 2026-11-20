@@ -1,0 +1,8 @@
+{
+  "description": "Both sides change runs-on of the same job differently.",
+  "language": "yaml",
+  "category": "semantic/same-constant",
+  "expected": {
+    ".github/workflows/ci.yml": "any-but-merged"
+  }
+}

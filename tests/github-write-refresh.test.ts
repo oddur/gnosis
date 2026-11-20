@@ -277,7 +277,7 @@ void test('links into a PR on GitHub name that PR', () => {
 void test('every GitHub write in the app is in the inventory', () => {
   const root = path.resolve(import.meta.dirname, '..');
   const pattern =
-    /\bmutation(?=\s*[($A-Z{])|'(?:POST|PUT|PATCH|DELETE) \/repos|\.(?:pulls|issues|reactions|actions|repos|git)\.(?:create|update|delete|remove|add|merge|requestReviewers|reRun|cancel|dismiss|submit)\w*\(|^\s+'push',$/gm;
+    /\bmutation(?=\s*[($A-Z{])|'(?:POST|PUT|PATCH|DELETE) \/repos|\.(?:pulls|issues|reactions|actions|repos|git)\.(?:create|update|delete|remove|add|set|merge|requestReviewers|reRun|cancel|dismiss|submit)\w*\(|^\s+'push',$/gm;
   const found = new Set<string>();
   for (const dir of ['src', 'lib']) {
     for (const file of fs.readdirSync(path.join(root, dir))) {
@@ -296,6 +296,14 @@ void test('every GitHub write in the app is in the inventory', () => {
     'src/pr-actions-service.ts: mutation',
     'src/pr-checks-service.ts: .actions.reRunWorkflow(',
     'src/pr-checks-service.ts: .actions.reRunWorkflowFailedJobs(',
+    // Reviewers, assignees, labels and the milestone, from the Summary details column.
+    'src/pr-metadata-write-service.ts: .issues.addAssignees(',
+    'src/pr-metadata-write-service.ts: .issues.addLabels(',
+    'src/pr-metadata-write-service.ts: .issues.removeAssignees(',
+    'src/pr-metadata-write-service.ts: .issues.removeLabel(',
+    'src/pr-metadata-write-service.ts: .issues.update(',
+    'src/pr-metadata-write-service.ts: .pulls.removeRequestedReviewers(',
+    'src/pr-metadata-write-service.ts: .pulls.requestReviewers(',
     'src/review-thread-service.ts: .issues.createComment(',
     'src/review-thread-service.ts: .pulls.requestReviewers(',
     'src/review-thread-service.ts: mutation',
@@ -310,6 +318,7 @@ void test('every GitHub write in the app is in the inventory', () => {
   assert.match(main, /githubWrites\.after\(write\(result\)/, 'PR actions refresh through githubWrites');
   assert.match(main, /githubWrites\.after\('push'/, 'conflict pushes refresh through githubWrites');
   assert.match(main, /githubWrites\.after\('stack-merged'/, 'a completed stack merge refreshes through githubWrites');
+  assert.match(main, /createPrMetadataWriteService\(\{[^\n]*refresh: gitHubWrite/, 'people and label edits refresh through gitHubWrite');
 });
 
 /** A refresher whose every metadata probe is REST (GraphQL cannot answer the PR exactly), run to the end. */
