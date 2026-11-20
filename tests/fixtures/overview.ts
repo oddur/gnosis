@@ -353,6 +353,21 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
     },
   });
 
+  // `?overview&overview-stars=day|many`: starred work for the Starred section's suite (tests/overview-starred-browser.ts).
+  // `day` stars a review request, an approved merge, a PR waiting on lena, one PR of the failing stack (so the stack
+  // is starred), someone else's quiet PR, your draft and a merged PR. `many` stars thirteen, past the section's cap.
+  const starScenario = params.get('overview-stars');
+  if (starScenario) {
+    const quiet = add(pr({ number: 351, repo: 'acme/web', title: 'Sketch the new onboarding checklist', author: 'maya', created: 3 * DAY, updated: 2 * HOUR }), { checks: 'success' });
+    const draft = add({ ...pr({ number: 352, repo: 'klang/cli', title: 'Try a streaming config parser', created: 2 * DAY, updated: 6 * HOUR }), isDraft: true }, { checks: 'success' });
+    const merged: ReviewMember = { ...pr({ number: 350, repo: 'klang/engine', title: 'Pin the toolchain for release builds', created: 5 * DAY, updated: 20 * HOUR }), merged: true, state: 'closed' };
+    items.push(single(quiet), single(draft), single(merged));
+    const starred = starScenario === 'many'
+      ? [...reviews, merge1, merge2, waiting1, quiet, merged, fixChild]
+      : [reviews[1], merge1, waiting1, fixChild, quiet, draft, merged];
+    void (mocks.workbenchStarPrs as (request: { members: ReviewMember[]; starred: boolean }) => Promise<unknown>)({ members: starred, starred: true });
+  }
+
   Object.assign(window, {
     fixtureOverview: {
       writes,

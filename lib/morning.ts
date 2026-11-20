@@ -12,6 +12,11 @@
  *
  * Needs a decision is drawn last on the page, but it claims its PRs before the Waiting sections do.
  *
+ * **Starred** (`lib/overview-starred.ts`) is first on the page and claims its PRs before all of them: a starred PR is
+ * listed there and in no other section, and the sections below leave it out of their rows and headings. The briefing
+ * and the tab count still count it, and an empty section below that Starred took work from says "else"
+ * (`MorningPage.starredHolds`).
+ *
  * **Each PR once.** Sections list each PR once on the whole page, and a PR goes to the first section that wants it:
  * Next up, then Needs a decision, then Waiting on you, then Waiting on others. A PR in Next up is removed from the
  * section below it, so nothing appears twice on screen. Within Waiting on others: stacks, then reviewers, teams, CI,
@@ -81,6 +86,7 @@ import { prTarget, type DeepLinkTarget } from './deep-link';
 import { repoName, waitingLabel, type OverviewModel, type OverviewRow, type OverviewSinceSource } from './overview';
 import { prCommentTotal, type QueueSignals } from './queue-signals';
 import type { ReviewMember, ReviewSubject } from './workbench';
+import type { StarredSection } from './overview-starred';
 
 const DAY_MS = 86_400_000;
 /** Next up lists at most this many. */
@@ -227,6 +233,11 @@ export interface MorningInput {
   replies?: Readonly<Record<string, { author: string; text: string }>>;
   /** PRs to leave off the page, such as ones closing on GitHub. */
   hidden?: ReadonlySet<string>;
+  /**
+   * The Starred section (`lib/overview-starred.ts`). It is first on the page and claims its PRs before every other
+   * section, so no other section lists them.
+   */
+  starred?: Pick<StarredSection, 'entries' | 'urls' | 'merges'>;
 }
 
 /** The PR's status, when it is for its current revision. */
@@ -341,11 +352,13 @@ const nextOrder = (stale: ReadonlySet<string>) => {
 export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): NextUp {
   const { model } = input;
   const hidden = input.hidden ?? new Set<string>();
+  // Starred lists its PRs first; Next up leaves them out.
+  const starred = new Set(input.starred?.urls ?? []);
   const candidates: NextItem[] = [];
   const add = (value: Omit<NextItem, 'id' | 'check' | 'since' | 'source' | 'comments'>) => {
     // A row for one PR of a stack names that PR, not the stack.
     const item = value.kind !== 'merge' && value.row.entries.length === 1 ? { ...value, title: value.member.title } : value;
-    if (item.urls.some((url) => hidden.has(url))) return;
+    if (item.urls.some((url) => hidden.has(url) || starred.has(url))) return;
     const members = item.urls.map((url) => item.row.item.subject.members.find((member) => member.url === url)).filter((member): member is ReviewMember => !!member);
     // One PR waits since its own entry in the lane; a row for several since the oldest of them.
     const waited = sinceOf(item.row, members.length === 1 ? members[0] : undefined);
@@ -450,8 +463,8 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
   const ready = readyMerges(model, input.signals, hidden);
   return {
     items,
-    unreviewed: ready.unreviewed.filter((url) => !listed.has(url)),
-    moreApproved: [...ready.approved, ...ready.other].filter((url) => !listed.has(url)),
+    unreviewed: ready.unreviewed.filter((url) => !listed.has(url) && !starred.has(url)),
+    moreApproved: [...ready.approved, ...ready.other].filter((url) => !listed.has(url) && !starred.has(url)),
   };
 }
 /** The quiet line under Next up: the ready merges no row lists. "10 ready to merge without review", "3 more approved and ready to merge". */
@@ -468,8 +481,8 @@ export function nextMoreLine(next: Pick<NextUp, 'unreviewed' | 'moreApproved'>):
 export const nextCount = (items: readonly unknown[]) => items.length;
 
 /** Where a PR is listed on the page. */
-export type Place = 'next' | 'decide' | 'you' | 'others' | 'hidden';
-export const PLACE_LABEL: Readonly<Record<Exclude<Place, 'hidden' | 'others'>, string>> = { next: 'Next up', decide: 'Needs a decision', you: 'Waiting on you' };
+export type Place = 'starred' | 'next' | 'decide' | 'you' | 'others' | 'hidden';
+export const PLACE_LABEL: Readonly<Record<Exclude<Place, 'hidden' | 'others'>, string>> = { starred: 'Starred', next: 'Next up', decide: 'Needs a decision', you: 'Waiting on you' };
 /**
  * Where a PR stands in its stack's chain. The first is "Next". Every PR after it is "Waiting" (on the PR below it),
  * whatever its own checks or review say: its check state shows beside it. "Conflicts" is the one exception, because
@@ -917,9 +930,9 @@ export function needsDecision(input: Pick<MorningInput, 'model' | 'now' | 'signa
   return items.sort((a, b) => a.since - b.since || a.row.title.localeCompare(b.row.title));
 }
 
-/** The tab count: PRs in Next up and Waiting on you, each once. */
-export function morningCount(next: readonly Pick<NextItem, 'urls'>[], you: readonly Pick<PersonGroup, 'urls'>[]): number {
-  return new Set([...next.flatMap((item) => item.urls), ...you.flatMap((group) => group.urls)]).size;
+/** The tab count: PRs in Next up and Waiting on you, and starred PRs that need you or can merge, each once. */
+export function morningCount(next: readonly Pick<NextItem, 'urls'>[], you: readonly Pick<PersonGroup, 'urls'>[], starred: readonly string[] = []): number {
+  return new Set([...next.flatMap((item) => item.urls), ...you.flatMap((group) => group.urls), ...starred]).size;
 }
 
 export interface MorningPage {
@@ -933,12 +946,19 @@ export interface MorningPage {
   count: number;
   /** The sentence under the title, counted from these sections (`morningBriefing`). */
   briefing: Briefing;
+  /**
+   * Starred holds PRs that would otherwise be in these sections, so their empty states say "else": "Nothing else needs
+   * you right now." Waiting on you names them in its note instead (`YouElsewhere.starred`).
+   */
+  starredHolds: { next: boolean; others: boolean; decide: boolean };
 }
 export interface YouElsewhere {
   /** Next up's rows that hold PRs waiting on you: "#377", "#37286’s stack (6 PRs)". */
   next: { label: string; urls: string[] }[];
   /** PRs waiting on you that Needs a decision lists. */
   decide: string[];
+  /** PRs waiting on you that Starred lists. */
+  starred?: string[];
 }
 
 /** A link in a sentence: it scrolls to and focuses the rows of `place` that list `urls`. */
@@ -957,14 +977,16 @@ export function waitingOnYouNote(listed: number, elsewhere: YouElsewhere): { par
   const parts: (string | PageLink)[] = [];
   const names = elsewhere.next.map((entry) => entry.label);
   const decide = elsewhere.decide.length;
-  if (!names.length && !decide) {
+  const starred = elsewhere.starred ?? [];
+  if (!names.length && !decide && !starred.length) {
     const text = listed ? '' : 'Nobody is waiting on you.';
     return { parts: text ? [text] : [], text };
   }
+  if (starred.length) parts.push('Shown in Starred: ', { text: prs(starred.length), urls: starred, place: 'starred' }, '.');
   if (names.length) {
+    if (parts.length) parts.push(' ');
     const shown = names.length > 3 ? [...names.slice(0, 2), `${names.length - 2} more`] : names;
     const list = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0];
-    const many = names.length > 1 || elsewhere.next[0].urls.length > 1;
     parts.push('Shown in Next up: ', { text: list, urls: elsewhere.next.flatMap((entry) => entry.urls), place: 'next' }, '.');
   }
   if (decide) {
@@ -1011,7 +1033,7 @@ export interface Briefing {
  * - Decisions: "7 PRs need a decision."
  * - With none of these: "Nothing needs you right now.", and how many of your PRs wait on others.
  */
-export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, page: Pick<MorningPage, 'next' | 'decide' | 'others'>): Briefing {
+export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden' | 'starred'>, page: Pick<MorningPage, 'next' | 'decide' | 'others'>): Briefing {
   const hidden = input.hidden ?? new Set<string>();
   const decided = new Set(page.decide.map((item) => item.member.url));
   const open = (rows: readonly OverviewRow[]) =>
@@ -1075,9 +1097,11 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, p
   // Your PRs: merges, then fixes by their first reason.
   const own: Clause[] = [];
   const listed = page.next.items.filter((item) => item.kind === 'merge');
-  const approved = count('approved', [...listed.flatMap((item) => item.urls), ...page.next.moreApproved], (n) => plural(n, 'approved PR', 'approved PRs'), page.next.moreApproved.length ? { line: true } : {});
+  // Starred merges are on the page too, in Starred: the briefing counts them with the rest.
+  const starredMerges = input.starred?.merges ?? { approved: [], unreviewed: [] };
+  const approved = count('approved', [...listed.flatMap((item) => item.urls), ...page.next.moreApproved, ...starredMerges.approved], (n) => plural(n, 'approved PR', 'approved PRs'), page.next.moreApproved.length ? { line: true } : {});
   if (approved) own.push([approved, ' can merge']);
-  const unreviewed = count('unreviewed', page.next.unreviewed, (n) => (approved ? `${n} more` : prs(n)), { line: true });
+  const unreviewed = count('unreviewed', [...page.next.unreviewed, ...starredMerges.unreviewed], (n) => (approved ? `${n} more` : prs(n)), page.next.unreviewed.length ? { line: true } : {});
   if (unreviewed) own.push([unreviewed, ' can merge without review']);
   const fixes = (lanes(input.model, 'fix')?.rows ?? []).flatMap((row) => row.entries).filter((entry) => !hidden.has(entry.member.url) && !decided.has(entry.member.url));
   const fixWords: [FixReason, BriefingKey, string, string][] = [
@@ -1109,6 +1133,8 @@ export function morningPage(input: MorningInput): MorningPage {
   const all = needsDecision(input);
   const next = nextUp({ ...input, stale: new Set(all.map((item) => item.member.url)) });
   const claimed = new Map<string, Place>([...hidden].map((url) => [url, 'hidden' as const]));
+  // Starred is first on the page: it claims its PRs before every other section.
+  for (const url of input.starred?.urls ?? []) if (!claimed.has(url)) claimed.set(url, 'starred');
   for (const item of next.items) for (const url of item.urls) claimed.set(url, 'next');
   const decide = all.filter((item) => !claimed.has(item.member.url));
   for (const item of decide) claimed.set(item.member.url, 'decide');
@@ -1123,9 +1149,17 @@ export function morningPage(input: MorningInput): MorningPage {
       .filter(({ urls }) => urls.length)
       .map(({ item, urls }) => ({ label: nextItemName(item), urls })),
     decide: decide.map((item) => item.member.url).filter((url) => yours.has(url)),
+    starred: (input.starred?.urls ?? []).filter((url) => yours.has(url)),
   };
-  const count = morningCount(next.items, waiting);
-  return { next, decide, you, others, youElsewhere, count, briefing: morningBriefing(input, { next, decide, others }) };
+  const lines = (input.starred?.entries ?? []).flatMap((entry) => entry.lines);
+  const actionable = lines.filter((line) => line.tier === 'you' || line.tier === 'merge').map((line) => line.member.url);
+  const starredHolds = {
+    next: actionable.length > 0,
+    others: lines.some((line) => line.tier === 'others' || (line.tier === 'you' && line.row?.lane === 'fix')),
+    decide: all.some((item) => claimed.get(item.member.url) === 'starred'),
+  };
+  const count = morningCount(next.items, waiting, actionable);
+  return { next, decide, you, others, youElsewhere, count, briefing: morningBriefing(input, { next, decide, others }), starredHolds };
 }
 
 // ── Writes: Nudge and Close PR ──

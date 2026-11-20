@@ -2150,6 +2150,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
                 onRefresh={() => void refresh(true)}
                 onShowLane={showLane}
                 onMarkRead={urls => void changeRead(urls, true)}
+                onStarChange={(members, value) => void changeStars(members, value)}
                 onOpenItem={item => { setSelected(item.subject.id); setOpenedItem(item); }}
                 onRepositories={() => openSettings('repositories')}
                 onConnect={() => setAuthOpen(true)}
