@@ -189,8 +189,18 @@ void app.whenReady().then(async () => {
     await wait(`!!document.querySelector('${P} [data-overview-stack="${stackId}"] .morning-chain')`);
 
     step = 'unstar';
-    // Unstar a PR with the queue's star toggle: the row leaves, and the PR goes back to its section.
+    // Unstar a PR with the queue's star toggle: the row leaves, and the PR goes back to its section. While the change
+    // is saved, the toggle waits on every row rather than dropping a second change.
+    await js(`(()=>{const api=window.electronAPI;const save=api.workbenchStarPrs;window.__releaseStar=null;api.workbenchStarPrs=(request)=>new Promise(r=>{window.__releaseStar=()=>{api.workbenchStarPrs=save;r(save(request))}})})()`);
     const items = await menu(`${P} [data-overview-row="starred|${url('klang/cli', 341)}"]`, 'Unstar PR #341');
+    await wait('!!window.__releaseStar');
+    await js(`document.querySelector('${P} [data-overview-row="starred|${url('klang/engine', 301)}"]').focus()`);
+    await key('F10', 8);
+    await wait("!!document.querySelector('[role=menuitem]')");
+    assert.equal(await js(`(()=>{const i=[...document.querySelectorAll('[role=menuitem]')].find(b=>b.textContent==='Unstar PR #301');return !!i&&(i.hasAttribute('data-disabled')||i.getAttribute('aria-disabled')==='true')})()`), true, 'the star toggle waits while a change is saved');
+    await key('Escape');
+    await wait("!document.querySelector('[role=menuitem]')");
+    await js('window.__releaseStar()');
     assert.deepEqual(items, ['Open', 'Snooze PR…', 'Mark as read', 'Unstar PR #341', 'Copy link', 'Copy repository', 'Copy PR number', 'Open on GitHub']);
     await wait(`!document.querySelector('${P} [data-overview-row="starred|${url('klang/cli', 341)}"]')`);
     assert.equal(await count('starred'), '6');
@@ -200,9 +210,13 @@ void app.whenReady().then(async () => {
     const done = await menu(`${P} [data-overview-row="starred|${url('klang/engine', 350)}"]`, 'Unstar PR #350');
     assert.ok(!done.includes('Snooze PR…'), 'a merged PR cannot be snoozed');
     await wait(`!document.querySelector('${P} [data-overview-row="starred|${url('klang/engine', 350)}"]')`);
-    // Unstar the stack from its header: every PR of it is unstarred, and the stack goes back to Waiting on others.
+    // The stack's header offers Unstar for the whole stack. With its starred PR (#332) snoozed, the stack is one line
+    // for #331, which nobody starred: its menu still unstars the stack, hidden PR included.
+    assert.ok((await menuItems(`${P} [data-overview-row="${stackId}"]`)).includes('Unstar PRs in this stack'));
+    await js(`window.electronAPI.workbenchSnoozePrs({ action: 'snooze', groups: [[${JSON.stringify(url('klang/engine', 332))}]], until: Date.now() + 86400000, on: [] }).then(()=>window.dispatchEvent(new Event('fixture-workbench-change')))`);
+    await wait(`!document.querySelector('${P} [data-overview-stack="${stackId}"]') && !!document.querySelector('${P} [data-overview-row="${stackId}"]')`);
     await menu(`${P} [data-overview-row="${stackId}"]`, 'Unstar PRs in this stack');
-    await wait(`!document.querySelector('${P} [data-overview-stack="${stackId}"]')`);
+    await wait(`!document.querySelector('${P} [data-overview-row="${stackId}"]')`);
     assert.equal(await count('starred'), '4');
     await noneTwice();
     // Star from another section: the PR moves up into Starred.

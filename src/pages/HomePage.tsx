@@ -2151,6 +2151,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
                 onShowLane={showLane}
                 onMarkRead={urls => void changeRead(urls, true)}
                 onStarChange={(members, value) => void changeStars(members, value)}
+                starBusy={starBusy}
                 onOpenItem={item => { setSelected(item.subject.id); setOpenedItem(item); }}
                 onRepositories={() => openSettings('repositories')}
                 onConnect={() => setAuthOpen(true)}
