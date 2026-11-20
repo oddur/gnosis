@@ -8,10 +8,11 @@
 //   GNOSIS_DOCKER_IMAGE=gnosis-browser-tests-mine npm run test:browser:docker  # a worktree's own image
 //   CI=true npm run test:browser:docker -- --diff-gaps    # timing report-only, as on CI
 //
-// The Linux Mergiraf for the image is cached in ${XDG_CACHE_HOME:-~/.cache}/gnosis/mergiraf/linux-<arch>;
+// The Linux Mergiraf for the image is cached in ${XDG_CACHE_HOME:-~/.cache}/gnosis/mergiraf/<version>-linux-<arch>;
 // set GNOSIS_MERGIRAF_CACHE to use another directory instead of …/gnosis/mergiraf.
 import { spawnSync } from 'node:child_process';
 import console from 'node:console';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -59,10 +60,11 @@ const platform = ['--platform', `linux/${dockerArch}`];
 
 // Download the Linux Mergiraf on the host into a cache shared by all worktrees. It is fetched once per version and
 // architecture, and the build does not need codeberg.org after that.
+const mergirafVersion = JSON.parse(readFileSync(path.join(root, 'resources/mergiraf/manifest.json'), 'utf8')).version;
 const cache = path.join(
   process.env.GNOSIS_MERGIRAF_CACHE ||
     path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'gnosis/mergiraf'),
-  `linux-${dockerArch}`
+  `${mergirafVersion}-linux-${dockerArch}`
 );
 run(process.execPath, [path.join(root, 'scripts/prepare-mergiraf.mjs')], {
   ...process.env,

@@ -14,8 +14,9 @@ const platform = process.env.GNOSIS_TARGET_PLATFORM || process.platform;
 const arch = process.env.GNOSIS_TARGET_ARCH || process.arch;
 const asset = manifest.platforms[`${platform}-${arch}`];
 if (!asset) throw Error(`Mergiraf is not available for ${platform}-${arch}.`);
-// test-browser-docker.mjs prepares a Linux runtime in a shared cache directory for the image.
-const target = process.env.GNOSIS_MERGIRAF_DIR
+// test-browser-docker.mjs prepares a Linux runtime in a shared, per-version cache directory for the image.
+const cacheMode = Boolean(process.env.GNOSIS_MERGIRAF_DIR);
+const target = cacheMode
   ? path.resolve(process.env.GNOSIS_MERGIRAF_DIR)
   : path.join(root, 'resources/mergiraf/runtime');
 const executable = platform === 'win32' ? 'mergiraf.exe' : 'mergiraf';
@@ -25,9 +26,14 @@ const ready = async (dir) =>
   Boolean(await fs.stat(path.join(dir, executable)).catch(() => false));
 if (await ready(target)) process.exit(0);
 // Prepare in a temporary sibling and rename it into place, so concurrent runs never see a half-written runtime.
+// The default runtime's temporary copy sits outside resources/mergiraf, which Forge packages whole.
+const temporary = cacheMode ? `${target}.tmp-` : path.join(root, 'resources/.mergiraf-runtime.tmp-');
 await fs.mkdir(path.dirname(target), { recursive: true });
-const directory = await fs.mkdtemp(`${target}.tmp-`);
+const directory = await fs.mkdtemp(temporary);
 process.on('exit', () => rmSync(directory, { recursive: true, force: true }));
+// The exit handler above removes the temporary copy; exit with the usual signal codes.
+process.on('SIGINT', () => process.exit(130));
+process.on('SIGTERM', () => process.exit(143));
 const binary = path.join(directory, executable);
 async function fetchOnce(url, sha) {
   const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
@@ -84,11 +90,12 @@ await fs.copyFile(path.join(root, 'resources/mergiraf/COPYING'), path.join(direc
 await fs.copyFile(path.join(root, 'resources/mergiraf/NOTICE.md'), path.join(directory, 'NOTICE.md'));
 await fs.writeFile(path.join(directory, 'version'), stamp);
 await fs.chmod(directory, 0o755);
+// Never remove a valid copy: another run may be using it. If one is already in place, this copy is discarded on exit.
+// Cache folders are per version, so there the rename only fills an empty target. The default runtime is replaced
+// when its stamp is stale.
 try {
-  if (!(await ready(target))) {
-    await fs.rm(target, { recursive: true, force: true });
-    await fs.rename(directory, target);
-  }
+  if (!cacheMode && !(await ready(target))) await fs.rm(target, { recursive: true, force: true });
+  if (!(await ready(target))) await fs.rename(directory, target);
 } catch (error) {
   // Another run may have renamed its copy into place first; that copy is as good as this one.
   if (!(await ready(target))) throw error;

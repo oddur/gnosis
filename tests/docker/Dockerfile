@@ -1,3 +1,4 @@
+# Needs the Mergiraf runtime as a named build context (--build-context mergiraf=…); build it with npm run test:browser:docker.
 # Linux + Xvfb environment for the Electron browser checks, matching the
 # "Full browser suite (Linux)" CI step. Run it with `npm run test:browser:docker`.
 FROM node:24-bookworm
