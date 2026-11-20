@@ -6,6 +6,8 @@ import type {
   GitHubSyncUpdate,
   GitHubSyncFailure,
 } from '../lib/github-sync';
+/** Targets per read. Signals: one aliased query. Checks: bounded pages. Discussion: one preload. Metadata: parallel REST. */
+const SYNC_BATCH: Record<GitHubSyncKind, number> = { signals: 25, checks: 5, discussion: 5, metadata: 6 };
 const intervals: Record<GitHubSyncKind, number> = {
   metadata: 30_000,
   signals: 25_000,
@@ -35,6 +37,11 @@ interface Task {
 export const ROW_REFRESH_LIMIT = 15;
 /** A row refresh asked for before the row subscribed waits this long for its subscription. */
 const ROW_REFRESH_WAIT_MS = 10_000;
+/** A batched read where some targets failed alone; each failed target backs off as if it had been read by itself. */
+export interface GitHubSyncRead {
+  updates: GitHubSyncUpdate[];
+  failed: { url: string; error: unknown }[];
+}
 interface Deps {
   account: () => string | null;
   enabled: () => boolean;
@@ -46,7 +53,7 @@ interface Deps {
     requestedFollowUp: boolean,
     /** Rows the reader just switched to (`refreshRows`): foreground, automatic, and fresher than a visible row. */
     refresh?: boolean
-  ) => Promise<GitHubSyncUpdate[]>;
+  ) => Promise<GitHubSyncUpdate[] | GitHubSyncRead>;
   publish: (updates: GitHubSyncUpdate[]) => void;
   failed?: (failures: GitHubSyncFailure[]) => void;
   now?: () => number;
@@ -158,73 +165,41 @@ export function createGitHubSyncService(deps: Deps) {
           Number(!!b.boosted) - Number(!!a.boosted) ||
           a.due - b.due
       );
+    // Active rows (and follow-ups after a write) and routine visible rows read in separate lanes, so a background batch
+    // of five or six never holds up the PR the reader is looking at.
+    const laneOf = (task: (typeof due)[number]) => (followingUp(task) || task.priority === 'active' ? 'active' : 'visible');
     await Promise.all(
-      (Object.keys(intervals) as GitHubSyncKind[]).map(async (kind) => {
-        if (pendingKinds.has(kind)) return;
-        const candidates = due.filter((task) => task.kind === kind);
+      (Object.keys(intervals) as GitHubSyncKind[]).flatMap((kind) => (['active', 'visible'] as const).map(async (lane) => {
+        const pendingKey = `${kind}:${lane}`;
+        if (pendingKinds.has(pendingKey)) return;
+        const candidates = due.filter((task) => task.kind === kind && laneOf(task) === lane);
         if (!candidates.length) return;
         const followUp = followingUp(candidates[0]);
         const priority = followUp ? 'active' : candidates[0].priority;
         // Rows the reader just switched to are read together, apart from routine visible rows.
         const refresh = !followUp && priority === 'visible' && !!candidates[0].boosted;
-        // Batch light signals and bounded check pages; leave capacity for newly active PRs.
+        // Batch light signals and bounded check pages; leave capacity for newly active PRs. Discussions share one
+        // GraphQL preload of five PRs; metadata reads run as parallel conditional REST reads, which stay free on a 304.
         const batch = candidates
           .filter((task) => followingUp(task) === followUp && (followUp || task.priority === priority) && (!refresh || !!task.boosted))
-          .slice(0, kind === 'signals' ? 25 : kind === 'checks' ? 5 : 1);
+          .slice(0, SYNC_BATCH[kind]);
         const versions = batch.map((task) => task.version);
-        pendingKinds.add(kind);
+        pendingKinds.add(pendingKey);
         batch.forEach((task) => {
           task.pending = true;
           task.boosted = false;
           task.lastAttempt = now();
           if (followUp) task.followUpRemaining = (task.followUpRemaining ?? 1) - 1;
         });
-        try {
-          const updates = await deps.read(
-            kind,
-            batch.map((task) => task.target),
-            priority,
-            followUp,
-            refresh
-          );
-          if (generation !== epoch || deps.account() !== account) return;
-          const acceptStarted = performance.now();
-          const accepted: GitHubSyncUpdate[] = [];
+        // A task is settled once: failed with backoff, or accepted after its update was published. Failures of one batch
+        // go out in one broadcast.
+        type Task = (typeof batch)[number];
+        const failures: GitHubSyncFailure[] = [];
+        const settled = new Set<Task>();
+        const fail = (error: unknown, only?: (task: Task) => boolean) => {
           for (const [index, task] of batch.entries()) {
-            if (!task.observed || tasks.get(`${kind}:${task.target.url}`) !== task || task.version !== versions[index])
-              continue;
-            const update = updates.find((update) => update.url === task.target.url && update.kind === kind);
-            if (!update) {
-              task.due = now() + 60_000;
-              continue;
-            }
-            const next = signature(update);
-            const changed = next !== task.signature;
-            const busy =
-              update.kind === 'signals'
-                ? update.value.checks.state === 'pending'
-                : update.kind === 'checks' && update.value.checks.some((check) => check.status !== 'completed');
-            task.interval = changed || busy ? intervals[kind] : Math.min(intervals[kind] * 4, task.interval * 2);
-            const recovered = task.failures > 0 || !!task.blockedUntil;
-            task.blockedUntil = undefined;
-            task.signature = next;
-            task.failures = 0;
-            task.due =
-              now() +
-              Math.max(
-                followUp && followingUp(task) ? (kind === 'checks' ? 5_000 : intervals[kind]) : task.interval,
-                priority === 'visible' ? 120_000 : 0
-              );
-            // Discussion content may be unchanged, but its successful observation time is new.
-            if (changed || recovered || kind === 'signals' || kind === 'checks' || kind === 'discussion') accepted.push(update);
-          }
-          if (accepted.length) deps.publish(accepted);
-          noteWork(`github-sync accept ${kind}`, acceptStarted);
-        } catch (error) {
-          if (generation !== epoch || deps.account() !== account) return;
-          const failures: GitHubSyncFailure[] = [];
-          for (const [index, task] of batch.entries()) {
-            if (task.version !== versions[index]) continue;
+            if (settled.has(task) || task.version !== versions[index] || (only && !only(task))) continue;
+            settled.add(task);
             task.failures++;
             task.due = Math.max(
               deps.backoff(kind, !followUp)?.retryAt ?? 0,
@@ -237,14 +212,83 @@ export function createGitHubSyncService(deps: Deps) {
               retryAt: task.due,
             });
           }
-          deps.failed?.(failures);
+        };
+        try {
+          const read = await deps.read(
+            kind,
+            batch.map((task) => task.target),
+            priority,
+            followUp,
+            refresh
+          );
+          if (generation !== epoch || deps.account() !== account) return;
+          const updates = Array.isArray(read) ? read : read.updates;
+          const failed = Array.isArray(read) ? [] : read.failed;
+          for (const { url, error } of failed) fail(error, (task) => task.target.url === url);
+          const acceptStarted = performance.now();
+          // Each task's update is checked first; its state changes only once the batch's updates are published.
+          const ready: { task: Task; update: GitHubSyncUpdate; next: string; changed: boolean; busy: boolean }[] = [];
+          for (const [index, task] of batch.entries()) {
+            if (settled.has(task)) continue;
+            if (!task.observed || tasks.get(`${kind}:${task.target.url}`) !== task || task.version !== versions[index]) {
+              settled.add(task);
+              continue;
+            }
+            try {
+              const update = updates.find((update) => update.url === task.target.url && update.kind === kind);
+              if (!update) {
+                settled.add(task);
+                task.due = now() + 60_000;
+                continue;
+              }
+              const next = signature(update);
+              const busy =
+                update.kind === 'signals'
+                  ? update.value.checks.state === 'pending'
+                  : update.kind === 'checks' && update.value.checks.some((check) => check.status !== 'completed');
+              ready.push({ task, update, next, changed: next !== task.signature, busy });
+            } catch (error) {
+              fail(error, (candidate) => candidate === task);
+            }
+          }
+          // Discussion content may be unchanged, but its successful observation time is new.
+          const published = ready.filter(
+            ({ task, changed }) =>
+              changed || task.failures > 0 || !!task.blockedUntil || kind === 'signals' || kind === 'checks' || kind === 'discussion'
+          );
+          try {
+            if (published.length) deps.publish(published.map(({ update }) => update));
+          } catch (error) {
+            // Nothing was accepted: these tasks keep their old signatures, back off and publish on the next read.
+            const unpublished = new Set(ready.map(({ task }) => task));
+            fail(error, (task) => unpublished.has(task));
+            ready.length = 0;
+          }
+          for (const { task, next, changed, busy } of ready) {
+            settled.add(task);
+            task.interval = changed || busy ? intervals[kind] : Math.min(intervals[kind] * 4, task.interval * 2);
+            task.blockedUntil = undefined;
+            task.signature = next;
+            task.failures = 0;
+            task.due =
+              now() +
+              Math.max(
+                followUp && followingUp(task) ? (kind === 'checks' ? 5_000 : intervals[kind]) : task.interval,
+                priority === 'visible' ? 120_000 : 0
+              );
+          }
+          noteWork(`github-sync accept ${kind}`, acceptStarted);
+        } catch (error) {
+          if (generation !== epoch || deps.account() !== account) return;
+          fail(error);
         } finally {
+          if (failures.length && generation === epoch && deps.account() === account) deps.failed?.(failures);
           batch.forEach((task) => {
             task.pending = false;
           });
-          if (generation === epoch) pendingKinds.delete(kind);
+          if (generation === epoch) pendingKinds.delete(pendingKey);
         }
-      })
+      }))
     );
   }
   return {

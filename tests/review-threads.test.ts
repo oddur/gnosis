@@ -63,8 +63,13 @@ const pr = (threads: unknown) => ({
 
 void test('threads and replies paginate fully, coalesce file reads, cache briefly, and isolate accounts', async () => {
   const h = harness((query, vars) => {
+    // Long threads read their next reply page together, one alias per thread.
     if (query.includes('ThreadReplies'))
-      return response({ data: { node: { comments: page([{ ...comment, id: 'C2', databaseId: 102 }]) } } });
+      return response({
+        data: Object.fromEntries(
+          [...query.matchAll(/(t\d+): node\(/g)].map(([, alias]) => [alias, { comments: page([{ ...comment, id: 'C2', databaseId: 102 }]) }])
+        ),
+      });
     return response(
       pr(
         vars.cursor
@@ -542,4 +547,109 @@ void test('a write through Gnosis keeps the queue’s last discussion, marked st
   assert.equal(kept?.threads.length, 1, 'The count does not drop to 0 after a write');
   assert.equal(kept.stale, true);
   assert.equal(service.stale(client, review.prUrl), undefined, 'Discussion views read GitHub again');
+});
+
+void test('long threads read their remaining replies in one aliased query', async () => {
+  const replies: string[] = [];
+  const h = harness((query) => {
+    if (query.includes('ThreadReplies')) {
+      const aliases = [...query.matchAll(/(t\d+): node\(id:"([^"]+)"\)/g)];
+      replies.push(aliases.map(([, , id]) => id).join(','));
+      return response({
+        data: Object.fromEntries(
+          aliases.map(([, alias, id]) => [alias, { comments: page([{ ...comment, id: `${id}-reply`, databaseId: 200 }]) }])
+        ),
+      });
+    }
+    return response(
+      pr(page(['T1', 'T2', 'T3', 'T4'].map((id, i) => ({ ...thread, id, comments: page([comment], i < 3 ? 'more' : null) }))))
+    );
+  });
+  const service = createReviewThreadService(() => 0);
+  const result = await service.list(h.pool.client('one'), review.prUrl);
+  assert.equal(h.calls.length, 2, 'one discussion query, one query for every long thread; before, one per thread');
+  assert.deepEqual(replies, ['T1,T2,T3']);
+  assert.deepEqual(
+    result.threads.map((t) => t.comments.map((c) => c.id)),
+    [['C1', 'T1-reply'], ['C1', 'T2-reply'], ['C1', 'T3-reply'], ['C1']]
+  );
+});
+
+void test('listMany preloads stale discussions five at a time and reads alone only what a preload could not save', async () => {
+  const service = createReviewThreadService(() => 0);
+  const urls = Array.from({ length: 7 }, (_, i) => `https://github.com/o/r/pull/${i + 1}`);
+  const groups: string[][] = [];
+  const lists: [string, boolean][] = [];
+  Object.assign(service, {
+    fresh: (_client: unknown, url: string) => url.endsWith('/7'),
+    preload: (_client: unknown, group: string[]) => {
+      groups.push(group);
+      return Promise.resolve({ saved: group.filter((url) => !url.endsWith('/2')), incomplete: [] });
+    },
+    list: (_client: unknown, url: string, refresh = false) => {
+      lists.push([url, refresh]);
+      return url.endsWith('/3') ? Promise.reject(new Error('Gone')) : Promise.resolve({ headSha: 'h', baseSha: 'b', threads: [], checkedAt: 0 });
+    },
+  });
+  const client = {} as Parameters<typeof service.listMany>[0];
+  const routine = await service.listMany(client, urls);
+  assert.deepEqual(groups, [urls.slice(0, 5)], 'the fresh PR is not preloaded; a group of one is left to list');
+  assert.deepEqual(routine.map((r) => r.status), ['fulfilled', 'fulfilled', 'rejected', 'fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
+  groups.length = 0;
+  lists.length = 0;
+  await service.listMany(client, urls, true);
+  assert.deepEqual(groups, [urls.slice(0, 5), urls.slice(5)], 'a forced read preloads every PR, fresh or not');
+  assert.deepEqual(
+    lists.filter(([, refresh]) => refresh).map(([url]) => url.split('/').pop()),
+    ['2'],
+    'only the PR a preload could not save reads by itself'
+  );
+});
+
+void test('a rate limit on one preload group fails only that group; the others still answer', async () => {
+  const service = createReviewThreadService(() => 0);
+  const urls = Array.from({ length: 10 }, (_, i) => `https://github.com/o/r/pull/${i + 1}`);
+  const limit = Object.assign(new Error('API rate limit exceeded'), {
+    status: 403,
+    response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 60) } },
+  });
+  const listed: string[] = [];
+  Object.assign(service, {
+    preload: (_client: unknown, group: string[]) =>
+      group.includes(urls[5]) ? Promise.reject(limit) : Promise.resolve({ saved: group, incomplete: [] }),
+    list: (_client: unknown, url: string) => {
+      listed.push(url);
+      return Promise.resolve({ headSha: 'h', baseSha: 'b', threads: [], checkedAt: 0 });
+    },
+  });
+  const settled = await service.listMany({} as Parameters<typeof service.listMany>[0], urls, true);
+  assert.deepEqual(settled.map((r) => r.status), [...Array<string>(5).fill('fulfilled'), ...Array<string>(5).fill('rejected')]);
+  assert.deepEqual(listed, urls.slice(0, 5), 'the limited group is not read one PR at a time either');
+});
+
+void test('a preload rate limit does not fail a PR whose read was already in flight; it joins that read', async () => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  // GitHub answers the discussion read only once the test lets it.
+  const pool = createGitHubClientPool({
+    fetch: (async () => {
+      await held;
+      return response(pr(page([{ ...thread, comments: page([comment]) }])));
+    }) as unknown as typeof fetch,
+  });
+  const client = pool.client('in-flight');
+  const service = createReviewThreadService(() => 0);
+  const [a, b] = ['https://github.com/o/r/pull/1', 'https://github.com/o/r/pull/2'];
+  const inFlight = service.list(client, a, true);
+  const limit = Object.assign(new Error('API rate limit exceeded'), {
+    status: 403,
+    response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 60) } },
+  });
+  Object.assign(service, { preload: () => Promise.reject(limit) });
+  const settled = service.listMany(client, [a, b], true);
+  release();
+  const [first, second] = await settled;
+  assert.equal(first.status, 'fulfilled', 'the in-flight read answers it');
+  assert.equal(second.status, 'rejected');
+  await inFlight;
 });

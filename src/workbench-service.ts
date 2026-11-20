@@ -65,6 +65,8 @@ import {
   type GitHubBackoffError,
 } from '../lib/github-client';
 import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
+import { getPrMetadataBatch, PR_METADATA_PER_QUERY } from '../lib/pr-metadata-graphql';
+import { mapBounded, settleInOrder } from '../lib/bounded';
 import { createDiscoveryListings, nextDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
 import { parseModelJson } from '../lib/json-repair';
@@ -722,6 +724,26 @@ export function createWorkbenchService(deps: Deps) {
     const { owner, repo, pullNumber } = parsePrUrl(url);
     return memberFrom(url, await getPrMetadata(octokit, owner, repo, pullNumber), role);
   }
+  /**
+   * `fetchMember` for many PRs, through aliased GraphQL queries (25 PRs each) with REST for anything they cannot answer
+   * exactly. Keyed by the requested URL, as `fetchMember` is.
+   */
+  async function fetchMembers(
+    octokit: Octokit,
+    requests: readonly { url: string; role?: ReviewMember['role'] }[]
+  ): Promise<Map<string, { member: ReviewMember } | { error: Error }>> {
+    const read = await getPrMetadataBatch(octokit, requests.map((r) => r.url));
+    return new Map(
+      requests.map(({ url, role = 'watched' }): [string, { member: ReviewMember } | { error: Error }] => {
+        const result = read.get(url);
+        if (!result || 'error' in result) {
+          const error = result?.error;
+          return [url, { error: error instanceof Error ? error : new Error(`Could not read ${url}.`) }];
+        }
+        return [url, { member: memberFrom(url, result.metadata, role) }];
+      })
+    );
+  }
   function memberFrom(url: string, meta: PrMetadata, role: ReviewMember['role']): ReviewMember {
     const { owner, repo, pullNumber } = parsePrUrl(url);
     return {
@@ -872,6 +894,29 @@ export function createWorkbenchService(deps: Deps) {
         if (member.state === 'open' && !member.merged && !isArchived(member) && !mutedUrls().has(member.url))
           seeds.set(member.url, discovered.has(member.url) ? { ...member, role: seeds.get(member.url)?.role ?? member.role } : withoutStaleRequest(member));
       }
+      // Every PR read that starts in the same turn shares one batch of aliased GraphQL queries.
+      let queued: { url: string; role?: ReviewMember['role']; resolve: (member: ReviewMember) => void; reject: (error: unknown) => void }[] = [];
+      const readMember = (url: string, role?: ReviewMember['role']) =>
+        new Promise<ReviewMember>((resolve, reject) => {
+          if (!queued.length)
+            queueMicrotask(() => {
+              const batch = queued;
+              queued = [];
+              fetchMembers(octokit, batch).then(
+                (read) => {
+                  for (const { url, resolve, reject } of batch) {
+                    const result = read.get(url);
+                    if (result && 'member' in result) resolve(result.member);
+                    else reject(result?.error ?? new Error(`Could not read ${url}.`));
+                  }
+                },
+                (error: unknown) => {
+                  for (const { reject } of batch) reject(error);
+                }
+              );
+            });
+          queued.push({ url, role, resolve, reject });
+        });
       const add = async (
         url: string,
         role?: ReviewMember['role'],
@@ -928,7 +973,7 @@ export function createWorkbenchService(deps: Deps) {
         }
         checkAllowance();
         try {
-          const member = await fetchMember(octokit, url, role ?? current?.role);
+          const member = await readMember(url, role ?? current?.role);
           if (member.repoArchived) { setArchiveState(member.repo, true); return; }
           members.set(url, member);
           if (!cached || cached.updatedAt !== member.updatedAt || cached.headSha !== member.headSha)
@@ -970,12 +1015,14 @@ export function createWorkbenchService(deps: Deps) {
       });
       const total = entries.length;
       progress('Updating pull request details', { completed: 0, total, unit: 'PRs' });
-      for (let i = 0; i < total; i += 5) {
+      // One wave is one metadata query: up to 25 PRs.
+      const wave = PR_METADATA_PER_QUERY;
+      for (let i = 0; i < total; i += wave) {
         // Drain the batch before saving or pausing; Promise.all can reject while
         // other requests are still completing and updating the checkpoint.
-        const results = await Promise.allSettled(entries.slice(i, i + 5).map(([url, role]) => add(url, role, listedByUrl.get(url))));
+        const results = await Promise.allSettled(entries.slice(i, i + wave).map(([url, role]) => add(url, role, listedByUrl.get(url))));
         // Count the batch before publishing it, so the snapshot that shows its PRs also shows the count.
-        progress('Updating pull request details', { completed: Math.min(i + 5, total), total, unit: 'PRs' });
+        progress('Updating pull request details', { completed: Math.min(i + wave, total), total, unit: 'PRs' });
         // add() updates dirty across the awaited batch.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (dirty) { publish(); checkpoint(); }
@@ -1020,20 +1067,21 @@ export function createWorkbenchService(deps: Deps) {
                 pendingUrls.push(url);
               }
           }
-          for (const url of connected) await add(url, undefined, byUrl.get(url));
+          await settleInOrder([...connected].map((url) => add(url, undefined, byUrl.get(url))));
           // A base can still point at a closed/merged parent.
-          const refs = [...new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.baseBranch))];
-          for (const ref of refs) {
-            if (ref === data[0]?.base.repo.default_branch) continue;
-            if ([...members.values()].some((m) => m.headRepo === fullName && m.headBranch === ref)) continue;
+          const refs = [...new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.baseBranch))].filter(
+            (ref) =>
+              ref !== data[0]?.base.repo.default_branch &&
+              ![...members.values()].some((m) => m.headRepo === fullName && m.headBranch === ref)
+          );
+          // The lookups are independent conditional REST reads, so they run 5 at a time; the parents they find are
+          // then read in one batch. Warnings keep the order of the branches.
+          const lookups = await mapBounded(refs, 5, async (ref) => {
             checkAllowance();
             const key = `${fullName}:${ref}`;
             const cachedParents = s.parentLookups?.[key];
-            if (!force && cachedParents && now() - cachedParents.checkedAt < 30 * 60_000) {
-              if (cachedParents.ambiguous) warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
-              for (const url of cachedParents.urls) await add(url);
-              continue;
-            }
+            if (!force && cachedParents && now() - cachedParents.checkedAt < 30 * 60_000)
+              return { ref, urls: cachedParents.urls, ambiguous: !!cachedParents.ambiguous };
             const { data: parents } = await octokit.pulls.list({
               owner,
               repo,
@@ -1042,10 +1090,11 @@ export function createWorkbenchService(deps: Deps) {
               per_page: 10,
             });
             (s.parentLookups ??= {})[key] = { checkedAt: now(), urls: parents.length === 1 ? [parents[0].html_url] : [], ambiguous: parents.length > 1 };
-            if (parents.length === 1) await add(parents[0].html_url);
-            else if (parents.length > 1)
-              warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
-          }
+            return { ref, urls: parents.length === 1 ? [parents[0].html_url] : [], ambiguous: parents.length > 1 };
+          });
+          for (const { ref, ambiguous } of lookups)
+            if (ambiguous) warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
+          await settleInOrder(lookups.flatMap(({ urls }) => urls.map((url) => add(url))));
         } catch (error) {
           if (error instanceof DiscoverySuperseded || githubRateLimit(error, now())) throw error;
           warnings.push(`Could not check which PRs depend on others in ${fullName}. Showing saved relationships.`);
@@ -1207,6 +1256,7 @@ export function createWorkbenchService(deps: Deps) {
       const muted = mutedUrls();
       const archived = new Set(load().archivedRepos ?? []);
       const changed: ReviewMember[] = [];
+      const stale: PrSearchResult[] = [];
       for (const pr of found) {
         const repo = `${pr.repoOwner}/${pr.repoName}`;
         const settings = repositorySettings(prefs, repo);
@@ -1217,8 +1267,17 @@ export function createWorkbenchService(deps: Deps) {
           if (cached.role !== pr.role) changed.push({ ...cached, role: pr.role });
           continue;
         }
+        stale.push(pr);
+      }
+      // Every changed PR in one batch of aliased queries; none of them would have been a free conditional read.
+      if (stale.length) {
         allowance();
-        changed.push(await withGitHubPriority('background', () => fetchMember(octokit, pr.url, pr.role), { automatic: true }));
+        const read = await withGitHubPriority('background', () => fetchMembers(octokit, stale), { automatic: true });
+        for (const pr of stale) {
+          const result = read.get(pr.url);
+          if (!result || 'error' in result) throw result?.error ?? new Error(`Could not read ${pr.url}.`);
+          changed.push(result.member);
+        }
       }
       // The personal searches are complete here. A recent PR they no longer return as requested is not requested.
       const requested = new Set(found.filter(pr => pr.role === 'review-requested').map(pr => pr.url));
@@ -1485,19 +1544,20 @@ export function createWorkbenchService(deps: Deps) {
       let generationStarted = false;
       try {
         const octokit = deps.client?.() ?? getGitHubClient(deps.auth().token);
-        const context = [];
-        for (const m of subject.members) {
-          controller.signal.throwIfAborted();
-          const { owner, repo, pullNumber } = parsePrUrl(m.url);
-          const files = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
-            () => getChangedFiles(octokit, owner, repo, pullNumber)));
-          context.push({
-            pr: m.url,
-            title: m.title,
-            description: m.description.slice(0, 4000),
-            files: files.slice(0, 60).map((f) => ({ path: f.filename, patch: f.patch?.slice(0, 2000) })),
-          });
-        }
+        controller.signal.throwIfAborted();
+        // Each member's file list is its own REST read: 3 run at a time, and none starts after a cancellation.
+        const memberFiles = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
+          () => mapBounded(subject.members, 3, (m) => {
+            controller.signal.throwIfAborted();
+            const { owner, repo, pullNumber } = parsePrUrl(m.url);
+            return getChangedFiles(octokit, owner, repo, pullNumber);
+          })));
+        const context = subject.members.map((m, i) => ({
+          pr: m.url,
+          title: m.title,
+          description: m.description.slice(0, 4000),
+          files: memberFiles[i].slice(0, 60).map((f) => ({ path: f.filename, patch: f.patch?.slice(0, 2000) })),
+        }));
         controller.signal.throwIfAborted();
         const assertRevision = async () => {
           const current = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
@@ -2049,8 +2109,9 @@ export function createWorkbenchService(deps: Deps) {
         if (override.parent === override.child) throw new Error('A PR cannot depend on itself.');
         const octokit = deps.client?.() ?? getGitHubClient(deps.auth().token);
         const members = new Map(s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)));
-        for (const url of [override.parent, override.child])
-          if (!members.has(url)) members.set(url, await fetchMember(octokit, url));
+        const missing = [override.parent, override.child].filter((url) => !members.has(url));
+        for (const [i, member] of (await Promise.all(missing.map((url) => fetchMember(octokit, url)))).entries())
+          members.set(missing[i], member);
         if (
           groupSubjects([...members.values()], proposed, s.subjects).some((sub) =>
             sub.warnings.some((w) => w.includes('Conflicting stack'))

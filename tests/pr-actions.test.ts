@@ -53,24 +53,44 @@ function fixture(native = false) {
     graphql: async (query: string, params: Record<string, unknown>) => {
       if (query.startsWith('query')) {
         calls++;
-        const pr = prs.find((p) => p.number === params.number);
-        if (!pr) throw new Error('Unknown fixture PR');
-        return {
-          viewer: { login: account },
-          repository: {
-            ...repo,
-            pullRequest: {
-              ...pr,
-              stack: nativeStack
-                ? {
-                    number: 8,
-                    baseRefName: stackBaseBranch,
-                    entries: { totalCount: 3, nodes: prs.map((p, i) => ({ position: i + 1, pullRequest: { ...p } })) },
-                  }
-                : null,
-            },
-          },
+        const answer = (number: unknown) => {
+          const pr = prs.find((p) => p.number === number);
+          return pr
+            ? {
+                ...pr,
+                stack: nativeStack
+                  ? {
+                      number: 8,
+                      baseRefName: stackBaseBranch,
+                      entries: { totalCount: 3, nodes: prs.map((p, i) => ({ position: i + 1, pullRequest: { ...p } })) },
+                    }
+                  : null,
+              }
+            : null;
         };
+        // A stack read aliases each PR as `pN: pullRequest(number:N)`.
+        const aliases = [...query.matchAll(/(p\d+): pullRequest\(number:(\d+)\)/g)];
+        if (aliases.length) {
+          const data = {
+            viewer: { login: account },
+            repository: { ...repo, ...Object.fromEntries(aliases.map(([, alias, n]) => [alias, answer(Number(n))])) },
+          };
+          // As GitHub does: a missing PR nulls its alias and names it in `errors`; the rest of the answer stands.
+          const missing = aliases.filter(([, , n]) => !answer(Number(n)));
+          if (missing.length)
+            throw Object.assign(new Error('Request failed due to following response errors'), {
+              data,
+              errors: missing.map(([, alias, n]) => ({
+                type: 'NOT_FOUND',
+                path: ['repository', alias],
+                message: `Could not resolve to a PullRequest with the number of ${n}.`,
+              })),
+            });
+          return data;
+        }
+        const pullRequest = answer(params.number);
+        if (!pullRequest) throw new Error('Unknown fixture PR');
+        return { viewer: { login: account }, repository: { ...repo, pullRequest } };
       }
       writes.push({ query, params });
       if (query.includes('MarkPullRequestReadyForReviewInput'))
@@ -318,6 +338,75 @@ void test('register a linear Gnosis stack only with explicit confirmation, then 
   assert.deepEqual(f.writes[0].params.pull_requests, [1, 2, 3]);
   assert.match(f.writes[1].query, /merge-async$/);
 });
+void test('a stack plan reads every member in one query, with the same states as single reads', async () => {
+  const f = fixture(true);
+  const plan = await f.service.stackPlan(f.client, [url(1), url(2), url(3)]);
+  assert.equal(f.reads(), 1, 'one aliased query instead of one per member');
+  const single = fixture(true);
+  for (const [i, member] of plan.members.entries())
+    assert.deepEqual(
+      { ...member, checkedAt: 0 },
+      { ...(await single.service.read(single.client, url(i + 1), true)), checkedAt: 0 }
+    );
+  // Cached members are reused; a forced plan reads again, still once.
+  await f.service.stackPlan(f.client, [url(1), url(2), url(3)]);
+  assert.equal(f.reads(), 1);
+  await f.service.stackPlan(f.client, [url(1), url(2), url(3)], true);
+  assert.equal(f.reads(), 2);
+  // A member GitHub does not return fails the plan with GitHub's error for it.
+  await assert.rejects(f.service.stackPlan(f.client, [url(1), url(4)], true), /number of 4/);
+});
+void test('one PR GitHub cannot read fails alone in a stack read', async () => {
+  const f = fixture(true);
+  const reads = f.service.readMany(f.client, [url(1), url(4), url(2)], true);
+  const [one, missing, two] = await Promise.allSettled(reads);
+  assert.equal(f.reads(), 1);
+  assert.equal(one.status === 'fulfilled' && one.value.number, 1);
+  assert.equal(two.status === 'fulfilled' && two.value.number, 2);
+  assert.ok(missing.status === 'rejected');
+  assert.match(String(missing.reason), /number of 4/);
+});
+void test('merging a new stack reads its members once before the write and once after', async () => {
+  const f = fixture(),
+    plan = await f.service.stackPlan(f.client, [url(1), url(2), url(3)]);
+  const before = f.reads();
+  await f.service.act(f.client, {
+    account: 'reviewer',
+    kind: 'merge',
+    url: url(3),
+    method: 'SQUASH',
+    createStack: true,
+    revisions: plan.members,
+  });
+  // Before: the target, then each member in turn (4), then the target after creating the stack (5).
+  assert.equal(f.reads() - before, 2);
+});
+void test('a stack read that fails without saying where reads each member by itself', async () => {
+  const f = fixture(true);
+  const original = f.client.graphql;
+  let aliased = 0;
+  f.client.graphql = (async (query: string, params: Record<string, unknown>) => {
+    if (/p\d+: pullRequest/.test(query)) {
+      aliased++;
+      throw Object.assign(new Error('Something went wrong while executing your query. This may be the result of a timeout'), { status: 502 });
+    }
+    return original(query, params);
+  }) as typeof f.client.graphql;
+  const states = await Promise.all(f.service.readMany(f.client, [url(1), url(2), url(3)], true));
+  assert.deepEqual(states.map((s) => s.number), [1, 2, 3]);
+  assert.equal(aliased, 1);
+  assert.equal(f.reads(), 3, 'then one query per member');
+});
+void test('PR action states carry fork permissions for conflict updates', async () => {
+  const f = fixture();
+  f.prs[0].headRepository = { nameWithOwner: 'fork/r', viewerPermission: 'READ' } as typeof f.prs[0]['headRepository'];
+  (f.prs[0] as typeof f.prs[0] & { maintainerCanModify: boolean }).maintainerCanModify = true;
+  const state = await f.service.read(f.client, url(1), true);
+  assert.equal(state.headRepoCanWrite, false);
+  assert.equal(state.maintainerCanModify, true);
+  const older = await f.service.read(f.client, url(2), true);
+  assert.equal(older.headRepoCanWrite, undefined, 'a response without the field leaves the REST check in place');
+});
 void test('refuse non-linear and cross-repository grouped stacks', async () => {
   const f = fixture();
   f.prs[1].baseRefName = 'main';
@@ -561,8 +650,10 @@ void test('mark all ready skips ready PRs, guards writes, and reports partial fa
   const members = f.prs.map((pr) => ({ url: pr.url, number: pr.number })) as import('../lib/workbench').ReviewMember[];
   const ready: string[] = [];
   let fail = true;
+  const before = f.reads();
   const deps = {
     read: (url: string, force: boolean) => f.service.read(f.client, url, force),
+    readMany: (urls: string[], force: boolean) => f.service.readMany(f.client, urls, force),
     act: async (request: PrActionRequest) => {
       if (request.url === url(3) && fail) throw Error('Rate limit reached');
       return f.service.act(f.client, request);
@@ -576,6 +667,8 @@ void test('mark all ready skips ready PRs, guards writes, and reports partial fa
   assert.deepEqual(first.completed, [url(1), url(2)]);
   assert.equal(first.failure?.member.number, 3);
   assert.equal(f.writes.length, 1, 'Already-ready PRs do not receive a mutation');
+  // One stack read, then #1's write recheck (#3's write fails before it reads). Before: 3 member reads, then 1.
+  assert.equal(f.reads() - before, 2);
   fail = false;
   const second = await markPrsReady(
     members.filter((m) => !ready.includes(m.url)),

@@ -7,6 +7,9 @@ import type {
   PrActionState,
   PrMergePlan,
 } from '../lib/pr-actions';
+import { chunked, mapBounded, settleInOrder } from '../lib/bounded';
+import { githubRateLimit } from '../lib/github-client';
+import { aliasedGraphql } from '../lib/github-graphql-batch';
 import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason, closeBlockedReason } from '../lib/pr-actions';
 
 const METHODS: MergeMethod[] = ['MERGE', 'SQUASH', 'REBASE'];
@@ -26,7 +29,8 @@ interface GraphMember {
 }
 interface GraphPr extends GraphMember {
   id: string;
-  headRepository: { nameWithOwner: string } | null;
+  headRepository: { nameWithOwner: string; viewerPermission?: string | null } | null;
+  maintainerCanModify?: boolean;
   mergeable: string;
   mergeStateStatus: string;
   reviewDecision?: string | null;
@@ -57,6 +61,14 @@ interface GraphRepo {
   rebaseMergeAllowed: boolean;
   pullRequest: GraphPr | null;
 }
+/** Pull requests per aliased stack query, small enough to answer well within GitHub's time limit. */
+const PRS_PER_QUERY = 20;
+const repoFields =
+  'nameWithOwner isArchived viewerPermission viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed';
+const prFields = `${memberFields} id headRepository{nameWithOwner viewerPermission} maintainerCanModify mergeable mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}
+        viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch viewerDidAuthor autoMergeRequest{mergeMethod} mergeQueue{id} isInMergeQueue
+        stack{number baseRefName entries(first:100){totalCount nodes{position pullRequest{${memberFields} mergeQueue{id}}}}}`;
+const writePermissions = ['WRITE', 'MAINTAIN', 'ADMIN'];
 export function prActionTarget(url: string) {
   const m = typeof url === 'string' && /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/([1-9]\d*)$/.exec(url);
   if (!m || !Number.isSafeInteger(Number(m[3]))) throw new Error('Choose a valid GitHub pull request.');
@@ -87,9 +99,13 @@ function normalize(repo: GraphRepo, checkedAt: number, account: string): PrActio
     account,
     checkedAt,
     headRepo: pr.headRepository?.nameWithOwner ?? null,
+    ...(pr.headRepository && pr.headRepository.viewerPermission !== undefined
+      ? { headRepoCanWrite: writePermissions.includes(pr.headRepository.viewerPermission ?? '') }
+      : {}),
+    ...(pr.maintainerCanModify !== undefined ? { maintainerCanModify: pr.maintainerCanModify } : {}),
     repository: repo.nameWithOwner,
     archived: repo.isArchived,
-    canWrite: ['WRITE', 'MAINTAIN', 'ADMIN'].includes(repo.viewerPermission ?? ''),
+    canWrite: writePermissions.includes(repo.viewerPermission ?? ''),
     mergeable: pr.mergeable,
     mergeState: pr.mergeStateStatus,
     reviewDecision: pr.reviewDecision,
@@ -102,7 +118,7 @@ function normalize(repo: GraphRepo, checkedAt: number, account: string): PrActio
     canEnableAuto: pr.viewerCanEnableAutoMerge,
     canDisableAuto: pr.viewerCanDisableAutoMerge,
     canUpdateBranch: pr.viewerCanUpdateBranch,
-    canChangeDraft: pr.viewerDidAuthor || ['WRITE', 'MAINTAIN', 'ADMIN'].includes(repo.viewerPermission ?? ''),
+    canChangeDraft: pr.viewerDidAuthor || writePermissions.includes(repo.viewerPermission ?? ''),
     mergeQueue: !!pr.mergeQueue,
     inMergeQueue: pr.isInMergeQueue,
     stack: pr.stack
@@ -156,35 +172,125 @@ export function createPrActionsService(now = Date.now) {
     if (!force && saved && now() - saved.checkedAt < 25_000) return saved;
     const existing = a.pending.get(url);
     if (!force && existing) return existing;
-    const request = client
-      .graphql<{ viewer: { login: string }; repository: GraphRepo | null }>(
-        `query($owner:String!,$repo:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$repo){
-      nameWithOwner isArchived viewerPermission viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
-      pullRequest(number:$number){ ${memberFields} id headRepository{nameWithOwner} mergeable mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}
-        viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch viewerDidAuthor autoMergeRequest{mergeMethod} mergeQueue{id} isInMergeQueue
-        stack{number baseRefName entries(first:100){totalCount nodes{position pullRequest{${memberFields} mergeQueue{id}}}}}
-      }}}`,
-        { owner, repo, number: pull_number }
-      )
-      .then((data) => {
-        if (!data.repository) throw new Error('GitHub could not grant access to this repository.');
-        const state = normalize(data.repository, now(), data.viewer.login);
-        a.cache.set(url, state);
-        return state;
-      })
-      .finally(() => {
-        if (a.pending.get(url) === request) a.pending.delete(url);
-      });
+    const request = readOne(client, owner, repo, pull_number, url).finally(() => {
+      if (a.pending.get(url) === request) a.pending.delete(url);
+    });
     a.pending.set(url, request);
     return request;
+  }
+  /** One PR's state from its own query, saved in the capability cache. No coalescing; `read` adds that. */
+  async function readOne(client: Octokit, owner: string, repo: string, number: number, url: string): Promise<PrActionState> {
+    const data = await client.graphql<{ viewer: { login: string }; repository: GraphRepo | null }>(
+      `query($owner:String!,$repo:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$repo){
+      ${repoFields}
+      pullRequest(number:$number){ ${prFields}
+      }}}`,
+      { owner, repo, number }
+    );
+    if (!data.repository) throw new Error('GitHub could not grant access to this repository.');
+    const state = normalize(data.repository, now(), data.viewer.login);
+    account(client).cache.set(url, state);
+    return state;
+  }
+  /**
+   * `read` for many PRs. The PRs of one repository share one aliased query (up to 50 each), so the repository settings
+   * are read once. Each URL gets its own promise, which fails alone when its PR is missing. Cached and pending reads are
+   * reused as in `read`.
+   */
+  function readMany(client: Octokit, urls: string[], force = false): Promise<PrActionState>[] {
+    if (urls.length <= 1) return urls.map((url) => read(client, url, force));
+    const a = account(client),
+      reads = new Map<string, Promise<PrActionState>>(),
+      groups = new Map<string, { owner: string; repo: string; members: { url: string; number: number }[] }>();
+    for (const url of new Set(urls)) {
+      let target: ReturnType<typeof prActionTarget>;
+      try {
+        target = prActionTarget(url);
+      } catch (error) {
+        reads.set(url, Promise.reject(error as Error));
+        continue;
+      }
+      const saved = a.cache.get(url),
+        existing = a.pending.get(url);
+      if (!force && saved && now() - saved.checkedAt < 25_000) reads.set(url, Promise.resolve(saved));
+      else if (!force && existing) reads.set(url, existing);
+      else {
+        const key = `${target.owner}/${target.repo}`.toLowerCase();
+        const group = groups.get(key) ?? { owner: target.owner, repo: target.repo, members: [] };
+        group.members.push({ url, number: target.pull_number });
+        groups.set(key, group);
+      }
+    }
+    for (const { owner, repo, members } of groups.values())
+      for (const batch of chunked(members, PRS_PER_QUERY)) {
+        type Data = { viewer: { login: string }; repository: (Omit<GraphRepo, 'pullRequest'> & Record<string, unknown>) | null };
+        // A PR whose alias errored fails alone; the repository failing fails them all.
+        const response = aliasedGraphql<Data>(
+          client,
+          `query($owner:String!,$repo:String!){viewer{login} repository(owner:$owner,name:$repo){
+      ${repoFields}
+      ${batch.map((m, j) => `p${j}: pullRequest(number:${m.number}){ ${prFields} }`).join('\n      ')}
+      }}`,
+          { owner, repo }
+        );
+        // A query that failed without saying where (a timeout, a server error) reads each member by itself, 3 at a time,
+        // so one bad answer never fails the whole stack. A rate limit is not retried.
+        const retried = response.then(
+          () => undefined,
+          (error: unknown) =>
+            githubRateLimit(error)
+              ? undefined
+              : mapBounded(batch, 3, (m) =>
+                  readOne(client, owner, repo, m.number, m.url).then(
+                    (state) => ({ state }),
+                    (failure: unknown) => ({ failure })
+                  )
+                )
+        );
+        const checked = response.then((answer) => {
+          const repository = answer.data.repository;
+          // An error anywhere but under one PR's alias leaves no member's state sound.
+          const shared = answer.errorPaths.find((path) => !(path[0] === 'repository' && /^p\d+$/.test(String(path[1]))));
+          if (shared) throw answer.error(...shared) ?? new Error('GitHub could not read this repository.');
+          if (!repository) throw new Error('GitHub could not grant access to this repository.');
+          return { login: answer.data.viewer.login, repository, answer };
+        });
+        for (const [j, { url }] of batch.entries()) {
+          const request = checked
+            .catch(async (error: unknown) => {
+              const retry = (await retried)?.[j];
+              if (!retry) throw error;
+              if ('failure' in retry) throw retry.failure;
+              return { retried: retry.state };
+            })
+            .then((read) => {
+              if ('retried' in read) return read.retried;
+              const { login, repository, answer } = read;
+              const failed = answer.error('repository', `p${j}`);
+              if (failed) throw failed;
+              const state = normalize(
+                { ...repository, pullRequest: (repository[`p${j}`] as GraphPr | null | undefined) ?? null } as GraphRepo,
+                now(),
+                login
+              );
+              a.cache.set(url, state);
+              return state;
+            })
+            .finally(() => {
+              if (a.pending.get(url) === request) a.pending.delete(url);
+            });
+          a.pending.set(url, request);
+          reads.set(url, request);
+        }
+      }
+    return urls.map((url) => reads.get(url) as Promise<PrActionState>);
   }
   async function stackPlan(client: Octokit, urls: string[], force = false): Promise<PrMergePlan> {
     if (!Array.isArray(urls) || urls.length < 2 || urls.length > 100 || new Set(urls).size !== urls.length)
       throw new Error('Choose a stack of 2–100 distinct PRs.');
     urls.forEach(prActionTarget);
-    const states: PrActionState[] = [];
-    // User-initiated only. Read sequentially through the shared scheduler, with a short capability cache.
-    for (const url of urls) states.push(await read(client, url, force));
+    // User-initiated only. One query per repository through the shared scheduler, with a short capability cache.
+    const states = await settleInOrder(readMany(client, urls, force));
     const target = states[states.length - 1];
     const native = target.stack;
     const openNative = native?.members.filter((m) => m.state !== 'MERGED');
@@ -242,11 +348,12 @@ export function createPrActionsService(now = Date.now) {
         throw new Error('Use a commit message of at most 65,536 characters.');
       if (req.comment !== undefined && (req.kind !== 'close' || typeof req.comment !== 'string' || req.comment.length > 65000))
         throw new Error('Use a comment of at most 65,000 characters.');
-      const state = await read(client, req.url, true);
+      // Creating a stack reads every member, the target included, in one forced read; nothing else needs the members.
+      const stacked = req.kind === 'merge' && req.createStack ? await stackPlan(client, urls, true) : undefined;
+      const state = stacked?.members.find((m): m is PrActionState => m.url === req.url) ?? (await read(client, req.url, true));
       if (req.account !== state.account)
         throw new Error('The GitHub account changed. Reopen this action before continuing.');
-      const plan =
-        req.kind === 'merge' && req.createStack ? await stackPlan(client, urls, true) : singleMergePlan(state);
+      const plan = stacked ?? singleMergePlan(state);
       const affected = req.kind === 'merge' ? plan.members : [state];
       if (
         affected.length !== req.revisions.length ||
@@ -422,6 +529,7 @@ export function createPrActionsService(now = Date.now) {
   }
   return {
     read,
+    readMany,
     stackPlan,
     act,
     async poll(client: Octokit, operation: NonNullable<PrActionResult['operation']>) {

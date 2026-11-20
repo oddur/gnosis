@@ -418,3 +418,46 @@ void test('an interactive reader promotes shared stack work without restarting m
   assert.equal(reads, 2, 'Load each of the two members only once');
   assert.deepEqual(priorities, ['interactive', 'interactive']);
 });
+
+void test('an earlier pair that lacks its parent commits is reported before a later pair’s read error', async () => {
+  const three = [1, 2, 3].map(
+    (n) =>
+      ({
+        ...members[0],
+        url: `https://github.com/o/r/pull/${n}`,
+        number: n,
+        baseBranch: n === 1 ? 'main' : `b${n - 1}`,
+        headBranch: `b${n}`,
+        baseSha: n === 1 ? 'base' : `head${n - 1}`,
+        headSha: `head${n}`,
+      }) as ReviewMember
+  );
+  const stack: ReviewSubject = {
+    ...subject,
+    members: three,
+    edges: [
+      { parent: three[0].url, child: three[1].url, evidence: 'branch' },
+      { parent: three[1].url, child: three[2].url, evidence: 'branch' },
+    ],
+  };
+  const pool = createGitHubClientPool({
+    fetch: ((input: string) => {
+      const u = new URL(input);
+      // Pair 1: #2 is based on an older #1. Pair 2: the merge-base read fails.
+      if (u.pathname.endsWith('head2...head3'))
+        return Promise.resolve(new Response('{"message":"Not Found"}', { status: 404, headers: { 'content-type': 'application/json' } }));
+      return Promise.resolve(
+        new Response(JSON.stringify({ merge_base_commit: { sha: 'old-parent' }, files: [] }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+    }) as typeof fetch,
+  });
+  const service = createStackChangesService({
+    manifest: (_client, url) => {
+      const n = Number(url.split('/').pop());
+      return Promise.resolve({ ...source(0), url, metadata: three[n - 1], comparisonBase: n === 1 ? 'ancestor' : `head${n - 1}` });
+    },
+  });
+  await assert.rejects(service.read(pool.client('order'), stack), /PR #2 does not include the current commits from PR #1/);
+});

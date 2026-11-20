@@ -450,6 +450,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ): Promise<import('../lib/pr-people').PrPeopleCandidates> => ipcRenderer.invoke('get-pr-people-candidates', request),
   editPrPeople: (edit: import('../lib/pr-people').PrPeopleEdit): Promise<import('../lib/pr-people').PrPeopleEditResult> =>
     ipcRenderer.invoke('edit-pr-people', edit),
+  getPrActionStates: (
+    urls: string[],
+    force = false
+  ): Promise<({ state: import('../lib/pr-actions').PrActionState } | { error: string })[]> =>
+    ipcRenderer.invoke('get-pr-action-states', urls, force),
   getStackMergePlan: (urls: string[]): Promise<import('../lib/pr-actions').PrMergePlan> =>
     ipcRenderer.invoke('get-stack-merge-plan', urls),
   performPrAction: (

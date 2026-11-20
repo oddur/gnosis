@@ -72,8 +72,11 @@ export interface OptimisticPatch {
   status: 'pending' | 'confirmed';
   confirmedAt?: number;
   result?: OptimisticResult;
-  /** Counts before the write, from local copies. */
-  before: { commentCount?: number; reviewCommentCount?: number; comments?: number };
+  /**
+   * Counts before the write, from local copies. `source` is the API the metadata counts came from: a copy from the
+   * other API never confirms them, since REST's counters can lag behind GraphQL's.
+   */
+  before: { commentCount?: number; reviewCommentCount?: number; comments?: number; source?: PrMetadata['source'] };
   /** Kinds a fresh read showed the change in. The patch no longer applies to them. */
   settled: OptimisticKind[];
 }
@@ -263,7 +266,7 @@ export function seenInDiscussion(patch: OptimisticPatch, base: GitHubReviewThrea
 
 export function seenInMetadata(
   patch: OptimisticPatch,
-  base: Pick<PrMetadata, 'isDraft' | 'autoMerge' | 'requestedReviewers' | 'commentCount' | 'reviewCommentCount'> &
+  base: Pick<PrMetadata, 'isDraft' | 'autoMerge' | 'requestedReviewers' | 'commentCount' | 'reviewCommentCount' | 'source'> &
     Partial<Pick<PrMetadata, 'requestedTeams' | 'assignees' | 'labels' | 'milestone'>>
 ): boolean {
   const { change, before } = patch;
@@ -286,11 +289,15 @@ export function seenInMetadata(
       break;
   }
   const reviews = reviewCommentDelta(change);
+  const comments = commentDelta(change);
+  // A count from the other API neither confirms nor refutes the change: the patch keeps applying, and a copy from the
+  // same API, or the patch's normal expiry, settles it.
+  const counted = (reviews && before.reviewCommentCount !== undefined) || (comments && before.commentCount !== undefined);
+  if (counted && (before.source ?? 'rest') !== (base.source ?? 'rest')) return false;
   if (reviews && before.reviewCommentCount !== undefined) {
     const target = before.reviewCommentCount + reviews;
     if (reviews > 0 ? count(base.reviewCommentCount) < target : count(base.reviewCommentCount) > target) return false;
   }
-  const comments = commentDelta(change);
   if (comments && before.commentCount !== undefined && count(base.commentCount) < before.commentCount + comments)
     return false;
   return true;

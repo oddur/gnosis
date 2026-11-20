@@ -27,6 +27,10 @@ export interface PrActionState extends PrActionMember {
   account: string;
   checkedAt: number;
   headRepo: string | null;
+  /** Whether this sign-in can push to the head repository. Undefined in states read before it was requested. */
+  headRepoCanWrite?: boolean;
+  /** Whether the author lets maintainers push to a fork's head branch. Undefined in states read before it was requested. */
+  maintainerCanModify?: boolean;
   repository: string;
   archived: boolean;
   canWrite: boolean;
