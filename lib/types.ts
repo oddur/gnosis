@@ -624,4 +624,6 @@ export interface PrMetadata {
   mergeableState: string | null;
   autoMerge: { method: string } | null;
   milestone: { title: string; dueOn: string | null } | null;
+  /** `graphql` when the aliased GraphQL reader produced this copy; its comment counts may run ahead of REST's. */
+  source?: 'graphql';
 }

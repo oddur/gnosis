@@ -1,5 +1,7 @@
 import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
+import { chunked } from '../lib/bounded';
+import { aliasedGraphql } from '../lib/github-graphql-batch';
 import { isCacheRecord } from '../lib/github-cache';
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { feedbackReplyBody } from '../lib/review-threads';
@@ -173,6 +175,15 @@ export function createReviewThreadService(now = Date.now) {
     }
     return cache;
   }
+  /** The saved discussion `list` may answer with, without a request: on disk for under a minute, or in memory. */
+  function freshCopy(client: Octokit, prUrl: string): GitHubReviewThreads | undefined {
+    const entry = cacheFor(client).get(prUrl);
+    const persistent = githubCacheFor(client);
+    const saved = persistent?.get(`review-threads:${prUrl}`, isSavedThreads);
+    if (saved && !saved.revalidate && saved.value.expires > now() && saved.value.expires <= now() + 60_000)
+      return saved.value.value;
+    if (entry?.value && entry.expires > now() && (!persistent || entry.version === persistent.version())) return entry.value;
+  }
   async function fetchThreads(client: Octokit, prUrl: string): Promise<GitHubReviewThreads> {
     const variables = parseUrl(prUrl);
     let cursor: string | null = null;
@@ -225,8 +236,7 @@ export function createReviewThreadService(now = Date.now) {
         after: nextCursor(thread.comments, null),
       }));
       for (let open = replies.filter((r) => r.after); open.length; open = replies.filter((r) => r.after)) {
-        for (let i = 0; i < open.length; i += THREADS_PER_QUERY) {
-          const batch = open.slice(i, i + THREADS_PER_QUERY);
+        for (const batch of chunked(open, THREADS_PER_QUERY)) {
           const more = await graphql<Record<string, { comments: Page<GitHubReviewComment> } | null>>(
             client,
             `query ThreadReplies { rateLimit { cost } ${batch
@@ -368,19 +378,11 @@ export function createReviewThreadService(now = Date.now) {
       if (entry?.pending) return structuredClone(await joinGitHubWork(entry.pending));
       const persistent = githubCacheFor(client);
       const version = persistent?.version();
-      const key = `review-threads:${prUrl}`;
-      const saved = persistent?.get(key, isSavedThreads);
-      if (
-        !refresh &&
-        saved &&
-        !saved.revalidate &&
-        saved.value.expires > now() &&
-        saved.value.expires <= now() + 60_000
-      )
+      if (!refresh) {
         // Callers such as `act` and `comment` edit the result. The cached value is frozen and shared.
-        return structuredClone(saved.value.value);
-      if (!refresh && entry?.value && entry.expires > now() && (!persistent || entry.version === version))
-        return structuredClone(entry.value);
+        const fresh = freshCopy(client, prUrl);
+        if (fresh) return structuredClone(fresh);
+      }
       entry = { expires: 0 };
       cache.set(prUrl, entry);
       const current = entry;
@@ -394,14 +396,9 @@ export function createReviewThreadService(now = Date.now) {
         if (!current.value && cache.get(prUrl) === current) cache.delete(prUrl);
       }
     },
-    /** Local data only. Whether `list` without `refresh` would answer from a saved copy, without a request. */
+    /** Local data only. Whether `list` without `refresh` would answer without a request: a fresh copy, or a read in flight. */
     fresh(client: Octokit, prUrl: string) {
-      const entry = cacheFor(client).get(prUrl);
-      if (entry?.pending) return true;
-      const persistent = githubCacheFor(client);
-      const saved = persistent?.get(`review-threads:${prUrl}`, isSavedThreads);
-      if (saved && !saved.revalidate && saved.value.expires > now() && saved.value.expires <= now() + 60_000) return true;
-      return !!entry?.value && entry.expires > now() && (!persistent || entry.version === persistent.version());
+      return !!cacheFor(client).get(prUrl)?.pending || !!freshCopy(client, prUrl);
     },
     /** Local data only. The saved record's identity and age, for deciding whether to refresh it. */
     saved(client: Octokit, prUrl: string) {
@@ -431,21 +428,12 @@ export function createReviewThreadService(now = Date.now) {
             `p${i}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { pullRequest(number:${number}) { ${pullFields('', '')} } }`
         )
         .join(' ')} }`;
-      const response = await client.request('POST /graphql', { query });
-      const result = response.data as {
-        data?: Record<string, { pullRequest: Pull | null } | null> | null;
-        errors?: { message: string; path?: (string | number)[] }[];
-      };
-      const failed = new Set<string>();
-      for (const error of result.errors ?? []) {
-        if (typeof error.path?.[0] !== 'string') throw new Error(error.message);
-        failed.add(error.path[0]);
-      }
-      if (!result.data) throw new Error('GitHub returned no review discussion data.');
+      // A PR with an error under its alias is left to its own read.
+      const answer = await aliasedGraphql<Record<string, { pullRequest: Pull | null } | null>>(client, query);
       const saved: string[] = [];
       const incomplete: string[] = [];
       for (const [i, { url }] of targets.entries()) {
-        const pr = failed.has(`p${i}`) ? undefined : result.data[`p${i}`]?.pullRequest;
+        const pr = answer.failed(`p${i}`) ? undefined : answer.data[`p${i}`]?.pullRequest;
         if (!pr?.comments || !pr.reviews || !pr.reviewRequests) continue;
         if (
           [pr.comments, pr.reviews, pr.reviewRequests, pr.reviewThreads].some((page) => page.pageInfo.hasNextPage) ||

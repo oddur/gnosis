@@ -7,6 +7,8 @@ import type {
   PrActionState,
   PrMergePlan,
 } from '../lib/pr-actions';
+import { chunked } from '../lib/bounded';
+import { aliasedGraphql } from '../lib/github-graphql-batch';
 import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason, closeBlockedReason } from '../lib/pr-actions';
 
 const METHODS: MergeMethod[] = ['MERGE', 'SQUASH', 'REBASE'];
@@ -219,23 +221,29 @@ export function createPrActionsService(now = Date.now) {
       }
     }
     for (const { owner, repo, members } of groups.values())
-      for (let i = 0; i < members.length; i += PRS_PER_QUERY) {
-        const batch = members.slice(i, i + PRS_PER_QUERY);
-        const response = client
-          .graphql<{ viewer: { login: string }; repository: (Omit<GraphRepo, 'pullRequest'> & Record<string, unknown>) | null }>(
-            `query($owner:String!,$repo:String!){viewer{login} repository(owner:$owner,name:$repo){
+      for (const batch of chunked(members, PRS_PER_QUERY)) {
+        type Data = { viewer: { login: string }; repository: (Omit<GraphRepo, 'pullRequest'> & Record<string, unknown>) | null };
+        // A PR whose alias errored fails alone; the repository failing fails them all.
+        const response = aliasedGraphql<Data>(
+          client,
+          `query($owner:String!,$repo:String!){viewer{login} repository(owner:$owner,name:$repo){
       ${repoFields}
       ${batch.map((m, j) => `p${j}: pullRequest(number:${m.number}){ ${prFields} }`).join('\n      ')}
       }}`,
-            { owner, repo }
-          )
-          .then((data) => {
-            if (!data.repository) throw new Error('GitHub could not grant access to this repository.');
-            return { login: data.viewer.login, repository: data.repository };
-          });
+          { owner, repo }
+        ).then((answer) => {
+          const repository = answer.data.repository;
+          // An error anywhere but under one PR's alias leaves no member's state sound.
+          const shared = answer.errorPaths.find((path) => !(path[0] === 'repository' && /^p\d+$/.test(String(path[1]))));
+          if (shared) throw answer.error(...shared) ?? new Error('GitHub could not read this repository.');
+          if (!repository) throw new Error('GitHub could not grant access to this repository.');
+          return { login: answer.data.viewer.login, repository, answer };
+        });
         for (const [j, { url }] of batch.entries()) {
           const request = response
-            .then(({ login, repository }) => {
+            .then(({ login, repository, answer }) => {
+              const failed = answer.error('repository', `p${j}`);
+              if (failed) throw failed;
               const state = normalize(
                 { ...repository, pullRequest: (repository[`p${j}`] as GraphPr | null | undefined) ?? null } as GraphRepo,
                 now(),

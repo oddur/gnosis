@@ -12,12 +12,13 @@ export interface FakeFile {
 
 export function fakeRepo(files: Record<string, string | FakeFile>, ref = 'ref') {
   const all = new Map(Object.entries(files).map(([path, f]) => [path, typeof f === 'string' ? { text: f } : f]));
-  const counts = { graphql: 0, getContent: 0, contentPaths: [] as string[] };
-  const isDir = (path: string) => [...all.keys()].some((p) => p.startsWith(path + '/'));
+  const counts = { graphql: 0, getContent: 0, contentPaths: [] as string[], blobPaths: [] as string[] };
+  const prefix = (dir: string) => (dir ? `${dir}/` : '');
+  const isDir = (path: string) => path === '' || [...all.keys()].some((p) => p.startsWith(path + '/'));
   const children = (dir: string) => {
     const names = new Set<string>();
-    for (const p of all.keys()) if (p.startsWith(dir + '/')) names.add(p.slice(dir.length + 1).split('/')[0]);
-    return [...names].sort().map((name) => `${dir}/${name}`);
+    for (const p of all.keys()) if (p.startsWith(prefix(dir))) names.add(p.slice(prefix(dir).length).split('/')[0]);
+    return [...names].sort().map((name) => `${prefix(dir)}${name}`);
   };
   const blob = (f: FakeFile) => ({
     __typename: 'Blob',
@@ -33,6 +34,7 @@ export function fakeRepo(files: Record<string, string | FakeFile>, ref = 'ref') 
     return {
       __typename: 'Tree',
       entries: children(path).map((child) => ({
+        name: child.slice(child.lastIndexOf('/') + 1),
         path: child,
         type: all.has(child) ? 'blob' : 'tree',
         mode: all.get(child)?.mode ?? (all.has(child) ? 0o100644 : 0o040000),
@@ -47,15 +49,19 @@ export function fakeRepo(files: Record<string, string | FakeFile>, ref = 'ref') 
       for (const [, alias, expression] of query.matchAll(/(\w+): object\(expression:("(?:[^"\\]|\\.)*")\)/g)) {
         const [at, ...rest] = (JSON.parse(expression) as string).split(':');
         const path = rest.join(':');
-        repository[alias] = at === ref ? node(path, 2) : null;
+        if (/^f\d+$/.test(alias)) counts.blobPaths.push(path);
+        repository[alias] = at === ref ? node(path, 3) : null;
       }
-      return Promise.resolve({ rateLimit: { cost: 1 }, repository });
+      // The shared blob reader nests its aliases under `r0`; other queries ask for `repository`.
+      return Promise.resolve({ rateLimit: { cost: 1 }, ...(query.includes('r0: repository') ? { r0: repository } : { repository }) });
     },
     repos: {
       getContent: ({ path, ref: at }: { path: string; ref: string }) => {
         counts.getContent++;
         counts.contentPaths.push(path);
-        const file = all.get(path);
+        let file = all.get(path);
+        // The contents API follows a symlink to a file in the repository.
+        if (file?.mode === 0o120000) file = all.get([...path.split('/').slice(0, -1), file.text].join('/'));
         if (at === ref && file) return Promise.resolve({ data: { type: 'file', path, content: Buffer.from(file.text).toString('base64') } });
         if (at === ref && isDir(path))
           return Promise.resolve({ data: children(path).map((p) => ({ path: p, type: all.has(p) ? 'file' : 'dir' })) });

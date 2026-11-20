@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Octokit } from '@octokit/rest';
 import { getPrMetadata } from '../lib/github';
-import { getPrMetadataBatch, withReviewerOrder } from '../lib/pr-metadata-graphql';
+import { getPrMetadataBatch, readMetadataLike } from '../lib/pr-metadata-graphql';
+import { GITHUB_WRITE_EFFECTS } from '../lib/github-write-refresh';
 import { answerPrQuery, graphPr, queriedPrs, type RestPull } from './fake-pr-graphql';
 
 const url = (n: number, repo = 'o/r') => `https://github.com/${repo}/pull/${n}`;
@@ -28,7 +29,7 @@ const pull = (n: number, repo = 'o/r', extra: Partial<RestPull> = {}): RestPull 
   deletions: n,
   comments: n % 3,
   review_comments: n % 4,
-  requested_reviewers: n % 2 ? [{ login: 'alice' }, { login: 'copilot[bot]', type: 'Bot' }] : [],
+  requested_reviewers: n % 2 ? [{ login: 'zed' }, { login: 'Alice' }, { login: 'renovate[bot]', type: 'Bot' }] : [],
   requested_teams: n % 2 ? [{ name: 'Platform' }] : [],
   mergeable_state: ['clean', 'blocked', 'dirty', 'unstable', 'behind', 'draft', 'unknown'][n % 7],
   auto_merge: n === 4 ? { merge_method: 'squash' } : null,
@@ -69,12 +70,14 @@ void test('batched PR metadata equals the REST read field for field, 25 PRs per 
   for (const [i, p] of prs.entries()) {
     const value = result.get(p.html_url);
     assert.ok(value && 'metadata' in value, p.html_url);
-    assert.deepEqual(value.metadata, expected[i], p.html_url);
+    const { source, ...metadata } = value.metadata;
+    assert.equal(source, 'graphql');
+    assert.deepEqual(metadata, expected[i], p.html_url);
   }
   // The mapped details that differ in GraphQL: bots, deleted forks, uppercase enums.
   const meta = (n: number) => (result.get(url(n)) as { metadata: Awaited<ReturnType<typeof getPrMetadata>> }).metadata;
   assert.equal(meta(3).author, 'dependabot[bot]');
-  assert.deepEqual(meta(1).requestedReviewers, ['alice', 'copilot[bot]']);
+  assert.deepEqual(meta(1).requestedReviewers, ['Alice', 'renovate[bot]', 'zed'], 'sorted in both readers');
   assert.equal(meta(5).headRepo, 'o/r');
   assert.equal(meta(4).autoMerge?.method, 'squash');
   assert.equal(meta(2).mergeableState, 'dirty');
@@ -115,9 +118,81 @@ void test('a PR GitHub does not return fails alone, as a 404 would', async () =>
   assert.equal(f.counts.rest, 0);
 });
 
-void test('a saved reviewer order survives a read that lists the same reviewers differently', () => {
-  const next = { requestedReviewers: ['b', 'a'], requestedTeams: ['x'] } as Parameters<typeof withReviewerOrder>[0];
-  assert.deepEqual(withReviewerOrder(next, { requestedReviewers: ['a', 'b'], requestedTeams: ['x'] }).requestedReviewers, ['a', 'b']);
-  assert.deepEqual(withReviewerOrder(next, { requestedReviewers: ['a', 'c'] }).requestedReviewers, ['b', 'a']);
-  assert.equal(withReviewerOrder(next, {}), next);
+void test('an alias with an error under it, even on a nested field, is read through REST', async () => {
+  const prs = [pull(1), pull(6), pull(3)];
+  // GitHub nulls a field it could not resolve and names it in `errors`; the rest of the answer stands.
+  const partial = fixture(prs, {
+    graphql: (query) => {
+      const data = answerPrQuery(query, (_o, _r, n) => prs.find((p) => p.number === n)) as Record<string, { pullRequest: Record<string, unknown> }>;
+      data.p1.pullRequest.headRepository = null;
+      return Promise.reject(
+        Object.assign(new Error('Request failed due to following response errors'), {
+          data,
+          errors: [{ message: 'Resource not accessible', path: ['p1', 'pullRequest', 'headRepository'] }],
+        })
+      );
+    },
+  });
+  const result = await getPrMetadataBatch(partial.octokit, prs.map((p) => p.html_url));
+  assert.equal(partial.counts.rest, 1, 'only the PR with the error');
+  const fork = result.get(url(6));
+  assert.ok(fork && 'metadata' in fork);
+  assert.equal(fork.metadata.headRepo, 'fork/r', 'the REST value, not the nulled one');
+  assert.equal(fork.metadata.source, undefined);
+});
+
+void test('Copilot identities map to REST logins, and an unknown one is read through REST', async () => {
+  const copilot = pull(11, 'o/r', {
+    user: { login: 'Copilot', type: 'Bot' },
+    requested_reviewers: [{ login: 'Copilot', type: 'Bot' }, { login: 'alice' }],
+  });
+  const graph = (login: (rest: string, role: 'author' | 'reviewer') => string) => (query: string) => {
+    const data = answerPrQuery(query, () => copilot) as Record<string, { pullRequest: ReturnType<typeof graphPr> }>;
+    const pr = data.p0.pullRequest;
+    pr.author = { __typename: 'Bot', login: login('Copilot', 'author') };
+    pr.reviewRequests.nodes[0] = { requestedReviewer: { __typename: 'Bot', login: login('Copilot', 'reviewer') } };
+    return Promise.resolve(data);
+  };
+  const expected = await getPrMetadata(fixture([copilot]).octokit, 'o', 'r', 11);
+  const known = fixture([copilot], { graphql: graph((_, role) => (role === 'author' ? 'copilot-swe-agent' : 'copilot-pull-request-reviewer')) });
+  const mapped = (await getPrMetadataBatch(known.octokit, [url(11)])).get(url(11));
+  assert.ok(mapped && 'metadata' in mapped);
+  assert.equal(known.counts.rest, 0);
+  const value = mapped.metadata;
+  assert.deepEqual({ ...value, source: undefined }, { ...expected, source: undefined });
+  assert.equal(value.author, 'Copilot');
+  assert.deepEqual(value.requestedReviewers, ['alice', 'Copilot']);
+
+  const unknown = fixture([copilot], { graphql: graph(() => 'copilot-new-agent') });
+  const fallback = (await getPrMetadataBatch(unknown.octokit, [url(11)])).get(url(11));
+  assert.ok(fallback && 'metadata' in fallback);
+  assert.equal(unknown.counts.rest, 1, 'an unknown Copilot login is not guessed');
+  assert.equal(fallback.metadata.author, 'Copilot');
+});
+
+void test('a write is checked against the source of its baseline, so a lagging REST count cannot hide it', async () => {
+  // GitHub has the new reply (8 review comments); REST's counter still says 7.
+  const after = pull(1, 'o/r', { review_comments: 8 });
+  const lagging = { ...after, review_comments: 7 };
+  const octokit = {
+    graphql: (query: string) => Promise.resolve(answerPrQuery(query, () => after)),
+    pulls: { get: () => Promise.resolve({ data: lagging }) },
+  } as unknown as Octokit;
+  const rest = () => getPrMetadata(octokit, 'o', 'r', 1, true);
+  const replySeen = GITHUB_WRITE_EFFECTS['thread-reply'].seen;
+  const deleteSeen = GITHUB_WRITE_EFFECTS['comment-delete'].seen;
+  assert.ok(replySeen && deleteSeen);
+  // The baseline came from GraphQL (7 before the reply): the probe reads GraphQL too and sees 8.
+  const graphBaseline = { ...(await rest()), reviewCommentCount: 7, source: 'graphql' as const };
+  const probe = await readMetadataLike(octokit, url(1), graphBaseline, rest);
+  assert.equal(probe.reviewCommentCount, 8);
+  assert.ok(replySeen({ metadata: probe }, { before: { metadata: graphBaseline } }));
+  // Mixing sources would compare GraphQL's 7 with REST's lagging 7 and miss the reply.
+  assert.ok(!replySeen({ metadata: await rest() }, { before: { metadata: graphBaseline } }));
+  // A REST baseline is probed through REST.
+  const restBaseline = { ...(await rest()), reviewCommentCount: 6 };
+  assert.equal((await readMetadataLike(octokit, url(1), restBaseline, rest)).source, undefined);
+  // A delete settles the same way: GraphQL 8 before, 7 after.
+  const deleted = { ...graphBaseline, reviewCommentCount: 8 };
+  assert.ok(deleteSeen({ metadata: { ...probe, reviewCommentCount: 7 } }, { before: { metadata: deleted } }));
 });

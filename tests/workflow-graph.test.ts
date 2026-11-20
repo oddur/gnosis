@@ -1242,25 +1242,35 @@ void test('job step expansion reroutes locally and supports REST timestamps in e
   assert.equal(h.calls.length, calls, 'Expand must not refetch jobs or definitions');
 });
 
-/** Answers each aliased blob from `files`, as GitHub's `object(expression:)` would. */
+/** Answers each aliased blob, and each parent directory's entries, from `files`, as GitHub's `object(expression:)` would. */
 function blobAnswer(files: Partial<Record<string, string | null>>, oversize: string[] = []) {
   return (query: string) => {
     const data: Record<string, Record<string, unknown>> = {};
-    for (const repo of query.matchAll(
-      /(r\d+): repository\(owner:"([^"]+)",name:"([^"]+)"\) \{(.*?)\} \}(?=\s*(?:r\d+:|\}$))/gs
-    )) {
+    const repos = [...query.matchAll(/(r\d+): repository\(owner:"([^"]+)",name:"([^"]+)"\)/g)];
+    for (const [k, repo] of repos.entries()) {
+      const body = query.slice(repo.index + repo[0].length, repos[k + 1]?.index ?? query.length);
       const fields: Record<string, unknown> = {};
-      for (const field of repo[4].matchAll(/(f\d+): object\(expression:"[a-f\d]{40}:([^"]+)"\)/g)) {
+      for (const field of body.matchAll(/(f\d+): object\(expression:"[a-f\d]{40}:([^"]+)"\)/g)) {
         const text = files[field[2]];
         fields[field[1]] =
           typeof text !== 'string'
             ? null
             : {
+                __typename: 'Blob',
                 text,
                 byteSize: oversize.includes(field[2]) ? 300_000 : text.length,
                 isTruncated: false,
                 isBinary: false,
               };
+      }
+      for (const dir of body.matchAll(/(d\d+): object\(expression:"[a-f\d]{40}:([^"]*)"\)/g)) {
+        const prefix = dir[2] ? `${dir[2]}/` : '';
+        fields[dir[1]] = {
+          __typename: 'Tree',
+          entries: Object.keys(files)
+            .filter((path) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
+            .map((path) => ({ name: path.slice(prefix.length), mode: 0o100644 })),
+        };
       }
       data[repo[1]] = fields;
     }

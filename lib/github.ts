@@ -10,7 +10,8 @@ import { readGitHubFile } from '../src/github-file-content';
 import { filesOfUnifiedDiff } from './diff-files';
 import { githubReadSignal } from './github-scheduler';
 import { reportPrHead } from './pr-heads';
-import { chunked, mapBounded } from './bounded';
+import { mapBounded } from './bounded';
+import { aliasedGraphql, readBlobs, type AliasedAnswer, type BlobAnswer, type BlobRequest } from './github-graphql-batch';
 export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -37,6 +38,10 @@ export function parsePrUrl(url: string): { owner: string; repo: string; pullNumb
     pullNumber: parseInt(match[3], 10),
   };
 }
+
+/** Names in a stable order that does not depend on the API that listed them. */
+export const sortedNames = (names: string[]) =>
+  [...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()) || (a < b ? -1 : a > b ? 1 : 0));
 
 export async function getPrMetadata(
   octokit: Octokit,
@@ -82,8 +87,9 @@ export async function getPrMetadata(
     changedFileCount: data.changed_files,
     additions: data.additions,
     deletions: data.deletions,
-    requestedReviewers: (data.requested_reviewers ?? []).map((u) => u.login),
-    requestedTeams: (data.requested_teams ?? []).map((t) => t.name),
+    // Sorted, as the GraphQL reader sorts them, so the order never depends on which API answered.
+    requestedReviewers: sortedNames((data.requested_reviewers ?? []).map((u) => u.login)),
+    requestedTeams: sortedNames((data.requested_teams ?? []).map((t) => t.name)),
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     mergeableState: data.mergeable_state ?? null,
     autoMerge: data.auto_merge ? { method: data.auto_merge.merge_method } : null,
@@ -347,17 +353,19 @@ export async function getFileContent(
   }
 }
 
-/** Aliases per `object(expression:)` query; the same budget as file classification and workflow sources. */
-export const BLOB_ALIASES_PER_QUERY = 50;
-/** Above this, GraphQL may truncate the text, and the contents API decides whether it has inline content. */
-const GRAPHQL_BLOB_TEXT_LIMIT = 512_000;
-type BatchBlob = { __typename?: string; text?: string | null; byteSize?: number; isBinary?: boolean | null; isTruncated?: boolean } | null;
+/** `getFileContent`'s answer for a batch answer, or undefined when only the contents API can give it. */
+const restEquivalent = (answer: BlobAnswer): string | null | undefined =>
+  answer.kind === 'text'
+    ? // The contents API answers an empty file with empty content, which `getFileContent` reads as null.
+      answer.text || null
+    : answer.kind === 'absent'
+      ? null
+      : undefined;
 
 /**
- * `getFileContent` for many paths at one ref, as aliased `object(expression:)` queries instead of one REST read per path.
- * Each value equals what `getFileContent` returns for that path. A missing path, a directory, a submodule or an empty file
- * is null without a request. Binary, truncated or large blobs, and anything a failed query did not answer, are read
- * through `getFileContent`.
+ * `getFileContent` for many paths at one ref, through the shared aliased blob reader (`readBlobs`). Each value equals
+ * what `getFileContent` returns for that path. Symlinks, binary, truncated or large blobs, and anything a failed query
+ * did not answer, are read through `getFileContent`, which follows symlinks as before.
  */
 export async function getFileContents(
   octokit: Octokit,
@@ -368,50 +376,15 @@ export async function getFileContents(
   signal?: AbortSignal
 ): Promise<Map<string, string | null>> {
   const unique = [...new Set(paths)];
+  signal?.throwIfAborted();
+  const answers = await readBlobs(octokit, unique.map((path) => ({ owner, repo, ref, path })));
   const found = new Map<string, string | null>();
   const rest: string[] = [];
-  await Promise.all(
-    chunked(unique, BLOB_ALIASES_PER_QUERY).map(async (batch) => {
-      signal?.throwIfAborted();
-      const fields = batch
-        .map(
-          (path, i) =>
-            `f${i}: object(expression:${JSON.stringify(`${ref}:${path}`)}) { __typename ... on Blob { text byteSize isBinary isTruncated } }`
-        )
-        .join(' ');
-      type Response = { repository?: Record<string, BatchBlob> | null };
-      let data: Response | undefined;
-      let partial = false;
-      try {
-        data = await octokit.graphql<Response>(
-          `query($owner:String!,$name:String!){ rateLimit { cost } repository(owner:$owner,name:$name){ ${fields} } }`,
-          { owner, name: repo, ...(signal ? { request: { signal } } : {}) }
-        );
-      } catch (error) {
-        signal?.throwIfAborted();
-        const limited = githubRateLimit(error);
-        if (limited) throw limited;
-        // A field that failed is null, like a missing path, so a partial answer only settles what it returned.
-        data = (error as { data?: Response }).data;
-        partial = true;
-      }
-      const repository = data?.repository;
-      for (const [i, path] of batch.entries()) {
-        const blob = repository?.[`f${i}`];
-        if (!repository || blob === undefined || (blob === null && partial)) rest.push(path);
-        else if (blob === null || blob.__typename !== 'Blob') found.set(path, null);
-        else if (
-          typeof blob.text === 'string' &&
-          !blob.isBinary &&
-          !blob.isTruncated &&
-          (blob.byteSize ?? Infinity) <= GRAPHQL_BLOB_TEXT_LIMIT
-        )
-          // The contents API answers an empty file with empty content, which `getFileContent` reads as null.
-          found.set(path, blob.text || null);
-        else rest.push(path);
-      }
-    })
-  );
+  for (const [i, path] of unique.entries()) {
+    const value = restEquivalent(answers[i]);
+    if (value === undefined) rest.push(path);
+    else found.set(path, value);
+  }
   await mapBounded(rest, 5, async (path) => {
     found.set(path, await getFileContent(octokit, owner, repo, path, ref, signal));
   });
@@ -731,11 +704,20 @@ export async function getNeighborFiles(
       }
     });
   } else {
-    const contents = await getFileContents(octokit, owner, repo, [...new Set(candidates.flat())], ref);
-    for (const paths of candidates) {
-      const path = paths.find((candidate) => (contents.get(candidate) ?? null) !== null);
-      if (path) results[path] = contents.get(path) as string;
-    }
+    const unique = [...new Set(candidates.flat())];
+    const answers = await readBlobs(octokit, unique.map((path) => ({ owner, repo, ref, path })));
+    const known = new Map(unique.map((path, i) => [path, restEquivalent(answers[i])]));
+    // Extensions in order, stopping at the first that resolves. A candidate the batch could not settle is read through
+    // REST right there, so a failed batch reads as the old one-path-at-a-time reader did.
+    await mapBounded(candidates, 5, async (paths) => {
+      for (const path of paths) {
+        const content = known.get(path) ?? (known.get(path) === null ? null : await getFileContent(octokit, owner, repo, path, ref));
+        if (content !== null) {
+          results[path] = content;
+          return;
+        }
+      }
+    });
   }
   if (smartImportsProvider)
     console.log(`[github] Fetched ${Object.keys(results).length} neighbor file(s):`, Object.keys(results));
@@ -871,42 +853,27 @@ export function makeGithubClaudeIO(octokit: Octokit, owner: string, repo: string
   };
 }
 
-type ClaudeTreeEntry = {
-  path: string;
-  type: string;
-  mode: number;
-  object?: (BatchBlob & { entries?: ClaudeTreeEntry[] }) | null;
-};
+type ClaudeTreeEntry = { path: string; type: string; mode: number; object?: { entries?: ClaudeTreeEntry[] } | null };
 const TREE_MODE = 0o040000;
-const REGULAR_FILE_MODES = new Set([0o100644, 0o100755]);
-/** Text the contents API would return for this blob, or undefined when only that API can say. */
-const batchBlobText = (blob: BatchBlob | undefined): string | null | undefined =>
-  blob &&
-  typeof blob.text === 'string' &&
-  !blob.isBinary &&
-  !blob.isTruncated &&
-  (blob.byteSize ?? Infinity) <= GRAPHQL_BLOB_TEXT_LIMIT
-    ? blob.text || null
-    : undefined;
+const PLAIN_FILE_MODES = new Set([0o100644, 0o100755]);
 
 /**
- * The Claude-context probe's reads at `ref`, answered by one GraphQL query: CLAUDE.md, plus `.claude/` two levels deep
- * with the text of each file there, and the names one level further for skills. A second aliased query reads every
- * `SKILL.md` it found. Whatever the queries cannot settle exactly (a symlink, submodule, binary or large blob, a
- * failed query) goes through the REST reads in `makeGithubClaudeIO`.
+ * The Claude-context probe's reads at `ref`, in two GraphQL queries. The first lists `.claude/` three levels deep,
+ * names and modes only. The second reads the texts the probe uses: CLAUDE.md, `commands/*.md`, `agents/*.md` and
+ * each `skills/<name>/SKILL.md`. Whatever they cannot settle exactly (a symlink, submodule, binary or large blob, a
+ * failed alias or query) goes through the REST reads in `makeGithubClaudeIO`, which follow symlinks.
  */
 async function githubClaudeSnapshotIO(octokit: Octokit, owner: string, repo: string, ref: string): Promise<ClaudeContextIO> {
   const rest = makeGithubClaudeIO(octokit, owner, repo, ref);
-  const blob = '__typename ... on Blob { text byteSize isBinary isTruncated }';
   const entry = (inner: string) => `entries { path type mode${inner ? ` object { ${inner} }` : ''} }`;
-  type Response = { repository?: { md?: BatchBlob; root?: { __typename?: string; entries?: ClaudeTreeEntry[] } | null } | null };
-  let data: Response | undefined;
+  type Response = { repository?: { root?: { __typename?: string; entries?: ClaudeTreeEntry[] } | null } | null };
+  let answer: AliasedAnswer<Response>;
   try {
-    data = await octokit.graphql<Response>(
+    answer = await aliasedGraphql<Response>(
+      octokit,
       `query($owner:String!,$name:String!){ rateLimit { cost } repository(owner:$owner,name:$name){
-        md: object(expression:${JSON.stringify(`${ref}:CLAUDE.md`)}) { ${blob} }
         root: object(expression:${JSON.stringify(`${ref}:.claude`)}) { __typename ... on Tree { ${entry(
-          `... on Tree { ${entry(`${blob} ... on Tree { ${entry('')} }`)} }`
+          `... on Tree { ${entry(`... on Tree { ${entry('')} }`)} }`
         )} } }
       } }`,
       { owner, name: repo }
@@ -916,50 +883,48 @@ async function githubClaudeSnapshotIO(octokit: Octokit, owner: string, repo: str
     if (limited) throw limited;
     return rest;
   }
-  const repository = data.repository;
-  if (!repository) return rest;
+  if (!answer.data.repository || answer.failed('repository')) return rest;
   const texts = new Map<string, string | null>();
   const listings = new Map<string, { file: string[]; dir: string[] } | undefined>();
-  const md = repository.md;
-  if (md === null || (md && md.__typename !== 'Blob')) texts.set('CLAUDE.md', null);
-  else {
-    const text = batchBlobText(md);
-    if (text !== undefined) texts.set('CLAUDE.md', text);
-  }
   /** A listing the contents API would give; undefined when an entry is neither a plain file nor a directory. */
   const listing = (entries: ClaudeTreeEntry[]) =>
-    entries.every((e) => e.mode === TREE_MODE || REGULAR_FILE_MODES.has(e.mode))
+    entries.every((e) => e.mode === TREE_MODE || PLAIN_FILE_MODES.has(e.mode))
       ? {
           file: entries.filter((e) => e.type === 'blob').map((e) => e.path),
           dir: entries.filter((e) => e.type === 'tree').map((e) => e.path),
         }
       : undefined;
-  const skillFiles: string[] = [];
-  const root = repository.root;
+  const reads: BlobRequest[] = [{ owner, repo, ref, path: 'CLAUDE.md' }];
+  const root = answer.data.repository.root;
   if (root === null || (root && root.__typename !== 'Tree')) listings.set('.claude', { file: [], dir: [] });
   else if (root?.entries) {
     listings.set('.claude', listing(root.entries));
     for (const dir of root.entries) {
-      if (dir.type !== 'tree' || !dir.object?.entries) continue;
+      const name = dir.path.slice('.claude/'.length);
+      if (dir.type !== 'tree' || !dir.object?.entries || !['commands', 'agents', 'skills'].includes(name)) continue;
       listings.set(dir.path, listing(dir.object.entries));
       for (const child of dir.object.entries) {
-        if (child.type === 'blob' && REGULAR_FILE_MODES.has(child.mode)) {
-          const text = batchBlobText(child.object ?? undefined);
-          if (text !== undefined) texts.set(child.path, text);
-        } else if (child.type === 'tree' && child.object?.entries) {
-          const children = listing(child.object.entries);
-          listings.set(child.path, children);
-          const skill = `${child.path}/SKILL.md`;
-          if (!children) continue;
-          if (children.file.includes(skill)) skillFiles.push(skill);
-          // No SKILL.md in a listed directory: the contents API would answer 404.
-          else if (!children.dir.includes(skill)) texts.set(skill, null);
+        // Only the texts the probe reads: `*.md` in commands and agents, and each skill's SKILL.md.
+        if (name !== 'skills') {
+          if (child.type === 'blob' && child.path.endsWith('.md')) reads.push({ owner, repo, ref, path: child.path, mode: child.mode });
+          continue;
         }
+        if (child.type !== 'tree' || !child.object?.entries) continue;
+        const children = listing(child.object.entries);
+        listings.set(child.path, children);
+        if (!children) continue;
+        const skill = child.object.entries.find((e) => e.path === `${child.path}/SKILL.md`);
+        if (skill?.type === 'blob') reads.push({ owner, repo, ref, path: skill.path, mode: skill.mode });
+        // No SKILL.md file in a listed directory: the contents API would answer 404, or a directory listing.
+        else texts.set(`${child.path}/SKILL.md`, null);
       }
     }
   }
-  if (skillFiles.length)
-    for (const [path, text] of await getFileContents(octokit, owner, repo, skillFiles, ref)) texts.set(path, text);
+  const answers = await readBlobs(octokit, reads);
+  for (const [i, { path }] of reads.entries()) {
+    const value = restEquivalent(answers[i]);
+    if (value !== undefined) texts.set(path, value);
+  }
   return {
     readFile: (path) => {
       const known = texts.get(path);

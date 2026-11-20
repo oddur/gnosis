@@ -1,6 +1,7 @@
 import type { Octokit } from '@octokit/rest';
-import { getPrMetadata, parsePrUrl } from './github';
-import { mapBounded } from './bounded';
+import { getPrMetadata, parsePrUrl, sortedNames } from './github';
+import { chunked, mapBounded } from './bounded';
+import { aliasedGraphql, type AliasedAnswer } from './github-graphql-batch';
 import { parseGitHubLabels } from './github-labels';
 import { reportPrHead } from './pr-heads';
 import type { PrMetadata } from './types';
@@ -11,7 +12,7 @@ import type { PrMetadata } from './types';
  * - `review_comments` has no GraphQL count. Each review comment belongs to one review, so the sum over submitted
  *   reviews (pending ones excluded, as REST does) gives the same number. `totalCommentsCount` minus the conversation
  *   comments does not: it also counts some review bodies.
- * - A bot's GraphQL login has no `[bot]` suffix; REST's does.
+ * - A bot's GraphQL login has no `[bot]` suffix; REST's does. Copilot's apps are `Copilot` in REST.
  * - `mergeStateStatus` and `autoMergeRequest.mergeMethod` are uppercase; REST's values are lowercase.
  */
 export const PR_METADATA_FIELDS = `number title url body createdAt updatedAt state merged isDraft mergeable mergeStateStatus
@@ -67,17 +68,34 @@ export interface GraphPrMetadata {
 
 const complete = (connection: Connection<unknown> | null | undefined) =>
   !!connection?.nodes && connection.nodes.length >= connection.totalCount;
-const restLogin = (actor: { __typename?: string; login?: string } | null | undefined) =>
-  actor?.login === undefined ? undefined : actor.__typename === 'Bot' ? `${actor.login}[bot]` : actor.login;
+/** GitHub apps whose GraphQL login differs from REST by more than the `[bot]` suffix. */
+const APP_LOGINS: Record<string, string> = {
+  'copilot-pull-request-reviewer': 'Copilot',
+  'copilot-swe-agent': 'Copilot',
+};
+/**
+ * The REST login of a GraphQL actor. A bot's GraphQL login lacks REST's `[bot]` suffix, and Copilot's two apps both
+ * appear as `Copilot` in REST. Null for another Copilot identity, whose REST login this cannot know.
+ */
+function restLogin(actor: { __typename?: string; login?: string } | null | undefined): string | null | undefined {
+  if (actor?.login === undefined) return undefined;
+  if (actor.__typename !== 'Bot') return actor.login;
+  const known = APP_LOGINS[actor.login.toLowerCase()];
+  if (known) return known;
+  return /copilot/i.test(actor.login) ? null : `${actor.login}[bot]`;
+}
 
 /**
- * The `PrMetadata` that `getPrMetadata` would return for this PR, or undefined when the answer is incomplete (more
- * than 100 reviews, labels, assignees or review requests) and only REST can give the exact value.
+ * The `PrMetadata` that `getPrMetadata` would return for this PR, or undefined when only REST can give the exact value:
+ * more than 100 reviews, labels, assignees or review requests, or a Copilot identity this does not know.
  */
 export function prMetadataFromGraph(pr: GraphPrMetadata): PrMetadata | undefined {
   if (!pr.baseRepository || ![pr.assignees, pr.reviews, pr.labels, pr.reviewRequests].every(complete)) return undefined;
   const nodes = <T>(connection: Connection<T | null>) => (connection.nodes ?? []).filter((n): n is T => !!n);
   const reviewers = nodes(pr.reviewRequests).map((request) => request.requestedReviewer);
+  const people = reviewers.flatMap((r) => (r && r.__typename !== 'Team' ? [restLogin(r)] : []));
+  const author = restLogin(pr.author);
+  if (author === null || people.includes(null)) return undefined;
   const labels = nodes(pr.labels);
   return {
     title: pr.title,
@@ -85,7 +103,7 @@ export function prMetadataFromGraph(pr: GraphPrMetadata): PrMetadata | undefined
     reviewCommentCount: nodes(pr.reviews).reduce((sum, review) => sum + review.comments.totalCount, 0),
     description: pr.body ?? '',
     // REST shows a deleted account as `ghost`.
-    author: restLogin(pr.author) ?? 'ghost',
+    author: author ?? 'ghost',
     assignees: nodes(pr.assignees).map((user) => user.login),
     baseBranch: pr.baseRefName,
     baseRepo: pr.baseRepository.nameWithOwner,
@@ -107,31 +125,34 @@ export function prMetadataFromGraph(pr: GraphPrMetadata): PrMetadata | undefined
     changedFileCount: pr.changedFiles,
     additions: pr.additions,
     deletions: pr.deletions,
-    requestedReviewers: reviewers.flatMap((r) => (r && r.__typename !== 'Team' ? [restLogin(r) ?? ''] : [])).filter(Boolean),
-    requestedTeams: reviewers.flatMap((r) => (r?.__typename === 'Team' && r.name ? [r.name] : [])),
+    // Sorted as `getPrMetadata` sorts them, so the order never depends on which API answered.
+    requestedReviewers: sortedNames(people.filter((login): login is string => !!login)),
+    requestedTeams: sortedNames(reviewers.flatMap((r) => (r?.__typename === 'Team' && r.name ? [r.name] : []))),
     mergeableState: pr.mergeStateStatus ? pr.mergeStateStatus.toLowerCase() : null,
     autoMerge: pr.autoMergeRequest ? { method: pr.autoMergeRequest.mergeMethod.toLowerCase() } : null,
     milestone: pr.milestone ? { title: pr.milestone.title, dueOn: pr.milestone.dueOn } : null,
+    // Comment counts from GraphQL can differ from REST's lagging counters; a comparison must stay with one source.
+    source: 'graphql',
   };
 }
 
-/** PRs per metadata query. Each carries four connections of up to 100 nodes, so 25 PRs cost about 1–2 points. */
+/** PRs per metadata query. Each carries four connections of up to 100 nodes; 25 PRs cost 1 point, as measured. */
 export const PR_METADATA_PER_QUERY = 25;
+
 /**
- * `getPrMetadata` for many PRs, as aliased GraphQL queries of up to 25 PRs each. A PR GitHub does not return gets its
- * own error, as a REST 404 would. A PR whose answer is incomplete, and every PR of a query that failed, is read
- * through `getPrMetadata` instead, so the result never differs from the REST read. `extra` adds fields to each PR's
- * selection; their raw values come back in `graph`.
+ * `getPrMetadata` for many PRs, as aliased GraphQL queries of up to 25 PRs each, keyed by the requested URL. A PR
+ * GitHub does not return gets its own 404 error, as REST would. A PR whose answer is incomplete, any PR alias with an
+ * error at or under it (so a nulled nested field such as `headRepository` is never trusted), and every PR of a query
+ * that failed, is read through `getPrMetadata` instead.
  */
 export async function getPrMetadataBatch(
   octokit: Octokit,
   urls: readonly string[],
-  options: { extra?: string; cost?: (cost: number) => void; fresh?: boolean } = {}
-): Promise<Map<string, { metadata: PrMetadata; graph?: Record<string, unknown> } | { error: unknown }>> {
-  const unique = [...new Set(urls)];
-  const results = new Map<string, { metadata: PrMetadata; graph?: Record<string, unknown> } | { error: unknown }>();
+  options: { fresh?: boolean } = {}
+): Promise<Map<string, { metadata: PrMetadata } | { error: unknown }>> {
+  const results = new Map<string, { metadata: PrMetadata } | { error: unknown }>();
   const rest: string[] = [];
-  const targets = unique.flatMap((url) => {
+  const targets = [...new Set(urls)].flatMap((url) => {
     try {
       return [{ url, ...parsePrUrl(url) }];
     } catch (error) {
@@ -139,38 +160,29 @@ export async function getPrMetadataBatch(
       return [];
     }
   });
-  const batches: (typeof targets)[] = [];
-  for (let i = 0; i < targets.length; i += PR_METADATA_PER_QUERY) batches.push(targets.slice(i, i + PR_METADATA_PER_QUERY));
   await Promise.all(
-    batches.map(async (batch) => {
+    chunked(targets, PR_METADATA_PER_QUERY).map(async (batch) => {
       const query = `query { rateLimit { cost } ${batch
         .map(
           ({ owner, repo, pullNumber }, i) =>
-            `p${i}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { pullRequest(number:${pullNumber}) { ${PR_METADATA_FIELDS} ${options.extra ?? ''} } }`
+            `p${i}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { pullRequest(number:${pullNumber}) { ${PR_METADATA_FIELDS} } }`
         )
         .join('\n')} }`;
-      type Data = Record<string, { pullRequest: (GraphPrMetadata & Record<string, unknown>) | null } | null> & {
-        rateLimit?: { cost?: number } | null;
-      };
-      let data: Data | undefined;
-      let partial = false;
+      let answer: AliasedAnswer<Record<string, { pullRequest: GraphPrMetadata | null } | null>> | undefined;
       try {
-        data = await octokit.graphql<Data>(query);
-      } catch (error) {
-        // A missing repository or PR fails only its own alias; anything unanswered goes through REST.
-        data = (error as { data?: Data | null }).data ?? undefined;
-        partial = true;
+        answer = await aliasedGraphql(octokit, query);
+      } catch {
+        // No usable data: every PR of this query goes through REST.
       }
-      const cost = data?.rateLimit?.cost;
-      if (typeof cost === 'number') options.cost?.(cost);
       for (const [i, { url }] of batch.entries()) {
-        const entry = data?.[`p${i}`];
+        const alias = `p${i}`;
+        const entry = answer?.data[alias];
         const pr = entry?.pullRequest;
-        const metadata = pr ? prMetadataFromGraph(pr) : undefined;
-        if (pr && metadata) {
+        const metadata = pr && !answer?.failed(alias) ? prMetadataFromGraph(pr) : undefined;
+        if (metadata) {
           reportPrHead(octokit, metadata.url, metadata.headSha, { updatedAt: metadata.updatedAt, source: 'metadata' });
-          results.set(url, { metadata, graph: pr });
-        } else if (data && !partial && (entry === null || (entry && pr === null)))
+          results.set(url, { metadata });
+        } else if (answer && !answer.failed(alias) && (entry === null || entry?.pullRequest === null))
           results.set(url, { error: Object.assign(new Error(`GitHub could not find ${url}.`), { status: 404 }) });
         else rest.push(url);
       }
@@ -187,24 +199,18 @@ export async function getPrMetadataBatch(
   return results;
 }
 
-const sameSet = (a: readonly string[], b: readonly string[]) =>
-  a.length === b.length && a.every((value) => b.includes(value));
 /**
- * `next` with the reviewer and team order of `previous` when the sets are equal. GraphQL lists review requests in a
- * different order than REST, and a saved copy should not appear to change because of where it was read.
+ * A metadata read after a write, from the same source as `baseline`, so comment counts compare like with like:
+ * GraphQL counts comments as they are, while REST's counters can lag behind.
  */
-export function withReviewerOrder(
-  next: PrMetadata,
-  previous: Partial<Pick<PrMetadata, 'requestedReviewers' | 'requestedTeams'>>
-): PrMetadata {
-  const reviewers = previous.requestedReviewers,
-    teams = previous.requestedTeams;
-  const keepReviewers = !!reviewers && sameSet(reviewers, next.requestedReviewers),
-    keepTeams = !!teams && sameSet(teams, next.requestedTeams);
-  if (!keepReviewers && !keepTeams) return next;
-  return {
-    ...next,
-    ...(keepReviewers ? { requestedReviewers: [...reviewers] } : {}),
-    ...(keepTeams ? { requestedTeams: [...teams] } : {}),
-  };
+export async function readMetadataLike(
+  octokit: Octokit,
+  url: string,
+  baseline: Partial<PrMetadata> | undefined,
+  rest: () => Promise<PrMetadata>
+): Promise<PrMetadata> {
+  if (baseline?.source !== 'graphql') return rest();
+  const result = (await getPrMetadataBatch(octokit, [url], { fresh: true })).get(url);
+  if (!result || 'error' in result) throw result?.error instanceof Error ? result.error : new Error(`Could not read ${url}.`);
+  return result.metadata;
 }

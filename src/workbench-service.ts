@@ -65,7 +65,7 @@ import {
   type GitHubBackoffError,
 } from '../lib/github-client';
 import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
-import { getPrMetadataBatch, PR_METADATA_PER_QUERY, withReviewerOrder } from '../lib/pr-metadata-graphql';
+import { getPrMetadataBatch, PR_METADATA_PER_QUERY } from '../lib/pr-metadata-graphql';
 import { mapBounded } from '../lib/bounded';
 import { createDiscoveryListings, nextDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
@@ -726,13 +726,11 @@ export function createWorkbenchService(deps: Deps) {
   }
   /**
    * `fetchMember` for many PRs, through aliased GraphQL queries (25 PRs each) with REST for anything they cannot answer
-   * exactly. `previous` keeps a saved member's reviewer order when the set is unchanged: GraphQL lists review requests
-   * in another order than REST.
+   * exactly. Keyed by the requested URL, as `fetchMember` is.
    */
   async function fetchMembers(
     octokit: Octokit,
-    requests: readonly { url: string; role?: ReviewMember['role'] }[],
-    previous?: ReadonlyMap<string, ReviewMember>
+    requests: readonly { url: string; role?: ReviewMember['role'] }[]
   ): Promise<Map<string, { member: ReviewMember } | { error: Error }>> {
     const read = await getPrMetadataBatch(octokit, requests.map((r) => r.url));
     return new Map(
@@ -742,9 +740,7 @@ export function createWorkbenchService(deps: Deps) {
           const error = result?.error;
           return [url, { error: error instanceof Error ? error : new Error(`Could not read ${url}.`) }];
         }
-        const before = previous?.get(url);
-        const metadata = before ? withReviewerOrder(result.metadata, before) : result.metadata;
-        return [url, { member: memberFrom(url, metadata, role) }];
+        return [url, { member: memberFrom(url, result.metadata, role) }];
       })
     );
   }
@@ -910,7 +906,7 @@ export function createWorkbenchService(deps: Deps) {
             queueMicrotask(() => {
               const batch = queued;
               queued = [];
-              fetchMembers(octokit, batch, previousMembers).then(
+              fetchMembers(octokit, batch).then(
                 (read) => {
                   for (const { url, resolve, reject } of batch) {
                     const result = read.get(url);
@@ -1280,7 +1276,7 @@ export function createWorkbenchService(deps: Deps) {
       // Every changed PR in one batch of aliased queries; none of them would have been a free conditional read.
       if (stale.length) {
         allowance();
-        const read = await withGitHubPriority('background', () => fetchMembers(octokit, stale, known), { automatic: true });
+        const read = await withGitHubPriority('background', () => fetchMembers(octokit, stale), { automatic: true });
         for (const pr of stale) {
           const result = read.get(pr.url);
           if (!result || 'error' in result) throw result?.error ?? new Error(`Could not read ${pr.url}.`);

@@ -132,15 +132,18 @@ void test('classification returns paths immediately, batches attributes in backg
     release = resolve;
   });
   const client = {
-    graphql: async (query: string, args: { name: string }) => {
-      calls.push({ query, repo: args.name });
+    graphql: async (query: string) => {
+      calls.push({ query, repo: /name:"([^"]+)"/.exec(query)?.[1] ?? '' });
       await gate;
-      const objects: Record<string, { text: string; byteSize: number } | null> = {};
-      for (const match of query.matchAll(/(a\d+): object\(expression:"([^"\\]+)"\)/g))
+      // Blobs and their parent directories, as the shared blob reader asks for them.
+      const objects: Record<string, unknown> = {};
+      for (const match of query.matchAll(/(f\d+): object\(expression:"([^"\\]+)"\)/g))
         objects[match[1]] = match[2].endsWith(':.gitattributes')
-          ? { text: '*.ts linguist-generated=false', byteSize: 30 }
+          ? { __typename: 'Blob', text: '*.ts linguist-generated=false', byteSize: 30, isBinary: false, isTruncated: false }
           : null;
-      return { repository: objects };
+      for (const match of query.matchAll(/(d\d+): object\(expression:"([^"\\]+)"\)/g))
+        objects[match[1]] = { __typename: 'Tree', entries: [{ name: '.gitattributes', mode: 0o100644 }] };
+      return { r0: objects };
     },
   } as unknown as Octokit;
   let updates = 0;
@@ -233,14 +236,20 @@ void test('classification and negative attribute lookups are reused after restar
     calls++;
     assert.equal(typeof init.body, 'string');
     const query = (JSON.parse(init.body as string) as { query: string }).query;
-    const repository = Object.fromEntries(
-      [...query.matchAll(/(a\d+): object\(expression:"([^"\\]+)"\)/g)].map((m) => [
+    const repository: Record<string, unknown> = Object.fromEntries<unknown>([
+      ...[...query.matchAll(/(f\d+): object\(expression:"([^"\\]+)"\)/g)].map((m): [string, unknown] => [
         m[1],
-        m[2].endsWith(':.gitattributes') ? { text: '*.ts linguist-generated', byteSize: 24 } : null,
-      ])
-    );
+        m[2].endsWith(':.gitattributes')
+          ? { __typename: 'Blob', text: '*.ts linguist-generated', byteSize: 24, isBinary: false, isTruncated: false }
+          : null,
+      ]),
+      ...[...query.matchAll(/(d\d+): object\(/g)].map((m): [string, unknown] => [
+        m[1],
+        { __typename: 'Tree', entries: [{ name: '.gitattributes', mode: 0o100644 }] },
+      ]),
+    ]);
     return Promise.resolve(
-      new Response(JSON.stringify({ data: { repository } }), {
+      new Response(JSON.stringify({ data: { r0: repository } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })

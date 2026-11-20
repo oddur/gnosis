@@ -36,8 +36,7 @@ import { createConflictResolutionService } from './conflict-resolution-service';
 import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-resolution';
 import { parseGitHubSyncInterest } from '../lib/github-sync';
 import { createGitHubSyncService, type GitHubSyncRead } from './github-sync-service';
-import { mapBounded } from '../lib/bounded';
-import { getPrMetadataBatch, withReviewerOrder } from '../lib/pr-metadata-graphql';
+import { getPrMetadataBatch, readMetadataLike } from '../lib/pr-metadata-graphql';
 import { createOptimisticService } from './optimistic-service';
 import { prActionChange, type OptimisticChange, type OptimisticKind } from '../lib/optimistic-patches';
 import { feedbackReplyBody } from '../lib/review-threads';
@@ -764,30 +763,34 @@ async function runProactiveCheck() {
 
     // Local reviews are pinned to commit shas — nothing to poll.
     const candidates = [...openCompletedByPr].filter(([prUrl]) => !generatingPrUrls.has(prUrl) && !isLocalUrl(prUrl));
-    // Conditional REST reads, which GitHub answers with a free 304 while a PR is unchanged; 5 run at a time.
-    const reads = await mapBounded(candidates, 5, async ([prUrl]) => {
-      try {
-        const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-        return { prData: await getPrMetadata(octokit, owner, repo, pullNumber) };
-      } catch (error) {
-        return { error };
-      }
-    });
+    // Conditional REST reads, which GitHub answers with a free 304 while a PR is unchanged. They run in waves of 5,
+    // and no wave starts once the update cap is reached.
     let updateCount = 0;
-    for (const [i, [prUrl, entry]] of candidates.entries()) {
-      if (updateCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
-      try {
-        const read = reads[i];
-        if ('error' in read) throw read.error;
-        const { prData } = read;
-
-        if (!prData.repoArchived && prData.headSha !== entry.prHeadSha) {
-          console.log(`[proactive] PR head changed for ${prUrl} (${entry.prHeadSha?.slice(0, 7)} → ${prData.headSha.slice(0, 7)}), re-reviewing`);
-          void triggerProactiveReview(prUrl, prefs, { autoUpdated: true, prData });
-          updateCount++;
+    for (let start = 0; start < candidates.length && updateCount < PROACTIVE_MAX_CONCURRENT_UPDATES; start += 5) {
+      const wave = candidates.slice(start, start + 5);
+      const reads = await Promise.all(wave.map(async ([prUrl]) => {
+        try {
+          const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+          return { prData: await getPrMetadata(octokit, owner, repo, pullNumber) };
+        } catch (error) {
+          return { error };
         }
-      } catch (err) {
-        console.warn(`[proactive] Failed to check freshness for ${prUrl}:`, err);
+      }));
+      for (const [i, [prUrl, entry]] of wave.entries()) {
+        if (updateCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
+        try {
+          const read = reads[i];
+          if ('error' in read) throw read.error;
+          const { prData } = read;
+
+          if (!prData.repoArchived && prData.headSha !== entry.prHeadSha) {
+            console.log(`[proactive] PR head changed for ${prUrl} (${entry.prHeadSha?.slice(0, 7)} → ${prData.headSha.slice(0, 7)}), re-reviewing`);
+            void triggerProactiveReview(prUrl, prefs, { autoUpdated: true, prData });
+            updateCount++;
+          }
+        } catch (err) {
+          console.warn(`[proactive] Failed to check freshness for ${prUrl}:`, err);
+        }
       }
     }
   } catch (err) {
@@ -4545,15 +4548,13 @@ async function refreshChangedPrs(urls: string[], source: ChangeSource | 'head') 
   // A PR that fails is skipped; the others still publish.
   const batch = await withGitHubPriority('foreground', () => getPrMetadataBatch(client, targets, { fresh: true }), { automatic: true });
   if (token !== cachedToken) return;
-  const read: PrMetadata[] = [];
-  for (const url of targets) {
+  // Published under the URL that was asked for, as before; GitHub's canonical URL can differ in case or after a rename.
+  const updates = targets.flatMap(url => {
     const result = batch.get(url);
-    if (!result || 'error' in result) continue;
-    const saved = syncMetadata.get(url) ?? workbench.knownMember(url);
-    const value = saved ? withReviewerOrder(result.metadata, saved) : result.metadata;
-    read.push(value);
-  }
-  if (read.length) publishGitHubUpdates(read.map(value => ({ kind: 'metadata' as const, url: value.url, value })));
+    return result && 'metadata' in result ? [{ kind: 'metadata' as const, url, value: result.metadata }] : [];
+  });
+  const read = updates.map(update => update.value);
+  if (updates.length) publishGitHubUpdates(updates);
   const open = read.filter(value => value.state === 'open' && !value.merged);
   if (open.length) {
     try {
@@ -4690,9 +4691,8 @@ const githubSync = createGitHubSyncService({
         }
         return { kind, url: target.url, value: await reviewThreads.list(client, target.url) };
       }));
-      // A rate limit stops the whole batch, as it would have stopped the next read.
-      const limited = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected' && !!githubRateLimit(result.reason));
-      if (limited) throw limited.reason;
+      // Successes are kept; a failed PR, rate-limited or not, backs off alone. A global rate limit still pauses the
+      // whole queue through `backoff` above.
       return {
         updates: settled.flatMap(result => result.status === 'fulfilled' ? [result.value] : []),
         failed: settled.flatMap((result, i) => result.status === 'rejected' ? [{ url: targets[i].url, error: result.reason as unknown }] : []),
@@ -4960,7 +4960,7 @@ const githubWrites = createGitHubWriteRefresher({
     return { metadata, signals };
   },
   invalidate: invalidateAfterGitHubWrite,
-  read: async (probe, target, phase, action) => {
+  read: async (probe, target, phase, action, before) => {
     const token = cachedToken;
     if (!token) return;
     const client = getGitHubClient(token);
@@ -4968,7 +4968,10 @@ const githubWrites = createGitHubWriteRefresher({
     const priority = phase === 'immediate' ? 'interactive' : 'foreground';
     if (probe === 'metadata') {
       const { owner, repo, pullNumber } = parsePrUrl(target.url);
-      const value = await withGitHubPriority(priority, () => getPrMetadata(client, owner, repo, pullNumber, true), { automatic: false });
+      // The same source as the baseline: GraphQL comment counts can run ahead of REST's, so mixing them could miss a
+      // new comment or a deletion.
+      const value = await withGitHubPriority(priority, () => readMetadataLike(client, target.url, before?.metadata,
+        () => getPrMetadata(client, owner, repo, pullNumber, true)), { automatic: false });
       if (token !== cachedToken) return;
       // The reader's own change is read, not news: no notification and no unread mark. Changes made on GitHub are news.
       if (action !== 'external') workbench.updatePrMetadata(value, true);

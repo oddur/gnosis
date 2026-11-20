@@ -70,11 +70,24 @@ function fixture(native = false) {
         };
         // A stack read aliases each PR as `pN: pullRequest(number:N)`.
         const aliases = [...query.matchAll(/(p\d+): pullRequest\(number:(\d+)\)/g)];
-        if (aliases.length)
-          return {
+        if (aliases.length) {
+          const data = {
             viewer: { login: account },
             repository: { ...repo, ...Object.fromEntries(aliases.map(([, alias, n]) => [alias, answer(Number(n))])) },
           };
+          // As GitHub does: a missing PR nulls its alias and names it in `errors`; the rest of the answer stands.
+          const missing = aliases.filter(([, , n]) => !answer(Number(n)));
+          if (missing.length)
+            throw Object.assign(new Error('Request failed due to following response errors'), {
+              data,
+              errors: missing.map(([, alias, n]) => ({
+                type: 'NOT_FOUND',
+                path: ['repository', alias],
+                message: `Could not resolve to a PullRequest with the number of ${n}.`,
+              })),
+            });
+          return data;
+        }
         const pullRequest = answer(params.number);
         if (!pullRequest) throw new Error('Unknown fixture PR');
         return { viewer: { login: account }, repository: { ...repo, pullRequest } };
@@ -340,8 +353,18 @@ void test('a stack plan reads every member in one query, with the same states as
   assert.equal(f.reads(), 1);
   await f.service.stackPlan(f.client, [url(1), url(2), url(3)], true);
   assert.equal(f.reads(), 2);
-  // A member GitHub does not return fails the plan with the single-read error.
-  await assert.rejects(f.service.stackPlan(f.client, [url(1), url(4)], true), /could not find this PR/);
+  // A member GitHub does not return fails the plan with GitHub's error for it.
+  await assert.rejects(f.service.stackPlan(f.client, [url(1), url(4)], true), /number of 4/);
+});
+void test('one PR GitHub cannot read fails alone in a stack read', async () => {
+  const f = fixture(true);
+  const reads = f.service.readMany(f.client, [url(1), url(4), url(2)], true);
+  const [one, missing, two] = await Promise.allSettled(reads);
+  assert.equal(f.reads(), 1);
+  assert.equal(one.status === 'fulfilled' && one.value.number, 1);
+  assert.equal(two.status === 'fulfilled' && two.value.number, 2);
+  assert.ok(missing.status === 'rejected');
+  assert.match(String(missing.reason), /number of 4/);
 });
 void test('merging a new stack reads its members once before the write and once after', async () => {
   const f = fixture(),

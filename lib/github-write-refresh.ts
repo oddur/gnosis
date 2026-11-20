@@ -45,6 +45,7 @@ export interface WriteObservation {
     | 'requestedReviewers'
     | 'commentCount'
     | 'reviewCommentCount'
+    | 'source'
   >;
   signals?: Pick<QueueSignals, 'headSha' | 'checks' | 'latestReview' | 'mine' | 'readiness' | 'comments'>;
 }
@@ -241,12 +242,16 @@ export interface GitHubWriteRefresherDeps {
   baseline: (url: string) => WriteObservation;
   /** Marks saved copies stale and schedules watched views. Local, synchronous. */
   invalidate: (urls: string[], kinds: GitHubSyncKind[], followUpKinds: GitHubSyncKind[]) => void;
-  /** Reads GitHub again, bypassing saved copies, and publishes the result. */
+  /**
+   * Reads GitHub again, bypassing saved copies, and publishes the result. `before` is the write's baseline: a metadata
+   * read must come from the same source, so its comment counts compare with the baseline's.
+   */
   read: (
     probe: WriteProbe,
     target: { url: string; headSha?: string },
     phase: 'immediate' | 'follow-up',
-    action: GitHubWriteAction
+    action: GitHubWriteAction,
+    before?: WriteObservation
   ) => Promise<WriteObservation[WriteProbe] | undefined>;
   /** When GitHub reads are paused for the budget or a rate limit, the time they resume. */
   blockedUntil?: () => number | undefined;
@@ -299,7 +304,7 @@ export function createGitHubWriteRefresher(deps: GitHubWriteRefresherDeps) {
     for (const probe of job.effect.probes) {
       try {
         if (probe === 'metadata') {
-          seen.metadata = (await deps.read('metadata', { url: job.url }, phase, job.action)) as WriteObservation['metadata'];
+          seen.metadata = (await deps.read('metadata', { url: job.url }, phase, job.action, job.details.before)) as WriteObservation['metadata'];
         } else {
           const headSha = seen.metadata?.headSha ?? job.details.before?.metadata?.headSha;
           seen.signals = (await deps.read('signals', { url: job.url, headSha }, phase, job.action)) as WriteObservation['signals'];

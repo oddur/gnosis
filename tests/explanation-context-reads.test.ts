@@ -82,13 +82,21 @@ void test('the Claude-context probe needs two GraphQL queries and matches the RE
     const batched = fakeRepo(files);
     const actual = await getProjectClaudeContext(batched.octokit, 'o', 'r', 'ref', { unfiltered });
     assert.deepEqual(actual, expected);
-    assert.equal(batched.counts.graphql, 2, 'the tree query, then one query for every SKILL.md');
+    assert.equal(batched.counts.graphql, 2, 'the tree query, then one query for the texts');
     assert.equal(batched.counts.getContent, 0);
+    // Only the texts the probe reads: no notes.txt, settings.json or skill scripts.
+    assert.deepEqual(batched.counts.blobPaths.sort(), [
+      '.claude/agents/security.md',
+      '.claude/commands/deploy.md',
+      '.claude/commands/review.md',
+      '.claude/skills/polish/SKILL.md',
+      'CLAUDE.md',
+    ]);
   }
 
   const none = fakeRepo({ 'README.md': 'hello' });
   assert.equal(await getProjectClaudeContext(none.octokit, 'o', 'r', 'ref'), null);
-  assert.equal(none.counts.graphql, 1);
+  assert.equal(none.counts.graphql, 2, 'the tree query, then CLAUDE.md');
   assert.equal(none.counts.getContent, 0);
 });
 
@@ -138,4 +146,69 @@ void test('file churn reads every PR commit at once and dates run alongside', as
       ['c.ts', 1, null],
     ]
   );
+});
+
+void test('a symlinked CLAUDE.md or neighbor reads its target through REST, never the link path', async () => {
+  const files = {
+    'AGENTS.md': '# Agents\n\nUse strict types.',
+    'CLAUDE.md': { text: 'AGENTS.md', mode: 0o120000 },
+    'src/main.ts': "import { a } from './a';",
+    'src/real.ts': 'export const a = 1;',
+    'src/a.ts': { text: 'real.ts', mode: 0o120000 },
+  };
+  const old = fakeRepo(files);
+  const expected = await probeClaudeContext(makeGithubClaudeIO(old.octokit, 'o', 'r', 'ref'));
+  const batched = fakeRepo(files);
+  const actual = await getProjectClaudeContext(batched.octokit, 'o', 'r', 'ref');
+  assert.deepEqual(actual, expected);
+  assert.match(actual?.projectInstructions ?? '', /Use strict types/);
+  const neighbors = await getNeighborFiles(batched.octokit, 'o', 'r', ['src/main.ts'], { 'src/main.ts': files['src/main.ts'] }, 'ref');
+  assert.deepEqual(neighbors, { 'src/a.ts': 'export const a = 1;' });
+});
+
+void test('when the neighbor batch fails, REST reads each import in extension order and stops at the first hit', async () => {
+  const repo = fakeRepo({ 'src/main.ts': "import { a } from './a';\nimport { b } from './b';", 'src/a.ts': 'a', 'src/b/index.ts': 'b' });
+  const octokit = Object.assign(Object.create(repo.octokit) as Octokit, {
+    graphql: () => Promise.reject(Object.assign(new Error('Bad gateway'), { status: 502 })),
+  });
+  const result = await getNeighborFiles(octokit, 'o', 'r', ['src/main.ts'], { 'src/main.ts': "import { a } from './a';\nimport { b } from './b';" }, 'ref');
+  assert.deepEqual(result, { 'src/a.ts': 'a', 'src/b/index.ts': 'b' });
+  // a: '', '.ts'. b: '', '.ts', '.tsx', '.js', '.jsx', '/index.ts'. Not all 16 candidates.
+  assert.equal(repo.counts.getContent, 8);
+});
+
+void test('mapBounded starts nothing after the first failure and waits for what is running', async () => {
+  const { mapBounded } = await import('../lib/bounded');
+  const started: number[] = [];
+  let running = 0;
+  const done: number[] = [];
+  await assert.rejects(
+    mapBounded([0, 1, 2, 3, 4, 5, 6, 7], 2, async (n) => {
+      started.push(n);
+      running++;
+      await new Promise((resolve) => setTimeout(resolve, n === 0 ? 1 : 10));
+      running--;
+      if (n === 0) throw new Error('first');
+      done.push(n);
+      return n;
+    }),
+    /first/
+  );
+  assert.deepEqual(started, [0, 1], 'no item starts after the failure');
+  assert.equal(running, 0, 'the item already running finished before the call rejected');
+  assert.deepEqual(done, [1]);
+});
+
+void test('a blob alias with an error falls back alone; the rest of the batch stands', async () => {
+  const { readBlobs } = await import('../lib/github-graphql-batch');
+  const repo = fakeRepo({ 'a.ts': 'a', 'b.ts': 'b' });
+  const octokit = Object.assign(Object.create(repo.octokit) as Octokit, {
+    graphql: async (query: string) => {
+      const data = await repo.octokit.graphql<{ r0: Record<string, unknown> }>(query);
+      data.r0.f1 = null;
+      throw Object.assign(new Error('partial'), { data, errors: [{ message: 'Timeout', path: ['r0', 'f1'] }] });
+    },
+  });
+  const answers = await readBlobs(octokit, ['a.ts', 'b.ts'].map((path) => ({ owner: 'o', repo: 'r', ref: 'ref', path })));
+  assert.deepEqual(answers, [{ kind: 'text', text: 'a' }, { kind: 'other', reason: 'failed' }]);
 });
