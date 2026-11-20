@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
-import { blockProposals, blockResolutions, withProposals } from '../lib/conflict-carry';
+import { blockProposals, blockResolutions, carryFile, withProposals } from '../lib/conflict-carry';
 import { parseConflicts } from '../lib/conflict-blocks';
 import { blockBuckets, bucketSummary, summarySentence, verifyProposals, type Analyse } from '../lib/conflict-verify';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
@@ -197,4 +197,16 @@ void test('review probe: a lost definition is excused only by its exact name, in
     original: original.replace("import { c } from './c';\n", imported),
   });
   assert.deepEqual(await verifyProposals(f, analyse), { merged: false, note: 'four is missing from the result.' });
+});
+
+void test('review probe: carrying a draft forward uses the fresh proposal for a conflict it cannot carry', () => {
+  const proposals = [merged(imports), merged(three + four)];
+  const next = file(proposals);
+  // The earlier draft resolved only an older version of the second conflict.
+  const old = file([null, null], { original: original.replace('return 3;', 'return 30;') });
+  old.result = old.original.replace(/<<<<<<< feature\nexport[\s\S]*?>>>>>>> main\n/, three.replace('3', '30'));
+  const carried = carryFile(old, next, true);
+  assert.equal(carried.file.result, withProposals(original, proposals));
+  assert.equal(carried.file.resolved, false);
+  assert.deepEqual(carried.file.proposals, proposals);
 });

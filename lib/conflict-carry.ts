@@ -1,4 +1,11 @@
-import { chosenText, conflictCount, inferChoices, parseConflicts, type ConflictSegment } from './conflict-blocks';
+import {
+  applyChoices,
+  chosenText,
+  conflictCount,
+  inferChoices,
+  parseConflicts,
+  type ConflictSegment,
+} from './conflict-blocks';
 import {
   hasConflictMarkers,
   type ConflictFile,
@@ -148,8 +155,9 @@ export function carryFile(old: ConflictFile | undefined, next: ConflictFile, kee
       if (segment.kind === 'text') return segment.text;
       const text = available.get(blockKey(segment))?.shift();
       if (text === undefined) {
+        // Not carried: the fresh merge's proposal for it, if any, as preparation left it. It still needs you.
         open++;
-        return segment.block.raw;
+        return next.proposals?.[segment.index]?.text ?? segment.block.raw;
       }
       reused++;
       return text;
@@ -205,7 +213,9 @@ export function blockProposals(original: string, output: string, source: Conflic
 
 /** Git's conflict with these proposals in place; other blocks keep their markers. */
 export function withProposals(original: string, proposals: readonly (ConflictProposal | null)[]) {
-  return parseConflicts(original)
-    .map((s) => (s.kind === 'text' ? s.text : (proposals[s.index]?.text ?? s.block.raw)))
-    .join('');
+  return applyChoices(
+    parseConflicts(original),
+    proposals.map((p) => (p ? 'proposal' : undefined)),
+    proposals
+  );
 }

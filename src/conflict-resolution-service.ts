@@ -738,7 +738,8 @@ export function createConflictResolutionService(deps: Deps) {
         if (merged !== undefined) {
           const open = conflictCount(merged);
           result = {
-            file: withResult(old, next, merged, keepReview && open === 0 && old.resolved),
+            // A text merge of the whole file: its blocks no longer line up with the fresh proposals.
+            file: { ...withResult(old, next, merged, keepReview && open === 0 && old.resolved), proposals: undefined },
             reused: conflictCount(next.original) - open,
             open,
             mapped: true,
@@ -782,14 +783,14 @@ export function createConflictResolutionService(deps: Deps) {
       };
       const prepared = await prepare(ctx, session.id, spec, signal, report);
       const fresh = await conflictFiles(ctx, session.id, prepared, signal);
-      const known = new Set(previous.map((file) => file.path));
-      const added = fresh.filter((file) => !known.has(file.path));
-      await remember(ctx, session.headRepo, added, signal);
+      // Every file of the fresh merge gets its proposals again: a conflict the carry cannot reuse takes the fresh
+      // proposal, so the draft and its proposals always describe the same blocks.
+      await remember(ctx, session.headRepo, fresh, signal);
       await mergeStructurally(
         ctx,
         session.id,
         { head: session.headBranch, base: session.baseBranch },
-        added,
+        fresh,
         signal,
         report
       );
