@@ -1,5 +1,16 @@
 import type * as TreeSitter from 'web-tree-sitter';
-import { classifyNoise, type NoiseBlock } from './semantic-noise';
+import { classifyNoise, comparisonTexts, comparisonTrees, type NoiseBlock } from './semantic-noise';
+import {
+  MIN_LINES,
+  MOVE_GROUPS,
+  changedRows,
+  placeBefore,
+  sideCandidates,
+  treeTokens,
+  type FilePrints,
+  type SymbolPrint,
+  type SymbolSides,
+} from './moved-symbols';
 
 /**
  * Enclosing definitions for diff hunks, from a tree-sitter parse (#393).
@@ -345,10 +356,20 @@ function isRustTest(first: Node, node: Node) {
 export function collectDefinitions(
   tree: TreeSitter.Tree,
   query: TreeSitter.Query,
-  language: SyntaxLanguage
+  language: SyntaxLanguage,
+  /**
+   * Only definitions that reach these rows (0-based, end exclusive), and the ones around them: moved symbols ask for
+   * the definitions their changed rows touch, so a large file's query stays short.
+   */
+  rows?: readonly (readonly [number, number])[]
 ): SyntaxDefinition[] {
   const found = new Map<number, { node: Node; first: Node; kind: DefinitionKind; name: string; rank: number }>();
-  for (const match of query.matches(tree.rootNode)) {
+  const matches = rows
+    ? rows.flatMap(([start, end]) =>
+        query.matches(tree.rootNode, { startPosition: { row: start, column: 0 }, endPosition: { row: end, column: 0 } })
+      )
+    : query.matches(tree.rootNode);
+  for (const match of matches) {
     const definition = match.captures.find((capture) => capture.name.startsWith('definition.'));
     if (!definition) continue;
     const captured = CAPTURE_KINDS[definition.name.slice('definition.'.length)];
@@ -615,6 +636,11 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
   let ready: Promise<void> | undefined;
   const languages = new Map<SyntaxLanguage, Promise<{ language: TreeSitter.Language; query: TreeSitter.Query }>>();
   let parser: TreeSitter.Parser | undefined;
+  let parses = 0;
+  const parse = (text: string, previous?: TreeSitter.Tree | null) => {
+    parses++;
+    return parser?.parse(text, previous) ?? null;
+  };
   const init = () =>
     (ready ??= files
       .runtime()
@@ -643,7 +669,7 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
     }
     return pending;
   };
-  return {
+  const api = {
     /** Loads a grammar and its query ahead of the first parse that needs it. */
     warm: (id: SyntaxLanguage) => load(id).then(() => undefined),
     async definitions(id: SyntaxLanguage, text: string): Promise<DefinitionsResult> {
@@ -653,7 +679,7 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       const t1 = performance.now();
       if (!parser) throw Error('The parser did not start');
       parser.setLanguage(language);
-      const tree = parser.parse(text);
+      const tree = parse(text);
       if (!tree) throw Error('The file did not parse');
       const t2 = performance.now();
       try {
@@ -667,21 +693,180 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
      * Formatting-only and comment-only changes (lib/semantic-noise.ts): each change block of `hunks`, from the new
      * side's text. Both sides are parsed here and deleted before this returns.
      */
-    async noise(id: SyntaxLanguage, after: string, hunks: Parameters<typeof classifyNoise>[3]): Promise<NoiseResult> {
+    async noise(
+      id: SyntaxLanguage,
+      after: string,
+      hunks: Parameters<typeof classifyNoise>[3],
+      /** Also fingerprint the file's moved-symbol candidates, from the same two trees (lib/moved-symbols.ts). */
+      withSymbols = false
+    ): Promise<NoiseResult> {
       const loading = !languages.has(id);
       const t0 = performance.now();
-      const { language } = await load(id);
+      const { language, query } = await load(id);
       const t1 = performance.now();
       if (!parser) throw Error('The parser did not start');
-      const own = parser;
-      own.setLanguage(language);
-      const blocks = classifyNoise({ parse: (text, previous) => own.parse(text, previous) }, id, after, hunks);
-      return { blocks, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+      parser.setLanguage(language);
+      let symbols: FilePrints | undefined;
+      let symbolsError: string | undefined;
+      const blocks = classifyNoise(
+        { parse: (text, previous) => parse(text, previous) },
+        id,
+        after,
+        hunks,
+        withSymbols
+          ? (texts, beforeTree, afterTree) => {
+              try {
+                if (!beforeTree || !afterTree) throw Error('The file did not parse');
+                const sides = symbolSidesOf(texts);
+                const before = sideCandidatesOf(beforeTree, sides.before, query, id),
+                  now = sideCandidatesOf(afterTree, sides.after, query, id);
+                const found: FilePrints = { before: placeBefore(before.prints, sides.at), after: now.prints };
+                if (before.capped || now.capped) found.capped = true;
+                symbols = found;
+              } catch (error) {
+                // Only the symbols fail: the comparison's blocks are returned all the same.
+                symbolsError = error instanceof Error ? error.message : String(error);
+              }
+            }
+          : undefined
+      );
+      // No change blocks: nothing parsed, and nothing moved.
+      if (withSymbols && !symbols && !blocks.length) symbols = { before: [], after: [] };
+      if (withSymbols && !symbols) symbolsError ??= 'The file does not match its diff';
+      return { blocks, symbols, symbolsError, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+    },
+    /**
+     * Moved and renamed symbols (lib/moved-symbols.ts): the fingerprints of a file's candidates, the definitions most
+     * of whose lines its diff removes or adds. An added or deleted file is its one side, parsed once. A modified file
+     * comes as its new side and hunks, and is read by the noise comparison's two trees (`noise` with symbols): its
+     * old side is the new one with the hunks undone, parsed incrementally from the new tree.
+     */
+    async symbols(id: SyntaxLanguage, input: SymbolsInput): Promise<SymbolsResult> {
+      const loading = !languages.has(id);
+      const t0 = performance.now();
+      const { language, query } = await load(id);
+      const t1 = performance.now();
+      if (!parser) throw Error('The parser did not start');
+      parser.setLanguage(language);
+      if (input.mode === 'modified') {
+        const texts = comparisonTexts(input.text, input.hunks);
+        if (!texts) throw Error('The file does not match its diff');
+        const prints: FilePrints = { before: [], after: [] };
+        if (texts.blocks.length) {
+          // The old tree comes from the new one, edited and parsed incrementally, as for the noise comparison.
+          const { oldTree, newTree } = comparisonTrees({ parse: (text, previous) => parse(text, previous) }, texts);
+          try {
+            if (!oldTree || !newTree) throw Error('The file did not parse');
+            const sides = symbolSidesOf(texts);
+            const before = sideCandidatesOf(oldTree, sides.before, query, id),
+              now = sideCandidatesOf(newTree, sides.after, query, id);
+            prints.before = placeBefore(before.prints, sides.at);
+            prints.after = now.prints;
+            if (before.capped || now.capped) prints.capped = true;
+          } finally {
+            oldTree?.delete();
+            newTree?.delete();
+          }
+        }
+        return { prints, ms: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+      }
+      const side = { text: input.text, changed: new Uint8Array(input.text.split('\n').length + 1).fill(1) };
+      const tree = parse(side.text);
+      if (!tree) throw Error('The file did not parse');
+      try {
+        const found = sideCandidatesOf(tree, side, query, id);
+        const prints: FilePrints =
+          input.mode === 'added' ? { before: [], after: found.prints } : { before: found.prints, after: [] };
+        if (found.capped) prints.capped = true;
+        return { prints, ms: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+      } finally {
+        tree.delete();
+      }
+    },
+    /** Parses so far, for the cost checks: definitions, noise comparisons and moved symbols together. */
+    parses: () => parses,
+  };
+  return api;
+}
+
+/** A side's moved-symbol candidates from its tree: none read unless some definition could be one. */
+function sideCandidatesOf(
+  tree: TreeSitter.Tree,
+  side: { text: string; changed: Uint8Array } | undefined,
+  query: TreeSitter.Query,
+  id: SyntaxLanguage
+): { prints: SymbolPrint[]; capped: boolean } {
+  if (!side || !side.changed.some((row) => row)) return { prints: [], capped: false };
+  // A candidate's declaration row is changed: only definitions reaching changed rows are asked for.
+  const rows: [number, number][] = [];
+  side.changed.forEach((changed, row) => {
+    if (!changed) return;
+    const last = rows.at(-1);
+    if (last && row - last[1] <= 2) last[1] = row + 1;
+    else rows.push([row, row + 1]);
+  });
+  const definitions = collectDefinitions(tree, query, id, rows.length <= 400 ? rows : undefined);
+  // Most files change no whole definition: their tokens are never read.
+  const worth = definitions.some((d) => {
+    if (!MOVE_GROUPS[d.kind] || d.end - d.start + 1 < MIN_LINES) return false;
+    // A candidate's declaration changes too: a class whose header stays is no candidate, however many rows it holds.
+    let declared = false;
+    for (let r = d.start - 1; r < d.signatureEnd && !declared; r++) declared = !!side.changed[r];
+    if (!declared) return false;
+    let touched = 0;
+    for (let r = d.start - 1; r < d.end; r++) touched += side.changed[r] ?? 0;
+    return touched >= MIN_LINES;
+  });
+  return worth ? sideCandidates(definitions, treeTokens(tree, side.text), side.changed) : { prints: [], capped: false };
+}
+
+export type SymbolsInput =
+  | { mode: 'modified'; text: string; hunks: Parameters<typeof classifyNoise>[3] }
+  | { mode: 'added' | 'deleted'; text: string };
+export interface SymbolsResult {
+  prints: FilePrints;
+  /** Milliseconds parsing both sides and fingerprinting them; `load` is grammar loading, when this call loaded it. */
+  ms: number;
+  load?: number;
+}
+
+/** A modified file's sides for its symbols, from the comparison's two texts (comparisonTexts). */
+function symbolSidesOf(texts: NonNullable<ReturnType<typeof comparisonTexts>>): SymbolSides & { before: { text: string; changed: Uint8Array }; after: { text: string; changed: Uint8Array } } {
+  const rows = (text: string) => text.split('\n').length;
+  const { blocks } = texts;
+  const afterChanged = changedRows(rows(texts.after), blocks.map((b) => ({ row: b.newRow, count: b.newCount })));
+  const afterLines = texts.after.split('\n');
+  // A new line that only separates changes (blank, or punctuation alone) or is itself changed belongs to the same
+  // change region: a removed block and an added one parted by blank context lines are one edit in place.
+  const joins = (line: number) => line >= 1 && line <= afterLines.length && (!!afterChanged[line - 1] || !/[\p{L}\p{N}_$]/u.test(afterLines[line - 1]));
+  const place = (row: number): [number, number] => {
+    let offset = 0;
+    for (const block of blocks) {
+      if (row < block.oldRow) break;
+      if (row < block.oldRow + block.oldCount) return [block.newRow + 1, block.newRow + Math.max(1, block.newCount)];
+      offset += block.newCount - block.oldCount;
+    }
+    return [row + offset + 1, row + offset + 1];
+  };
+  return {
+    before: { text: texts.before, changed: changedRows(rows(texts.before), blocks.map((b) => ({ row: b.oldRow, count: b.oldCount }))) },
+    after: { text: texts.after, changed: afterChanged },
+    at: (row) => {
+      let [first, last] = place(row);
+      while (joins(first - 1)) first--;
+      // A deleted block sits before `last`: the line it sits before may itself join the region.
+      if (!joins(last)) return [first, last];
+      while (joins(last + 1)) last++;
+      return [first, last];
     },
   };
 }
 export interface NoiseResult {
   blocks: NoiseBlock[];
+  /** The file's moved-symbol candidates, when asked for and the hunks match the text. */
+  symbols?: FilePrints;
+  /** Why the candidates were asked for and not found; the blocks stand regardless. */
+  symbolsError?: string;
   /** Milliseconds parsing both sides and comparing them; `load` is grammar loading, when this call loaded it. */
   classify: number;
   load?: number;

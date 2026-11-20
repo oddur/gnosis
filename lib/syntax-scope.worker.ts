@@ -1,7 +1,8 @@
 import * as TreeSitter from 'web-tree-sitter';
-import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
+import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage, type SymbolsInput } from './syntax-scope';
 import type { NoiseBlock } from './semantic-noise';
-import { createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
+import { matchMoves, type FilePrints, type MoveFile, type MovesResult } from './moved-symbols';
+import { createFollowers, createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
 import javascriptTags from '../src/assets/tree-sitter/javascript-tags.scm?raw';
 import typescriptTags from '../src/assets/tree-sitter/typescript-tags.scm?raw';
 import rustTags from '../src/assets/tree-sitter/rust-tags.scm?raw';
@@ -48,7 +49,28 @@ export type SyntaxRequest =
       grammarUrl: string;
       priority: SyntaxPriority;
       side: 'noise';
+      /** Also fingerprint the file's moved-symbol candidates from the same two trees (#398): no parse of its own. */
+      symbols?: boolean;
     }
+  /**
+   * Moved and renamed symbols (#398): one file's candidates and their fingerprints (lib/moved-symbols.ts), from its
+   * new side and hunks, or the one side of an added or deleted file. It queues below every other parse.
+   */
+  | {
+      type: 'symbols';
+      id: number;
+      /** A file revision, such as `fileRevisionKey(...) + ':symbols'`. */
+      key: string;
+      url: string;
+      language: SyntaxLanguage;
+      input: SymbolsInput;
+      runtimeUrl: string;
+      grammarUrl: string;
+      priority: SyntaxPriority;
+      side: 'symbols';
+    }
+  /** A PR's moves, from its files' fingerprints: matched in the queue, below every parse. */
+  | { type: 'moves'; id: number; files: MoveFile[] }
   /** The view came nearer a file whose parse waits: it moves up to `priority`. */
   | { type: 'priority'; key: string; priority: SyntaxPriority }
   /** The parse moves to the other worker, if it has not started here: the answer says whether it was taken. */
@@ -62,13 +84,32 @@ export type SyntaxResponse =
       id: number;
       definitions: SyntaxDefinition[];
       /** `wait` is the time in the queue; `priority`, the tier the parse ran at. */
-      timing: { parse: number; query: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority };
+      timing: {
+        parse: number;
+        query: number;
+        load?: number;
+        cached: boolean;
+        wait?: number;
+        priority?: SyntaxPriority;
+        /** Parses the worker has made in all, for the cost checks. */
+        parses?: number;
+      };
     }
   | {
       id: number;
       noise: NoiseBlock[];
-      timing: { classify: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority };
+      /** The file's moved-symbol candidates, when asked for; absent when the hunks do not match the text. */
+      symbols?: FilePrints;
+      /** Why they were asked for and are absent. */
+      symbolsError?: string;
+      timing: { classify: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority; parses?: number };
     }
+  | {
+      id: number;
+      symbols: FilePrints;
+      timing: { ms: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority; parses?: number };
+    }
+  | { id: number; moves: MovesResult }
   | { id: number; error: string }
   | { id: number; taken: boolean };
 
@@ -115,8 +156,21 @@ const engine = createSyntaxEngine(TreeSitter, {
 });
 const cache = new Map<string, { url: string; definitions: SyntaxDefinition[] }>();
 /** Comparisons, by file revision and change blocks: a few bytes per block. */
-const noiseCache = new Map<string, { url: string; noise: NoiseBlock[] }>();
-type Job = Extract<SyntaxRequest, { type: 'definitions' | 'noise' }> & { received: number };
+const noiseCache = new Map<string, { url: string; noise: NoiseBlock[]; symbols?: FilePrints; symbolsError?: string }>();
+type MovesJob = Extract<SyntaxRequest, { type: 'moves' }> & { key: string; priority: SyntaxPriority; side: 'symbols' };
+type Job = (Extract<SyntaxRequest, { type: 'definitions' | 'noise' | 'symbols' }> | MovesJob) & { received: number };
+/** Requests a newer job with the same key replaced in the queue: they hear that job's answer (createFollowers). */
+const followers = createFollowers();
+function enqueue(job: Job) {
+  const replaced = queue.add(job);
+  if (replaced) followers.replace(job.id, replaced.id);
+  void drain();
+}
+/** Answers a job's request and every request it replaced. */
+function answer(job: Job, response: Omit<SyntaxResponse, 'id'>) {
+  for (const id of followers.answer(job.id)) self.postMessage({ id, ...response } as SyntaxResponse);
+}
+const failed = (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) });
 // One parse at a time, nearest the reader first (lib/syntax-parse-queue.ts); a cached file answers at once.
 const queue = createParseQueue<Job>();
 /** Grammars to load once no parse waits. */
@@ -135,21 +189,43 @@ const yieldToMessages = () =>
 
 async function run(job: Job) {
   const wait = performance.now() - job.received;
+  if (job.type === 'moves') {
+    try {
+      answer(job, { moves: matchMoves(job.files) });
+    } catch (error) {
+      answer(job, failed(error));
+    }
+    return;
+  }
+  if (job.type === 'symbols') {
+    try {
+      const result = await engine.symbols(job.language, job.input);
+      // Kept on the page only (lib/moved-symbols-store.ts): the worker has nothing to answer twice.
+      answer(job, {
+        symbols: result.prints,
+        timing: { ms: result.ms, load: result.load, cached: false, wait, priority: job.priority, parses: engine.parses() },
+      });
+    } catch (error) {
+      answer(job, failed(error));
+    }
+    return;
+  }
   if (job.type === 'noise') {
     try {
-      const result = await engine.noise(job.language, job.text, job.hunks);
-      noiseCache.set(job.key, { url: job.url, noise: result.blocks });
+      const result = await engine.noise(job.language, job.text, job.hunks, !!job.symbols);
+      noiseCache.set(job.key, { url: job.url, noise: result.blocks, symbols: result.symbols, symbolsError: result.symbolsError });
       for (const key of noiseCache.keys()) {
         if (noiseCache.size <= CACHE_ENTRIES) break;
         noiseCache.delete(key);
       }
-      self.postMessage({
-        id: job.id,
+      answer(job, {
         noise: result.blocks,
-        timing: { classify: result.classify, load: result.load, cached: false, wait, priority: job.priority },
-      } satisfies SyntaxResponse);
+        symbols: result.symbols,
+        symbolsError: result.symbolsError,
+        timing: { classify: result.classify, load: result.load, cached: false, wait, priority: job.priority, parses: engine.parses() },
+      });
     } catch (error) {
-      self.postMessage({ id: job.id, error: error instanceof Error ? error.message : String(error) } satisfies SyntaxResponse);
+      answer(job, failed(error));
     }
     return;
   }
@@ -160,13 +236,20 @@ async function run(job: Job) {
       if (cache.size <= CACHE_ENTRIES) break;
       cache.delete(key);
     }
-    self.postMessage({
-      id: job.id,
+    answer(job, {
       definitions: result.definitions,
-      timing: { parse: result.parse, query: result.query, load: result.load, cached: false, wait, priority: job.priority },
-    } satisfies SyntaxResponse);
+      timing: {
+        parse: result.parse,
+        query: result.query,
+        load: result.load,
+        cached: false,
+        wait,
+        priority: job.priority,
+        parses: engine.parses(),
+      },
+    });
   } catch (error) {
-    self.postMessage({ id: job.id, error: error instanceof Error ? error.message : String(error) } satisfies SyntaxResponse);
+    answer(job, failed(error));
   }
 }
 async function drain() {
@@ -200,8 +283,12 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
     return;
   }
   if (message.type === 'take') {
-    const taken = queue.remove((job) => job.key === message.key).length > 0;
-    self.postMessage({ id: message.id, taken } satisfies SyntaxResponse);
+    const removed = queue.remove((job) => job.key === message.key);
+    // Requests the taken job had replaced are not answered by the other worker: they end here.
+    // Only jobs actually taken: a running job with the same key still answers the requests it replaced.
+    for (const job of removed)
+      for (const id of followers.drop(job.id)) self.postMessage({ id, error: 'The parse moved to the other worker' } satisfies SyntaxResponse);
+    self.postMessage({ id: message.id, taken: removed.length > 0 } satisfies SyntaxResponse);
     return;
   }
   if (message.type === 'warm') {
@@ -213,16 +300,26 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
     void drain();
     return;
   }
+  if (message.type === 'moves') {
+    // Matched at the lowest tier, between parses: breadcrumbs never wait for a large refactor's match.
+    enqueue({ ...message, key: `moves:${message.id}`, priority: 'prefetch', side: 'symbols', received: performance.now() });
+    return;
+  }
+  if (message.type === 'symbols') {
+    runtimeUrl ||= message.runtimeUrl;
+    grammarUrls.set(message.language, message.grammarUrl);
+    enqueue({ ...message, received: performance.now() });
+    return;
+  }
   if (message.type === 'noise') {
     const known = noiseCache.get(message.key);
-    if (known) {
-      self.postMessage({ id: message.id, noise: known.noise, timing: { classify: 0, cached: true } } satisfies SyntaxResponse);
+    if (known && (!message.symbols || known.symbols || known.symbolsError)) {
+      self.postMessage({ id: message.id, noise: known.noise, symbols: known.symbols, symbolsError: known.symbolsError, timing: { classify: 0, cached: true } } satisfies SyntaxResponse);
       return;
     }
     runtimeUrl ||= message.runtimeUrl;
     grammarUrls.set(message.language, message.grammarUrl);
-    queue.add({ ...message, received: performance.now() });
-    void drain();
+    enqueue({ ...message, received: performance.now() });
     return;
   }
   const hit = cache.get(message.key);
@@ -238,6 +335,5 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   }
   runtimeUrl ||= message.runtimeUrl;
   grammarUrls.set(message.language, message.grammarUrl);
-  queue.add({ ...message, received: performance.now() });
-  void drain();
+  enqueue({ ...message, received: performance.now() });
 };
