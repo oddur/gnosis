@@ -27,6 +27,9 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
+import { Brush, Pilcrow, SquareSlash } from 'lucide-react';
+import { blockKey, changeBlocks, hunkNoise, noiseLabel, type HunkNoise, type NoiseKind } from '../lib/semantic-noise';
+import type { DiffNoise } from './useDiffFileModel';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
 export type GapStatus =
@@ -73,6 +76,12 @@ ${HERE_CSS}
 [data-column-number][data-scope-rail=start] { background-size: 2px calc(100% - 0.5lh + 1px), 7px 2px; background-position: 3px 100%, 3px calc(0.5lh - 1px); }
 [data-column-number][data-scope-rail=end] { background-size: 2px calc(0.5lh + 1px), 7px 2px; background-position: 3px 0, 3px calc(0.5lh - 1px); }
 [data-column-number][data-scope-rail=only] { background-size: 7px 2px, 0 0; background-position: 3px calc(0.5lh - 1px), 0 0; }
+/* Quiet changes (#396): in a hunk that also changes code, the lines whose change is only formatting or comments, and
+   that the reader hides, keep their text and lose most of their change colour, so the code change reads first. */
+[data-line][data-noise-line], [data-column-number][data-noise-line] {
+  background-image: linear-gradient(color-mix(in srgb, var(--diffs-bg) 62%, transparent), color-mix(in srgb, var(--diffs-bg) 62%, transparent));
+}
+[data-noise-line] [data-diff-span] { background-color: transparent; }
 ${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
 const NO_RAILS: readonly ScopeRail[] = [];
@@ -851,6 +860,81 @@ function markRails(host: Element, rails: readonly ScopeRail[]) {
   }
 }
 
+/**
+ * Marks the changed rows of quiet blocks inside hunks that also change code (#396), by side and line (`a12`, `b9`),
+ * on the rows and their gutter cells. Attributes change only where they differ.
+ */
+function markNoise(host: Element, lines: ReadonlySet<string>) {
+  const root = host.shadowRoot;
+  if (!root) return;
+  if (!lines.size && !root.querySelector('[data-noise-line]')) return;
+  const gutters = new Map<string, Element[]>();
+  for (const cell of root.querySelectorAll('[data-column-number]')) {
+    const index = cell.getAttribute('data-line-index') ?? '';
+    gutters.set(index, [...(gutters.get(index) ?? []), cell]);
+  }
+  for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
+    const type = row.dataset.lineType;
+    const side = type === 'change-deletion' ? 'b' : type === 'change-addition' ? 'a' : undefined;
+    const on = !!side && lines.has(`${side}${row.dataset.line}`);
+    for (const element of [row, ...(gutters.get(row.getAttribute('data-line-index') ?? '') ?? [])].filter((e) => e.closest('[data-deletions]') === row.closest('[data-deletions]')))
+      if (element.hasAttribute('data-noise-line') !== on) element.toggleAttribute('data-noise-line', on);
+  }
+}
+
+/** A quiet run's icon: a pilcrow for whitespace, a brush for formatting, a slash for comments. */
+function NoiseIcon({ kinds }: { kinds: readonly NoiseKind[] }) {
+  const label = noiseLabel(kinds);
+  const Icon = label === 'Comments only' ? SquareSlash : label.startsWith('Formatting') ? Brush : Pilcrow;
+  return <Icon className="diff-noise-icon" size={13} strokeWidth={2} aria-hidden="true" />;
+}
+
+/**
+ * A hunk whose every change is formatting or comments the reader hides (#396): one quiet code line in its place, under
+ * its header, that says what it holds and shows it. Nothing is gone: the header keeps its breadcrumb, lines and
+ * counts, and "Show" puts the hunk back.
+ */
+function NoiseBar({
+  quiet,
+  rows,
+  lines: span,
+  onShow,
+}: {
+  quiet: HunkNoise;
+  rows: number;
+  /** The hunk's new and old lines, so a jump to one of them finds this bar and opens it (lib/diff-here.ts). */
+  lines: { after: [number, number]; before: [number, number] };
+  onShow?: () => void;
+}) {
+  const label = noiseLabel(quiet.kinds);
+  return (
+    <div
+      className="diff-gap"
+      role="group"
+      aria-label={`${label}, ${lines(rows)} hidden`}
+      data-trailing=""
+      data-noise-bar={label}
+      data-noise-after={span.after.join('-')}
+      data-noise-before={span.before.join('-')}
+    >
+      <span className="diff-gap-trailing">
+        <NoiseIcon kinds={quiet.kinds} />
+        <span className="diff-noise-label">{label}</span>
+        <span className="diff-gap-dot" aria-hidden="true">
+          ·
+        </span>
+        {onShow ? (
+          <button type="button" className="diff-context-button diff-gap-text" data-noise-show="" onClick={onShow} title={`Show this ${label.toLowerCase()} change`}>
+            Show {lines(rows)}
+          </button>
+        ) : (
+          <span className="diff-gap-count">{lines(rows)}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
 /** A definition's signature is marked "here" with its first line, up to this many lines. */
 const MAX_HERE_LINES = 12;
 
@@ -999,6 +1083,7 @@ export function ChangesDiff<A>({
   rails = NO_RAILS,
   onCollapseScope,
   outline,
+  noise,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1039,9 +1124,18 @@ export function ChangesDiff<A>({
   onCollapseScope?: (key: string) => void;
   /** The file's outline of changed symbols (#394), above its first hunk. */
   outline?: Omit<OutlineProps, 'onGo'>;
+  /** Quiet changes (#396): hunks whose every change the reader hides show as a bar, and quiet lines among code dim. */
+  noise?: DiffNoise;
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
+  // The kinds of the blocks still hidden: those the reader opened show.
+  const quietKinds = useMemo(() => {
+    if (!noise || !noise.shown.size) return noise?.kinds;
+    const kinds = new Map(noise.kinds);
+    for (const key of noise.shown) kinds.delete(key);
+    return kinds;
+  }, [noise?.kinds, noise?.shown]);
   const stableOptions = useStableOptions({
     ...options,
     // One text node per line (lib/diff-token-flatten.ts).
@@ -1052,6 +1146,7 @@ export function ChangesDiff<A>({
     onPostRender: (node: HTMLElement, ...rest: unknown[]) => {
       (options.onPostRender as ((node: HTMLElement, ...rest: unknown[]) => void) | undefined)?.(node, ...rest);
       markRails(node, latestRails.current);
+      markNoise(node, latestNoiseLines.current);
     },
   } as FileDiffOptions<A, undefined>);
   const latestRender = useRef(renderAnnotation);
@@ -1074,11 +1169,28 @@ export function ChangesDiff<A>({
         changed: part.hunk.rows.some((row) => row.type !== ' '),
         counts: hunkCounts(hunk),
         range: hunkRange(hunk),
+        rows: hunk.rows.length,
+        lines: {
+          after: [hunk.newStart, hunk.newStart + hunk.rows.filter((row) => row.type !== '-').length - 1] as [number, number],
+          before: [hunk.oldStart, hunk.oldStart + hunk.rows.filter((row) => row.type !== '+').length - 1] as [number, number],
+        },
+        quiet: noise && quietKinds ? hunkNoise(hunk, quietKinds, noise.filter) : undefined,
+        blockKeys: noise ? changeBlocks([hunk]).map(blockKey) : [],
       };
     });
     cache.current = next;
     return result;
-  }, [parts, file.name, file.prevName, file.status]);
+  }, [parts, file.name, file.prevName, file.status, quietKinds, noise?.filter.whitespace, noise?.filter.formatting, noise?.filter.comments]);
+  // Quiet lines in hunks that also change code: dimmed, not hidden.
+  const noiseLines = useMemo(() => {
+    const result = new Set<string>();
+    for (const block of blocks)
+      if (block.kind === 'hunk' && block.quiet && !block.quiet.hidden)
+        for (const { side, line } of block.quiet.lines) result.add(`${side === 'before' ? 'b' : 'a'}${line}`);
+    return result;
+  }, [blocks]);
+  const latestNoiseLines = useRef(noiseLines);
+  latestNoiseLines.current = noiseLines;
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
   // Hunks with a change: pinned context (a definition's signature) is not a location of its own.
   const changedHunks = useMemo(() => new Set(blocks.flatMap((block) => (block.kind === 'hunk' && block.changed ? [block.key] : []))), [blocks]);
@@ -1176,6 +1288,8 @@ export function ChangesDiff<A>({
   latestParts.current = parts;
   const latestBlocks = useRef(blocks);
   latestBlocks.current = blocks;
+  const latestNoise = useRef(noise);
+  latestNoise.current = noise;
   const latestShow = useRef(onShowDefinition);
   latestShow.current = onShowDefinition;
   const latestName = useRef('');
@@ -1340,6 +1454,11 @@ export function ChangesDiff<A>({
         }
         const block = latestBlocks.current.find((b) => b.kind === 'hunk' && b.key === place.key);
         if (block?.kind !== 'hunk' || !block.slices.length) return undefined;
+        // The line is in a hunk collapsed as a quiet change: it opens, and the jump aims again once it renders.
+        if (block.quiet?.hidden) {
+          latestNoise.current?.show(block.blockKeys, false);
+          return undefined;
+        }
         const index = Math.min(block.slices.length - 1, Math.floor(place.row / HUNK_SLICE_SIZE));
         const slice = block.slices[block.slices.length > 1 ? index : 0];
         const holder = element.querySelector<HTMLElement>(`[data-slice="${CSS.escape(slice.key)}"]`);
@@ -1510,6 +1629,9 @@ export function ChangesDiff<A>({
   useEffect(() => {
     if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markRails(host, rails);
   }, [rails]);
+  useEffect(() => {
+    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markNoise(host, noiseLines);
+  }, [noiseLines]);
   // New definitions name the reader's place anew.
   useEffect(() => follow.current?.(), [scopeAt]);
   // Breadcrumbs fold to fit their bar: again whenever the bars' width or their crumbs change.
@@ -1629,6 +1751,13 @@ export function ChangesDiff<A>({
       current.children.push(<div key={`between-${block.key}`} className="diff-gap" data-static="" aria-hidden="true" />);
     current ??= open(block.key);
     previous = 'hunk';
+    // A hunk the reader hides as noise is one bar, unless it holds a comment or the line to show.
+    if (block.quiet?.hidden && !block.slices.some((slice) => bySlice.has(slice.key) || slice.key === targetKey)) {
+      current.children.push(
+        <NoiseBar key={`noise-${block.key}`} quiet={block.quiet} rows={block.rows} lines={block.lines} onShow={noise && (() => noise.show(block.blockKeys))} />
+      );
+      return;
+    }
     for (const slice of block.slices) {
       const diff = (
         <SliceDiff
@@ -1660,6 +1789,43 @@ export function ChangesDiff<A>({
     }
   });
   close();
+  // Every change of the file is noise the reader hides: the file is one bar under its header.
+  const quietFile =
+    !!noise?.fileHidden && !!noise.file && !annotations.length && !targetKey && blocks.some((block) => block.kind === 'hunk' && block.changed);
+  const quietNoise = quietFile ? noise : undefined;
+  if (quietNoise?.file) {
+    const changes = quietNoise.file.added + quietNoise.file.deleted;
+    const hunks = blocks.filter((block) => block.kind === 'hunk' && block.changed).length;
+    // A whole file of layout changes across hunks reads as a formatter run: "Reformatted".
+    const label = quietNoise.file.reformatted ? 'Reformatted' : noiseLabel(quietNoise.file.kinds);
+    content.length = 0;
+    content.push(
+      <div key="noise-file" className="diff-gap" role="group" aria-label={`${label}: every change in this file`} data-trailing="" data-noise-file={label}>
+        <span className="diff-gap-trailing">
+          <NoiseIcon kinds={quietNoise.file.kinds} />
+          <span className="diff-noise-label">{label}</span>
+          <span className="diff-gap-dot" aria-hidden="true">
+            ·
+          </span>
+          <span className="diff-gap-count">
+            {hunks.toLocaleString()} {hunks === 1 ? 'change' : 'changes'}, {lines(changes)}
+          </span>
+          <span className="diff-gap-dot" aria-hidden="true">
+            ·
+          </span>
+          <button
+            type="button"
+            className="diff-context-button diff-gap-text"
+            data-noise-show=""
+            title="Show every change in this file"
+            onClick={() => quietNoise.show(blocks.flatMap((block) => (block.kind === 'hunk' ? block.blockKeys : [])))}
+          >
+            Show changes
+          </button>
+        </span>
+      </div>
+    );
+  }
   return (
     <div
       ref={root}
@@ -1670,7 +1836,7 @@ export function ChangesDiff<A>({
       data-line-numbers={options.disableLineNumbers ? 'off' : undefined}
       style={rootStyle}
     >
-      {outline && <DiffOutline {...outline} onGo={goToSymbol} />}
+      {outline && !quietFile && <DiffOutline {...outline} onGo={goToSymbol} />}
       {content}
     </div>
   );

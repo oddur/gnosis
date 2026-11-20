@@ -5,13 +5,14 @@ import type { GitHubReviewThread } from '../lib/review-threads';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
 import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
-import { DEFAULT_DIFF_APPEARANCE, diffContextLines, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, noiseFilterOf, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
 import { reviewGapHunks, type ReviewPin } from '@/lib/review-gap-hunks';
 import { fileRevisionKey, type PrChangeFile, type PrChanges, type PrFileRequest } from '@/lib/pr-changes';
 import { currentCodeIntelligence } from '@/lib/use-syntax-contents';
 import { LFS_VERSION } from '@/lib/git-lfs';
 import type { DiffHunk, DiffSide, FileMetadata, InlineExplanation, PendingReviewComment } from '@/lib/types';
 import { InlineCodeExplanation } from './InlineCodeExplanation';
+import { openQuietLine } from '@/lib/diff-here';
 import { ChangesDiff } from './ChangesDiff';
 import { useDiffFileModel } from './useDiffFileModel';
 import { CommentBubble, InlineCommentForm, extractShikiStyles, type CommentCallbacks } from './shared-diff-utils';
@@ -154,6 +155,8 @@ export function ReviewDiff({
     };
     return { key: fileKey, snapshot, file };
   }, [fileKey, source?.previousPath, fileStatus, saved.patch]);
+  // The same quiet changes as Changes (#396), from the same appearance.
+  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
   const model = useDiffFileModel({
     fileKey,
     revealKey,
@@ -171,6 +174,7 @@ export function ReviewDiff({
     codeSettings: currentCodeIntelligence(),
     sectionRef: root,
     status: lfs ? undefined : fileStatus,
+    noiseFilter,
   });
   // Unified context lines name their old line too, for review checks and jumps (findReviewLine).
   const oldOf = useMemo(() => {
@@ -319,7 +323,9 @@ export function ReviewDiff({
           onShowDefinition={model.showDefinition}
           rails={model.rails}
           onCollapseScope={model.collapseScope}
+          noise={model.noise}
           outline={{
+            quiet: model.quietSymbols,
             symbols: model.symbols,
             pending: model.outlinePending,
             fileKey,
@@ -367,6 +373,16 @@ export function findReviewLine(
     }
   }
   return null;
+}
+
+/**
+ * When a line is not on screen because a quiet change holds it (#396), opens that change: a jump then finds the line
+ * once the diff renders. Whether it opened one.
+ */
+export function openReviewLine(container: HTMLElement, filePath: string, line: number, side?: DiffSide): boolean {
+  const groups = [...container.querySelectorAll<HTMLElement>('.review-file-group[data-file-path]')].filter((group) => group.dataset.filePath === filePath);
+  const scopes: HTMLElement[] = groups.length ? groups : container.matches('.review-file-group') ? [container] : [container];
+  return scopes.some((scope) => openQuietLine(scope, line, side === 'LEFT' ? 'before' : 'after'));
 }
 
 export function reviewCodeSelection(container: HTMLElement) {

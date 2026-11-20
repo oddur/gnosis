@@ -62,7 +62,12 @@ function innermost(definitions: readonly SyntaxDefinition[], line: number): Synt
 
 export function changedSymbols(
   hunks: readonly GapHunk[],
-  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] }
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  /**
+   * Changed lines the outline leaves out, by side and line: formatting or comments the reader hides (#396). A symbol
+   * whose every change is left out is not listed; its diff still shows the change, collapsed.
+   */
+  skip?: (side: 'before' | 'after', line: number) => boolean
 ): ChangedSymbol[] | undefined {
   const after = definitions.after;
   if (!after) return undefined;
@@ -100,7 +105,9 @@ export function changedSymbols(
       newLine = hunk.newStart;
     for (const row of hunk.rows) {
       order++;
-      if (row.type === '+') {
+      if (skip && row.type !== ' ' && skip(row.type === '+' ? 'after' : 'before', row.type === '+' ? newLine : oldLine)) {
+        // Left out: counted as unchanged.
+      } else if (row.type === '+') {
         addedLines.add(newLine);
         const definition = innermost(after, newLine);
         if (definition) touch(definition, 'after', order, { side: 'after', line: newLine }, 1, 0);

@@ -226,3 +226,23 @@ export function markSection(hosts: Iterable<Element>, section: HereSection, bars
   for (const element of bars) targets.push({ element, part: 'body' });
   return mark(targets);
 }
+
+/**
+ * Opens the quiet change (#396) that holds a line, so a jump can land on it: a hunk collapsed to a bar, or a file
+ * collapsed to one. `side` is the line's side; `scope` is the file's diff, or what holds it. Whether it opened one:
+ * the caller looks for the line again once the diff has rendered.
+ */
+export function openQuietLine(scope: ParentNode, line: number, side: 'before' | 'after' = 'after'): boolean {
+  for (const bar of scope.querySelectorAll<HTMLElement>('[data-noise-file], [data-noise-bar]')) {
+    const range = bar.dataset[side === 'before' ? 'noiseBefore' : 'noiseAfter'];
+    if (range !== undefined) {
+      const [from, to] = range.split('-').map(Number);
+      if (line < from || line > to) continue;
+    }
+    const show = bar.querySelector<HTMLButtonElement>('[data-noise-show]');
+    if (!show) continue;
+    show.click();
+    return true;
+  }
+  return false;
+}

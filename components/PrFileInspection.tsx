@@ -24,7 +24,8 @@ import {
 import { useFileProgress } from '../lib/file-view-progress';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { useDiffLayout } from '../lib/use-diff-layout';
-import { diffContextLines } from '../lib/review-diff';
+import { diffContextLines, noiseFilterOf } from '../lib/review-diff';
+import { quietHeader } from '../lib/quiet-changes-header';
 import { gapContaining, hunksFromDiff, shownSelection } from '../lib/diff-gaps';
 import { ChangesDiff } from './ChangesDiff';
 import { useDiffFileModel } from './useDiffFileModel';
@@ -202,6 +203,7 @@ export function PrFileInspection({
   const expandable = entry.file.status !== 'added' && entry.file.status !== 'deleted' && !contents?.lfs;
   // Settings › Appearance › Code intelligence: a language that is off shows as a file without a grammar.
   const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
+  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
   useEffect(() => applyCodeIntelligence(codeSettings), [codeSettings]);
   const scopeFile = useMemo(() => ({ key: activeKey, snapshot: entry.snapshot, file: entry.file }), [activeKey, entry.snapshot, entry.file]);
   // Gaps, reveals, scopes and structure loading are shared with Explanation topics (components/useDiffFileModel.tsx).
@@ -221,7 +223,11 @@ export function PrFileInspection({
     sectionRef,
     // An added or deleted file's structure comes from its patch; an LFS pointer is not the file.
     status: contents?.lfs ? undefined : entry.file.status,
+    noiseFilter,
   });
+  // How much of the file is noise the reader hides (#396), for its header: "90 formatting", or "Formatting only".
+  const quiet = model.noise?.file;
+  const quietStat = quiet && (quiet.added || quiet.deleted) ? quietHeader(quiet, entry.file.additions, entry.file.deletions) : undefined;
   const { parts, gaps, shown, lineCount } = model;
   const revealLines = model.revealLines;
   const wantsPreview = !compactMove && markdown && markdownView.mode === 'preview' && sourceOverride !== activeKey;
@@ -619,6 +625,7 @@ export function PrFileInspection({
         stats={unchangedMove ? 'Moved · contents unchanged' : undefined}
         additions={entry.file.additions}
         deletions={entry.file.deletions}
+        noise={unchangedMove ? undefined : quietStat}
         tags={classificationTags}
         actions={
           <>
@@ -816,7 +823,9 @@ export function PrFileInspection({
                   onShowDefinition={model.showDefinition}
                   rails={model.rails}
                   onCollapseScope={model.collapseScope}
+                  noise={model.noise}
                   outline={{
+                    quiet: model.quietSymbols,
                     symbols: model.symbols,
                     pending: model.outlinePending,
                     fileKey: activeKey,

@@ -4,8 +4,10 @@ import { useId } from 'react';
 import { Popover } from 'radix-ui';
 import { SlidersHorizontal } from 'lucide-react';
 import { Button } from './ui/button';
-import { DEFAULT_DIFF_APPEARANCE, diffContextLines, type DiffAppearance } from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, noiseFilterOf, type DiffAppearance } from '@/lib/review-diff';
 import { DIFF_LAYOUT_KEYS } from '@/lib/diff-layout';
+import { anchorReader } from '@/lib/quiet-changes';
+import { QuietChangesOptions } from './QuietChanges';
 
 const inlineDescriptions: Record<DiffAppearance['inline'], string> = {
   'word-alt': 'Highlights whole words using enhanced matching.',
@@ -29,6 +31,7 @@ export function DiffAppearanceMenu({
   const descriptionId = useId();
   const contextDescriptionId = useId();
   const layoutDescriptionId = useId();
+  const noise = noiseFilterOf(value);
   const change = (next: DiffAppearance) => {
     publishDiffAppearance(next);
     onChange(next);
@@ -145,6 +148,15 @@ export function DiffAppearanceMenu({
                 />
               </label>
             ))}
+            <div className="pt-3 border-t">
+              <QuietChangesOptions
+                filter={noise}
+                onChange={(next) => {
+                  anchorReader();
+                  change({ ...value, ...next });
+                }}
+              />
+            </div>
           </div>
           <Button variant="ghost" size="sm" className="mt-4" onClick={() => change({ ...DEFAULT_DIFF_APPEARANCE })}>
             Reset appearance

@@ -1,3 +1,4 @@
+import { QUIET_CHANGES_KEY } from '../lib/quiet-changes';
 import { useRef } from 'react';
 import { DIFF_LAYOUT_KEYS } from '../lib/diff-layout';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
@@ -35,6 +36,7 @@ const groups: ShortcutGroup[] = [
       { keys: DIFF_LAYOUT_KEYS.toggle, label: 'Switch between split and unified diff' },
       { keys: DIFF_LAYOUT_KEYS.unified, label: 'Switch to unified diff' },
       { keys: DIFF_LAYOUT_KEYS.split, label: 'Switch to split diff' },
+      { keys: QUIET_CHANGES_KEY, label: 'Show or hide quiet changes (whitespace, formatting, comments)' },
     ],
   },
   {

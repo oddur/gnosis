@@ -1,5 +1,6 @@
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
+import type { NoiseBlock } from './semantic-noise';
 import { createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
 import javascriptTags from '../src/assets/tree-sitter/javascript-tags.scm?raw';
 import typescriptTags from '../src/assets/tree-sitter/typescript-tags.scm?raw';
@@ -30,6 +31,24 @@ export type SyntaxRequest =
       priority: SyntaxPriority;
       side: 'after' | 'before';
     }
+  /**
+   * Formatting-only and comment-only changes (#396): both sides of a file parsed and compared, from the new side's
+   * text and the hunks (lib/semantic-noise.ts). It queues with the parses, below its file's own.
+   */
+  | {
+      type: 'noise';
+      id: number;
+      /** A file revision and its change blocks, such as `fileRevisionKey(...) + ':noise:' + signature`. */
+      key: string;
+      url: string;
+      language: SyntaxLanguage;
+      text: string;
+      hunks: { oldStart: number; newStart: number; rows: { type: ' ' | '+' | '-'; text: string }[] }[];
+      runtimeUrl: string;
+      grammarUrl: string;
+      priority: SyntaxPriority;
+      side: 'noise';
+    }
   /** The view came nearer a file whose parse waits: it moves up to `priority`. */
   | { type: 'priority'; key: string; priority: SyntaxPriority }
   /** The parse moves to the other worker, if it has not started here: the answer says whether it was taken. */
@@ -44,6 +63,11 @@ export type SyntaxResponse =
       definitions: SyntaxDefinition[];
       /** `wait` is the time in the queue; `priority`, the tier the parse ran at. */
       timing: { parse: number; query: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority };
+    }
+  | {
+      id: number;
+      noise: NoiseBlock[];
+      timing: { classify: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority };
     }
   | { id: number; error: string }
   | { id: number; taken: boolean };
@@ -90,7 +114,9 @@ const engine = createSyntaxEngine(TreeSitter, {
   tags: (name) => Promise.resolve(TAGS[name] ?? ''),
 });
 const cache = new Map<string, { url: string; definitions: SyntaxDefinition[] }>();
-type Job = Extract<SyntaxRequest, { type: 'definitions' }> & { received: number };
+/** Comparisons, by file revision and change blocks: a few bytes per block. */
+const noiseCache = new Map<string, { url: string; noise: NoiseBlock[] }>();
+type Job = Extract<SyntaxRequest, { type: 'definitions' | 'noise' }> & { received: number };
 // One parse at a time, nearest the reader first (lib/syntax-parse-queue.ts); a cached file answers at once.
 const queue = createParseQueue<Job>();
 /** Grammars to load once no parse waits. */
@@ -109,6 +135,24 @@ const yieldToMessages = () =>
 
 async function run(job: Job) {
   const wait = performance.now() - job.received;
+  if (job.type === 'noise') {
+    try {
+      const result = await engine.noise(job.language, job.text, job.hunks);
+      noiseCache.set(job.key, { url: job.url, noise: result.blocks });
+      for (const key of noiseCache.keys()) {
+        if (noiseCache.size <= CACHE_ENTRIES) break;
+        noiseCache.delete(key);
+      }
+      self.postMessage({
+        id: job.id,
+        noise: result.blocks,
+        timing: { classify: result.classify, load: result.load, cached: false, wait, priority: job.priority },
+      } satisfies SyntaxResponse);
+    } catch (error) {
+      self.postMessage({ id: job.id, error: error instanceof Error ? error.message : String(error) } satisfies SyntaxResponse);
+    }
+    return;
+  }
   try {
     const result = await engine.definitions(job.language, job.text);
     cache.set(job.key, { url: job.url, definitions: result.definitions });
@@ -147,6 +191,7 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   if (message.type === 'forget' || message.type === 'clear') {
     const urls = message.type === 'forget' ? new Set(message.urls) : undefined;
     for (const [key, entry] of cache) if (!urls || urls.has(entry.url)) cache.delete(key);
+    for (const [key, entry] of noiseCache) if (!urls || urls.has(entry.url)) noiseCache.delete(key);
     // Parses that wait still run and answer their callers: another view (an Explanation topic) may show the file.
     return;
   }
@@ -165,6 +210,18 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
       grammarUrls.set(language, grammarUrl);
       if (!warming.includes(language)) warming.push(language);
     }
+    void drain();
+    return;
+  }
+  if (message.type === 'noise') {
+    const known = noiseCache.get(message.key);
+    if (known) {
+      self.postMessage({ id: message.id, noise: known.noise, timing: { classify: 0, cached: true } } satisfies SyntaxResponse);
+      return;
+    }
+    runtimeUrl ||= message.runtimeUrl;
+    grammarUrls.set(message.language, message.grammarUrl);
+    queue.add({ ...message, received: performance.now() });
     void drain();
     return;
   }

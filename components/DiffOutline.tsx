@@ -28,6 +28,8 @@ export interface OutlineProps {
   onMarkFileViewed?: () => void;
   /** Takes the reader to the symbol. */
   onGo: (symbol: ChangedSymbol) => void;
+  /** Symbols left out because their every change is formatting or comments the reader hides (#396). */
+  quiet?: number;
 }
 
 /** Collapsed, the bar names this many symbols, then "+N more". */
@@ -71,7 +73,7 @@ function SymbolName({ symbol }: { symbol: ChangedSymbol }) {
   );
 }
 
-export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = false, onMarkFileViewed, onGo }: OutlineProps) {
+export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = false, onMarkFileViewed, onGo, quiet = 0 }: OutlineProps) {
   const open = useExpanded();
   const progress = useFileProgress();
   const listId = useId();
@@ -88,7 +90,9 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
   const viewed = symbols.map((symbol) => fileViewed || progress.isSymbolViewed(fileKey, symbol.id));
   const done = viewed.filter(Boolean).length;
   const all = symbols.length > 0 && done === symbols.length;
-  const summary = outlineSummary(symbols);
+  // Symbols whose changes are all hidden as noise are left out, and counted, so the outline stays honest.
+  const quietNote = quiet > 0 ? `${quiet} ${quiet === 1 ? 'symbol' : 'symbols'} with quiet changes only` : undefined;
+  const summary = !symbols.length && quietNote ? 'No functions or classes changed beyond quiet changes' : outlineSummary(symbols);
   const tick = (symbol: ChangedSymbol, on: boolean) => void progress.markSymbolsViewed(fileKey, [symbol.id], on);
   const go = (symbol: ChangedSymbol) => (
     <button
@@ -143,6 +147,11 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
               </li>
             )}
           </ul>
+        )}
+        {quietNote && (
+          <span className="diff-outline-quiet diff-outline-noise" data-outline-quiet={quiet} title="Their changes are formatting or comments that Diff appearance hides; the diff shows each as a bar.">
+            {quietNote}
+          </span>
         )}
         {symbols.length > 0 && (
           <span className="diff-outline-end">

@@ -1,4 +1,5 @@
 import type * as TreeSitter from 'web-tree-sitter';
+import { classifyNoise, type NoiseBlock } from './semantic-noise';
 
 /**
  * Enclosing definitions for diff hunks, from a tree-sitter parse (#393).
@@ -662,5 +663,26 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
         tree.delete();
       }
     },
+    /**
+     * Formatting-only and comment-only changes (lib/semantic-noise.ts): each change block of `hunks`, from the new
+     * side's text. Both sides are parsed here and deleted before this returns.
+     */
+    async noise(id: SyntaxLanguage, after: string, hunks: Parameters<typeof classifyNoise>[3]): Promise<NoiseResult> {
+      const loading = !languages.has(id);
+      const t0 = performance.now();
+      const { language } = await load(id);
+      const t1 = performance.now();
+      if (!parser) throw Error('The parser did not start');
+      const own = parser;
+      own.setLanguage(language);
+      const blocks = classifyNoise({ parse: (text, previous) => own.parse(text, previous) }, id, after, hunks);
+      return { blocks, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+    },
   };
+}
+export interface NoiseResult {
+  blocks: NoiseBlock[];
+  /** Milliseconds parsing both sides and comparing them; `load` is grammar loading, when this call loaded it. */
+  classify: number;
+  load?: number;
 }

@@ -15,7 +15,7 @@ import { useChangesComments } from '../../components/useChangesComments';
 import { useExplanationComments } from '../../lib/use-explanation-comments';
 import { explanationSubject, rememberExplanation } from '../../lib/explanation-workspace';
 import { rememberCommandDestination } from '../../lib/command-recents';
-import { findReviewLine } from '../../components/ReviewDiff';
+import { findReviewLine, openReviewLine } from '../../components/ReviewDiff';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
@@ -491,6 +491,8 @@ function ReviewPageContent({
           return;
         }
         const target = codeTarget.line ? findReviewLine(file, codeTarget.filePath, codeTarget.line) : file;
+        // A line inside a quiet change (#396): open it, and look again next time.
+        if (!target && codeTarget.line && openReviewLine(file, codeTarget.filePath, codeTarget.line)) return;
         if (target) {
           inspectedTarget.current = codeTarget.nonce;
           target.scrollIntoView({ block: 'center' });
@@ -807,6 +809,7 @@ function ReviewPageContent({
             match = thread;
           }
         }
+        if (!match && target.line && openReviewLine(file, filePath, target.line, target.side)) return;
         if (!match && ++tries < 30) return;
         match ??= file;
         activeWorkspaceRoot().querySelectorAll('.search-arrival').forEach((el) => el.classList.remove('search-arrival'));

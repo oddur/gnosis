@@ -14,7 +14,7 @@ import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'reac
 import { ArrowRight, Check, Copy, CopyX } from 'lucide-react';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { Button } from '@/components/ui/button';
-import { findReviewLine, reviewDiffTheme } from './ReviewDiff';
+import { findReviewLine, openReviewLine, reviewDiffTheme } from './ReviewDiff';
 import { markHere } from '@/lib/diff-here';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
 import { ReviewFileDiscussion } from './ReviewFileDiscussion';
@@ -551,6 +551,17 @@ export function SlideView({
       const target = findReviewLine(container, check.filePath, check.startLine);
 
       if (!target) {
+        // A line inside a quiet change (#396) shows once its bar opens: try again after the diff renders.
+        if (openReviewLine(container, check.filePath, check.startLine)) {
+          let frames = 0;
+          const retry = () => {
+            if (findReviewLine(container, filePath, check.startLine as number)) handleCheckClickRef.current(check);
+            else if (frames++ < 30) requestAnimationFrame(retry);
+            else setAnchorMiss({ filePath, line: check.startLine as number, at: Date.now() });
+          };
+          requestAnimationFrame(retry);
+          return;
+        }
         setAnchorMiss({ filePath: check.filePath, line: check.startLine, at: Date.now() });
         return;
       }
@@ -568,6 +579,8 @@ export function SlideView({
     },
     [onInspectCode]
   );
+  const handleCheckClickRef = useRef(handleCheckClick);
+  handleCheckClickRef.current = handleCheckClick;
 
   // ── Shared content blocks ── Extracted so both split and focus
   // modes can render the same narrative and diff content without

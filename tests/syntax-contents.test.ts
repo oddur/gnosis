@@ -526,6 +526,22 @@ void test('Parses go nearest the reader first: on screen, newest first; near; th
   assert.equal(higherPriority('prefetch', 'near'), 'near');
 });
 
+void test('A file’s noise comparison waits a tier below its parses, so breadcrumbs never wait for it (#396)', () => {
+  const queue = createParseQueue<ParseJob>();
+  const add = (key: string, priority: SyntaxPriority, side: ParseJob['side'] = 'after') => queue.add({ key, priority, side });
+  add('v1-noise', 'view', 'noise');
+  add('p1', 'prefetch');
+  add('n1', 'near');
+  add('v1', 'view');
+  add('n1-old', 'near', 'before');
+  add('n1-noise', 'near', 'noise');
+  add('p1-noise', 'prefetch', 'noise');
+  const order: string[] = [];
+  for (let job = queue.take(); job; job = queue.take()) order.push(job.key);
+  // On screen: the after side, then the files near the view, then the screen's comparison, then the rest.
+  assert.deepEqual(order, ['v1', 'n1', 'n1-old', 'v1-noise', 'p1', 'n1-noise', 'p1-noise']);
+});
+
 void test('An added file’s new side and a deleted file’s old side come whole from the patch, when it holds them whole', () => {
   assert.equal(wholeFileText('@@ -0,0 +1,3 @@\n+pub struct A {\n+    x: u32,\n+}\n', 'after'), 'pub struct A {\n    x: u32,\n}\n');
   assert.equal(wholeFileText('@@ -0,0 +1,2 @@\n+a\n+b\n\\ No newline at end of file', 'after'), 'a\nb', 'No line break at the end');

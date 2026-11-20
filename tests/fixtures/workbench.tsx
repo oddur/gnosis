@@ -10,6 +10,7 @@ import { fileFilterMocks, filterFixtureFiles } from './file-filters';
 import { diffGapContents, diffGapFiles, staleDiffFiles } from './diff-gaps';
 import { scopeAfter, syntaxLazyFiles, syntaxScopeContents, syntaxScopeFiles, syntaxSpanFiles } from './syntax-scope';
 import { syntaxLargeContents, syntaxLargeFiles } from './syntax-large';
+import { NOISE_FILES, noiseFilterContents, noiseFilterFiles } from './noise-filter';
 import { NAV_TOPIC_FILES, breadcrumbNavContents, breadcrumbNavFiles } from './breadcrumb-nav';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
@@ -212,6 +213,30 @@ if (parityScenario) {
       },
     ],
     diffHunks: [hunks[0], hunks[1]],
+    reviewChecks: [],
+    explainer: undefined,
+    explainerIdea: undefined,
+    mermaidDiagram: undefined,
+    d2Diagram: undefined,
+  };
+}
+// Quiet changes in a slide (#396, tests/noise-filter-browser.ts): the first topic shows every hunk of the noise
+// fixture's src/noise/mixed.ts, which Changes shows with `?noise-filter`.
+if (new URLSearchParams(location.search).has('noise-filter')) {
+  const file = noiseFilterFiles.find((f) => f.path === NOISE_FILES.mixed);
+  const path = prefix + NOISE_FILES.mixed;
+  review.changedFiles = [{ filename: path, status: 'modified', additions: file?.additions ?? 0, deletions: file?.deletions ?? 0 }];
+  review.slides[0] = {
+    ...review.slides[0],
+    title: 'Scale by three and cap below 100',
+    narrative: 'Scaling triples values, and clamping caps them at 99. The rest of the file is reformatted.',
+    affectedFiles: [path],
+    fileSummaries: [],
+    inlineExplanations: [],
+    diffHunks: (file?.patch ?? '').split(/\n(?=@@)/).map((hunk) => {
+      const [header, ...body] = hunk.split('\n');
+      return { filePath: path, language: 'typescript', renderedHtml: '', hunkHeader: header, content: body.join('\n') };
+    }),
     reviewChecks: [],
     explainer: undefined,
     explainerIdea: undefined,
@@ -457,6 +482,8 @@ let prefs: Preferences = {
   ...(sessionStorage.getItem('fixture-predict-navigation') === 'false' ? { predictNavigation: false } : {}),
   ...(JSON.parse(sessionStorage.getItem('fixture-preloading') ?? '{}') as Partial<Preferences>),
   prInactivityDays: JSON.parse(sessionStorage.getItem('fixture-inactivity-days') ?? '30'),
+  // Diff appearance survives a reload, as preferences.json does (tests/noise-filter-browser.ts).
+  ...(sessionStorage.getItem('fixture-diff-appearance') ? { diffAppearance: JSON.parse(sessionStorage.getItem('fixture-diff-appearance') ?? '{}') } : {}),
   instructions: '',
   provider: 'claude',
   model: DEFAULT_CLAUDE_MODEL,
@@ -685,6 +712,7 @@ const mocks = {
       ...(new URLSearchParams(location.search).has('syntax-span') ? syntaxSpanFiles : []),
       ...(new URLSearchParams(location.search).has('syntax-large') ? syntaxLargeFiles() : []),
       ...(new URLSearchParams(location.search).has('breadcrumb-nav') ? breadcrumbNavFiles : []),
+      ...(new URLSearchParams(location.search).has('noise-filter') ? noiseFilterFiles : []),
       // A file renamed into a long path, for the file header's left-collapsing path and its rename display.
       ...(new URLSearchParams(location.search).has('renamed-file') ? [{path:'src/transport/ECORuntime/Core/ECONemoConnector.cs',previousPath:'src/transport/Legacy/NemoConnector.cs',status:'renamed' as const,additions:1,deletions:1,changeId:'renamed-v1'}] : []),
       {path:'src/worker.ts',status:'modified' as const,additions:1,deletions:1,changeId:'worker-v1',patch:'@@ -33,7 +33,7 @@\n const value32 = 32;\n const value33 = 33;\n const value34 = 34;\n-const value35 = 35;\n+const value35 = 36;\n const value36 = 36;\n const value37 = 37;\n const value38 = 38;'},
@@ -706,7 +734,7 @@ const mocks = {
     return {...snapshot, comparison:selection,comparisonBase:parent,metadata:{...snapshot.metadata,baseSha:parent,headSha:selection.lastSha}};
   },
   getPrChangeFile: (request: import('../../lib/pr-changes').PrFileRequest) => {
-    const gapFile = diffGapContents(request.path) ?? syntaxScopeContents(request.path) ?? syntaxLargeContents(request.path) ?? breadcrumbNavContents(request.path);
+    const gapFile = diffGapContents(request.path) ?? syntaxScopeContents(request.path) ?? syntaxLargeContents(request.path) ?? breadcrumbNavContents(request.path) ?? noiseFilterContents(request.path);
     if (gapFile) return Promise.resolve(gapFile);
     if (new URLSearchParams(location.search).has('markdown-review')) return Promise.resolve({ before: request.path.endsWith('/new.md') ? { kind: 'absent' as const } : { kind: 'text' as const, content: markdownBefore }, after: request.path.endsWith('/removed.md') ? { kind: 'absent' as const } : { kind: 'text' as const, content: markdownAfter } });
     if(request.path.endsWith('.svg')) {const image={kind:'image' as const,dataUrl:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="140"><rect width="300" height="140" fill="#5076b8"/><text x="30" y="75" fill="white">Queue flow</text></svg>')};return Promise.resolve({before:image,after:image});}
@@ -838,6 +866,7 @@ const mocks = {
     sessionStorage.setItem('fixture-preloading', JSON.stringify({ preloadAmount: next.preloadAmount, prepareQueue: next.prepareQueue, preloadBudgetPercent: next.preloadBudgetPercent }));
     if (next.diffHighlighter) sessionStorage.setItem('fixture-diff-highlighter', next.diffHighlighter);
     sessionStorage.setItem('fixture-inactivity-days', JSON.stringify(next.prInactivityDays ?? 30));
+    if (next.diffAppearance) sessionStorage.setItem('fixture-diff-appearance', JSON.stringify(next.diffAppearance));
     if (onboardingScenario) {
       sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
       sessionStorage.setItem('fixture-guest-mode', String(next.guestMode));
