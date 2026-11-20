@@ -404,6 +404,42 @@ void test('paused restack survives restart, accepts reviewed edits and reuses th
   assert.equal(await f.git('show', 'tip:sample.ts'), 'export const answer = 5;');
 });
 
+void test('restack reads the whole stack in one batch to prepare and one to publish', async (t) => {
+  const f = await stackedFixture(t);
+  const batches: string[][] = [];
+  let single = 0;
+  const service = createConflictResolutionService({
+    ...f.deps,
+    read: (url) => {
+      single++;
+      return f.deps.read(url);
+    },
+    readMany: (urls) => {
+      batches.push(urls);
+      return urls.map((url) => f.deps.read(url));
+    },
+  });
+  const run = (r: Parameters<typeof service.run>[0]) => service.run(r, new AbortController().signal);
+  const { session } = await run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.equal(session.restack?.status, 'prepared');
+  const before = single;
+  const published = await run({
+    kind: 'restack-publish',
+    id: session.id,
+    version: session.version,
+    previewToken: session.restack.token,
+    reviewed: f.urls,
+  });
+  assert.equal(published.session.restack?.status, 'published');
+  assert.deepEqual(batches, [
+    [f.state.url, ...f.urls],
+    [f.state.url, ...f.urls],
+  ]);
+  // Publishing reads nothing one PR at a time; before, it read the root and then each branch in turn.
+  assert.equal(single - before, 0);
+  assert.equal(await f.git('rev-parse', 'tip^'), await f.git('rev-parse', 'child'));
+});
+
 void test('rerere remembers reviewed resolutions across PRs without marking the proposal reviewed', async (t) => {
   const f = await stackedFixture(t);
   const service = createConflictResolutionService({

@@ -69,7 +69,7 @@ import { createUpdateController, supportsAutoUpdate, type AppUpdateStatus, type 
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
-import type { PrActionRequest, PrActionResult } from '../lib/pr-actions';
+import type { PrActionRequest, PrActionResult, PrActionState } from '../lib/pr-actions';
 import { requestGitHubCacheClear, applyPendingGitHubCacheClear, hasPendingGitHubCacheClear } from './github-cache-reset';
 import { withGitHubPriority, githubPriority, githubPredicted, githubPredictedJoins } from '../lib/github-scheduler';
 import { predictionStateFor, type PredictionState } from '../lib/github-budget';
@@ -4023,6 +4023,27 @@ handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
 });
 
 const prActions = createPrActionsService();
+/**
+ * Whether this sign-in can push the PR's head branch. The PR read carries the head repository's permission and
+ * `maintainerCanModify`; a state without them asks REST.
+ */
+async function conflictPermissions(client: ReturnType<typeof discussionClient>, url: string, read: PrActionState): Promise<PrActionState> {
+  const state = { ...read };
+  if (state.headRepo && state.headRepo !== state.repository) {
+    const [owner, repo] = state.headRepo.split('/');
+    const headCanWrite = state.headRepoCanWrite ?? !!(await client.rest.repos.get({ owner, repo })).data.permissions?.push;
+    state.canUpdateBranch = state.canUpdateBranch || headCanWrite;
+    if (!state.canUpdateBranch && state.canWrite) {
+      if (state.maintainerCanModify !== undefined) state.canUpdateBranch = state.maintainerCanModify;
+      else {
+        const target = parsePrUrl(url);
+        const pr = await client.rest.pulls.get({ owner: target.owner, repo: target.repo, pull_number: target.pullNumber });
+        state.canUpdateBranch = pr.data.maintainer_can_modify;
+      }
+    }
+  } else state.canUpdateBranch = state.canWrite;
+  return state;
+}
 const conflicts = createConflictResolutionService({
   dependents: url => {
     const subject = workbench.cached().items.find(item => item.subject.members.some(member => member.url === url))?.subject;
@@ -4042,18 +4063,12 @@ const conflicts = createConflictResolutionService({
   context: () => ({ account: cachedLogin ?? '', token: getResolvedToken() ?? '' }),
   read: async url => {
     const client = discussionClient();
-    const state = { ...await prActions.read(client, url, true) };
-    if (state.headRepo && state.headRepo !== state.repository) {
-      const [owner, repo] = state.headRepo.split('/');
-      const head = await client.rest.repos.get({ owner, repo });
-      state.canUpdateBranch = state.canUpdateBranch || !!head.data.permissions?.push;
-      if (!state.canUpdateBranch && state.canWrite) {
-        const target = parsePrUrl(url);
-        const pr = await client.rest.pulls.get({ owner: target.owner, repo: target.repo, pull_number: target.pullNumber });
-        state.canUpdateBranch = pr.data.maintainer_can_modify;
-      }
-    } else state.canUpdateBranch = state.canWrite;
-    return state;
+    return conflictPermissions(client, url, await prActions.read(client, url, true));
+  },
+  // A restack reads the whole stack in one query per repository.
+  readMany: urls => {
+    const client = discussionClient();
+    return prActions.readMany(client, urls, true).map((read, i) => read.then(state => conflictPermissions(client, urls[i], state)));
   },
   mergiraf: () => path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? 'mergiraf/runtime' : 'resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf'),
   suggest: async ({ session, file, instructions }, signal) => {
@@ -4115,6 +4130,16 @@ const prMergeMonitor = createPrMergeMonitor({
   changed: (_client, urls) => githubWrites.after('stack-merged', urls),
 });
 handleInteractive('get-pr-action-state', async (_event, url: string, force: boolean) => optimistic.actionState(await prActions.read(discussionClient(), url, force)));
+handleInteractive('get-pr-action-states', async (_event, urls: string[], force: boolean) => {
+  if (!Array.isArray(urls) || urls.length > 100 || urls.some(url => typeof url !== 'string'))
+    throw new Error('Choose at most 100 PRs.');
+  const settled = await Promise.allSettled(prActions.readMany(discussionClient(), urls, force === true));
+  return settled.map(result =>
+    result.status === 'fulfilled'
+      ? { state: optimistic.actionState(result.value) }
+      : { error: result.reason instanceof Error ? result.reason.message : String(result.reason) }
+  );
+});
 handleInteractive('get-stack-merge-plan', (_event, urls: string[]) => prActions.stackPlan(discussionClient(), urls, true));
 handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) => {
   const client = discussionClient();

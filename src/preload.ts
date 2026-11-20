@@ -443,6 +443,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
   getPrActionState: (url: string, force = false): Promise<import('../lib/pr-actions').PrActionState> =>
     ipcRenderer.invoke('get-pr-action-state', url, force),
+  getPrActionStates: (
+    urls: string[],
+    force = false
+  ): Promise<({ state: import('../lib/pr-actions').PrActionState } | { error: string })[]> =>
+    ipcRenderer.invoke('get-pr-action-states', urls, force),
   getStackMergePlan: (urls: string[]): Promise<import('../lib/pr-actions').PrMergePlan> =>
     ipcRenderer.invoke('get-stack-merge-plan', urls),
   performPrAction: (

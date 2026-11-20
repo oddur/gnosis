@@ -38,6 +38,7 @@ void app.whenReady().then(async () => {
       const readChecks=window.electronAPI.getPrChecks;
       window.electronAPI.getPrChecks=async(...args)=>{const r=await readChecks(...args);return {...r,checks:r.checks.slice(0,1).map(c=>({...c,name:'Build and test',required:!r.url.endsWith('/122'),status:'completed',conclusion:r.url.endsWith('/122')?'cancelled':'failure'}))};};
       window.actionReads=0;window.electronAPI.getPrActionState=async url=>{window.actionReads++;const m=window.testStack.subject.members.find(m=>m.url===url);return {...m,account:'oddur',state:'OPEN',isDraft:true,canChangeDraft:true,canWrite:true,archived:false,methods:['SQUASH'],defaultMethod:'SQUASH',mergeable:'MERGEABLE',mergeState:'CLEAN',stack:null};};
+      window.electronAPI.getPrActionStates=async(urls,force)=>Promise.all(urls.map(url=>window.electronAPI.getPrActionState(url,force).then(state=>({state}),error=>({error:error.message}))));
       window.electronAPI.performPrAction=async r=>{window.actionRequest=r;return {message:'Ready for review',status:'completed'};};
       window.electronAPI.rerunChecks=async r=>{window.rerunRequest=r;};
       window.publishStatus=async()=>{const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');publishQueueSignals('oddur',await window.electronAPI.getQueueSignals(window.testStack.subject.members.map(({url,headSha})=>({url,headSha}))));};

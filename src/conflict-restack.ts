@@ -19,10 +19,22 @@ type Git = (
 interface Deps {
   git: Git;
   read: (url: string) => Promise<PrActionState>;
+  /** `read` for many PRs at once, one promise per URL in order, such as one aliased GitHub query for the stack. */
+  readMany?: (urls: string[]) => Promise<PrActionState>[];
   directory: string;
   remote: (repo: string) => string;
   signal: AbortSignal;
   report: (text: string) => void;
+}
+/**
+ * Start every read at once, through `readMany` when there is one. Checks still run in stack order and stop at the first
+ * failure, so a later member's read error never hides an earlier member's check.
+ */
+function startReads(deps: Deps, urls: string[]): Promise<PrActionState>[] {
+  const reads = deps.readMany ? deps.readMany(urls) : urls.map((url) => deps.read(url));
+  // A check that fails early leaves later reads unawaited; their errors are not news.
+  for (const read of reads) read.catch(() => {});
+  return reads;
 }
 const text = async (git: Git, args: string[]) => (await git(args)).stdout.toString('utf8').trim();
 type WritableState = PrActionState & { headRepo: string };
@@ -57,14 +69,15 @@ export async function prepareRestack(
   if (!session.commitSha || !urls.length) throw new Error('No dependent PRs were found. Refresh the stack first.');
   if (urls.length > 30 || new Set(urls).size !== urls.length || urls.includes(session.url))
     throw new Error('Choose a single linear stack with at most 30 dependent PRs.');
-  const root = await deps.read(session.url);
+  const [rootRead, ...reads] = startReads(deps, [session.url, ...urls]);
+  const root = await rootRead;
   writable(root, session);
   if (root.headSha !== session.commitSha || root.headBranch !== session.headBranch)
     throw new Error('The resolved PR changed. Reopen its conflict workspace before restacking.');
   const states: WritableState[] = [];
   let parent = root;
-  for (const url of urls) {
-    const state = await deps.read(url);
+  for (const [index, url] of urls.entries()) {
+    const state = await reads[index];
     writable(state, session);
     if (state.baseBranch !== parent.headBranch || state.baseSha !== parent.headSha)
       throw new Error(`The dependency for ${url} changed. Refresh the stack before restacking.`);
@@ -320,12 +333,13 @@ export async function publishRestack(session: ConflictSession, token: string, de
   const plan = session.restack;
   if (!plan || plan.status !== 'prepared' || plan.token !== token || !plan.branches.length)
     throw new Error('Prepare and review the dependent PR updates before pushing.');
-  const root = await deps.read(session.url);
+  const [rootRead, ...reads] = startReads(deps, [session.url, ...plan.branches.map((branch) => branch.url)]);
+  const root = await rootRead;
   writable(root, session);
   if (root.headSha !== plan.rootSha || root.headBranch !== session.headBranch)
     throw new Error('The resolved PR changed. Prepare the restack again.');
-  for (const branch of plan.branches) {
-    const current = await deps.read(branch.url);
+  for (const [index, branch] of plan.branches.entries()) {
+    const current = await reads[index];
     writable(current, session);
     if (
       current.headSha !== branch.oldSha ||
