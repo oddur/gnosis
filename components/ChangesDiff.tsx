@@ -884,10 +884,29 @@ function NoiseIcon({ kinds }: { kinds: readonly NoiseKind[] }) {
  * its header, that says what it holds and shows it. Nothing is gone: the header keeps its breadcrumb, lines and
  * counts, and "Show" puts the hunk back.
  */
-function NoiseBar({ quiet, rows, onShow }: { quiet: HunkNoise; rows: number; onShow?: () => void }) {
+function NoiseBar({
+  quiet,
+  rows,
+  lines: span,
+  onShow,
+}: {
+  quiet: HunkNoise;
+  rows: number;
+  /** The hunk's new and old lines, so a jump to one of them finds this bar and opens it (lib/diff-here.ts). */
+  lines: { after: [number, number]; before: [number, number] };
+  onShow?: () => void;
+}) {
   const label = noiseLabel(quiet.kinds);
   return (
-    <div className="diff-gap" role="group" aria-label={`${label}, ${lines(rows)} hidden`} data-trailing="" data-noise-bar={label}>
+    <div
+      className="diff-gap"
+      role="group"
+      aria-label={`${label}, ${lines(rows)} hidden`}
+      data-trailing=""
+      data-noise-bar={label}
+      data-noise-after={span.after.join('-')}
+      data-noise-before={span.before.join('-')}
+    >
       <span className="diff-gap-trailing">
         <NoiseIcon kinds={quiet.kinds} />
         <span className="diff-noise-label">{label}</span>
@@ -1138,6 +1157,10 @@ export function ChangesDiff<A>({
         counts: hunkCounts(hunk),
         range: hunkRange(hunk),
         rows: hunk.rows.length,
+        lines: {
+          after: [hunk.newStart, hunk.newStart + hunk.rows.filter((row) => row.type !== '-').length - 1] as [number, number],
+          before: [hunk.oldStart, hunk.oldStart + hunk.rows.filter((row) => row.type !== '+').length - 1] as [number, number],
+        },
         quiet: noise && quietKinds ? hunkNoise(hunk, quietKinds, noise.filter) : undefined,
         blockKeys: noise ? changeBlocks([hunk]).map(blockKey) : [],
       };
@@ -1716,7 +1739,7 @@ export function ChangesDiff<A>({
     // A hunk the reader hides as noise is one bar, unless it holds a comment or the line to show.
     if (block.quiet?.hidden && !block.slices.some((slice) => bySlice.has(slice.key) || slice.key === targetKey)) {
       current.children.push(
-        <NoiseBar key={`noise-${block.key}`} quiet={block.quiet} rows={block.rows} onShow={noise && (() => noise.show(block.blockKeys))} />
+        <NoiseBar key={`noise-${block.key}`} quiet={block.quiet} rows={block.rows} lines={block.lines} onShow={noise && (() => noise.show(block.blockKeys))} />
       );
       return;
     }

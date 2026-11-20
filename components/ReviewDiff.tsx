@@ -12,6 +12,7 @@ import { currentCodeIntelligence } from '@/lib/use-syntax-contents';
 import { LFS_VERSION } from '@/lib/git-lfs';
 import type { DiffHunk, DiffSide, FileMetadata, InlineExplanation, PendingReviewComment } from '@/lib/types';
 import { InlineCodeExplanation } from './InlineCodeExplanation';
+import { openQuietLine } from '@/lib/diff-here';
 import { ChangesDiff } from './ChangesDiff';
 import { useDiffFileModel } from './useDiffFileModel';
 import { CommentBubble, InlineCommentForm, extractShikiStyles, type CommentCallbacks } from './shared-diff-utils';
@@ -365,6 +366,16 @@ export function findReviewLine(
     }
   }
   return null;
+}
+
+/**
+ * When a line is not on screen because a quiet change holds it (#396), opens that change: a jump then finds the line
+ * once the diff renders. Whether it opened one.
+ */
+export function openReviewLine(container: HTMLElement, filePath: string, line: number, side?: DiffSide): boolean {
+  const groups = [...container.querySelectorAll<HTMLElement>('.review-file-group[data-file-path]')].filter((group) => group.dataset.filePath === filePath);
+  const scopes: HTMLElement[] = groups.length ? groups : container.matches('.review-file-group') ? [container] : [container];
+  return scopes.some((scope) => openQuietLine(scope, line, side === 'LEFT' ? 'before' : 'after'));
 }
 
 export function reviewCodeSelection(container: HTMLElement) {

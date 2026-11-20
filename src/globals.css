@@ -1971,7 +1971,7 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 @keyframes noise-bar-in { from { opacity:0; } }
 .changes-file-code { display:inline-flex; align-items:baseline; gap:.5ch; }
 /* The quiet changes summary in the Changes toolbar: one quiet chip, its count in tabular figures. */
-.quiet-chip-count { font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
+.quiet-chip-count { min-width:7ch; text-align:left; font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
 .quiet-chip[data-quiet-chip=on] .quiet-chip-count { color:inherit; }
 .quiet-breakdown { display:flex; flex-direction:column; gap:4px; margin:0; padding:0; list-style:none; font-size:var(--type-caption); }
 .quiet-breakdown-row { display:flex; align-items:center; gap:8px; min-height:22px; }

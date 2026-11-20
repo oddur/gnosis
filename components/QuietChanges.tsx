@@ -100,7 +100,7 @@ export function QuietChangesChip({
         >
           <Pilcrow className="size-3.5" aria-hidden="true" />
           <span className="toolbar-label">Quiet</span>
-          <span className="quiet-chip-count">{on ? (hidden ? lines(hidden) : '0') : 'off'}</span>
+          <span className="quiet-chip-count toolbar-label is-secondary">{on ? (hidden ? lines(hidden) : '0') : 'off'}</span>
         </Button>
       </Popover.Trigger>
       <Popover.Portal>
