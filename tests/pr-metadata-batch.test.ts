@@ -270,3 +270,30 @@ void test('a rate limit stops the metadata batch instead of falling back to REST
   assert.ok(restReads <= 5, `at most one wave of REST reads ran (${restReads})`);
   assert.ok([...result.values()].every((value) => 'error' in value));
 });
+
+void test('a probe GraphQL cannot answer exactly is inconclusive against a GraphQL baseline', async () => {
+  // More than 100 labels: GraphQL hands this PR to REST, whose counter happens to read lower (a lag) or higher.
+  const pr = pull(1);
+  let restCount = 6;
+  const octokit = {
+    graphql: (query: string) => {
+      const data = answerPrQuery(query, () => pr) as Record<string, { pullRequest: ReturnType<typeof graphPr> }>;
+      data.p0.pullRequest.labels.totalCount = 101;
+      return Promise.resolve(data);
+    },
+    pulls: { get: () => Promise.resolve({ data: { ...pr, review_comments: restCount } }) },
+  } as unknown as Octokit;
+  const rest = () => getPrMetadata(octokit, 'o', 'r', 1, true);
+  const baseline = { ...(await rest()), reviewCommentCount: 7, source: 'graphql' as const };
+  const probe = await readMetadataLike(octokit, url(1), baseline, rest);
+  assert.equal(probe.source, 'rest');
+  const deleteSeen = GITHUB_WRITE_EFFECTS['comment-delete'].seen;
+  const replySeen = GITHUB_WRITE_EFFECTS['thread-reply'].seen;
+  assert.ok(deleteSeen && replySeen);
+  // REST's 6 < GraphQL's 7 would look like a delete, but it is only REST lagging: not settled.
+  assert.ok(!deleteSeen({ metadata: probe }, { before: { metadata: baseline } }));
+  restCount = 9;
+  assert.ok(!replySeen({ metadata: await readMetadataLike(octokit, url(1), baseline, rest) }, { before: { metadata: baseline } }));
+  // Same-source copies still settle.
+  assert.ok(replySeen({ metadata: { ...baseline, reviewCommentCount: 8 } }, { before: { metadata: baseline } }));
+});

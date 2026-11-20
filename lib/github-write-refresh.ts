@@ -82,10 +82,19 @@ const merged = ({ metadata, signals }: WriteObservation) =>
   !!metadata?.merged || metadata?.state === 'closed' || signals?.readiness?.state === 'MERGED';
 const headMoved = ({ metadata }: WriteObservation, details: WriteDetails) =>
   !!metadata && (!before(details) || metadata.headSha !== before(details)?.headSha);
+/**
+ * Whether two copies' comment counts can be compared. GraphQL counts comments as they are; REST's counters can lag,
+ * so a count from one API never confirms or refutes a count from the other. A copy without a source is from REST.
+ */
+export const sameCountSource = (a: { source?: string } | undefined, b: { source?: string } | undefined) =>
+  (a?.source ?? 'rest') === (b?.source ?? 'rest');
+/** A read from the other API is inconclusive: the write is not settled on it, and the follow-up reads again. */
 const commentsAdded =
   (field: 'commentCount' | 'reviewCommentCount') =>
   ({ metadata }: WriteObservation, details: WriteDetails) =>
-    !!metadata && (!before(details) || count(metadata[field]) > count(before(details)?.[field]));
+    !!metadata &&
+    (!before(details) ||
+      (sameCountSource(metadata, before(details)) && count(metadata[field]) > count(before(details)?.[field])));
 
 export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   // The merge commit and the closed state can trail a confirmed merge.
@@ -170,7 +179,10 @@ export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
     kinds: ['metadata', 'signals', 'discussion'],
     probes: ['metadata'],
     seen: ({ metadata }, details) =>
-      !!metadata && (!before(details) || count(metadata.reviewCommentCount) < count(before(details)?.reviewCommentCount)),
+      !!metadata &&
+      (!before(details) ||
+        (sameCountSource(metadata, before(details)) &&
+          count(metadata.reviewCommentCount) < count(before(details)?.reviewCommentCount))),
   },
   'feedback-reply': {
     kinds: ['metadata', 'signals', 'discussion'],

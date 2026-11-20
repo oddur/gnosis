@@ -191,11 +191,19 @@ export function createGitHubSyncService(deps: Deps) {
           task.lastAttempt = now();
           if (followUp) task.followUpRemaining = (task.followUpRemaining ?? 1) - 1;
         });
-        // Failures of one batch are reported together, in one broadcast.
+        // Failures of one batch are reported together, in one broadcast. A task is settled once, accepted or failed:
+        // an error later in the batch never fails it again.
         const failures: GitHubSyncFailure[] = [];
+        const settled = new Set<(typeof batch)[number]>();
+        const report = () => {
+          if (!failures.length) return;
+          const sent = failures.splice(0);
+          deps.failed?.(sent);
+        };
         const fail = (error: unknown, only?: Set<string>) => {
           for (const [index, task] of batch.entries()) {
-            if (task.version !== versions[index] || (only && !only.has(task.target.url))) continue;
+            if (settled.has(task) || task.version !== versions[index] || (only && !only.has(task.target.url))) continue;
+            settled.add(task);
             task.failures++;
             task.due = Math.max(
               deps.backoff(kind, !followUp)?.retryAt ?? 0,
@@ -221,13 +229,14 @@ export function createGitHubSyncService(deps: Deps) {
           const updates = Array.isArray(read) ? read : read.updates;
           const failed = Array.isArray(read) ? [] : read.failed;
           for (const { url, error } of failed) fail(error, new Set([url]));
-          if (failures.length) deps.failed?.(failures);
+          report();
           const acceptStarted = performance.now();
           const accepted: GitHubSyncUpdate[] = [];
           for (const [index, task] of batch.entries()) {
+            if (settled.has(task)) continue;
+            settled.add(task);
             if (!task.observed || tasks.get(`${kind}:${task.target.url}`) !== task || task.version !== versions[index])
               continue;
-            if (failed.some((failure) => failure.url === task.target.url)) continue;
             const update = updates.find((update) => update.url === task.target.url && update.kind === kind);
             if (!update) {
               task.due = now() + 60_000;
@@ -258,7 +267,7 @@ export function createGitHubSyncService(deps: Deps) {
         } catch (error) {
           if (generation !== epoch || deps.account() !== account) return;
           fail(error);
-          if (failures.length) deps.failed?.(failures);
+          report();
         } finally {
           batch.forEach((task) => {
             task.pending = false;

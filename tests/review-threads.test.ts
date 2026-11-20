@@ -605,3 +605,24 @@ void test('listMany preloads stale discussions five at a time and reads alone on
     'only the PR a preload could not save reads by itself'
   );
 });
+
+void test('a rate limit on one preload group fails only that group; the others still answer', async () => {
+  const service = createReviewThreadService(() => 0);
+  const urls = Array.from({ length: 10 }, (_, i) => `https://github.com/o/r/pull/${i + 1}`);
+  const limit = Object.assign(new Error('API rate limit exceeded'), {
+    status: 403,
+    response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 60) } },
+  });
+  const listed: string[] = [];
+  Object.assign(service, {
+    preload: (_client: unknown, group: string[]) =>
+      group.includes(urls[5]) ? Promise.reject(limit) : Promise.resolve({ saved: group, incomplete: [] }),
+    list: (_client: unknown, url: string) => {
+      listed.push(url);
+      return Promise.resolve({ headSha: 'h', baseSha: 'b', threads: [], checkedAt: 0 });
+    },
+  });
+  const settled = await service.listMany({} as Parameters<typeof service.listMany>[0], urls, true);
+  assert.deepEqual(settled.map((r) => r.status), [...Array<string>(5).fill('fulfilled'), ...Array<string>(5).fill('rejected')]);
+  assert.deepEqual(listed, urls.slice(0, 5), 'the limited group is not read one PR at a time either');
+});

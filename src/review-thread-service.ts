@@ -399,12 +399,14 @@ export function createReviewThreadService(now = Date.now) {
     /**
      * `list` for many PRs. The ones that need a read share GraphQL preloads of five PRs each, two at once; `list` then
      * answers from them, and reads by itself only a PR a preload could not save completely. Each PR settles alone,
-     * in request order. A rate limit on a preload is thrown.
+     * in request order. A preload group that hits a rate limit fails its own PRs with that limit; the other groups
+     * still answer.
      */
     async listMany(client: Octokit, prUrls: string[], refresh = false): Promise<PromiseSettledResult<GitHubReviewThreads>[]> {
       const unique = [...new Set(prUrls)];
       const stale = refresh ? unique : unique.filter((url) => !service.fresh(client, url));
       const saved = new Set<string>();
+      const limited = new Map<string, unknown>();
       await mapBounded(
         chunked(stale, 5).filter((group) => group.length > 1),
         2,
@@ -412,12 +414,16 @@ export function createReviewThreadService(now = Date.now) {
           try {
             for (const url of (await service.preload(client, group)).saved) saved.add(url);
           } catch (error) {
-            if (githubRateLimit(error)) throw error;
-            // Each PR of this group reads its own discussion below.
+            if (githubRateLimit(error)) for (const url of group) limited.set(url, error);
+            // Otherwise each PR of this group reads its own discussion below.
           }
         }
       );
-      return Promise.allSettled(prUrls.map((url) => service.list(client, url, refresh && !saved.has(url))));
+      return Promise.allSettled(
+        prUrls.map((url) =>
+          limited.has(url) ? Promise.reject(limited.get(url) as Error) : service.list(client, url, refresh && !saved.has(url))
+        )
+      );
     },
     /** Local data only. Whether `list` without `refresh` would answer without a request: a fresh copy, or a read in flight. */
     fresh(client: Octokit, prUrl: string) {

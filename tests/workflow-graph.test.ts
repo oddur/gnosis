@@ -1453,3 +1453,23 @@ void test('graph notices name what is missing and links name their destination',
   assert.equal(checkGroupLabel([done('skipped')]), '1 skipped');
   assert.equal(checkGroupLabel([done('neutral'), done('skipped')]), '2 skipped / neutral');
 });
+
+void test('job pages follow the largest job count seen, up to five pages', async () => {
+  const { readJobPages } = await import('../src/workflow-graph-service');
+  // Page 1 says 150 jobs; page 2, read after more jobs started, says 320.
+  const totals = [150, 320, 320, 320, 320];
+  const read: number[] = [];
+  const result = await readJobPages((page) => {
+    read.push(page);
+    return Promise.resolve({ total_count: totals[page - 1], page });
+  });
+  assert.deepEqual(read, [1, 2, 3, 4]);
+  assert.equal(result.total, 320);
+  // Never more than five pages, however many jobs there are.
+  const many: number[] = [];
+  await readJobPages((page) => {
+    many.push(page);
+    return Promise.resolve({ total_count: page === 1 ? 120 : 900 });
+  });
+  assert.deepEqual(many, [1, 2, 3, 4, 5]);
+});

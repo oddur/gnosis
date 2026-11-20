@@ -96,7 +96,7 @@ import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
 import { createReviewThreadService } from './review-thread-service';
 import { createReviewComment, submitPrReview } from './review-write-service';
-import type { ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
+import type { ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest, GitHubReviewThreads } from '../lib/review-threads';
 import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride, type WorkbenchQueue } from '../lib/workbench';
@@ -179,6 +179,7 @@ import { createNotificationService, type DesktopNotification, type ToastAction }
 import { createDeepLinks } from './deep-link-service';
 import { botAllowed, notificationSettings, normalizeNotificationPreferences, NOTIFICATION_EVENT_TYPES, parsePauseRequest, pauseUntil } from '../lib/notification-settings';
 import { commentEvent, withChangeRequest, type CommentCandidate } from '../lib/notification-comments';
+import { createCommentEventReader } from '../lib/comment-event-reads';
 import { preciseTarget } from '../lib/notification-targets';
 import { QUICK_ACTIONS, QUICK_SNOOZE_MS, type QuickAction } from '../lib/notification-actions';
 import { parseReplyTarget, type NotificationEvent, type NotificationReplyTarget } from '../lib/notification-events';
@@ -3341,32 +3342,19 @@ function deliverPreparedEvents(events: NotificationEvent[]) {
  * Feed threads that may hold a mention or a reply: one discussion read each, through the review-thread cache and
  * the background slot, so the rate budget and backoff apply. The newest comment about the reader becomes an event.
  */
-async function readCommentEvents(candidates: CommentCandidate[]) {
-  const token = getResolvedToken();
-  const login = cachedLogin;
-  if (!token || !login) return;
-  const client = getGitHubClient(token);
-  if ((githubClients.backoff(token, true, ['graphql'])?.retryAt ?? 0) > Date.now()) return;
-  const known = candidates.flatMap(candidate => {
+// Mention and reply candidates: fresh discussions, five per GraphQL preload. One that hits a rate limit is read
+// again once the limit lifts, since the notifications cursor has already moved past it.
+const commentEvents = createCommentEventReader<GitHubReviewThreads>({
+  read: urls => {
+    const token = getResolvedToken();
+    if (!token) return Promise.resolve(urls.map(() => ({ status: 'rejected' as const, reason: new Error('Signed out.') })));
+    const client = getGitHubClient(token);
+    return withGitHubPriority('background', () => reviewThreads.listMany(client, urls, true));
+  },
+  deliver: (candidate, discussion) => {
+    const login = cachedLogin;
     const member = workbench.knownMember(candidate.url);
-    return member ? [{ candidate, member }] : [];
-  });
-  // Fresh discussions, five per GraphQL preload; a PR a preload could not save is read by itself.
-  let read: Awaited<ReturnType<typeof reviewThreads.listMany>>;
-  try {
-    read = await withGitHubPriority('background', () => reviewThreads.listMany(client, known.map(k => k.candidate.url), true));
-  } catch (error) {
-    console.warn('[notifications] Could not read discussions for mentions or replies:', error instanceof Error ? error.message : error);
-    return;
-  }
-  if (token !== getResolvedToken() || login !== cachedLogin) return;
-  for (const [i, { candidate, member }] of known.entries()) {
-    const result = read[i];
-    if (result.status === 'rejected') {
-      console.warn('[notifications] Could not read the discussion for a mention or reply:', result.reason instanceof Error ? result.reason.message : result.reason);
-      continue;
-    }
-    const discussion = result.value;
+    if (!login || !member) return;
     optimistic.observe(candidate.url, 'discussion', discussion);
     const event = commentEvent({
       discussion,
@@ -3378,7 +3366,18 @@ async function readCommentEvents(candidates: CommentCandidate[]) {
       allowBot: name => botAllowed(notificationSettings(loadPreferences()), name),
     });
     if (event) workbench.deliverEvents([event]);
-  }
+  },
+  retryAt: (...args: unknown[]) => {
+    if (args.length) return githubRateLimit(args[0])?.retryAt;
+    const token = getResolvedToken();
+    return token ? githubClients.backoff(token, true, ['graphql'])?.retryAt : undefined;
+  },
+  schedule: (run, delay) => { setTimeout(run, delay).unref(); },
+  warn: (message, error) => { console.warn(`[notifications] ${message}`, error instanceof Error ? error.message : error); },
+});
+async function readCommentEvents(candidates: CommentCandidate[]) {
+  if (!getResolvedToken() || !cachedLogin) return;
+  await commentEvents(candidates.filter(candidate => workbench.knownMember(candidate.url)));
 }
 const notifications = createNotificationService({
   settings: () => notificationSettings(loadPreferences()),
@@ -3890,7 +3889,7 @@ const optimistic = createOptimisticService({
   before: url => {
     const metadata = syncMetadata.get(url) ?? workbench.knownMember(url);
     const signals = syncSignals.get(url) ?? (metadata && cachedToken ? cachedQueueSignals(getGitHubClient(cachedToken), [{ url, headSha: metadata.headSha }])[0] : undefined);
-    return { commentCount: metadata?.commentCount, reviewCommentCount: metadata?.reviewCommentCount, comments: signals?.comments };
+    return { commentCount: metadata?.commentCount, reviewCommentCount: metadata?.reviewCommentCount, comments: signals?.comments, source: metadata?.source };
   },
   changed: publishOptimistic,
 });

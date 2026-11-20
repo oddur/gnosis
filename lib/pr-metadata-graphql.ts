@@ -212,8 +212,10 @@ export async function getPrMetadataBatch(
 }
 
 /**
- * A metadata read after a write, from the same source as `baseline`, so comment counts compare like with like:
- * GraphQL counts comments as they are, while REST's counters can lag behind.
+ * A metadata read after a write, from the same source as `baseline` where it can be, so comment counts compare like
+ * with like: GraphQL counts comments as they are, while REST's counters can lag behind. When GraphQL cannot answer
+ * this PR exactly, the copy comes from REST and says so in `source`; the write refresh then treats its counts as
+ * inconclusive (`sameCountSource`) and reads again instead of settling.
  */
 export async function readMetadataLike(
   octokit: Octokit,

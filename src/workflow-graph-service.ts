@@ -297,6 +297,22 @@ async function primeWorkflowSources(client: Octokit, files: SourceFile[]): Promi
     /* Each source falls back to its own REST read. */
   }
 }
+/**
+ * A run attempt's job pages, at most 5 (500 jobs). The first page gives the job count; the remaining pages are read
+ * together. Jobs can be added while they load, so the largest count seen decides whether more pages are needed.
+ */
+export async function readJobPages<P extends { total_count: number }>(
+  readPage: (page: number) => Promise<P>
+): Promise<{ pages: P[]; total: number }> {
+  const pages = [await readPage(1)];
+  const total = () => Math.max(...pages.map((page) => page.total_count));
+  const wanted = () => Math.min(5, Math.max(1, Math.ceil(total() / 100)));
+  while (pages.length < wanted()) {
+    const from = pages.length;
+    pages.push(...(await Promise.all(Array.from({ length: wanted() - from }, (_, i) => readPage(from + i + 1)))));
+  }
+  return { pages, total: total() };
+}
 const workflowPath = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 /** The root workflow and every reusable workflow the run reports with an exact revision. */
 function workflowSources(owner: string, repo: string, run: WorkflowRunInfo, references: Reference[]): SourceFile[] {
@@ -414,13 +430,10 @@ async function readGraph(
                 headers: { 'cache-control': 'no-cache' },
               })
             ).data;
-          // The first page gives the job count; the remaining pages (at most 5 in all) are read together.
-          const first = await readPage(1);
-          const pageCount = Math.min(5, Math.max(1, Math.ceil(first.total_count / 100)));
-          const pages = [first, ...(await Promise.all(Array.from({ length: pageCount - 1 }, (_, i) => readPage(i + 2))))];
+          const { pages, total: jobTotal } = await readJobPages(readPage);
           for (const [index, batch] of pages.entries()) {
             const page = index + 1;
-            runInfo.jobCount = batch.total_count;
+            runInfo.jobCount = jobTotal;
             for (const job of batch.jobs) {
               const checkId = /\/check-runs\/(\d+)$/.exec(job.check_run_url)?.[1];
               jobs.push({
@@ -435,7 +448,7 @@ async function readGraph(
                 steps: job.steps ?? [],
               });
             }
-            if (page * 100 >= batch.total_count) break;
+            if (page * 100 >= jobTotal) break;
             if (page === 5) warnings.push('Showing the first 500 jobs. Open GitHub for the full run.');
           }
         };
