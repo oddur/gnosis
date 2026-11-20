@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertPerf } from './perf-budget';
 import { serialize } from 'node:v8';
 import { groupSubjects, type QueueItem, type ReviewMember, type WorkbenchQueue } from '../lib/workbench';
 import { stampQueue } from '../lib/workbench-revision';
@@ -116,15 +117,18 @@ void test('sleep and a locked screen are never long tasks or the maximum event-l
     // Locked, then asleep, then awake but still locked: nothing is measured until the screen unlocks.
     noteSystemSleep('lock-screen');
     noteSystemSleep('suspend');
-    block(200);
+    block(300);
     noteSystemWake('suspend');
     await new Promise((resolve) => setTimeout(resolve, 40));
-    block(200);
+    block(300);
     noteSystemWake('lock-screen');
     await new Promise((resolve) => setTimeout(resolve, 80));
     const { longTasks, eventLoopDelay } = mainLoopReport();
     assert.deepEqual(longTasks, [], 'No long task while asleep or locked');
-    assert.ok(eventLoopDelay.max < 150, `The delay histogram skips the sleep: max ${eventLoopDelay.max} ms`);
+    // Each block above is 300 ms or more, so one the histogram kept would read about 290 ms or more (it samples every
+    // 10 ms): this does not depend on the machine. How close the rest stays to zero does, so that is a budget.
+    assert.ok(eventLoopDelay.max < 250, `The delay histogram skips the sleep: max ${eventLoopDelay.max} ms`);
+    assertPerf('main event loop: delay histogram maximum around a sleep', eventLoopDelay.max, 150);
     assert.equal(eventLoopDelay.sleeps, 2, 'Each wake starts the histogram again');
     // Awake again, real blocking is measured as before.
     block(160);

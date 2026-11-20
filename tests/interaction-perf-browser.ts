@@ -1,10 +1,13 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
-import { PERF_BUDGET_SCALE, perfBudget } from './perf-budget';
+import { PERF_BUDGET_SCALE, assertPerf, perfBudget, withinPerf } from './perf-budget';
 import { app, BrowserWindow } from 'electron';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
 
 /**
+ * Its timing budgets are report-only on CI and enforced by `npm run test:perf` (docs/continuous-integration.md,
+ * "Performance tests"). The structural checks always fail the run.
+ *
  * Interaction latency on large synthetic fixtures (#345, #346). Every input here is a trusted input event sent
  * through Electron, so the app's own slow-interaction monitor (lib/interaction-latency.ts) measures it with the
  * Event Timing API: from the input to the next paint, split into input delay, handlers and presentation.
@@ -979,18 +982,15 @@ void app.whenReady().then(async () => {
     const background = await backgroundSync();
     const summary = report();
     if (profiling) await profileSources();
-    const over = summary.filter((s) => s.budget && s.checked > s.budget);
+    const over = summary.filter((s) => s.budget && !withinPerf(`interaction: ${s.name}`, s.checked, s.budget));
     assert.deepEqual(
       over.map((s) => `${s.name}: ${s.checked} ms > ${s.budget} ms`),
       [],
       'Interactions stay within budget'
     );
     // Relative to the same inputs without sync, so a slower machine does not fail it; scaled like the budgets.
-    const allowed = scaledBudget(BACKGROUND_INPUT_DELAY_P90);
-    assert.ok(
-      background.p90 - background.idleP90 <= allowed,
-      `Input delay under background sync stays within ${allowed} ms of the same inputs without it at p90: ${background.p90} ms against ${background.idleP90} ms`
-    );
+    assertPerf('interaction: input delay p90 under background sync, over the same inputs without it', background.p90 - background.idleP90,
+      scaledBudget(BACKGROUND_INPUT_DELAY_P90), { detail: `${background.p90} ms against ${background.idleP90} ms` });
     for (const [moment, count] of Object.entries(background.counts))
       assert.ok(count.receivers < 3, `github-sync listeners stay bounded (${moment}): ${count.receivers} for ${count.watches} watches`);
     assert.ok(
@@ -998,10 +998,8 @@ void app.whenReady().then(async () => {
       `Closed tabs leave no watches behind: ${JSON.stringify(background.counts)}`
     );
     // Opening and closing five tabs again must not keep their pages: the heap returns to about where it was.
-    assert.ok(
-      background.counts['tabs closed 5'].heapMB - background.counts['tabs closed'].heapMB < 8,
-      `Closed tabs release their memory: ${JSON.stringify(background.counts)}`
-    );
+    assertPerf('interaction: heap kept by five more tab cycles', background.counts['tabs closed 5'].heapMB - background.counts['tabs closed'].heapMB, 8,
+      { unit: 'MB', detail: JSON.stringify(background.counts) });
     // Before the PrSummary eviction timer was moved out of the component, each cycle kept about 4,700 detached
     // elements and 10 MB for a minute.
     assert.ok(

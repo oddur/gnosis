@@ -7,6 +7,10 @@
 //   node scripts/run-browser-suites.mjs --shard 2/6     # one balanced sixth
 //   node scripts/run-browser-suites.mjs --list --shard 2/6
 //   node scripts/run-browser-suites.mjs --durations out.json   # also record measured seconds
+//   node scripts/run-browser-suites.mjs --perf          # suites with timing budgets, enforced (npm run test:perf)
+//
+// Performance tests run locally only; see "Performance tests" in docs/continuous-integration.md. CI runs every suite,
+// with timing assertions report-only; --perf picks the suites whose test file uses tests/perf-budget.ts.
 import { spawn } from 'node:child_process';
 import console from 'node:console';
 import fs from 'node:fs';
@@ -22,14 +26,20 @@ const argument = (name) => {
   return index > 0 ? process.argv[index + 1] : undefined;
 };
 
-/** Every browser suite as `{ key, command }`, in package.json order. */
+/** The npm scripts whose suites CI runs, in shards. */
+export const CI_SCRIPTS = ['test:explainer', 'test:workbench', 'test:diagrams'];
+/** A `scripts/test-workbench.mjs --flag` suite flag. */
+export const SUITE_FLAG = /--[a-z0-9-]+/;
+const workbenchCommand = new RegExp(`scripts/test-workbench\\.mjs(?:\\s+(${SUITE_FLAG.source}))?\\s*$`);
+
+/** Every browser suite CI runs as `{ key, command }`, in package.json order. */
 export function browserSuites(scripts) {
   const suites = [];
-  for (const script of ['test:explainer', 'test:workbench', 'test:diagrams']) {
+  for (const script of CI_SCRIPTS) {
     for (const part of String(scripts[script] ?? '').split('&&')) {
       const command = part.trim();
       if (!command) continue;
-      const flag = /scripts\/test-workbench\.mjs(?:\s+(--[\w-]+))?\s*$/.exec(command)?.[1];
+      const flag = workbenchCommand.exec(command)?.[1];
       const key = /test-workbench\.mjs/.test(command)
         ? (flag?.slice(2) ?? 'default')
         : /test-explainer\.mjs/.test(command)
@@ -39,6 +49,64 @@ export function browserSuites(scripts) {
     }
   }
   return suites;
+}
+
+/**
+ * Each `scripts/test-workbench.mjs` flag and the test file it builds, from both forms the runner uses:
+ * `process.argv.includes('--x') ? 'tests/x.ts'` and `const x = process.argv.includes('--x')` with `x ? 'tests/x.ts'`.
+ */
+export function workbenchSuiteFiles(runner = fs.readFileSync(path.join(root, 'scripts/test-workbench.mjs'), 'utf8')) {
+  /** @type {Map<string, string>} */
+  const files = new Map();
+  const flag = `'(${SUITE_FLAG.source})'`;
+  for (const [, name, file] of runner.matchAll(new RegExp(`process\\.argv\\.includes\\(${flag}\\) \\? '(tests/[\\w-]+\\.ts)'`, 'g')))
+    files.set(name, file);
+  const includes = `process\\.argv\\.includes\\('${SUITE_FLAG.source}'\\)`;
+  for (const [, variable, test] of runner.matchAll(new RegExp(`const (\\w+) = (${includes}(?: \\|\\| ${includes})*);`, 'g'))) {
+    const file = new RegExp(`[:?(]\\s*${variable}\\s*\\?\\s*'(tests/[\\w-]+\\.ts)'`).exec(runner)?.[1];
+    for (const [name] of test.matchAll(new RegExp(SUITE_FLAG.source, 'g'))) if (file && !files.has(name)) files.set(name, file);
+  }
+  // With no flag the runner builds its last entry point.
+  const fallback = /:\s*'(tests\/[\w-]+\.ts)',\s*\]/.exec(runner)?.[1];
+  if (fallback) files.set('default', fallback);
+  return files;
+}
+
+/** The test file a suite runs, or undefined when it cannot be told from the scripts. */
+export function suiteFile(suite, files = workbenchSuiteFiles()) {
+  if (suite.key === 'explainer') {
+    const source = fs.readFileSync(path.join(root, 'scripts/test-explainer.mjs'), 'utf8');
+    return [...source.matchAll(/'(tests\/[\w-]+-browser\.ts)'/g)].at(-1)?.[1];
+  }
+  if (suite.key.endsWith('-unit')) return /tests\/[\w-]+\.test\.ts/.exec(suite.command)?.[0];
+  return files.get(suite.key === 'default' ? 'default' : `--${suite.key}`);
+}
+
+/**
+ * Whether a test file uses tests/perf-budget.ts: it imports or re-exports it (with or without `.ts`), directly or
+ * through another local module it imports.
+ */
+export function usesPerfBudget(file, seen = new Set()) {
+  const full = path.resolve(root, file);
+  if (seen.has(full) || !fs.existsSync(full)) return false;
+  seen.add(full);
+  const source = fs.readFileSync(full, 'utf8');
+  for (const [, specifier] of source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)) {
+    if (/(^|\/)perf-budget(\.ts)?$/.test(specifier)) return true;
+    const target = path.resolve(path.dirname(full), specifier);
+    const candidate = [target, `${target}.ts`, `${target}.tsx`].find((f) => fs.existsSync(f) && fs.statSync(f).isFile());
+    if (candidate && /\.(ts|tsx)$/.test(candidate) && usesPerfBudget(path.relative(root, candidate), seen)) return true;
+  }
+  return false;
+}
+
+/** The CI suites with timing or memory budgets: `npm run test:perf` runs these with the budgets enforced. */
+export function perfSuites(scripts) {
+  const files = workbenchSuiteFiles();
+  return browserSuites(scripts).filter((suite) => {
+    const file = suiteFile(suite, files);
+    return file !== undefined && usesPerfBudget(file);
+  });
 }
 
 /**
@@ -68,7 +136,7 @@ export function shardSuites(suites, durations, index, count) {
 async function main() {
   const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
   const durations = JSON.parse(fs.readFileSync(path.join(root, 'scripts/browser-suite-durations.json'), 'utf8'));
-  const all = browserSuites(scripts);
+  let all = browserSuites(scripts);
   const verify = argument('--verify');
   if (verify) {
     // Every suite must land in exactly one shard, or a CI shard silently skips it.
@@ -85,6 +153,11 @@ async function main() {
       `${all.length} browser suites cover ${count} shards exactly once.${unmeasured.length ? ` Unmeasured (median weight): ${unmeasured.join(', ')}` : ''}`
     );
     return;
+  }
+  if (process.argv.includes('--perf')) {
+    // Timing assertions fail the run here, also in a container or on a runner (tests/perf-budget.ts).
+    process.env.GNOSIS_PERF = '1';
+    all = perfSuites(scripts);
   }
   const shard = argument('--shard');
   let selected = all;

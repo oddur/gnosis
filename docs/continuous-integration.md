@@ -35,6 +35,43 @@ node scripts/run-browser-suites.mjs --list --shard 2/6    # suites in one shard,
 npm run test:browser:docker -- node scripts/run-browser-suites.mjs --shard 2/6
 ```
 
+## Performance tests
+
+Performance tests run locally only. CI does not enforce timing budgets. Shared runners are too noisy for them: the checks kept failing on runner load, not on regressions.
+
+When `CI` is set (GitHub Actions sets `CI=true`), every browser suite and unit test still runs, with all its functional assertions. Only the timing budgets change: they go through `assertPerf` and `withinPerf` in `tests/perf-budget.ts`, which log `[perf] <name>: <value> (budget <budget>)` and do not fail. On GitHub Actions, a value over its budget also shows as a warning annotation. A measurement that is not a number fails in every mode.
+
+Some checks that use time stay enforced on CI, because they check behaviour, not speed:
+
+- Scheduling (`--syntax-scope`): the file in view, and the file the reader jumps to, wait less than 400 ms for the syntax worker, where waiting behind prefetch takes seconds; and parsing runs in the worker, not on the page.
+- Heap growth after a forced garbage collection (`--renderer-heap`): that is about leaks, not load.
+- Instant views (`--instant-views`): a prepared PR or the saved queue shows well before the fixture's slow network or slow start would answer.
+- Timeouts with wide margins: an interactive read stops waiting for a 1 s fetch (`local-clone`), and a status read waits for a stuck preload for about 250 ms (`pr-status`). Quit flushing (`quit-flush`) uses mocked timers.
+
+Run `npm run test:perf` on your own machine before a release, and after you change rendering, scrolling, sync, diff or queue code. Put the `[perf]` lines in the PR description.
+
+```sh
+npm run test:perf                  # unit timing tests on this machine, then the timed browser suites in Docker
+npm run test:perf -- --unit        # only the unit timing tests
+npm run test:perf -- --browser     # only the timed browser suites, in Docker
+GNOSIS_PERF_STRICT=1 npm run test:perf
+npm run test:browser:docker -- --diff-gaps            # one timed suite in Docker, budgets enforced
+CI=true npm run test:browser:docker -- --diff-gaps    # the same, report-only, as on CI
+```
+
+`test:perf` finds its tests from the files that use `tests/perf-budget.ts` (an import, a re-export, or a local helper that does):
+
+- The unit tests in `npm test` that use it, such as main-process blocking during sync and discovery (`main-sync-blocking`) and regrouping 4,000 PRs (`group-subjects`). They run on the host, one file at a time.
+- The CI browser suites that use it: `npm run test:perf:browser` runs them, and `node scripts/run-browser-suites.mjs --list --perf` lists them. They include `--interaction-perf`, `--comment-typing`, `--diff-gaps`, `--syntax-scope` and `--breadcrumb-nav`. On a dev machine they run in Docker, through `npm run test:browser:docker`. Set `GNOSIS_BROWSER_ON_HOST=1` to run them natively; they open windows. The budgets were calibrated in Docker.
+
+| Variable                   | Effect                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GNOSIS_PERF`              | `1` enforces timing assertions, also with `CI` set. `0` makes them report-only. Without it, they are enforced unless `CI` is set. `test:perf` sets `1`. |
+| `GNOSIS_PERF_STRICT`       | `1` enforces the budgets as written, with no scale factor.                                                                                              |
+| `GNOSIS_PERF_BUDGET_SCALE` | The scale factor for budgets when not strict: a number above 0. The default is 1.6, which leaves room for a busy laptop or for Docker on a Mac.         |
+
+`CI=0` and `CI=false` count as not set. The Docker container does not set `CI`, so budgets are enforced there unless you pass `CI` or `GNOSIS_PERF=0`. `npm run test:browser:docker` passes these variables, `CI`, and the suites' own tuning variables (`GNOSIS_INTERACTION_CPU_SLOWDOWN`, `GNOSIS_TYPING_CPU_SLOWDOWN`, `GNOSIS_LONG_TASK_BUDGET`, `GNOSIS_INTERACTION_ONLY`, `GNOSIS_INTERACTION_PROFILE`) into the container.
+
 ## Downloadable builds
 
 Every run builds with `npm run make` and uploads `gnosis-unsigned-<OS>-<architecture>-<commit>` artifacts for seven days. Artifacts contain the platform's normal distributables: macOS ZIP/DMG, Windows Squirrel installer files, or Linux DEB/RPM. Linux packaging uses Ubuntu 24.04, matching the release workflow's RPM requirement.
@@ -55,4 +92,4 @@ npm run test:electron-smoke
 npm run test:browser-smoke
 ```
 
-For full browser coverage, run `npm run test:explainer`, `npm run test:workbench`, and `npm run test:diagrams`. On headless Linux, prefix each Electron test command with `xvfb-run -a` after configuring the Electron sandbox, as the workflow does.
+For full browser coverage, run `npm run test:explainer`, `npm run test:workbench`, and `npm run test:diagrams`. For timing and memory budgets, run `npm run test:perf` (see [Performance tests](#performance-tests)). On headless Linux, prefix each Electron test command with `xvfb-run -a` after configuring the Electron sandbox, as the workflow does.
