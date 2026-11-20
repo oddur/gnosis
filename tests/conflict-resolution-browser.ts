@@ -1005,7 +1005,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${block(1)}.dataset.bucket`), 'check');
     assert.match(
       await js<string>(`${block(1)}.querySelector('.conflict-block-header').textContent`),
-      /Check · Combined both sides’ changesfour is missing from the result\./
+      /Check · Combined both sides’ changesexport function four\(\) \{ from main is missing from the result\./
     );
     // J and K visit both conflicts that need you: the one to decide and the one to check.
     await js(`${block(0)}.focus()`);
@@ -1016,7 +1016,7 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /Merged · Combined both sides’ changes/);
     assert.equal(await js(`${block(0)}.querySelector('details').open`), false, 'Merged starts collapsed');
-    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /The file parses\. No definition or added line was lost\./);
+    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /The file parses\. Every line of both sides is accounted for\./);
     assert.equal(await stage(), 'resolved', 'With the switch on, a Merged file still waits for your review');
     await captureAll('buckets-merged');
     // Off: files whose every conflict is Merged are marked reviewed for you. Nothing is pushed.

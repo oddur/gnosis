@@ -5,8 +5,10 @@ import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { blockProposals, blockResolutions, carryFile, withProposals } from '../lib/conflict-carry';
-import { parseConflicts } from '../lib/conflict-blocks';
+import { inferChoices, parseConflicts } from '../lib/conflict-blocks';
+import { assertPerf, perfBudget } from './perf-budget';
 import {
+  accountLines,
   blockBuckets,
   bucketSummary,
   proposalKey,
@@ -79,12 +81,12 @@ void test('a resolver’s output becomes per-conflict proposals only where the t
 
 void test('a result that parses and keeps every definition is Merged', async () => {
   const verdict = await verifyProposals(file([merged(imports), merged(three + four)]), analyse);
-  assert.deepEqual(verdict, { merged: true, note: 'The file parses. No definition or added line was lost.' });
+  assert.deepEqual(verdict, { merged: true, note: 'The file parses. Every line of both sides is accounted for.' });
 });
 
 void test('a lost definition, a duplicate, a parse error, markers or mixed line endings keep the proposal in Check', async () => {
   const lost = await verifyProposals(file([merged(imports), merged(three)]), analyse);
-  assert.deepEqual(lost, { merged: false, note: 'four is missing from the result.' });
+  assert.deepEqual(lost, { merged: false, note: 'export function four() { from main is missing from the result.' });
   const twice = await verifyProposals(file([merged(imports), merged(three + three + four)]), analyse);
   assert.deepEqual(twice, { merged: false, note: 'three is defined twice in the result.' });
   const broken = await verifyProposals(
@@ -134,7 +136,8 @@ void test('buckets follow the draft: proposal, undone, kept by you, edited by ha
   assert.deepEqual(blockBuckets(f, original, ok), ['decide', 'decide'], 'Undo restores both sides');
   const keptPr = f.result.replace(/<<<<<<< feature\nexport function three[\s\S]*?>>>>>>> main\n/, three);
   assert.deepEqual(blockBuckets(f, keptPr, ok), ['merged', 'decided']);
-  assert.deepEqual(blockBuckets(f, `// edited\n${keptPr}`, ok), ['decided', 'decided']);
+  // Review probe: an edit elsewhere never turns an unreviewed proposal into a decision.
+  assert.deepEqual(blockBuckets(f, `// edited\n${keptPr}`, ok), ['check', 'decided']);
   assert.deepEqual(blockBuckets({ ...f, unsupported: 'binary' }, '', ok), ['decide']);
 });
 
@@ -203,7 +206,10 @@ void test('review probe: a lost definition is excused only by its exact name, in
     theirs: theirs.replace("import { c } from './c';\n", imported),
     original: original.replace("import { c } from './c';\n", imported),
   });
-  assert.deepEqual(await verifyProposals(f, analyse), { merged: false, note: 'four is missing from the result.' });
+  assert.deepEqual(await verifyProposals(f, analyse), {
+    merged: false,
+    note: 'export function four() { from main is missing from the result.',
+  });
 });
 
 void test('review probe: carrying a draft forward uses the fresh proposal for a conflict it cannot carry', () => {
@@ -224,4 +230,65 @@ void test('review probe: a check result belongs to the proposals it checked', ()
   const after = file([merged(imports), merged(three)]);
   assert.notEqual(proposalKey(before), proposalKey(after));
   assert.equal(proposalKey(before), proposalKey(file([merged(imports), merged(three + four)])));
+});
+
+void test('second review probe: a draft that splits two ways is never carried, so a choice cannot swap', () => {
+  // `}\n}\n` is "PR side, then the text, then the PR side" and also "main side, then the text, then main side".
+  const twoWays = '<<<<<<< feature\n}\n=======\n>>>>>>> main\n}\n<<<<<<< feature\n=======\n}\n>>>>>>> main\n';
+  assert.equal(inferChoices(parseConflicts(twoWays), '}\n}\n'), undefined);
+  assert.deepEqual(blockResolutions(parseConflicts(twoWays), '}\n}\n'), [undefined, undefined]);
+});
+
+void test('second review probe: a fresh proposal next to a hand-edited block is never decided', () => {
+  const proposals = [null, merged(three + four)];
+  const f = file(proposals);
+  const edited = withProposals(original, proposals).replace(
+    /<<<<<<< feature\nimport[\s\S]*?>>>>>>> main\n/,
+    "import { b, c } from './bc';\n"
+  );
+  assert.deepEqual(blockBuckets(f, edited, undefined), ['decided', 'check']);
+  assert.deepEqual(blockBuckets(f, edited, { merged: true, note: '' }), ['decided', 'merged']);
+});
+
+void test('second review probe: a proposal that drops a line both sides kept is not Merged', () => {
+  const kept = {
+    base: 'start();\nvalidate(input);\nfinish();\n',
+    ours: 'start();\nvalidate(input);\nlog(1);\nfinish();\n',
+    theirs: 'begin();\nvalidate(input);\nfinish();\n',
+  };
+  assert.equal(
+    accountLines(kept, 'begin();\nlog(1);\nfinish();\n', false),
+    'validate(input); from both sides is missing from the result.'
+  );
+  assert.equal(accountLines(kept, 'begin();\nvalidate(input);\nlog(1);\nfinish();\n', false), undefined);
+  assert.equal(
+    accountLines(kept, 'begin();\nvalidate(input);\nlog(1);\nfinish();\nextra();\n', false),
+    'extra(); is in neither side.'
+  );
+  assert.equal(
+    accountLines(kept, 'start();\nbegin();\nvalidate(input);\nlog(1);\nfinish();\n', false),
+    'start(); was removed on one side but is still in the result.'
+  );
+  // Both sides rewrote the same line: a choice, never Merged. In Python, indentation counts.
+  assert.match(
+    accountLines({ base: 'a = 1\n', ours: 'a = 2\n', theirs: 'a = 3\n' }, 'a = 2\n', true) ?? '',
+    /Both sides changed/
+  );
+  assert.match(
+    accountLines(
+      { base: 'if x:\n    y()\n', ours: 'if x:\n    y()\nz()\n', theirs: 'if x:\n    y()\n' },
+      'if x:\n    y()\n    z()\n',
+      true
+    ) ?? '',
+    /z\(\)/
+  );
+});
+
+void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
+  const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
+  const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');
+  const output = Array.from({ length: 2500 }, (_, i) => `a${i}b${i}\n`).join('\n');
+  const started = performance.now();
+  assert.equal(blockProposals(blocks, output, 'mergiraf'), undefined);
+  assertPerf('conflict split of a 10,000-line output', performance.now() - started, perfBudget(500));
 });

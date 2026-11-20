@@ -1,5 +1,7 @@
+import { diffArrays } from 'diff';
+import { blockResolutions } from './conflict-carry';
 import { inferChoices, parseConflicts, type ConflictSegment } from './conflict-blocks';
-import { hasConflictMarkers, type ConflictFile } from './conflict-resolution';
+import { hasConflictMarkers, type ConflictFile, type ConflictProposal } from './conflict-resolution';
 import { definitionChain, syntaxLanguage, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
 
 /**
@@ -37,9 +39,10 @@ function symbols(definitions: readonly SyntaxDefinition[]) {
 
 /**
  * Checks one file's proposals together, cheapest first: no conflict markers and one line-ending style; the result
- * parses where both sides parsed; no definition either side kept is lost; no definition is duplicated. Blocks with no
- * proposal take the PR's lines for the parse, and a definition that only main's side of such a block holds is not
- * expected. Your own earlier resolutions stay Merged in files Gnosis has no grammar for; structural merge does not.
+ * parses where both sides parsed (an undecided conflict may take either side's lines); no definition is duplicated.
+ * Structural merge is also held to the line accounting of each block (`accountLines`), and to no renamed name coming
+ * back, no member declared twice and no stray line. Your own earlier resolutions stay Merged in files Gnosis has no
+ * grammar for; structural merge does not.
  */
 export async function verifyProposals(
   file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals'>,
@@ -67,73 +70,194 @@ export async function verifyProposals(
     return { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' };
   }
   const [, ours, theirs, result] = parsed;
-  if (result.errors && !ours.errors && !theirs.errors) return { merged: false, note: 'The result doesn’t parse.' };
-  const [b, o, t, r] = parsed.map((p) => symbols(p.definitions));
-  let blockDefinitions: Promise<{ ours: SyntaxDefinition[]; theirs: SyntaxDefinition[] }[]> | undefined;
-  const pendingDefinitions = async (wanted: string) => {
-    blockDefinitions ??= Promise.all(
-      open.map(async (s) => ({
-        ours: (await analyse(language, s.block.ours)).definitions,
-        theirs: (await analyse(language, s.block.theirs)).definitions,
-      }))
-    );
-    const count = (list: SyntaxDefinition[]) => list.filter((d) => d.name === wanted).length;
-    return (await blockDefinitions).reduce((sum, d) => sum + Math.max(0, count(d.theirs) - count(d.ours)), 0);
-  };
-  const name = (key: string) => key.slice(key.lastIndexOf('.') + 1).replace(/^\S+ /, '');
-  for (const key of new Set([...o.keys(), ...t.keys()])) {
-    const [inBase, inOurs, inTheirs, inResult] = [b, o, t, r].map((m) => m.get(key) ?? 0);
-    const missing = expectedCount(inBase, inOurs, inTheirs) - inResult;
-    // The probe holds the PR's side of an undecided conflict: a definition that main's side of that same conflict
-    // defines, by its exact name, is not expected yet.
-    if (missing > 0 && (inTheirs <= inOurs || missing > (await pendingDefinitions(name(key)))))
-      return { merged: false, note: `${name(key)} is missing from the result.` };
-    if (inResult > Math.max(inOurs, inTheirs, inOurs + inTheirs - inBase))
-      return { merged: false, note: `${name(key)} is defined twice in the result.` };
+  // The probe fills undecided conflicts with the PR's lines; with main's lines it may parse. Only a result that fails
+  // both ways is the proposals' fault.
+  if (result.errors && !ours.errors && !theirs.errors) {
+    const withMain = segments.map((s) => (s.kind === 'text' ? s.text : (proposals[s.index]?.text ?? s.block.theirs)));
+    if (!open.length || (await analyse(language, withMain.join(''))).errors)
+      return { merged: false, note: 'The result doesn’t parse.' };
   }
-  // Definitions miss imports, statements and config lines. Every line a side added must be in the result too, unless
-  // the other side removed it; whitespace is ignored, so a reindent passes. Your own earlier resolutions may drop a
-  // side on purpose, so they are not held to this.
-  if (proposals.some((p) => p?.source === 'mergiraf')) {
-    const [lb, lo, lt, lr] = [file.base, file.ours, file.theirs, probe].map(lineCounts);
-    for (const [line, text] of new Map([...lo.texts, ...lt.texts])) {
-      const [inBase, inOurs, inTheirs, inResult] = [lb, lo, lt, lr].map((m) => m.counts.get(line) ?? 0);
-      if (inOurs <= inBase && inTheirs <= inBase) continue;
-      const pending = open.reduce(
-        (sum, s) =>
-          sum +
-          Math.max(
-            0,
-            (lineCounts(s.block.theirs).counts.get(line) ?? 0) - (lineCounts(s.block.ours).counts.get(line) ?? 0)
-          ),
-        0
-      );
-      if (expectedCount(inBase, inOurs, inTheirs) - inResult > pending) {
-        const shown = text.length > 60 ? `${text.slice(0, 59)}…` : text;
-        return {
-          merged: false,
-          note: `${shown} from ${inOurs > inResult ? 'the PR' : 'main'} is missing from the result.`,
-        };
-      }
+  const [b, o, t, r] = parsed.map((p) => symbols(p.definitions));
+  for (const key of new Set([...o.keys(), ...t.keys(), ...r.keys()])) {
+    const [inBase, inOurs, inTheirs, inResult] = [b, o, t, r].map((m) => m.get(key) ?? 0);
+    if (inResult > Math.max(inOurs, inTheirs, inOurs + inTheirs - inBase)) {
+      const name = key.slice(key.lastIndexOf('.') + 1).replace(/^\S+ /, '');
+      return { merged: false, note: `${name} is defined twice in the result.` };
     }
   }
-  return { merged: true, note: 'The file parses. No definition or added line was lost.' };
+  // Your own earlier resolutions may drop a side on purpose: only structural merge is held to the line accounting.
+  if (proposals.some((p) => p?.source === 'mergiraf')) {
+    const indented = language === 'python' || language === 'yaml';
+    for (const s of segments) {
+      const proposal = s.kind === 'conflict' ? proposals[s.index] : undefined;
+      if (s.kind !== 'conflict' || !proposal) continue;
+      const note = accountLines(s.block, proposal.text, indented);
+      if (note) return { merged: false, note };
+    }
+    const named =
+      danglingName(file, segments) ?? duplicateMember(segments, proposals) ?? strayLine(segments, proposals);
+    if (named) return { merged: false, note: named };
+  }
+  return { merged: true, note: 'The file parses. Every line of both sides is accounted for.' };
 }
 
-/** How many copies the result needs: what both sides kept when a side removed some, else the larger side. */
-const expectedCount = (base: number, ours: number, theirs: number) =>
-  ours < base || theirs < base ? Math.min(ours, theirs) : Math.max(ours, theirs);
-/** Non-blank lines with their whitespace removed, counted, and one original spelling of each. */
-function lineCounts(text: string) {
-  const counts = new Map<string, number>();
-  const texts = new Map<string, string>();
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/\s+/g, '');
-    if (!line) continue;
-    counts.set(line, (counts.get(line) ?? 0) + 1);
-    if (!texts.has(line)) texts.set(line, raw.trim());
+/**
+ * One block's line accounting, against the block's own ancestor, PR and main lines. Lines both sides kept must be in
+ * the result; lines either side added must be in it; lines a side deleted must be gone; nothing else may appear. Where
+ * both sides changed the same ancestor lines differently, the block is a real conflict and nothing is Merged. Blank
+ * lines, trailing commas and whitespace are ignored; in Python and YAML, indentation counts.
+ */
+export function accountLines(
+  block: { base?: string; ours: string; theirs: string },
+  result: string,
+  indented: boolean
+): string | undefined {
+  if (block.base === undefined) return 'Gnosis couldn’t see the lines before both changes.';
+  const spelled = new Map<string, string>();
+  const lines = (text: string) =>
+    text.split(/\r?\n/).flatMap((raw) => {
+      const line = (indented ? raw.replace(/\s+$/, '') : raw.replace(/\s+/g, '')).replace(/,$/, '');
+      if (!line.trim()) return [];
+      if (!spelled.has(line)) spelled.set(line, raw.trim());
+      return [line];
+    });
+  const [base, ours, theirs, merged] = [block.base, block.ours, block.theirs, result].map(lines);
+  const [mine, other] = [changesOf(base, ours), changesOf(base, theirs)];
+  const same = (a: LineChange, b: LineChange) =>
+    a.start === b.start && a.end === b.end && a.added.join('\n') === b.added.join('\n');
+  const inside = (gap: number, c: LineChange) => c.start < gap && gap < c.end;
+  for (const a of mine)
+    for (const b of other) {
+      if (same(a, b)) continue;
+      const overlap = a.start < a.end && b.start < b.end && a.start < b.end && b.start < a.end;
+      if (overlap || (a.start === a.end && inside(a.start, b)) || (b.start === b.end && inside(b.start, a)))
+        return 'Both sides changed the same lines, so the result is a choice, not a merge.';
+    }
+  const removed = new Set<number>();
+  for (const c of [...mine, ...other]) for (let i = c.start; i < c.end; i++) removed.add(i);
+  const expected = new Map<string, number>();
+  const add = (line: string) => expected.set(line, (expected.get(line) ?? 0) + 1);
+  base.forEach((line, i) => !removed.has(i) && add(line));
+  for (const c of mine) c.added.forEach(add);
+  for (const c of other) if (!mine.some((m) => same(m, c))) c.added.forEach(add);
+  const found = new Map<string, number>();
+  for (const line of merged) found.set(line, (found.get(line) ?? 0) + 1);
+  const shown = (line: string) => {
+    const text = spelled.get(line) ?? line;
+    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+  };
+  // Name the most telling missing line: one with a word in it, not a lone brace.
+  const missing = [...expected].filter(([line, n]) => (found.get(line) ?? 0) < n).map(([line]) => line);
+  const line = missing.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? missing.at(0);
+  if (line !== undefined) {
+    const from = ours.includes(line) ? (theirs.includes(line) ? 'both sides' : 'the PR') : 'main';
+    return `${shown(line)} from ${from} is missing from the result.`;
   }
-  return { counts, texts };
+  for (const [line, n] of found)
+    if (n > (expected.get(line) ?? 0))
+      return base.includes(line)
+        ? `${shown(line)} was removed on one side but is still in the result.`
+        : `${shown(line)} is in neither side.`;
+}
+/** A side's edits against the ancestor: each replaces ancestor lines [start, end) with `added`. */
+interface LineChange {
+  start: number;
+  end: number;
+  added: string[];
+}
+function changesOf(base: string[], side: string[]): LineChange[] {
+  const changes: LineChange[] = [];
+  let at = 0;
+  let open: LineChange | undefined;
+  for (const part of diffArrays(base, side)) {
+    if (!part.added && !part.removed) {
+      if (open) changes.push(open);
+      open = undefined;
+      at += part.value.length;
+      continue;
+    }
+    open ??= { start: at, end: at, added: [] };
+    if (part.removed) {
+      at += part.value.length;
+      open.end = at;
+    } else open.added.push(...part.value);
+  }
+  if (open) changes.push(open);
+  return changes;
+}
+
+/** Keywords of the bundled grammars: a side that drops an `if` has not renamed anything. */
+const KEYWORDS = new Set(
+  'if else for while do return break continue switch case default match try catch finally throw throws new delete typeof instanceof in of is as await async yield function fn def func class struct enum interface impl trait type let const var val mut pub public private protected internal static readonly final abstract override virtual sealed import from export use using package namespace mod self this super true false null nil None True False void int string bool where with lambda pass raise except elif not and or go defer select chan map range'.split(
+    ' '
+  )
+);
+const words = (text: string) => new Set(text.match(/[A-Za-z_$][\w$]*/g) ?? []);
+/**
+ * A name one side removed comes back in a proposal: one side renamed or deleted a function, parameter or keyword
+ * argument, and the other side's new lines in the same conflict still use it. A name counts as removed when the side
+ * dropped it from the whole file, or from that conflict's lines while the ancestor had it there.
+ */
+function danglingName(file: Pick<ConflictFile, 'base' | 'ours' | 'theirs' | 'proposals'>, segments: ConflictSegment[]) {
+  const whole = { base: words(file.base), ours: words(file.ours), theirs: words(file.theirs) };
+  for (const s of segments) {
+    const proposal = s.kind === 'conflict' ? file.proposals?.[s.index] : undefined;
+    if (s.kind !== 'conflict' || !proposal) continue;
+    const block = { base: words(s.block.base ?? ''), ours: words(s.block.ours), theirs: words(s.block.theirs) };
+    const removed = (word: string, side: 'ours' | 'theirs', other: 'ours' | 'theirs') =>
+      block[other].has(word) &&
+      ((whole.base.has(word) && !whole[side].has(word)) || (block.base.has(word) && !block[side].has(word)));
+    for (const word of words(proposal.text)) {
+      if (word.length < 2 || KEYWORDS.has(word)) continue;
+      if (removed(word, 'ours', 'theirs'))
+        return `${word} was renamed or removed on the PR, but the result still uses it.`;
+      if (removed(word, 'theirs', 'ours'))
+        return `${word} was renamed or removed on main, but the result still uses it.`;
+    }
+  }
+}
+/**
+ * The name each line at a block's first indentation declares or keys: the last word before the first `(`, `=`, `:`,
+ * `,` or `{`, with a call's parameter list so overloads differ. Enum members, fields and keys are not definitions.
+ */
+function declared(text: string) {
+  const counts = new Map<string, number>();
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const indent = lines.length ? (/^\s*/.exec(lines[0])?.[0].length ?? 0) : 0;
+  for (const line of lines) {
+    if ((/^\s*/.exec(line)?.[0].length ?? 0) !== indent) continue;
+    const body = line.trim().replace(/^func\s*\([^)]*\)\s*/, 'func ');
+    if (/^(import|from|using|use|return|if|for|while|else|case|default|#|\/\/|\/\*|\*|-\s)/.test(body)) continue;
+    const at = body.search(/[(=:,{]/);
+    if (at <= 0) continue;
+    const name = /["']?([\w$.-]+)["']?\s*$/.exec(body.slice(0, at))?.[1];
+    if (!name) continue;
+    const key =
+      body[at] === '(' ? `${name}(${(/^\(([^)]*)\)/.exec(body.slice(at))?.[1] ?? '').replace(/\s+/g, ' ')})` : name;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+/** A proposal declares one name twice where neither side's lines did: two enum members, fields or keys. */
+function duplicateMember(segments: ConflictSegment[], proposals: readonly (ConflictProposal | null)[]) {
+  for (const s of segments) {
+    const proposal = s.kind === 'conflict' ? proposals[s.index] : undefined;
+    if (s.kind !== 'conflict' || !proposal) continue;
+    const [result, ours, theirs] = [proposal.text, s.block.ours, s.block.theirs].map(declared);
+    for (const [name, n] of result)
+      if (n > Math.max(ours.get(name) ?? 0, theirs.get(name) ?? 0, 1))
+        return `${name} is declared twice in the result.`;
+  }
+}
+/** Structural merge sometimes writes a line holding only `;` (JavaScript class fields with CRLF). */
+function strayLine(segments: ConflictSegment[], proposals: readonly (ConflictProposal | null)[]) {
+  const semicolons = (text: string) => text.split(/\r?\n/).filter((l) => l.trim() === ';').length;
+  for (const s of segments)
+    if (s.kind === 'conflict' && proposals[s.index]) {
+      const text = proposals[s.index]?.text ?? '';
+      if (semicolons(text) > Math.max(semicolons(s.block.ours), semicolons(s.block.theirs)))
+        return 'The result adds a line that holds only a semicolon.';
+    }
 }
 
 const proposalKeys = new WeakMap<object, string>();
@@ -170,8 +294,18 @@ export function blockBuckets(
   const choices = inferChoices(segments, contents, file.proposals);
   const blocks = segments.filter((s) => s.kind === 'conflict');
   if (!choices) {
-    const open = parseConflicts(contents).filter((s) => s.kind === 'conflict').length;
-    return blocks.map((_, i) => (i < open ? 'decide' : 'decided'));
+    // Edited by hand somewhere: each block's own text where the draft still shows it. A proposal that is not shown
+    // to be in place unchanged needs you: it is never Decided, and only Merged when its exact text is there.
+    const texts = blockResolutions(segments, contents);
+    let open = parseConflicts(contents).filter((s) => s.kind === 'conflict').length;
+    return blocks.map((s) => {
+      const proposal = file.proposals?.[s.index];
+      const text = texts?.[s.index];
+      if (proposal && text === proposal.text) return verdict?.merged ? 'merged' : 'check';
+      if (proposal && text === undefined) return 'check';
+      if (texts) return text === undefined ? 'decide' : 'decided';
+      return open-- > 0 ? 'decide' : 'decided';
+    });
   }
   return blocks.map((s) => {
     const pick = choices[s.index];

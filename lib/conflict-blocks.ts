@@ -129,36 +129,54 @@ export function inferChoices(
   contents: string,
   proposals?: BlockProposals
 ): (BlockPick | undefined)[] | undefined {
-  const choices: (BlockPick | undefined)[] = [];
-  const failed = new Set<string>();
-  const walk = (i: number, at: number): boolean => {
-    if (i === segments.length) return at === contents.length;
-    const key = `${i}:${at}`;
-    if (failed.has(key)) return false;
-    const segment = segments[i];
-    if (segment.kind === 'text') {
-      if (contents.startsWith(segment.text, at) && walk(i + 1, at + segment.text.length)) return true;
-    } else {
-      // A proposal comes first: one that equals a side is still the proposal that was checked.
-      const options: (BlockPick | undefined)[] = [
-        undefined,
-        ...(proposals?.[segment.index] ? ['proposal' as const] : []),
-        'ours',
-        'theirs',
-        'both',
-      ];
-      for (const choice of options) {
-        const text = pickText(segment, choice, proposals);
-        if (!contents.startsWith(text, at)) continue;
-        choices[segment.index] = choice;
-        if (walk(i + 1, at + text.length)) return true;
-      }
-      choices[segment.index] = undefined;
-    }
-    failed.add(key);
-    return false;
+  // Options with the same text are one option: the proposal comes first, so one that equals a side is still the
+  // proposal that was checked.
+  const options = (segment: Extract<ConflictSegment, { kind: 'conflict' }>) => {
+    const seen = new Set<string>();
+    return (
+      [undefined, ...(proposals?.[segment.index] ? ['proposal' as const] : []), 'ours', 'theirs', 'both'] as const
+    )
+      .map((choice) => ({ choice, text: pickText(segment, choice, proposals) }))
+      .filter(({ text }) => {
+        if (seen.has(text)) return false;
+        seen.add(text);
+        return true;
+      });
   };
-  return walk(0, 0) ? choices : undefined;
+  // How many ways the draft splits into the segments, up to 2. Only one way may count: when two splits give a block
+  // different text, neither can be trusted, and the draft is treated as edited by hand.
+  const memo = new Map<string, number>();
+  const ways = (i: number, at: number): number => {
+    if (i === segments.length) return at === contents.length ? 1 : 0;
+    const key = `${i}:${at}`;
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    const segment = segments[i];
+    let n = 0;
+    if (segment.kind === 'text') n = contents.startsWith(segment.text, at) ? ways(i + 1, at + segment.text.length) : 0;
+    else
+      for (const { text } of options(segment)) {
+        if (contents.startsWith(text, at)) n += ways(i + 1, at + text.length);
+        if (n >= 2) break;
+      }
+    memo.set(key, Math.min(n, 2));
+    return Math.min(n, 2);
+  };
+  if (ways(0, 0) !== 1) return undefined;
+  const choices: (BlockPick | undefined)[] = [];
+  let at = 0;
+  segments.forEach((segment, i) => {
+    if (segment.kind === 'text') {
+      at += segment.text.length;
+      return;
+    }
+    const found = options(segment).find(
+      ({ text }) => contents.startsWith(text, at) && ways(i + 1, at + text.length) === 1
+    );
+    choices[segment.index] = found?.choice;
+    at += found?.text.length ?? 0;
+  });
+  return choices;
 }
 
 export interface ConflictModel {
