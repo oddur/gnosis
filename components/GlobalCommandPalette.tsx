@@ -79,6 +79,13 @@ export function GlobalCommandPalette({
     [remotePending, setRemotePending] = useState(false);
   const selectionTouched = useRef(false);
   const actionPending = useRef(false);
+  /** A command that runs after the palette closes (`AppCommand.afterClose`). */
+  const afterClose = useRef<AppCommand['perform'] | null>(null);
+  const runCommand = (command: AppCommand) => {
+    if (!command.afterClose) return void run(command.perform);
+    afterClose.current = command.perform;
+    onClose();
+  };
   const remoteInFlight = useRef(false);
   const sequence = useRef(0),
     remoteSequence = useRef(0),
@@ -238,7 +245,7 @@ export function GlobalCommandPalette({
     selected
       ? void run(() => navigate(selected.document.destination), selected.document)
       : selectedCommand
-        ? void run(selectedCommand.perform)
+        ? runCommand(selectedCommand)
         : selectedRemote
           ? void run(() => navigate({ kind: 'home', url: selectedRemote.url }))
           : undefined;
@@ -264,6 +271,9 @@ export function GlobalCommandPalette({
             !opener.current.closest('[hidden]')
           )
             opener.current.focus();
+          const next = afterClose.current;
+          afterClose.current = null;
+          void next?.();
         }}
       >
         <DialogTitle className="sr-only">Search and navigate Gnosis</DialogTitle>
@@ -429,7 +439,7 @@ export function GlobalCommandPalette({
                       key={command.id}
                       value={command.id}
                       disabled={busy}
-                      onSelect={() => void run(command.perform)}
+                      onSelect={() => runCommand(command)}
                     >
                       <CommandActionIcon command={command} />
                       <span className="global-command-result-copy">
