@@ -1,6 +1,16 @@
 import type { QueueSignals } from './queue-signals';
 import type { FeedbackReview, GitHubReviewComment, GitHubReviewThread, GitHubReviewThreads } from './review-threads';
-import type { DiffSide, PrMetadata } from './types';
+import type { DiffSide, PrLabel, PrMetadata } from './types';
+import { sameLogin } from './github-actors';
+import {
+  applyPeopleChange,
+  editList,
+  isPeopleChange,
+  metadataShows,
+  peopleExpectation,
+  showsEdit,
+  withoutSuperseded,
+} from './pr-people';
 
 /**
  * Optimistic GitHub writes. Each write Gnosis makes adds one patch, keyed by what it changes, before the write starts.
@@ -30,7 +40,12 @@ export type OptimisticChange =
   | { action: 'mark-ready' | 'convert-draft' }
   | { action: 'enable-auto-merge'; method: string }
   | { action: 'disable-auto-merge' }
-  | { action: 'request-review'; reviewer: string };
+  | { action: 'request-review'; reviewer: string }
+  // Reviewers, assignees, labels and the milestone (lib/pr-people.ts). Teams by name, as the PR copies hold them.
+  | { action: 'edit-reviewers'; add: string[]; remove: string[]; addTeams: string[]; removeTeams: string[] }
+  | { action: 'edit-assignees'; add: string[]; remove: string[] }
+  | { action: 'edit-labels'; add: PrLabel[]; remove: string[] }
+  | { action: 'edit-milestone'; milestone: { title: string; dueOn: string | null } | null };
 export type OptimisticAction = OptimisticChange['action'];
 export type OptimisticKind = 'discussion' | 'metadata' | 'signals';
 
@@ -92,6 +107,13 @@ export function optimisticKey(url: string, change: OptimisticChange, id: string)
       return `auto-merge|${url}`;
     case 'request-review':
       return `request-review|${url}|${change.reviewer.toLowerCase()}`;
+    // Each edit is its own change: a second edit before the first settles applies over it, and either rolls back alone.
+    // When the newer one succeeds, `confirm` takes out of the older one whatever the newer one decided (`supersededBy`).
+    case 'edit-milestone':
+    case 'edit-reviewers':
+    case 'edit-assignees':
+    case 'edit-labels':
+      return `${change.action}|${url}|${id}`;
     default:
       // Every new comment is its own target.
       return `comment|${url}|${id}`;
@@ -120,12 +142,16 @@ export function optimisticKinds(change: OptimisticChange): OptimisticKind[] {
     case 'disable-auto-merge':
       return ['metadata'];
     case 'request-review':
+    case 'edit-reviewers':
       return ['discussion', 'metadata'];
+    case 'edit-assignees':
+    case 'edit-labels':
+    case 'edit-milestone':
+      return ['metadata'];
   }
 }
 
-const same = (a: string | undefined | null, b: string | undefined | null) =>
-  !!a && !!b && a.toLowerCase() === b.toLowerCase();
+const same = sameLogin;
 const text = (value: string) => value.replace(/\r\n/g, '\n').trim();
 const isoAt = (ms: number) => new Date(ms).toISOString();
 const optimisticId = (patch: OptimisticPatch, suffix = '') => `${OPTIMISTIC_ID_PREFIX}${patch.id}${suffix}`;
@@ -231,6 +257,8 @@ export function seenInDiscussion(patch: OptimisticPatch, base: GitHubReviewThrea
     }
     case 'request-review':
       return !!base.feedback?.requestedReviewers.some((login) => same(login, change.reviewer));
+    case 'edit-reviewers':
+      return !!base.feedback && showsEdit(base.feedback.requestedReviewers, change.add, change.remove);
     default:
       return true;
   }
@@ -238,9 +266,11 @@ export function seenInDiscussion(patch: OptimisticPatch, base: GitHubReviewThrea
 
 export function seenInMetadata(
   patch: OptimisticPatch,
-  base: Pick<PrMetadata, 'isDraft' | 'autoMerge' | 'requestedReviewers' | 'commentCount' | 'reviewCommentCount' | 'source'>
+  base: Pick<PrMetadata, 'isDraft' | 'autoMerge' | 'requestedReviewers' | 'commentCount' | 'reviewCommentCount' | 'source'> &
+    Partial<Pick<PrMetadata, 'requestedTeams' | 'assignees' | 'labels' | 'milestone'>>
 ): boolean {
   const { change, before } = patch;
+  if (isPeopleChange(change)) return metadataShows(base, peopleExpectation(change));
   switch (change.action) {
     case 'mark-ready':
       return !base.isDraft;
@@ -453,9 +483,27 @@ export function applyToDiscussion(patch: OptimisticPatch, base: GitHubReviewThre
             feedback: { ...base.feedback, requestedReviewers: [...base.feedback.requestedReviewers, change.reviewer] },
           }
         : base;
+    case 'edit-reviewers':
+      return base.feedback
+        ? {
+            ...base,
+            feedback: {
+              ...base.feedback,
+              requestedReviewers: editList(base.feedback.requestedReviewers, change.add, change.remove),
+            },
+          }
+        : base;
     default:
       return base;
   }
+}
+
+/** A queue member whose review request from the reader ended: its role becomes the reader's other relation to it. */
+function leftReviewRequested(base: PrMetadata, patch: OptimisticPatch): { role?: string } {
+  const role = (base as { role?: string }).role;
+  return role === 'review-requested'
+    ? { role: same((base as { author?: string }).author, patch.viewer.login) ? 'author' : 'watched' }
+    : {};
 }
 
 export function applyToMetadata<T extends PrMetadata>(patch: OptimisticPatch, base: T): T {
@@ -485,15 +533,19 @@ export function applyToMetadata<T extends PrMetadata>(patch: OptimisticPatch, ba
       return { ...next, autoMerge: null };
     case 'request-review':
       return { ...next, requestedReviewers: [...base.requestedReviewers, change.reviewer] };
+    case 'edit-reviewers': {
+      const edited = applyPeopleChange(next, change);
+      // The reader took back their own review request: the queue row leaves Review requested at once, as after a review.
+      return change.remove.some((login) => same(login, patch.viewer.login)) ? { ...edited, ...leftReviewRequested(base, patch) } : edited;
+    }
+    case 'edit-assignees':
+    case 'edit-labels':
+    case 'edit-milestone':
+      return applyPeopleChange(next, change);
     case 'submit-review': {
       // GitHub ends the reader's review request with the review. The queue row leaves Review requested at once.
       const requestedReviewers = base.requestedReviewers.filter((login) => !same(login, patch.viewer.login));
-      const role = (base as { role?: string }).role;
-      const member =
-        role === 'review-requested'
-          ? { role: same((base as { author?: string }).author, patch.viewer.login) ? 'author' : 'watched' }
-          : {};
-      return { ...next, requestedReviewers, ...member };
+      return { ...next, requestedReviewers, ...leftReviewRequested(base, patch) };
     }
     default:
       return next;
@@ -557,6 +609,24 @@ export function applyToSignals(patch: OptimisticPatch, base: QueueSignals): Queu
   }
 }
 
+/**
+ * An earlier change with what a later successful one decided taken out, or undefined when nothing is left. People and
+ * label edits supersede each other per item (lib/pr-people.ts); Feedback's review request and a reviewer edit naming
+ * the same login supersede each other both ways.
+ */
+export function supersededBy(older: OptimisticChange, newer: OptimisticChange): OptimisticChange | undefined {
+  const later: OptimisticChange =
+    newer.action === 'request-review'
+      ? { action: 'edit-reviewers', add: [newer.reviewer], remove: [], addTeams: [], removeTeams: [] }
+      : newer;
+  if (later.action !== 'edit-reviewers' && !(isPeopleChange(older) && isPeopleChange(later))) return older;
+  if (older.action === 'request-review')
+    return later.action === 'edit-reviewers' && [...later.add, ...later.remove].some((login) => same(login, older.reviewer))
+      ? undefined
+      : older;
+  return isPeopleChange(older) && isPeopleChange(later) ? withoutSuperseded(older, later) : older;
+}
+
 // ── The layer ──
 
 export interface OptimisticLayerOptions {
@@ -609,9 +679,41 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
     confirm(id: string, result: OptimisticResult = {}): OptimisticPatch | undefined {
       const patch = byId(id);
       if (!patch) return undefined;
+      // GitHub took the newer decision: earlier writes on the same items stop applying them. Only now, so a newer write
+      // that fails leaves the earlier ones as they were.
+      for (const older of [...patches.values()]) {
+        if (older === patch) break;
+        if (older.url !== patch.url) continue;
+        const rest = supersededBy(older.change, patch.change);
+        if (!rest) patches.delete(older.key);
+        else older.change = rest;
+      }
       patch.status = 'confirmed';
       patch.confirmedAt = now();
       patch.result = { ...patch.result, ...result };
+      return patch;
+    },
+    /**
+     * GitHub carried out `change` just now without a patch of its own, such as the part of an edit it took: confirmed
+     * patches on the same items stop applying them, so GitHub's next read shows the real result. Returns whether any
+     * patch changed.
+     */
+    applied(url: string, change: OptimisticChange): boolean {
+      let changed = false;
+      for (const older of [...patches.values()]) {
+        if (older.url !== url || older.status !== 'confirmed') continue;
+        const rest = supersededBy(older.change, change);
+        if (rest === older.change) continue;
+        changed = true;
+        if (!rest) patches.delete(older.key);
+        else older.change = rest;
+      }
+      return changed;
+    },
+    /** GitHub took only part of the write: the patch shows that part from now on. */
+    narrow(id: string, change: OptimisticChange): OptimisticPatch | undefined {
+      const patch = byId(id);
+      if (patch) patch.change = change;
       return patch;
     },
     /** The write failed: roll back. Returns the removed patch. */
@@ -732,6 +834,14 @@ export function failureTitle(action: OptimisticAction): string {
       return 'Auto-merge wasn’t turned off.';
     case 'request-review':
       return 'Review wasn’t requested.';
+    case 'edit-reviewers':
+      return 'Reviewers weren’t changed.';
+    case 'edit-assignees':
+      return 'Assignees weren’t changed.';
+    case 'edit-labels':
+      return 'Labels weren’t changed.';
+    case 'edit-milestone':
+      return 'Milestone wasn’t changed.';
   }
 }
 

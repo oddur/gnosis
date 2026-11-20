@@ -1139,6 +1139,10 @@ if (new URLSearchParams(location.search).has('change-signals')) {
   const { installChangeSignalsFixture } = await import('./change-signals');
   installChangeSignalsFixture(mocks, items);
 }
+if (new URLSearchParams(location.search).has('pr-people')) {
+  const { installPrPeopleFixture } = await import('./pr-people');
+  installPrPeopleFixture(mocks, items);
+}
 if (new URLSearchParams(location.search).has('optimistic-actions')) {
   const { installOptimisticActionsFixture } = await import('./optimistic-actions');
   installOptimisticActionsFixture(mocks, items);
