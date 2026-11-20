@@ -96,7 +96,10 @@ void app.whenReady().then(async () => {
     await js("(()=>{const p=document.querySelector('[data-feedback-scroller]');p.scrollTop=0;p.scrollTop=document.querySelector('.feedback-timeline').getBoundingClientRect().top-p.getBoundingClientRect().top+300})()");
     await sleep(200);
     const pinned = await js<{ page: number; bar: number; side: number }>("(()=>{const p=document.querySelector('[data-feedback-scroller]').getBoundingClientRect().top;return {page:p,bar:document.querySelector('.feedback-toolbar').getBoundingClientRect().top,side:document.querySelector('.conversation-side').getBoundingClientRect().top}})()");
-    assert.ok(Math.abs(pinned.bar - pinned.page) <= 12 && Math.abs(pinned.side - pinned.page) <= 20, `Pinned while scrolling: ${JSON.stringify(pinned)}`);
+    // The details column pins only beside the timeline. A window the screen clamps below 1100px (the 1024px Windows
+    // runner) shows the details as a strip above it instead, which scrolls with the page (checked at 760px below).
+    const beside = await js<boolean>("(()=>{const side=document.querySelector('.conversation-sidebar').getBoundingClientRect(),main=document.querySelector('.conversation-main').getBoundingClientRect();return side.left>=main.right-1})()");
+    assert.ok(Math.abs(pinned.bar - pinned.page) <= 12 && (!beside || Math.abs(pinned.side - pinned.page) <= 20), `Pinned while scrolling: ${JSON.stringify({ ...pinned, beside })}`);
     await capture('scrolled-pinned', [[1280, 800], [1600, 900]], () => js("(()=>{const p=document.querySelector('[data-feedback-scroller]');p.scrollTop=0;p.scrollTop=document.querySelector('.feedback-timeline').getBoundingClientRect().top-p.getBoundingClientRect().top+300})()"));
     // Narrow: the details become a strip above the timeline.
     win.setContentSize(760, 800);
