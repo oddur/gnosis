@@ -356,10 +356,20 @@ function isRustTest(first: Node, node: Node) {
 export function collectDefinitions(
   tree: TreeSitter.Tree,
   query: TreeSitter.Query,
-  language: SyntaxLanguage
+  language: SyntaxLanguage,
+  /**
+   * Only definitions that reach these rows (0-based, end exclusive), and the ones around them: moved symbols ask for
+   * the definitions their changed rows touch, so a large file's query stays short.
+   */
+  rows?: readonly (readonly [number, number])[]
 ): SyntaxDefinition[] {
   const found = new Map<number, { node: Node; first: Node; kind: DefinitionKind; name: string; rank: number }>();
-  for (const match of query.matches(tree.rootNode)) {
+  const matches = rows
+    ? rows.flatMap(([start, end]) =>
+        query.matches(tree.rootNode, { startPosition: { row: start, column: 0 }, endPosition: { row: end, column: 0 } })
+      )
+    : query.matches(tree.rootNode);
+  for (const match of matches) {
     const definition = match.captures.find((capture) => capture.name.startsWith('definition.'));
     if (!definition) continue;
     const captured = CAPTURE_KINDS[definition.name.slice('definition.'.length)];
@@ -779,10 +789,22 @@ function sideCandidatesOf(
   id: SyntaxLanguage
 ): { prints: SymbolPrint[]; capped: boolean } {
   if (!side || !side.changed.some((row) => row)) return { prints: [], capped: false };
-  const definitions = collectDefinitions(tree, query, id);
+  // A candidate's declaration row is changed: only definitions reaching changed rows are asked for.
+  const rows: [number, number][] = [];
+  side.changed.forEach((changed, row) => {
+    if (!changed) return;
+    const last = rows.at(-1);
+    if (last && row - last[1] <= 2) last[1] = row + 1;
+    else rows.push([row, row + 1]);
+  });
+  const definitions = collectDefinitions(tree, query, id, rows.length <= 400 ? rows : undefined);
   // Most files change no whole definition: their tokens are never read.
   const worth = definitions.some((d) => {
     if (!MOVE_GROUPS[d.kind] || d.end - d.start + 1 < MIN_LINES) return false;
+    // A candidate's declaration changes too: a class whose header stays is no candidate, however many rows it holds.
+    let declared = false;
+    for (let r = d.start - 1; r < d.signatureEnd && !declared; r++) declared = !!side.changed[r];
+    if (!declared) return false;
     let touched = 0;
     for (let r = d.start - 1; r < d.end; r++) touched += side.changed[r] ?? 0;
     return touched >= MIN_LINES;
