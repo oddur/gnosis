@@ -27,6 +27,11 @@ export interface RepositorySettings {
   color?: (typeof REPOSITORY_COLORS)[number];
   /** Notification level (#385). Unset: All for a watched repository, else the "Other repositories" default. */
   notifications?: RepositoryNotificationLevel;
+  /**
+   * Resolve conflicts: Merged conflicts still wait for you to review their file. On unless set to false; off, a file
+   * whose every conflict is Merged is marked reviewed for you.
+   */
+  showMergedConflicts?: boolean;
 }
 export type RepositorySettingsMap = Record<string, RepositorySettings>;
 export type RepositoryDefaults = Pick<
@@ -76,6 +81,7 @@ export function normalizeRepositorySettings(input: unknown): RepositorySettingsM
       if (typeof v.icon === 'string' && validRepositoryIcon(v.icon)) settings.icon = v.icon;
       if (typeof v.color === 'string' && (REPOSITORY_COLORS as readonly string[]).includes(v.color))
         settings.color = v.color as RepositorySettings['color'];
+      if (typeof v.showMergedConflicts === 'boolean') settings.showMergedConflicts = v.showMergedConflicts;
       if (v.notifications === 'all' || v.notifications === 'on-me' || v.notifications === 'none') settings.notifications = v.notifications;
       return Object.keys(settings).length ? [[repositoryKey(name), settings]] : [];
     })

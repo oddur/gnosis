@@ -1,5 +1,10 @@
 import { chosenText, conflictCount, inferChoices, parseConflicts, type ConflictSegment } from './conflict-blocks';
-import { hasConflictMarkers, type ConflictFile, type ConflictSession } from './conflict-resolution';
+import {
+  hasConflictMarkers,
+  type ConflictFile,
+  type ConflictProposal,
+  type ConflictSession,
+} from './conflict-resolution';
 
 /** Service errors. The workspace matches them to plain copy in `describeConflictError`. */
 export const HEAD_MOVED = 'The PR branch has new commits since you started. Nothing was pushed.';
@@ -47,7 +52,7 @@ export function blockResolutions(segments: ConflictSegment[], result: string): (
     return segments.flatMap((s) => {
       if (s.kind !== 'conflict') return [];
       const choice = choices[s.index];
-      return [choice ? chosenText(s.block, choice) : undefined];
+      return [choice && choice !== 'proposal' ? chosenText(s.block, choice) : undefined];
     });
   const blocks = segments.filter((s) => s.kind === 'conflict').length;
   const found: (string | undefined)[] = new Array<string | undefined>(blocks).fill(undefined);
@@ -162,5 +167,25 @@ export function relabelMarkers(text: string, sample: string) {
       if (!char || !labels[char]) return line;
       return labels[char] + (/\r\n$/.test(line) ? '\r\n' : line.endsWith('\n') ? '\n' : '');
     })
+    .join('');
+}
+
+/**
+ * A resolver's whole-file output as per-block proposals of Git's conflict. Undefined when the text outside the blocks
+ * differs from Git's merge (the resolver touched lines Git had merged) or when no block was resolved. A block the
+ * resolver left conflicted has no proposal.
+ */
+export function blockProposals(original: string, output: string, source: ConflictProposal['source']) {
+  const resolutions = blockResolutions(parseConflicts(original), output);
+  const proposals = resolutions?.map((text) =>
+    text === undefined || hasConflictMarkers(text) ? null : { source, text }
+  );
+  return proposals?.some(Boolean) ? proposals : undefined;
+}
+
+/** Git's conflict with these proposals in place; other blocks keep their markers. */
+export function withProposals(original: string, proposals: readonly (ConflictProposal | null)[]) {
+  return parseConflicts(original)
+    .map((s) => (s.kind === 'text' ? s.text : (proposals[s.index]?.text ?? s.block.raw)))
     .join('');
 }

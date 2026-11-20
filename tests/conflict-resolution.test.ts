@@ -685,6 +685,40 @@ void test('Mergiraf structurally combines both JSON edits, persists the proposal
   assert.equal(await f.git('show', 'feature:from-main.txt'), 'Retain this clean base change.');
 });
 
+void test('preparation runs structural merge on every conflicted file and keeps each result a proposal per conflict', async (t) => {
+  const binary = path.resolve('resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf');
+  if (!(await fs.stat(binary).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const base = "import { a } from './a';\n\nexport function one() {\n  return 1;\n}\n";
+  const f = await fixture(
+    t,
+    false,
+    {
+      name: 'numbers.ts',
+      base,
+      ours: base.replace("'./a';\n", "'./a';\nimport { b } from './b';\n").replace('return 1;', 'return 10;'),
+      theirs: base.replace("'./a';\n", "'./a';\nimport { c } from './c';\n").replace('return 1;', 'return 11;'),
+    },
+    [{ name: 'settings.json', base: '{"left":0,"right":0}\n', ours: '{"left":1,"right":0}\n', theirs: '{"left":0,"right":2}\n' }]
+  );
+  const ts = f.session.files.find((file) => file.path === 'numbers.ts');
+  const json = f.session.files.find((file) => file.path === 'settings.json');
+  assert.ok(ts && json);
+  // The imports combine; the two return values are a real conflict and stay as Git wrote them.
+  assert.equal(conflictCount(ts.original), 2);
+  assert.deepEqual(
+    ts.proposals?.map((p) => p && p.source),
+    ['mergiraf', null]
+  );
+  assert.match(ts.result, /import \{ b \} from '\.\/b';\nimport \{ c \} from '\.\/c';/);
+  assert.equal(conflictCount(ts.result), 1);
+  assert.deepEqual(JSON.parse(json.result), { left: 1, right: 2 });
+  assert.ok(f.session.files.every((file) => !file.resolved), 'Proposals are never reviewed for you');
+  await assert.rejects(f.run({ kind: 'preview', id: f.session.id, version: f.session.version }), /every file reviewed/);
+});
+
 void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {
   const file: ConflictFile = {
     path: 'a.ts',

@@ -622,6 +622,8 @@ export interface SyntaxEngineFiles {
 }
 export interface DefinitionsResult {
   definitions: SyntaxDefinition[];
+  /** The tree holds an ERROR or MISSING node: the text does not parse cleanly. */
+  errors: boolean;
   /** Milliseconds parsing and querying; `load` is grammar loading, when this call loaded it. */
   parse: number;
   query: number;
@@ -684,7 +686,13 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       const t2 = performance.now();
       try {
         const definitions = collectDefinitions(tree, query, id);
-        return { definitions, parse: t2 - t1, query: performance.now() - t2, ...(loading ? { load: t1 - t0 } : {}) };
+        return {
+          definitions,
+          errors: tree.rootNode.hasError,
+          parse: t2 - t1,
+          query: performance.now() - t2,
+          ...(loading ? { load: t1 - t0 } : {}),
+        };
       } finally {
         tree.delete();
       }

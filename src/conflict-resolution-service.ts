@@ -16,9 +16,11 @@ import {
   BASE_MOVE_ROUNDS,
   HEAD_MOVED,
   RETARGETED,
+  blockProposals,
   carryFile,
   relabelMarkers,
   revisionChange,
+  withProposals,
   withResult,
 } from '../lib/conflict-carry';
 import { conflictCount } from '../lib/conflict-blocks';
@@ -572,12 +574,91 @@ export function createConflictResolutionService(deps: Deps) {
     for (const file of files) {
       const contents = remembered.get(file.path);
       if (contents !== undefined) {
-        file.result = contents;
+        const proposals = blockProposals(file.original, contents, 'rerere');
+        file.result = proposals ? withProposals(file.original, proposals) : contents;
+        if (proposals) file.proposals = proposals;
         file.source = 'rerere';
         file.explanation =
           'Git reused a resolution you previously reviewed in this repository. Check it in this PR context before marking the file reviewed.';
       }
     }
+    return files;
+  }
+  /** Structural merge of one file's three versions. Exit code 1 means some conflicts remain in the output. */
+  async function mergiraf(
+    ctx: Context,
+    id: string,
+    branches: { head: string; base: string },
+    file: ConflictFile,
+    signal: AbortSignal,
+    timeout = 10_000
+  ) {
+    const parent = await directory(ctx.account, id);
+    await fs.mkdir(parent, { recursive: true, mode: 0o700 });
+    const temp = await fs.mkdtemp(path.join(parent, 'mergiraf-'));
+    try {
+      const names = ['base', 'ours', 'theirs'].map((name) => path.join(temp, name));
+      await Promise.all(
+        names.map((name, i) => fs.writeFile(name, [file.base, file.ours, file.theirs][i], { mode: 0o600 }))
+      );
+      const result = await runConflictProcess(
+        deps.mergiraf(),
+        [
+          'merge',
+          ...names,
+          `--path-name=${file.path}`,
+          '--timeout',
+          String(timeout),
+          '--base-name',
+          'Common ancestor',
+          `--left-name=${branches.head}`,
+          `--right-name=${branches.base}`,
+        ],
+        { cwd: temp, signal, timeout: timeout * 2 }
+      );
+      if (result.code > 1) throw new Error('Mergiraf could not resolve this file. Use the manual editor or an agent.');
+      const output = new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
+      if (Buffer.byteLength(output) > CONFLICT_FILE_LIMIT) throw new Error('The proposed result is too large.');
+      return output;
+    } finally {
+      await fs.rm(temp, { recursive: true, force: true });
+    }
+  }
+  /**
+   * Runs structural merge on every text conflict that your earlier resolutions did not settle, a few files at a time.
+   * Each conflict it resolves becomes a proposal; the ones it leaves, and any file it fails on, stay as Git wrote them.
+   */
+  async function mergeStructurally(
+    ctx: Context,
+    id: string,
+    branches: { head: string; base: string },
+    files: ConflictFile[],
+    signal: AbortSignal,
+    report: (text: string) => void
+  ) {
+    const queue = files.filter((file) => !file.unsupported && file.source !== 'rerere');
+    // A development build without `npm run prepare:mergiraf` has no binary: the conflicts stay as Git wrote them.
+    if (!queue.length || !(await exists(deps.mergiraf()))) return files;
+    report(`Combining both sides’ changes in ${queue.length} ${queue.length === 1 ? 'file' : 'files'}.`);
+    const work = async () => {
+      for (let file = queue.shift(); file; file = queue.shift()) {
+        try {
+          const proposals = blockProposals(
+            file.original,
+            await mergiraf(ctx, id, branches, file, signal, 5000),
+            'mergiraf'
+          );
+          if (!proposals) continue;
+          file.proposals = proposals;
+          file.result = withProposals(file.original, proposals);
+          file.source = 'mergiraf';
+        } catch (error) {
+          signal.throwIfAborted();
+          console.warn(`[conflicts] Structural merge skipped ${file.path}.`, error);
+        }
+      }
+    };
+    await Promise.all([work(), work(), work(), work()]);
     return files;
   }
   async function preparation(
@@ -702,11 +783,15 @@ export function createConflictResolutionService(deps: Deps) {
       const prepared = await prepare(ctx, session.id, spec, signal, report);
       const fresh = await conflictFiles(ctx, session.id, prepared, signal);
       const known = new Set(previous.map((file) => file.path));
-      await remember(
+      const added = fresh.filter((file) => !known.has(file.path));
+      await remember(ctx, session.headRepo, added, signal);
+      await mergeStructurally(
         ctx,
-        session.headRepo,
-        fresh.filter((file) => !known.has(file.path)),
-        signal
+        session.id,
+        { head: session.headBranch, base: session.baseBranch },
+        added,
+        signal,
+        report
       );
       const carried = await carryFiles(await directory(ctx.account, session.id), previous, fresh, true, signal);
       session.baseSha = live.baseSha;
@@ -795,7 +880,14 @@ export function createConflictResolutionService(deps: Deps) {
       signal,
       report
     );
-    let files = await remember(ctx, state.headRepo, await conflictFiles(ctx, id, prepared, signal), signal);
+    let files = await mergeStructurally(
+      ctx,
+      id,
+      { head: state.headBranch, base: state.baseBranch },
+      await remember(ctx, state.headRepo, await conflictFiles(ctx, id, prepared, signal), signal),
+      signal,
+      report
+    );
     const { tree } = prepared;
     // Load latest changes keeps the resolutions whose conflicts did not change. New PR commits need a fresh review.
     if (keep && saved?.status === 'editing' && saved.files.length)
@@ -1165,42 +1257,20 @@ export function createConflictResolutionService(deps: Deps) {
               }
               file.explanation = result.explanation;
             } else {
-              const parent = await directory(ctx.account, id);
-              await fs.mkdir(parent, { recursive: true, mode: 0o700 });
-              const temp = await fs.mkdtemp(path.join(parent, 'mergiraf-'));
-              try {
-                const names = ['base', 'ours', 'theirs'].map((name) => path.join(temp, name));
-                await Promise.all(
-                  names.map((name, i) => fs.writeFile(name, [file.base, file.ours, file.theirs][i], { mode: 0o600 }))
-                );
-                const result = await runConflictProcess(
-                  deps.mergiraf(),
-                  [
-                    'merge',
-                    ...names,
-                    `--path-name=${file.path}`,
-                    '--timeout',
-                    '10000',
-                    '--base-name',
-                    'Common ancestor',
-                    `--left-name=${session.headBranch}`,
-                    `--right-name=${session.baseBranch}`,
-                  ],
-                  { cwd: temp, signal, timeout: 20_000 }
-                );
-                if (result.code > 1)
-                  throw new Error('Mergiraf could not resolve this file. Use the manual editor or an agent.');
-                file.result = new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
-                if (Buffer.byteLength(file.result) > CONFLICT_FILE_LIMIT)
-                  throw new Error('The proposed result is too large.');
-                file.explanation = hasConflictMarkers(file.result)
-                  ? 'Mergiraf left conflicts that need your input.'
-                  : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
-              } finally {
-                await fs.rm(temp, { recursive: true, force: true });
-              }
+              file.result = await mergiraf(
+                ctx,
+                id,
+                { head: session.headBranch, base: session.baseBranch },
+                file,
+                signal
+              );
+              file.explanation = hasConflictMarkers(file.result)
+                ? 'Mergiraf left conflicts that need your input.'
+                : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
             }
             file.source = request.engine;
+            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals.
+            delete file.proposals;
             file.resolved = false;
           }
         } else {
