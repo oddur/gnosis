@@ -91,8 +91,8 @@ export type SyntaxResponse =
         cached: boolean;
         wait?: number;
         priority?: SyntaxPriority;
-        /** Prefetched jobs that started while this parse waited at its tier: 0 when the queue put it ahead of them. */
-        prefetchAhead?: number;
+        /** Jobs of a lower tier that started while this parse waited: 0 when the queue kept to its order. */
+        passedBy?: number;
         /** Parses the worker has made in all, for the cost checks. */
         parses?: number;
       };
@@ -160,17 +160,12 @@ const cache = new Map<string, { url: string; definitions: SyntaxDefinition[] }>(
 /** Comparisons, by file revision and change blocks: a few bytes per block. */
 const noiseCache = new Map<string, { url: string; noise: NoiseBlock[]; symbols?: FilePrints; symbolsError?: string }>();
 type MovesJob = Extract<SyntaxRequest, { type: 'moves' }> & { key: string; priority: SyntaxPriority; side: 'symbols' };
-type Job = (Extract<SyntaxRequest, { type: 'definitions' | 'noise' | 'symbols' }> | MovesJob) & { received: number };
+// The queue counts `passedBy` on each job (lib/syntax-parse-queue.ts). It stops growing once the job starts, so a parse
+// that ran as prefetch before the view asked for it reports what passed it until then.
+type Job = (Extract<SyntaxRequest, { type: 'definitions' | 'noise' | 'symbols' }> | MovesJob) & { received: number; passedBy?: number };
 /** Requests a newer job with the same key replaced in the queue: they hear that job's answer (createFollowers). */
 const followers = createFollowers();
-/**
- * Prefetched jobs started so far, and the count when each waiting job reached its tier, by key. Their difference at
- * a job's start is how many prefetched jobs went first: the browser checks assert the order on that, not on time.
- */
-let prefetchStarted = 0;
-const prefetchAtTier = new Map<string, number>();
 function enqueue(job: Job) {
-  prefetchAtTier.set(job.key, prefetchStarted);
   const replaced = queue.add(job);
   if (replaced) followers.replace(job.id, replaced.id);
   void drain();
@@ -198,9 +193,6 @@ const yieldToMessages = () =>
 
 async function run(job: Job) {
   const wait = performance.now() - job.received;
-  const prefetchAhead = prefetchStarted - (prefetchAtTier.get(job.key) ?? prefetchStarted);
-  prefetchAtTier.delete(job.key);
-  if (job.priority === 'prefetch') prefetchStarted++;
   if (job.type === 'moves') {
     try {
       answer(job, { moves: matchMoves(job.files) });
@@ -257,7 +249,7 @@ async function run(job: Job) {
         cached: false,
         wait,
         priority: job.priority,
-        prefetchAhead,
+        passedBy: job.passedBy ?? 0,
         parses: engine.parses(),
       },
     });
@@ -292,12 +284,11 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
     return;
   }
   if (message.type === 'priority') {
-    if (queue.raise(message.key, message.priority)) prefetchAtTier.set(message.key, prefetchStarted);
+    queue.raise(message.key, message.priority);
     return;
   }
   if (message.type === 'take') {
     const removed = queue.remove((job) => job.key === message.key);
-    if (removed.length) prefetchAtTier.delete(message.key);
     // Requests the taken job had replaced are not answered by the other worker: they end here.
     // Only jobs actually taken: a running job with the same key still answers the requests it replaced.
     for (const job of removed)

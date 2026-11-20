@@ -526,6 +526,24 @@ void test('Parses go nearest the reader first: on screen, newest first; near; th
   assert.equal(higherPriority('prefetch', 'near'), 'near');
 });
 
+void test('No job of a lower tier is taken while a higher one waits, through raises (the worker’s passedBy)', () => {
+  const queue = createParseQueue<ParseJob>();
+  const add = (key: string, priority: SyntaxPriority, side: ParseJob['side'] = 'after') => {
+    const job: ParseJob = { key, priority, side };
+    queue.add(job);
+    return job;
+  };
+  const jobs = [...['p1', 'p2', 'p3'].map((key) => add(key, 'prefetch')), add('p1-noise', 'prefetch', 'noise'), add('v1-noise', 'view', 'noise'), add('n1', 'near')];
+  queue.take();
+  // The reader reaches p3 and then p2 while the queue drains.
+  queue.raise('p3', 'view');
+  queue.take();
+  jobs.push(add('v2', 'view'));
+  queue.raise('p2', 'near');
+  while (queue.take());
+  assert.deepEqual(jobs.filter((job) => job.passedBy).map((job) => [job.key, job.passedBy]), []);
+});
+
 void test('A file’s noise comparison waits a tier below its parses, so breadcrumbs never wait for it (#396)', () => {
   const queue = createParseQueue<ParseJob>();
   const add = (key: string, priority: SyntaxPriority, side: ParseJob['side'] = 'after') => queue.add({ key, priority, side });

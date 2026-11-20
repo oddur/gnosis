@@ -404,7 +404,7 @@ void app.whenReady().then(async () => {
         read: span(at(readStart), at(readEnd)),
         toWorker: span(at(readEnd), at(posted)),
         workerQueue: done !== undefined && done > start ? Math.round(num(t.workerWait) ?? 0) : 0,
-        prefetchAhead: done !== undefined && done > start ? (num(t.prefetchAhead) ?? 0) : 0,
+        passedBy: done !== undefined && done > start ? (num(t.passedBy) ?? 0) : 0,
         parse: done !== undefined && done > start ? Math.round(worker - (num(t.workerWait) ?? 0)) : 0,
         message: done !== undefined && done > start && posted !== undefined ? Math.round(Math.max(0, done - Math.max(start, posted) - worker)) : 0,
         before: span(at(done), at(num(t.beforeDone))),
@@ -486,11 +486,11 @@ void app.whenReady().then(async () => {
           large.first.total !== undefined && large.lastParse !== undefined && large.first.total < large.lastParse,
           `The first file's breadcrumbs show before prefetch has parsed every file (${large.first.total} ms, last parse ${large.lastParse} ms)`
         );
-        // Scheduling, asserted on the worker's order: it counts the prefetched jobs it started while the file waited at
-        // its tier. Time in the queue also counts the parse that was running and other files on screen, and grows on a
-        // slow runner, so it is only reported.
-        assert.equal(large.first.prefetchAhead, 0, `The first file's parse does not wait behind prefetched ones (${large.first.prefetchAhead} went first)`);
-        assert.equal(large.mid.prefetchAhead, 0, `Nor does the file jumped to (${large.mid.prefetchAhead} went first)`);
+        // Scheduling, asserted on the worker's order: it counts the jobs of a lower tier (prefetched files, comparisons,
+        // moved-symbol prints) that started while the file waited. Time in the queue also counts the parse that was
+        // running and other files on screen, and grows on a slow runner, so it is only reported.
+        assert.equal(large.first.passedBy, 0, `The first file's parse does not wait behind prefetched ones (${large.first.passedBy} lower-tier jobs went first)`);
+        assert.equal(large.mid.passedBy, 0, `Nor does the file jumped to (${large.mid.passedBy} lower-tier jobs went first)`);
         assertPerf(`syntax scope: the first file's parse in the worker queue, reads of ${latency} ms`, large.first.workerQueue, perfBudget(400));
         assertPerf(`syntax scope: the jumped-to file's parse in the worker queue, reads of ${latency} ms`, large.mid.workerQueue, perfBudget(400));
         assert.ok(large.frames >= 20, `Files resolve one by one, not in one frame (${large.frames} frames for ${large.parsed} files)`);

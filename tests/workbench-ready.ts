@@ -19,15 +19,16 @@ export async function waitForWorkbenchQueue(contents: WebContents, expectedItems
  * so a scroll or click the test just made counts. Read layout after this, not after a sleep or a number of frames.
  */
 export async function waitSettled(contents: WebContents, key: string, timeoutMs = 15_000): Promise<void> {
-  const check = `window.__gnosisSettled ? window.__gnosisSettled.settled(${JSON.stringify(key)}) : 'no registry'`;
+  const check = `window.__gnosisSettled ? window.__gnosisSettled.settled(${JSON.stringify(key)}) : null`;
   const deadline = Date.now() + timeoutMs;
+  let reason: unknown;
   while (Date.now() < deadline) {
-    const settled: unknown = await contents.executeJavaScript(check);
-    if (settled === true) return;
-    if (settled === 'no registry') throw new Error(`waitSettled('${key}'): the page did not install the settled registry`);
+    reason = await contents.executeJavaScript(check);
+    if (reason === true) return;
+    if (reason === null) throw new Error(`waitSettled('${key}'): the page did not install the settled registry`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error(`'${key}' did not settle within ${timeoutMs / 1000}s`);
+  throw new Error(`'${key}' did not settle within ${timeoutMs / 1000}s: ${String(reason)}`);
 }
 
 const loadTimeoutMs = 60_000;

@@ -23,17 +23,25 @@ export interface ParseJob {
   key: string;
   priority: SyntaxPriority;
   side: 'after' | 'before' | 'noise' | 'symbols';
+  /**
+   * Jobs of a lower tier that were taken while this one waited, from any tier it waited at: a raise keeps the count,
+   * and it stops once the job is taken. take() keeps to the order, so it stays 0; the worker reports it, and the
+   * browser checks assert scheduling on it rather than on time in the queue.
+   */
+  passedBy?: number;
 }
 const SIDE_RANK = { after: 0, before: 1, noise: 2, symbols: 3 } as const;
 /** Tiers a side waits below its file's own: noise one, moved symbols two (they only add labels). */
 const SIDE_DROP = { after: 0, before: 0, noise: 1, symbols: 2 } as const;
+/** A job's tier with its side's drop: lower runs first. */
+const jobTier = (job: ParseJob) => RANK[job.priority] + SIDE_DROP[job.side];
 
 export function createParseQueue<T extends ParseJob>() {
   const jobs = new Map<string, { job: T; seq: number }>();
   let seq = 0;
   /** Lower comes first: tier, then side, then order within the tier. */
   const order = ({ job, seq: at }: { job: T; seq: number }): [number, number, number] => [
-    RANK[job.priority] + SIDE_DROP[job.side],
+    jobTier(job),
     SIDE_RANK[job.side],
     job.priority === 'prefetch' ? at : -at,
   ];
@@ -63,6 +71,8 @@ export function createParseQueue<T extends ParseJob>() {
       }
       if (!best) return undefined;
       jobs.delete(best.job.key);
+      const tier = jobTier(best.job);
+      for (const { job } of jobs.values()) if (jobTier(job) < tier) job.passedBy = (job.passedBy ?? 0) + 1;
       return best.job;
     },
     /** Removes the waiting parses `drop` picks, and returns them. */
