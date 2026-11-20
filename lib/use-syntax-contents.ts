@@ -61,28 +61,44 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
 /**
  * How long the view must be still before a file near it queues its read, so files that only flash past are not read.
  * Scrolling restarts the wait: on a slow machine a fast scroll can leave each file near the view for longer than this,
- * so time near the view alone is not enough. A scroll fires every frame, so a scroll that is still going never lets
- * this much time pass; a file that came near without a scroll (the PR opened, a file expanded) asks at once.
+ * so time near the view alone is not enough. Still means no scroll event for this long, as seen from a frame: a slow
+ * frame can hold back the scroll events of a scroll that goes on, so the last check waits for the next frame, whose
+ * scroll steps deliver them first. A file that came near without a scroll (the PR opened, a file expanded) asks then.
  */
 const SETTLE_MS = 150;
 let lastScrollAt = 0;
 /**
- * Runs `run` once the view has been still for SETTLE_MS, at once when it already is; the returned function cancels it.
- * Reads wait for it, and so do the renders that show structure that lands while the reader scrolls: they would add
- * work to the frames of the scroll.
+ * Runs `run` once the view has been still for SETTLE_MS; the returned function cancels it. Reads wait for it, and so
+ * do the renders that show structure that lands while the reader scrolls: they would add work to the scroll's frames.
  */
 export function whenSettled(run: () => void): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let frame: number | undefined;
   let cancelled = false;
+  const still = () => performance.now() - lastScrollAt >= SETTLE_MS;
   const check = () => {
-    const wait = lastScrollAt + SETTLE_MS - Date.now();
-    if (wait > 0) timer = setTimeout(check, wait);
-    else if (!cancelled) run();
+    const wait = lastScrollAt + SETTLE_MS - performance.now();
+    if (wait > 0) {
+      timer = setTimeout(check, wait);
+      return;
+    }
+    // A hidden window draws no frames, and has no scroll to wait out.
+    if (typeof requestAnimationFrame === 'undefined' || document.visibilityState === 'hidden') {
+      if (!cancelled) run();
+      return;
+    }
+    frame = requestAnimationFrame(() => {
+      frame = undefined;
+      if (cancelled) return;
+      if (still()) run();
+      else check();
+    });
   };
   check();
   return () => {
     cancelled = true;
     clearTimeout(timer);
+    if (frame !== undefined) cancelAnimationFrame(frame);
   };
 }
 /** Near the view: within a viewport above or below it. Rows outside the virtualizer's range are not mounted. */
@@ -173,7 +189,7 @@ if (typeof window !== 'undefined') {
   document.addEventListener(
     'scroll',
     () => {
-      lastScrollAt = Date.now();
+      lastScrollAt = performance.now();
     },
     { capture: true, passive: true }
   );
