@@ -87,13 +87,13 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
       } catch {
         // The write succeeded. Matching by text replaces the optimistic copy instead.
       }
+      // What GitHub carried out: all of it, or the part it took. Patches confirmed while this write ran stop applying
+      // its items, before this patch is confirmed so `applied` leaves it alone.
       const part = narrow?.(value);
-      if (part)
-        for (const patch of patches) {
-          // Before the confirm, so `applied` trims the others and leaves this patch alone.
-          layer.applied(patch.url, part);
-          layer.narrow(patch.id, part);
-        }
+      for (const patch of patches) {
+        layer.applied(patch.url, part ?? change);
+        if (part) layer.narrow(patch.id, part);
+      }
       for (const patch of patches) if (layer.confirm(patch.id, details)) changed(patch.url, kinds);
       return value;
     },

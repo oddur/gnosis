@@ -302,7 +302,8 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     return once(a, `candidates|${key}`, async () => {
       const { transient, ...value } = await read();
       a.candidates.delete(key);
-      // A passing failure, such as a timeout or a rate limit, is kept briefly: the next open tries again, typing does not.
+      // A list read only in part after a passing failure (a timeout, a rate limit) is reused for 30 s, by typing and by
+      // reopening the picker alike; after that the next read tries again.
       a.candidates.set(key, { at: now(), ...value, ...(transient ? { ttl: TRANSIENT_TTL_MS } : {}) });
       while (a.candidates.size > CANDIDATE_ENTRIES) a.candidates.delete(a.candidates.keys().next().value as string);
       return value;
@@ -596,15 +597,17 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
   /** The saved access after an edit GitHub took: team requests and the milestone as they are now. */
   function keepAccess(client: Octokit, done: PrPeopleEdit) {
     const a = account(client);
+    // An access read that began before the write must not store what it saw then over this.
+    a.generation.set(done.url, (a.generation.get(done.url) ?? 0) + 1);
     const saved = a.access.get(done.url);
     if (!saved) return;
     if (done.field === 'reviewers' && (done.addTeams.length || done.removeTeams.length)) {
       const removed = (team: PrTeamCandidate) => done.removeTeams.some((other) => sameLogin(other.slug, team.slug));
       const kept = saved.requestedTeams.filter((team) => !removed(team));
       const added = done.addTeams.filter((team) => !kept.some((other) => sameLogin(other.slug, team.slug)));
-      a.access.set(done.url, { ...saved, requestedTeams: [...kept, ...added] });
+      a.access.set(done.url, { ...saved, requestedTeams: [...kept, ...added], checkedAt: now() });
     }
-    if (done.field === 'milestone') a.access.set(done.url, { ...saved, milestone: done.milestone });
+    if (done.field === 'milestone') a.access.set(done.url, { ...saved, milestone: done.milestone, checkedAt: now() });
   }
   /**
    * Who may edit changed: a merge, close or reopen changes whether reviews can be requested, and an edit changes the

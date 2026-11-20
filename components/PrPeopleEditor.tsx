@@ -346,6 +346,8 @@ export function PrPeopleEditor({
   const trigger = useRef<HTMLButtonElement>(null);
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const [query, setQuery] = useState('');
+  /** The pointer or focus asks for the disabled reason. The tooltip is always controlled: it opens only with a reason. */
+  const [hinted, setHinted] = useState(false);
   const [draft, setDraftState] = useState<string[]>([]);
   // The latest selection and whether this opening is still to be applied, read when the picker closes.
   const latest = useRef<string[]>([]);
@@ -360,11 +362,13 @@ export function PrPeopleEditor({
   const saving = useWriteInFlight(peopleFailureKey(member.url, field));
   const author = access?.author || member.author;
   const label = FIELD_LABEL[field];
-  const disabledReason = accessError
+  /** Why the field can't be edited at all. The tooltip shows this; a save in flight only disables it for a moment. */
+  const blockedReason = accessError
     ? `Couldn’t check your access: ${accessError}`
     : !access
       ? 'Checking your access…'
-      : (fieldBlockedReason(access, field) ?? (saving ? 'Saving the last change…' : undefined));
+      : fieldBlockedReason(access, field);
+  const disabledReason = blockedReason ?? (saving ? 'Saving the last change…' : undefined);
 
   const current = useMemo((): Option[] => {
     switch (field) {
@@ -645,11 +649,11 @@ export function PrPeopleEditor({
   // button would drop keyboard focus to the page. The tooltip only opens while there is a reason to show.
   return (
     <TooltipProvider delayDuration={350}>
-      <Tooltip {...(disabledReason ? {} : { open: false })}>
+      <Tooltip open={!!blockedReason && hinted} onOpenChange={(next) => setHinted(next && !!blockedReason)}>
         <TooltipTrigger asChild>
           <span className="pr-people-edit-wrap">{picker}</span>
         </TooltipTrigger>
-        <TooltipContent>{disabledReason}</TooltipContent>
+        <TooltipContent>{blockedReason}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

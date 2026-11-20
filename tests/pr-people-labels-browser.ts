@@ -21,8 +21,11 @@ void app.whenReady().then(async () => {
     webPreferences: { backgroundThrottling: false },
   });
   const errors: string[] = [];
+  const controlWarnings: string[] = [];
   win.webContents.on('console-message', ({ level, message }) => {
     if (level === 'error' && !message.includes('ResizeObserver') && !message.includes('Failed to load resource')) errors.push(message);
+    // A tooltip switching between controlled and uncontrolled warns on every save.
+    if (/controlled/i.test(message)) controlWarnings.push(message);
   });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -183,6 +186,8 @@ void app.whenReady().then(async () => {
     // The save disables the editor for a moment; its button keeps keyboard focus, never dropping it to the page.
     await frames();
     assert.ok(await js<boolean>(`document.activeElement === document.querySelector(${JSON.stringify(edit('reviewers'))})`), 'Focus stays on the edit button while it saves');
+    // The disabled reason's tooltip does not pop up by itself while the save runs.
+    assert.ok(await js<boolean>("!document.querySelector('[data-slot=tooltip-content]')"), 'No tooltip opens unprompted');
     const sent = await js<{ add: string[]; remove: string[] }>('window.prPeopleFixture.record.edits.at(-1)');
     assert.deepEqual([sent.add, sent.remove], [['zelda-ops', 'owen'], ['sam']], 'One write with the whole change');
     await settle();
@@ -451,6 +456,7 @@ void app.whenReady().then(async () => {
     await press('.pr-people-access-error button');
     await wait(`!document.querySelector('.pr-people-access-error') && !document.querySelector('.pr-people-edit[aria-disabled]')`);
     assert.deepEqual(errors, [], errors.join('\n'));
+    assert.deepEqual(controlWarnings, [], 'The tooltip never switches between controlled and uncontrolled');
     console.log('PR people and labels checks passed.');
     app.exit(0);
   } catch (error) {

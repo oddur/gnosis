@@ -807,3 +807,40 @@ void test('a command that runs after close waits while another palette action ru
   runCommand({ perform: () => undefined });
   assert.deepEqual([ran, set, closed], [['run'], ['set'], 1]);
 });
+
+void test('an access read that began during an edit never overwrites the saved access the edit updated', async () => {
+  const f = fixture();
+  await f.service.access(f.client, url);
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const graphql = f.client.graphql.bind(f.client);
+  let stale: Promise<unknown> | undefined;
+  f.whileWriting(() => {
+    f.whileWriting(() => undefined);
+    // The saved access expires and another read starts while the write runs; GitHub answers it from before the write.
+    f.tick(PR_PEOPLE_ACCESS_TTL_MS + 1);
+    Object.assign(f.client, {
+      graphql: async (q: string, p: Record<string, unknown>) => {
+        if (/viewer\{login\}/.test(q)) await held;
+        return graphql(q, p);
+      },
+    });
+    stale = f.service.access(f.client, url);
+  });
+  await f.service.edit(f.client, { url, field: 'milestone', milestone: { number: 3, title: 'v1', dueOn: null } });
+  release();
+  await stale;
+  assert.equal((await f.service.access(f.client, url)).milestone?.title, 'v1', 'The in-place update stands');
+});
+
+void test('a later-started edit that confirmed first stops overriding once the earlier one succeeds', async () => {
+  const f = fixture();
+  let finishFirst: () => void = () => undefined;
+  const first = f.optimistic.run(url, prPeopleChange(reviewers({ add: ['maya'] })), () => new Promise<void>((resolve) => (finishFirst = resolve)));
+  await f.optimistic.run(url, prPeopleChange(reviewers({ remove: ['maya'] })), () => Promise.resolve());
+  finishFirst();
+  await first;
+  // GitHub finished the request for maya last. Its read shows her requested, and the removal no longer hides her.
+  assert.deepEqual(f.optimistic.metadata({ ...f.metadata, requestedReviewers: ['maya'] }).requestedReviewers, ['maya']);
+  assert.ok(!f.optimistic.layer.list().some((p) => p.change.action === 'edit-reviewers' && p.change.remove.includes('maya')));
+});
