@@ -1,6 +1,7 @@
 import type { Octokit } from '@octokit/rest';
 import type { DiffSource } from './diffSource';
 import { GitHubDiffSource } from './github';
+import { mapBounded } from './bounded';
 import { memberPrefix, type ReviewSubject } from './workbench';
 import type { ChangedFile, FileMetadata, PrMetadata, Provider } from './types';
 
@@ -88,21 +89,28 @@ export class StackDiffSource implements DiffSource {
     ).flat();
   }
   async getNeighborFiles(paths: string[], contents: Record<string, string>, ref: 'base' | 'head', provider?: Provider) {
+    // Members are independent: their reads run 3 at a time, and one at a time when each may call the smart-imports
+    // model. The result keeps the members' order.
+    const members = await mapBounded(
+      [...this.sources],
+      provider ? 1 : 3,
+      async ([prefix, s]) => {
+        const local = Object.fromEntries(
+          Object.entries(contents)
+            .filter(([p]) => p.startsWith(prefix))
+            .map(([p, c]) => [p.slice(prefix.length), c])
+        );
+        const files = await s.getNeighborFiles(
+          paths.filter((p) => p.startsWith(prefix)).map((p) => p.slice(prefix.length)),
+          local,
+          ref,
+          provider
+        );
+        return Object.entries(files).map(([p, c]) => [prefix + p, c] as const);
+      }
+    );
     const out: Record<string, string> = {};
-    for (const [prefix, s] of this.sources) {
-      const local = Object.fromEntries(
-        Object.entries(contents)
-          .filter(([p]) => p.startsWith(prefix))
-          .map(([p, c]) => [p.slice(prefix.length), c])
-      );
-      const files = await s.getNeighborFiles(
-        paths.filter((p) => p.startsWith(prefix)).map((p) => p.slice(prefix.length)),
-        local,
-        ref,
-        provider
-      );
-      for (const [p, c] of Object.entries(files)) out[prefix + p] = c;
-    }
+    for (const files of members) for (const [p, c] of files) out[p] = c;
     return out;
   }
   getProjectClaudeContext(opts?: { unfiltered?: boolean }) {

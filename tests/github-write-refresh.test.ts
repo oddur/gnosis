@@ -311,3 +311,101 @@ void test('every GitHub write in the app is in the inventory', () => {
   assert.match(main, /githubWrites\.after\('push'/, 'conflict pushes refresh through githubWrites');
   assert.match(main, /githubWrites\.after\('stack-merged'/, 'a completed stack merge refreshes through githubWrites');
 });
+
+/** A refresher whose every metadata probe is REST (GraphQL cannot answer the PR exactly), run to the end. */
+async function restOnly(baseline: WriteObservation, restCounts: number[]) {
+  let now = 0;
+  const timers: { at: number; run: () => void; cleared?: boolean }[] = [];
+  const events: GitHubWriteEvent[] = [];
+  const refresher = createGitHubWriteRefresher({
+    now: () => now,
+    setTimer: (run, ms) => {
+      const timer = { at: now + ms, run };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as { cleared?: boolean }).cleared = true;
+    },
+    active: () => true,
+    account: () => 'token',
+    baseline: () => baseline,
+    invalidate: () => {},
+    read: () => Promise.resolve(metadata({ reviewCommentCount: restCounts.shift() ?? 7, source: 'rest' })),
+    refreshed: (event) => events.push(event),
+  });
+  await refresher.after('thread-reply', [URL]);
+  for (;;) {
+    const next = timers.filter((t) => !t.cleared).sort((a, b) => a.at - b.at).at(0);
+    if (!next) break;
+    next.cleared = true;
+    now = next.at;
+    next.run();
+    for (let j = 0; j < 10; j++) await Promise.resolve();
+  }
+  return events.map((e) => e.phase);
+}
+
+void test('a REST probe against a GraphQL baseline settles against the REST copy read before the write', async () => {
+  // REST is already current after the reply: 7, against the REST copy of 6 read before the write.
+  const phases = await restOnly(
+    {
+      metadata: metadata({ reviewCommentCount: 6, source: 'graphql' }),
+      restMetadata: metadata({ reviewCommentCount: 6, source: 'rest' }),
+    },
+    [7]
+  );
+  assert.ok(phases.includes('settled'), phases.join(','));
+  assert.ok(!phases.includes('gave-up'));
+});
+
+void test('without a same-API copy a cross-API probe is inconclusive: it never settles the write', async () => {
+  // GraphQL said 6 before; REST counts never compare with it, whatever they read.
+  const phases = await restOnly({ metadata: metadata({ reviewCommentCount: 6, source: 'graphql' }) }, [5, 7, 8]);
+  assert.ok(!phases.includes('settled'), phases.join(','));
+  assert.ok(phases.includes('gave-up'));
+});
+
+void test('the optimistic patch and the write go out before the pre-write REST copy answers', async () => {
+  const { startRestBaselines } = await import('../lib/github-write-refresh');
+  const { createOptimisticLayer } = await import('../lib/optimistic-patches');
+  const layer = createOptimisticLayer();
+  const order: string[] = [];
+  let answer: () => void = () => {};
+  const before = new Map<string, WriteObservation>([[URL, { metadata: metadata({ reviewCommentCount: 6, source: 'graphql' }) }]]);
+  // gitHubWrite's order: start the REST copy, run the write (patch, then request), then wait for the copy.
+  const copies = startRestBaselines('thread-reply', before, () => {
+    order.push('rest started');
+    return new Promise((resolve) => {
+      answer = () => {
+        order.push('rest answered');
+        resolve(metadata({ reviewCommentCount: 6, source: 'rest' }));
+      };
+    });
+  });
+  const write = () => {
+    layer.begin({ url: URL, viewer: { login: 'oddur', avatarUrl: '' }, change: { action: 'thread-reply', threadId: 'T1', body: 'Done.' } });
+    order.push(layer.has(URL) ? 'patch applied' : 'no patch');
+    order.push('request sent');
+    return Promise.resolve();
+  };
+  await write();
+  assert.deepEqual(order, ['rest started', 'patch applied', 'request sent'], 'nothing waited for the REST copy');
+  answer();
+  await copies;
+  assert.equal(before.get(URL)?.restMetadata?.source, 'rest');
+
+  // A REST copy that never answers is given up after the wait; the probe then stays inconclusive.
+  const stalled = new Map<string, WriteObservation>([[URL, { metadata: metadata({ source: 'graphql' }) }]]);
+  await startRestBaselines('thread-reply', stalled, () => new Promise(() => {}), 10);
+  assert.equal(stalled.get(URL)?.restMetadata, undefined);
+  // Other writes, and REST baselines, start no read at all.
+  let reads = 0;
+  const read = () => {
+    reads++;
+    return Promise.resolve(metadata());
+  };
+  await startRestBaselines('merge', before, read);
+  await startRestBaselines('thread-reply', new Map([[URL, { metadata: metadata({ source: 'rest' }) }]]), read);
+  assert.equal(reads, 0);
+});

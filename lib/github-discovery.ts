@@ -87,7 +87,9 @@ export function createDiscoveryListings(
       const roles = options.includeAssigned
         ? (['author', 'assignee', 'review-requested'] as const)
         : (['author', 'review-requested'] as const);
-      for (const role of roles) {
+      // The roles are independent searches with their own checkpoints, so they run together. Each stays a conditional
+      // REST search: its stable parameters let GitHub answer an unchanged page with a free 304.
+      const searchRole = async (role: (typeof roles)[number]) => {
         const search = (state.searches[role] ??= {
           // Stable parameters throughout the day let conditional searches reuse their ETags.
           windows: [{ from: 0, to: Math.ceil(options.now / 86_400_000) * 86_400, page: 1 }],
@@ -142,8 +144,13 @@ export function createDiscoveryListings(
           else window.page++;
           options.save();
         }
-        // Process review requests last so that role wins duplicate URLs.
-        for (const item of search.items) seen.set(item.url, item);
+        return search.items;
+      };
+      const results = await Promise.allSettled(roles.map(searchRole));
+      // Process review requests last so that role wins duplicate URLs.
+      for (const result of results) {
+        if (result.status === 'rejected') throw result.reason;
+        for (const item of result.value) seen.set(item.url, item);
       }
       return [...seen.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     },

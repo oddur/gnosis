@@ -1,3 +1,5 @@
+import { mapBounded } from './bounded';
+
 /** Publish independent members as they finish, with bounded concurrency. */
 export async function loadInspectionBatch<T, V>(
   members: T[],
@@ -6,22 +8,18 @@ export async function loadInspectionBatch<T, V>(
   signal: AbortSignal,
   concurrency = 3
 ) {
-  let cursor = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, members.length) }, async () => {
-      while (!signal.aborted && cursor < members.length) {
-        const member = members[cursor++];
-        try {
-          const value = await read(member, signal);
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- cancellation can occur during the awaited read
-          if (!signal.aborted) receive(member, { value });
-        } catch (error) {
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- cancellation can occur during the awaited read
-          if (!signal.aborted) receive(member, { error });
-        }
-      }
-    })
-  );
+  // Each member reports its own failure, so the shared pool never stops early; a cancelled batch starts nothing new.
+  await mapBounded(members, concurrency, async (member) => {
+    if (signal.aborted) return;
+    try {
+      const value = await read(member, signal);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- cancellation can occur during the awaited read
+      if (!signal.aborted) receive(member, { value });
+    } catch (error) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- cancellation can occur during the awaited read
+      if (!signal.aborted) receive(member, { error });
+    }
+  });
 }
 
 export interface InspectionFailure {

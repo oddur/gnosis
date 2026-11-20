@@ -11,8 +11,10 @@ import path from 'node:path';
 import type { Octokit } from '@octokit/rest';
 import { createWorkbenchService, type WorkbenchPreferences } from '../src/workbench-service';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
+import { answerPrQuery, queriedPrs } from './fake-pr-graphql';
 
-const COUNT = 12;
+// Discovery reads PR details in waves of 25, one aliased query each: 25, 25, then 10.
+const COUNT = 60;
 const url = (n: number) => `https://github.com/owner/repo/pull/${n}`;
 const pull = (n: number) => ({
   number: n,
@@ -40,11 +42,18 @@ const pull = (n: number) => ({
 function setup(options: { signals?: () => boolean; fail?: boolean } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-discovery-progress-'));
   const numbers = Array.from({ length: COUNT }, (_, i) => i + 1);
-  // Each PR read waits for the test to let it answer.
+  // Each PR query waits for the test to let it answer.
   const waiting: (() => void)[] = [];
-  let reads = 0;
+  let reads = 0,
+    queries = 0;
   let changes = 0;
   const client = {
+    graphql: (query: string) =>
+      new Promise((resolve) => {
+        queries++;
+        reads += queriedPrs(query).length;
+        waiting.push(() => resolve(answerPrQuery(query, (_owner, _repo, n) => pull(n))));
+      }),
     search: {
       issuesAndPullRequests: () => {
         if (options.fail) return Promise.reject(new Error('getaddrinfo ENOTFOUND api.github.com'));
@@ -79,11 +88,12 @@ function setup(options: { signals?: () => boolean; fail?: boolean } = {}) {
   return {
     service,
     reads: () => reads,
+    queries: () => queries,
     changes: () => changes,
-    /** Waits until `count` reads are waiting, then answers them. */
+    /** Waits until `count` queries are waiting, then answers them. */
     async answer(count: number) {
       for (let i = 0; i < 200 && waiting.length < count; i++) await turn();
-      assert.ok(waiting.length >= count, `expected ${count} PR reads to wait, saw ${waiting.length}`);
+      assert.ok(waiting.length >= count, `expected ${count} PR queries to wait, saw ${waiting.length}`);
       for (const resolve of waiting.splice(0, count)) resolve();
       for (let i = 0; i < 20; i++) await turn();
     },
@@ -105,14 +115,16 @@ void test('a pass the reader asked for reports requested, then its PR count batc
     assert.equal(sync()?.progress, undefined, 'no total before the PR list is read');
     assert.ok(s.changes() >= 1, 'the pass is broadcast as it starts');
     // The search answered: the total is known before any PR is read, and broadcast once.
-    await s.until(() => s.reads() >= 5);
+    await s.until(() => s.reads() >= 25);
     assert.deepEqual(sync()?.progress, { done: 0, total: COUNT });
-    await s.answer(5);
-    assert.deepEqual(sync()?.progress, { done: 5, total: COUNT }, 'a batch counts before its snapshot is published');
-    await s.answer(5);
-    assert.deepEqual(sync()?.progress, { done: 10, total: COUNT });
-    await s.answer(2);
+    assert.equal(s.queries(), 1, 'one query reads the first 25 PRs');
+    await s.answer(1);
+    assert.deepEqual(sync()?.progress, { done: 25, total: COUNT }, 'a batch counts before its snapshot is published');
+    await s.answer(1);
+    assert.deepEqual(sync()?.progress, { done: 50, total: COUNT });
+    await s.answer(1);
     await pass;
+    assert.equal(s.queries(), 3, 'before, 60 PRs took 60 REST reads in 12 waves');
     const done = sync();
     assert.equal(done?.status, 'idle');
     assert.equal(done?.progress, undefined, 'a finished pass has no progress');
@@ -130,13 +142,13 @@ void test('an automatic pass is not requested until the reader joins it with Ref
     const sync = () => s.service.snapshot().sync;
     assert.equal(sync()?.status, 'checking');
     assert.equal(sync()?.requested, undefined, 'main\'s own pass is a quiet note, not a spinner');
-    await s.answer(5);
-    assert.deepEqual(sync()?.progress, { done: 5, total: COUNT });
+    await s.answer(1);
+    assert.deepEqual(sync()?.progress, { done: 25, total: COUNT });
     const joined = s.service.queue(true);
     assert.equal(sync()?.requested, true, 'Refresh during a pass makes it the reader\'s');
-    assert.deepEqual(sync()?.progress, { done: 5, total: COUNT }, 'joining keeps the count');
-    await s.answer(5);
-    await s.answer(2);
+    assert.deepEqual(sync()?.progress, { done: 25, total: COUNT }, 'joining keeps the count');
+    await s.answer(1);
+    await s.answer(1);
     await joined;
     assert.equal(sync()?.status, 'idle');
   } finally {

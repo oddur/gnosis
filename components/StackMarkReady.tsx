@@ -36,6 +36,16 @@ export function StackMarkReady({
     try {
       const result = await markPrsReady(remaining, account, {
         read: (url, force) => window.electronAPI.getPrActionState(url, force),
+        readMany: (urls, force) => {
+          const states = window.electronAPI.getPrActionStates(urls, force);
+          return urls.map((_, i) =>
+            states.then((all) => {
+              const result = all[i];
+              if ('error' in result) throw new Error(result.error);
+              return result.state;
+            })
+          );
+        },
         act: (request) => window.electronAPI.performPrAction(request),
         active: () => active.current,
         ready: (url) => {

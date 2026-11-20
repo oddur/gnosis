@@ -10,6 +10,16 @@ import { readGitHubFile } from '../src/github-file-content';
 import { filesOfUnifiedDiff } from './diff-files';
 import { githubReadSignal } from './github-scheduler';
 import { reportPrHead } from './pr-heads';
+import { mapBounded } from './bounded';
+import {
+  aliasedGraphql,
+  readBlobs,
+  REGULAR_FILE_MODES,
+  TREE_MODE,
+  type AliasedAnswer,
+  type BlobAnswer,
+  type BlobRequest,
+} from './github-graphql-batch';
 export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -36,6 +46,10 @@ export function parsePrUrl(url: string): { owner: string; repo: string; pullNumb
     pullNumber: parseInt(match[3], 10),
   };
 }
+
+/** Names in a stable order that does not depend on the API that listed them. */
+export const sortedNames = (names: string[]) =>
+  [...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()) || (a < b ? -1 : a > b ? 1 : 0));
 
 export async function getPrMetadata(
   octokit: Octokit,
@@ -81,12 +95,15 @@ export async function getPrMetadata(
     changedFileCount: data.changed_files,
     additions: data.additions,
     deletions: data.deletions,
-    requestedReviewers: (data.requested_reviewers ?? []).map((u) => u.login),
-    requestedTeams: (data.requested_teams ?? []).map((t) => t.name),
+    // Sorted, as the GraphQL reader sorts them, so the order never depends on which API answered.
+    requestedReviewers: sortedNames((data.requested_reviewers ?? []).map((u) => u.login)),
+    requestedTeams: sortedNames((data.requested_teams ?? []).map((t) => t.name)),
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     mergeableState: data.mergeable_state ?? null,
     autoMerge: data.auto_merge ? { method: data.auto_merge.merge_method } : null,
     milestone: data.milestone ? { title: data.milestone.title, dueOn: data.milestone.due_on } : null,
+    // Explicit, so a REST copy spread over a GraphQL one never keeps the GraphQL tag.
+    source: 'rest',
   };
 }
 
@@ -346,6 +363,15 @@ export async function getFileContent(
   }
 }
 
+/** `getFileContent`'s answer for a blob batch answer, or undefined when only the contents API can give it. */
+const restEquivalent = (answer: BlobAnswer): string | null | undefined =>
+  answer.kind === 'text'
+    ? // The contents API answers an empty file with empty content, which `getFileContent` reads as null.
+      answer.text || null
+    : answer.kind === 'absent'
+      ? null
+      : undefined;
+
 export async function searchPullRequests(octokit: Octokit, login: string, limit = 30): Promise<PrSearchResult[]> {
   const queries = [
     { q: `is:pr is:open archived:false author:${login}`, role: 'author' as const },
@@ -601,6 +627,11 @@ export async function extractImportsWithLLM(
   return [...paths];
 }
 
+/**
+ * Files the changed files import, at `ref`. Every candidate path (each import with each of `TS_EXTENSIONS`) is read in
+ * one batch of aliased GraphQL queries, and each import keeps the first extension that resolves. `readFile`, such as a
+ * local clone, reads one path at a time instead and stops at the first extension that resolves.
+ */
 export async function getNeighborFiles(
   octokit: Octokit,
   owner: string,
@@ -609,8 +640,9 @@ export async function getNeighborFiles(
   changedFileContents: Record<string, string>,
   ref: string,
   smartImportsProvider?: Provider,
-  readFile: (path: string) => Promise<string | null> = (path) => getFileContent(octokit, owner, repo, path, ref)
+  readFile?: (path: string) => Promise<string | null>
 ): Promise<Record<string, string>> {
+  let candidates: string[][];
   if (smartImportsProvider) {
     console.log(`[github] Using smart (${smartImportsProvider}) import extraction`);
     const importPaths = await extractImportsWithLLM(changedFileContents, changedFilePaths, smartImportsProvider);
@@ -619,61 +651,58 @@ export async function getNeighborFiles(
     // Filter out paths already in the changed set
     const neighborPaths = importPaths.filter((p) => !changedFilePaths.includes(p));
     console.log(`[github] ${neighborPaths.length} neighbor file(s) to fetch (after excluding changed files)`);
-    const pathsToFetch = neighborPaths.slice(0, 30);
+    candidates = neighborPaths.slice(0, 30).map((path) => [path]);
+  } else {
+    // Default: regex-based extraction
+    const neighborPaths = new Set<string>();
+    for (const filePath of changedFilePaths) {
+      const content = changedFileContents[filePath];
+      if (!content) continue;
 
-    const results: Record<string, string> = {};
-    const concurrency = 5;
-    for (let i = 0; i < pathsToFetch.length; i += concurrency) {
-      const batch = pathsToFetch.slice(i, i + concurrency);
-      await Promise.all(
-        batch.map(async (filePath) => {
-          const content = await readFile(filePath);
-          if (content !== null) {
-            results[filePath] = content;
-          }
-        })
-      );
-    }
-    console.log(`[github] Fetched ${Object.keys(results).length} neighbor file(s):`, Object.keys(results));
-    return results;
-  }
-
-  // Default: existing regex-based extraction
-  const neighborPaths = new Set<string>();
-
-  for (const filePath of changedFilePaths) {
-    const content = changedFileContents[filePath];
-    if (!content) continue;
-
-    const imports = extractImports(content, filePath);
-    for (const imp of imports) {
-      const alreadyChanged = changedFilePaths.some((p) => p === imp || TS_EXTENSIONS.some((ext) => p === imp + ext));
-      if (!alreadyChanged) {
-        neighborPaths.add(imp);
+      const imports = extractImports(content, filePath);
+      for (const imp of imports) {
+        const alreadyChanged = changedFilePaths.some((p) => p === imp || TS_EXTENSIONS.some((ext) => p === imp + ext));
+        if (!alreadyChanged) {
+          neighborPaths.add(imp);
+        }
       }
     }
+    candidates = Array.from(neighborPaths)
+      .slice(0, 30)
+      .map((basePath) => TS_EXTENSIONS.map((ext) => basePath + ext));
   }
 
   const results: Record<string, string> = {};
-  const pathsToFetch = Array.from(neighborPaths).slice(0, 30);
-
-  const concurrency = 5;
-  for (let i = 0; i < pathsToFetch.length; i += concurrency) {
-    const batch = pathsToFetch.slice(i, i + concurrency);
-    await Promise.all(
-      batch.map(async (basePath) => {
-        for (const ext of TS_EXTENSIONS) {
-          const fullPath = basePath + ext;
-          const content = await readFile(fullPath);
-          if (content !== null) {
-            results[fullPath] = content;
-            break;
-          }
+  if (readFile) {
+    // One path at a time, stopping at the first extension that resolves.
+    await mapBounded(candidates, 5, async (paths) => {
+      for (const path of paths) {
+        const content = await readFile(path);
+        if (content !== null) {
+          results[path] = content;
+          return;
         }
-      })
-    );
+      }
+    });
+  } else {
+    const unique = [...new Set(candidates.flat())];
+    const answers = await readBlobs(octokit, unique.map((path) => ({ owner, repo, ref, path })));
+    const known = new Map(unique.map((path, i) => [path, restEquivalent(answers[i])]));
+    // Extensions in order, stopping at the first that resolves. A candidate the batch could not settle is read through
+    // REST right there, so a failed batch reads as the old one-path-at-a-time reader did.
+    await mapBounded(candidates, 5, async (paths) => {
+      for (const path of paths) {
+        const settled = known.get(path);
+        const content = settled === undefined ? await getFileContent(octokit, owner, repo, path, ref) : settled;
+        if (content !== null) {
+          results[path] = content;
+          return;
+        }
+      }
+    });
   }
-
+  if (smartImportsProvider)
+    console.log(`[github] Fetched ${Object.keys(results).length} neighbor file(s):`, Object.keys(results));
   return results;
 }
 
@@ -725,9 +754,9 @@ async function getPrFileChurn(
     });
     // For each commit, fetch its files and increment the counter.
     // Limit to first 30 commits to avoid API rate limit issues on
-    // very large PRs.
+    // very large PRs. The reads are independent, so they run 10 at a time.
     const toFetch = commits.slice(0, 30);
-    for (const commit of toFetch) {
+    const files = await mapBounded(toFetch, 10, async (commit) => {
       signal?.throwIfAborted();
       try {
         const { data } = await octokit.repos.getCommit({
@@ -736,13 +765,13 @@ async function getPrFileChurn(
           ref: commit.sha,
           ...(signal ? { request: { signal } } : {}),
         });
-        for (const f of data.files ?? []) {
-          churn.set(f.filename, (churn.get(f.filename) ?? 0) + 1);
-        }
+        return data.files ?? [];
       } catch {
         // Individual commit fetch failed — skip silently
+        return [];
       }
-    }
+    });
+    for (const list of files) for (const f of list) churn.set(f.filename, (churn.get(f.filename) ?? 0) + 1);
   } catch {
     // Commit listing failed — return empty map
   }
@@ -762,34 +791,24 @@ export async function getFileMetadata(
   changedFiles: ChangedFile[],
   signal?: AbortSignal
 ): Promise<FileMetadata[]> {
-  // Fetch churn data once for the whole PR
-  const churnMap = await getPrFileChurn(octokit, owner, repo, pullNumber, signal);
-
-  // Fetch last-modified dates in parallel, batched 10 at a time to
-  // stay well under GitHub's rate limit.
-  const metadata: FileMetadata[] = changedFiles.map((f) => ({
+  // Churn (once for the whole PR) and every file's last-modified date are independent reads, so they run together.
+  // The dates run 10 at a time to stay well under GitHub's rate limit.
+  const [churnMap, lastModified] = await Promise.all([
+    getPrFileChurn(octokit, owner, repo, pullNumber, signal),
+    mapBounded(changedFiles, 10, async (f) => {
+      signal?.throwIfAborted();
+      return f.status === 'added' ? null : getFileLastModified(octokit, owner, repo, f.filename, baseSha, signal);
+    }),
+  ]);
+  const metadata: FileMetadata[] = changedFiles.map((f, i) => ({
     filename: f.filename,
     previousFilename: f.previous_filename,
     status: f.status,
     additions: f.additions,
     deletions: f.deletions,
     prCommitCount: churnMap.get(f.filename) ?? 1,
+    lastModified: lastModified[i],
   }));
-
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < metadata.length; i += BATCH_SIZE) {
-    signal?.throwIfAborted();
-    const batch = metadata.slice(i, i + BATCH_SIZE);
-    await Promise.all(
-      batch.map(async (fm) => {
-        if (fm.status === 'added') {
-          fm.lastModified = null;
-        } else {
-          fm.lastModified = await getFileLastModified(octokit, owner, repo, fm.filename, baseSha, signal);
-        }
-      })
-    );
-  }
 
   return metadata;
 }
@@ -801,7 +820,7 @@ export async function getFileMetadata(
 
 import { probeClaudeContext, type ClaudeContextIO } from './claude-context';
 
-function makeGithubClaudeIO(octokit: Octokit, owner: string, repo: string, ref: string): ClaudeContextIO {
+export function makeGithubClaudeIO(octokit: Octokit, owner: string, repo: string, ref: string): ClaudeContextIO {
   return {
     readFile: (p) => getFileContent(octokit, owner, repo, p, ref),
     listDir: async (p, kind) => {
@@ -816,14 +835,109 @@ function makeGithubClaudeIO(octokit: Octokit, owner: string, repo: string, ref: 
   };
 }
 
-export function getProjectClaudeContext(
+type ClaudeTreeEntry = { path: string; type: string; mode: number; object?: { entries?: ClaudeTreeEntry[] } | null };
+
+/**
+ * The Claude-context probe's reads at `ref`, in two GraphQL queries. The first lists the root and `.claude/` three
+ * levels deep, names and modes only. The second reads the texts the probe uses: CLAUDE.md, `commands/*.md`, `agents/*.md` and
+ * each `skills/<name>/SKILL.md`. Whatever they cannot settle exactly (a symlink, submodule, binary or large blob, a
+ * failed alias or query) goes through the REST reads in `makeGithubClaudeIO`, which follow symlinks.
+ */
+async function githubClaudeSnapshotIO(octokit: Octokit, owner: string, repo: string, ref: string): Promise<ClaudeContextIO> {
+  const rest = makeGithubClaudeIO(octokit, owner, repo, ref);
+  const entry = (inner: string) => `entries { path type mode${inner ? ` object { ${inner} }` : ''} }`;
+  type Response = {
+    repository?: {
+      root?: { __typename?: string; entries?: ClaudeTreeEntry[] } | null;
+      top?: { entries?: { name: string; type: string; mode: number }[] } | null;
+    } | null;
+  };
+  let answer: AliasedAnswer<Response>;
+  try {
+    answer = await aliasedGraphql<Response>(
+      octokit,
+      `query($owner:String!,$name:String!){ rateLimit { cost } repository(owner:$owner,name:$name){
+        top: object(expression:${JSON.stringify(`${ref}:`)}) { ... on Tree { entries { name type mode } } }
+        root: object(expression:${JSON.stringify(`${ref}:.claude`)}) { __typename ... on Tree { ${entry(
+          `... on Tree { ${entry(`... on Tree { ${entry('')} }`)} }`
+        )} } }
+      } }`,
+      { owner, name: repo }
+    );
+  } catch (error) {
+    const limited = githubRateLimit(error);
+    if (limited) throw limited;
+    return rest;
+  }
+  if (!answer.data.repository || answer.failed('repository')) return rest;
+  const texts = new Map<string, string | null>();
+  const listings = new Map<string, { file: string[]; dir: string[] } | undefined>();
+  /** A listing the contents API would give; undefined when an entry is neither a plain file nor a directory. */
+  const listing = (entries: ClaudeTreeEntry[]) =>
+    entries.every((e) => e.mode === TREE_MODE || REGULAR_FILE_MODES.has(e.mode))
+      ? {
+          file: entries.filter((e) => e.type === 'blob').map((e) => e.path),
+          dir: entries.filter((e) => e.type === 'tree').map((e) => e.path),
+        }
+      : undefined;
+  // CLAUDE.md's mode comes from the root listing above, so the texts take one more query, not two.
+  const reads: BlobRequest[] = [];
+  const top = answer.data.repository.top?.entries;
+  const md = top?.find((e) => e.name === 'CLAUDE.md');
+  if (!top) reads.push({ owner, repo, ref, path: 'CLAUDE.md' });
+  else if (md?.type === 'blob') reads.push({ owner, repo, ref, path: 'CLAUDE.md', mode: md.mode });
+  // Absent, or a directory: the contents API gives no text.
+  else texts.set('CLAUDE.md', null);
+  const root = answer.data.repository.root;
+  if (root === null || (root && root.__typename !== 'Tree')) listings.set('.claude', { file: [], dir: [] });
+  else if (root?.entries) {
+    listings.set('.claude', listing(root.entries));
+    for (const dir of root.entries) {
+      const name = dir.path.slice('.claude/'.length);
+      if (dir.type !== 'tree' || !dir.object?.entries || !['commands', 'agents', 'skills'].includes(name)) continue;
+      listings.set(dir.path, listing(dir.object.entries));
+      for (const child of dir.object.entries) {
+        // Only the texts the probe reads: `*.md` in commands and agents, and each skill's SKILL.md.
+        if (name !== 'skills') {
+          if (child.type === 'blob' && child.path.endsWith('.md')) reads.push({ owner, repo, ref, path: child.path, mode: child.mode });
+          continue;
+        }
+        if (child.type !== 'tree' || !child.object?.entries) continue;
+        const children = listing(child.object.entries);
+        listings.set(child.path, children);
+        if (!children) continue;
+        const skill = child.object.entries.find((e) => e.path === `${child.path}/SKILL.md`);
+        if (skill?.type === 'blob') reads.push({ owner, repo, ref, path: skill.path, mode: skill.mode });
+        // No SKILL.md file in a listed directory: the contents API would answer 404, or a directory listing.
+        else texts.set(`${child.path}/SKILL.md`, null);
+      }
+    }
+  }
+  const answers = await readBlobs(octokit, reads);
+  for (const [i, { path }] of reads.entries()) {
+    const value = restEquivalent(answers[i]);
+    if (value !== undefined) texts.set(path, value);
+  }
+  return {
+    readFile: (path) => {
+      const known = texts.get(path);
+      return known !== undefined ? Promise.resolve(known) : rest.readFile(path);
+    },
+    listDir: (path, kind) => {
+      const known = listings.get(path);
+      return known ? Promise.resolve(known[kind]) : rest.listDir(path, kind);
+    },
+  };
+}
+
+export async function getProjectClaudeContext(
   octokit: Octokit,
   owner: string,
   repo: string,
   ref: string,
   opts?: { unfiltered?: boolean },
 ): Promise<ProjectClaudeContext | null> {
-  return probeClaudeContext(makeGithubClaudeIO(octokit, owner, repo, ref), opts);
+  return probeClaudeContext(await githubClaudeSnapshotIO(octokit, owner, repo, ref), opts);
 }
 
 // ── DiffSource adapter ──────────────────────────────────────────
@@ -985,12 +1099,15 @@ export class GitHubDiffSource implements DiffSource {
   ): Promise<Record<string, string>> {
     const meta = await this.getMetadata();
     const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
+    // Without a clone, every candidate path is read in one batch of GraphQL queries.
     return getNeighborFiles(this.octokit, this.owner, this.repo, paths, contents, gitRef, smartImportsProvider,
-      (filePath) => this.readAt(this.owner, this.repo, filePath, gitRef));
+      localClones.has(`${this.owner}/${this.repo}`) ? (filePath) => this.readAt(this.owner, this.repo, filePath, gitRef) : undefined);
   }
 
   async getProjectClaudeContext(opts?: { unfiltered?: boolean }): Promise<ProjectClaudeContext | null> {
     const meta = await this.getMetadata();
+    if (!localClones.has(`${this.owner}/${this.repo}`))
+      return getProjectClaudeContext(this.octokit, this.owner, this.repo, meta.headSha, opts);
     const github = makeGithubClaudeIO(this.octokit, this.owner, this.repo, meta.headSha);
     return probeClaudeContext({
       readFile: (p) => this.readAt(this.owner, this.repo, p, meta.headSha),

@@ -7,16 +7,25 @@ export async function markPrsReady(
   account: string,
   deps: {
     read: (url: string, force: boolean) => Promise<PrActionState>;
+    /** `read` for every member at once, one promise per URL in order, such as one aliased GitHub query. */
+    readMany?: (urls: string[], force: boolean) => Promise<PrActionState>[];
     act: (request: PrActionRequest) => Promise<PrActionResult>;
     active: () => boolean;
     ready: (url: string) => void;
   }
 ) {
   const completed: string[] = [];
-  for (const member of members) {
+  // One forced read of the whole stack up front; each write still rechecks its own PR.
+  const reads = deps.readMany?.(
+    members.map((member) => member.url),
+    true
+  );
+  // A failure stops at that member; later reads are never awaited.
+  for (const read of reads ?? []) read.catch(() => {});
+  for (const [index, member] of members.entries()) {
     if (!deps.active()) break;
     try {
-      const state = await deps.read(member.url, true);
+      const state = await (reads ? reads[index] : deps.read(member.url, true));
       if (!deps.active()) break;
       if (state.account !== account) throw Error('Your GitHub account changed. Try again from the current account.');
       if (state.isDraft) {

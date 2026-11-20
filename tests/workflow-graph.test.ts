@@ -1242,25 +1242,35 @@ void test('job step expansion reroutes locally and supports REST timestamps in e
   assert.equal(h.calls.length, calls, 'Expand must not refetch jobs or definitions');
 });
 
-/** Answers each aliased blob from `files`, as GitHub's `object(expression:)` would. */
+/** Answers each aliased blob, and each parent directory's entries, from `files`, as GitHub's `object(expression:)` would. */
 function blobAnswer(files: Partial<Record<string, string | null>>, oversize: string[] = []) {
   return (query: string) => {
     const data: Record<string, Record<string, unknown>> = {};
-    for (const repo of query.matchAll(
-      /(r\d+): repository\(owner:"([^"]+)",name:"([^"]+)"\) \{(.*?)\} \}(?=\s*(?:r\d+:|\}$))/gs
-    )) {
+    const repos = [...query.matchAll(/(r\d+): repository\(owner:"([^"]+)",name:"([^"]+)"\)/g)];
+    for (const [k, repo] of repos.entries()) {
+      const body = query.slice(repo.index + repo[0].length, repos[k + 1]?.index ?? query.length);
       const fields: Record<string, unknown> = {};
-      for (const field of repo[4].matchAll(/(f\d+): object\(expression:"[a-f\d]{40}:([^"]+)"\)/g)) {
+      for (const field of body.matchAll(/(f\d+): object\(expression:"[a-f\d]{40}:([^"]+)"\)/g)) {
         const text = files[field[2]];
         fields[field[1]] =
           typeof text !== 'string'
             ? null
             : {
+                __typename: 'Blob',
                 text,
                 byteSize: oversize.includes(field[2]) ? 300_000 : text.length,
                 isTruncated: false,
                 isBinary: false,
               };
+      }
+      for (const dir of body.matchAll(/(d\d+): object\(expression:"[a-f\d]{40}:([^"]*)"\)/g)) {
+        const prefix = dir[2] ? `${dir[2]}/` : '';
+        fields[dir[1]] = {
+          __typename: 'Tree',
+          entries: Object.keys(files)
+            .filter((path) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
+            .map((path) => ({ name: path.slice(prefix.length), mode: 0o100644 })),
+        };
       }
       data[repo[1]] = fields;
     }
@@ -1285,7 +1295,7 @@ void test('primes all referenced sources in one query', async () => {
   assert.ok(graph);
   assert.ok(!graph.warnings.some((w) => w.includes('unavailable')), graph.warnings.join('\n'));
   assert.ok(graph.nodes.some((n) => n.name === 'Child') && graph.nodes.some((n) => n.name === 'Shared'));
-  assert.equal(h.calls.filter((c) => c.endsWith('/graphql')).length, 1, 'One query reads every source');
+  assert.equal(h.calls.filter((c) => c.endsWith('/graphql')).length, 2, 'One query reads every source, one lists their modes');
   assert.equal(h.calls.filter((c) => c.includes('/contents/')).length, 0, 'No per-file REST reads');
 });
 void test('falls back to REST for oversize or failed blobs', async () => {
@@ -1442,4 +1452,24 @@ void test('graph notices name what is missing and links name their destination',
   assert.equal(checkGroupLabel([done('failure')]), '1 failed');
   assert.equal(checkGroupLabel([done('skipped')]), '1 skipped');
   assert.equal(checkGroupLabel([done('neutral'), done('skipped')]), '2 skipped / neutral');
+});
+
+void test('job pages follow the largest job count seen, up to five pages', async () => {
+  const { readJobPages } = await import('../src/workflow-graph-service');
+  // Page 1 says 150 jobs; page 2, read after more jobs started, says 320.
+  const totals = [150, 320, 320, 320, 320];
+  const read: number[] = [];
+  const result = await readJobPages((page) => {
+    read.push(page);
+    return Promise.resolve({ total_count: totals[page - 1], page });
+  });
+  assert.deepEqual(read, [1, 2, 3, 4]);
+  assert.equal(result.total, 320);
+  // Never more than five pages, however many jobs there are.
+  const many: number[] = [];
+  await readJobPages((page) => {
+    many.push(page);
+    return Promise.resolve({ total_count: page === 1 ? 120 : 900 });
+  });
+  assert.deepEqual(many, [1, 2, 3, 4, 5]);
 });

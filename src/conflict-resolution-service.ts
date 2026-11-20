@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { settleInOrder } from '../lib/bounded';
 import fs from 'node:fs/promises';
 import {
   CONFLICT_FILE_LIMIT,
@@ -54,6 +55,8 @@ interface Deps {
   directory: () => string;
   context: () => Context;
   read: (url: string) => Promise<PrActionState>;
+  /** `read` for many PRs at once, one promise per URL in order. */
+  readMany?: (urls: string[]) => Promise<PrActionState>[];
   mergiraf: () => string;
   suggest: (
     context: { session: ConflictSession; file: ConflictFile; instructions: string },
@@ -843,7 +846,8 @@ export function createConflictResolutionService(deps: Deps) {
       const restack = saved.restack;
       if (restack?.status === 'prepared') {
         // Recover a successful atomic push whose response or local persistence was interrupted.
-        const states = await Promise.all(restack.branches.map((branch) => deps.read(branch.url)));
+        const urls = restack.branches.map((branch) => branch.url);
+        const states = await settleInOrder(deps.readMany ? deps.readMany(urls) : urls.map((u) => deps.read(u)));
         assertAccount(ctx);
         if (
           states.length &&
@@ -1148,6 +1152,7 @@ export function createConflictResolutionService(deps: Deps) {
             git: (args: string[], input?: string, allowed?: number[], overrideSignal?: AbortSignal) =>
               git(ctx, id, args, overrideSignal ?? signal, input, allowed),
             read: deps.read,
+            readMany: deps.readMany,
             directory: await directory(ctx.account, id),
             remote,
             signal,

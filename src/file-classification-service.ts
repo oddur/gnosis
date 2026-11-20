@@ -4,6 +4,7 @@ import { classificationKey, fileSource, generatedHeader, pathFileKinds, type Fil
 import { generatedAttribute, type AttributeFile } from '../lib/git-attributes';
 import { githubCacheFor } from '../lib/github-client';
 import { withGitHubPriority } from '../lib/github-scheduler';
+import { readBlobs } from '../lib/github-graphql-batch';
 interface RecordValue {
   version: 1;
   kinds: Record<string, FileKinds>;
@@ -90,24 +91,16 @@ export function createFileClassificationService(
       if (known) found.push({ path, text: known.text });
       else missing.push(path);
     }
-    const [owner, name] = repoName.split('/');
-    for (let i = 0; i < missing.length; i += 32) {
-      const batch = missing.slice(i, i + 32);
-      const fields = batch
-        .map((p, j) => `a${j}: object(expression:${JSON.stringify(ref + ':' + p)}) { ... on Blob { text byteSize } }`)
-        .join('\n');
-      const response = await client.graphql<{
-        repository: Record<string, { text: string | null; byteSize: number } | null> | null;
-      }>(`query($owner:String!,$name:String!){rateLimit{cost} repository(owner:$owner,name:$name){${fields}}}`, { owner, name });
-      if (!response.repository) throw Error('Repository attributes are unavailable');
-      for (const [j, path] of batch.entries()) {
-        const blob = response.repository[`a${j}`];
-        if (blob && (blob.byteSize > 256_000 || blob.text === null))
-          throw Error('Repository attributes are too large to inspect');
-        const text = blob?.text ?? '';
-        found.push({ path, text });
-        if (cache?.version() === version) cache?.set(`attributes:v1:${repoName}:${ref}:${path}`, { text });
-      }
+    const [owner, repo] = repoName.split('/');
+    const answers = await readBlobs(client, missing.map((path) => ({ owner, repo, ref, path })));
+    for (const [j, path] of missing.entries()) {
+      const answer = answers[j];
+      if (answer.kind === 'other' && answer.reason === 'failed') throw Error('Repository attributes are unavailable');
+      // Git ignores a symlinked .gitattributes; a missing one declares nothing.
+      if (answer.kind === 'other' && answer.reason !== 'symlink') throw Error('Repository attributes are too large to inspect');
+      const text = answer.kind === 'text' ? answer.text : '';
+      found.push({ path, text });
+      if (cache?.version() === version) cache?.set(`attributes:v1:${repoName}:${ref}:${path}`, { text });
     }
     return found;
   }

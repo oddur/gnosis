@@ -1,5 +1,7 @@
 import type { Octokit } from '@octokit/rest';
-import { githubCacheFor } from '../lib/github-client';
+import { githubCacheFor, githubRateLimit } from '../lib/github-client';
+import { chunked, mapBounded } from '../lib/bounded';
+import { aliasedGraphql } from '../lib/github-graphql-batch';
 import { isCacheRecord } from '../lib/github-cache';
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { feedbackReplyBody } from '../lib/review-threads';
@@ -153,6 +155,8 @@ async function graphql<T>(client: Octokit, query: string, variables: Record<stri
   if (!result.data) throw new Error('GitHub returned no review discussion data.');
   return result.data;
 }
+/** Long review threads whose next reply page shares one aliased `node(id:)` query. */
+const THREADS_PER_QUERY = 25;
 function nextCursor<T>(page: Page<T>, previous: string | null) {
   if (!page.pageInfo.hasNextPage) return null;
   const next = page.pageInfo.endCursor;
@@ -170,6 +174,15 @@ export function createReviewThreadService(now = Date.now) {
       caches.set(client, cache);
     }
     return cache;
+  }
+  /** The saved discussion `list` may answer with, without a request: on disk for under a minute, or in memory. */
+  function freshCopy(client: Octokit, prUrl: string): GitHubReviewThreads | undefined {
+    const entry = cacheFor(client).get(prUrl);
+    const persistent = githubCacheFor(client);
+    const saved = persistent?.get(`review-threads:${prUrl}`, isSavedThreads);
+    if (saved && !saved.revalidate && saved.value.expires > now() && saved.value.expires <= now() + 60_000)
+      return saved.value.value;
+    if (entry?.value && entry.expires > now() && (!persistent || entry.version === persistent.version())) return entry.value;
   }
   async function fetchThreads(client: Octokit, prUrl: string): Promise<GitHubReviewThreads> {
     const variables = parseUrl(prUrl);
@@ -205,33 +218,44 @@ export function createReviewThreadService(now = Date.now) {
           }
           return all;
         }
-        feedback = feedbackOf(
-          pr,
-          await collect(pr.comments, 'comments', bodyFields),
-          await collect(pr.reviews, 'reviews', reviewFields),
-          await collect(pr.reviewRequests, 'reviewRequests', requestedReviewerFields)
-        );
+        // The three lists page independently, so their remaining pages load together.
+        const [comments, reviews, requests] = await Promise.all([
+          collect(pr.comments, 'comments', bodyFields),
+          collect(pr.reviews, 'reviews', reviewFields),
+          collect(pr.reviewRequests, 'reviewRequests', requestedReviewerFields),
+        ]);
+        feedback = feedbackOf(pr, comments, reviews, requests);
       }
       if (revision && (revision.headSha !== pr.headRefOid || revision.baseSha !== pr.baseRefOid))
         throw new Error('The PR changed while loading discussions. Refresh comments to try again.');
       revision = { headSha: pr.headRefOid, baseSha: pr.baseRefOid };
-      for (const thread of pr.reviewThreads.nodes) {
-        let comments = thread.comments;
-        const all = [...comments.nodes];
-        let after = nextCursor(comments, null);
-        while (after) {
-          const more: { node: { comments: Page<GitHubReviewComment> } | null } = await graphql(
+      // Every thread with more replies than the first page reads its next page in one aliased query, 25 threads each.
+      const replies = pr.reviewThreads.nodes.map((thread) => ({
+        thread,
+        all: [...thread.comments.nodes],
+        after: nextCursor(thread.comments, null),
+      }));
+      for (let open = replies.filter((r) => r.after); open.length; open = replies.filter((r) => r.after)) {
+        for (const batch of chunked(open, THREADS_PER_QUERY)) {
+          const more = await graphql<Record<string, { comments: Page<GitHubReviewComment> } | null>>(
             client,
-            `query ThreadReplies($id:ID!,$after:String!) { rateLimit { cost } node(id:$id) { ... on PullRequestReviewThread { comments(first:100,after:$after) { nodes { ${commentFields} } ${pageFields} } } } }`,
-            { id: thread.id, after }
+            `query ThreadReplies { rateLimit { cost } ${batch
+              .map(
+                (r, j) =>
+                  `t${j}: node(id:${JSON.stringify(r.thread.id)}) { ... on PullRequestReviewThread { comments(first:100,after:${JSON.stringify(r.after)}) { nodes { ${commentFields} } ${pageFields} } } }`
+              )
+              .join(' ')} }`,
+            {}
           );
-          if (!more.node) throw new Error('This discussion is no longer available. Refresh comments.');
-          comments = more.node.comments;
-          all.push(...comments.nodes);
-          after = nextCursor(comments, after);
+          for (const [j, r] of batch.entries()) {
+            const node = more[`t${j}`];
+            if (!node) throw new Error('This discussion is no longer available. Refresh comments.');
+            r.all.push(...node.comments.nodes);
+            r.after = nextCursor(node.comments, r.after);
+          }
         }
-        threads.push({ ...thread, comments: all });
       }
+      for (const { thread, all } of replies) threads.push({ ...thread, comments: all });
       cursor = nextCursor(pr.reviewThreads, cursor);
     } while (cursor);
     return { ...revision, threads, checkedAt: now(), ...(feedback ? { feedback } : {}) };
@@ -354,19 +378,11 @@ export function createReviewThreadService(now = Date.now) {
       if (entry?.pending) return structuredClone(await joinGitHubWork(entry.pending));
       const persistent = githubCacheFor(client);
       const version = persistent?.version();
-      const key = `review-threads:${prUrl}`;
-      const saved = persistent?.get(key, isSavedThreads);
-      if (
-        !refresh &&
-        saved &&
-        !saved.revalidate &&
-        saved.value.expires > now() &&
-        saved.value.expires <= now() + 60_000
-      )
+      if (!refresh) {
         // Callers such as `act` and `comment` edit the result. The cached value is frozen and shared.
-        return structuredClone(saved.value.value);
-      if (!refresh && entry?.value && entry.expires > now() && (!persistent || entry.version === version))
-        return structuredClone(entry.value);
+        const fresh = freshCopy(client, prUrl);
+        if (fresh) return structuredClone(fresh);
+      }
       entry = { expires: 0 };
       cache.set(prUrl, entry);
       const current = entry;
@@ -379,6 +395,40 @@ export function createReviewThreadService(now = Date.now) {
         current.pending = undefined;
         if (!current.value && cache.get(prUrl) === current) cache.delete(prUrl);
       }
+    },
+    /**
+     * `list` for many PRs. The ones that need a read share GraphQL preloads of five PRs each, two at once; `list` then
+     * answers from them, and reads by itself only a PR a preload could not save completely. Each PR settles alone,
+     * in request order. A preload group that hits a rate limit fails its own PRs with that limit; the other groups
+     * still answer.
+     */
+    async listMany(client: Octokit, prUrls: string[], refresh = false): Promise<PromiseSettledResult<GitHubReviewThreads>[]> {
+      const unique = [...new Set(prUrls)];
+      const stale = refresh ? unique : unique.filter((url) => !service.fresh(client, url));
+      const saved = new Set<string>();
+      const limited = new Map<string, unknown>();
+      await mapBounded(
+        chunked(stale, 5).filter((group) => group.length > 1),
+        2,
+        async (group) => {
+          try {
+            for (const url of (await service.preload(client, group)).saved) saved.add(url);
+          } catch (error) {
+            // A PR with a read in flight was left out of the preload; it joins that read through `list`.
+            if (githubRateLimit(error)) for (const url of group) if (!cacheFor(client).get(url)?.pending) limited.set(url, error);
+            // Otherwise each PR of this group reads its own discussion below.
+          }
+        }
+      );
+      return Promise.allSettled(
+        prUrls.map((url) =>
+          limited.has(url) ? Promise.reject(limited.get(url) as Error) : service.list(client, url, refresh && !saved.has(url))
+        )
+      );
+    },
+    /** Local data only. Whether `list` without `refresh` would answer without a request: a fresh copy, or a read in flight. */
+    fresh(client: Octokit, prUrl: string) {
+      return !!cacheFor(client).get(prUrl)?.pending || !!freshCopy(client, prUrl);
     },
     /** Local data only. The saved record's identity and age, for deciding whether to refresh it. */
     saved(client: Octokit, prUrl: string) {
@@ -408,21 +458,12 @@ export function createReviewThreadService(now = Date.now) {
             `p${i}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { pullRequest(number:${number}) { ${pullFields('', '')} } }`
         )
         .join(' ')} }`;
-      const response = await client.request('POST /graphql', { query });
-      const result = response.data as {
-        data?: Record<string, { pullRequest: Pull | null } | null> | null;
-        errors?: { message: string; path?: (string | number)[] }[];
-      };
-      const failed = new Set<string>();
-      for (const error of result.errors ?? []) {
-        if (typeof error.path?.[0] !== 'string') throw new Error(error.message);
-        failed.add(error.path[0]);
-      }
-      if (!result.data) throw new Error('GitHub returned no review discussion data.');
+      // A PR with an error under its alias is left to its own read.
+      const answer = await aliasedGraphql<Record<string, { pullRequest: Pull | null } | null>>(client, query);
       const saved: string[] = [];
       const incomplete: string[] = [];
       for (const [i, { url }] of targets.entries()) {
-        const pr = failed.has(`p${i}`) ? undefined : result.data[`p${i}`]?.pullRequest;
+        const pr = answer.failed(`p${i}`) ? undefined : answer.data[`p${i}`]?.pullRequest;
         if (!pr?.comments || !pr.reviews || !pr.reviewRequests) continue;
         if (
           [pr.comments, pr.reviews, pr.reviewRequests, pr.reviewThreads].some((page) => page.pageInfo.hasNextPage) ||

@@ -1182,7 +1182,8 @@ void test('incomplete GitHub search pages remain retryable instead of being save
     await assert.rejects(createDiscoveryListings(s.deps.client(), state, options).personal(), /incomplete search/);
     incomplete = false;
     assert.deepEqual(await createDiscoveryListings(s.deps.client(), state, options).personal(), []);
-    assert.deepEqual(pages, [1, 1, 1]);
+    // Both roles search together, so both incomplete first pages are read again.
+    assert.deepEqual(pages, [1, 1, 1, 1]);
   } finally {
     s.cleanup();
   }
@@ -1600,7 +1601,8 @@ void test('completed batches become visible before the rest of discovery finishe
   let entered!: () => void, release!: () => void;
   const started = new Promise<void>(resolve => { entered = resolve; });
   const blocked = new Promise<void>(resolve => { release = resolve; });
-  const prs = Array.from({ length: 6 }, (_, i) => ({
+  // A wave is 25 PRs: the 26th waits in the next one.
+  const prs = Array.from({ length: 26 }, (_, i) => ({
     ...structuredClone(s.pr), html_url: `https://github.com/owner/repo/pull/${i + 1}`,
     head: { ...s.pr.head, ref: `branch-${i}` },
     base: { ...s.pr.base, repo: { ...s.pr.base.repo, default_branch: 'main' } },
@@ -1609,14 +1611,14 @@ void test('completed batches become visible before the rest of discovery finishe
   Object.assign(s.deps.client().pulls, {
     list: () => Promise.resolve({ data: prs }),
     get: async ({ pull_number }: { pull_number: number }) => {
-      if (pull_number === 6) { entered(); await blocked; }
+      if (pull_number === 26) { entered(); await blocked; }
       return { data: prs[pull_number - 1] };
     },
   });
   const pending = s.service.queue();
   try {
     await started;
-    assert.equal(s.service.snapshot().items.length, 5, 'Useful work is published while the next batch is waiting');
+    assert.equal(s.service.snapshot().items.length, 25, 'Useful work is published while the next batch is waiting');
     assert.equal(s.service.snapshot().sync?.status, 'checking');
   } finally { release(); await pending; s.cleanup(); }
 });
