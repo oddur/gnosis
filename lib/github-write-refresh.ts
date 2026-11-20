@@ -96,6 +96,9 @@ const commentsAdded =
     (!before(details) ||
       (sameCountSource(metadata, before(details)) && count(metadata[field]) > count(before(details)?.[field])));
 
+/** Writes whose follow-up compares comment counts. */
+const COUNTED = new Set<GitHubWriteAction>(['review-comment', 'thread-reply', 'comment-delete', 'feedback-reply']);
+
 export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   // The merge commit and the closed state can trail a confirmed merge.
   merge: { kinds: ALL, probes: ['metadata'], seen: merged, queue: true },
@@ -317,6 +320,12 @@ export function createGitHubWriteRefresher(deps: GitHubWriteRefresherDeps) {
       try {
         if (probe === 'metadata') {
           seen.metadata = (await deps.read('metadata', { url: job.url }, phase, job.action, job.details.before)) as WriteObservation['metadata'];
+          // A count-based write whose probe came from the other API (GraphQL could not answer this PR exactly) is
+          // re-baselined on that copy: later probes then read the same API and compare like with like. This read
+          // compares the copy with itself, so it never settles the write.
+          const baseline = job.details.before?.metadata;
+          if (COUNTED.has(job.action) && seen.metadata && baseline && !sameCountSource(seen.metadata, baseline))
+            job.details = { ...job.details, before: { ...job.details.before, metadata: seen.metadata } };
         } else {
           const headSha = seen.metadata?.headSha ?? job.details.before?.metadata?.headSha;
           seen.signals = (await deps.read('signals', { url: job.url, headSha }, phase, job.action)) as WriteObservation['signals'];

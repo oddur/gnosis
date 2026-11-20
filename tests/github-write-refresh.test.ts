@@ -311,3 +311,45 @@ void test('every GitHub write in the app is in the inventory', () => {
   assert.match(main, /githubWrites\.after\('push'/, 'conflict pushes refresh through githubWrites');
   assert.match(main, /githubWrites\.after\('stack-merged'/, 'a completed stack merge refreshes through githubWrites');
 });
+
+void test('a reply probed through REST against a GraphQL baseline re-baselines on REST and settles REST against REST', async () => {
+  let now = 0;
+  const timers: { at: number; run: () => void; cleared?: boolean }[] = [];
+  const events: GitHubWriteEvent[] = [];
+  // GraphQL can never answer this PR exactly, so every probe is REST: 4 at first (its counter lags), then 5.
+  const restCounts = [4, 4, 5];
+  const befores: (string | undefined)[] = [];
+  const refresher = createGitHubWriteRefresher({
+    now: () => now,
+    setTimer: (run, ms) => {
+      const timer = { at: now + ms, run };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as { cleared?: boolean }).cleared = true;
+    },
+    active: () => true,
+    account: () => 'token',
+    baseline: () => ({ metadata: metadata({ reviewCommentCount: 6, source: 'graphql' }) }),
+    invalidate: () => {},
+    read: (_probe, _target, _phase, _action, before) => {
+      befores.push(before?.metadata?.source);
+      return Promise.resolve(metadata({ reviewCommentCount: restCounts.shift() ?? 5, source: 'rest' }));
+    },
+    refreshed: (event) => events.push(event),
+  });
+  await refresher.after('thread-reply', [URL]);
+  for (let i = 0; i < 5 && !events.some((e) => e.phase === 'settled'); i++) {
+    const next = timers.filter((t) => !t.cleared).sort((a, b) => a.at - b.at).at(0);
+    if (!next) break;
+    next.cleared = true;
+    now = next.at;
+    next.run();
+    for (let j = 0; j < 10; j++) await Promise.resolve();
+  }
+  assert.deepEqual(befores.slice(0, 3), ['graphql', 'rest', 'rest'], 'after the first REST probe the baseline is REST');
+  assert.ok(events.some((e) => e.phase === 'settled'), 'REST 5 after REST 4 shows the reply');
+  // GraphQL 6 against REST 4 never counted as a delete or a reply on its own.
+  assert.equal(events.filter((e) => e.phase === 'settled').length, 1);
+});
