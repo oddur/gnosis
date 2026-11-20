@@ -1,9 +1,11 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 
 /**
+ * Its budgets are report-only on CI and enforced by `npm run test:perf` (docs/continuous-integration.md, "Performance tests").
+ *
  * Typing in a line comment inside a large Changes view (#354). A key must not restyle the diff: every key used to
  * cost a full style recalculation of the page. This types 20 characters into an inline comment on a 600-file PR
  * with a large file and checks the per-key event duration and style time.
@@ -237,9 +239,9 @@ void app.whenReady().then(async () => {
       for (const [key, count] of [...counts].sort((a, b) => b[1] - a[1]).slice(0, 40)) console.log(`  ${count}x ${key.slice(0, 400)}`);
     }
     assert.equal(keys.length, KEYS, 'Each key is traced');
-    assert.ok(result.styleP90 <= STYLE_BUDGET_MS, `Style per key p90 ${result.styleP90} ms is over ${STYLE_BUDGET_MS} ms`);
-    assert.ok(result.layoutP90 <= LAYOUT_BUDGET_MS, `Layout per key p90 ${result.layoutP90} ms is over ${LAYOUT_BUDGET_MS} ms`);
-    assert.ok(result.eventP90 <= EVENT_BUDGET_MS, `Key event p90 ${result.eventP90} ms is over ${EVENT_BUDGET_MS} ms`);
+    assertPerf('comment typing: style per key p90', result.styleP90, STYLE_BUDGET_MS);
+    assertPerf('comment typing: layout per key p90', result.layoutP90, LAYOUT_BUDGET_MS);
+    assertPerf('comment typing: key event p90', result.eventP90, EVENT_BUDGET_MS);
     console.log('Comment typing passed: style, layout and event time per key stay within budget in a 600-file Changes view.');
     app.exit(0);
   } catch (error) {

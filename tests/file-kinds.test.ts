@@ -11,7 +11,7 @@ import {
   fileSource,
 } from '../lib/file-kinds';
 import { generatedAttribute } from '../lib/git-attributes';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 import { createFileFilterState } from '../src/file-filter-state';
 import { createFileClassificationService } from '../src/file-classification-service';
 import type { PrChanges } from '../lib/pr-changes';
@@ -388,5 +388,5 @@ void test('.gitattributes rules compile once per PR, so a large file against man
   const elapsed = performance.now() - started;
   assert.deepEqual([values[0], values[1], values[2]], [true, true, false]);
   assert.ok(constructions <= lines.length, `3,000 paths against ${lines.length} rules built ${constructions} regular expressions`);
-  assert.ok(elapsed < perfBudget(3000), `3,000 paths against ${lines.length} rules took ${Math.round(elapsed)} ms`);
+  assertPerf(`3,000 paths against ${lines.length} .gitattributes rules`, elapsed, perfBudget(3000));
 });

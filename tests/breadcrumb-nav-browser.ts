@@ -1,7 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 
 /**
  * Breadcrumb navigation, the whole matrix (#417, #394, show scope), on the synthetic files in
@@ -96,7 +96,7 @@ void app.whenReady().then(async () => {
   };
   /** Long tasks over the scaled budget: a jump that reveals and renders a 200-row slice runs one render task by design
    * (#353), about 17 ms here and up to 50 ms on a slow CI runner. */
-  const overBudget = (tasks: number[]) => tasks.filter((ms) => ms > perfBudget(50));
+  const longest = (tasks: number[]) => Math.max(0, ...tasks);
 
   /** Helpers in the page, for a diff's root (a Changes row or a topic's file group) and the scroller it is in. */
   const install = () =>
@@ -575,7 +575,8 @@ void app.whenReady().then(async () => {
     assert.equal(rapid.filter((m) => m.kind === 'line').length, 1, 'Rapid jumps leave one place marked');
     assert.ok(Math.abs(((await js<number | null>(`window.lineTop(${JSON.stringify(deep)},'function step(value: number): number {',false)`)) ?? 0) - (rapidState.bottom ?? 0)) <= 2, 'and land where the last one goes');
     assert.equal(rapidState.active, 'Go to function step', 'Focus stays through rapid jumps');
-    assert.deepEqual(overBudget(await js<number[]>('window.__longTasks.map(t=>Math.round(t.duration))')), [], `Rapid jumps leave no task over ${perfBudget(50)} ms`);
+    const rapidTasks = await js<number[]>('window.__longTasks.map(t=>Math.round(t.duration))');
+    assertPerf('breadcrumb nav: longest task during rapid jumps', longest(rapidTasks), perfBudget(50), { detail: JSON.stringify(rapidTasks) });
     await js('document.activeElement?.blur()');
     // Narrow: the pinned breadcrumb folds from the outside into "…", keeps the innermost, and keeps its height.
     await setWidth(deep, '430px');
@@ -641,7 +642,7 @@ void app.whenReady().then(async () => {
     assert.ok(slices > 1, `The revealed hunk is sliced, and its slices mount as they are reached: ${slices}`);
     assert.equal(await js<number>(`window.shownCount(${JSON.stringify(far)},'pub const FAR_')`), 240, 'All 240 lines from the module down to the reader show');
     assert.ok(steps >= 4, `The scroll eases over several frames: ${steps}`);
-    assert.deepEqual(overBudget(farTasks), [], `Revealing 240 lines into slices and easing there leaves no task over ${perfBudget(50)} ms`);
+    assertPerf('breadcrumb nav: longest task revealing 240 lines and easing there', longest(farTasks), perfBudget(50), { detail: JSON.stringify(farTasks) });
     // A jump stopped by the wheel, and by a key, mid-way: it does not land, and nothing is marked.
     for (const stop of ['wheel', 'key'] as const) {
       await pin(far, STREAM, 'total += 50 * 2;');
@@ -877,7 +878,7 @@ void app.whenReady().then(async () => {
       await new Promise(r=>setTimeout(r,100));watch.disconnect();deltas.sort((a,b)=>a-b);
       return {frames:deltas.length,p50:Math.round(deltas[deltas.length>>1]*10)/10,max:Math.round(deltas.at(-1)*10)/10,longTasks:window.__longTasks.map(t=>Math.round(t.duration)),places}})()`);
     console.log('Scrolling far_mod.rs 20 px a frame, following the reader:', JSON.stringify(scrolling));
-    assert.deepEqual(scrolling.longTasks, [], 'Following the reader adds no long task');
+    assertPerf('breadcrumb nav: long tasks while the header follows the reader', scrolling.longTasks.length, 0, { unit: 'long tasks', detail: JSON.stringify(scrolling.longTasks) });
     assert.ok(scrolling.places > 10, `The header follows line by line: ${scrolling.places}`);
 
     // ═══ An Explanation topic: the same core checks in a slide ═══
