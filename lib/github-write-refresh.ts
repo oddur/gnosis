@@ -48,6 +48,8 @@ export interface WriteObservation {
     | 'source'
   >;
   signals?: Pick<QueueSignals, 'headSha' | 'checks' | 'latestReview' | 'mine' | 'readiness' | 'comments'>;
+  /** A REST copy read just before a comment write whose baseline came from GraphQL (`COUNTED_WRITES`). */
+  restMetadata?: WriteObservation['metadata'];
 }
 export interface WriteDetails {
   /** The state before the write. Main captures it from local copies before the write starts. */
@@ -89,15 +91,35 @@ const headMoved = ({ metadata }: WriteObservation, details: WriteDetails) =>
 export const sameCountSource = (a: { source?: string } | undefined, b: { source?: string } | undefined) =>
   (a?.source ?? 'rest') === (b?.source ?? 'rest');
 /** A read from the other API is inconclusive: the write is not settled on it, and the follow-up reads again. */
+/**
+ * The pre-write copy a probe's counts compare with: the baseline, or the REST copy read before the write, whichever
+ * came from the probe's API. Undefined when neither did: the probe is inconclusive.
+ */
+const countBaseline = (metadata: NonNullable<WriteObservation['metadata']>, details: WriteDetails) => {
+  const { metadata: baseline, restMetadata } = details.before ?? {};
+  if (baseline && sameCountSource(metadata, baseline)) return baseline;
+  if (restMetadata && sameCountSource(metadata, restMetadata)) return restMetadata;
+  return undefined;
+};
 const commentsAdded =
   (field: 'commentCount' | 'reviewCommentCount') =>
-  ({ metadata }: WriteObservation, details: WriteDetails) =>
-    !!metadata &&
-    (!before(details) ||
-      (sameCountSource(metadata, before(details)) && count(metadata[field]) > count(before(details)?.[field])));
+  ({ metadata }: WriteObservation, details: WriteDetails) => {
+    if (!metadata) return false;
+    if (!before(details)) return true;
+    const baseline = countBaseline(metadata, details);
+    return !!baseline && count(metadata[field]) > count(baseline[field]);
+  };
 
-/** Writes whose follow-up compares comment counts. */
-const COUNTED = new Set<GitHubWriteAction>(['review-comment', 'thread-reply', 'comment-delete', 'feedback-reply']);
+/**
+ * Writes whose follow-up compares comment counts. When the baseline came from GraphQL, main reads the PR through REST
+ * before the write too, so a probe GraphQL cannot answer exactly still has a same-API copy to compare with.
+ */
+export const COUNTED_WRITES: ReadonlySet<GitHubWriteAction> = new Set<GitHubWriteAction>([
+  'review-comment',
+  'thread-reply',
+  'comment-delete',
+  'feedback-reply',
+]);
 
 export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   // The merge commit and the closed state can trail a confirmed merge.
@@ -181,11 +203,12 @@ export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   'comment-delete': {
     kinds: ['metadata', 'signals', 'discussion'],
     probes: ['metadata'],
-    seen: ({ metadata }, details) =>
-      !!metadata &&
-      (!before(details) ||
-        (sameCountSource(metadata, before(details)) &&
-          count(metadata.reviewCommentCount) < count(before(details)?.reviewCommentCount))),
+    seen: ({ metadata }, details) => {
+      if (!metadata) return false;
+      if (!before(details)) return true;
+      const baseline = countBaseline(metadata, details);
+      return !!baseline && count(metadata.reviewCommentCount) < count(baseline.reviewCommentCount);
+    },
   },
   'feedback-reply': {
     kinds: ['metadata', 'signals', 'discussion'],
@@ -320,12 +343,6 @@ export function createGitHubWriteRefresher(deps: GitHubWriteRefresherDeps) {
       try {
         if (probe === 'metadata') {
           seen.metadata = (await deps.read('metadata', { url: job.url }, phase, job.action, job.details.before)) as WriteObservation['metadata'];
-          // A count-based write whose probe came from the other API (GraphQL could not answer this PR exactly) is
-          // re-baselined on that copy: later probes then read the same API and compare like with like. This read
-          // compares the copy with itself, so it never settles the write.
-          const baseline = job.details.before?.metadata;
-          if (COUNTED.has(job.action) && seen.metadata && baseline && !sameCountSource(seen.metadata, baseline))
-            job.details = { ...job.details, before: { ...job.details.before, metadata: seen.metadata } };
         } else {
           const headSha = seen.metadata?.headSha ?? job.details.before?.metadata?.headSha;
           seen.signals = (await deps.read('signals', { url: job.url, headSha }, phase, job.action)) as WriteObservation['signals'];
