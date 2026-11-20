@@ -321,10 +321,16 @@ export function createSyntaxContentsScheduler({
     }
     return prefetch;
   }
+  /** Hear of every read that is refused or fails for good, whoever asked: moved symbols mark the file's family. */
+  const failureListeners = new Set<(key: string, failure: SyntaxContentsFailure) => void>();
+  const told = (key: string, failure: SyntaxContentsFailure) => {
+    for (const listener of failureListeners) listener(key, failure);
+  };
   function fail(key: string, entry: Entry, failure: SyntaxContentsFailure) {
     failed.set(key, { pr: entry.job.pr, ...failure });
     used.set(entry.job.pr, now());
     for (const onFail of entry.waiters.values()) onFail?.(failure);
+    told(key, failure);
   }
   function pump() {
     if (now() < pausedUntil) {
@@ -340,6 +346,7 @@ export function createSyntaxContentsScheduler({
       if (refused) {
         drop(key, entry);
         for (const onFail of entry.waiters.values()) onFail?.(refused);
+        told(key, refused);
         continue;
       }
       if (job.ready?.()) {
@@ -487,7 +494,11 @@ export function createSyntaxContentsScheduler({
       owners.set(owner, keys);
       jobs.forEach((job, index) => {
         const entry = entryFor(job);
-        if (!isEntry(entry) || keys.has(job.key)) return;
+        if (!isEntry(entry)) {
+          told(job.key, entry);
+          return;
+        }
+        if (keys.has(job.key)) return;
         entry.owners.set(owner, rank * 1_000_000 + index);
         keys.add(job.key);
       });
@@ -527,6 +538,11 @@ export function createSyntaxContentsScheduler({
     setHidden(value: boolean) {
       hidden = value;
       if (!value) pump();
+    },
+    /** Tells `listener` of each read refused or failed for good, by key; the return stops it. */
+    onFailure(listener: (key: string, failure: SyntaxContentsFailure) => void): () => void {
+      failureListeners.add(listener);
+      return () => failureListeners.delete(listener);
     },
     /** Drops every prefetch that has not started. */
     stopPrefetch() {

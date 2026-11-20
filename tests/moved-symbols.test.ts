@@ -9,6 +9,7 @@ import {
   SAME_NAME,
   languageFamily,
   matchMoves,
+  moveEdits,
   sketchSimilarity,
   type MoveFile,
   type MovesResult,
@@ -80,6 +81,11 @@ async function moveFile(file: FixtureFile): Promise<MoveFile> {
 async function moves(files: FixtureFile[]): Promise<MovesResult> {
   return matchMoves(await Promise.all(files.map(moveFile)));
 }
+/** A move's changed lines on each side (`moveEdits`). */
+const edits = (move: SymbolMove) => {
+  const found = moveEdits(move);
+  return found && { before: found.before, after: found.after };
+};
 /** A move in words: `a.ts:3 save -> b.ts:7 save`. */
 const spoken = (move: SymbolMove) =>
   `${move.from.path}:${move.from.start} ${move.from.name} -> ${move.to.path}:${move.to.start} ${move.to.name}`;
@@ -134,7 +140,7 @@ void describe('moved symbols: true moves', () => {
     const [move] = result.moves;
     assert.equal(move.exact, true);
     assert.equal(move.renamed, false);
-    assert.deepEqual(move.edits, { before: [], after: [] });
+    assert.deepEqual(edits(move), { before: [], after: [] });
   });
 
   void test('a function moved within its file is moved from its old line', async () => {
@@ -167,7 +173,7 @@ void describe('moved symbols: true moves', () => {
     assert.equal(result.moves[0].renamed, true);
     assert.equal(result.moves[0].exact, true);
     // The rename is a real edit of its signature line; the recursive calls are too, and nothing else.
-    assert.deepEqual(result.moves[0].edits, { before: [5, 7, 8], after: [5, 7, 8] });
+    assert.deepEqual(edits(result.moves[0]), { before: [5, 7, 8], after: [5, 7, 8] });
   });
 
   void test('a move with a small edit is moved, and only the edited line is an edit', async () => {
@@ -182,7 +188,7 @@ void describe('moved symbols: true moves', () => {
     const [move] = result.moves;
     assert.equal(move.exact, false);
     assert.ok(move.similarity >= SAME_NAME, `similarity ${move.similarity}`);
-    assert.deepEqual(move.edits, { before: [10], after: [10] });
+    assert.deepEqual(edits(move), { before: [10], after: [10] });
   });
 
   void test('a moved class is one move, not one per method', async () => {
@@ -543,8 +549,13 @@ void describe('moved symbols: limits', () => {
 async function prMoves(files: PrChangeFile[], contents: (path: string) => PrFileContents | undefined) {
   const started = performance.now();
   let fingerprintMs = 0,
-    read = 0;
+    read = 0,
+    modified = 0,
+    comparedMs = 0;
   const moveFiles: MoveFile[] = [];
+  const parsesBefore = engine.parses();
+  // With the noise comparison on (the default), a modified file is fingerprinted from the comparison's two trees.
+  let combinedParses = 0;
   for (const file of files) {
     const plan = movesFilePlan({}, file, () => true);
     if (!plan) continue;
@@ -563,6 +574,18 @@ async function prMoves(files: PrChangeFile[], contents: (path: string) => PrFile
             };
     const result = await engine.symbols(plan.language, input);
     fingerprintMs += result.ms;
+    if (input.mode === 'modified') {
+      modified++;
+      const at = engine.parses();
+      const compared = await engine.noise(plan.language, input.text, input.hunks, true);
+      combinedParses += engine.parses() - at;
+      comparedMs += compared.classify;
+      assert.equal(
+        compared.symbols?.after.length,
+        result.prints.after.length,
+        'The comparison finds the same candidates'
+      );
+    }
     moveFiles.push({
       file: file.path,
       url: 'pr',
@@ -573,7 +596,17 @@ async function prMoves(files: PrChangeFile[], contents: (path: string) => PrFile
     });
   }
   const matched = matchMoves(moveFiles);
-  return { ...matched, fingerprintMs, read, totalMs: performance.now() - started };
+  const symbolsParses = engine.parses() - parsesBefore - combinedParses;
+  return {
+    ...matched,
+    fingerprintMs,
+    comparedMs,
+    read,
+    totalMs: performance.now() - started,
+    // Per modified file, in the app with the comparison on: before, its own two-side parse on top of the comparison's
+    // two; now none.
+    parses: { symbolsJobs: symbolsParses, comparisonWithSymbols: combinedParses, modified, savedPerModifiedFile: 2 },
+  };
 }
 
 void describe('moved symbols: the browser fixtures', () => {
@@ -586,7 +619,7 @@ void describe('moved symbols: the browser fixtures', () => {
       `${MOVE_FILES.store}:62 parseHeader -> ${MOVE_FILES.headers}:3 readHeader`,
     ]);
     const flush = result.moves.find((move) => move.to.name === 'flushQueue');
-    assert.deepEqual(flush?.edits, { before: [40], after: [21] });
+    assert.deepEqual(flush && edits(flush), { before: [40], after: [21] });
   });
 
   void test('?moved-symbols-large: every move is found and nothing else, within the cost budget', async () => {
@@ -610,6 +643,8 @@ void describe('moved symbols: the browser fixtures', () => {
         precision,
         recall,
         fingerprintMs: Math.round(result.fingerprintMs),
+        comparisonWithSymbolsMs: Math.round(result.comparedMs),
+        parses: result.parses,
         matchMs: Math.round(result.ms * 10) / 10,
         totalMs: Math.round(result.totalMs),
       })

@@ -220,30 +220,27 @@ void app.whenReady().then(async () => {
     );
     console.log('Jump within the file: marked formatEntry’s old line');
 
-    // ── Parity: an Explanation topic of queue.ts and store.ts shows the same notes ──
-    await click('Review queue');
-    await wait("!!document.querySelector('.queue-row-main')");
+    // ── Parity: an Explanation topic of queue.ts and store.ts shows the same notes, in a session that never opens
+    // Changes: the PR workspace tracks the PR's moves whichever tab shows its diffs. ──
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?moved-symbols`);
+    await waitForWorkbenchQueue(win.webContents);
+    await install();
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await wait("!!document.querySelector('.briefing-panel')");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.explanation-reader')");
-    // The topic's PR is matched with its files, as Changes reads them.
-    await click('Changes');
-    await wait("!!document.querySelector('.commit-diff-stream')", 500);
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
+    assert.equal(await js('!!document.querySelector(".commit-diff-stream")'), false, 'Changes never opened');
+    const topic = '[data-explanation-section="1"]';
     await wait(
-      `import('/lib/moved-symbols-store.ts').then(m=>m.movedSymbolsStats().prs.some(p=>p.url.endsWith('/121')&&p.families.some(f=>f.family==='script'&&f.state==='matched')))`,
+      `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(topic)})).length>=3`,
       1500
     ).catch(async (error: unknown) => {
-      console.log('MOVES DEBUG', JSON.stringify(await stats()), await js('location.search'));
+      console.log('MOVES DEBUG', JSON.stringify(await stats()));
       throw error;
     });
-    await click('Explanation');
-    await wait("!!document.querySelector('.explanation-reader')");
-    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
-    const topic = '[data-explanation-section="1"]';
-    await wait(`window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(topic)})).length>=3`, 750);
     const topicNotes = await notes(topic);
     console.log('Topic notes:', JSON.stringify(topicNotes));
     for (const note of [...queueNotes, 'Moved to src/moves/queue.ts:16 · 1 line edited', 'Moved to L49 · unchanged'])
@@ -273,8 +270,8 @@ void app.whenReady().then(async () => {
       await sleep(250);
     }
     const matchedAfter = Date.now() - started;
-    const totals = await js<{ reads: number; ms: number; maxMs: number; waitMs: number }>(
-      `import('/lib/syntax-scope-client.ts').then(m=>({...m.symbolReadTotals}))`
+    const totals = await js<{ reads: number; ms: number; maxMs: number; waitMs: number; parses: number }>(
+      `import('/lib/syntax-scope-client.ts').then(m=>({...m.symbolReadTotals,parses:m.syntaxWorkerParses()}))`
     );
     const longTasks = await js<number[]>('window.longTasks');
     const families = large?.families ?? [];
@@ -298,6 +295,9 @@ void app.whenReady().then(async () => {
           perFile: Math.round(totals.ms / Math.max(1, totals.reads)),
           queueWait: Math.round(totals.waitMs / Math.max(1, totals.reads)),
         },
+        // Every parse the worker made: breadcrumbs, comparisons and moved symbols together.
+        workerParses: totals.parses,
+        fingerprintReads: totals.reads,
         firstBreadcrumbMs: firstScope,
         matchedAfterMs: matchedAfter,
         longTasks,

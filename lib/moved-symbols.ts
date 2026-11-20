@@ -99,6 +99,8 @@ export interface SymbolPrint {
   sketch: Uint32Array;
   /** One hash per line from `start` to `end`: its tokens as written, or 0 for a line without code. */
   lineHashes: Uint32Array;
+  /** The hash of its comments' texts in order, whitespace squashed; 0 without comments. */
+  comments: number;
   /** Old side of a modified file: the new lines its removed lines sat between, for the in-place check. */
   at?: [number, number];
 }
@@ -133,6 +135,8 @@ interface Tokens {
   count: number;
   /** Rows with a word token: lines with code. */
   wordRows: Uint8Array;
+  /** Each comment's row and the hash of its text, in order: an exact move whose comments changed is not unchanged. */
+  comments: { row: number; hash: number }[];
 }
 
 /** Every token of a tree, comments left out. One walk with a cursor, rows found from offsets. */
@@ -156,6 +160,7 @@ export function treeTokens(tree: TreeSitter.Tree, text: string): Tokens {
     row = new Int32Array(1024),
     count = 0;
   const wordRows = new Uint8Array(lineStarts.length + 1);
+  const comments: Tokens['comments'] = [];
   const push = (value: string, at: number) => {
     if (count === hash.length) {
       const nextHash = new Uint32Array(count * 2);
@@ -175,7 +180,10 @@ export function treeTokens(tree: TreeSitter.Tree, text: string): Tokens {
     outer: for (;;) {
       const comment = COMMENTS.has(cursor.nodeType);
       if (!comment && cursor.gotoFirstChild()) continue;
-      if (!comment) {
+      if (comment) {
+        const value = text.slice(cursor.startIndex, cursor.endIndex).replace(/\s+/g, ' ').trim();
+        if (value) comments.push({ row: rowOf(cursor.startIndex), hash: fnv(value) });
+      } else {
         const start = cursor.startIndex,
           end = cursor.endIndex;
         if (end > start) {
@@ -191,7 +199,7 @@ export function treeTokens(tree: TreeSitter.Tree, text: string): Tokens {
   } finally {
     cursor.delete();
   }
-  return { hash, row, count, wordRows };
+  return { hash, row, count, wordRows, comments };
 }
 
 /** The first token index at or after `row`. */
@@ -242,6 +250,10 @@ export function symbolPrint(definition: SyntaxDefinition, tokens: Tokens): Symbo
   }
   let lines = 0;
   for (let r = definition.start - 1; r < definition.end; r++) lines += tokens.wordRows[r];
+  let comments = 0;
+  for (const comment of tokens.comments)
+    if (comment.row >= definition.start - 1 && comment.row < definition.end)
+      comments = (Math.imul(comments ^ comment.hash, 0x01000193) | 1) >>> 0;
   return {
     kind: definition.kind,
     name,
@@ -254,6 +266,7 @@ export function symbolPrint(definition: SyntaxDefinition, tokens: Tokens): Symbo
     hash: `${count.toString(36)}.${h1.toString(36)}.${h2.toString(36)}`,
     sketch: sorted.length > SKETCH ? sorted.slice(0, SKETCH) : sorted,
     lineHashes,
+    comments,
   };
 }
 
@@ -328,8 +341,18 @@ export interface SymbolMove {
   renamed: boolean;
   /** Jaccard similarity of the two bodies' 4-grams: 1 for an exact match. */
   similarity: number;
-  /** Lines that differ between the two bodies, by the line diff of their tokens: old lines and new lines. */
-  edits: { before: number[]; after: number[] };
+  /** The two bodies' comments differ: an exact move whose comments changed is not unchanged. */
+  commentsChanged: boolean;
+  /**
+   * Each body's per-line token hashes (`SymbolPrint.lineHashes`), for the line diff a view makes when it shows the move
+   * (`moveEdits`): the diff waits until then, so a large refactor's match stays one short task.
+   */
+  lines: { before: Uint32Array; after: Uint32Array };
+}
+/** A move's line diff (`moveEdits`): the lines that differ, and the lines it matched, on each side. */
+export interface MoveEdits {
+  before: number[];
+  after: number[];
   /**
    * Lines the line diff matched between the two bodies: carried over unchanged. Lines without code (comments, blank
    * lines) are in neither list: nothing says whether they changed.
@@ -389,30 +412,25 @@ const end = (candidate: Candidate): MoveEnd => ({
   signatureEnd: candidate.print.signatureEnd,
 });
 
-/** Old and new lines that differ, by a line diff of the bodies' per-line token hashes (lines without code skipped). */
-export function bodyEdits(
-  before: SymbolPrint,
-  after: SymbolPrint
-): { before: number[]; after: number[]; kept: { before: number[]; after: number[] } } {
-  const lines = (print: SymbolPrint) => {
+/**
+ * Old and new lines that differ, by a line diff of the bodies' per-line token hashes (lines without code skipped), and
+ * the lines it matched. Undefined for bodies too long to diff (`MAX_EDIT_LINES`): a view then neither dims nor counts.
+ */
+export function moveEdits(move: Pick<SymbolMove, 'from' | 'to' | 'lines'>): MoveEdits | undefined {
+  const lines = (start: number, all: Uint32Array) => {
     const numbers: number[] = [],
       hashes: number[] = [];
-    print.lineHashes.forEach((hash, i) => {
+    all.forEach((hash, i) => {
       if (!hash) return;
-      numbers.push(print.start + i);
+      numbers.push(start + i);
       hashes.push(hash);
     });
     return { numbers, hashes };
   };
-  const old = lines(before),
-    now = lines(after);
-  if (old.hashes.length + now.hashes.length > MAX_EDIT_LINES)
-    return { before: old.numbers, after: now.numbers, kept: { before: [], after: [] } };
-  const edits = {
-    before: [] as number[],
-    after: [] as number[],
-    kept: { before: [] as number[], after: [] as number[] },
-  };
+  const old = lines(move.from.start, move.lines.before),
+    now = lines(move.to.start, move.lines.after);
+  if (old.hashes.length + now.hashes.length > MAX_EDIT_LINES) return undefined;
+  const edits: MoveEdits = { before: [], after: [], kept: { before: [], after: [] } };
   let i = 0,
     j = 0;
   for (const part of diffArrays(old.hashes, now.hashes)) {
@@ -606,24 +624,28 @@ export function matchMoves(
       exact,
       renamed: from.print.name !== to.print.name,
       similarity,
-      ...(({ kept, ...edits }) => ({ edits, kept }))(bodyEdits(from.print, to.print)),
+      commentsChanged: from.print.comments !== to.print.comments,
+      lines: { before: from.print.lineHashes, after: to.print.lineHashes },
     }))
     .sort((x, y) => (x.to.file < y.to.file ? -1 : x.to.file > y.to.file ? 1 : x.to.start - y.to.start));
   result.ms = performance.now() - started;
   return result;
 }
 
-/** Whether a patch can hold a moved symbol: a change block that removes or adds `MIN_LINES` lines or more. */
+/**
+ * Whether a patch can hold a moved symbol's end: it removes or adds at least the changed lines a candidate needs
+ * (`sideCandidates`: `MIN_LINES` lines with code, `MIN_CHANGED` of them changed), counted over the whole patch, since a
+ * candidate's changed lines may sit in several hunks.
+ */
 export function patchMayMove(patch: string | undefined): boolean {
   if (!patch) return false;
+  const need = Math.ceil(MIN_LINES * MIN_CHANGED);
   let removed = 0,
     added = 0;
   for (const line of patch.split('\n')) {
-    const c = line[0];
-    if (c === '-') removed++;
-    else if (c === '+') added++;
-    else if (c !== '\\') removed = added = 0;
-    if (removed >= MIN_LINES || added >= MIN_LINES) return true;
+    if (line.startsWith('-')) removed++;
+    else if (line.startsWith('+')) added++;
+    if (removed >= need || added >= need) return true;
   }
   return false;
 }

@@ -594,3 +594,10 @@ void test('The moves prefetch ranks below the open PR’s scope reads (#398)', a
   await finish('s2');
   assert.deepEqual(started, ['m1', 's1', 's2', 'm2']);
 });
+
+void test('A parse queued again under its key returns the one it replaced, so its caller can be answered (#398)', () => {
+  const queue = createParseQueue<ParseJob & { id: number }>();
+  assert.equal(queue.add({ key: 'a', priority: 'prefetch', side: 'symbols', id: 1 }), undefined);
+  assert.equal(queue.add({ key: 'a', priority: 'view', side: 'symbols', id: 2 })?.id, 1);
+  assert.equal(queue.size, 1);
+});

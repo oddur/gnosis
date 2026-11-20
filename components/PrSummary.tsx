@@ -38,6 +38,7 @@ import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MoveNavigation, type MoveTarget } from '../lib/use-moved-symbols';
+import { usePrMoves } from '../lib/use-pr-moves';
 import type { PrFocus } from '../lib/deep-link';
 import { AlarmClock, ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
 import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
@@ -552,6 +553,8 @@ function PrSummaryContent({
     />
   );
   const tabs = workspaceTabs;
+  // Moved and renamed symbols (#398) are the PR's, whichever tab shows its diffs.
+  usePrMoves(item.subject.members, preferences);
   // A moved symbol's note in an Explanation topic or a code thread opens its other end in Changes (#398). Changes
   // provides its own, which stays in the view.
   const openMove = useCallback((target: MoveTarget) => {

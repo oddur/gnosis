@@ -38,8 +38,11 @@ export function createParseQueue<T extends ParseJob>() {
     job.priority === 'prefetch' ? at : -at,
   ];
   return {
-    add(job: T) {
+    /** Queues a parse; a waiting one with the same key leaves, and is returned so its caller can be answered. */
+    add(job: T): T | undefined {
+      const replaced = jobs.get(job.key)?.job;
       jobs.set(job.key, { job, seq: ++seq });
+      return replaced;
     },
     /** Raises a waiting parse to `priority`; one already at or above it keeps its place. */
     raise(key: string, priority: SyntaxPriority): boolean {

@@ -1,5 +1,5 @@
 import { createMovesStore } from './moved-symbols-core';
-import { readMoves, readSymbols, symbolReadTimings } from './syntax-scope-client';
+import { readMoves, readSymbols, symbolReadTotals, syntaxWorkerParses } from './syntax-scope-client';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
 
@@ -17,10 +17,16 @@ export const noteMovesFailure: typeof store.noteFailure = (...args) => store.not
 export const onMoves: typeof store.onMoves = (listener) => store.onMoves(listener);
 export const movesRevision = () => store.revision();
 export const peekFileMoves: typeof store.peek = (fileKey) => store.peek(fileKey);
+export const failMovesKey: typeof store.failKey = (key, reason) => store.failKey(key, reason);
+export const movesDrops = () => store.drops();
 
 onInspectionForget((urls) => store.forget(urls));
 onInspectionUses((into) => store.uses(into));
 
 /** What the store holds and how long its work took, for the diagnostics export and the browser checks. */
-export const movedSymbolsStats = () => ({ ...store.stats(), reads: symbolReadTimings.slice(-10) });
+export const movedSymbolsStats = () => ({
+  ...store.stats(),
+  reads: { ...symbolReadTotals, ms: Math.round(symbolReadTotals.ms), waitMs: Math.round(symbolReadTotals.waitMs) },
+  parses: syntaxWorkerParses(),
+});
 addDiagnosticsSource('movedSymbols', movedSymbolsStats);

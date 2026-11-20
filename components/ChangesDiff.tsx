@@ -32,7 +32,7 @@ import { blockKey, changeBlocks, hunkNoise, noiseLabel, type HunkNoise, type Noi
 import type { DiffMoves, DiffNoise } from './useDiffFileModel';
 import type { MoveMark } from '../lib/moved-symbols-store';
 import { MoveNavigation } from '../lib/use-moved-symbols';
-import { moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
+import { moveEditsLabel, moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
 export type GapStatus =
@@ -915,16 +915,7 @@ function MoveNote({ mark, onGo }: { mark: MoveMark; onGo?: () => void }) {
   const into = mark.side === 'after';
   const place = mark.sameFile ? `${other.side === 'before' ? 'old ' : ''}L${other.start}` : `${other.path}:${other.start}`;
   const verb = into ? 'Moved from' : 'Moved to';
-  // An exact match differs only in its name: a rename's edited lines are where the name is, and its body is the same.
-  // An exact match has the same tokens, the name aside: a rename's differing lines are where the name is, and other
-  // differing lines only break or join lines.
-  const edits = mark.exact
-    ? mark.renamed
-      ? 'body unchanged'
-      : mark.edits.length
-        ? 'reformatted'
-        : 'unchanged'
-    : `${lines(mark.edits.length)} edited`;
+  const edits = moveEditsLabel(mark);
   const where = mark.sameFile ? `line ${other.start} of this file${other.side === 'before' ? ', old side' : ''}` : `${other.path}, line ${other.start}`;
   const rename = mark.renamed ? `, renamed ${into ? 'from' : 'to'} ${other.name}` : '';
   const how = mark.exact ? 'the same code' : `${Math.round(mark.similarity * 100)}% similar`;
@@ -962,7 +953,7 @@ function MoveNote({ mark, onGo }: { mark: MoveMark; onGo?: () => void }) {
         <span className="diff-gap-dot" aria-hidden="true">
           ·
         </span>{' '}
-        <span className="diff-gap-count" data-move-edits={mark.edits.length}>
+        <span className="diff-gap-count" data-move-edits={mark.edits?.changed.length}>
           {edits}
         </span>
       </span>
@@ -1310,7 +1301,9 @@ export function ChangesDiff<A>({
   const latestNoiseLines = useRef(noiseLines);
   latestNoiseLines.current = noiseLines;
   // Lines each move carried over unchanged: dimmed, so its real edits read first.
-  const movedLines = useMemo(() => movedLineKeys(moves?.marks ?? []), [moves?.marks]);
+  // Each move's note heads its symbol (lib/moved-symbols-view.ts); only a symbol with a note shows as moved.
+  const noteLines = useMemo(() => moveNoteLines(parts, moves?.marks ?? []), [parts, moves?.marks]);
+  const movedLines = useMemo(() => movedLineKeys([...noteLines.keys()]), [noteLines]);
   const latestMovedLines = useRef(movedLines);
   latestMovedLines.current = movedLines;
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
@@ -1350,11 +1343,10 @@ export function ChangesDiff<A>({
     }
     return result;
   }, [annotations, slices]);
-  // Each move's note heads its symbol (lib/moved-symbols-view.ts).
   const moveBySlice = useMemo(() => {
     const result = new Map<string, DiffLineAnnotation<A>[]>();
     if (!moves?.marks.length) return result;
-    for (const [mark, lineNumber] of moveNoteLines(parts, moves.marks)) {
+    for (const [mark, lineNumber] of noteLines) {
       const side = mark.side === 'after' ? ('additions' as const) : ('deletions' as const);
       const owner = slices.find((slice) => {
         const [from, to] = side === 'deletions' ? slice.oldLines : slice.newLines;
@@ -1364,7 +1356,7 @@ export function ChangesDiff<A>({
       if (owner) result.set(owner.key, [...(result.get(owner.key) ?? []), annotation]);
     }
     return result;
-  }, [moves?.marks, parts, slices]);
+  }, [noteLines, slices]);
   const sliceAnnotations = useMemo(() => {
     if (!moveBySlice.size) return bySlice;
     const result = new Map(bySlice);

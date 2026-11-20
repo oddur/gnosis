@@ -25,7 +25,15 @@ import { preferencesReady, startupPreferences } from './startup-preferences';
 import { syntaxLanguage } from './syntax-scope';
 import { traceStructure } from './structure-trace';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
-import { MOVES_MAX_FILES, noteMovesFailure, noteMovesText, trackMoves } from './moved-symbols-store';
+import {
+  MOVES_MAX_FILES,
+  failMovesKey,
+  movesDrops,
+  noteMovesFailure,
+  noteMovesText,
+  onMoves,
+  trackMoves,
+} from './moved-symbols-store';
 /** Reads for moved symbols per PR, apart from the reads scopes may make (`SYNTAX_CONTENTS_PER_PR`). */
 const MOVES_READS = MOVES_MAX_FILES;
 /**
@@ -40,6 +48,9 @@ export const syntaxContents = createSyntaxContentsScheduler();
 // still hold is swept when idle.
 onInspectionForget((urls) => syntaxContents.forget(urls));
 onInspectionUses((into) => syntaxContents.lastUses(into));
+// A read refused (too large, past a cap) or failed for good leaves its file unread: its moved-symbol family is not
+// matched, rather than waiting for it forever (#398).
+syntaxContents.onFailure((key, failure) => failMovesKey(key, failure.message));
 // Each read's tier, wait, run time, tries and outcome, so an export shows why breadcrumbs came late.
 addDiagnosticsSource('syntaxContents', () => syntaxContentsDiagnostics(syntaxContents.stats()));
 
@@ -306,6 +317,8 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
     },
     () => epoch
   );
+  // A PR that left the store while still shown is tracked again.
+  const dropped = useSyncExternalStore(onMoves, movesDrops);
   useEffect(() => {
     if (!settings.enabled || !files.length) return;
     const enabled = (path: string) => pathEnabled(settings, path);
@@ -314,24 +327,29 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
       const request = inspectionFileRequest(snapshot, file);
       const both = inspectionFiles.peek(request);
       return both ?? { after: inspectionFiles.peekAfter(request) };
-    });
+    }, setting);
     if (!waiting.length || waiting.length > SYNTAX_PREFETCH_FILES) return;
-    const budget = { name: 'moves', limit: MOVES_READS };
     const jobs = waiting.flatMap(({ snapshot, file }): SyntaxContentsJob[] => {
       const entry = byKey.get(`${snapshot.url}\u0000${file.path}`);
       if (!entry) return [];
+      // A budget per head: a force-push starts afresh.
+      const budget = { name: `moves:${snapshot.metadata.headSha}`, limit: MOVES_READS };
       const plan = syntaxContentsPlan(snapshot, file, enabled);
       if (plan) return [{ ...syntaxContentsJob(entry, plan), budget }];
       // An added or deleted file without a patch has no scope read: it is read whole, through the same queue.
-      if (file.patch || file.additions + file.deletions > MOVES_WHOLE_LINES) {
+      if (!movesWholeReadable(file)) {
         noteMovesFailure(snapshot, file, file.patch ? 'Not read' : 'Too large');
         return [];
       }
       return [movesWholeJob(entry, budget)];
     });
     return jobs.length ? syntaxContents.prefetch(`${owner}:moves`, jobs, 1) : undefined;
-  }, [owner, signature, setting, restart]);
+  }, [owner, signature, setting, restart, dropped]);
 }
+
+/** An added or deleted file without a patch that is not obviously too large to fingerprint. */
+const movesWholeReadable = (file: PrChangeFile) =>
+  !file.patch && (file.status === 'added' || file.status === 'deleted') && file.additions + file.deletions <= MOVES_WHOLE_LINES;
 
 /** An added or deleted file without a patch, read whole for its moved symbols. */
 function movesWholeJob({ key, snapshot, file }: SyntaxFile, budget: SyntaxContentsJob['budget']): SyntaxContentsJob {

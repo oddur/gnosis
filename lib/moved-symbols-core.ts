@@ -1,6 +1,13 @@
 import { fileRevisionKey, type PrChangeFile, type PrChanges, type PrFileSide } from './pr-changes';
 import type { DefinitionKind, SymbolsInput, SyntaxLanguage } from './syntax-scope';
-import { languageFamily, type FilePrints, type MoveFile, type MovesResult, type SymbolMove } from './moved-symbols';
+import {
+  languageFamily,
+  moveEdits,
+  type FilePrints,
+  type MoveFile,
+  type MovesResult,
+  type SymbolMove,
+} from './moved-symbols';
 import { movesFilePlan, movesLanguage } from './moved-symbols-plan';
 import { patchHunks } from './semantic-noise';
 import { wholeFileText } from './syntax-contents';
@@ -42,10 +49,13 @@ export interface MoveMark {
   exact: boolean;
   renamed: boolean;
   similarity: number;
-  /** Lines on this side that differ from the other end's body: the move's real edits. */
-  edits: readonly number[];
-  /** Lines on this side the line diff matched to the other end's: carried over unchanged. */
-  kept: readonly number[];
+  /** The two bodies' comments differ. */
+  commentsChanged: boolean;
+  /**
+   * Lines on this side that differ from the other end's body (the move's real edits), and lines the line diff matched
+   * to the other end's (carried over unchanged). Undefined when the bodies are too long to diff: nothing dims or counts.
+   */
+  edits?: { changed: readonly number[]; kept: readonly number[] };
 }
 export interface FileMoves {
   marks: readonly MoveMark[];
@@ -67,7 +77,11 @@ interface PrState {
   files: Map<string, FileState>;
   /** What each file was planned from: reads that land later are fingerprinted from this, never from the caller's. */
   planned: Map<string, { snapshot: PrChanges; file: PrChangeFile; language: SyntaxLanguage }>;
+  /** Each file's moves, as matched; its marks are made when a view first shows the file (`peek`). */
+  moves: Map<string, SymbolMove[]>;
   marks: Map<string, FileMoves>;
+  /** The files and the Settings it was planned from: either changing plans it again. */
+  signature: string;
   /** Too many files: nothing is matched. */
   skipped?: boolean;
   at: number;
@@ -76,6 +90,7 @@ interface PrState {
 export interface MovesWorker {
   readSymbols: (request: {
     key: string;
+    fileKey: string;
     url: string;
     language: SyntaxLanguage;
     input: SymbolsInput;
@@ -126,12 +141,14 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     for (const listener of listeners) listener();
   };
 
+  let drops = 0;
   function drop(revision: string) {
     const pr = prs.get(revision);
     if (!pr) return false;
+    drops++;
     prs.delete(revision);
     for (const key of pr.files.keys()) if (byKey.get(key) === revision) byKey.delete(key);
-    return pr.marks.size > 0;
+    return true;
   }
 
   function fail(pr: PrState, key: string, reason: string) {
@@ -148,7 +165,14 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     pr.files.set(key, { family: entry.family, state: 'reading' });
     const live = () => prs.get(pr.revision) === pr && pr.files.get(key)?.state === 'reading';
     void worker
-      .readSymbols({ key: `${key}:symbols`, url: pr.url, language: plan.language, input, priority: 'prefetch' })
+      .readSymbols({
+        key: `${key}:symbols`,
+        fileKey: key,
+        url: pr.url,
+        language: plan.language,
+        input,
+        priority: 'prefetch',
+      })
       .then(
         (prints) => {
           if (!live()) return;
@@ -221,48 +245,62 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     }
   }
 
-  /** A family's marks: they replace whatever its files had, so a family matched again never shows a note twice. */
+  /** A family's moves: they replace whatever its files had, so a family matched again never shows a note twice. */
   function publish(pr: PrState, keys: readonly string[], moves: readonly SymbolMove[]) {
-    const byFile = new Map<string, MoveMark[]>();
-    const add = (key: string, mark: MoveMark) => byFile.set(key, [...(byFile.get(key) ?? []), mark]);
+    const byFile = new Map<string, SymbolMove[]>();
+    for (const move of moves)
+      for (const key of new Set([move.from.file, move.to.file])) byFile.set(key, [...(byFile.get(key) ?? []), move]);
+    let touched = false;
+    for (const key of keys) {
+      const list = byFile.get(key);
+      const had = pr.moves.delete(key) || pr.marks.delete(key);
+      if (list) pr.moves.set(key, list);
+      touched ||= had || !!list;
+    }
+    if (touched) changed();
+  }
+
+  /** A file's marks, made from its moves the first time a view shows it: the line diff of each body runs then. */
+  function marksOf(pr: PrState, key: string): FileMoves | undefined {
+    const known = pr.marks.get(key);
+    if (known) return known;
+    const moves = pr.moves.get(key);
+    if (!moves) return undefined;
+    const marks: MoveMark[] = [];
     for (const move of moves) {
+      const edits = moveEdits(move);
       const common = {
         sameFile: move.from.file === move.to.file,
         exact: move.exact,
         renamed: move.renamed,
         similarity: move.similarity,
+        commentsChanged: move.commentsChanged,
       };
-      const here = (end: SymbolMove['from']) => ({
-        side: end.side,
-        kind: end.kind,
-        name: end.name,
-        label: end.label,
-        start: end.start,
-        end: end.end,
-        signatureEnd: end.signatureEnd,
-      });
-      add(move.to.file, {
-        ...here(move.to),
-        other: move.from,
-        edits: move.edits.after,
-        kept: move.kept.after,
-        ...common,
-      });
-      add(move.from.file, {
-        ...here(move.from),
-        other: move.to,
-        edits: move.edits.before,
-        kept: move.kept.before,
-        ...common,
-      });
+      for (const [here, other, side] of [
+        [move.to, move.from, 'after'],
+        [move.from, move.to, 'before'],
+      ] as const) {
+        if (here.file !== key) continue;
+        marks.push({
+          side,
+          kind: here.kind,
+          name: here.name,
+          label: here.label,
+          start: here.start,
+          end: here.end,
+          signatureEnd: here.signatureEnd,
+          other,
+          ...common,
+          edits: edits && {
+            changed: side === 'after' ? edits.after : edits.before,
+            kept: side === 'after' ? edits.kept.after : edits.kept.before,
+          },
+        });
+      }
     }
-    let touched = false;
-    for (const key of keys) {
-      const list = byFile.get(key);
-      if (list) pr.marks.set(key, { marks: list.sort((a, b) => a.start - b.start) });
-      else if (pr.marks.delete(key)) touched = true;
-    }
-    if (byFile.size || touched) changed();
+    const value = { marks: marks.sort((a, b) => a.start - b.start) };
+    pr.marks.set(key, value);
+    return value;
   }
 
   return {
@@ -274,9 +312,14 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     revision: () => version,
     /** A file revision's moves, once its PR's family is matched. */
     peek(fileKey: string): FileMoves | undefined {
-      const revision = byKey.get(fileKey);
-      return revision ? prs.get(revision)?.marks.get(fileKey) : undefined;
+      const pr = prs.get(byKey.get(fileKey) ?? '');
+      if (!pr) return undefined;
+      // A PR a view shows is in use: it is the last to leave.
+      pr.at = now();
+      return marksOf(pr, fileKey);
     },
+    /** Counts PRs dropped, so views that track PRs track one again that left while shown. */
+    drops: () => drops,
     /**
      * Starts matching a PR's files, or picks up where it left off: called with every file Changes lists, each time
      * they change. Files whose text is here (an added file's patch, a side in the cache) are fingerprinted now; `text`
@@ -285,7 +328,9 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     track(
       entries: readonly { snapshot: PrChanges; file: PrChangeFile }[],
       allowed: (path: string) => boolean,
-      text: (snapshot: PrChanges, file: PrChangeFile) => { after?: PrFileSide; before?: PrFileSide } | undefined
+      text: (snapshot: PrChanges, file: PrChangeFile) => { after?: PrFileSide; before?: PrFileSide } | undefined,
+      /** What `allowed` says, as a string: a change of Settings plans the PR again. */
+      settings = ''
     ): { snapshot: PrChanges; file: PrChangeFile }[] {
       const byRevision = new Map<string, { snapshot: PrChanges; file: PrChangeFile }[]>();
       for (const entry of entries) {
@@ -296,7 +341,16 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
       const waiting: { snapshot: PrChanges; file: PrChangeFile }[] = [];
       let dropped = false;
       for (const [revision, list] of byRevision) {
+        const signature = `${settings}\u0001${list
+          .map(({ file }) => `${file.path}\u0000${file.changeId}\u0000${file.status}`)
+          .sort()
+          .join('\u0001')}`;
         let pr = prs.get(revision);
+        // Another file list or other Settings: the PR is planned again from scratch.
+        if (pr && pr.signature !== signature) {
+          if (drop(revision)) dropped = true;
+          pr = undefined;
+        }
         if (!pr) {
           const url = list[0].snapshot.url;
           // A new head replaces the PR's old revision: its notes would name lines that moved.
@@ -307,7 +361,9 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
             families: new Map(),
             files: new Map(),
             planned: new Map(),
+            moves: new Map(),
             marks: new Map(),
+            signature,
             at: now(),
           };
           const plans = list.flatMap((entry) => {
@@ -374,6 +430,11 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     /** A file's read failed for good: its family is not matched. */
     noteFailure(snapshot: PrChanges, file: PrChangeFile, reason: string) {
       const key = keyOf(snapshot, file);
+      const pr = prs.get(byKey.get(key) ?? '');
+      if (pr) fail(pr, key, reason);
+    },
+    /** A read of a file revision (`fileRevisionKey`) was refused or failed for good: its family is not matched. */
+    failKey(key: string, reason: string) {
       const pr = prs.get(byKey.get(key) ?? '');
       if (pr) fail(pr, key, reason);
     },

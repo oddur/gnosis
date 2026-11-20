@@ -38,6 +38,24 @@ export function moveNoteLines(parts: readonly GapPart[], marks: readonly MoveMar
  */
 export function movedLineKeys(marks: readonly MoveMark[]): Set<string> {
   const result = new Set<string>();
-  for (const mark of marks) for (const line of mark.kept) result.add(`${mark.side === 'after' ? 'a' : 'b'}${line}`);
+  for (const mark of marks)
+    for (const line of mark.edits?.kept ?? []) result.add(`${mark.side === 'after' ? 'a' : 'b'}${line}`);
   return result;
+}
+
+const lines = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'}`;
+/**
+ * How much of a moved symbol changed, in words, for its note. An exact match has the same code tokens, the name aside:
+ * a rename's differing lines are where the name is ("body unchanged"), other differing lines only break or join lines
+ * ("reformatted"). Comments are compared on their own ("comments edited"). Bodies too long to diff line by line are
+ * not counted ("too large to compare"); an exact one still says so by its tokens.
+ */
+export function moveEditsLabel(mark: Pick<MoveMark, 'exact' | 'renamed' | 'commentsChanged' | 'edits'>): string {
+  if (mark.exact) {
+    if (mark.commentsChanged) return 'comments edited';
+    if (mark.renamed) return 'body unchanged';
+    return mark.edits?.changed.length ? 'reformatted' : 'unchanged';
+  }
+  if (!mark.edits) return 'too large to compare';
+  return `${lines(mark.edits.changed.length)} edited${mark.commentsChanged ? ', comments too' : ''}`;
 }
