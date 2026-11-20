@@ -1,0 +1,10 @@
+{
+  "description": "Both sides rename the same file to different names.",
+  "language": "typescript",
+  "category": "files/rename",
+  "expected": {
+    "src/old.ts": "decide",
+    "src/left.ts": "decide",
+    "src/right.ts": "decide"
+  }
+}

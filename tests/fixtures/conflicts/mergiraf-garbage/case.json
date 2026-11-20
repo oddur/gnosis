@@ -1,0 +1,9 @@
+{
+  "description": "Mergiraf exits 0 but prints unrelated text.",
+  "language": "typescript",
+  "category": "failure/mergiraf",
+  "mergiraf": "garbage",
+  "expected": {
+    "src/math.ts": "decide"
+  }
+}

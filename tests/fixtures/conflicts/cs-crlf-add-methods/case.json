@@ -1,0 +1,8 @@
+{
+  "description": "A CRLF C# file: both sides add a different method.",
+  "language": "csharp",
+  "category": "files/crlf",
+  "expected": {
+    "src/OrderService.cs": "merged"
+  }
+}

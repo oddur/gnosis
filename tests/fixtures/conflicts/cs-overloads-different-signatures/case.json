@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add an overload of Write with different parameter types. Keeping both is right.",
+  "language": "csharp",
+  "category": "semantic/overloads",
+  "expected": {
+    "src/Logger.cs": "any"
+  }
+}

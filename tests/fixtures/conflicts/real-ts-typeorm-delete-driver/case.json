@@ -1,0 +1,19 @@
+{
+  "description": "The crdb branch added a cockroachdb case to the switch on connection name, master replaced the switch with instanceof driver checks; the human took master's instanceof form and added CockroachDriver to it.",
+  "language": "typescript",
+  "category": "real",
+  "source": {
+    "repo": "typeorm/typeorm",
+    "license": "MIT",
+    "merge": "e174ebd40d2f0e48b7bcb0205c16011cec2bf400",
+    "ours": "8fba5f263e857eb0190f515a7d7b80f9745e2b50",
+    "theirs": "0e705b7c2962de57db93085d83c3c7bff2a7b1d1",
+    "base": "93e8847550af9c9bd24aded96e94d7a78711a767",
+    "url": "https://github.com/typeorm/typeorm/commit/e174ebd40d2f0e48b7bcb0205c16011cec2bf400",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch 'master' into crdb"
+  },
+  "expected": {
+    "src/query-builder/DeleteQueryBuilder.ts": "any"
+  }
+}

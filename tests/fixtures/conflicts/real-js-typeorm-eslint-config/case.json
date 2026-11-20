@@ -1,0 +1,19 @@
+{
+  "description": "Both branches added eslint-plugin-chai-friendly and globalIgnores with different import names and comments; the human kept next's chaiFriendly name and comment and dropped the duplicate blocks.",
+  "language": "javascript",
+  "category": "real",
+  "source": {
+    "repo": "typeorm/typeorm",
+    "license": "MIT",
+    "merge": "974803ce41fb5d3febe79c70845432a054234479",
+    "ours": "14e2ae3eb9e0564e850a35790bea420fbac3c096",
+    "theirs": "2133c97437135de2da3c1195e4a29aa1339b69fa",
+    "base": "cc07c90f1de51bd31c0c450fae3a200f355c37f1",
+    "url": "https://github.com/typeorm/typeorm/commit/974803ce41fb5d3febe79c70845432a054234479",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch 'master' into next"
+  },
+  "expected": {
+    "eslint.config.mjs": "any"
+  }
+}

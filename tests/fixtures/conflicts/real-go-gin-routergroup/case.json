@@ -1,0 +1,19 @@
+{
+  "description": "Develop renamed 'middlewares' to 'middleware' in comments and parameters, master replaced routesInterface with IRouter/IRoutes in a type block and added BasePath/handle; the human took master's structure and reapplied develop's wording.",
+  "language": "go",
+  "category": "real",
+  "source": {
+    "repo": "gin-gonic/gin",
+    "license": "MIT",
+    "merge": "e8bc8f48e9d149888f43376990b477d248f99412",
+    "ours": "5f56db59be3b25f9473fb2b96883b52cd2b463c5",
+    "theirs": "a97c239b7a52a4eab0ddb0afd6c53aedd48124fc",
+    "base": "d6425f1692d4aa170ece887b62bb75c9c4da5829",
+    "url": "https://github.com/gin-gonic/gin/commit/e8bc8f48e9d149888f43376990b477d248f99412",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch 'master' into develop"
+  },
+  "expected": {
+    "routergroup.go": "any"
+  }
+}

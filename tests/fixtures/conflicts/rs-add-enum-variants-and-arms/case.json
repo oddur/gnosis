@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different enum variant and its match arm.",
+  "language": "rust",
+  "category": "structure/both-add",
+  "expected": {
+    "src/color.rs": "merged"
+  }
+}

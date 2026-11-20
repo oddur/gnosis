@@ -1,0 +1,8 @@
+{
+  "description": "A plain text file both sides append to. No grammar anywhere.",
+  "language": "text",
+  "category": "files/no-grammar",
+  "expected": {
+    "NOTES.txt": "decide"
+  }
+}

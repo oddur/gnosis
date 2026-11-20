@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a using directive and a method to the same class.",
+  "language": "csharp",
+  "category": "structure/both-add",
+  "expected": {
+    "src/OrderService.cs": "merged"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "lab",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.19.0",
+    "lodash": "^4.17.21"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "description": "The PR’s file is CRLF; main converted it to LF and added a function, so every line conflicts.",
+  "language": "typescript",
+  "category": "files/crlf",
+  "expected": {
+    "src/math.ts": "any-but-merged"
+  }
+}

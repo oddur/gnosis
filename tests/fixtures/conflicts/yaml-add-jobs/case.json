@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different job at the end of a workflow.",
+  "language": "yaml",
+  "category": "structure/both-add",
+  "expected": {
+    ".github/workflows/ci.yml": "merged"
+  }
+}

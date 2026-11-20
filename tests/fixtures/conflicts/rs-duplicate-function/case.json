@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a function named validate with different bodies.",
+  "language": "rust",
+  "category": "semantic/duplicate",
+  "expected": {
+    "src/parse.rs": "any-but-merged"
+  }
+}

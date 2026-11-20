@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a method with the same signature and different bodies. Keeping both does not compile.",
+  "language": "java",
+  "category": "semantic/duplicate",
+  "expected": {
+    "src/main/java/lab/cart/Cart.java": "any-but-merged"
+  }
+}

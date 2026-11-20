@@ -1,0 +1,2 @@
+BATCH = 20
+WORKERS = 2

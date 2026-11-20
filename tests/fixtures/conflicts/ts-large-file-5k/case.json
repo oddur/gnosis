@@ -1,0 +1,8 @@
+{
+  "description": "A 5,200-line TypeScript file: both sides add a different function in the middle.",
+  "language": "typescript",
+  "category": "files/large",
+  "expected": {
+    "src/big.ts": "merged"
+  }
+}

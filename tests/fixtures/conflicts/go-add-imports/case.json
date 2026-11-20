@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different import to the same import block, and use it in Start.",
+  "language": "go",
+  "category": "structure/both-add",
+  "expected": {
+    "server/start.go": "any"
+  }
+}

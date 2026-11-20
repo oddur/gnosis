@@ -1,0 +1,16 @@
+{
+  "description": "One side renames a function; the other adds new code, next to it, that calls the old name.",
+  "language": "go",
+  "category": "matrix/must-not-merge (generated sample)",
+  "pattern": "rename-vs-new-use",
+  "axes": {
+    "position": "middle",
+    "indent": "tab",
+    "eol": "lf",
+    "nesting": "top",
+    "size": "small"
+  },
+  "expected": {
+    "lab/rename-vs-new-use.go": "any-but-merged"
+  }
+}

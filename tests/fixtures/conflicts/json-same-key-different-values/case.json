@@ -1,0 +1,8 @@
+{
+  "description": "Both sides change the version of the same dependency differently.",
+  "language": "json",
+  "category": "semantic/same-constant",
+  "expected": {
+    "package.json": "any-but-merged"
+  }
+}

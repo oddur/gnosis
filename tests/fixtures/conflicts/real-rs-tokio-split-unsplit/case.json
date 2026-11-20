@@ -1,0 +1,19 @@
+{
+  "description": "The 1.20.x branch added #[track_caller] to ReadHalf::unsplit, 1.18.x added a where T: Unpin bound; the human kept both the attribute and the bound.",
+  "language": "rust",
+  "category": "real",
+  "source": {
+    "repo": "tokio-rs/tokio",
+    "license": "MIT",
+    "merge": "0d8fe5fe75f0f71f5dee8eb968732d1d40927c2f",
+    "ours": "ba81945ffc2695b71f2bbcadbfb5e46ec55aaef3",
+    "theirs": "171ce0ff8d38b87a39c1e6a16fedc9a2373720e0",
+    "base": "9241c3eddf4a6a218681b088d71f7191513e2376",
+    "url": "https://github.com/tokio-rs/tokio/commit/0d8fe5fe75f0f71f5dee8eb968732d1d40927c2f",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch 'tokio-1.18.x' into tokio-1.20.x"
+  },
+  "expected": {
+    "tokio/src/io/split.rs": "any"
+  }
+}

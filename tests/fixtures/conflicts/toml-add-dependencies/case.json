@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different Cargo dependency. Mergiraf merges TOML; Gnosis has no TOML grammar to check it.",
+  "language": "toml",
+  "category": "files/no-grammar",
+  "expected": {
+    "Cargo.toml": "check"
+  }
+}

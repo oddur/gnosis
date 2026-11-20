@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different button to the same JSX element, and a different import.",
+  "language": "tsx",
+  "category": "structure/both-add",
+  "expected": {
+    "src/Toolbar.tsx": "any"
+  }
+}
