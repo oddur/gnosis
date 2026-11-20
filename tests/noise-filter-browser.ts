@@ -273,6 +273,11 @@ void app.whenReady().then(async () => {
     await closeMenu();
     await openFile('src/noise/indent.py');
     await wait(`!!document.querySelector(${JSON.stringify(row('src/noise/indent.py') + ' [data-noise-bar]')})`);
+    // The stream may still be settling on the file it opened: place the line, then measure.
+    for (let i = 0; i < 3; i++) {
+      await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const l=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row('src/noise/indent.py'))})).find(e=>e.textContent.includes('return total'));s.scrollTop+=l.getBoundingClientRect().top-s.getBoundingClientRect().top-240})()`);
+      await settle();
+    }
     const top = await js<number>(`(()=>{const s=document.querySelector('.commit-diff-stream');const l=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row('src/noise/indent.py'))})).find(e=>e.textContent.includes('return total'));return Math.round(l.getBoundingClientRect().top-s.getBoundingClientRect().top)})()`);
     await js('document.activeElement?.blur()');
     const press = async () => {
