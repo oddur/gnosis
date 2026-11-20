@@ -14,7 +14,10 @@ const platform = process.env.GNOSIS_TARGET_PLATFORM || process.platform;
 const arch = process.env.GNOSIS_TARGET_ARCH || process.arch;
 const asset = manifest.platforms[`${platform}-${arch}`];
 if (!asset) throw Error(`Mergiraf is not available for ${platform}-${arch}.`);
-const directory = path.join(root, 'resources/mergiraf/runtime');
+// test-browser-docker.mjs prepares a Linux runtime in its own cache directory for the image.
+const directory = process.env.GNOSIS_MERGIRAF_DIR
+  ? path.resolve(process.env.GNOSIS_MERGIRAF_DIR)
+  : path.join(root, 'resources/mergiraf/runtime');
 await fs.mkdir(directory, { recursive: true });
 const binary = path.join(directory, platform === 'win32' ? 'mergiraf.exe' : 'mergiraf');
 const stamp = `${manifest.version}:${platform}:${arch}:${asset.sha256}`;

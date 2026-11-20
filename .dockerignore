@@ -6,3 +6,5 @@ out
 .vite
 resources/mergiraf/runtime
 site
+.cache
+!.cache/mergiraf

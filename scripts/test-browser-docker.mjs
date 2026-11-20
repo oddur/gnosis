@@ -9,6 +9,8 @@
 //   CI=true npm run test:browser:docker -- --diff-gaps    # timing report-only, as on CI
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const image = process.env.GNOSIS_DOCKER_IMAGE || 'gnosis-browser-tests';
 const platform = process.env.GNOSIS_DOCKER_PLATFORM ? ['--platform', process.env.GNOSIS_DOCKER_PLATFORM] : [];
@@ -28,7 +30,25 @@ const run = (command, commandArgs) => {
   if (result.status !== 0) process.exit(result.status ?? 1);
 };
 
-run('docker', ['build', ...platform, '-t', image, '-f', 'tests/docker/Dockerfile', '.']);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// The image needs a Linux Mergiraf. Download it on the host into a cache that the Dockerfile copies in, so
+// a build does not need codeberg.org once the runtime for this version and architecture is cached.
+const dockerArch = (process.env.GNOSIS_DOCKER_PLATFORM?.split('/')[1] ??
+  spawnSync('docker', ['version', '--format', '{{.Server.Arch}}'], { encoding: 'utf8' }).stdout?.trim()) || 'amd64';
+const mergirafArch = { amd64: 'x64', arm64: 'arm64' }[dockerArch];
+if (!mergirafArch) throw Error(`Unsupported Docker architecture for Mergiraf: ${dockerArch}`);
+const prepared = spawnSync(process.execPath, [path.join(root, 'scripts/prepare-mergiraf.mjs')], {
+  stdio: 'inherit',
+  env: {
+    ...process.env,
+    GNOSIS_TARGET_PLATFORM: 'linux',
+    GNOSIS_TARGET_ARCH: mergirafArch,
+    GNOSIS_MERGIRAF_DIR: path.join(root, '.cache/mergiraf', `linux-${dockerArch}`),
+  },
+});
+if (prepared.status !== 0) process.exit(prepared.status ?? 1);
+
+run('docker', ['build', ...platform, '-t', image, '-f', 'tests/docker/Dockerfile', root]);
 // Chromium needs a larger /dev/shm than Docker's 64 MB default, and its sandbox needs
 // namespace syscalls that Docker's default seccomp profile blocks.
 run('docker', [
