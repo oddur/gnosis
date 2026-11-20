@@ -7,10 +7,10 @@
 //   node scripts/run-browser-suites.mjs --shard 2/6     # one balanced sixth
 //   node scripts/run-browser-suites.mjs --list --shard 2/6
 //   node scripts/run-browser-suites.mjs --durations out.json   # also record measured seconds
-//   node scripts/run-browser-suites.mjs --perf          # the timed suites in test:perf:browser, enforced
+//   node scripts/run-browser-suites.mjs --perf          # suites with timing budgets, enforced (npm run test:perf)
 //
-// Performance tests run locally only; see "Performance tests" in docs/continuous-integration.md. Suites listed only in
-// test:perf:browser are the "local perf" category: they are left out of the CI suite list and its shards.
+// Performance tests run locally only; see "Performance tests" in docs/continuous-integration.md. CI runs every suite,
+// with timing assertions report-only; --perf picks the suites whose test file uses tests/perf-budget.ts.
 import { spawn } from 'node:child_process';
 import console from 'node:console';
 import fs from 'node:fs';
@@ -28,17 +28,18 @@ const argument = (name) => {
 
 /** The npm scripts whose suites CI runs, in shards. */
 export const CI_SCRIPTS = ['test:explainer', 'test:workbench', 'test:diagrams'];
-/** The suites `npm run test:perf` runs with timing enforced: local perf suites, and CI suites with timing budgets. */
-export const PERF_SCRIPTS = ['test:perf:browser'];
+/** A `scripts/test-workbench.mjs --flag` suite flag. */
+export const SUITE_FLAG = /--[a-z0-9-]+/;
+const workbenchCommand = new RegExp(`scripts/test-workbench\\.mjs(?:\\s+(${SUITE_FLAG.source}))?\\s*$`);
 
-/** Every browser suite in the given npm scripts as `{ key, command }`, in package.json order. CI's suites by default. */
-export function browserSuites(scripts, names = CI_SCRIPTS) {
+/** Every browser suite CI runs as `{ key, command }`, in package.json order. */
+export function browserSuites(scripts) {
   const suites = [];
-  for (const script of names) {
+  for (const script of CI_SCRIPTS) {
     for (const part of String(scripts[script] ?? '').split('&&')) {
       const command = part.trim();
       if (!command) continue;
-      const flag = /scripts\/test-workbench\.mjs(?:\s+(--[\w-]+))?\s*$/.exec(command)?.[1];
+      const flag = workbenchCommand.exec(command)?.[1];
       const key = /test-workbench\.mjs/.test(command)
         ? (flag?.slice(2) ?? 'default')
         : /test-explainer\.mjs/.test(command)
@@ -50,10 +51,62 @@ export function browserSuites(scripts, names = CI_SCRIPTS) {
   return suites;
 }
 
-/** Local perf suites: timed in test:perf:browser and not run by CI. */
-export function localPerfSuites(scripts) {
-  const ci = new Set(browserSuites(scripts).map((s) => s.key));
-  return browserSuites(scripts, PERF_SCRIPTS).filter((s) => !ci.has(s.key));
+/**
+ * Each `scripts/test-workbench.mjs` flag and the test file it builds, from both forms the runner uses:
+ * `process.argv.includes('--x') ? 'tests/x.ts'` and `const x = process.argv.includes('--x')` with `x ? 'tests/x.ts'`.
+ */
+export function workbenchSuiteFiles(runner = fs.readFileSync(path.join(root, 'scripts/test-workbench.mjs'), 'utf8')) {
+  /** @type {Map<string, string>} */
+  const files = new Map();
+  const flag = `'(${SUITE_FLAG.source})'`;
+  for (const [, name, file] of runner.matchAll(new RegExp(`process\\.argv\\.includes\\(${flag}\\) \\? '(tests/[\\w-]+\\.ts)'`, 'g')))
+    files.set(name, file);
+  const includes = `process\\.argv\\.includes\\('${SUITE_FLAG.source}'\\)`;
+  for (const [, variable, test] of runner.matchAll(new RegExp(`const (\\w+) = (${includes}(?: \\|\\| ${includes})*);`, 'g'))) {
+    const file = new RegExp(`[:?(]\\s*${variable}\\s*\\?\\s*'(tests/[\\w-]+\\.ts)'`).exec(runner)?.[1];
+    for (const [name] of test.matchAll(new RegExp(SUITE_FLAG.source, 'g'))) if (file && !files.has(name)) files.set(name, file);
+  }
+  // With no flag the runner builds its last entry point.
+  const fallback = /:\s*'(tests\/[\w-]+\.ts)',\s*\]/.exec(runner)?.[1];
+  if (fallback) files.set('default', fallback);
+  return files;
+}
+
+/** The test file a suite runs, or undefined when it cannot be told from the scripts. */
+export function suiteFile(suite, files = workbenchSuiteFiles()) {
+  if (suite.key === 'explainer') {
+    const source = fs.readFileSync(path.join(root, 'scripts/test-explainer.mjs'), 'utf8');
+    return [...source.matchAll(/'(tests\/[\w-]+-browser\.ts)'/g)].at(-1)?.[1];
+  }
+  if (suite.key.endsWith('-unit')) return /tests\/[\w-]+\.test\.ts/.exec(suite.command)?.[0];
+  return files.get(suite.key === 'default' ? 'default' : `--${suite.key}`);
+}
+
+/**
+ * Whether a test file uses tests/perf-budget.ts: it imports or re-exports it (with or without `.ts`), directly or
+ * through another local module it imports.
+ */
+export function usesPerfBudget(file, seen = new Set()) {
+  const full = path.resolve(root, file);
+  if (seen.has(full) || !fs.existsSync(full)) return false;
+  seen.add(full);
+  const source = fs.readFileSync(full, 'utf8');
+  for (const [, specifier] of source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)) {
+    if (/(^|\/)perf-budget(\.ts)?$/.test(specifier)) return true;
+    const target = path.resolve(path.dirname(full), specifier);
+    const candidate = [target, `${target}.ts`, `${target}.tsx`].find((f) => fs.existsSync(f) && fs.statSync(f).isFile());
+    if (candidate && /\.(ts|tsx)$/.test(candidate) && usesPerfBudget(path.relative(root, candidate), seen)) return true;
+  }
+  return false;
+}
+
+/** The CI suites with timing or memory budgets: `npm run test:perf` runs these with the budgets enforced. */
+export function perfSuites(scripts) {
+  const files = workbenchSuiteFiles();
+  return browserSuites(scripts).filter((suite) => {
+    const file = suiteFile(suite, files);
+    return file !== undefined && usesPerfBudget(file);
+  });
 }
 
 /**
@@ -96,17 +149,15 @@ async function main() {
     if (missing.length || keys.size !== all.length)
       throw new Error(`Shards do not cover each suite exactly once: ${missing.join(', ') || 'duplicate suite keys'}`);
     const unmeasured = all.filter((s) => typeof durations[s.key] !== 'number').map((s) => s.key);
-    const local = localPerfSuites(scripts).map((s) => s.key);
     console.log(
-      `${all.length} browser suites cover ${count} shards exactly once.${unmeasured.length ? ` Unmeasured (median weight): ${unmeasured.join(', ')}` : ''}` +
-        (local.length ? ` Local perf, not in CI: ${local.join(', ')}.` : '')
+      `${all.length} browser suites cover ${count} shards exactly once.${unmeasured.length ? ` Unmeasured (median weight): ${unmeasured.join(', ')}` : ''}`
     );
     return;
   }
   if (process.argv.includes('--perf')) {
     // Timing assertions fail the run here, also in a container or on a runner (tests/perf-budget.ts).
     process.env.GNOSIS_PERF = '1';
-    all = browserSuites(scripts, PERF_SCRIPTS);
+    all = perfSuites(scripts);
   }
   const shard = argument('--shard');
   let selected = all;
@@ -117,8 +168,6 @@ async function main() {
   }
   if (process.argv.includes('--list')) {
     for (const suite of selected) console.log(`${String(durations[suite.key] ?? '?').padStart(4)}s  ${suite.key}`);
-    if (!shard && !process.argv.includes('--perf'))
-      for (const suite of localPerfSuites(scripts)) console.log(`${String(durations[suite.key] ?? '?').padStart(4)}s  ${suite.key}  (local perf, not in CI: npm run test:perf)`);
     return;
   }
   // Windows names the variable `Path`; extend whichever spelling exists so the child sees one entry.

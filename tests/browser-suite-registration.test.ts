@@ -1,46 +1,36 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { browserSuites, perfSuites, suiteFile, usesPerfBudget, workbenchSuiteFiles } from '../scripts/run-browser-suites.mjs';
 
-const runner = readFileSync('scripts/test-workbench.mjs', 'utf8');
 const scripts = (JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }).scripts;
-const flags = (names: string[]) => new Set([...names.map(name => scripts[name] ?? '').join(' && ').matchAll(/test-workbench\.mjs (--[a-z0-9-]+)/g)].map(match => match[1]));
-const ci = flags(['test:explainer', 'test:workbench', 'test:diagrams']);
-// Performance tests run locally only; see "Performance tests" in docs/continuous-integration.md.
-const perf = flags(['test:perf:browser']);
+const files = workbenchSuiteFiles();
+const suites = browserSuites(scripts);
 
-/** Each suite flag and the test file it builds, from both forms scripts/test-workbench.mjs uses. */
-function suiteFiles() {
-  const files = new Map<string, string>();
-  for (const [, flag, file] of runner.matchAll(/process\.argv\.includes\('(--[a-z0-9-]+)'\) \? '(tests\/[\w-]+\.ts)'/g)) files.set(flag, file);
-  for (const [, name, flag] of runner.matchAll(/const (\w+) = process\.argv\.includes\('(--[a-z0-9-]+)'\)/g)) {
-    const file = new RegExp(`[:?(]\\s*${name}\\s*\\?\\s*'(tests/[\\w-]+\\.ts)'`).exec(runner)?.[1];
-    if (file && !files.has(flag)) files.set(flag, file);
-  }
-  return files;
-}
-
-// Every browser suite that scripts/test-workbench.mjs knows about must run somewhere: in CI, through test:explainer,
-// test:workbench or test:diagrams, or locally as a perf suite through test:perf:browser. A suite left out silently
-// never runs.
-void test('every workbench browser suite is registered in an npm script CI runs, or as a local perf suite', () => {
-  const mapped = new Set([...runner.matchAll(/process\.argv\.includes\('(--[a-z0-9-]+)'\) \? 'tests\//g)].map(match => match[1]));
-  const missing = [...mapped].filter(flag => !ci.has(flag) && !perf.has(flag));
+// Every browser suite that scripts/test-workbench.mjs knows about must be run by CI, through
+// test:explainer, test:workbench or test:diagrams. A suite left out silently never runs.
+void test('every workbench browser suite is registered in an npm script CI runs', () => {
+  const registered = new Set(suites.map((suite) => `--${suite.key}`));
+  const missing = [...files.keys()].filter((flag) => flag !== 'default' && !registered.has(flag));
   assert.deepEqual(missing, [], `Add these suites to test:workbench: ${missing.join(', ')}`);
 });
 
-// A browser suite with timing or memory budgets (it imports tests/perf-budget.ts) must be in test:perf:browser, so
-// `npm run test:perf` enforces its budgets. CI only reports them.
-void test('every browser suite with timing budgets runs in npm run test:perf', () => {
-  const timed = [...suiteFiles()].filter(([, file]) => /from '\.\/perf-budget'/.test(readFileSync(file, 'utf8'))).map(([flag]) => flag);
-  assert.ok(timed.length > 0, 'The suite files were found');
-  const missing = timed.filter(flag => !perf.has(flag));
-  assert.deepEqual(missing, [], `Add these suites to test:perf:browser: ${missing.join(', ')}`);
+// npm run test:perf picks the suites with budgets from their test files, so each CI suite must name one.
+// Performance tests run locally only; see "Performance tests" in docs/continuous-integration.md.
+void test('every CI browser suite maps to its test file, so test:perf can find the timed ones', () => {
+  const unknown = suites.filter((suite) => !suiteFile(suite, files)).map((suite) => suite.key);
+  assert.deepEqual(unknown, [], `scripts/run-browser-suites.mjs cannot tell which file these suites run: ${unknown.join(', ')}`);
+  assert.equal(suiteFile({ key: 'default', command: 'node scripts/test-workbench.mjs' }, files), 'tests/workbench-browser.ts');
+  assert.equal(suiteFile({ key: 'explainer', command: 'node scripts/test-explainer.mjs' }, files), 'tests/explainer-browser.ts');
+  const timed = perfSuites(scripts).map((suite) => suite.key);
+  for (const key of ['interaction-perf', 'comment-typing', 'diff-gaps', 'syntax-scope']) assert.ok(timed.includes(key), `${key} has budgets`);
+  assert.ok(!timed.includes('default') && !timed.includes('explainer'), 'Suites without budgets are not timed');
 });
 
-// The local perf category: suites that exist only to measure performance. Only test:perf:browser lists them, so CI's
-// suite list and shards (scripts/run-browser-suites.mjs) leave them out. Changing the category is a deliberate edit here.
-void test('the local perf suites are the perf-only suites, and CI does not run them', () => {
-  const local = [...perf].filter(flag => !ci.has(flag));
-  assert.deepEqual(local, ['--interaction-perf', '--comment-typing']);
+void test('a test file uses the perf budgets through any import form, a re-export or a local helper', () => {
+  assert.equal(usesPerfBudget('tests/group-subjects.test.ts'), true);
+  assert.equal(usesPerfBudget('tests/fixtures/perf-budget-import.ts'), true, "import from './perf-budget.ts'");
+  assert.equal(usesPerfBudget('tests/fixtures/perf-budget-reexport.ts'), true, 'export … from');
+  assert.equal(usesPerfBudget('tests/fixtures/perf-budget-helper.ts'), true, 'through a helper that re-exports it');
+  assert.equal(usesPerfBudget('tests/workbench-browser.ts'), false);
 });

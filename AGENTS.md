@@ -17,9 +17,9 @@ npm run test:browser:docker                             # full suite, as on Linu
 
 ## Performance tests run locally only
 
-- CI does not enforce timing or memory budgets. When `CI` is set, timing assertions only log their value against the budget, and the perf-only browser suites (`--interaction-perf`, `--comment-typing`) do not run at all.
+- CI does not enforce timing budgets. When `CI` is set, every suite still runs its functional assertions, and timing assertions only log their value against the budget.
 - After you change rendering, scrolling, sync, diff or queue code, run `npm run test:perf` on your own machine. Put its `[perf]` results in the PR description, and say which budgets went over.
-- Use `assertPerf` or `withinPerf` from `tests/perf-budget.ts` for any new timing or memory assertion, never a plain `assert`. A browser suite with budgets must be listed in `test:perf:browser`; `tests/browser-suite-registration.test.ts` checks this.
+- Use `assertPerf` or `withinPerf` from `tests/perf-budget.ts` for any new timing budget, never a plain `assert`. `npm run test:perf` finds the tests that use it by itself. A check that guards behaviour (order, a leak, a timeout) must not depend on the machine's speed: use mocked timers, or check order instead of milliseconds.
 - See [Performance tests](docs/continuous-integration.md#performance-tests).
 
 ## Diff presentation

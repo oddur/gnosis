@@ -21,7 +21,7 @@ Old commit messages have `+semver:` labels. Nothing reads them. The person who c
 ## Cut a stable release
 
 1. Make sure that the Checks run for the `main` commit is green.
-2. Run `npm run test:perf` locally on a quiet machine, and note any budget over its limit. CI does not enforce timing budgets; see [Performance tests](continuous-integration.md#performance-tests).
+2. Run `npm run test:perf` locally on a quiet machine, and note any budget over its limit. CI only reports timing budgets; see [Performance tests](continuous-integration.md#performance-tests).
 3. Tag the commit and push the tag:
 
    ```sh
