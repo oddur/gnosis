@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import { chunked } from './bounded';
+import { chunked, mapBounded } from './bounded';
 import { githubRateLimit } from './github-client';
 
 /**
@@ -53,8 +53,10 @@ export async function aliasedGraphql<T extends object>(
 export const BLOB_ALIASES_PER_QUERY = 50;
 /** Above this, GraphQL may truncate a blob's text; callers read such files another way. */
 export const BLOB_TEXT_LIMIT = 256_000;
-const SYMLINK_MODE = 0o120000;
-const REGULAR_FILE_MODES = new Set([0o100644, 0o100755]);
+/** Git tree entry modes, as GraphQL's `TreeEntry.mode` reports them. */
+export const TREE_MODE = 0o040000;
+export const SYMLINK_MODE = 0o120000;
+export const REGULAR_FILE_MODES: ReadonlySet<number> = new Set([0o100644, 0o100755]);
 
 export interface BlobRequest {
   owner: string;
@@ -76,76 +78,103 @@ type Dir = { __typename?: string; entries?: { name: string; mode: number }[] } |
 const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 
+/** Queries that run at once; each carries up to 50 aliases. */
+const QUERIES_AT_ONCE = 2;
+type RepoAnswer = AliasedAnswer<Record<string, Record<string, Blob | Dir> | null>>;
+
 /**
- * File texts through aliased `object(expression:)` queries, 50 files per query, answers in request order. A file's
- * mode comes from its parent directory's entries, so a symlink is reported as one instead of as its target path.
+ * One aliased query over several repositories: `rN: repository(...) { <alias>: <selection> }` for each repository's
+ * fields. Undefined when the query failed outright, except for a rate limit, which is thrown.
+ */
+async function queryRepos(
+  client: Octokit,
+  fields: { owner: string; repo: string; alias: string; selection: string }[]
+): Promise<{ answer: RepoAnswer; repoAlias: (owner: string, repo: string) => string } | undefined> {
+  const repos = [...new Set(fields.map((f) => `${f.owner}/${f.repo}`))];
+  const body = repos
+    .map((name, r) => {
+      const [owner, repo] = name.split('/');
+      const selections = fields.filter((f) => `${f.owner}/${f.repo}` === name).map((f) => `${f.alias}: ${f.selection}`);
+      return `r${r}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { ${selections.join(' ')} }`;
+    })
+    .join('\n');
+  try {
+    const answer: RepoAnswer = await aliasedGraphql(client, `query { rateLimit { cost } ${body} }`);
+    return { answer, repoAlias: (owner, repo) => `r${repos.indexOf(`${owner}/${repo}`)}` };
+  } catch (error) {
+    const limited = githubRateLimit(error);
+    if (limited) throw limited;
+    return undefined;
+  }
+}
+
+/**
+ * File texts through aliased `object(expression:)` queries, 50 files per query and two queries at once, answers in
+ * request order. A file's mode comes from its parent directory's entries, listed in a second query only for files
+ * that exist and whose mode the caller did not give, so a symlink is reported as one instead of as its target path.
  * Never throws, except for a rate limit; a failed query or alias answers `failed`.
  */
 export async function readBlobs(client: Octokit, requests: readonly BlobRequest[]): Promise<BlobAnswer[]> {
   const answers = new Array<BlobAnswer>(requests.length);
+  const blobs = new Array<Blob | undefined>(requests.length);
   const indexed = requests.map((request, index) => ({ request, index }));
-  await Promise.all(
-    chunked(indexed, BLOB_ALIASES_PER_QUERY).map(async (batch) => {
-      const repos = [...new Set(batch.map(({ request }) => `${request.owner}/${request.repo}`))];
-      const dirs = new Map<string, string>();
-      const fields = repos.map((name, r) => {
-        const [owner, repo] = name.split('/');
-        const selections: string[] = [];
-        for (const [f, { request }] of batch.entries()) {
-          if (`${request.owner}/${request.repo}` !== name) continue;
-          selections.push(
-            `f${f}: object(expression:${JSON.stringify(`${request.ref}:${request.path}`)}) { __typename ... on Blob { text byteSize isBinary isTruncated } }`
-          );
-          if (request.mode !== undefined) continue;
-          const dir = `${request.ref}:${parentOf(request.path)}`;
-          if (dirs.has(`r${r}|${dir}`)) continue;
-          const alias = `d${dirs.size}`;
-          dirs.set(`r${r}|${dir}`, alias);
-          selections.push(`${alias}: object(expression:${JSON.stringify(dir)}) { __typename ... on Tree { entries { name mode } } }`);
-        }
-        return `r${r}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { ${selections.join(' ')} }`;
-      });
-      let answer: AliasedAnswer<Record<string, Record<string, Blob | Dir> | null>>;
-      try {
-        answer = await aliasedGraphql(client, `query { rateLimit { cost } ${fields.join('\n')} }`);
-      } catch (error) {
-        const limited = githubRateLimit(error);
-        if (limited) throw limited;
-        for (const { index } of batch) answers[index] = { kind: 'other', reason: 'failed' };
-        return;
-      }
-      for (const [f, { request, index }] of batch.entries()) {
-        const r = `r${repos.indexOf(`${request.owner}/${request.repo}`)}`;
-        const repository = answer.data[r];
-        const blob = repository?.[`f${f}`] as Blob | undefined;
-        if (!repository || blob === undefined || answer.failed(r, `f${f}`)) {
-          answers[index] = { kind: 'other', reason: 'failed' };
-          continue;
-        }
-        if (blob === null || blob.__typename !== 'Blob') {
-          answers[index] = { kind: 'absent' };
-          continue;
-        }
-        let mode = request.mode;
-        if (mode === undefined) {
-          const alias = dirs.get(`${r}|${request.ref}:${parentOf(request.path)}`) ?? '';
-          const dir = repository[alias] as Dir | undefined;
-          mode = answer.failed(r, alias) ? undefined : dir?.entries?.find((e) => e.name === nameOf(request.path))?.mode;
-        }
-        answers[index] =
-          mode === SYMLINK_MODE
-            ? { kind: 'other', reason: 'symlink' }
-            : mode === undefined || !REGULAR_FILE_MODES.has(mode)
-              ? { kind: 'other', reason: 'failed' }
-              : blob.isBinary || typeof blob.text !== 'string'
-                ? { kind: 'other', reason: 'binary' }
-                : blob.isTruncated
-                  ? { kind: 'other', reason: 'truncated' }
-                  : (blob.byteSize ?? Infinity) > BLOB_TEXT_LIMIT
-                    ? { kind: 'other', reason: 'large' }
-                    : { kind: 'text', text: blob.text };
-      }
-    })
-  );
+  // The blobs first.
+  await mapBounded(chunked(indexed, BLOB_ALIASES_PER_QUERY), QUERIES_AT_ONCE, async (batch) => {
+    const result = await queryRepos(
+      client,
+      batch.map(({ request }, f) => ({
+        owner: request.owner,
+        repo: request.repo,
+        alias: `f${f}`,
+        selection: `object(expression:${JSON.stringify(`${request.ref}:${request.path}`)}) { __typename ... on Blob { text byteSize isBinary isTruncated } }`,
+      }))
+    );
+    for (const [f, { request, index }] of batch.entries()) {
+      const r = result?.repoAlias(request.owner, request.repo) ?? '';
+      const blob = result?.answer.data[r]?.[`f${f}`] as Blob | undefined;
+      if (!result || blob === undefined || result.answer.failed(r, `f${f}`)) answers[index] = { kind: 'other', reason: 'failed' };
+      else if (blob === null || blob.__typename !== 'Blob') answers[index] = { kind: 'absent' };
+      else blobs[index] = blob;
+    }
+  });
+  // Then the modes of the files that exist, from each parent directory listed once.
+  const modes = new Map<number, number | undefined>();
+  const unlisted = indexed.filter(({ request, index }) => blobs[index] && request.mode === undefined);
+  const dirOf = ({ request }: (typeof indexed)[number]) => JSON.stringify([request.owner, request.repo, request.ref, parentOf(request.path)]);
+  const dirs = [...new Map(unlisted.map((item) => [dirOf(item), item.request])).entries()];
+  await mapBounded(chunked(dirs, BLOB_ALIASES_PER_QUERY), QUERIES_AT_ONCE, async (batch) => {
+    const result = await queryRepos(
+      client,
+      batch.map(([, request], d) => ({
+        owner: request.owner,
+        repo: request.repo,
+        alias: `d${d}`,
+        selection: `object(expression:${JSON.stringify(`${request.ref}:${parentOf(request.path)}`)}) { __typename ... on Tree { entries { name mode } } }`,
+      }))
+    );
+    for (const [d, [key, request]] of batch.entries()) {
+      const r = result?.repoAlias(request.owner, request.repo) ?? '';
+      const dir = result && !result.answer.failed(r, `d${d}`) ? (result.answer.data[r]?.[`d${d}`] as Dir | undefined) : undefined;
+      for (const item of unlisted)
+        if (dirOf(item) === key) modes.set(item.index, dir?.entries?.find((e) => e.name === nameOf(item.request.path))?.mode);
+    }
+  });
+  for (const { request, index } of indexed) {
+    const blob = blobs[index];
+    if (!blob) continue;
+    const mode = request.mode ?? modes.get(index);
+    answers[index] =
+      mode === SYMLINK_MODE
+        ? { kind: 'other', reason: 'symlink' }
+        : mode === undefined || !REGULAR_FILE_MODES.has(mode)
+          ? { kind: 'other', reason: 'failed' }
+          : blob.isBinary || typeof blob.text !== 'string'
+            ? { kind: 'other', reason: 'binary' }
+            : blob.isTruncated
+              ? { kind: 'other', reason: 'truncated' }
+              : (blob.byteSize ?? Infinity) > BLOB_TEXT_LIMIT
+                ? { kind: 'other', reason: 'large' }
+                : { kind: 'text', text: blob.text };
+  }
   return answers;
 }

@@ -2,6 +2,7 @@ import type { Octokit } from '@octokit/rest';
 import { getPrMetadata, parsePrUrl, sortedNames } from './github';
 import { chunked, mapBounded } from './bounded';
 import { aliasedGraphql, type AliasedAnswer } from './github-graphql-batch';
+import { githubRateLimit } from './github-client';
 import { parseGitHubLabels } from './github-labels';
 import { reportPrHead } from './pr-heads';
 import type { PrMetadata } from './types';
@@ -19,6 +20,7 @@ export const PR_METADATA_FIELDS = `number title url body createdAt updatedAt sta
       additions deletions changedFiles
       author { __typename login }
       assignees(first:100) { totalCount nodes { login } }
+      assignedActors(first:1) { totalCount }
       baseRefName baseRefOid headRefName headRefOid
       baseRepository { nameWithOwner isArchived } headRepository { nameWithOwner }
       comments { totalCount } commits { totalCount }
@@ -49,6 +51,8 @@ export interface GraphPrMetadata {
   changedFiles: number;
   author: { __typename?: string; login: string } | null;
   assignees: Connection<{ login: string } | null>;
+  /** Users and bots; `assignees` lists users only, so a larger count means an assignee it left out. */
+  assignedActors?: { totalCount: number } | null;
   baseRefName: string;
   baseRefOid: string;
   headRefName: string;
@@ -91,6 +95,9 @@ function restLogin(actor: { __typename?: string; login?: string } | null | undef
  */
 export function prMetadataFromGraph(pr: GraphPrMetadata): PrMetadata | undefined {
   if (!pr.baseRepository || ![pr.assignees, pr.reviews, pr.labels, pr.reviewRequests].every(complete)) return undefined;
+  // REST lists every assignee. GraphQL's `assignees` includes Copilot (checked on public Copilot-agent PRs), but a
+  // count that differs from `assignedActors` means some other actor is missing.
+  if (!pr.assignedActors || pr.assignedActors.totalCount !== pr.assignees.totalCount) return undefined;
   const nodes = <T>(connection: Connection<T | null>) => (connection.nodes ?? []).filter((n): n is T => !!n);
   const reviewers = nodes(pr.reviewRequests).map((request) => request.requestedReviewer);
   const people = reviewers.flatMap((r) => (r && r.__typename !== 'Team' ? [restLogin(r)] : []));
@@ -160,8 +167,8 @@ export async function getPrMetadataBatch(
       return [];
     }
   });
-  await Promise.all(
-    chunked(targets, PR_METADATA_PER_QUERY).map(async (batch) => {
+  // Two queries at once. A rate limit stops the read: it is thrown, never answered with 25 REST reads.
+  await mapBounded(chunked(targets, PR_METADATA_PER_QUERY), 2, async (batch) => {
       const query = `query { rateLimit { cost } ${batch
         .map(
           ({ owner, repo, pullNumber }, i) =>
@@ -171,7 +178,9 @@ export async function getPrMetadataBatch(
       let answer: AliasedAnswer<Record<string, { pullRequest: GraphPrMetadata | null } | null>> | undefined;
       try {
         answer = await aliasedGraphql(octokit, query);
-      } catch {
+      } catch (error) {
+        const limited = githubRateLimit(error);
+        if (limited) throw limited;
         // No usable data: every PR of this query goes through REST.
       }
       for (const [i, { url }] of batch.entries()) {
@@ -186,13 +195,16 @@ export async function getPrMetadataBatch(
           results.set(url, { error: Object.assign(new Error(`GitHub could not find ${url}.`), { status: 404 }) });
         else rest.push(url);
       }
-    })
-  );
+  });
+  // The REST fallback stops at the first rate limit: the PRs it did not reach report that limit.
+  let limited: Error | undefined;
   await mapBounded(rest, 5, async (url) => {
+    if (limited) return void results.set(url, { error: limited });
     const { owner, repo, pullNumber } = parsePrUrl(url);
     try {
       results.set(url, { metadata: await getPrMetadata(octokit, owner, repo, pullNumber, options.fresh) });
     } catch (error) {
+      limited ??= githubRateLimit(error);
       results.set(url, { error });
     }
   });

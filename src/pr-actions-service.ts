@@ -7,7 +7,8 @@ import type {
   PrActionState,
   PrMergePlan,
 } from '../lib/pr-actions';
-import { chunked } from '../lib/bounded';
+import { chunked, mapBounded, settleInOrder } from '../lib/bounded';
+import { githubRateLimit } from '../lib/github-client';
 import { aliasedGraphql } from '../lib/github-graphql-batch';
 import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason, closeBlockedReason } from '../lib/pr-actions';
 
@@ -60,8 +61,8 @@ interface GraphRepo {
   rebaseMergeAllowed: boolean;
   pullRequest: GraphPr | null;
 }
-/** Pull requests per aliased stack query; a stack plan allows 100, a restack 31. */
-const PRS_PER_QUERY = 50;
+/** Pull requests per aliased stack query, small enough to answer well within GitHub's time limit. */
+const PRS_PER_QUERY = 20;
 const repoFields =
   'nameWithOwner isArchived viewerPermission viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed';
 const prFields = `${memberFields} id headRepository{nameWithOwner viewerPermission} maintainerCanModify mergeable mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}
@@ -104,7 +105,7 @@ function normalize(repo: GraphRepo, checkedAt: number, account: string): PrActio
     ...(pr.maintainerCanModify !== undefined ? { maintainerCanModify: pr.maintainerCanModify } : {}),
     repository: repo.nameWithOwner,
     archived: repo.isArchived,
-    canWrite: ['WRITE', 'MAINTAIN', 'ADMIN'].includes(repo.viewerPermission ?? ''),
+    canWrite: writePermissions.includes(repo.viewerPermission ?? ''),
     mergeable: pr.mergeable,
     mergeState: pr.mergeStateStatus,
     reviewDecision: pr.reviewDecision,
@@ -117,7 +118,7 @@ function normalize(repo: GraphRepo, checkedAt: number, account: string): PrActio
     canEnableAuto: pr.viewerCanEnableAutoMerge,
     canDisableAuto: pr.viewerCanDisableAutoMerge,
     canUpdateBranch: pr.viewerCanUpdateBranch,
-    canChangeDraft: pr.viewerDidAuthor || ['WRITE', 'MAINTAIN', 'ADMIN'].includes(repo.viewerPermission ?? ''),
+    canChangeDraft: pr.viewerDidAuthor || writePermissions.includes(repo.viewerPermission ?? ''),
     mergeQueue: !!pr.mergeQueue,
     inMergeQueue: pr.isInMergeQueue,
     stack: pr.stack
@@ -171,25 +172,25 @@ export function createPrActionsService(now = Date.now) {
     if (!force && saved && now() - saved.checkedAt < 25_000) return saved;
     const existing = a.pending.get(url);
     if (!force && existing) return existing;
-    const request = client
-      .graphql<{ viewer: { login: string }; repository: GraphRepo | null }>(
-        `query($owner:String!,$repo:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$repo){
+    const request = readOne(client, owner, repo, pull_number, url).finally(() => {
+      if (a.pending.get(url) === request) a.pending.delete(url);
+    });
+    a.pending.set(url, request);
+    return request;
+  }
+  /** One PR's state from its own query, saved in the capability cache. No coalescing; `read` adds that. */
+  async function readOne(client: Octokit, owner: string, repo: string, number: number, url: string): Promise<PrActionState> {
+    const data = await client.graphql<{ viewer: { login: string }; repository: GraphRepo | null }>(
+      `query($owner:String!,$repo:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$repo){
       ${repoFields}
       pullRequest(number:$number){ ${prFields}
       }}}`,
-        { owner, repo, number: pull_number }
-      )
-      .then((data) => {
-        if (!data.repository) throw new Error('GitHub could not grant access to this repository.');
-        const state = normalize(data.repository, now(), data.viewer.login);
-        a.cache.set(url, state);
-        return state;
-      })
-      .finally(() => {
-        if (a.pending.get(url) === request) a.pending.delete(url);
-      });
-    a.pending.set(url, request);
-    return request;
+      { owner, repo, number }
+    );
+    if (!data.repository) throw new Error('GitHub could not grant access to this repository.');
+    const state = normalize(data.repository, now(), data.viewer.login);
+    account(client).cache.set(url, state);
+    return state;
   }
   /**
    * `read` for many PRs. The PRs of one repository share one aliased query (up to 50 each), so the repository settings
@@ -231,7 +232,22 @@ export function createPrActionsService(now = Date.now) {
       ${batch.map((m, j) => `p${j}: pullRequest(number:${m.number}){ ${prFields} }`).join('\n      ')}
       }}`,
           { owner, repo }
-        ).then((answer) => {
+        );
+        // A query that failed without saying where (a timeout, a server error) reads each member by itself, 3 at a time,
+        // so one bad answer never fails the whole stack. A rate limit is not retried.
+        const retried = response.then(
+          () => undefined,
+          (error: unknown) =>
+            githubRateLimit(error)
+              ? undefined
+              : mapBounded(batch, 3, (m) =>
+                  readOne(client, owner, repo, m.number, m.url).then(
+                    (state) => ({ state }),
+                    (failure: unknown) => ({ failure })
+                  )
+                )
+        );
+        const checked = response.then((answer) => {
           const repository = answer.data.repository;
           // An error anywhere but under one PR's alias leaves no member's state sound.
           const shared = answer.errorPaths.find((path) => !(path[0] === 'repository' && /^p\d+$/.test(String(path[1]))));
@@ -240,8 +256,16 @@ export function createPrActionsService(now = Date.now) {
           return { login: answer.data.viewer.login, repository, answer };
         });
         for (const [j, { url }] of batch.entries()) {
-          const request = response
-            .then(({ login, repository, answer }) => {
+          const request = checked
+            .catch(async (error: unknown) => {
+              const retry = (await retried)?.[j];
+              if (!retry) throw error;
+              if ('failure' in retry) throw retry.failure;
+              return { retried: retry.state };
+            })
+            .then((read) => {
+              if ('retried' in read) return read.retried;
+              const { login, repository, answer } = read;
               const failed = answer.error('repository', `p${j}`);
               if (failed) throw failed;
               const state = normalize(
@@ -261,20 +285,12 @@ export function createPrActionsService(now = Date.now) {
       }
     return urls.map((url) => reads.get(url) as Promise<PrActionState>);
   }
-  /** Every member's state in order, or the first member's failure in order once all have settled. */
-  async function readAll(client: Octokit, urls: string[], force = false): Promise<PrActionState[]> {
-    const settled = await Promise.allSettled(readMany(client, urls, force));
-    return settled.map((result) => {
-      if (result.status === 'rejected') throw result.reason;
-      return result.value;
-    });
-  }
   async function stackPlan(client: Octokit, urls: string[], force = false): Promise<PrMergePlan> {
     if (!Array.isArray(urls) || urls.length < 2 || urls.length > 100 || new Set(urls).size !== urls.length)
       throw new Error('Choose a stack of 2–100 distinct PRs.');
     urls.forEach(prActionTarget);
     // User-initiated only. One query per repository through the shared scheduler, with a short capability cache.
-    const states = await readAll(client, urls, force);
+    const states = await settleInOrder(readMany(client, urls, force));
     const target = states[states.length - 1];
     const native = target.stack;
     const openNative = native?.members.filter((m) => m.state !== 'MERGED');

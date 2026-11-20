@@ -11,7 +11,15 @@ import { filesOfUnifiedDiff } from './diff-files';
 import { githubReadSignal } from './github-scheduler';
 import { reportPrHead } from './pr-heads';
 import { mapBounded } from './bounded';
-import { aliasedGraphql, readBlobs, type AliasedAnswer, type BlobAnswer, type BlobRequest } from './github-graphql-batch';
+import {
+  aliasedGraphql,
+  readBlobs,
+  REGULAR_FILE_MODES,
+  TREE_MODE,
+  type AliasedAnswer,
+  type BlobAnswer,
+  type BlobRequest,
+} from './github-graphql-batch';
 export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -94,6 +102,8 @@ export async function getPrMetadata(
     mergeableState: data.mergeable_state ?? null,
     autoMerge: data.auto_merge ? { method: data.auto_merge.merge_method } : null,
     milestone: data.milestone ? { title: data.milestone.title, dueOn: data.milestone.due_on } : null,
+    // Explicit, so a REST copy spread over a GraphQL one never keeps the GraphQL tag.
+    source: 'rest',
   };
 }
 
@@ -353,7 +363,7 @@ export async function getFileContent(
   }
 }
 
-/** `getFileContent`'s answer for a batch answer, or undefined when only the contents API can give it. */
+/** `getFileContent`'s answer for a blob batch answer, or undefined when only the contents API can give it. */
 const restEquivalent = (answer: BlobAnswer): string | null | undefined =>
   answer.kind === 'text'
     ? // The contents API answers an empty file with empty content, which `getFileContent` reads as null.
@@ -361,35 +371,6 @@ const restEquivalent = (answer: BlobAnswer): string | null | undefined =>
     : answer.kind === 'absent'
       ? null
       : undefined;
-
-/**
- * `getFileContent` for many paths at one ref, through the shared aliased blob reader (`readBlobs`). Each value equals
- * what `getFileContent` returns for that path. Symlinks, binary, truncated or large blobs, and anything a failed query
- * did not answer, are read through `getFileContent`, which follows symlinks as before.
- */
-export async function getFileContents(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  paths: readonly string[],
-  ref: string,
-  signal?: AbortSignal
-): Promise<Map<string, string | null>> {
-  const unique = [...new Set(paths)];
-  signal?.throwIfAborted();
-  const answers = await readBlobs(octokit, unique.map((path) => ({ owner, repo, ref, path })));
-  const found = new Map<string, string | null>();
-  const rest: string[] = [];
-  for (const [i, path] of unique.entries()) {
-    const value = restEquivalent(answers[i]);
-    if (value === undefined) rest.push(path);
-    else found.set(path, value);
-  }
-  await mapBounded(rest, 5, async (path) => {
-    found.set(path, await getFileContent(octokit, owner, repo, path, ref, signal));
-  });
-  return found;
-}
 
 export async function searchPullRequests(octokit: Octokit, login: string, limit = 30): Promise<PrSearchResult[]> {
   const queries = [
@@ -711,7 +692,8 @@ export async function getNeighborFiles(
     // REST right there, so a failed batch reads as the old one-path-at-a-time reader did.
     await mapBounded(candidates, 5, async (paths) => {
       for (const path of paths) {
-        const content = known.get(path) ?? (known.get(path) === null ? null : await getFileContent(octokit, owner, repo, path, ref));
+        const settled = known.get(path);
+        const content = settled === undefined ? await getFileContent(octokit, owner, repo, path, ref) : settled;
         if (content !== null) {
           results[path] = content;
           return;
@@ -854,8 +836,6 @@ export function makeGithubClaudeIO(octokit: Octokit, owner: string, repo: string
 }
 
 type ClaudeTreeEntry = { path: string; type: string; mode: number; object?: { entries?: ClaudeTreeEntry[] } | null };
-const TREE_MODE = 0o040000;
-const PLAIN_FILE_MODES = new Set([0o100644, 0o100755]);
 
 /**
  * The Claude-context probe's reads at `ref`, in two GraphQL queries. The first lists `.claude/` three levels deep,
@@ -888,7 +868,7 @@ async function githubClaudeSnapshotIO(octokit: Octokit, owner: string, repo: str
   const listings = new Map<string, { file: string[]; dir: string[] } | undefined>();
   /** A listing the contents API would give; undefined when an entry is neither a plain file nor a directory. */
   const listing = (entries: ClaudeTreeEntry[]) =>
-    entries.every((e) => e.mode === TREE_MODE || PLAIN_FILE_MODES.has(e.mode))
+    entries.every((e) => e.mode === TREE_MODE || REGULAR_FILE_MODES.has(e.mode))
       ? {
           file: entries.filter((e) => e.type === 'blob').map((e) => e.path),
           dir: entries.filter((e) => e.type === 'tree').map((e) => e.path),

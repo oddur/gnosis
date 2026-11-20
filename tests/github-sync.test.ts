@@ -69,9 +69,12 @@ void test('overlapping screens share one request; active PRs outrank visible row
   f.sync.observe('1:checks', watch());
   f.sync.observe('1:other', watch('visible', 2));
   await f.sync.tick();
-  assert.deepEqual(f.calls, [{ urls: [target().url], priority: 'active' }]);
+  // Active and visible rows read in separate lanes, active first; neither waits for the other.
+  assert.deepEqual(f.calls, [
+    { urls: [target().url], priority: 'active' },
+    { urls: [target(2).url], priority: 'visible' },
+  ]);
   await f.sync.tick();
-  assert.deepEqual(f.calls[1], { urls: [target(2).url], priority: 'visible' });
   await f.sync.tick();
   assert.equal(f.calls.length, 2, 'reconciling overlapping priorities must not restart cadence');
 });
@@ -591,4 +594,55 @@ void test('metadata and discussion read several PRs together, and one PR failing
     ]
   );
   assert.equal(published.length, 9, 'every other PR in both batches is accepted');
+});
+
+void test('an active PR reads while a background batch of the same kind is still running', async () => {
+  const calls: { priority: string; urls: string[] }[] = [];
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const sync = createGitHubSyncService({
+    now: () => 0,
+    account: () => 'alice',
+    enabled: () => true,
+    backoff: () => undefined,
+    read: async (kind, targets, priority) => {
+      calls.push({ priority, urls: targets.map((t) => t.url) });
+      if (priority === 'visible') await held;
+      return targets.map((t) => ({ kind, url: t.url, value: { title: t.url, headSha: 'a', updatedAt: '' } }) as unknown as GitHubSyncUpdate);
+    },
+    publish: () => {},
+  });
+  sync.observe('1:rows', { kind: 'metadata', priority: 'visible', targets: Array.from({ length: 6 }, (_, n) => target(n + 1)) });
+  const background = sync.tick();
+  await new Promise((resolve) => setImmediate(resolve));
+  sync.observe('1:open', { kind: 'metadata', priority: 'active', targets: [target(9)] });
+  await sync.tick();
+  assert.deepEqual(
+    calls.map((c) => [c.priority, c.urls.length]),
+    [
+      ['visible', 6],
+      ['active', 1],
+    ],
+    'the open PR did not wait for the six background reads'
+  );
+  release();
+  await background;
+});
+
+void test('a batch reports its failures in one broadcast', async () => {
+  const broadcasts: number[] = [];
+  const sync = createGitHubSyncService({
+    now: () => 0,
+    account: () => 'alice',
+    enabled: () => true,
+    backoff: () => undefined,
+    read: (_kind, targets) => Promise.resolve({ updates: [], failed: targets.map((t) => ({ url: t.url, error: new Error('Not Found') })) }),
+    publish: () => {},
+    failed: (value) => broadcasts.push(value.length),
+  });
+  sync.observe('1:rows', { kind: 'metadata', priority: 'active', targets: Array.from({ length: 4 }, (_, n) => target(n + 1)) });
+  await sync.tick();
+  assert.deepEqual(broadcasts, [4]);
 });

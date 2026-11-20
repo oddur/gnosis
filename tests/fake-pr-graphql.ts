@@ -54,6 +54,7 @@ export function graphPr(pull: RestPull) {
     changedFiles: pull.changed_files ?? 0,
     author: pull.user ? actor(pull.user) : null,
     assignees: connection(pull.assignees ?? []),
+    assignedActors: { totalCount: (pull.assignees ?? []).length },
     baseRefName: pull.base.ref,
     baseRefOid: pull.base.sha,
     headRefName: pull.head.ref,

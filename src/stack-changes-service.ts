@@ -1,4 +1,5 @@
 import { readError } from '../lib/shared-read';
+import { settleInOrder } from '../lib/bounded';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
@@ -104,7 +105,7 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
           tip = snapshots[snapshots.length - 1];
         const [owner, repo] = (root.metadata.baseRepo ?? '').split('/');
         // Each pair's merge base is its own read (REST only), so they run together; the checks keep stack order.
-        const bases = await Promise.allSettled(
+        const bases = await settleInOrder(
           snapshots.slice(1).map(
             async (child, i) =>
               (await clones.read(root.metadata.baseRepo, (clone) => clone.mergeBase(snapshots[i].metadata.headSha, child.metadata.headSha))) ??
@@ -114,10 +115,7 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
         for (let i = 1; i < snapshots.length; i++) {
           const parent = snapshots[i - 1],
             child = snapshots[i];
-          const settled = bases[i - 1];
-          if (settled.status === 'rejected') throw settled.reason;
-          const base = settled.value;
-          if (base !== parent.metadata.headSha)
+          if (bases[i - 1] !== parent.metadata.headSha)
             throw new Error(
               `PR #${child.url.split('/').pop()} does not include the current commits from PR #${parent.url.split('/').pop()}. Update its branch or review by PR.`
             );

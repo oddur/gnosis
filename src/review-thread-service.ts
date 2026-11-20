@@ -1,6 +1,6 @@
 import type { Octokit } from '@octokit/rest';
-import { githubCacheFor } from '../lib/github-client';
-import { chunked } from '../lib/bounded';
+import { githubCacheFor, githubRateLimit } from '../lib/github-client';
+import { chunked, mapBounded } from '../lib/bounded';
 import { aliasedGraphql } from '../lib/github-graphql-batch';
 import { isCacheRecord } from '../lib/github-cache';
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
@@ -395,6 +395,29 @@ export function createReviewThreadService(now = Date.now) {
         current.pending = undefined;
         if (!current.value && cache.get(prUrl) === current) cache.delete(prUrl);
       }
+    },
+    /**
+     * `list` for many PRs. The ones that need a read share GraphQL preloads of five PRs each, two at once; `list` then
+     * answers from them, and reads by itself only a PR a preload could not save completely. Each PR settles alone,
+     * in request order. A rate limit on a preload is thrown.
+     */
+    async listMany(client: Octokit, prUrls: string[], refresh = false): Promise<PromiseSettledResult<GitHubReviewThreads>[]> {
+      const unique = [...new Set(prUrls)];
+      const stale = refresh ? unique : unique.filter((url) => !service.fresh(client, url));
+      const saved = new Set<string>();
+      await mapBounded(
+        chunked(stale, 5).filter((group) => group.length > 1),
+        2,
+        async (group) => {
+          try {
+            for (const url of (await service.preload(client, group)).saved) saved.add(url);
+          } catch (error) {
+            if (githubRateLimit(error)) throw error;
+            // Each PR of this group reads its own discussion below.
+          }
+        }
+      );
+      return Promise.allSettled(prUrls.map((url) => service.list(client, url, refresh && !saved.has(url))));
     },
     /** Local data only. Whether `list` without `refresh` would answer without a request: a fresh copy, or a read in flight. */
     fresh(client: Octokit, prUrl: string) {

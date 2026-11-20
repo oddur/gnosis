@@ -37,6 +37,7 @@ import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-r
 import { parseGitHubSyncInterest } from '../lib/github-sync';
 import { createGitHubSyncService, type GitHubSyncRead } from './github-sync-service';
 import { getPrMetadataBatch, readMetadataLike } from '../lib/pr-metadata-graphql';
+import { mapBounded } from '../lib/bounded';
 import { createOptimisticService } from './optimistic-service';
 import { prActionChange, type OptimisticChange, type OptimisticKind } from '../lib/optimistic-patches';
 import { feedbackReplyBody } from '../lib/review-threads';
@@ -763,19 +764,20 @@ async function runProactiveCheck() {
 
     // Local reviews are pinned to commit shas — nothing to poll.
     const candidates = [...openCompletedByPr].filter(([prUrl]) => !generatingPrUrls.has(prUrl) && !isLocalUrl(prUrl));
-    // Conditional REST reads, which GitHub answers with a free 304 while a PR is unchanged. They run in waves of 5,
-    // and no wave starts once the update cap is reached.
+    // Conditional REST reads, which GitHub answers with a free 304 while a PR is unchanged. Each wave is at most 5 PRs
+    // and no larger than the updates still allowed, so no PR is read once the cap is reached.
     let updateCount = 0;
-    for (let start = 0; start < candidates.length && updateCount < PROACTIVE_MAX_CONCURRENT_UPDATES; start += 5) {
-      const wave = candidates.slice(start, start + 5);
-      const reads = await Promise.all(wave.map(async ([prUrl]) => {
+    for (let start = 0; start < candidates.length && updateCount < PROACTIVE_MAX_CONCURRENT_UPDATES; ) {
+      const wave = candidates.slice(start, start + Math.min(5, PROACTIVE_MAX_CONCURRENT_UPDATES - updateCount));
+      start += wave.length;
+      const reads = await mapBounded(wave, wave.length, async ([prUrl]) => {
         try {
           const { owner, repo, pullNumber } = parsePrUrl(prUrl);
           return { prData: await getPrMetadata(octokit, owner, repo, pullNumber) };
         } catch (error) {
           return { error };
         }
-      }));
+      });
       for (const [i, [prUrl, entry]] of wave.entries()) {
         if (updateCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
         try {
@@ -3344,31 +3346,27 @@ async function readCommentEvents(candidates: CommentCandidate[]) {
   const login = cachedLogin;
   if (!token || !login) return;
   const client = getGitHubClient(token);
-  // Five discussions share one GraphQL preload; a PR it could not save completely is read by itself.
-  const saved = new Set<string>(), attempted = new Set<string>();
-  for (const [index, candidate] of candidates.entries()) {
-    if ((githubClients.backoff(token, true, ['graphql'])?.retryAt ?? 0) > Date.now()) return;
+  if ((githubClients.backoff(token, true, ['graphql'])?.retryAt ?? 0) > Date.now()) return;
+  const known = candidates.flatMap(candidate => {
     const member = workbench.knownMember(candidate.url);
-    if (!member) continue;
-    if (!attempted.has(candidate.url)) {
-      const group = [...new Set(candidates.slice(index).filter(c => !attempted.has(c.url) && workbench.knownMember(c.url)).map(c => c.url))].slice(0, 5);
-      for (const url of group) attempted.add(url);
-      if (group.length > 1)
-        try {
-          const preloaded = await withGitHubPriority('background', () => reviewThreads.preload(client, group));
-          for (const url of preloaded.saved) saved.add(url);
-        } catch {
-          // Each PR reads its own discussion below.
-        }
-    }
-    let discussion;
-    try {
-      discussion = await withGitHubPriority('background', () => reviewThreads.list(client, candidate.url, !saved.has(candidate.url)));
-    } catch (error) {
-      console.warn('[notifications] Could not read the discussion for a mention or reply:', error instanceof Error ? error.message : error);
+    return member ? [{ candidate, member }] : [];
+  });
+  // Fresh discussions, five per GraphQL preload; a PR a preload could not save is read by itself.
+  let read: Awaited<ReturnType<typeof reviewThreads.listMany>>;
+  try {
+    read = await withGitHubPriority('background', () => reviewThreads.listMany(client, known.map(k => k.candidate.url), true));
+  } catch (error) {
+    console.warn('[notifications] Could not read discussions for mentions or replies:', error instanceof Error ? error.message : error);
+    return;
+  }
+  if (token !== getResolvedToken() || login !== cachedLogin) return;
+  for (const [i, { candidate, member }] of known.entries()) {
+    const result = read[i];
+    if (result.status === 'rejected') {
+      console.warn('[notifications] Could not read the discussion for a mention or reply:', result.reason instanceof Error ? result.reason.message : result.reason);
       continue;
     }
-    if (token !== getResolvedToken() || login !== cachedLogin) return;
+    const discussion = result.value;
     optimistic.observe(candidate.url, 'discussion', discussion);
     const event = commentEvent({
       discussion,
@@ -4546,7 +4544,14 @@ async function refreshChangedPrs(urls: string[], source: ChangeSource | 'head') 
   const targets = [...new Set(urls)].filter(url => !workbench.mutedUrls().has(url)).slice(0, CHANGED_REFRESH_LIMIT);
   // Changed PRs never answer a conditional read with a free 304, so they share one aliased query (25 PRs each).
   // A PR that fails is skipped; the others still publish.
-  const batch = await withGitHubPriority('foreground', () => getPrMetadataBatch(client, targets, { fresh: true }), { automatic: true });
+  let batch: Awaited<ReturnType<typeof getPrMetadataBatch>>;
+  try {
+    batch = await withGitHubPriority('foreground', () => getPrMetadataBatch(client, targets, { fresh: true }), { automatic: true });
+  } catch (error) {
+    // A rate limit stops the sweep, as before; discovery and normal sync catch up later.
+    if (githubRateLimit(error)) return;
+    throw error;
+  }
   if (token !== cachedToken) return;
   // Published under the URL that was asked for, as before; GitHub's canonical URL can differ in case or after a rename.
   const updates = targets.flatMap(url => {
@@ -4674,22 +4679,19 @@ const githubSync = createGitHubSyncService({
         const values = await readPrChecksBatch(client, requests, { force: true });
         return values.map(value => ({ kind, url: value.url, value }));
       }
-      // Discussions that need a read share one GraphQL preload; `list` then answers from it, and reads by itself only
-      // a PR the preload could not save completely.
+      // Discussions that need a read share one GraphQL preload; each PR settles alone.
       if (kind === 'discussion') {
-        const stale = targets.filter(target => !reviewThreads.fresh(client, target.url)).map(target => target.url);
-        if (stale.length > 1) await reviewThreads.preload(client, stale).catch((error: unknown) => {
-          if (githubRateLimit(error)) throw error;
-        });
+        const settled = await reviewThreads.listMany(client, targets.map(target => target.url));
+        return {
+          updates: settled.flatMap((result, i) => result.status === 'fulfilled' ? [{ kind, url: targets[i].url, value: result.value }] : []),
+          failed: settled.flatMap((result, i) => result.status === 'rejected' ? [{ url: targets[i].url, error: result.reason as unknown }] : []),
+        };
       }
       // Metadata stays one conditional REST read per PR, which GitHub answers with a free 304 while nothing changed;
       // the reads run together. Each PR fails alone, as when it was read by itself.
       const settled = await Promise.allSettled(targets.map(async (target): Promise<GitHubSyncUpdate> => {
-        if (kind === 'metadata') {
-          const { owner, repo, pullNumber } = parsePrUrl(target.url);
-          return { kind, url: target.url, value: await getPrMetadata(client, owner, repo, pullNumber, true) };
-        }
-        return { kind, url: target.url, value: await reviewThreads.list(client, target.url) };
+        const { owner, repo, pullNumber } = parsePrUrl(target.url);
+        return { kind: 'metadata', url: target.url, value: await getPrMetadata(client, owner, repo, pullNumber, true) };
       }));
       // Successes are kept; a failed PR, rate-limited or not, backs off alone. A global rate limit still pauses the
       // whole queue through `backoff` above.

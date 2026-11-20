@@ -1,5 +1,6 @@
 import type { Octokit } from '@octokit/rest';
 import { getPrMetadata, parsePrUrl } from '../lib/github';
+import { settleInOrder } from '../lib/bounded';
 import { parsePatchValidLines } from '../lib/diff-lines';
 import type { SubmitReviewRequest } from '../lib/types';
 import type { CreateReviewCommentRequest } from '../lib/review-threads';
@@ -44,13 +45,11 @@ async function revisionAndLines(
   needLines = true
 ) {
   const { owner, repo, pullNumber } = parsePrUrl(req.prUrl);
-  const [revision, lines] = await Promise.allSettled([
+  const [target, lines] = await settleInOrder([
     assertRevision(client, req),
     needLines ? lineInventory(client, { owner, repo, pull_number: pullNumber }) : Promise.resolve(new Map<string, Set<string>>()),
-  ]);
-  if (revision.status === 'rejected') throw revision.reason;
-  if (lines.status === 'rejected') throw lines.reason;
-  return { target: revision.value, lines: lines.value };
+  ] as const);
+  return { target, lines };
 }
 async function lineInventory(client: Octokit, target: { owner: string; repo: string; pull_number: number }) {
   const files = await client.paginate(client.pulls.listFiles, {

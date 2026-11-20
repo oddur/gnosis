@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import type { Octokit } from '@octokit/rest';
 import {
   getFileContent,
-  getFileContents,
   getFileMetadata,
   getNeighborFiles,
   getProjectClaudeContext,
@@ -46,19 +45,10 @@ void test('neighbor files come from batched blob queries and match the one-path-
   assert.equal(Object.keys(actual).length, 30);
   assert.equal(actual['src/util/index.ts'], 'export const u = 1;');
   assert.equal(actual['src/empty.js'], 'export const e = 1;');
-  // 30 imports × 8 extensions = 240 candidates, 50 aliases per query.
-  assert.equal(batched.counts.graphql, 5);
+  // 30 imports × 8 extensions = 240 candidates, 50 aliases per query, then one listing of the directories holding
+  // the files that exist, for their modes.
+  assert.equal(batched.counts.graphql, 6);
   assert.deepEqual(batched.counts.contentPaths.sort(), ['src/big.tsx', 'src/bin.js']);
-});
-
-void test('getFileContents falls back to REST for anything a failed query did not answer', async () => {
-  const repo = fakeRepo({ 'a.ts': 'a', 'b.ts': 'b' });
-  const octokit = Object.assign(Object.create(repo.octokit) as Octokit, {
-    graphql: () => Promise.reject(Object.assign(new Error('Something went wrong'), { status: 502 })),
-  });
-  const result = await getFileContents(octokit, 'o', 'r', ['a.ts', 'b.ts', 'missing.ts'], 'ref');
-  assert.deepEqual(Object.fromEntries(result), { 'a.ts': 'a', 'b.ts': 'b', 'missing.ts': null });
-  assert.equal(repo.counts.getContent, 3);
 });
 
 void test('the Claude-context probe needs two GraphQL queries and matches the REST probe', async () => {
@@ -82,7 +72,7 @@ void test('the Claude-context probe needs two GraphQL queries and matches the RE
     const batched = fakeRepo(files);
     const actual = await getProjectClaudeContext(batched.octokit, 'o', 'r', 'ref', { unfiltered });
     assert.deepEqual(actual, expected);
-    assert.equal(batched.counts.graphql, 2, 'the tree query, then one query for the texts');
+    assert.equal(batched.counts.graphql, 3, 'the tree query, the texts, then the root listing for CLAUDE.md’s mode');
     assert.equal(batched.counts.getContent, 0);
     // Only the texts the probe reads: no notes.txt, settings.json or skill scripts.
     assert.deepEqual(batched.counts.blobPaths.sort(), [

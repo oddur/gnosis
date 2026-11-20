@@ -70,9 +70,9 @@ void test('batched PR metadata equals the REST read field for field, 25 PRs per 
   for (const [i, p] of prs.entries()) {
     const value = result.get(p.html_url);
     assert.ok(value && 'metadata' in value, p.html_url);
-    const { source, ...metadata } = value.metadata;
-    assert.equal(source, 'graphql');
-    assert.deepEqual(metadata, expected[i], p.html_url);
+    assert.equal(value.metadata.source, 'graphql');
+    assert.equal(expected[i].source, 'rest');
+    assert.deepEqual({ ...value.metadata, source: undefined }, { ...expected[i], source: undefined }, p.html_url);
   }
   // The mapped details that differ in GraphQL: bots, deleted forks, uppercase enums.
   const meta = (n: number) => (result.get(url(n)) as { metadata: Awaited<ReturnType<typeof getPrMetadata>> }).metadata;
@@ -138,7 +138,7 @@ void test('an alias with an error under it, even on a nested field, is read thro
   const fork = result.get(url(6));
   assert.ok(fork && 'metadata' in fork);
   assert.equal(fork.metadata.headRepo, 'fork/r', 'the REST value, not the nulled one');
-  assert.equal(fork.metadata.source, undefined);
+  assert.equal(fork.metadata.source, 'rest');
 });
 
 void test('Copilot identities map to REST logins, and an unknown one is read through REST', async () => {
@@ -191,8 +191,82 @@ void test('a write is checked against the source of its baseline, so a lagging R
   assert.ok(!replySeen({ metadata: await rest() }, { before: { metadata: graphBaseline } }));
   // A REST baseline is probed through REST.
   const restBaseline = { ...(await rest()), reviewCommentCount: 6 };
-  assert.equal((await readMetadataLike(octokit, url(1), restBaseline, rest)).source, undefined);
+  assert.equal((await readMetadataLike(octokit, url(1), restBaseline, rest)).source, 'rest');
   // A delete settles the same way: GraphQL 8 before, 7 after.
   const deleted = { ...graphBaseline, reviewCommentCount: 8 };
   assert.ok(deleteSeen({ metadata: { ...probe, reviewCommentCount: 7 } }, { before: { metadata: deleted } }));
+});
+
+void test('a REST update spread over a GraphQL copy makes the write refresh probe REST', async () => {
+  const pr = pull(1);
+  let graphql = 0,
+    rest = 0;
+  const octokit = {
+    graphql: (query: string) => {
+      graphql++;
+      return Promise.resolve(answerPrQuery(query, () => pr));
+    },
+    pulls: {
+      get: () => {
+        rest++;
+        return Promise.resolve({ data: pr });
+      },
+    },
+  } as unknown as Octokit;
+  const fromGraph = (await getPrMetadataBatch(octokit, [url(1)])).get(url(1));
+  assert.ok(fromGraph && 'metadata' in fromGraph);
+  // A member from discovery (GraphQL), then a sync update read through REST.
+  const member = { ...fromGraph.metadata, role: 'watched' };
+  const synced = { ...member, ...(await getPrMetadata(octokit, 'o', 'r', 1, true)) };
+  assert.equal(synced.source, 'rest', 'the REST copy does not keep the GraphQL tag');
+  graphql = rest = 0;
+  await readMetadataLike(octokit, url(1), synced, () => getPrMetadata(octokit, 'o', 'r', 1, true));
+  assert.deepEqual({ graphql, rest }, { graphql: 0, rest: 1 });
+});
+
+void test('an assignee GraphQL leaves out sends the PR to REST', async () => {
+  // Checked on public Copilot-agent PRs: `assignees` lists Copilot as REST does. Another actor it leaves out shows
+  // only as a larger `assignedActors` count.
+  const pr = pull(4, 'o/r', { assignees: [{ login: 'alice' }, { login: 'Copilot' }] });
+  const ok = fixture([pr]);
+  const read = (await getPrMetadataBatch(ok.octokit, [url(4)])).get(url(4));
+  assert.ok(read && 'metadata' in read);
+  assert.deepEqual(read.metadata.assignees, ['alice', 'Copilot']);
+  assert.equal(ok.counts.rest, 0);
+  const missing = fixture([pr], {
+    graphql: (query) => {
+      const data = answerPrQuery(query, () => pr) as Record<string, { pullRequest: ReturnType<typeof graphPr> }>;
+      data.p0.pullRequest.assignedActors = { totalCount: 3 };
+      return Promise.resolve(data);
+    },
+  });
+  await getPrMetadataBatch(missing.octokit, [url(4)]);
+  assert.equal(missing.counts.rest, 1);
+});
+
+void test('a rate limit stops the metadata batch instead of falling back to REST', async () => {
+  const prs = Array.from({ length: 6 }, (_, i) => pull(i + 1));
+  const limit = () =>
+    Object.assign(new Error('API rate limit exceeded'), {
+      status: 403,
+      response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 60) } },
+    });
+  const graphLimited = fixture(prs, { graphql: () => Promise.reject(limit()) });
+  await assert.rejects(getPrMetadataBatch(graphLimited.octokit, prs.map((p) => p.html_url)), /rate limit|requests can resume/i);
+  assert.equal(graphLimited.counts.rest, 0, 'no REST reads after a GraphQL rate limit');
+
+  // The REST fallback stops at its first rate limit; the PRs it did not reach report that limit.
+  let restReads = 0;
+  const failing = fixture(prs, { graphql: () => Promise.reject(Object.assign(new Error('Bad gateway'), { status: 502 })) });
+  const octokit = Object.assign(Object.create(failing.octokit) as Octokit, {
+    pulls: {
+      get: () => {
+        restReads++;
+        return Promise.reject(limit());
+      },
+    },
+  });
+  const result = await getPrMetadataBatch(octokit, prs.map((p) => p.html_url));
+  assert.ok(restReads <= 5, `at most one wave of REST reads ran (${restReads})`);
+  assert.ok([...result.values()].every((value) => 'error' in value));
 });

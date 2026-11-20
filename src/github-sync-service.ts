@@ -165,10 +165,14 @@ export function createGitHubSyncService(deps: Deps) {
           Number(!!b.boosted) - Number(!!a.boosted) ||
           a.due - b.due
       );
+    // Active rows (and follow-ups after a write) and routine visible rows read in separate lanes, so a background batch
+    // of five or six never holds up the PR the reader is looking at.
+    const laneOf = (task: (typeof due)[number]) => (followingUp(task) || task.priority === 'active' ? 'active' : 'visible');
     await Promise.all(
-      (Object.keys(intervals) as GitHubSyncKind[]).map(async (kind) => {
-        if (pendingKinds.has(kind)) return;
-        const candidates = due.filter((task) => task.kind === kind);
+      (Object.keys(intervals) as GitHubSyncKind[]).flatMap((kind) => (['active', 'visible'] as const).map(async (lane) => {
+        const pendingKey = `${kind}:${lane}`;
+        if (pendingKinds.has(pendingKey)) return;
+        const candidates = due.filter((task) => task.kind === kind && laneOf(task) === lane);
         if (!candidates.length) return;
         const followUp = followingUp(candidates[0]);
         const priority = followUp ? 'active' : candidates[0].priority;
@@ -180,15 +184,16 @@ export function createGitHubSyncService(deps: Deps) {
           .filter((task) => followingUp(task) === followUp && (followUp || task.priority === priority) && (!refresh || !!task.boosted))
           .slice(0, SYNC_BATCH[kind]);
         const versions = batch.map((task) => task.version);
-        pendingKinds.add(kind);
+        pendingKinds.add(pendingKey);
         batch.forEach((task) => {
           task.pending = true;
           task.boosted = false;
           task.lastAttempt = now();
           if (followUp) task.followUpRemaining = (task.followUpRemaining ?? 1) - 1;
         });
+        // Failures of one batch are reported together, in one broadcast.
+        const failures: GitHubSyncFailure[] = [];
         const fail = (error: unknown, only?: Set<string>) => {
-          const failures: GitHubSyncFailure[] = [];
           for (const [index, task] of batch.entries()) {
             if (task.version !== versions[index] || (only && !only.has(task.target.url))) continue;
             task.failures++;
@@ -203,7 +208,6 @@ export function createGitHubSyncService(deps: Deps) {
               retryAt: task.due,
             });
           }
-          if (failures.length) deps.failed?.(failures);
         };
         try {
           const read = await deps.read(
@@ -217,6 +221,7 @@ export function createGitHubSyncService(deps: Deps) {
           const updates = Array.isArray(read) ? read : read.updates;
           const failed = Array.isArray(read) ? [] : read.failed;
           for (const { url, error } of failed) fail(error, new Set([url]));
+          if (failures.length) deps.failed?.(failures);
           const acceptStarted = performance.now();
           const accepted: GitHubSyncUpdate[] = [];
           for (const [index, task] of batch.entries()) {
@@ -253,13 +258,14 @@ export function createGitHubSyncService(deps: Deps) {
         } catch (error) {
           if (generation !== epoch || deps.account() !== account) return;
           fail(error);
+          if (failures.length) deps.failed?.(failures);
         } finally {
           batch.forEach((task) => {
             task.pending = false;
           });
-          if (generation === epoch) pendingKinds.delete(kind);
+          if (generation === epoch) pendingKinds.delete(pendingKey);
         }
-      })
+      }))
     );
   }
   return {

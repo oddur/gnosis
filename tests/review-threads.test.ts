@@ -574,3 +574,34 @@ void test('long threads read their remaining replies in one aliased query', asyn
     [['C1', 'T1-reply'], ['C1', 'T2-reply'], ['C1', 'T3-reply'], ['C1']]
   );
 });
+
+void test('listMany preloads stale discussions five at a time and reads alone only what a preload could not save', async () => {
+  const service = createReviewThreadService(() => 0);
+  const urls = Array.from({ length: 7 }, (_, i) => `https://github.com/o/r/pull/${i + 1}`);
+  const groups: string[][] = [];
+  const lists: [string, boolean][] = [];
+  Object.assign(service, {
+    fresh: (_client: unknown, url: string) => url.endsWith('/7'),
+    preload: (_client: unknown, group: string[]) => {
+      groups.push(group);
+      return Promise.resolve({ saved: group.filter((url) => !url.endsWith('/2')), incomplete: [] });
+    },
+    list: (_client: unknown, url: string, refresh = false) => {
+      lists.push([url, refresh]);
+      return url.endsWith('/3') ? Promise.reject(new Error('Gone')) : Promise.resolve({ headSha: 'h', baseSha: 'b', threads: [], checkedAt: 0 });
+    },
+  });
+  const client = {} as Parameters<typeof service.listMany>[0];
+  const routine = await service.listMany(client, urls);
+  assert.deepEqual(groups, [urls.slice(0, 5)], 'the fresh PR is not preloaded; a group of one is left to list');
+  assert.deepEqual(routine.map((r) => r.status), ['fulfilled', 'fulfilled', 'rejected', 'fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
+  groups.length = 0;
+  lists.length = 0;
+  await service.listMany(client, urls, true);
+  assert.deepEqual(groups, [urls.slice(0, 5), urls.slice(5)], 'a forced read preloads every PR, fresh or not');
+  assert.deepEqual(
+    lists.filter(([, refresh]) => refresh).map(([url]) => url.split('/').pop()),
+    ['2'],
+    'only the PR a preload could not save reads by itself'
+  );
+});

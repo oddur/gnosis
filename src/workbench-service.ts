@@ -66,7 +66,7 @@ import {
 } from '../lib/github-client';
 import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
 import { getPrMetadataBatch, PR_METADATA_PER_QUERY } from '../lib/pr-metadata-graphql';
-import { mapBounded } from '../lib/bounded';
+import { mapBounded, settleInOrder } from '../lib/bounded';
 import { createDiscoveryListings, nextDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
 import { parseModelJson } from '../lib/json-repair';
@@ -744,10 +744,6 @@ export function createWorkbenchService(deps: Deps) {
       })
     );
   }
-  /** Wait for every promise, then throw the first rejection in order, so no read is left running unobserved. */
-  async function settleAll(promises: Promise<unknown>[]) {
-    for (const result of await Promise.allSettled(promises)) if (result.status === 'rejected') throw result.reason;
-  }
   function memberFrom(url: string, meta: PrMetadata, role: ReviewMember['role']): ReviewMember {
     const { owner, repo, pullNumber } = parsePrUrl(url);
     return {
@@ -1071,7 +1067,7 @@ export function createWorkbenchService(deps: Deps) {
                 pendingUrls.push(url);
               }
           }
-          await settleAll([...connected].map((url) => add(url, undefined, byUrl.get(url))));
+          await settleInOrder([...connected].map((url) => add(url, undefined, byUrl.get(url))));
           // A base can still point at a closed/merged parent.
           const refs = [...new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.baseBranch))].filter(
             (ref) =>
@@ -1098,7 +1094,7 @@ export function createWorkbenchService(deps: Deps) {
           });
           for (const { ref, ambiguous } of lookups)
             if (ambiguous) warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
-          await settleAll(lookups.flatMap(({ urls }) => urls.map((url) => add(url))));
+          await settleInOrder(lookups.flatMap(({ urls }) => urls.map((url) => add(url))));
         } catch (error) {
           if (error instanceof DiscoverySuperseded || githubRateLimit(error, now())) throw error;
           warnings.push(`Could not check which PRs depend on others in ${fullName}. Showing saved relationships.`);
@@ -1549,12 +1545,13 @@ export function createWorkbenchService(deps: Deps) {
       try {
         const octokit = deps.client?.() ?? getGitHubClient(deps.auth().token);
         controller.signal.throwIfAborted();
-        // Each member's file list is its own REST read, so they run together.
+        // Each member's file list is its own REST read: 3 run at a time, and none starts after a cancellation.
         const memberFiles = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
-          () => Promise.all(subject.members.map((m) => {
+          () => mapBounded(subject.members, 3, (m) => {
+            controller.signal.throwIfAborted();
             const { owner, repo, pullNumber } = parsePrUrl(m.url);
             return getChangedFiles(octokit, owner, repo, pullNumber);
-          }))));
+          })));
         const context = subject.members.map((m, i) => ({
           pr: m.url,
           title: m.title,

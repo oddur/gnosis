@@ -1,3 +1,5 @@
+import { mapBounded } from './bounded';
+
 export interface EntrySelection {
   keys: string[];
   anchor: string | null;
@@ -49,19 +51,14 @@ export async function runSelectionTasks<T>(
 ): Promise<{ succeeded: T[]; failed: { target: T; error: unknown }[] }> {
   const succeeded: T[] = [],
     failed: { target: T; error: unknown }[] = [];
-  let index = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(targets.length, Math.max(1, concurrency)) }, async () => {
-      while (index < targets.length) {
-        const target = targets[index++];
-        try {
-          await run(target);
-          succeeded.push(target);
-        } catch (error) {
-          failed.push({ target, error });
-        }
-      }
-    })
-  );
+  // Each target records its own failure, so the shared pool runs every target.
+  await mapBounded(targets, concurrency, async (target) => {
+    try {
+      await run(target);
+      succeeded.push(target);
+    } catch (error) {
+      failed.push({ target, error });
+    }
+  });
   return { succeeded, failed };
 }

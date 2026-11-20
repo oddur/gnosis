@@ -162,9 +162,10 @@ void test('classification returns paths immediately, batches attributes in backg
   const later = await service.read(client, snapshot);
   assert.equal(later['src/a.ts'].generated.value, false);
   assert.match(later['src/a.ts'].generated.reason, /gitattributes/);
-  assert.equal(calls.length, 2, 'head and base repositories are queried separately');
+  // Per repository: the blobs, then their directory's listing for the mode.
+  assert.equal(calls.length, 4, 'head and base repositories are queried separately');
   assert.match(calls[0].query, /head:src\/\.gitattributes/);
-  assert.match(calls[1].query, /base:\.gitattributes/);
+  assert.match(calls[2].query, /base:\.gitattributes/);
 });
 
 void test('header evidence ignores source strings; test config stays visible', () => {
@@ -267,7 +268,7 @@ void test('classification and negative attribute lookups are reused after restar
     });
     await service.read(pool.client('fixture'), snapshot);
     await done(1);
-    assert.equal(calls, 2);
+    assert.equal(calls, 4);
     await pool.closeStorage();
     pool = createGitHubClientPool({ ...clock, fetch: fetcher });
     await pool.setStorage(path.join(dir, 'budget.json'));
@@ -275,17 +276,17 @@ void test('classification and negative attribute lookups are reused after restar
       updates++;
     });
     assert.equal((await service.read(pool.client('fixture'), snapshot))['src/a.ts'].generated.value, true);
-    assert.equal(calls, 2);
+    assert.equal(calls, 4);
     // Another comparison at the same revision reuses both present and absent attribute files.
     await service.read(pool.client('fixture'), { ...snapshot, url: 'https://github.com/o/r/pull/2' });
     await done(2);
-    assert.equal(calls, 2);
+    assert.equal(calls, 4);
     await service.read(pool.client('fixture'), {
       ...snapshot,
       metadata: { ...snapshot.metadata, headSha: 'new-head' },
     });
     await done(3);
-    assert.equal(calls, 3);
+    assert.equal(calls, 6);
   } finally {
     await pool.closeStorage();
     fs.rmSync(dir, { recursive: true, force: true });

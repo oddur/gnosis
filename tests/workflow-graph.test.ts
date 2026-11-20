@@ -1295,7 +1295,7 @@ void test('primes all referenced sources in one query', async () => {
   assert.ok(graph);
   assert.ok(!graph.warnings.some((w) => w.includes('unavailable')), graph.warnings.join('\n'));
   assert.ok(graph.nodes.some((n) => n.name === 'Child') && graph.nodes.some((n) => n.name === 'Shared'));
-  assert.equal(h.calls.filter((c) => c.endsWith('/graphql')).length, 1, 'One query reads every source');
+  assert.equal(h.calls.filter((c) => c.endsWith('/graphql')).length, 2, 'One query reads every source, one lists their modes');
   assert.equal(h.calls.filter((c) => c.includes('/contents/')).length, 0, 'No per-file REST reads');
 });
 void test('falls back to REST for oversize or failed blobs', async () => {

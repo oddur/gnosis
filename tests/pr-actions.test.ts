@@ -381,6 +381,22 @@ void test('merging a new stack reads its members once before the write and once 
   // Before: the target, then each member in turn (4), then the target after creating the stack (5).
   assert.equal(f.reads() - before, 2);
 });
+void test('a stack read that fails without saying where reads each member by itself', async () => {
+  const f = fixture(true);
+  const original = f.client.graphql;
+  let aliased = 0;
+  f.client.graphql = (async (query: string, params: Record<string, unknown>) => {
+    if (/p\d+: pullRequest/.test(query)) {
+      aliased++;
+      throw Object.assign(new Error('Something went wrong while executing your query. This may be the result of a timeout'), { status: 502 });
+    }
+    return original(query, params);
+  }) as typeof f.client.graphql;
+  const states = await Promise.all(f.service.readMany(f.client, [url(1), url(2), url(3)], true));
+  assert.deepEqual(states.map((s) => s.number), [1, 2, 3]);
+  assert.equal(aliased, 1);
+  assert.equal(f.reads(), 3, 'then one query per member');
+});
 void test('PR action states carry fork permissions for conflict updates', async () => {
   const f = fixture();
   f.prs[0].headRepository = { nameWithOwner: 'fork/r', viewerPermission: 'READ' } as typeof f.prs[0]['headRepository'];
