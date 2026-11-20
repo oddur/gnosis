@@ -14,6 +14,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { prLabelColors } from './PrLabels';
 import { WriteFailureNotice } from './WriteFailureNotice';
+import { toast } from './ui/toast';
 import { optimisticWrite, reportWriteFailure, useWriteInFlight } from '../lib/write-failures';
 import { githubAvatarUrl } from '../lib/github-profile';
 import { sameLogin } from '../lib/github-actors';
@@ -105,6 +106,8 @@ export function usePrPeople(member: ReviewMember, status?: PrStatus) {
   const [access, setAccess] = useState<{ url: string; value?: PrPeopleAccess; error?: string }>();
   const [attempt, setAttempt] = useState(0);
   const pending = useSyncExternalStore(subscribe, () => inFlight.get(url) ?? NONE);
+  // A merge, close or reopen changes whether reviews can be requested: read access again when the PR's state moves.
+  const lifecycle = `${status?.lifecycle?.state ?? member.state}:${status?.lifecycle?.merged ?? member.merged}`;
   useEffect(() => {
     let cancelled = false;
     const read = () =>
@@ -120,7 +123,7 @@ export function usePrPeople(member: ReviewMember, status?: PrStatus) {
       cancelled = true;
       stop?.();
     };
-  }, [url, attempt]);
+  }, [url, attempt, lifecycle]);
   const current = access?.url === url ? access : undefined;
   const failed = !!current?.error;
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
@@ -319,6 +322,7 @@ export function PrPeopleEditor({
   people,
   reviewed = [],
   open,
+  openRequest = 0,
   onOpenChange,
 }: {
   field: PrPeopleField;
@@ -327,6 +331,8 @@ export function PrPeopleEditor({
   /** Reviewers who already reviewed, with their verdicts: picking one requests their review again. */
   reviewed?: { login: string; verdict: string; typename?: string }[];
   open: boolean;
+  /** Changes when a command asks the picker to open, as a click on its button does. */
+  openRequest?: number;
   onOpenChange: (open: boolean) => void;
 }) {
   const { view, access, accessError } = people;
@@ -501,6 +507,22 @@ export function PrPeopleEditor({
     }
     onOpenChange(next);
   };
+
+  // A command opens the picker through the same checks as the button. While the field's last change is still saving,
+  // it opens once that finishes, so neither change is lost.
+  const waiting = useRef(false);
+  useEffect(() => {
+    if (!openRequest) return;
+    if (saving) waiting.current = true;
+    else if (disabledReason) toast.add({ title: label.edit, description: disabledReason, type: 'error' });
+    else setOpen(true);
+  }, [openRequest]);
+  useEffect(() => {
+    if (saving || !waiting.current) return;
+    waiting.current = false;
+    if (disabledReason) toast.add({ title: label.edit, description: disabledReason, type: 'error' });
+    else setOpen(true);
+  }, [saving]);
 
   const button = (
     <ComboboxPrimitive.Trigger

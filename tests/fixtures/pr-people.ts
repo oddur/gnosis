@@ -89,8 +89,10 @@ export function installPrPeopleFixture(mocks: Record<string, unknown>, items: Qu
     { name: 'transport', color: 'c5def5' },
   ];
   const milestones = [
+    // As GitHub stores them: current milestones at midnight UTC, older ones at local midnight (here US Pacific).
     { number: 3, title: 'v0.42', dueOn: '2026-12-01T00:00:00Z' },
-    { number: 4, title: 'v0.43', dueOn: null },
+    { number: 4, title: 'v0.43', dueOn: '2026-12-15T08:00:00Z' },
+    { number: 5, title: 'Backlog', dueOn: null },
   ];
   const record = { access: 0, candidates: [] as string[], edits: [] as PrPeopleEdit[], settled: [] as string[], results: [] as PrPeopleEditResult[] };
   const held: { edit: PrPeopleEdit; settle: (outcome: string) => void }[] = [];
@@ -187,7 +189,7 @@ export function installPrPeopleFixture(mocks: Record<string, unknown>, items: Qu
       return Promise.resolve({
         url: prUrl,
         permission,
-        ...prPeopleGate({ permission, archived: false, repo: 'klang/engine', open: true }),
+        ...prPeopleGate({ permission, archived: false, repo: 'klang/engine', open: target.state === 'open' && !target.merged }),
         author: target.author,
         viewer: 'oddur',
         organization: true,
@@ -271,6 +273,13 @@ export function installPrPeopleFixture(mocks: Record<string, unknown>, items: Qu
         next.settle(outcome);
       },
       /** The read after a write: GitHub's copy reaches the page and clears the patches it shows. */
+      /** The PR is closed on GitHub, and main reads it again, as after Close or a change seen on GitHub. */
+      close: () => {
+        target.state = 'closed';
+        target.updatedAt = new Date(Date.parse(target.updatedAt) + 60_000).toISOString();
+        publish(url, ['metadata']);
+        refreshed.forEach((listener) => listener({ action: 'close-pr', urls: [url], phase: 'settled' }));
+      },
       refresh: () => {
         Object.assign(target, structuredClone(github));
         service.observe(url, 'metadata', target);

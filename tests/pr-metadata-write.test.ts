@@ -24,6 +24,7 @@ import {
   type PrPeopleEdit,
 } from '../lib/pr-people';
 import type { PrMetadata } from '../lib/types';
+import { createAfterClose } from '../lib/after-close';
 
 const url = 'https://github.com/klang/engine/pull/7';
 type Failure = Error & { status?: number };
@@ -41,7 +42,7 @@ function fixture(options: { permission?: string; archived?: boolean; owner?: str
   const call = (method: string, result: unknown = {}) =>
     async (params: Record<string, unknown>) => {
       calls.push({ method, params });
-      const failure = failures.get(method);
+      const failure = failures.get(method) ?? failures.get(`${method}:page${String(params.page)}`);
       if (failure) throw failure;
       return { data: typeof result === 'function' ? (result as (p: Record<string, unknown>) => unknown)(params) : result };
     };
@@ -98,10 +99,20 @@ function fixture(options: { permission?: string; archived?: boolean; owner?: str
       removeAssignees: call('issues.removeAssignees'),
       addLabels: call('issues.addLabels'),
       listLabelsOnIssue: call('issues.listLabelsOnIssue', () => prLabels.map((name) => ({ name }))),
-      setLabels: call('issues.setLabels', (p: Record<string, unknown>) => {
-        prLabels = p.labels as string[];
-        return [];
-      }),
+      removeLabel: async (p: Record<string, unknown>) => {
+        calls.push({ method: 'issues.removeLabel', params: p });
+        const failure = failures.get('issues.removeLabel');
+        if (failure) throw failure;
+        if (!prLabels.includes(p.name as string)) throw fail('Label does not exist', 404);
+        prLabels = prLabels.filter((name) => name !== p.name);
+        return { data: [] };
+      },
+      // An exact lookup also finds labels the search's first page leaves out.
+      getLabel: async (p: Record<string, unknown>) => {
+        calls.push({ method: 'issues.getLabel', params: p });
+        if (![...repoLabels.map((l) => l.name), 'zz-archived'].includes(p.name as string)) throw fail('Not Found', 404);
+        return { data: { name: p.name, color: 'ededed' } };
+      },
       update: call('issues.update'),
     },
     repos: {
@@ -145,7 +156,9 @@ function fixture(options: { permission?: string; archived?: boolean; owner?: str
   return {
     client, service, calls, queries, failures, metadata, optimistic, shownDuringWrite, refreshes, published,
     tick: (ms: number) => (clock += ms),
-    writes: () => calls.filter((c) => !c.method.startsWith('repos.') && c.method !== 'issues.listLabelsOnIssue'),
+    writes: () => calls.filter((c) => !c.method.startsWith('repos.') && c.method !== 'issues.listLabelsOnIssue' && c.method !== 'issues.getLabel'),
+    /** Someone else labels the PR on GitHub. */
+    labelOnGitHub: (name: string) => (prLabels = [...prLabels, name]),
     labelsOnPr: () => prLabels,
   };
 }
@@ -285,14 +298,24 @@ void test('assignees: GitHub skipping some counts as a partial change, skipping 
   assert.deepEqual(g.optimistic.metadata(g.metadata).assignees, ['lena'], 'Rolled back');
 });
 
-void test('labels: one request; removal sets the label list GitHub has with the edit applied', async () => {
-  const f = fixture({ prLabels: ['bug', 'later-added'] });
+void test('labels: added in one request, removed one by one, never overwriting labels others added', async () => {
+  const f = fixture({ prLabels: ['bug'] });
+  // Someone else adds a label while the reader edits: it stays.
+  f.labelOnGitHub('later-added');
   await f.service.edit(f.client, { url, field: 'labels', add: [{ name: 'docs' }], remove: ['bug'] });
-  assert.deepEqual(f.writes().map((c) => [c.method, c.params.labels]), [['issues.setLabels', ['later-added', 'docs']]]);
+  assert.deepEqual(f.writes().map((c) => [c.method, c.params.labels ?? c.params.name]), [['issues.addLabels', ['docs']], ['issues.removeLabel', 'bug']]);
+  assert.ok(!f.calls.some((c) => c.method === 'issues.setLabels'), 'The label list is never replaced');
+  assert.deepEqual(f.labelsOnPr(), ['later-added']);
   assert.deepEqual(f.refreshes[0].details.expect, { labels: { add: ['docs'], remove: ['bug'] } });
-  const g = fixture();
-  await g.service.edit(g.client, { url, field: 'labels', add: [{ name: 'docs' }], remove: [] });
-  assert.deepEqual(g.writes().map((c) => c.method), ['issues.addLabels'], 'Adding only needs no read');
+});
+
+void test('removing a label: a 404 is success only when the label is really gone', async () => {
+  const gone = fixture({ prLabels: [] });
+  assert.deepEqual(await gone.service.edit(gone.client, { url, field: 'labels', add: [], remove: ['bug'] }), { status: 'done' });
+  const present = fixture({ prLabels: ['bug'] });
+  present.failures.set('issues.removeLabel', fail('Not Found', 404));
+  await assert.rejects(present.service.edit(present.client, { url, field: 'labels', add: [], remove: ['bug'] }), /Not Found/);
+  assert.deepEqual(present.optimistic.metadata(present.metadata).labels, ['bug'], 'Rolled back');
 });
 
 void test('a label the repository lacks is refused, never created', async () => {
@@ -420,22 +443,27 @@ void test('edits stack: a later edit replaces what an earlier one decided about 
   const layer = layerWithIds();
   const add = layer.begin({ url, viewer, change: prPeopleChange({ url, field: 'labels', add: [{ name: 'docs' }], remove: [] }) });
   layer.confirm(add.id);
-  layer.begin({ url, viewer, change: prPeopleChange({ url, field: 'labels', add: [], remove: ['docs'] }) });
+  const remove = layer.begin({ url, viewer, change: prPeopleChange({ url, field: 'labels', add: [], remove: ['docs'] }) });
   assert.deepEqual(layer.metadata(base).labels, ['bug'], 'Adding then removing a label leaves it off');
-  assert.equal(layer.list().length, 1, 'The earlier add no longer applies');
+  assert.equal(layer.list().length, 2, 'Both apply while the removal is pending');
+  layer.confirm(remove.id);
+  assert.equal(layer.list().length, 1, 'Once GitHub takes the removal, the earlier add no longer applies');
+  assert.deepEqual(layer.metadata(base).labels, ['bug']);
   // Unrelated items of an earlier edit stay.
   const two = layerWithIds();
   two.begin({ url, viewer, change: prPeopleChange({ url, field: 'labels', add: [{ name: 'docs' }, { name: 'perf' }], remove: [] }) });
   const later = two.begin({ url, viewer, change: prPeopleChange({ url, field: 'labels', add: [], remove: ['docs'] }) });
   assert.deepEqual(two.metadata(base).labels, ['bug', 'perf']);
   two.fail(later.id);
-  assert.deepEqual(two.metadata(base).labels, ['bug', 'perf'], 'Each rolls back alone');
+  assert.deepEqual(two.metadata(base).labels, ['bug', 'docs', 'perf'], 'Each rolls back alone: the refused removal leaves docs on');
   // Milestones: the latest choice wins.
   const m = layerWithIds();
   m.begin({ url, viewer, change: prPeopleChange({ url, field: 'milestone', milestone: { number: 1, title: 'A', dueOn: null } }) });
-  m.begin({ url, viewer, change: prPeopleChange({ url, field: 'milestone', milestone: { number: 2, title: 'B', dueOn: null } }) });
+  const b = m.begin({ url, viewer, change: prPeopleChange({ url, field: 'milestone', milestone: { number: 2, title: 'B', dueOn: null } }) });
   assert.equal(m.metadata(base).milestone?.title, 'B');
+  m.confirm(b.id);
   assert.equal(m.list().length, 1);
+  assert.equal(m.metadata(base).milestone?.title, 'B');
   assert.deepEqual(editList(['a', 'B'], ['b', 'c'], ['a']), ['B', 'c']);
   assert.deepEqual(diffSelection(['a', 'b'], ['b', 'c']), { add: ['c'], remove: ['a'] });
 });
@@ -455,7 +483,122 @@ void test('a status read without a milestone means none, not the queue copy’s'
   assert.equal(prPeopleView(member).milestone?.title, 'Old');
 });
 
-void test('a due date at midnight UTC shows that day in every time zone', () => {
+void test('a due date is the day GitHub stored, whichever midnight it used, in every time zone', () => {
   const expected = new Date(Date.UTC(2026, 11, 1)).toLocaleDateString(undefined, { dateStyle: 'medium', timeZone: 'UTC' });
-  assert.equal(formatDueOn('2026-12-01T00:00:00Z'), expected);
+  // Current milestones (microsoft/vscode, golang/go), US Eastern and US Pacific midnight (older milestones), and
+  // midnight east of UTC, which lands on the evening before.
+  for (const dueOn of ['2026-12-01T00:00:00Z', '2026-12-01T05:00:00Z', '2026-12-01T07:00:00Z', '2026-12-01T08:00:00Z', '2026-11-30T23:00:00Z', '2026-11-30T15:00:00Z'])
+    assert.equal(formatDueOn(dueOn), expected, dueOn);
+});
+
+void test('a failed newer write leaves the earlier one as it was', () => {
+  const layer = layerWithIds();
+  const add = layer.begin({ url, viewer, change: prPeopleChange({ url, field: 'labels', add: [{ name: 'docs' }], remove: [] }) });
+  layer.confirm(add.id);
+  const remove = layer.begin({ url, viewer, change: prPeopleChange({ url, field: 'labels', add: [], remove: ['docs'] }) });
+  layer.fail(remove.id);
+  assert.deepEqual(layer.metadata(base).labels, ['bug', 'docs'], 'The confirmed add still shows');
+  const m = layerWithIds();
+  const a = m.begin({ url, viewer, change: prPeopleChange({ url, field: 'milestone', milestone: { number: 1, title: 'A', dueOn: null } }) });
+  m.confirm(a.id);
+  const b = m.begin({ url, viewer, change: prPeopleChange({ url, field: 'milestone', milestone: { number: 2, title: 'B', dueOn: null } }) });
+  m.fail(b.id);
+  assert.equal(m.metadata(base).milestone?.title, 'A', 'A failed newer milestone restores the earlier choice');
+});
+
+void test('Feedback’s review request and a reviewer edit on the same login supersede each other both ways', () => {
+  const asked = layerWithIds();
+  const request = asked.begin({ url, viewer, change: { action: 'request-review', reviewer: 'maya' } });
+  asked.confirm(request.id);
+  const removal = asked.begin({ url, viewer, change: prPeopleChange(reviewers({ remove: ['Maya'] })) });
+  asked.confirm(removal.id);
+  assert.deepEqual(asked.list().map((patch) => patch.change.action), ['edit-reviewers']);
+  assert.deepEqual(asked.metadata(base).requestedReviewers, []);
+  const edited = layerWithIds();
+  const edit = edited.begin({ url, viewer, change: prPeopleChange(reviewers({ remove: ['maya'], add: ['sam'] })) });
+  edited.confirm(edit.id);
+  const again = edited.begin({ url, viewer, change: { action: 'request-review', reviewer: 'maya' } });
+  edited.confirm(again.id);
+  assert.deepEqual(edited.metadata({ ...base, requestedReviewers: ['maya'] }).requestedReviewers, ['maya', 'sam'], 'The later request wins; sam stays');
+});
+
+void test('removal accepts bots that are requested or assigned; adding them is still refused', async () => {
+  const f = fixture();
+  await f.service.edit(f.client, reviewers({ remove: ['dependabot[bot]'] }));
+  await f.service.edit(f.client, { url, field: 'assignees', add: [], remove: ['copilot-swe-agent[bot]'] });
+  assert.deepEqual(f.writes().map((c) => c.params.reviewers ?? c.params.assignees), [['dependabot[bot]'], ['copilot-swe-agent[bot]']]);
+  assert.throws(() => validatePrPeopleEdit(reviewers({ add: ['dependabot[bot]'] })), /valid reviewers/);
+});
+
+void test('a label past the search’s first page is found by its exact name', async () => {
+  const f = fixture();
+  await f.service.edit(f.client, { url, field: 'labels', add: [{ name: 'zz-archived' }], remove: [] });
+  assert.deepEqual(f.writes().map((c) => [c.method, c.params.labels]), [['issues.addLabels', ['zz-archived']]]);
+});
+
+void test('a partial edit is followed up like a successful write, with what GitHub took as the expectation', async () => {
+  const f = fixture();
+  f.failures.set('pulls.requestReviewers', fail('Reviews may only be requested from collaborators.'));
+  await f.service.edit(f.client, reviewers({ add: ['outsider'], remove: ['sam'] }));
+  assert.deepEqual(f.refreshes.map((r) => [r.action, r.failed ?? false, r.details.expect]), [
+    ['edit-reviewers', false, { requestedReviewers: { add: [], remove: ['sam'] }, requestedTeams: { add: [], remove: [] } }],
+  ]);
+});
+
+void test('a passing team list failure keeps the pages read and is tried again; a refusal is saved', async () => {
+  const f = fixture({ teams: 150 });
+  f.failures.set('repos.listTeams:page2', fail('Server Error', 502));
+  const first = await f.service.candidates(f.client, { url, field: 'reviewers' });
+  assert.equal(first.teams.length, 100, 'The first page stays');
+  assert.equal(first.complete, false);
+  assert.equal(first.teamsUnavailable, undefined);
+  f.failures.clear();
+  const second = await f.service.candidates(f.client, { url, field: 'reviewers' });
+  assert.equal(second.teams.length, 150, 'Read again on the next open');
+  assert.equal(second.complete, true);
+});
+
+void test('cached suggestions never leave a failed access read unhandled', async () => {
+  const f = fixture();
+  await f.service.candidates(f.client, { url, field: 'reviewers' });
+  const unhandled: unknown[] = [];
+  const listener = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', listener);
+  try {
+    f.tick(PR_PEOPLE_ACCESS_TTL_MS + 1);
+    const graphql = f.client.graphql.bind(f.client);
+    Object.assign(f.client, {
+      graphql: (q: string, p: Record<string, unknown>) => (/viewer\{login\}/.test(q) ? Promise.reject(fail('Bad gateway', 502)) : graphql(q, p)),
+    });
+    await assert.rejects(f.service.candidates(f.client, { url, field: 'reviewers' }), /Bad gateway/);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', listener);
+  }
+});
+
+void test('forgetting access sends the next read to GitHub, as after a merge or close', async () => {
+  const f = fixture();
+  await f.service.access(f.client, url);
+  f.service.forget(f.client, [url]);
+  await f.service.access(f.client, url);
+  assert.equal(f.queries.filter((q) => q.kind === 'access').length, 2);
+});
+
+void test('a palette command runs once after close, never after a later opening, and reports failures', async () => {
+  const reports: string[] = [];
+  const after = createAfterClose((message) => reports.push(message));
+  let runs = 0;
+  after.set(() => void runs++);
+  after.clear();
+  await after.run();
+  assert.equal(runs, 0, 'Opening again drops the stale command');
+  after.set(() => void runs++);
+  await after.run();
+  await after.run();
+  assert.equal(runs, 1);
+  after.set(() => Promise.reject(new Error('Picker unavailable')));
+  await after.run();
+  assert.deepEqual(reports, ['Picker unavailable']);
 });

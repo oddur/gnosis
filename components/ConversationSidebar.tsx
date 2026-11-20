@@ -10,7 +10,7 @@ import type { PrStatus } from '../lib/types';
 import type { ReviewMember } from '../lib/workbench';
 import type { ReactNode } from 'react';
 import { PrPeopleAccessError, PrPeopleEditor, PrPeopleFailure, ReRequestFailure, ReRequestReview, usePrPeople } from './PrPeopleEditor';
-import { editList, formatDueOn, type PrPeopleField } from '../lib/pr-people';
+import { editList, fieldBlockedReason, formatDueOn, type PrPeopleField } from '../lib/pr-people';
 import { useCommandScope } from '../lib/command-center';
 
 type Verdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | 'PENDING';
@@ -75,6 +75,8 @@ export function ConversationSidebar({
   const people = usePrPeople(m, status);
   const { view } = people;
   const [editing, setEditing] = useState<PrPeopleField | null>(null);
+  // A palette command asks the field's editor to open; the editor applies the same checks as its button.
+  const [openRequest, setOpenRequest] = useState<{ field: PrPeopleField; n: number }>();
   const editor = (field: PrPeopleField, reviewed?: { login: string; verdict: string; typename?: string }[]) => (
     <PrPeopleEditor
       field={field}
@@ -82,6 +84,7 @@ export function ConversationSidebar({
       people={people}
       reviewed={reviewed}
       open={editing === field}
+      openRequest={openRequest?.field === field ? openRequest.n : 0}
       onOpenChange={(open) => setEditing((current) => (open ? field : current === field ? null : current))}
     />
   );
@@ -104,18 +107,18 @@ export function ConversationSidebar({
     group: `PR #${m.number}`,
     // The picker takes focus: it opens once the palette has closed and handed focus back.
     afterClose: true,
-    perform: () => setEditing(field),
+    perform: () => setOpenRequest((previous) => ({ field, n: (previous?.n ?? 0) + 1 })),
   });
+  // Only the fields this account can change on this PR: no "Request reviewers…" on a closed PR.
+  const editable = (field: PrPeopleField) => !!people.access && !fieldBlockedReason(people.access, field);
   useCommandScope(
     'pr-people',
-    canEdit
-      ? [
-          command('reviewers', 'Request reviewers…', Users, 'reviewer review request re-request team people'),
-          command('assignees', 'Edit assignees…', UserRound, 'assignee assign people'),
-          command('labels', 'Edit labels…', Tag, 'label tag'),
-          command('milestone', 'Set milestone…', Milestone, 'milestone release'),
-        ]
-      : []
+    [
+      editable('reviewers') && command('reviewers', 'Request reviewers…', Users, 'reviewer review request re-request team people'),
+      editable('assignees') && command('assignees', 'Edit assignees…', UserRound, 'assignee assign people'),
+      editable('labels') && command('labels', 'Edit labels…', Tag, 'label tag'),
+      editable('milestone') && command('milestone', 'Set milestone…', Milestone, 'milestone release'),
+    ].filter((entry) => !!entry)
   );
   return (
     <aside className="conversation-sidebar pr-metadata" aria-label={`Details for PR #${m.number}`}>

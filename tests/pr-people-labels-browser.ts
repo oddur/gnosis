@@ -77,6 +77,17 @@ void app.whenReady().then(async () => {
     await sleep(350);
     console.log(`PPSHOT ${name} ${(await win.webContents.capturePage()).toPNG().toString('base64')}`);
   };
+  /** Opens the command palette with a command query; resolves with the results' text. */
+  const palette = async (query: string) => {
+    await key('k', ['meta']);
+    await wait("!!document.querySelector('.global-command-dialog')");
+    await js(
+      `(()=>{const e=document.querySelector('.global-command-dialog input[role=combobox]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(query)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`
+    );
+    await wait("document.querySelector('.global-command-results')?.getAttribute('aria-busy')!=='true'");
+    await sleep(250);
+    return js<string>("document.querySelector('.global-command-results')?.textContent ?? ''");
+  };
   const openPr = async (query: string) => {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?${query}`);
     win.focus();
@@ -269,6 +280,24 @@ void app.whenReady().then(async () => {
     await closed();
     assert.deepEqual(await held(), [], 'Closing without a change writes nothing');
 
+    // ── A command while the field's last change is saving opens the picker once it has saved ──
+    await open('labels');
+    await press(option('label:documentation'));
+    await press('.pr-people-footer button');
+    await closed();
+    assert.deepEqual(await held(), ['labels']);
+    assert.match(await palette('> edit labels'), /Edit labels/);
+    await key('Enter');
+    await sleep(400);
+    assert.ok(await js<boolean>("!document.querySelector('.pr-people-popup')"), 'The picker waits for the save');
+    await settle();
+    await wait("document.querySelector('.pr-people-popup')?.dataset.field==='labels'");
+    await wait(`document.querySelector(${JSON.stringify(option('label:documentation'))})?.hasAttribute('data-selected')`);
+    await key('Escape');
+    await closed();
+    await refresh();
+    assert.deepEqual(await held(), []);
+
     // ── Screenshots: dark, then narrow ──
     await js("document.documentElement.classList.add('dark')");
     await open('reviewers');
@@ -296,6 +325,16 @@ void app.whenReady().then(async () => {
     await closed();
     await held().then((writes) => assert.deepEqual(writes, []));
     win.setContentSize(1280, 800);
+
+    // ── Closed on GitHub: access is read again; reviews can't be requested, labels still can ──
+    await js('window.prPeopleFixture.close()');
+    await wait(`/open PR/.test(document.querySelector(${JSON.stringify(edit('reviewers'))})?.getAttribute('aria-description') ?? '')`);
+    assert.ok(await js<boolean>(`!document.querySelector(${JSON.stringify(edit('labels'))}).hasAttribute('aria-disabled')`), 'Labels stay editable');
+    assert.ok(!/Request reviewers/.test(await palette('> request reviewers')), 'No "Request reviewers…" command on a closed PR');
+    await key('Escape');
+    assert.match(await palette('> edit labels'), /Edit labels/);
+    await key('Escape');
+    await wait("!document.querySelector('.global-command-dialog')");
 
     // ── Read-only account: the editors are disabled and say why ──
     await openPr('pr-summary&github-sync&pr-people&pr-people-readonly');

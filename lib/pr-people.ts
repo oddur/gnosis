@@ -149,6 +149,9 @@ export function diffSelection(before: readonly string[], after: readonly string[
 const LOGIN = /^[a-z\d](?:[a-z\d_-]{0,38})$/i;
 const TEAM = /^[a-z\d][\w.-]{0,99}$/i;
 export const isLogin = (value: unknown): value is string => typeof value === 'string' && LOGIN.test(value);
+/** Anyone currently requested or assigned can be taken off, bots (`name[bot]`) included, though bots can't be added. */
+export const isRemovableLogin = (value: unknown): value is string =>
+  typeof value === 'string' && (LOGIN.test(value) || LOGIN.test(value.replace(/\[bot\]$/i, '')));
 export const isTeamSlug = (value: unknown): value is string => typeof value === 'string' && TEAM.test(value);
 export const isLabelName = (value: unknown): value is string =>
   typeof value === 'string' && !!value.trim() && value.length <= 100;
@@ -332,8 +335,19 @@ export function matchesQuery(query: string, ...values: (string | undefined)[]) {
 
 /** A milestone due date. GitHub stores the day at midnight UTC: show that day, not the evening before. */
 export function formatDueOn(dueOn: string): string {
-  const parsed = new Date(dueOn);
-  if (Number.isNaN(parsed.getTime())) return 'Unknown';
-  const midnightUtc = parsed.getUTCHours() === 0 && parsed.getUTCMinutes() === 0;
-  return parsed.toLocaleDateString(undefined, { dateStyle: 'medium', ...(midnightUtc ? { timeZone: 'UTC' } : {}) });
+  const day = dueOnDay(dueOn);
+  return day ? day.toLocaleDateString(undefined, { dateStyle: 'medium', timeZone: 'UTC' }) : 'Unknown';
+}
+/**
+ * The calendar day a milestone is due. GitHub keeps a date only, as a timestamp at midnight somewhere: current
+ * milestones read `T00:00:00Z`, older ones local midnight, such as `T05:00:00Z` (US Eastern) or `T07:00:00Z` and
+ * `T08:00:00Z` (US Pacific), checked against public repositories. Midnight west of UTC lands before noon UTC on the
+ * same day; midnight east of UTC lands in the afternoon of the day before. So the day is the UTC day twelve hours on.
+ * Shown in UTC, it is the same day in every time zone.
+ */
+export function dueOnDay(dueOn: string): Date | undefined {
+  const at = Date.parse(dueOn);
+  if (Number.isNaN(at)) return undefined;
+  const shifted = new Date(at + 12 * 60 * 60_000);
+  return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()));
 }

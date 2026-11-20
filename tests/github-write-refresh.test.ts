@@ -300,7 +300,7 @@ void test('every GitHub write in the app is in the inventory', () => {
     'src/pr-metadata-write-service.ts: .issues.addAssignees(',
     'src/pr-metadata-write-service.ts: .issues.addLabels(',
     'src/pr-metadata-write-service.ts: .issues.removeAssignees(',
-    'src/pr-metadata-write-service.ts: .issues.setLabels(',
+    'src/pr-metadata-write-service.ts: .issues.removeLabel(',
     'src/pr-metadata-write-service.ts: .issues.update(',
     'src/pr-metadata-write-service.ts: .pulls.removeRequestedReviewers(',
     'src/pr-metadata-write-service.ts: .pulls.requestReviewers(',

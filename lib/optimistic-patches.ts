@@ -104,11 +104,9 @@ export function optimisticKey(url: string, change: OptimisticChange, id: string)
       return `auto-merge|${url}`;
     case 'request-review':
       return `request-review|${url}|${change.reviewer.toLowerCase()}`;
-    // One milestone at a time: a newer choice replaces the older one.
+    // Each edit is its own change: a second edit before the first settles applies over it, and either rolls back alone.
+    // When the newer one succeeds, `confirm` takes out of the older one whatever the newer one decided (`supersededBy`).
     case 'edit-milestone':
-      return `edit-milestone|${url}`;
-    // Each list edit is its own change: a second edit before the first settles applies over it, and either rolls back
-    // alone. `begin` takes out of the older one whatever the newer one decides (lib/pr-people.ts `withoutSuperseded`).
     case 'edit-reviewers':
     case 'edit-assignees':
     case 'edit-labels':
@@ -604,6 +602,24 @@ export function applyToSignals(patch: OptimisticPatch, base: QueueSignals): Queu
   }
 }
 
+/**
+ * An earlier change with what a later successful one decided taken out, or undefined when nothing is left. People and
+ * label edits supersede each other per item (lib/pr-people.ts); Feedback's review request and a reviewer edit naming
+ * the same login supersede each other both ways.
+ */
+export function supersededBy(older: OptimisticChange, newer: OptimisticChange): OptimisticChange | undefined {
+  const later: OptimisticChange =
+    newer.action === 'request-review'
+      ? { action: 'edit-reviewers', add: [newer.reviewer], remove: [], addTeams: [], removeTeams: [] }
+      : newer;
+  if (later.action !== 'edit-reviewers' && !(isPeopleChange(older) && isPeopleChange(later))) return older;
+  if (older.action === 'request-review')
+    return later.action === 'edit-reviewers' && [...later.add, ...later.remove].some((login) => same(login, older.reviewer))
+      ? undefined
+      : older;
+  return isPeopleChange(older) && isPeopleChange(later) ? withoutSuperseded(older, later) : older;
+}
+
 // ── The layer ──
 
 export interface OptimisticLayerOptions {
@@ -649,14 +665,6 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
       };
       // A newer write to the same target replaces the older one and moves to the end.
       patches.delete(key);
-      // A newer people or label edit decides the items it names: older edits on that field stop applying them.
-      if (isPeopleChange(input.change))
-        for (const older of [...patches.values()]) {
-          if (older.url !== input.url || !isPeopleChange(older.change)) continue;
-          const rest = withoutSuperseded(older.change, input.change);
-          if (!rest) patches.delete(older.key);
-          else if (rest !== older.change) older.change = rest;
-        }
       patches.set(key, patch);
       return patch;
     },
@@ -664,6 +672,15 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
     confirm(id: string, result: OptimisticResult = {}): OptimisticPatch | undefined {
       const patch = byId(id);
       if (!patch) return undefined;
+      // GitHub took the newer decision: earlier writes on the same items stop applying them. Only now, so a newer write
+      // that fails leaves the earlier ones as they were.
+      for (const older of [...patches.values()]) {
+        if (older === patch) break;
+        if (older.url !== patch.url) continue;
+        const rest = supersededBy(older.change, patch.change);
+        if (!rest) patches.delete(older.key);
+        else older.change = rest;
+      }
       patch.status = 'confirmed';
       patch.confirmedAt = now();
       patch.result = { ...patch.result, ...result };

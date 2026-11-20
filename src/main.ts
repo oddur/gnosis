@@ -4117,6 +4117,7 @@ const prMergeMonitor = createPrMergeMonitor({
 });
 handleInteractive('get-pr-action-state', async (_event, url: string, force: boolean) => optimistic.actionState(await prActions.read(discussionClient(), url, force)));
 // Reviewers, assignees, labels and the milestone (src/pr-metadata-write-service.ts), through the optimistic layer and the write refresh.
+const PR_PEOPLE_ACCESS_ACTIONS = new Set<GitHubWriteAction>(['merge', 'merge-queue', 'stack-merged', 'close-pr', 'external']);
 const prPeople = createPrMetadataWriteService({ optimistic: (url, change, write) => optimistic.run(url, change, write), refresh: gitHubWrite });
 handleInteractive('get-pr-people-access', (_event, url: string) => prPeople.access(discussionClient(), url));
 handleInteractive('get-pr-people-candidates', (_event, request: import('../lib/pr-people').PrPeopleCandidateRequest) => prPeople.candidates(discussionClient(), request));
@@ -4931,6 +4932,8 @@ const githubWrites = createGitHubWriteRefresher({
   },
   blockedUntil: () => (cachedToken ? githubClients.backoff(cachedToken, false, ['core', 'graphql'])?.retryAt : undefined),
   refreshed: event => {
+    // A merge, close or reopen changes who may request reviews: the editors read access again (pr-metadata-write-service).
+    if (PR_PEOPLE_ACCESS_ACTIONS.has(event.action) && cachedToken) prPeople.forget(getGitHubClient(cachedToken), event.urls);
     // Every window, and the menu bar panel through the queue broadcast.
     broadcastToAllWindows('github-write-refreshed', event);
     notifyLocalChange('workbench-changed');

@@ -6,11 +6,11 @@ import { githubWriteError } from '../lib/github-access';
 import {
   canBeRequested,
   editIsEmpty,
-  editList,
   expectationOf,
   fieldBlockedReason,
   isLabelName,
   isLogin,
+  isRemovableLogin,
   isTeamSlug,
   matchesQuery,
   prPeopleChange,
@@ -115,7 +115,7 @@ export function validatePrPeopleEdit(input: unknown): PrPeopleEdit {
         url,
         field: 'reviewers',
         add: strings(edit.add, isLogin, 'reviewers'),
-        remove: strings(edit.remove, isLogin, 'reviewers'),
+        remove: strings(edit.remove, isRemovableLogin, 'reviewers'),
         addTeams: teams(edit.addTeams),
         removeTeams: teams(edit.removeTeams),
       };
@@ -124,7 +124,7 @@ export function validatePrPeopleEdit(input: unknown): PrPeopleEdit {
         url,
         field: 'assignees',
         add: strings(edit.add, isLogin, 'assignees'),
-        remove: strings(edit.remove, isLogin, 'assignees'),
+        remove: strings(edit.remove, isRemovableLogin, 'assignees'),
       };
     case 'labels': {
       if (!Array.isArray(edit.add) || edit.add.length > 100) throw new Error('Choose valid labels.');
@@ -154,6 +154,7 @@ export function validatePrPeopleEdit(input: unknown): PrPeopleEdit {
 }
 
 const writeAction = (field: PrPeopleField): GitHubWriteAction => `edit-${field}`;
+const status = (error: unknown) => (error as { status?: number } | null)?.status;
 const message = (error: unknown) => githubWriteError(error).message || 'GitHub did not accept the change.';
 
 /** One GitHub request of an edit: the part of the edit it carries out. */
@@ -269,7 +270,7 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     scope: string,
     kind: CandidateKind,
     query: string,
-    read: () => Promise<{ items: T[]; complete: boolean; failed?: boolean }>
+    read: () => Promise<{ items: T[]; complete: boolean; failed?: boolean; transient?: boolean }>
   ): Promise<{ items: T[]; complete: boolean; failed?: boolean }> {
     const a = account(client);
     const needle = query.trim().toLowerCase();
@@ -285,7 +286,9 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     }
     const key = `${scope}|${kind}|${needle}`;
     return once(a, `candidates|${key}`, async () => {
-      const value = await read();
+      const { transient, ...value } = await read();
+      // A passing failure, such as a timeout or a rate limit, is tried again on the next open.
+      if (transient) return value;
       a.candidates.delete(key);
       a.candidates.set(key, { at: now(), ...value });
       while (a.candidates.size > CANDIDATE_ENTRIES) a.candidates.delete(a.candidates.keys().next().value as string);
@@ -304,7 +307,8 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
       return { items: nodes(list).map(person), complete: !list?.pageInfo.hasNextPage };
     });
   // Only teams with access to the repository can review. GitHub lists them per repository without a search, so the
-  // pages are read once and narrowed here. A refusal, such as a token without `read:org`, is saved as well.
+  // pages are read once and narrowed here. A refusal (403, or 404 for a personal repository or a token without
+  // `read:org`) is saved as well. Any other failure keeps the pages already read and is tried again next time.
   const repoTeams = (client: Octokit, repo: Repo) =>
     page<PrTeamCandidate>(client, repo.full, 'teams', '', async () => {
       const items: PrTeamCandidate[] = [];
@@ -315,12 +319,12 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
           if (data.length < PAGE.teams) return { items, complete: true };
         }
         return { items, complete: false };
-      } catch {
-        // A personal repository answers 404; `candidates` shows no teams for it rather than an error.
-        return { items: [], complete: true, failed: true };
+      } catch (error) {
+        const refused = status(error) === 403 || status(error) === 404;
+        return refused ? { items: [], complete: true, failed: true } : { items, complete: false, transient: true };
       }
     });
-  const suggested = (client: Octokit, url: string, author: Promise<string>) =>
+  const suggested = (client: Octokit, url: string) =>
     page(client, url, 'suggested', '', async () => {
       const pr = target(url);
       const data = await client.graphql<{ repository: { pullRequest: { suggestedReviewers: ({ reviewer: { login: string; name: string | null; avatarUrl: string; __typename?: string } | null } | null)[] | null } | null } | null }>(
@@ -328,7 +332,8 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
         suggestedReviewers{reviewer{__typename login name avatarUrl}}}}}`,
         { owner: pr.owner, repo: pr.repo, number: pr.number }
       );
-      const login = await author;
+      // Read here, never as a promise passed in: a saved page would leave that promise's failure unhandled.
+      const login = (await access(client, url)).author;
       // GitHub never suggests the author, but a stale suggestion must not offer a request GitHub refuses.
       const items = (data.repository?.pullRequest?.suggestedReviewers ?? []).flatMap((entry) =>
         entry?.reviewer && canBeRequested(entry.reviewer.login, login, entry.reviewer.__typename) ? [person(entry.reviewer)] : []
@@ -374,7 +379,7 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
           gate,
           users(client, repo, query),
           repoTeams(client, repo),
-          query ? Promise.resolve({ items: [] as PrPersonCandidate[] }) : suggested(client, request.url, gate.then((g) => g.author)),
+          query ? Promise.resolve({ items: [] as PrPersonCandidate[] }) : suggested(client, request.url),
         ]);
         return {
           ...empty,
@@ -453,23 +458,43 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
           });
         return list;
       }
-      case 'labels':
-        return [
-          {
-            part: edit,
+      case 'labels': {
+        // Additions and removals only: setting the whole list would drop a label someone else added meanwhile.
+        const list: Step[] = [];
+        if (edit.add.length)
+          list.push({
+            part: { url, field: 'labels', add: edit.add, remove: [] },
             run: async () => {
-              if (!edit.remove.length) {
-                await client.issues.addLabels({ ...issue, labels: edit.add.map((label) => label.name) });
-                return;
-              }
-              // One request for the whole change: GitHub's current labels with the edit applied. Removing one by one
-              // would need a request per label and a 404 check for each.
-              const current = await client.paginate(client.issues.listLabelsOnIssue, { ...issue, per_page: 100 });
-              const names = editList(current.map((label) => label.name), edit.add.map((label) => label.name), edit.remove);
-              await client.issues.setLabels({ ...issue, labels: names });
+              await client.issues.addLabels({ ...issue, labels: edit.add.map((label) => label.name) });
             },
-          },
-        ];
+          });
+        if (edit.remove.length)
+          list.push({
+            part: { url, field: 'labels', add: [], remove: edit.remove },
+            run: async () => {
+              const removed: string[] = [];
+              for (const name of edit.remove) {
+                try {
+                  await client.issues.removeLabel({ ...issue, name });
+                } catch (error) {
+                  // 404 means the label is not on the PR, or GitHub could not find the PR: check which.
+                  const gone =
+                    status(error) === 404 &&
+                    !(await client.paginate(client.issues.listLabelsOnIssue, { ...issue, per_page: 100 })).some((label) =>
+                      sameLogin(label.name, name)
+                    );
+                  if (!gone) {
+                    if (!removed.length) throw error;
+                    const rest = edit.remove.filter((label) => !removed.includes(label));
+                    throw new StepPartial(message(error), { url, field: 'labels', add: [], remove: removed }, { url, field: 'labels', add: [], remove: rest });
+                  }
+                }
+                removed.push(name);
+              }
+            },
+          });
+        return list;
+      }
       case 'milestone':
         return [
           {
@@ -508,8 +533,14 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     const repo = target(edit.url);
     for (const label of edit.add) {
       const found = await labels(client, repo, label.name);
-      if (!found.items.some((item) => sameLogin(item.name, label.name)))
-        throw new Error(`${repo.full} has no label named “${label.name}”.`);
+      if (found.items.some((item) => sameLogin(item.name, label.name))) continue;
+      // Not among the search's first page: look the name up exactly before refusing.
+      try {
+        await client.issues.getLabel({ owner: repo.owner, repo: repo.repo, name: label.name });
+      } catch (error) {
+        if (status(error) === 404) throw new Error(`${repo.full} has no label named “${label.name}”.`);
+        throw error;
+      }
     }
   }
 
@@ -527,33 +558,38 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
         );
     }
     await assertLabelsExist(client, request);
-    let result: PrPeopleEditResult;
-    try {
-      result = await deps.refresh(
-        writeAction(request.field),
-        [request.url],
-        () =>
-          deps.optimistic(request.url, prPeopleChange(request), async () => {
+    const result = await deps.refresh(
+      writeAction(request.field),
+      [request.url],
+      async (): Promise<PrPeopleEditResult> => {
+        try {
+          return await deps.optimistic(request.url, prPeopleChange(request), async () => {
             const outcome = await apply(client, request);
             // Rolled back as a whole, then the part GitHub took is shown again below.
             if (outcome.status === 'partial') throw new PartialEdit(outcome);
             return outcome;
-          }),
-        () => ({ expect: expectationOf(request) })
-      );
-    } catch (error) {
-      if (!(error instanceof PartialEdit)) throw error;
-      result = error.result;
-      // The part GitHub took stays on screen until the read after the write shows it.
-      await deps.optimistic(request.url, prPeopleChange(result.applied), () => Promise.resolve());
-    }
-    // Team requests and the milestone are part of the access read: read them again next time.
-    const a = account(client);
-    const saved = a.access.get(request.url);
-    if (saved) a.access.set(request.url, { ...saved, checkedAt: 0 });
+          });
+        } catch (error) {
+          if (!(error instanceof PartialEdit)) throw error;
+          // The part GitHub took stays on screen, and the refresh follows it up like any successful write.
+          await deps.optimistic(request.url, prPeopleChange(error.result.applied), () => Promise.resolve());
+          return error.result;
+        }
+      },
+      (outcome) => ({ expect: expectationOf(outcome.status === 'partial' ? outcome.applied : request) })
+    );
+    forget(client, [request.url]);
     return result;
   }
+  /**
+   * Who may edit changed: a merge, close or reopen changes whether reviews can be requested, and an edit changes the
+   * team requests and the milestone. The next access read goes to GitHub.
+   */
+  function forget(client: Octokit, urls: string[]) {
+    const a = account(client);
+    for (const url of urls) a.access.delete(url);
+  }
 
-  return { access, candidates, edit };
+  return { access, candidates, edit, forget };
 }
 export type PrMetadataWriteService = ReturnType<typeof createPrMetadataWriteService>;
