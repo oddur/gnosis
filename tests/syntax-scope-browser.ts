@@ -1,7 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 
 /**
  * Enclosing definitions in Changes (#393), on the synthetic files in tests/fixtures/syntax-scope.ts.
@@ -485,8 +485,9 @@ void app.whenReady().then(async () => {
           large.first.total !== undefined && large.lastParse !== undefined && large.first.total < large.lastParse,
           `The first file's breadcrumbs show before prefetch has parsed every file (${large.first.total} ms, last parse ${large.lastParse} ms)`
         );
-        assert.ok(large.first.workerQueue < 400, `The first file's parse does not wait behind prefetched ones (${large.first.workerQueue} ms)`);
-        assert.ok(large.mid.workerQueue < 400, `Nor does the file jumped to (${large.mid.workerQueue} ms)`);
+        // The first file's parse, and the file jumped to, do not wait behind prefetched ones.
+        assertPerf(`syntax scope: first file's parse queue wait, reads of ${latency} ms`, large.first.workerQueue, 400);
+        assertPerf(`syntax scope: jumped-to file's parse queue wait, reads of ${latency} ms`, large.mid.workerQueue, 400);
         assert.ok(large.frames >= 20, `Files resolve one by one, not in one frame (${large.frames} frames for ${large.parsed} files)`);
         assert.ok(large.resolved['2s'] < large.parsed || latency < 50, 'With GitHub-like reads, files keep resolving after 2 s');
       }
@@ -745,7 +746,7 @@ void app.whenReady().then(async () => {
       JSON.stringify({ ...fresh, elapsed: Math.round(fresh.elapsed), posting: Math.round(fresh.posting * 10) / 10 })
     );
     assert.equal(fresh.definitions, 1000);
-    assert.deepEqual(fresh.tasks, [], 'Parsing leaves no long task on the main thread');
+    assertPerf('syntax scope: long tasks on the main thread while a 3,000-line file parses', fresh.tasks.length, 0, { unit: 'long tasks', detail: JSON.stringify(fresh.tasks) });
 
     // ── Pinned hunk headers (#395) ──
     await installSticky();
@@ -1158,7 +1159,7 @@ void app.whenReady().then(async () => {
       await new Promise(r=>setTimeout(r,100));watch.disconnect();deltas.sort((a,b)=>a-b);
       return {frames:deltas.length,p50:Math.round(deltas[deltas.length>>1]*10)/10,max:Math.round(deltas.at(-1)*10)/10,longTasks:window.__longTasks.map(t=>Math.round(t.duration)),places}})()`);
     console.log('Scrolling span.ts 20 px a frame, following the reader:', JSON.stringify(following));
-    assert.deepEqual(following.longTasks, [], 'Following the reader adds no long task');
+    assertPerf('syntax scope: long tasks while the header follows the reader', following.longTasks.length, 0, { unit: 'long tasks', detail: JSON.stringify(following.longTasks) });
     assert.ok(following.places > 10, `The header follows line by line: ${following.places}`);
     await shot('follow-alpha', '.commit-diff-stream');
 
@@ -1406,7 +1407,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js<number>(`window.shownCount('src/far.ts','readonly far')`), 230, 'All 230 lines between the class line and the hunk show');
     assert.equal(await js<number>(`window.shownCount('src/far.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
     assert.ok(steps >= 4, `The scroll eases over several frames: ${JSON.stringify(samples)}`);
-    assert.deepEqual(longTasks.map((t) => Math.round(t.duration)).filter((ms) => ms > perfBudget(50)), [], `Revealing 230 lines and easing there leaves no task over ${perfBudget(50)} ms`);
+    assertPerf('syntax scope: longest task revealing 230 lines and easing there', Math.max(0, ...longTasks.map((t) => Math.round(t.duration))), perfBudget(50), { detail: JSON.stringify(longTasks.map((t) => Math.round(t.duration))) });
     assert.deepEqual((await js<Flash[]>(`window.jumped('src/far.ts')`)).map((f) => f.text), ['export class FarRunner {'], 'The class line flashes');
     // The reader's wheel stops the scroll part way.
     await js(`window.pinAt('src/far.ts','total += 50 * 2;')`);

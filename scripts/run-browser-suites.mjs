@@ -7,6 +7,10 @@
 //   node scripts/run-browser-suites.mjs --shard 2/6     # one balanced sixth
 //   node scripts/run-browser-suites.mjs --list --shard 2/6
 //   node scripts/run-browser-suites.mjs --durations out.json   # also record measured seconds
+//   node scripts/run-browser-suites.mjs --perf          # the timed suites in test:perf:browser, enforced
+//
+// Performance tests run locally only; see "Performance tests" in docs/continuous-integration.md. Suites listed only in
+// test:perf:browser are the "local perf" category: they are left out of the CI suite list and its shards.
 import { spawn } from 'node:child_process';
 import console from 'node:console';
 import fs from 'node:fs';
@@ -22,10 +26,15 @@ const argument = (name) => {
   return index > 0 ? process.argv[index + 1] : undefined;
 };
 
-/** Every browser suite as `{ key, command }`, in package.json order. */
-export function browserSuites(scripts) {
+/** The npm scripts whose suites CI runs, in shards. */
+export const CI_SCRIPTS = ['test:explainer', 'test:workbench', 'test:diagrams'];
+/** The suites `npm run test:perf` runs with timing enforced: local perf suites, and CI suites with timing budgets. */
+export const PERF_SCRIPTS = ['test:perf:browser'];
+
+/** Every browser suite in the given npm scripts as `{ key, command }`, in package.json order. CI's suites by default. */
+export function browserSuites(scripts, names = CI_SCRIPTS) {
   const suites = [];
-  for (const script of ['test:explainer', 'test:workbench', 'test:diagrams']) {
+  for (const script of names) {
     for (const part of String(scripts[script] ?? '').split('&&')) {
       const command = part.trim();
       if (!command) continue;
@@ -39,6 +48,12 @@ export function browserSuites(scripts) {
     }
   }
   return suites;
+}
+
+/** Local perf suites: timed in test:perf:browser and not run by CI. */
+export function localPerfSuites(scripts) {
+  const ci = new Set(browserSuites(scripts).map((s) => s.key));
+  return browserSuites(scripts, PERF_SCRIPTS).filter((s) => !ci.has(s.key));
 }
 
 /**
@@ -68,7 +83,7 @@ export function shardSuites(suites, durations, index, count) {
 async function main() {
   const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
   const durations = JSON.parse(fs.readFileSync(path.join(root, 'scripts/browser-suite-durations.json'), 'utf8'));
-  const all = browserSuites(scripts);
+  let all = browserSuites(scripts);
   const verify = argument('--verify');
   if (verify) {
     // Every suite must land in exactly one shard, or a CI shard silently skips it.
@@ -81,10 +96,17 @@ async function main() {
     if (missing.length || keys.size !== all.length)
       throw new Error(`Shards do not cover each suite exactly once: ${missing.join(', ') || 'duplicate suite keys'}`);
     const unmeasured = all.filter((s) => typeof durations[s.key] !== 'number').map((s) => s.key);
+    const local = localPerfSuites(scripts).map((s) => s.key);
     console.log(
-      `${all.length} browser suites cover ${count} shards exactly once.${unmeasured.length ? ` Unmeasured (median weight): ${unmeasured.join(', ')}` : ''}`
+      `${all.length} browser suites cover ${count} shards exactly once.${unmeasured.length ? ` Unmeasured (median weight): ${unmeasured.join(', ')}` : ''}` +
+        (local.length ? ` Local perf, not in CI: ${local.join(', ')}.` : '')
     );
     return;
+  }
+  if (process.argv.includes('--perf')) {
+    // Timing assertions fail the run here, also in a container or on a runner (tests/perf-budget.ts).
+    process.env.GNOSIS_PERF = '1';
+    all = browserSuites(scripts, PERF_SCRIPTS);
   }
   const shard = argument('--shard');
   let selected = all;
@@ -95,6 +117,8 @@ async function main() {
   }
   if (process.argv.includes('--list')) {
     for (const suite of selected) console.log(`${String(durations[suite.key] ?? '?').padStart(4)}s  ${suite.key}`);
+    if (!shard && !process.argv.includes('--perf'))
+      for (const suite of localPerfSuites(scripts)) console.log(`${String(durations[suite.key] ?? '?').padStart(4)}s  ${suite.key}  (local perf, not in CI: npm run test:perf)`);
     return;
   }
   // Windows names the variable `Path`; extend whichever spelling exists so the child sees one entry.

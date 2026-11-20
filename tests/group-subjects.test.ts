@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { groupSubjects, type GroupingOverride, type ReviewMember, type ReviewSubject, type StackEdge } from '../lib/workbench';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 
 /** The grouping before #345 made it linear, kept to check the new one returns the same subjects. */
 function quadraticGroupSubjects(members: ReviewMember[], overrides: GroupingOverride[] = [], previous: ReviewSubject[] = []): ReviewSubject[] {
@@ -149,5 +149,5 @@ void test('grouping a queue of 4,000 PRs with stacks is fast enough to repeat af
   const elapsed = performance.now() - started;
   assert.deepEqual(again.map((subject) => subject.id), first.map((subject) => subject.id), 'Regrouping keeps every identity');
   // Before #345 this took about 600 ms on a fast Mac.
-  assert.ok(elapsed < perfBudget(60), `Regrouping 4,000 PRs took ${elapsed.toFixed(0)} ms`);
+  assertPerf('regrouping 4,000 PRs', elapsed, perfBudget(60));
 });

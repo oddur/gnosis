@@ -21,21 +21,23 @@ Old commit messages have `+semver:` labels. Nothing reads them. The person who c
 ## Cut a stable release
 
 1. Make sure that the Checks run for the `main` commit is green.
-2. Tag the commit and push the tag:
+2. Run `npm run test:perf` locally on a quiet machine, and note any budget over its limit. CI does not enforce timing budgets; see [Performance tests](continuous-integration.md#performance-tests).
+3. Tag the commit and push the tag:
 
    ```sh
    git tag v0.42.0 <commit>
    git push origin v0.42.0
    ```
 
-3. Write the release notes on the GitHub release. They cover everything since the previous stable release, not since the last pre-release.
+4. Write the release notes on the GitHub release. They cover everything since the previous stable release, not since the last pre-release.
 
 The workflow also updates the Homebrew tap (`oddur/homebrew-gnosis`).
 
 ## Cut a pre-release from main
 
 1. Make sure that the Checks run for the `main` commit is green. The Release workflow cancels Checks runs that are still in progress, because macOS runners are limited.
-2. Find the next number. List the pre-release tags for the version:
+2. Run `npm run test:perf` locally on a quiet machine, and note any budget over its limit.
+3. Find the next number. List the pre-release tags for the version:
 
    ```sh
    git fetch --tags
@@ -43,18 +45,18 @@ The workflow also updates the Homebrew tap (`oddur/homebrew-gnosis`).
    ```
 
    If there are none, use `beta.1`. If not, add 1 to the highest number.
-3. Tag the `main` commit and push the tag:
+4. Tag the `main` commit and push the tag:
 
    ```sh
    git tag v0.42.0-beta.1 origin/main
    git push origin v0.42.0-beta.1
    ```
 
-4. When the workflow is done, check the release:
+5. When the workflow is done, check the release:
    - It is marked **Pre-release** on GitHub.
    - It has `Gnosis-darwin-arm64-update.json` next to the macOS ZIP.
    - It has `RELEASES` and `gnosis-0.42.0-beta1-full.nupkg` for Windows.
-5. Write short notes: what changed since the previous pre-release, and what to test. GitHub's **Generate release notes** button, from the previous tag, is a good start. If the build changes saved data so that the current stable release cannot read it, say so in the notes.
+6. Write short notes: what changed since the previous pre-release, and what to test. GitHub's **Generate release notes** button, from the previous tag, is a good start. If the build changes saved data so that the current stable release cannot read it, say so in the notes.
 
 The Homebrew tap is not updated for a pre-release.
 

@@ -5,6 +5,8 @@ import { app, BrowserWindow } from 'electron';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
 
 /**
+ * A local perf suite: CI does not run it, `npm run test:perf` does (docs/continuous-integration.md, "Performance tests").
+ *
  * Interaction latency on large synthetic fixtures (#345, #346). Every input here is a trusted input event sent
  * through Electron, so the app's own slow-interaction monitor (lib/interaction-latency.ts) measures it with the
  * Event Timing API: from the input to the next paint, split into input delay, handlers and presentation.

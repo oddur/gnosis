@@ -29,7 +29,7 @@ import {
   jumpLabel,
   spokenChain,
 } from '../lib/hunk-scopes';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 import { largeAfter, lazyHandler, patchOf, scopeAfter, scopeBefore, storeAfter, storeBefore } from './fixtures/syntax-scope';
 
 /**
@@ -689,7 +689,7 @@ void test('Parsing a 3,000-line TypeScript file and a Rust file', async () => {
   assert.equal(results['typescript, 3,000 lines'].definitions, 1000);
   assert.equal(results['rust, 3,000 lines'].definitions, 1200);
   for (const [name, result] of Object.entries(results))
-    assert.ok(result.parse + result.query < perfBudget(250), `${name}: ${JSON.stringify(result)}`);
+    assertPerf(`parse and query, ${name}`, result.parse + result.query, perfBudget(250), { detail: JSON.stringify(result) });
 });
 
 before(async () => {

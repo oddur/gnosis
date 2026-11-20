@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 
 /**
+ * A local perf suite: CI does not run it, `npm run test:perf` does (docs/continuous-integration.md, "Performance tests").
+ *
  * Typing in a line comment inside a large Changes view (#354). A key must not restyle the diff: every key used to
  * cost a full style recalculation of the page. This types 20 characters into an inline comment on a 600-file PR
  * with a large file and checks the per-key event duration and style time.

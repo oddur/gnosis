@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
+import { assertPerf } from './perf-budget';
 
 /**
  * Renderer heap in a long session (#355). A reader opens 20 PRs with large diffs one after another, each in a workspace
@@ -321,18 +322,11 @@ void app.whenReady().then(async () => {
     console.log('Caches after the tabs closed:', JSON.stringify(closed.caches));
     console.log(`Idle sweep dropped ${idle.length} PRs:`, JSON.stringify(swept.caches));
     assert.deepEqual(errors, [], 'No renderer errors');
-    assert.ok(
-      peak.heapMB - baseline.heapMB < PEAK_OVER_BASELINE_MB,
-      `The heap with ${KEEP_TABS} large PRs open stays within ${PEAK_OVER_BASELINE_MB} MB of the baseline: ${JSON.stringify(samples)}`
-    );
-    assert.ok(
-      closed.heapMB - baseline.heapMB < CLOSED_OVER_BASELINE_MB,
-      `After the tabs close the heap returns within ${CLOSED_OVER_BASELINE_MB} MB of the baseline: ${JSON.stringify(samples)}`
-    );
-    assert.ok(
-      closed.heapMB - swept.heapMB < CACHED_AFTER_CLOSE_MB,
-      `After the tabs close the inspection caches hold less than ${CACHED_AFTER_CLOSE_MB} MB: ${JSON.stringify(samples)}`
-    );
+    // Heap sizes after garbage collection vary with V8 and the machine; they are budgets, enforced locally only.
+    const heap = { unit: 'MB', detail: JSON.stringify(samples) };
+    assertPerf(`renderer heap: with ${KEEP_TABS} large PRs open, over the baseline`, peak.heapMB - baseline.heapMB, PEAK_OVER_BASELINE_MB, heap);
+    assertPerf('renderer heap: after the tabs close, over the baseline', closed.heapMB - baseline.heapMB, CLOSED_OVER_BASELINE_MB, heap);
+    assertPerf('renderer heap: held by the inspection caches after the tabs close', closed.heapMB - swept.heapMB, CACHED_AFTER_CLOSE_MB, heap);
     assert.deepEqual(left, { inspection: 0, definitions: 0, scopeReads: 0 }, 'The idle sweep leaves no PR in any cache');
     // And with nothing reading them, work that was in flight does not bring them back.
     assert.equal((swept.caches.inspection as { prs: number }).prs, 0, 'Idle PRs stay out of every inspection cache');
