@@ -1,0 +1,19 @@
+{
+  "description": "The 5-merge branch added tests that clearCookie honours expires and maxAge, the 5.0 branch added tests that it ignores them; the human took the 5.0 tests verbatim.",
+  "language": "javascript",
+  "category": "real",
+  "source": {
+    "repo": "expressjs/express",
+    "license": "MIT",
+    "merge": "dde1f7d6e8d8058edb8c95c8a75a5a58444369de",
+    "ours": "c96c690dc087d121137c97318215e03a432395c5",
+    "theirs": "82fc12a40b3e6694e9a2c9b1376e7548d95779f6",
+    "base": "ee40a881f5d8cb4ce71bc45262fde8e4b7640d05",
+    "url": "https://github.com/expressjs/express/commit/dde1f7d6e8d8058edb8c95c8a75a5a58444369de",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch '5.0' into 5-merge"
+  },
+  "expected": {
+    "test/res.clearCookie.js": "any"
+  }
+}

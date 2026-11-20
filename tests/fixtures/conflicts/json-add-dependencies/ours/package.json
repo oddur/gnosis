@@ -1,0 +1,9 @@
+{
+  "name": "lab",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.18.2",
+    "lodash": "^4.17.21",
+    "zod": "^3.22.0"
+  }
+}

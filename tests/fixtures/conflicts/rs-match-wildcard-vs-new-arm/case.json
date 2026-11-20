@@ -1,0 +1,8 @@
+{
+  "description": "The PR adds a catch-all `_ => 500` arm; main adds a specific \"denied\" arm. Placed after the catch-all, main’s arm can never match.",
+  "language": "rust",
+  "category": "semantic/order",
+  "expected": {
+    "src/code.rs": "any-but-merged"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "description": "The PR only reformats a long call over several lines; main changes one argument in it.",
+  "language": "python",
+  "category": "structure/format-vs-edit",
+  "expected": {
+    "lab/client.py": "any"
+  }
+}

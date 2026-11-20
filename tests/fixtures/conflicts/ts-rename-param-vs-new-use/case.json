@@ -1,0 +1,8 @@
+{
+  "description": "The PR renames parameter count to limit; main adds a guard that still uses count. Both compile on their own; the combination references a name that no longer exists.",
+  "language": "typescript",
+  "category": "semantic/rename-vs-use",
+  "expected": {
+    "src/take.ts": "any-but-merged"
+  }
+}

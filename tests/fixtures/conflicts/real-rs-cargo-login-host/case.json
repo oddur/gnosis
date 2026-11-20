@@ -1,0 +1,19 @@
+{
+  "description": "The registry-login branch added a flag_z argument and unwrapped the now-optional api field, the credentials-hosts branch only queried the registry when --host is absent; the human kept flag_z, took the lazy host match and added .unwrap() to the api value.",
+  "language": "rust",
+  "category": "real",
+  "source": {
+    "repo": "rust-lang/cargo",
+    "license": "MIT OR Apache-2.0",
+    "merge": "e911a25f42030df8a6a93c6adc937066fce93795",
+    "ours": "e5562ddb061b8eb5a0e754d702f164a1d42d0a21",
+    "theirs": "002996eb6baf93d3a43c9c433049de0298d3dcb1",
+    "base": "534ce68621ce4feec0b7e8627cfd3b077d4f3900",
+    "url": "https://github.com/rust-lang/cargo/commit/e911a25f42030df8a6a93c6adc937066fce93795",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch 'credentials-hosts' of github.com:dethoter/cargo into registry-login"
+  },
+  "expected": {
+    "src/bin/login.rs": "any"
+  }
+}

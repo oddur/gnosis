@@ -1,0 +1,20 @@
+{
+  "description": "The feature branch turned the Get/GetAsync wrappers into expression-bodied members, while v700 replaced them with TryGet/TryGetAsync returning (bool, T) tuples; the human took the v700 TryGet methods in both files.",
+  "language": "csharp",
+  "category": "real",
+  "source": {
+    "repo": "App-vNext/Polly",
+    "license": "BSD-3-Clause",
+    "merge": "a26d34a102de19e908c5e02d815e7ad86ce958f4",
+    "ours": "66b501d33af4f4c7506cb4049a548c1772b4680f",
+    "theirs": "2f1aabfe9b375247b4f2932f27d0bbb9a81f6abf",
+    "base": "7422ed1623f03950c0df3554e5e512cca8a0a4df",
+    "url": "https://github.com/App-vNext/Polly/commit/a26d34a102de19e908c5e02d815e7ad86ce958f4",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch 'v700' into issue_557_Caching"
+  },
+  "expected": {
+    "src/Polly.Shared/Caching/GenericCacheProvider.cs": "any",
+    "src/Polly.Shared/Caching/AsyncGenericCacheProvider.cs": "any"
+  }
+}

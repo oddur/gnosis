@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different method at the end of the same class.",
+  "language": "python",
+  "category": "structure/both-add",
+  "expected": {
+    "bank/account.py": "merged"
+  }
+}

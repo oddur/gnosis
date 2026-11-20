@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different require at the end of the import block.",
+  "language": "javascript",
+  "category": "structure/both-add",
+  "expected": {
+    "lib/load.js": "merged"
+  }
+}

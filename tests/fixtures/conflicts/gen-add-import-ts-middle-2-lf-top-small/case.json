@@ -1,0 +1,21 @@
+{
+  "description": "Both sides add a different import at the end of the import block.",
+  "language": "typescript",
+  "category": "matrix/auto (generated sample)",
+  "pattern": "add-import",
+  "axes": {
+    "position": "middle",
+    "indent": "2",
+    "eol": "lf",
+    "nesting": "top",
+    "size": "small"
+  },
+  "expected": {
+    "lab/add-import.ts": "auto"
+  },
+  "acceptable": {
+    "lab/add-import.ts": [
+      "import { alpha } from './alpha';\nimport { beta } from './beta';\nimport { delta } from './delta';\nimport { gamma } from './gamma';\n\nexport function filler0(value: number): number {\n  return value + 0;\n}\n\nexport function alpha(value: number): number {\n  const total = value + 1;\n  const scaled = total * 2;\n  return scaled - 3;\n}\n\nexport function filler1(value: number): number {\n  return value + 1;\n}\n"
+    ]
+  }
+}

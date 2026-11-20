@@ -1,0 +1,19 @@
+{
+  "description": "The contributor branch added a ProtoBuf binding var, the local branch added FormPost and FormMultipart, and gofmt realigned both blocks differently; the human kept all five vars aligned to the longest name.",
+  "language": "go",
+  "category": "real",
+  "source": {
+    "repo": "gin-gonic/gin",
+    "license": "MIT",
+    "merge": "e5339a3f4d427d22532108dda324148310f10fa0",
+    "ours": "04917e83076ae04a4bc12a7b88d9396e78cb9aba",
+    "theirs": "52fcc5dbf6e94df33ad313858fb94b713e9d1b4a",
+    "base": "0d1b9856edf54b5319aaf6586987b465b6ed92b2",
+    "url": "https://github.com/gin-gonic/gin/commit/e5339a3f4d427d22532108dda324148310f10fa0",
+    "direction": "ours=P2 (merged-in feature branch), theirs=P1",
+    "mergeSubject": "Merge branch 'new-binding-validator' of https://github.com/zhing/gin into zhing-new-binding-validator"
+  },
+  "expected": {
+    "binding/binding.go": "any"
+  }
+}

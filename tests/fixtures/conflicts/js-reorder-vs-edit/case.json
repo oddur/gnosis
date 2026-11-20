@@ -1,0 +1,8 @@
+{
+  "description": "The PR swaps two functions; main edits the body of one of them.",
+  "language": "javascript",
+  "category": "structure/reorder-vs-edit",
+  "expected": {
+    "src/order.js": "any"
+  }
+}

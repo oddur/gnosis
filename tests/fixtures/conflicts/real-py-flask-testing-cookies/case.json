@@ -1,0 +1,19 @@
+{
+  "description": "The 2.3.x branch simplified the Werkzeug cookie update to a single path-aware call, while 2.2.x added try/except fallbacks for several Werkzeug versions; the human kept the 2.3.x side verbatim.",
+  "language": "python",
+  "category": "real",
+  "source": {
+    "repo": "pallets/flask",
+    "license": "BSD-3-Clause",
+    "merge": "97c830190ff839b89b85c93781f3603f95365384",
+    "ours": "ca12e8ebb7753d4a982584c2909ad9c7e5c2b029",
+    "theirs": "bda08b11c692a5c94124b11749c1af6fa5c0e003",
+    "base": "ddc7accaa2e83b328f969c120af2ce0804876b4a",
+    "url": "https://github.com/pallets/flask/commit/97c830190ff839b89b85c93781f3603f95365384",
+    "direction": "ours=P1 (branch being merged into), theirs=P2",
+    "mergeSubject": "Merge branch '2.2.x' into 2.3.x"
+  },
+  "expected": {
+    "src/flask/testing.py": "any"
+  }
+}

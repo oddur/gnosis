@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a different function between add and subtract.",
+  "language": "typescript",
+  "category": "structure/both-add",
+  "expected": {
+    "src/math.ts": "merged"
+  }
+}

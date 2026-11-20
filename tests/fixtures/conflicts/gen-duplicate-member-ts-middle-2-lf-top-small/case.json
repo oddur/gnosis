@@ -1,0 +1,16 @@
+{
+  "description": "Both sides add an enum member or object key with the same name and different values.",
+  "language": "typescript",
+  "category": "matrix/must-not-merge (generated sample)",
+  "pattern": "duplicate-member",
+  "axes": {
+    "position": "middle",
+    "indent": "2",
+    "eol": "lf",
+    "nesting": "top",
+    "size": "small"
+  },
+  "expected": {
+    "lab/duplicate-member.ts": "any-but-merged"
+  }
+}

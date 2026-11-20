@@ -1,0 +1,9 @@
+{
+  "description": "No Mergiraf binary (a development build without prepare:mergiraf).",
+  "language": "typescript",
+  "category": "failure/mergiraf",
+  "mergiraf": "missing",
+  "expected": {
+    "src/math.ts": "decide"
+  }
+}

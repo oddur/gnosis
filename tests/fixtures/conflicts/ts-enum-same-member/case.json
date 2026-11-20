@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add an enum member with the same name and a different value.",
+  "language": "typescript",
+  "category": "semantic/duplicate",
+  "expected": {
+    "src/status.ts": "any-but-merged"
+  }
+}

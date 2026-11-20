@@ -1,0 +1,14 @@
+{
+  "description": "The same CSS conflict, resolved and published once, comes back in a second PR. Your earlier resolution is reused; there is no grammar, so it is Merged on trust.",
+  "language": "css",
+  "category": "rerere",
+  "rerere": true,
+  "steps": {
+    "first": {
+      "styles/button.css": "decide"
+    },
+    "second": {
+      "styles/button.css": "merged"
+    }
+  }
+}

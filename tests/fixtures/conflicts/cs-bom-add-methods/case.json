@@ -1,0 +1,8 @@
+{
+  "description": "A C# file with a UTF-8 BOM: both sides add a different method.",
+  "language": "csharp",
+  "category": "files/bom",
+  "expected": {
+    "src/OrderService.cs": "merged"
+  }
+}

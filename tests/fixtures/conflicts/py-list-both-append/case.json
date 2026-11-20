@@ -1,0 +1,8 @@
+{
+  "description": "Both sides append a different entry to the same Python list. Order may matter, but both entries are wanted.",
+  "language": "python",
+  "category": "structure/both-add",
+  "expected": {
+    "lab/settings.py": "any"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "description": "The sync_pool branch removed the percentage column from the log format string, develop captured end := time.Now() and used it for latency and the timestamp; the human kept develop's end variable and sync_pool's shorter format.",
+  "language": "go",
+  "category": "real",
+  "source": {
+    "repo": "gin-gonic/gin",
+    "license": "MIT",
+    "merge": "25e7330e6519f98bd2480c2417085f400a34284d",
+    "ours": "3e4033673eb26f63e1b38b3870afc8e1fdc31469",
+    "theirs": "058201713b5badcabe7a5f200bb9008b590e3307",
+    "base": "31417dbc63643fd26c05302f29713728a1ac947d",
+    "url": "https://github.com/gin-gonic/gin/commit/25e7330e6519f98bd2480c2417085f400a34284d",
+    "direction": "ours=P2 (merged-in feature branch), theirs=P1",
+    "mergeSubject": "Merge branch 'sync_pool' into develop"
+  },
+  "expected": {
+    "logger.go": "any"
+  }
+}

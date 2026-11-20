@@ -1,0 +1,8 @@
+{
+  "description": "Both sides change the same PNG.",
+  "language": "binary",
+  "category": "files/binary",
+  "expected": {
+    "assets/logo.png": "decide"
+  }
+}

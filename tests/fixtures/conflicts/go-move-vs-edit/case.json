@@ -1,0 +1,8 @@
+{
+  "description": "The PR moves Helper to the end of the file; main edits Helper’s body. The right result is the moved function with main’s edit.",
+  "language": "go",
+  "category": "structure/move-vs-edit",
+  "expected": {
+    "lab/move.go": "any"
+  }
+}
