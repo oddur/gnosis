@@ -365,3 +365,47 @@ void test('without a same-API copy a cross-API probe is inconclusive: it never s
   assert.ok(!phases.includes('settled'), phases.join(','));
   assert.ok(phases.includes('gave-up'));
 });
+
+void test('the optimistic patch and the write go out before the pre-write REST copy answers', async () => {
+  const { startRestBaselines } = await import('../lib/github-write-refresh');
+  const { createOptimisticLayer } = await import('../lib/optimistic-patches');
+  const layer = createOptimisticLayer();
+  const order: string[] = [];
+  let answer: () => void = () => {};
+  const before = new Map<string, WriteObservation>([[URL, { metadata: metadata({ reviewCommentCount: 6, source: 'graphql' }) }]]);
+  // gitHubWrite's order: start the REST copy, run the write (patch, then request), then wait for the copy.
+  const copies = startRestBaselines('thread-reply', before, () => {
+    order.push('rest started');
+    return new Promise((resolve) => {
+      answer = () => {
+        order.push('rest answered');
+        resolve(metadata({ reviewCommentCount: 6, source: 'rest' }));
+      };
+    });
+  });
+  const write = () => {
+    layer.begin({ url: URL, viewer: { login: 'oddur', avatarUrl: '' }, change: { action: 'thread-reply', threadId: 'T1', body: 'Done.' } });
+    order.push(layer.has(URL) ? 'patch applied' : 'no patch');
+    order.push('request sent');
+    return Promise.resolve();
+  };
+  await write();
+  assert.deepEqual(order, ['rest started', 'patch applied', 'request sent'], 'nothing waited for the REST copy');
+  answer();
+  await copies;
+  assert.equal(before.get(URL)?.restMetadata?.source, 'rest');
+
+  // A REST copy that never answers is given up after the wait; the probe then stays inconclusive.
+  const stalled = new Map<string, WriteObservation>([[URL, { metadata: metadata({ source: 'graphql' }) }]]);
+  await startRestBaselines('thread-reply', stalled, () => new Promise(() => {}), 10);
+  assert.equal(stalled.get(URL)?.restMetadata, undefined);
+  // Other writes, and REST baselines, start no read at all.
+  let reads = 0;
+  const read = () => {
+    reads++;
+    return Promise.resolve(metadata());
+  };
+  await startRestBaselines('merge', before, read);
+  await startRestBaselines('thread-reply', new Map([[URL, { metadata: metadata({ source: 'rest' }) }]]), read);
+  assert.equal(reads, 0);
+});

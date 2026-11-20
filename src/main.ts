@@ -41,7 +41,7 @@ import { mapBounded } from '../lib/bounded';
 import { createOptimisticService } from './optimistic-service';
 import { prActionChange, type OptimisticChange, type OptimisticKind } from '../lib/optimistic-patches';
 import { feedbackReplyBody } from '../lib/review-threads';
-import { COUNTED_WRITES, createGitHubWriteRefresher, githubPrUrl, type GitHubWriteAction, type WriteDetails, type WriteObservation, type GitHubWriteEvent } from '../lib/github-write-refresh';
+import { createGitHubWriteRefresher, githubPrUrl, startRestBaselines, type GitHubWriteAction, type WriteDetails, type WriteObservation, type GitHubWriteEvent } from '../lib/github-write-refresh';
 import type { GitHubSyncInterest, GitHubSyncUpdate, GitHubSyncKind, GitHubSyncFailure } from '../lib/github-sync';
 import { createStackChangesService } from './stack-changes-service';
 import { approximateBytes } from '../lib/byte-cache';
@@ -5008,23 +5008,19 @@ const githubWrites = createGitHubWriteRefresher({
 async function gitHubWrite<T>(action: GitHubWriteAction, urls: string[], write: () => Promise<T>,
   details: (result: T) => Omit<WriteDetails, 'before'> = () => ({})): Promise<T> {
   const before = githubWrites.capture(urls);
-  // A comment write whose local copy came from GraphQL also gets a REST copy from just before the write. A probe that
-  // GraphQL cannot answer exactly comes from REST, and is compared with that copy rather than across APIs. It is a
-  // conditional read, usually a free 304; a failed one only means such a probe stays inconclusive.
+  // A comment write whose local copy came from GraphQL also gets a REST copy, started before the write and never
+  // waited for by it, so the optimistic patch and the write go out at once (`startRestBaselines`).
   const token = cachedToken;
-  if (token && COUNTED_WRITES.has(action))
-    await Promise.all([...before].map(async ([url, observation]) => {
-      if (observation.metadata?.source !== 'graphql') return;
-      try {
-        const { owner, repo, pullNumber } = parsePrUrl(url);
-        observation.restMetadata = await withGitHubPriority('interactive', () => getPrMetadata(getGitHubClient(token), owner, repo, pullNumber, true));
-      } catch {
-        // No REST copy: a REST probe stays inconclusive.
-      }
-    }));
+  const restBaselines = token
+    ? startRestBaselines(action, before, url => {
+      const { owner, repo, pullNumber } = parsePrUrl(url);
+      return withGitHubPriority('interactive', () => getPrMetadata(getGitHubClient(token), owner, repo, pullNumber, true));
+    })
+    : Promise.resolve();
   let result: T;
   try {
     result = await write();
+    await restBaselines;
   } catch (error) {
     // A failed write may still have reached GitHub: read once, without a follow-up.
     void githubWrites.after(action, urls, url => ({ before: before.get(url) }), { followUp: false });

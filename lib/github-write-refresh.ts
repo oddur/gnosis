@@ -121,6 +121,44 @@ export const COUNTED_WRITES: ReadonlySet<GitHubWriteAction> = new Set<GitHubWrit
   'feedback-reply',
 ]);
 
+/**
+ * For a comment write whose baseline came from GraphQL, starts a REST read of each PR and attaches it as
+ * `restMetadata` when it answers. The caller starts the write right away and awaits the returned promise only after
+ * the write, so neither the optimistic patch nor the write waits for it. The promise never rejects and gives up after
+ * `waitMs`. A copy that is late, missing or read after GitHub applied the write can only leave a REST probe
+ * inconclusive: a count that already includes the write never looks like a new change.
+ */
+export function startRestBaselines(
+  action: GitHubWriteAction,
+  before: ReadonlyMap<string, WriteObservation>,
+  read: (url: string) => Promise<WriteObservation['metadata']>,
+  waitMs = 2_000
+): Promise<void> {
+  if (!COUNTED_WRITES.has(action)) return Promise.resolve();
+  const reads = [...before].flatMap(([url, observation]) =>
+    observation.metadata?.source === 'graphql'
+      ? [
+          read(url).then(
+            (metadata) => {
+              observation.restMetadata = metadata;
+            },
+            () => {
+              // No REST copy: a REST probe stays inconclusive.
+            }
+          ),
+        ]
+      : []
+  );
+  if (!reads.length) return Promise.resolve();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    Promise.all(reads).then(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, waitMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   // The merge commit and the closed state can trail a confirmed merge.
   merge: { kinds: ALL, probes: ['metadata'], seen: merged, queue: true },
