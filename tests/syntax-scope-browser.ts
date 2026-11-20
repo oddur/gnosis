@@ -1,7 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
-import { perfBudget } from './perf-budget';
+import { assertPerf, perfBudget } from './perf-budget';
 
 /**
  * Enclosing definitions in Changes (#393), on the synthetic files in tests/fixtures/syntax-scope.ts.
@@ -485,6 +485,9 @@ void app.whenReady().then(async () => {
           large.first.total !== undefined && large.lastParse !== undefined && large.first.total < large.lastParse,
           `The first file's breadcrumbs show before prefetch has parsed every file (${large.first.total} ms, last parse ${large.lastParse} ms)`
         );
+        // Scheduling, not speed, so it holds on CI: a file waiting behind the prefetched ones waits for seconds (prefetch
+        // finishes 2 s or more after the start), so 400 ms leaves a wide margin. The page cannot see the worker's queue order: the
+        // times it records are when answers arrive, which a busy page delays and reorders.
         assert.ok(large.first.workerQueue < 400, `The first file's parse does not wait behind prefetched ones (${large.first.workerQueue} ms)`);
         assert.ok(large.mid.workerQueue < 400, `Nor does the file jumped to (${large.mid.workerQueue} ms)`);
         assert.ok(large.frames >= 20, `Files resolve one by one, not in one frame (${large.frames} frames for ${large.parsed} files)`);
@@ -730,7 +733,7 @@ void app.whenReady().then(async () => {
     );
     // A fresh parse of the large file, timed from the page, with nothing else running.
     await sleep(500);
-    const fresh = await js<{ elapsed: number; posting: number; definitions: number; tasks: number[] }>(`(async()=>{
+    const fresh = await js<{ elapsed: number; posting: number; definitions: number; worker: boolean; parserOnPage: string[]; tasks: number[] }>(`(async()=>{
       const client=await import('/lib/syntax-scope-client.ts');
       const text=(await window.electronAPI.getPrChangeFile({url:'x',path:'src/large.ts',baseSha:'a',headSha:'b'},true)).after.content;
       window.__longTasks=[];const t0=performance.now();
@@ -739,13 +742,18 @@ void app.whenReady().then(async () => {
       const definitions=await pending;const elapsed=performance.now()-t0;
       await new Promise(r=>setTimeout(r,200));
       client.forgetDefinitions(new Set(['test:fresh']));
-      return {elapsed,posting,definitions:definitions.length,tasks:window.__longTasks.filter(t=>t.start>=t0-5).map(t=>Math.round(t.duration))}})()`);
+      const timing=client.syntaxTimings.find(t=>t.key==='fresh-large');
+      const parserOnPage=performance.getEntriesByType('resource').filter(e=>/tree-sitter/i.test(e.name)).map(e=>e.name);
+      return {elapsed,posting,definitions:definitions.length,worker:!!timing&&timing.parse>0,parserOnPage,tasks:window.__longTasks.filter(t=>t.start>=t0-5).map(t=>Math.round(t.duration))}})()`);
     console.log(
       'Fresh 3,000-line parse from the page:',
       JSON.stringify({ ...fresh, elapsed: Math.round(fresh.elapsed), posting: Math.round(fresh.posting * 10) / 10 })
     );
     assert.equal(fresh.definitions, 1000);
-    assert.deepEqual(fresh.tasks, [], 'Parsing leaves no long task on the main thread');
+    // Off the main thread: the worker answered with its own timing, and the page never loaded the parser.
+    assert.ok(fresh.worker, 'The parse ran in the syntax worker');
+    assert.deepEqual(fresh.parserOnPage, [], 'The page itself loads no tree-sitter code');
+    assertPerf('syntax scope: long tasks on the main thread while a 3,000-line file parses', fresh.tasks.length, 0, { unit: 'long tasks', detail: JSON.stringify(fresh.tasks) });
 
     // ── Pinned hunk headers (#395) ──
     await installSticky();
@@ -1158,7 +1166,7 @@ void app.whenReady().then(async () => {
       await new Promise(r=>setTimeout(r,100));watch.disconnect();deltas.sort((a,b)=>a-b);
       return {frames:deltas.length,p50:Math.round(deltas[deltas.length>>1]*10)/10,max:Math.round(deltas.at(-1)*10)/10,longTasks:window.__longTasks.map(t=>Math.round(t.duration)),places}})()`);
     console.log('Scrolling span.ts 20 px a frame, following the reader:', JSON.stringify(following));
-    assert.deepEqual(following.longTasks, [], 'Following the reader adds no long task');
+    assertPerf('syntax scope: long tasks while the header follows the reader', following.longTasks.length, 0, { unit: 'long tasks', detail: JSON.stringify(following.longTasks) });
     assert.ok(following.places > 10, `The header follows line by line: ${following.places}`);
     await shot('follow-alpha', '.commit-diff-stream');
 
@@ -1406,7 +1414,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js<number>(`window.shownCount('src/far.ts','readonly far')`), 230, 'All 230 lines between the class line and the hunk show');
     assert.equal(await js<number>(`window.shownCount('src/far.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
     assert.ok(steps >= 4, `The scroll eases over several frames: ${JSON.stringify(samples)}`);
-    assert.deepEqual(longTasks.map((t) => Math.round(t.duration)).filter((ms) => ms > perfBudget(50)), [], `Revealing 230 lines and easing there leaves no task over ${perfBudget(50)} ms`);
+    assertPerf('syntax scope: longest task revealing 230 lines and easing there', Math.max(0, ...longTasks.map((t) => Math.round(t.duration))), perfBudget(50), { detail: JSON.stringify(longTasks.map((t) => Math.round(t.duration))) });
     assert.deepEqual((await js<Flash[]>(`window.jumped('src/far.ts')`)).map((f) => f.text), ['export class FarRunner {'], 'The class line flashes');
     // The reader's wheel stops the scroll part way.
     await js(`window.pinAt('src/far.ts','total += 50 * 2;')`);
