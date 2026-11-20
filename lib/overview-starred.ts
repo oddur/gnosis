@@ -20,8 +20,10 @@
  */
 import { checkView, type CheckView } from './check-summary';
 import { prTarget, type DeepLinkTarget } from './deep-link';
-import { commentsOf, rebaseWords, readyMerges } from './morning';
-import { OVERVIEW_REASON_LABEL, type OverviewLane, type OverviewModel, type OverviewReason, type OverviewRow, type OverviewSinceSource } from './overview';
+import { commentsOf, mergeCaveats, prNeed, rebaseWords } from './morning';
+import { isOpenPr } from './pr-lifecycle';
+import { sameLogin } from './github-actors';
+import { OVERVIEW_REASON_LABEL, type OverviewModel, type OverviewRow, type OverviewSinceSource } from './overview';
 import { stackDependencyOrder } from './stack-overview';
 import type { QueueSignals } from './queue-signals';
 import type { QueueItem, ReviewMember } from './workbench';
@@ -54,8 +56,10 @@ export interface StarredLine {
   action?: StarredAction;
   /** The PR has merge conflicts: shown with the conflict icon. */
   conflicts?: boolean;
-  /** Orders lines within a tier: people blocked on you before fixes. */
+  /** Orders lines within a tier: people blocked on you before fixes, approved merges before the rest. */
   rank: number;
+  /** Work Next up would list: it needs you, or it is an approved, passing merge. The tab count counts it. */
+  actionable: boolean;
 }
 export interface StarredEntry {
   /** `starred|${subject.id}` */
@@ -82,8 +86,8 @@ export interface StarredSection {
   entries: StarredEntry[];
   /** Every open PR the section lists: the PRs it claims from the other sections. */
   urls: string[];
-  /** Ready merges it lists (`readyMerges`), so the briefing still counts them. */
-  merges: { approved: string[]; unreviewed: string[] };
+  /** Its PRs that are work (`StarredLine.actionable`), for the tab count and Next up's empty state. */
+  actionable: string[];
 }
 export interface StarredInput {
   /** The starred queue entries. */
@@ -98,8 +102,6 @@ export interface StarredInput {
   excluded?: ReadonlySet<string>;
 }
 
-const isOpen = (member: ReviewMember) => member.state === 'open' && !member.merged;
-const same = (a: string | undefined, b: string) => !!a && a.toLowerCase() === b.toLowerCase();
 const time = (value: string | undefined) => {
   const parsed = value ? Date.parse(value) : NaN;
   return Number.isFinite(parsed) ? parsed : undefined;
@@ -108,81 +110,65 @@ const prs = (n: number) => `${n} ${n === 1 ? 'PR' : 'PRs'}`;
 const lower = (text: string) => (/^[A-Z][a-z]/.test(text) ? `${text.charAt(0).toLowerCase()}${text.slice(1)}` : text);
 const tierRank = (tier: StarredTier) => STARRED_TIERS.indexOf(tier);
 
-/** Where a PR sits in the lanes: its most actionable lane, as `STARRED_TIERS` orders them. */
-interface Placement {
-  lane: OverviewLane;
-  row: OverviewRow;
-  reasons: readonly OverviewReason[];
-  since: number;
-  source: OverviewSinceSource;
-  isNew?: boolean;
-  parked: boolean;
-}
-const LANE_ORDER: readonly OverviewLane[] = ['answer', 'review', 'fix', 'merge', 'waiting'];
-function placements(model: Pick<OverviewModel, 'lanes'>): Map<string, Placement> {
-  const found = new Map<string, Placement>();
-  const order = (value: Placement) => LANE_ORDER.indexOf(value.lane) + (value.parked ? LANE_ORDER.length : 0);
-  for (const state of model.lanes)
-    for (const [rows, parked] of [[state.rows, false], [state.parked, true]] as const)
-      for (const row of rows)
-        for (const entry of row.entries) {
-          const value: Placement = { lane: state.lane, row, reasons: entry.reasons, since: entry.since, source: entry.source, parked, ...(entry.isNew ? { isNew: true } : {}) };
-          const current = found.get(entry.member.url);
-          if (!current || order(value) < order(current)) found.set(entry.member.url, value);
-        }
-  return found;
-}
-
 /** The status the lanes read, when it is for the PR's current commit. */
 const current = (input: Pick<StarredInput, 'signals'>, member: ReviewMember) => {
   const value = input.signals(member);
   return value && value.url === member.url && value.headSha === member.headSha ? value : undefined;
 };
 
-/** One PR's line: its tier, why, action and age, from its lane, else its own state. An open draft's why says "Draft". */
-export function starredLine(input: Pick<StarredInput, 'signals' | 'login'>, item: QueueItem, member: ReviewMember, place: Placement | undefined): StarredLine {
-  const line = laneLine(input, item, member, place);
+/** One PR's line: its tier, why, action and age, from what it needs (`prNeed`). An open draft's why says "Draft". */
+export function starredLine(input: Pick<StarredInput, 'signals' | 'login' | 'model'>, item: QueueItem, member: ReviewMember): StarredLine {
+  const line = needLine(input, item, member);
   return member.isDraft && line.tier !== 'done' && line.why !== 'Draft' ? { ...line, why: `Draft · ${line.why}` } : line;
 }
-function laneLine(input: Pick<StarredInput, 'signals' | 'login'>, item: QueueItem, member: ReviewMember, place: Placement | undefined): StarredLine {
+function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model'>, item: QueueItem, member: ReviewMember): StarredLine {
   const fresh = current(input, member);
-  const base = { id: member.url, member, target: prTarget(member.url) ?? { kind: 'queue' as const } };
+  const base = { id: member.url, member, target: prTarget(member.url) ?? { kind: 'queue' as const }, actionable: false };
   const updated = time(member.updatedAt) ?? time(member.createdAt) ?? 0;
-  if (!isOpen(member)) return { ...base, tier: 'done', why: member.merged ? 'Merged' : 'Closed', since: updated, source: 'updated', rank: 0 };
+  if (!isOpenPr(member)) return { ...base, tier: 'done', why: member.merged ? 'Merged' : 'Closed', since: updated, source: 'updated', rank: 0 };
   const comments = commentsOf(input, [member]);
   const open = { ...base, check: checkView([fresh]), ...(comments !== undefined ? { comments } : {}) };
-  if (!place) {
+  const need = prNeed(input.model, member, input.signals);
+  const { row, entry } = need;
+  if (!row || !entry) {
     const decision = fresh?.readiness?.reviewDecision;
     const why = member.isDraft ? 'Draft' : decision === 'APPROVED' ? 'Approved' : decision === 'CHANGES_REQUESTED' ? 'Changes requested' : decision === 'REVIEW_REQUIRED' ? 'Review required' : fresh?.readiness && decision === null ? 'No review required' : 'Open';
     return { ...open, tier: 'quiet', why, since: updated, source: 'updated', rank: 0 };
   }
-  const { lane, row, reasons } = place;
-  const lined = { ...open, row, target: row.focus.url === member.url ? row.target : base.target, since: place.since, source: place.source, ...(place.isNew ? { isNew: true } : {}) };
+  const reasons = entry.reasons;
+  const lined = { ...open, row, target: row.focus.url === member.url ? row.target : base.target, since: entry.since, source: entry.source, ...(entry.isNew ? { isNew: true } : {}) };
+  // Updated since your review, when another reason leads: a reply on a PR that also changed.
+  const also = need.kind !== 'review' && need.all.has('updated-since-review') ? ' · updated since your review' : '';
   const first = reasons[0];
-  const also = lane !== 'review' && reasons.includes('updated-since-review') ? ' · updated since your review' : '';
-  if (lane === 'answer') {
+  if (need.kind === 'answer') {
     const person = row.focus.url === member.url ? row.person : undefined;
-    if (first === 'replies') return { ...lined, tier: 'you', rank: 0, action: 'reply', why: `${person ? `${person} is waiting on your reply` : OVERVIEW_REASON_LABEL.replies}${also}` };
-    return { ...lined, tier: 'you', rank: 0, action: 'open', why: `${person ? `${person} requested changes` : OVERVIEW_REASON_LABEL['changes-requested']}${also}` };
+    if (first === 'replies') return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'reply', why: `${person ? `${person} is waiting on your reply` : OVERVIEW_REASON_LABEL.replies}${also}` };
+    return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'open', why: `${person ? `${person} requested changes` : OVERVIEW_REASON_LABEL['changes-requested']}${also}` };
   }
-  if (lane === 'review') {
+  if (need.kind === 'review') {
     const again = reasons.includes('updated-since-review');
-    return { ...lined, tier: 'you', rank: 0, action: again ? 'rereview' : 'review', why: again ? OVERVIEW_REASON_LABEL['updated-since-review'] : OVERVIEW_REASON_LABEL['review-requested'] };
+    return { ...lined, tier: 'you', rank: 0, actionable: true, action: again ? 'rereview' : 'review', why: again ? OVERVIEW_REASON_LABEL['updated-since-review'] : OVERVIEW_REASON_LABEL['review-requested'] };
   }
-  if (lane === 'fix') {
+  if (need.kind === 'fix') {
     const why = first === 'checks-failed' ? 'Failing checks' : first === 'conflicts' ? 'Conflicts' : rebaseWords(item.subject, member).replace(/^n/, 'N');
-    return { ...lined, tier: 'you', rank: 1, action: first === 'checks-failed' ? 'rerun' : 'open', why: `${why}${also}`, ...(reasons.includes('conflicts') ? { conflicts: true } : {}) };
+    return { ...lined, tier: 'you', rank: 1, actionable: true, action: first === 'checks-failed' ? 'rerun' : 'open', why: `${why}${also}`, ...(reasons.includes('conflicts') ? { conflicts: true } : {}) };
   }
-  if (lane === 'merge') {
-    const notes = row.merge?.member.url === member.url ? row.merge.notes : [];
+  if (need.kind === 'merge' || need.kind === 'parked') {
+    // Another PR merges first: this one waits for it, and is not work yet.
+    if (need.gate === 'base-open') return { ...lined, tier: 'others', rank: 0, why: need.base ? `Waits for #${need.base.number} to merge` : 'Waits for its base to merge' };
+    const notes = row.merge?.notes ?? [];
     const words = notes.map((note) => note.text);
-    if (notes.some((note) => note.kind === 'base-open')) return { ...lined, tier: 'others', rank: 0, why: words.filter((_, i) => notes[i].kind === 'base-open').join(' · ') };
-    if (place.parked) return { ...lined, tier: 'quiet', rank: 0, action: 'open', why: words.join(' · ') || 'Mergeable' };
-    return { ...lined, tier: 'merge', rank: 0, action: fresh?.checks.state === 'success' ? 'merge' : 'open', why: ['Ready to merge', ...words.map(lower)].join(' · ') };
+    if (need.gate === 'parked') return { ...lined, tier: 'quiet', rank: 0, action: 'open', why: words.join(' · ') || 'Mergeable' };
+    if (need.gate === 'checks') return { ...lined, tier: 'others', rank: 0, why: fresh?.checks.state === 'failure' ? 'Failing checks' : OVERVIEW_REASON_LABEL['checks-pending'] };
+    // Ready to merge, as `readyMerges` counts it. Only an approved, passing PR gets the Merge button and counts as
+    // work, as in Next up; one without review or checks says what it goes ahead without, and opens.
+    const caveats = mergeCaveats(row, checkView([fresh]));
+    const approved = need.gate === 'approved';
+    return { ...lined, tier: 'merge', rank: approved ? 0 : 1, actionable: approved, action: approved ? 'merge' : 'open', why: ['Ready to merge', ...words.map(lower), ...(approved ? [] : caveats.filter((caveat) => caveat !== 'no review'))].join(' · ') };
   }
   // Waiting on others: who it waits on.
   if (reasons.includes('review-pending')) {
-    const reviewer = member.requestedReviewers.find((name) => !same(name, input.login)) ?? member.requestedTeams[0];
+    const reviewer = member.requestedReviewers.find((name) => !sameLogin(name, input.login)) ?? member.requestedTeams[0];
     return { ...lined, tier: 'others', rank: 0, why: reviewer ? `Waits on review from ${reviewer}` : 'Awaiting review' };
   }
   return { ...lined, tier: 'others', rank: 0, why: OVERVIEW_REASON_LABEL['checks-pending'] };
@@ -198,7 +184,6 @@ export function compareStarred(a: Pick<StarredLine, 'tier' | 'rank' | 'since'> &
 export function starredSection(input: StarredInput): StarredSection {
   const hidden = input.hidden ?? new Set<string>();
   const excluded = input.excluded ?? new Set<string>();
-  const placed = placements(input.model);
   const entries: StarredEntry[] = [];
   const seen = new Set<string>();
   for (const item of input.items) {
@@ -208,7 +193,7 @@ export function starredSection(input: StarredInput): StarredSection {
     const ordered = subject.kind === 'stack' ? stackDependencyOrder(subject).members : subject.members;
     const members = ordered.filter((member) => !hidden.has(member.url) && !excluded.has(member.url) && !item.snoozedUrls?.includes(member.url));
     if (!members.length) continue;
-    const lines = members.map((member) => starredLine(input, item, member, isOpen(member) ? placed.get(member.url) : undefined));
+    const lines = members.map((member) => starredLine(input, item, member));
     const lead = [...lines].sort(compareStarred)[0];
     const openLines = lines.filter((line) => line.tier !== 'done');
     const stack = subject.kind === 'stack' && lines.length > 1;
@@ -238,12 +223,10 @@ export function starredSection(input: StarredInput): StarredSection {
   }
   entries.sort((a, b) => compareStarred({ ...a.lead, title: a.title }, { ...b.lead, title: b.title }));
   const urls = entries.flatMap((entry) => entry.urls);
-  const claimed = new Set(urls);
-  const ready = readyMerges(input.model, input.signals, hidden);
   return {
     entries,
     urls,
-    merges: { approved: [...ready.approved, ...ready.other].filter((url) => claimed.has(url)), unreviewed: ready.unreviewed.filter((url) => claimed.has(url)) },
+    actionable: entries.flatMap((entry) => entry.lines.filter((line) => line.actionable).map((line) => line.member.url)),
   };
 }
 
@@ -253,13 +236,9 @@ export function starredStatusRequests(items: readonly QueueItem[], excluded?: Re
   const result: { url: string; headSha: string }[] = [];
   for (const item of items)
     for (const member of item.subject.members) {
-      if (!isOpen(member) || seen.has(member.url) || excluded?.has(member.url) || item.snoozedUrls?.includes(member.url)) continue;
+      if (!isOpenPr(member) || seen.has(member.url) || excluded?.has(member.url) || item.snoozedUrls?.includes(member.url)) continue;
       seen.add(member.url);
       result.push({ url: member.url, headSha: member.headSha });
     }
   return result;
 }
-
-/** Starred entries that are work: they need you, or can merge. The tab count counts their PRs. */
-export const starredActionable = (section: Pick<StarredSection, 'entries'>) =>
-  section.entries.flatMap((entry) => entry.lines.filter((line) => line.tier === 'you' || line.tier === 'merge').map((line) => line.member.url));

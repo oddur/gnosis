@@ -83,7 +83,7 @@
 import { reviewRequest } from './attention';
 import { checkView, type CheckView } from './check-summary';
 import { prTarget, type DeepLinkTarget } from './deep-link';
-import { repoName, waitingLabel, type OverviewModel, type OverviewRow, type OverviewSinceSource } from './overview';
+import { repoName, waitingLabel, type OverviewEntry, type OverviewModel, type OverviewReason, type OverviewRow, type OverviewSinceSource } from './overview';
 import { prCommentTotal, type QueueSignals } from './queue-signals';
 import type { ReviewMember, ReviewSubject } from './workbench';
 import type { StarredSection } from './overview-starred';
@@ -204,15 +204,31 @@ export function readyMerges(model: Pick<OverviewModel, 'lanes'>, signals: Mornin
   const result = { approved: [] as string[], unreviewed: [] as string[], other: [] as string[] };
   for (const row of lanes(model, 'merge')?.rows ?? []) {
     const member = row.merge?.member ?? row.focus;
-    if (!row.merge?.ready || row.merge.notes.some((note) => note.kind === 'base-open') || hidden.has(member.url)) continue;
-    const checks = current({ signals }, member)?.checks.state;
-    if (checks === 'failure' || checks === 'pending') continue;
-    const review = row.merge.notes[0]?.kind;
-    if (review === 'approved' && checks === 'success') result.approved.push(member.url);
-    else if (review === 'no-review') result.unreviewed.push(member.url);
-    else result.other.push(member.url);
+    if (hidden.has(member.url)) continue;
+    const gate = mergeGate(row, member, current({ signals }, member));
+    if (gate === 'approved' || gate === 'unreviewed' || gate === 'other') result[gate].push(member.url);
   }
   return result;
+}
+/**
+ * What a Merge lane row lets you do with one of its PRs, the one gate Next up, `readyMerges`, stack steps and Starred
+ * share:
+ * - `approved`: the PR the row merges (`OverviewMerge.member`), approved and passing: the Merge button.
+ * - `unreviewed`: it needs no review; `other`: approved, without passing checks (none, or not known yet). Both can
+ *   merge, and the page counts them, but they open the PR rather than merge it.
+ * - `checks`: its checks are failing or running. `parked`: mergeable, not Ready (`OverviewMerge.ready`).
+ * - `base-open`: another PR has to merge first: the PR below it in the stack, or the row's merge PR when this is not it.
+ */
+export type MergeGate = 'approved' | 'unreviewed' | 'other' | 'checks' | 'parked' | 'base-open';
+export function mergeGate(row: Pick<OverviewRow, 'merge'>, member: Pick<ReviewMember, 'url'>, fresh: Pick<QueueSignals, 'checks'> | undefined): MergeGate {
+  if (!row.merge || row.merge.member.url !== member.url || row.merge.notes.some((note) => note.kind === 'base-open')) return 'base-open';
+  if (!row.merge.ready) return 'parked';
+  const checks = fresh?.checks.state;
+  if (checks === 'failure' || checks === 'pending') return 'checks';
+  const review = row.merge.notes[0]?.kind;
+  if (review === 'approved' && checks === 'success') return 'approved';
+  if (review === 'no-review') return 'unreviewed';
+  return 'other';
 }
 /** The stack (or PR) an item belongs to: Next up gives each one row. */
 const stackKey = (item: Pick<NextItem, 'row'>) => item.row.item.subject.id;
@@ -237,7 +253,7 @@ export interface MorningInput {
    * The Starred section (`lib/overview-starred.ts`). It is first on the page and claims its PRs before every other
    * section, so no other section lists them.
    */
-  starred?: Pick<StarredSection, 'entries' | 'urls' | 'merges'>;
+  starred?: Pick<StarredSection, 'entries' | 'urls' | 'actionable'>;
 }
 
 /** The PR's status, when it is for its current revision. */
@@ -368,11 +384,10 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
   };
   for (const row of lanes(model, 'merge')?.rows ?? []) {
     const member = row.merge?.member ?? row.focus;
-    // A PR stacked on one that has not merged waits for it: its base is the next step.
-    if (!row.merge?.ready || row.merge.notes.some((note) => note.kind === 'base-open')) continue;
-    if (current(input, member)?.checks.state !== 'success') continue;
+    // A PR stacked on one that has not merged waits for it: its base is the next step. Only a passing merge is a row.
+    const gate = mergeGate(row, member, current(input, member));
+    if (!row.merge || (gate !== 'approved' && !(gate === 'unreviewed' && current(input, member)?.checks.state === 'success'))) continue;
     const review = row.merge.notes[0];
-    if (review.kind !== 'approved' && review.kind !== 'no-review') continue;
     const unblocks = openAbove(row.item.subject, member).length;
     // The check state shows passing on the row: the words do not say "green" again.
     const why = [review.kind === 'approved' ? review.text.replace(/^Approved/, 'approved') : 'no review', unblocks ? waitOnIt(unblocks) : '']
@@ -552,6 +567,8 @@ export interface StackStep {
   actionable: boolean;
   /** The step is a Next up row already: the stack's line points there ("next step in Next up") with no action of its own. */
   inNext?: boolean;
+  /** The step's PR is in Starred: the stack's line points there ("next step in Starred") with no action of its own. */
+  inStarred?: boolean;
 }
 export interface PersonGroup {
   /** `person:lena`, `unassigned`, `team`, `team:org/name`, `review`, `ci`, `stack:owner/repo#380`, `stacks`, `you`. */
@@ -587,7 +604,7 @@ export interface PersonGroup {
 export function stackLine(stack: Pick<PersonGroup, 'label' | 'repos' | 'chain' | 'urls' | 'step'>, names: ReadonlyMap<string, string> = new Map()): string {
   const size = stack.chain?.length ?? stack.urls.length;
   const repo = stack.repos.length === 1 ? repositoryLabel(names, stack.repos[0]) : `${stack.repos.length} repos`;
-  return [stack.label, repo, prs(size), stack.step?.inNext ? 'next step in Next up' : stack.step?.text].filter(Boolean).join(' · ');
+  return [stack.label, repo, prs(size), stack.step?.inNext ? 'next step in Next up' : stack.step?.inStarred ? 'next step in Starred' : stack.step?.text].filter(Boolean).join(' · ');
 }
 /** Chain rows name their repository when stacks from several repositories are on the page: #384 is never ambiguous. */
 export const qualifyChains = (stacks: Pick<PersonGroup, 'repos'>) => stacks.repos.length > 1;
@@ -702,42 +719,90 @@ export function mergeCaveats(row: Pick<OverviewRow, 'merge'>, checks?: Pick<Chec
 }
 
 /**
- * What the PR a stack waits on is waiting on itself, from its row in the lanes, and the action that moves it.
- * `checks`: the PR's check state, so a merge says what it goes ahead without (`mergeCaveats`).
+ * What one open PR needs, from its rows in the lanes: the per-PR rule that stack steps (`stackStep`) and Starred
+ * (`lib/overview-starred.ts`) share, so a PR reads the same wherever it is. In order: a fix, an answer, a merge (with
+ * its `MergeGate`), a parked merge, waiting on others, your review, nothing.
  */
-export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember, login: string, unblocks: number, checks?: Pick<CheckView, 'state'>): StackStep {
-  const n = `#${member.number}`;
+export interface PrNeed {
+  kind: 'fix' | 'answer' | 'merge' | 'parked' | 'waiting' | 'review' | 'none';
+  row?: OverviewRow;
+  /** The PR's own entry in that row: its reasons there, and since when. */
+  entry?: OverviewEntry;
+  /** Its reasons in every lane, such as a reply that is also an update since your review. */
+  all: ReadonlySet<OverviewReason>;
+  /** Merge and parked: what the row lets you do with this PR. */
+  gate?: MergeGate;
+  /** `base-open`: the PR that has to merge first. */
+  base?: ReviewMember;
+}
+export function prNeed(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember, signals: MorningInput['signals']): PrNeed {
+  const holds = (row: OverviewRow) => row.entries.some((entry) => entry.member.url === member.url);
   const find = (lane: OverviewRow['lane'], parked = false) => {
     const state = lanes(model, lane);
-    return (parked ? state?.parked : state?.rows)?.find((row) => row.entries.some((entry) => entry.member.url === member.url));
+    return (parked ? state?.parked : state?.rows)?.find(holds);
   };
-  const reasons = (row: OverviewRow) => row.entries.find((entry) => entry.member.url === member.url)?.reasons ?? row.reasons;
+  const all = new Set<OverviewReason>();
+  for (const state of model.lanes)
+    for (const row of [...state.rows, ...state.parked])
+      for (const entry of row.entries) if (entry.member.url === member.url) for (const reason of entry.reasons) all.add(reason);
+  const need = (kind: PrNeed['kind'], row?: OverviewRow, extra: Partial<PrNeed> = {}): PrNeed => ({ kind, all, ...(row ? { row, entry: row.entries.find((entry) => entry.member.url === member.url) } : {}), ...extra });
+  const merging = (row: OverviewRow, kind: 'merge' | 'parked') => {
+    const gate = mergeGate(row, member, current({ signals }, member));
+    const base = gate !== 'base-open' ? undefined : row.merge && row.merge.member.url !== member.url ? row.merge.member : openParent(row.item.subject, member);
+    // Parked or not, a PR that waits for another to merge first says so.
+    return need(kind, row, { gate: kind === 'parked' && gate !== 'base-open' ? 'parked' : gate, ...(base ? { base } : {}) });
+  };
   const fix = find('fix');
+  if (fix) return need('fix', fix);
+  const answer = find('answer');
+  if (answer) return need('answer', answer);
+  const merge = find('merge');
+  if (merge) return merging(merge, 'merge');
+  const parked = find('merge', true);
+  if (parked) return merging(parked, 'parked');
+  const waiting = find('waiting');
+  if (waiting) return need('waiting', waiting);
+  const review = find('review');
+  if (review) return need('review', review);
+  return need('none');
+}
+
+/**
+ * What the PR a stack waits on is waiting on itself, from its row in the lanes (`prNeed`), and the action that moves
+ * it. `checks`: the PR's check state, so a merge says what it goes ahead without (`mergeCaveats`).
+ */
+export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember, login: string, unblocks: number, checks?: Pick<CheckView, 'state'>, signals: MorningInput['signals'] = () => undefined): StackStep {
+  const n = `#${member.number}`;
+  const need = prNeed(model, member, signals);
+  const reasons = need.entry?.reasons ?? need.row?.reasons ?? [];
+  const fix = need.kind === 'fix' ? need.row : undefined;
   if (fix) {
-    const reason = fixReason(reasons(fix));
+    const reason = fixReason(reasons);
     return { member, row: fix, action: 'open', actionable: true, ...(reason === 'conflicts' ? { conflicts: true } : {}), text: `${n} ${{ failing: 'has failing checks', conflicts: 'has conflicts', restack: rebaseWords(fix.item.subject, member) }[reason]}` };
   }
-  const answer = find('answer');
-  if (answer) return { member, row: answer, action: 'open', actionable: true, text: reasons(answer).includes('changes-requested') ? `${n} has changes requested` : `${n} waits on your reply` };
-  const merge = find('merge');
-  const parked = find('merge', true);
+  const answer = need.kind === 'answer' ? need.row : undefined;
+  if (answer) return { member, row: answer, action: 'open', actionable: true, text: reasons.includes('changes-requested') ? `${n} has changes requested` : `${n} waits on your reply` };
+  // The row merges this PR (it is the row's merge PR), or it is set aside as Parked.
+  const merge = need.kind === 'merge' && need.row?.merge?.member.url === member.url ? need.row : undefined;
+  const parked = need.kind === 'parked' ? need.row : undefined;
+  // In a Merge row that merges another PR first: it merges after that one.
+  if (need.kind === 'merge' && !merge) return { member, action: 'open', actionable: false, text: `${n} has to merge first` };
   // You owe a review on a PR of this stack: the review comes first, and the base merges after it.
   const owed = (lanes(model, 'review')?.rows ?? []).find((row) => row.item.subject.members.some((candidate) => candidate.url === member.url));
-  if (owed && ((merge && merge.merge?.member.url === member.url) || parked)) {
+  if (owed && (merge || parked)) {
     const again = owed.reasons.includes('updated-since-review') ? ' again' : '';
     return { member, row: owed, action: 'review', actionable: true, text: `Review ${owed.entries.length > 1 ? prs(owed.entries.length) : `#${owed.focus.number}`}${again} first, then merge ${n}` };
   }
-  if (merge && merge.merge?.member.url === member.url) {
+  if (merge) {
     const caveats = mergeCaveats(merge, checks);
     const merging = `Merge ${n}${caveats.length ? ` (${caveats.join(', ')})` : ''}`;
     // Only an approved, passing base gets the Merge button; one nobody reviewed, or without checks, opens the PR.
     return { member, row: merge, action: caveats.length ? 'open' : 'merge', actionable: true, caveats, text: unblocks ? `${merging}; ${waitOnIt(unblocks)}` : merging };
   }
   if (parked) return { member, row: parked, action: 'open', actionable: true, text: parked.merge?.notes[0]?.kind === 'approved' ? `${n} is approved and can merge` : `${n} can merge without review` };
-  const waiting = find('waiting');
+  const waiting = need.kind === 'waiting' ? need.row : undefined;
   if (waiting) {
-    const why = reasons(waiting);
-    if (why.includes('review-pending')) {
+    if (reasons.includes('review-pending')) {
       const reviewer = member.requestedReviewers.find((name) => !same(name, login));
       const team = member.requestedTeams[0];
       if (reviewer) return { member, row: waiting, action: 'nudge', reviewer, actionable: false, text: `${n} waits on review from ${reviewer}` };
@@ -745,7 +810,7 @@ export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
     }
     return { member, row: waiting, action: 'open', actionable: false, text: `${n} is waiting on checks` };
   }
-  const review = find('review');
+  const review = need.kind === 'review' ? need.row : undefined;
   if (review) return { member, row: review, action: 'open', actionable: true, text: `${n} waits on your review` };
   return { member, action: 'open', actionable: false, text: `${n} has to merge first` };
 }
@@ -786,10 +851,12 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
     const position = (member: ReviewMember) => subject.members.findIndex((candidate) => candidate.url === member.url);
     const above = [...waiting.values()].sort((a, b) => position(a.member) - position(b.member));
     if (above.every(({ member }) => claimed.has(member.url))) continue;
-    const step = stackStep(model, root, login, openAbove(subject, root).length, checksOf(input, [root]));
+    const step = stackStep(model, root, login, openAbove(subject, root).length, checksOf(input, [root]), input.signals);
     // The step is a Next up row already: a review of the stack, or the base's own merge or fix.
     const stepUrls = step.action === 'review' && step.row ? step.row.entries.map((entry) => entry.member.url) : [step.member.url];
     if (stepUrls.some((url) => claimed.get(url) === 'next')) step.inNext = true;
+    // Or Starred lists it: the line points there, and does not repeat its action.
+    else if (stepUrls.some((url) => claimed.get(url) === 'starred')) step.inStarred = true;
     // Named by the stack, else by its base's title; the base's line then shows its number alone.
     const label = subject.name || root.title;
     const seed = () => ({ kind: 'stack' as const, label });
@@ -1033,7 +1100,7 @@ export interface Briefing {
  * - Decisions: "7 PRs need a decision."
  * - With none of these: "Nothing needs you right now.", and how many of your PRs wait on others.
  */
-export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden' | 'starred'>, page: Pick<MorningPage, 'next' | 'decide' | 'others'>): Briefing {
+export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, page: Pick<MorningPage, 'next' | 'decide' | 'others'>): Briefing {
   const hidden = input.hidden ?? new Set<string>();
   const decided = new Set(page.decide.map((item) => item.member.url));
   const open = (rows: readonly OverviewRow[]) =>
@@ -1097,11 +1164,9 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden' | '
   // Your PRs: merges, then fixes by their first reason.
   const own: Clause[] = [];
   const listed = page.next.items.filter((item) => item.kind === 'merge');
-  // Starred merges are on the page too, in Starred: the briefing counts them with the rest.
-  const starredMerges = input.starred?.merges ?? { approved: [], unreviewed: [] };
-  const approved = count('approved', [...listed.flatMap((item) => item.urls), ...page.next.moreApproved, ...starredMerges.approved], (n) => plural(n, 'approved PR', 'approved PRs'), page.next.moreApproved.length ? { line: true } : {});
+  const approved = count('approved', [...listed.flatMap((item) => item.urls), ...page.next.moreApproved], (n) => plural(n, 'approved PR', 'approved PRs'), page.next.moreApproved.length ? { line: true } : {});
   if (approved) own.push([approved, ' can merge']);
-  const unreviewed = count('unreviewed', [...page.next.unreviewed, ...starredMerges.unreviewed], (n) => (approved ? `${n} more` : prs(n)), page.next.unreviewed.length ? { line: true } : {});
+  const unreviewed = count('unreviewed', page.next.unreviewed, (n) => (approved ? `${n} more` : prs(n)), { line: true });
   if (unreviewed) own.push([unreviewed, ' can merge without review']);
   const fixes = (lanes(input.model, 'fix')?.rows ?? []).flatMap((row) => row.entries).filter((entry) => !hidden.has(entry.member.url) && !decided.has(entry.member.url));
   const fixWords: [FixReason, BriefingKey, string, string][] = [
@@ -1151,15 +1216,33 @@ export function morningPage(input: MorningInput): MorningPage {
     decide: decide.map((item) => item.member.url).filter((url) => yours.has(url)),
     starred: (input.starred?.urls ?? []).filter((url) => yours.has(url)),
   };
-  const lines = (input.starred?.entries ?? []).flatMap((entry) => entry.lines);
-  const actionable = lines.filter((line) => line.tier === 'you' || line.tier === 'merge').map((line) => line.member.url);
+  const starred = input.starred;
+  const lines = (starred?.entries ?? []).flatMap((entry) => entry.lines);
   const starredHolds = {
-    next: actionable.length > 0,
+    next: (starred?.actionable.length ?? 0) > 0,
     others: lines.some((line) => line.tier === 'others' || (line.tier === 'you' && line.row?.lane === 'fix')),
     decide: all.some((item) => claimed.get(item.member.url) === 'starred'),
   };
-  const count = morningCount(next.items, waiting, actionable);
-  return { next, decide, you, others, youElsewhere, count, briefing: morningBriefing(input, { next, decide, others }), starredHolds };
+  // Starred moves PRs out of the sections below, but not out of the work there is. The briefing counts each PR in its
+  // own section as if nothing were starred (a starred decision is still a decision, a starred PR waiting on others
+  // still waits), and the tab count is the distinct work: Next up as it would be without stars, Waiting on you, and
+  // the starred PRs that are work. Starring a PR Next up listed never raises it, though Next up refills.
+  let briefing = morningBriefing(input, { next, decide, others });
+  let count = morningCount(next.items, waiting);
+  if (starred?.urls.length) {
+    const plain = { ...input, starred: undefined };
+    const plainNext = nextUp({ ...plain, stale: new Set(all.map((item) => item.member.url)) });
+    const plainClaimed = new Map<string, Place>([...hidden].map((url) => [url, 'hidden' as const]));
+    for (const item of plainNext.items) for (const url of item.urls) plainClaimed.set(url, 'next');
+    const plainDecide = all.filter((item) => !plainClaimed.has(item.member.url));
+    for (const item of plainDecide) plainClaimed.set(item.member.url, 'decide');
+    // Waiting on you claims its PRs before Waiting on others, as on the page.
+    waitingOnYou(plain, plainClaimed);
+    const plainOthers = waitingOnOthers(plain, plainClaimed);
+    briefing = morningBriefing(plain, { next: plainNext, decide: plainDecide, others: plainOthers });
+    count = morningCount(plainNext.items, waiting, starred.actionable);
+  }
+  return { next, decide, you, others, youElsewhere, count, briefing, starredHolds };
 }
 
 // ── Writes: Nudge and Close PR ──
