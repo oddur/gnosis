@@ -647,10 +647,11 @@ void test('a batch reports its failures in one broadcast', async () => {
   assert.deepEqual(broadcasts, [4]);
 });
 
-void test('an error after a batch is accepted neither fails its tasks again nor repeats a failure broadcast', async () => {
+void test('a publish that throws accepts nothing: the batch backs off in one broadcast and publishes on the next read', async () => {
   const broadcasts: string[][] = [];
   let now = 0;
   const reads: string[][] = [];
+  const published: string[][] = [];
   let publishes = 0;
   const sync = createGitHubSyncService({
     now: () => now,
@@ -666,17 +667,51 @@ void test('an error after a batch is accepted neither fails its tasks again nor 
         failed: targets.filter((t) => t.url.endsWith('/2')).map((t) => ({ url: t.url, error: new Error('Not Found') })),
       });
     },
-    publish: () => {
+    publish: (updates) => {
       publishes++;
       if (publishes === 1) throw new Error('A window went away');
+      published.push(updates.map((u) => u.url));
     },
     failed: (value) => broadcasts.push(value.map((f) => f.url)),
   });
   sync.observe('1:rows', { kind: 'signals', priority: 'active', targets: [1, 2, 3].map((n) => target(n)) });
   await sync.tick();
-  assert.deepEqual(broadcasts, [[target(2).url]], 'the failure is broadcast once, and accepted PRs are not failed');
-  // The accepted PRs keep their 25 s cadence; only #2 backs off (30 s after its first failure).
+  assert.deepEqual(broadcasts, [[target(2).url, target(1).url, target(3).url]], 'one broadcast; no PR is reported twice');
+  assert.deepEqual(published, []);
+  // Every PR backs off; the next read publishes the two that were never accepted.
   now = 25_000;
   await sync.tick();
-  assert.deepEqual(reads.at(-1), [target(1).url, target(3).url]);
+  assert.equal(reads.length, 1);
+  now = 30_000;
+  await sync.tick();
+  assert.deepEqual(published, [[target(1).url, target(3).url]]);
+});
+
+void test('a PR whose update cannot be processed fails alone, with backoff, in the batch’s one broadcast', async () => {
+  const broadcasts: string[][] = [];
+  const published: string[][] = [];
+  let now = 0;
+  const reads: string[][] = [];
+  const sync = createGitHubSyncService({
+    now: () => now,
+    account: () => 'alice',
+    enabled: () => true,
+    backoff: () => undefined,
+    read: (kind, targets) => {
+      reads.push(targets.map((t) => t.url));
+      // #2's update has no checks, so reading its state throws.
+      return Promise.resolve(
+        targets.map((t) => ({ kind, url: t.url, value: { ...t, checkedAt: 0, comments: 0, ...(t.url.endsWith('/2') ? {} : { checks: { state: 'success', total: 1, passed: 1 } }) } }) as unknown as GitHubSyncUpdate)
+      );
+    },
+    publish: (updates) => published.push(updates.map((u) => u.url)),
+    failed: (value) => broadcasts.push(value.map((f) => f.url)),
+  });
+  sync.observe('1:rows', { kind: 'signals', priority: 'active', targets: [1, 2, 3].map((n) => target(n)) });
+  await sync.tick();
+  assert.deepEqual(published, [[target(1).url, target(3).url]]);
+  assert.deepEqual(broadcasts, [[target(2).url]]);
+  now = 25_000;
+  await sync.tick();
+  assert.deepEqual(reads.at(-1), [target(1).url, target(3).url], 'only the failed PR backs off');
 });
