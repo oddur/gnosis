@@ -1685,8 +1685,10 @@ function StarredQuick({ line, item, actions, reveal = false }: { line: StarredLi
     );
   }
   const words = STARRED_ACTION[action];
+  // An owed line's Review opens the owed review, and says which PR; the line itself opens its own PR.
+  const onAction = () => (line.actionRow ? actions.open(line.actionRow, line.actionTarget) : openStarred(line, item, actions));
   return (
-    <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title={`${words} #${member.number} · A`} onClick={() => openStarred(line, item, actions)}>
+    <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title={`${words} #${line.actionNumber ?? member.number} · A`} onClick={onAction}>
       {words}
     </Button>
   );

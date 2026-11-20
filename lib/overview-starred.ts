@@ -56,6 +56,13 @@ export interface StarredLine {
   action?: StarredAction;
   /** `nudge`: the requested reviewer Remind re-requests. */
   reviewer?: string;
+  /**
+   * Where the action button goes when it is not this PR: an owed review. `row` and `target` stay this PR's own, for
+   * Enter, a click and Open; the button's tooltip names `actionNumber`.
+   */
+  actionRow?: OverviewRow;
+  actionTarget?: DeepLinkTarget;
+  actionNumber?: number;
   /** The PR has merge conflicts: shown with the conflict icon. */
   conflicts?: boolean;
   /** Orders lines within a tier: people blocked on you before fixes, approved merges before the rest. */
@@ -119,18 +126,18 @@ const current = (input: Pick<StarredInput, 'signals'>, member: ReviewMember) => 
 };
 
 /** One PR's line: its tier, why, action and age, from what it needs (`prNeed`). An open draft's why says "Draft". */
-export function starredLine(input: Pick<StarredInput, 'signals' | 'login' | 'model'>, item: QueueItem, member: ReviewMember): StarredLine {
+export function starredLine(input: Pick<StarredInput, 'signals' | 'login' | 'model' | 'hidden'>, item: QueueItem, member: ReviewMember): StarredLine {
   const line = needLine(input, item, member);
   return member.isDraft && line.tier !== 'done' && line.why !== 'Draft' ? { ...line, why: `Draft · ${line.why}` } : line;
 }
-function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model'>, item: QueueItem, member: ReviewMember): StarredLine {
+function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model' | 'hidden'>, item: QueueItem, member: ReviewMember): StarredLine {
   const fresh = current(input, member);
   const base = { id: member.url, member, target: prTarget(member.url) ?? { kind: 'queue' as const }, actionable: false };
   const updated = time(member.updatedAt) ?? time(member.createdAt) ?? 0;
   if (!isOpenPr(member)) return { ...base, tier: 'done', why: member.merged ? 'Merged' : 'Closed', since: updated, source: 'updated', rank: 0 };
   const comments = commentsOf(input, [member]);
   const open = { ...base, check: checkView([fresh]), ...(comments !== undefined ? { comments } : {}) };
-  const need = prNeed(input.model, member, input.signals);
+  const need = prNeed(input.model, member, input.signals, input.hidden);
   const { row, entry } = need;
   if (!row || !entry) {
     const decision = fresh?.readiness?.reviewDecision;
@@ -162,7 +169,17 @@ function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model'>, item
     if (need.gate === 'base-open') return { ...lined, tier: 'others', rank: 0, why: need.base ? `Waits for #${need.base.number} to merge` : 'Waits for its base to merge' };
     // You owe a review in its stack, whether it is ready, running checks or parked: as in Next up and the stack step,
     // the review comes first. The line opens that review and is not counted itself.
-    if (decision.verb === 'owed') return { ...lined, tier: 'merge', rank: 1, action: decision.row?.reasons.includes('updated-since-review') ? 'rereview' : 'review', why: decision.owedText ?? '' };
+    if (decision.verb === 'owed' && decision.actionRow)
+      return {
+        ...lined,
+        tier: 'merge',
+        rank: 1,
+        action: decision.actionRow.reasons.includes('updated-since-review') ? 'rereview' : 'review',
+        why: decision.owedText ?? '',
+        actionRow: decision.actionRow,
+        actionTarget: decision.actionTarget ?? decision.actionRow.target,
+        actionNumber: decision.actionRow.focus.number,
+      };
     const notes = row.merge?.notes ?? [];
     const words = notes.map((note) => note.text);
     if (need.gate === 'parked') return { ...lined, tier: 'quiet', rank: 0, action: 'open', why: words.join(' · ') || 'Mergeable' };

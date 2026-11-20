@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { overviewModel } from '../lib/overview';
 import { morningPage, stackLine, stackStep, waitingOnYouNote, type NextItem } from '../lib/morning';
 import { checkView } from '../lib/check-summary';
+import { prTarget } from '../lib/deep-link';
 import type { OverviewVisit } from '../lib/overview';
 import { STARRED_SHOWN, starredSection, starredStatusRequests } from '../lib/overview-starred';
 import { starAction } from '../components/PrEntryActions';
@@ -411,54 +412,63 @@ void test('A starred PR that needs a decision counts in the tab only where an un
   assert.equal(starred.page.count, plain.page.count);
 });
 
-// ── Review fixes, round 3 (#441): a starred line decides what Next up and the stack step decide ──
+// ── Review fixes, rounds 3 and 4 (#441): a starred line decides what Next up and the stack step decide ──
 
 /** The starred line for `member`, Next up's row for it (unstarred), and its stack step, from one lane model. */
-function decisions(items: QueueItem[], status: Record<string, QueueSignals>, starred: QueueItem, member: ReviewMember, previous?: OverviewVisit) {
+function decisions(items: QueueItem[], status: Record<string, QueueSignals>, starred: QueueItem, member: ReviewMember, options: { previous?: OverviewVisit; hidden?: ReadonlySet<string> } = {}) {
   const signal = (m: ReviewMember) => status[m.url];
+  const { previous, hidden } = options;
   const model = overviewModel({ items, signals: signal, login: LOGIN, now: T0, previous });
-  const section = starredSection({ items: [starred], model, signals: signal, login: LOGIN, now: T0 });
+  const section = starredSection({ items: [starred], model, signals: signal, login: LOGIN, now: T0, hidden });
   const line = section.entries.flatMap((entry) => entry.lines).find((candidate) => candidate.member.url === member.url);
   assert.ok(line, `#${member.number} has a starred line`);
-  const next = morningPage({ model, now: T0, login: LOGIN, signals: signal }).next.items.find((entry) => entry.urls.length === 1 && entry.urls[0] === member.url);
-  const step = stackStep(model, member, LOGIN, 0, checkView([status[member.url]]), signal);
+  const next = morningPage({ model, now: T0, login: LOGIN, signals: signal, hidden }).next.items.find((entry) => entry.urls.length === 1 && entry.urls[0] === member.url);
+  const step = stackStep(model, member, LOGIN, 0, checkView([status[member.url]]), signal, hidden);
   return { line, next, step, model };
 }
 /** The starred action for a Next up row: the same verb. */
 const NEXT_ACTION: Readonly<Record<NextItem['kind'], string>> = { reply: 'reply', changes: 'open', review: 'review', rereview: 'rereview', merge: 'merge', fix: 'open' };
 const nextAction = (entry: NextItem) => (entry.kind === 'fix' && entry.fix === 'failing' ? 'rerun' : NEXT_ACTION[entry.kind]);
 const awaiting = (m: ReviewMember): Partial<QueueItem> => ({ responses: { [m.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } });
+/** A line opens its own PR: its own row's target, as a stack chain line does. */
+const ownTarget = (line: { member: ReviewMember; row?: { focus: ReviewMember; target: unknown } }) => (line.row && line.row.focus.url === line.member.url ? line.row.target : prTarget(line.member.url));
 
-void test('Starred lines match Next up and the stack step: action, target, unread dot, conflicts, rebase words and owed reviews', () => {
+void test('Starred lines match Next up and the stack step: text, action, target, unread dot, conflicts and owed reviews', () => {
   const status: Record<string, QueueSignals> = {};
   const lenaChanges = [{ id: '1', author: 'lena', state: 'CHANGES_REQUESTED', at: iso(HOUR) }];
+  const lenaApproved = (ago: number) => [{ id: '1', author: 'lena', state: 'APPROVED', at: iso(ago) }];
   const cases: { name: string; check: () => void }[] = [];
 
-  // A reply and a change request on one PR: Next up offers Reply.
+  // A reply and a change request on one PR: Reply everywhere.
   const both = mine(300);
   status[both.url] = signals(both, { checks: 'success', decision: 'CHANGES_REQUESTED', opinions: lenaChanges });
   cases.push({ name: 'reply plus changes', check: () => {
     const value = item([both], awaiting(both));
-    const { line, next } = decisions([value], status, star(value), both);
+    const { line, next, step } = decisions([value], status, star(value), both);
     assert.ok(next);
     assert.equal(next.kind, 'reply');
     assert.equal(line.action, nextAction(next));
+    assert.equal(line.why, 'lena is waiting on your reply');
+    assert.equal(step.text, '#300 waits on your reply');
     assert.deepEqual(line.target, next.row.target);
     assert.equal(!!line.isNew, !!next.isNew);
   } });
 
-  // Conflicts behind a reply: the line says so with the conflict icon, as the stack step flags them.
+  // Conflicts behind a reply, leading or not among the fix's reasons: the conflict icon shows on both surfaces.
   const conflicted = mine(301);
   status[conflicted.url] = signals(conflicted, { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
-  cases.push({ name: 'conflicts behind a reply', check: () => {
-    const value = item([conflicted], awaiting(conflicted));
-    const { line, next, step } = decisions([value], status, star(value), conflicted);
-    assert.equal(next?.kind, 'reply');
-    assert.equal(line.action, 'reply');
-    assert.equal(step.conflicts, true);
-    assert.equal(line.conflicts, true);
-    assert.match(line.why, / · conflicts$/);
-  } });
+  const failingConflicted = mine(302);
+  status[failingConflicted.url] = signals(failingConflicted, { checks: 'failure', mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  for (const [m, words] of [[conflicted, 'conflicts'], [failingConflicted, 'failing checks']] as const)
+    cases.push({ name: `conflicts behind a reply (${words})`, check: () => {
+      const value = item([m], awaiting(m));
+      const { line, next, step } = decisions([value], status, star(value), m);
+      assert.equal(next?.kind, 'reply');
+      assert.equal(line.action, 'reply');
+      assert.equal(line.why, `Awaiting your reply · ${words}`);
+      assert.equal(line.conflicts, true);
+      assert.equal(step.conflicts, true);
+    } });
 
   // A lone-PR subject whose parent merged in its stack: the rebase words name the merged parent.
   const parent = mine(310, { headBranch: 'p', state: 'closed', merged: true });
@@ -466,14 +476,15 @@ void test('Starred lines match Next up and the stack step: action, target, unrea
   status[child.url] = signals(child, { checks: 'success' });
   cases.push({ name: 'lone subject, merged parent', check: () => {
     const { line, next, step } = decisions([item([parent, child])], status, star(item([child])), child);
-    assert.equal(step.text, '#311 needs rebasing after #310 merged');
     assert.ok(next);
+    assert.equal(step.text, '#311 needs rebasing after #310 merged');
     assert.equal(next.why, 'needs rebasing after #310 merged');
     assert.equal(line.why, 'Needs rebasing after #310 merged');
     assert.equal(line.action, nextAction(next));
   } });
 
-  // A review owed in the stack, on a base that is ready, running checks or parked: review first, as the stack step.
+  // A review owed in the stack, on the base that merges next, ready, running checks or parked: review first. The
+  // line opens its own PR; only its Review button opens the owed review, and says so.
   const owedCase = (name: string, n: number, signal: (m: ReviewMember) => QueueSignals, extra: Partial<ReviewMember> = {}) => {
     const base = mine(n, { headBranch: `b${n}`, ...extra });
     const owed = pr(n + 1, { baseBranch: `b${n}`, headBranch: `o${n}`, requestedReviewers: [LOGIN] });
@@ -485,28 +496,84 @@ void test('Starred lines match Next up and the stack step: action, target, unrea
       assert.equal(step.action, 'review', `${name}: the stack step reviews first`);
       assert.equal(line.why, step.text);
       assert.equal(line.why, `Review #${n + 1} first, then merge #${n}`);
-      assert.equal(line.row, step.row);
-      assert.deepEqual(line.target, step.row?.target);
       assert.equal(line.action, 'review');
       assert.equal(line.actionable, false);
+      assert.equal(line.actionRow, step.row);
+      assert.deepEqual(line.actionTarget, step.row?.target);
+      assert.equal(line.actionNumber, n + 1);
+      assert.deepEqual(line.target, ownTarget(line));
+      assert.equal(line.row?.entries.some((entry) => entry.member.url === base.url), true, 'its row is its own');
     } });
   };
   owedCase('owed review on a merge base', 320, approved);
-  owedCase('owed review on a checks-running base', 330, (m) => signals(m, { checks: 'pending', decision: 'APPROVED', mergeState: 'CLEAN', opinions: [{ id: '1', author: 'lena', state: 'APPROVED', at: iso(HOUR) }] }));
-  owedCase('owed review on a parked base', 340, (m) => signals(m, { checks: 'success', decision: 'APPROVED', mergeState: 'CLEAN', opinions: [{ id: '1', author: 'lena', state: 'APPROVED', at: iso(6 * DAY) }] }), { updatedAt: iso(6 * DAY) });
+  owedCase('owed review on a checks-running base', 330, (m) => signals(m, { checks: 'pending', decision: 'APPROVED', mergeState: 'CLEAN', opinions: lenaApproved(HOUR) }));
+  owedCase('owed review on a parked base', 340, (m) => signals(m, { checks: 'success', decision: 'APPROVED', mergeState: 'CLEAN', opinions: lenaApproved(6 * DAY) }), { updatedAt: iso(6 * DAY) });
 
-  // A new fix entry behind an unchanged reply: the line's unread dot follows the fix it names.
+  // A parked PR above the base, with a review owed in the stack: it waits for its base, and opens itself.
+  const pBase = mine(360, { headBranch: 'pb', updatedAt: iso(6 * DAY) });
+  const pChild = mine(361, { baseBranch: 'pb', headBranch: 'pc', updatedAt: iso(6 * DAY) });
+  const pOwed = pr(362, { baseBranch: 'pc', headBranch: 'po', requestedReviewers: [LOGIN] });
+  for (const m of [pBase, pChild]) status[m.url] = signals(m, { checks: 'success', decision: 'APPROVED', mergeState: 'CLEAN', opinions: lenaApproved(6 * DAY) });
+  status[pOwed.url] = signals(pOwed, { checks: 'success' });
+  cases.push({ name: 'parked PR above an owed base', check: () => {
+    const value = item([pBase, pChild, pOwed]);
+    const { line, step } = decisions([value], status, star(value), pChild);
+    assert.equal(line.why, 'Waits for #360 to merge');
+    assert.equal(line.actionRow, undefined);
+    assert.equal(line.action, undefined);
+    assert.deepEqual(line.target, ownTarget(line));
+    assert.equal(step.text, '#361 has to merge first');
+  } });
+
+  // An owed review that is leaving the page (closing) is not owed, as Next up leaves it out: the base merges.
+  const hBase = mine(370, { headBranch: 'hb' });
+  const hOwed = pr(371, { baseBranch: 'hb', headBranch: 'ho', requestedReviewers: [LOGIN] });
+  status[hBase.url] = approved(hBase);
+  status[hOwed.url] = signals(hOwed, { checks: 'success' });
+  cases.push({ name: 'hidden owed review', check: () => {
+    const value = item([hBase, hOwed]);
+    const { line, next, step } = decisions([value], status, star(value), hBase, { hidden: new Set([hOwed.url]) });
+    assert.equal(next?.kind, 'merge');
+    assert.equal(step.action, 'merge');
+    assert.equal(line.action, 'merge');
+    assert.equal(line.why, 'Ready to merge · approved by lena');
+  } });
+
+  // A new fix entry behind an unchanged reply, and a new owed review: the line's unread dot follows what it names.
   const fresh = mine(350);
   status[fresh.url] = signals(fresh, { checks: 'failure' });
   cases.push({ name: 'new fix entry', check: () => {
     const value = item([fresh], awaiting(fresh));
     const seen = overviewModel({ items: [value], signals: (m) => status[m.url], login: LOGIN, now: T0 });
     const previous: OverviewVisit = { at: T0 - DAY, keys: [], entries: seen.entryKeys.filter((key) => !key.startsWith('fix|')), seen: [fresh.url], unchecked: [] };
-    const { line, model } = decisions([value], status, star(value), fresh, previous);
+    const { line, model } = decisions([value], status, star(value), fresh, { previous });
     assert.ok(model.lanes.find((state) => state.lane === 'fix')?.rows[0]?.entries[0]?.isNew, 'the fix entry is new');
     assert.ok(!model.lanes.find((state) => state.lane === 'answer')?.rows[0]?.entries[0]?.isNew, 'the reply is not');
     assert.equal(line.why, 'Awaiting your reply · failing checks');
     assert.equal(line.isNew, true);
+  } });
+  const nBase = mine(380, { headBranch: 'nb' });
+  const nOwed = pr(381, { baseBranch: 'nb', headBranch: 'no', requestedReviewers: [LOGIN] });
+  status[nBase.url] = approved(nBase);
+  status[nOwed.url] = signals(nOwed, { checks: 'success' });
+  cases.push({ name: 'new owed review', check: () => {
+    const value = item([nBase, nOwed]);
+    const seen = overviewModel({ items: [value], signals: (m) => status[m.url], login: LOGIN, now: T0 });
+    const previous: OverviewVisit = { at: T0 - DAY, keys: [], entries: seen.entryKeys.filter((key) => !key.startsWith('review|')), seen: [nBase.url, nOwed.url], unchecked: [] };
+    const { line } = decisions([value], status, star(value), nBase, { previous });
+    assert.equal(line.action, 'review');
+    assert.equal(line.isNew, true);
+  } });
+
+  // A check state the gate does not count as passing never offers Merge on one surface and Open on another.
+  const unknown = mine(390);
+  status[unknown.url] = { ...approved(unknown), checks: { state: 'unknown' as never, passed: 0, total: 0 } };
+  cases.push({ name: 'unknown check state', check: () => {
+    const value = item([unknown]);
+    const { line, model } = decisions([value], status, star(value), unknown);
+    const step = stackStep(model, unknown, LOGIN, 0, { state: 'unknown' }, (m) => status[m.url]);
+    assert.equal(line.action, 'open');
+    assert.equal(step.action, 'open');
   } });
 
   for (const { name, check } of cases) {
