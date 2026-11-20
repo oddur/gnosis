@@ -411,7 +411,7 @@ void app.whenReady().then(async () => {
     for (const [name, samples] of Object.entries(results)) {
       const worst = Math.max(...samples.map((s) => (accessibility ? (s.withoutAccessibility ?? s.longest) : s.longest)));
       const spent = accessibility ? `, ${Math.max(...samples.map((s) => s.accessibility ?? 0))} ms more of accessibility work (#366)` : '';
-      assertPerf(`diff gaps: longest task, ${name}`, worst, LONG_TASK_BUDGET, { detail: spent });
+      assertPerf(`diff gaps: longest task, ${name}`, worst, LONG_TASK_BUDGET, { detail: spent.slice(2) });
       assert.ok(samples.every((s) => s.shift === 0), `${name}: the first line in view moved: ${samples.map((s) => s.shift).join(', ')}`);
       const restyled = Math.max(...samples.map((s) => s.pageRestyles ?? 0));
       assert.ok(restyled <= PAGE_RESTYLE_LIMIT, `${name}: ${restyled} style recalculations of more than one slice (at most ${PAGE_RESTYLE_LIMIT}, #366)`);
