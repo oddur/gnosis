@@ -782,19 +782,62 @@ export function prNeed(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember
 }
 
 /**
- * What the PR a stack waits on is waiting on itself, from its row in the lanes (`prNeed`), and the action that moves
- * it. `checks`: the PR's check state, so a merge says what it goes ahead without (`mergeCaveats`).
+ * What to do about one PR, decided once from its `prNeed` for stack steps and Starred, by Next up's rules:
+ * - `verb`: a reply wins over a change request on the same PR (Next up's Reply); an update since your review is a
+ *   re-review; a merge PR with a review owed in its stack (merge, checks running or parked alike) is `owed`, and opens
+ *   that review; only an approved, passing merge PR merges.
+ * - `row` and `target`: where the action lands: the owed review's row for `owed`, else the PR's own row.
+ * - `fix`: its fix, leading or behind an answer, in Next up's words (`fixText`, "needs rebasing after #12 merged"
+ *   from the fix row's stack), and `conflicts` when conflicts are the fix, for the icon.
+ * - `isNew`: any entry it names changed since the last visit: its own, its fix's.
+ */
+export interface PrDecision {
+  verb?: 'reply' | 'changes' | 'review' | 'rereview' | 'fix' | 'merge' | 'owed';
+  row?: OverviewRow;
+  target?: DeepLinkTarget;
+  isNew: boolean;
+  fix?: FixReason;
+  fixText?: string;
+  conflicts: boolean;
+  /** `owed`: "Review #161 first, then merge #160", as the stack step says it. */
+  owedText?: string;
+}
+export function prDecision(need: PrNeed, member: ReviewMember): PrDecision {
+  const own = (row: OverviewRow | undefined) => row?.entries.find((entry) => entry.member.url === member.url);
+  const fixEntry = own(need.fix);
+  const fix = need.fix ? fixReason(fixEntry?.reasons ?? need.fix.reasons) : undefined;
+  const fixText = need.fix && fix ? (fix === 'restack' ? rebaseWords(need.fix.item.subject, member) : FIX_WORDS[fix]) : undefined;
+  const targetOf = (row: OverviewRow) => (row.focus.url === member.url ? row.target : (prTarget(member.url) ?? row.target));
+  const base = { isNew: !!need.entry?.isNew || !!fixEntry?.isNew, conflicts: fix === 'conflicts', ...(fix ? { fix, fixText } : {}) };
+  const row = need.row;
+  if (!row) return base;
+  const reasons = need.entry?.reasons ?? row.reasons;
+  const merging = row.merge?.member.url === member.url;
+  if (need.owed && ((need.kind === 'merge' && merging) || need.kind === 'parked'))
+    return { ...base, verb: 'owed', row: need.owed, target: need.owed.target, owedText: `${reviewFirst(need.owed)}, then merge #${member.number}` };
+  const verb: PrDecision['verb'] =
+    need.kind === 'answer' ? (reasons.includes('replies') ? 'reply' : 'changes')
+      : need.kind === 'review' ? (reasons.includes('updated-since-review') ? 'rereview' : 'review')
+        : need.kind === 'fix' ? 'fix'
+          : need.kind === 'merge' && need.gate === 'approved' ? 'merge'
+            : undefined;
+  return { ...base, ...(verb ? { verb } : {}), row, target: targetOf(row) };
+}
+
+/**
+ * What the PR a stack waits on is waiting on itself, from its row in the lanes (`prNeed`, `prDecision`), and the
+ * action that moves it. `checks`: the PR's check state, so a merge says what it goes ahead without (`mergeCaveats`).
  */
 export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember, login: string, unblocks: number, checks?: Pick<CheckView, 'state'>, signals: MorningInput['signals'] = () => undefined): StackStep {
   const n = `#${member.number}`;
   const need = prNeed(model, member, signals);
+  const decision = prDecision(need, member);
   const reasons = need.entry?.reasons ?? need.row?.reasons ?? [];
-  const fixReasons = need.fix?.entries.find((entry) => entry.member.url === member.url)?.reasons ?? need.fix?.reasons ?? [];
   // A stack's base names its own fix first: the stack cannot merge until it is fixed.
   const fix = need.fix;
-  if (fix) {
-    const reason = fixReason(fixReasons);
-    return { member, row: fix, action: 'open', actionable: true, ...(reason === 'conflicts' ? { conflicts: true } : {}), text: `${n} ${{ failing: 'has failing checks', conflicts: 'has conflicts', restack: rebaseWords(fix.item.subject, member) }[reason]}` };
+  if (fix && decision.fix) {
+    const reason = decision.fix;
+    return { member, row: fix, action: 'open', actionable: true, ...(decision.conflicts ? { conflicts: true } : {}), text: `${n} ${{ failing: 'has failing checks', conflicts: 'has conflicts', restack: decision.fixText ?? '' }[reason]}` };
   }
   const answer = need.kind === 'answer' ? need.row : undefined;
   if (answer) return { member, row: answer, action: 'open', actionable: true, text: reasons.includes('changes-requested') ? `${n} has changes requested` : `${n} waits on your reply` };
@@ -804,9 +847,8 @@ export function stackStep(model: Pick<OverviewModel, 'lanes'>, member: ReviewMem
   // In a Merge row that merges another PR first: it merges after that one.
   if (need.kind === 'merge' && !merge) return { member, action: 'open', actionable: false, text: `${n} has to merge first` };
   // You owe a review on a PR of this stack: the review comes first, and the base merges after it.
-  const owed = need.owed;
-  if (owed && (merge || parked)) {
-    return { member, row: owed, action: 'review', actionable: true, text: `${reviewFirst(owed)}, then merge ${n}` };
+  if (decision.verb === 'owed' && decision.row && decision.owedText) {
+    return { member, row: decision.row, action: 'review', actionable: true, text: decision.owedText };
   }
   if (merge) {
     const caveats = mergeCaveats(merge, checks);

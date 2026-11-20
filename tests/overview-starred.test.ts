@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { overviewModel } from '../lib/overview';
-import { morningPage, stackLine, waitingOnYouNote } from '../lib/morning';
+import { morningPage, stackLine, stackStep, waitingOnYouNote, type NextItem } from '../lib/morning';
+import { checkView } from '../lib/check-summary';
+import type { OverviewVisit } from '../lib/overview';
 import { STARRED_SHOWN, starredSection, starredStatusRequests } from '../lib/overview-starred';
 import { starAction } from '../components/PrEntryActions';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
@@ -386,7 +388,7 @@ void test('When you owe a review in a starred stack, its base says to review fir
   const starred = page([star(item([base, child]))], status);
   const lines = starred.section.entries[0].lines;
   assert.deepEqual(lines.map((line) => [line.member.number, line.why, line.action ?? null, line.actionable]), [
-    [160, 'Review #161 first, then merge', null, false],
+    [160, 'Review #161 first, then merge #160', 'review', false],
     [161, 'Review requested', 'review', true],
   ]);
   assert.equal(starred.section.entries[0].lead.member.number, 161);
@@ -407,4 +409,111 @@ void test('A starred PR that needs a decision counts in the tab only where an un
   assert.ok(plain.page.decide.some((entry) => entry.member.url === stale.url));
   const starred = page([...merges, star(item([stale]))], status);
   assert.equal(starred.page.count, plain.page.count);
+});
+
+// ── Review fixes, round 3 (#441): a starred line decides what Next up and the stack step decide ──
+
+/** The starred line for `member`, Next up's row for it (unstarred), and its stack step, from one lane model. */
+function decisions(items: QueueItem[], status: Record<string, QueueSignals>, starred: QueueItem, member: ReviewMember, previous?: OverviewVisit) {
+  const signal = (m: ReviewMember) => status[m.url];
+  const model = overviewModel({ items, signals: signal, login: LOGIN, now: T0, previous });
+  const section = starredSection({ items: [starred], model, signals: signal, login: LOGIN, now: T0 });
+  const line = section.entries.flatMap((entry) => entry.lines).find((candidate) => candidate.member.url === member.url);
+  assert.ok(line, `#${member.number} has a starred line`);
+  const next = morningPage({ model, now: T0, login: LOGIN, signals: signal }).next.items.find((entry) => entry.urls.length === 1 && entry.urls[0] === member.url);
+  const step = stackStep(model, member, LOGIN, 0, checkView([status[member.url]]), signal);
+  return { line, next, step, model };
+}
+/** The starred action for a Next up row: the same verb. */
+const NEXT_ACTION: Readonly<Record<NextItem['kind'], string>> = { reply: 'reply', changes: 'open', review: 'review', rereview: 'rereview', merge: 'merge', fix: 'open' };
+const nextAction = (entry: NextItem) => (entry.kind === 'fix' && entry.fix === 'failing' ? 'rerun' : NEXT_ACTION[entry.kind]);
+const awaiting = (m: ReviewMember): Partial<QueueItem> => ({ responses: { [m.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } });
+
+void test('Starred lines match Next up and the stack step: action, target, unread dot, conflicts, rebase words and owed reviews', () => {
+  const status: Record<string, QueueSignals> = {};
+  const lenaChanges = [{ id: '1', author: 'lena', state: 'CHANGES_REQUESTED', at: iso(HOUR) }];
+  const cases: { name: string; check: () => void }[] = [];
+
+  // A reply and a change request on one PR: Next up offers Reply.
+  const both = mine(300);
+  status[both.url] = signals(both, { checks: 'success', decision: 'CHANGES_REQUESTED', opinions: lenaChanges });
+  cases.push({ name: 'reply plus changes', check: () => {
+    const value = item([both], awaiting(both));
+    const { line, next } = decisions([value], status, star(value), both);
+    assert.ok(next);
+    assert.equal(next.kind, 'reply');
+    assert.equal(line.action, nextAction(next));
+    assert.deepEqual(line.target, next.row.target);
+    assert.equal(!!line.isNew, !!next.isNew);
+  } });
+
+  // Conflicts behind a reply: the line says so with the conflict icon, as the stack step flags them.
+  const conflicted = mine(301);
+  status[conflicted.url] = signals(conflicted, { checks: 'success', mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  cases.push({ name: 'conflicts behind a reply', check: () => {
+    const value = item([conflicted], awaiting(conflicted));
+    const { line, next, step } = decisions([value], status, star(value), conflicted);
+    assert.equal(next?.kind, 'reply');
+    assert.equal(line.action, 'reply');
+    assert.equal(step.conflicts, true);
+    assert.equal(line.conflicts, true);
+    assert.match(line.why, / · conflicts$/);
+  } });
+
+  // A lone-PR subject whose parent merged in its stack: the rebase words name the merged parent.
+  const parent = mine(310, { headBranch: 'p', state: 'closed', merged: true });
+  const child = mine(311, { baseBranch: 'p', headBranch: 'c' });
+  status[child.url] = signals(child, { checks: 'success' });
+  cases.push({ name: 'lone subject, merged parent', check: () => {
+    const { line, next, step } = decisions([item([parent, child])], status, star(item([child])), child);
+    assert.equal(step.text, '#311 needs rebasing after #310 merged');
+    assert.ok(next);
+    assert.equal(next.why, 'needs rebasing after #310 merged');
+    assert.equal(line.why, 'Needs rebasing after #310 merged');
+    assert.equal(line.action, nextAction(next));
+  } });
+
+  // A review owed in the stack, on a base that is ready, running checks or parked: review first, as the stack step.
+  const owedCase = (name: string, n: number, signal: (m: ReviewMember) => QueueSignals, extra: Partial<ReviewMember> = {}) => {
+    const base = mine(n, { headBranch: `b${n}`, ...extra });
+    const owed = pr(n + 1, { baseBranch: `b${n}`, headBranch: `o${n}`, requestedReviewers: [LOGIN] });
+    status[base.url] = signal(base);
+    status[owed.url] = signals(owed, { checks: 'success' });
+    cases.push({ name, check: () => {
+      const value = item([base, owed]);
+      const { line, step } = decisions([value], status, star(value), base);
+      assert.equal(step.action, 'review', `${name}: the stack step reviews first`);
+      assert.equal(line.why, step.text);
+      assert.equal(line.why, `Review #${n + 1} first, then merge #${n}`);
+      assert.equal(line.row, step.row);
+      assert.deepEqual(line.target, step.row?.target);
+      assert.equal(line.action, 'review');
+      assert.equal(line.actionable, false);
+    } });
+  };
+  owedCase('owed review on a merge base', 320, approved);
+  owedCase('owed review on a checks-running base', 330, (m) => signals(m, { checks: 'pending', decision: 'APPROVED', mergeState: 'CLEAN', opinions: [{ id: '1', author: 'lena', state: 'APPROVED', at: iso(HOUR) }] }));
+  owedCase('owed review on a parked base', 340, (m) => signals(m, { checks: 'success', decision: 'APPROVED', mergeState: 'CLEAN', opinions: [{ id: '1', author: 'lena', state: 'APPROVED', at: iso(6 * DAY) }] }), { updatedAt: iso(6 * DAY) });
+
+  // A new fix entry behind an unchanged reply: the line's unread dot follows the fix it names.
+  const fresh = mine(350);
+  status[fresh.url] = signals(fresh, { checks: 'failure' });
+  cases.push({ name: 'new fix entry', check: () => {
+    const value = item([fresh], awaiting(fresh));
+    const seen = overviewModel({ items: [value], signals: (m) => status[m.url], login: LOGIN, now: T0 });
+    const previous: OverviewVisit = { at: T0 - DAY, keys: [], entries: seen.entryKeys.filter((key) => !key.startsWith('fix|')), seen: [fresh.url], unchecked: [] };
+    const { line, model } = decisions([value], status, star(value), fresh, previous);
+    assert.ok(model.lanes.find((state) => state.lane === 'fix')?.rows[0]?.entries[0]?.isNew, 'the fix entry is new');
+    assert.ok(!model.lanes.find((state) => state.lane === 'answer')?.rows[0]?.entries[0]?.isNew, 'the reply is not');
+    assert.equal(line.why, 'Awaiting your reply · failing checks');
+    assert.equal(line.isNew, true);
+  } });
+
+  for (const { name, check } of cases) {
+    try {
+      check();
+    } catch (error) {
+      throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 });

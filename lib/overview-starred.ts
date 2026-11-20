@@ -20,7 +20,7 @@
  */
 import { checkView, type CheckView } from './check-summary';
 import { prTarget, type DeepLinkTarget } from './deep-link';
-import { commentsOf, mergeCaveats, prNeed, rebaseWords, reviewFirst } from './morning';
+import { commentsOf, mergeCaveats, prDecision, prNeed } from './morning';
 import { isOpenPr } from './pr-lifecycle';
 import { sameLogin } from './github-actors';
 import { OVERVIEW_REASON_LABEL, type OverviewModel, type OverviewRow, type OverviewSinceSource } from './overview';
@@ -138,40 +138,39 @@ function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model'>, item
     return { ...open, tier: 'quiet', why, since: updated, source: 'updated', rank: 0 };
   }
   const reasons = entry.reasons;
-  const lined = { ...open, row, target: row.focus.url === member.url ? row.target : base.target, since: entry.since, source: entry.source, ...(entry.isNew ? { isNew: true } : {}) };
+  // Everything the line does comes from the one decision Next up's rules and stack steps share (`prDecision`):
+  // its action, where it opens, its unread dot, its fix words and conflict icon.
+  const decision = prDecision(need, member);
+  const lined = { ...open, row: decision.row ?? row, target: decision.target ?? base.target, since: entry.since, source: entry.source, ...(decision.isNew ? { isNew: true } : {}), ...(decision.conflicts ? { conflicts: true } : {}) };
   // Updated since your review, when another reason leads: a reply on a PR that also changed.
   const also = need.kind !== 'review' && need.all.has('updated-since-review') ? ' · updated since your review' : '';
-  const first = reasons[0];
-  // A fix behind the reason that leads: "Awaiting your reply · failing checks".
-  const fixReasons = need.fix?.entries.find((candidate) => candidate.member.url === member.url)?.reasons ?? [];
-  const fixWords = (list: readonly string[]) => (list.includes('checks-failed') ? 'Failing checks' : list.includes('conflicts') ? 'Conflicts' : rebaseWords(item.subject, member).replace(/^n/, 'N'));
+  const fixWords = decision.fixText ? `${decision.fixText.charAt(0).toUpperCase()}${decision.fixText.slice(1)}` : '';
   if (need.kind === 'answer') {
     const person = row.focus.url === member.url ? row.person : undefined;
-    const fix = need.fix ? ` · ${lower(fixWords(fixReasons))}` : '';
-    if (first === 'replies') return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'reply', why: `${person ? `${person} is waiting on your reply` : OVERVIEW_REASON_LABEL.replies}${fix}${also}` };
+    // A fix behind the reason that leads: "Awaiting your reply · failing checks".
+    const fix = decision.fixText ? ` · ${decision.fixText}` : '';
+    if (decision.verb === 'reply') return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'reply', why: `${person ? `${person} is waiting on your reply` : OVERVIEW_REASON_LABEL.replies}${fix}${also}` };
     return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'open', why: `${person ? `${person} requested changes` : OVERVIEW_REASON_LABEL['changes-requested']}${fix}${also}` };
   }
   if (need.kind === 'review') {
-    const again = reasons.includes('updated-since-review');
+    const again = decision.verb === 'rereview';
     return { ...lined, tier: 'you', rank: 0, actionable: true, action: again ? 'rereview' : 'review', why: again ? OVERVIEW_REASON_LABEL['updated-since-review'] : OVERVIEW_REASON_LABEL['review-requested'] };
   }
-  if (need.kind === 'fix') {
-    const why = fixWords(reasons);
-    return { ...lined, tier: 'you', rank: 1, actionable: true, action: first === 'checks-failed' ? 'rerun' : 'open', why: `${why}${also}`, ...(reasons.includes('conflicts') ? { conflicts: true } : {}) };
-  }
+  if (need.kind === 'fix') return { ...lined, tier: 'you', rank: 1, actionable: true, action: decision.fix === 'failing' ? 'rerun' : 'open', why: `${fixWords}${also}` };
   if (need.kind === 'merge' || need.kind === 'parked') {
     // Another PR merges first: this one waits for it, and is not work yet.
     if (need.gate === 'base-open') return { ...lined, tier: 'others', rank: 0, why: need.base ? `Waits for #${need.base.number} to merge` : 'Waits for its base to merge' };
+    // You owe a review in its stack, whether it is ready, running checks or parked: as in Next up and the stack step,
+    // the review comes first. The line opens that review and is not counted itself.
+    if (decision.verb === 'owed') return { ...lined, tier: 'merge', rank: 1, action: decision.row?.reasons.includes('updated-since-review') ? 'rereview' : 'review', why: decision.owedText ?? '' };
     const notes = row.merge?.notes ?? [];
     const words = notes.map((note) => note.text);
     if (need.gate === 'parked') return { ...lined, tier: 'quiet', rank: 0, action: 'open', why: words.join(' · ') || 'Mergeable' };
     if (need.gate === 'checks') return { ...lined, tier: 'others', rank: 0, why: fresh?.checks.state === 'failure' ? 'Failing checks' : OVERVIEW_REASON_LABEL['checks-pending'] };
     // Ready to merge, as `readyMerges` counts it. Only an approved, passing PR gets the Merge button and counts as
     // work, as in Next up; one without review or checks says what it goes ahead without, and opens.
-    // You owe a review in its stack: as in Next up, the review comes first, and this PR offers no Merge yet.
-    if (need.owed) return { ...lined, tier: 'merge', rank: 1, why: `${reviewFirst(need.owed)}, then merge` };
     const caveats = mergeCaveats(row, checkView([fresh]));
-    const approved = need.gate === 'approved';
+    const approved = decision.verb === 'merge';
     return { ...lined, tier: 'merge', rank: approved ? 0 : 1, actionable: approved, action: approved ? 'merge' : 'open', why: ['Ready to merge', ...words.map(lower), ...(approved ? [] : caveats.filter((caveat) => caveat !== 'no review'))].join(' · ') };
   }
   // Waiting on others: who it waits on.
