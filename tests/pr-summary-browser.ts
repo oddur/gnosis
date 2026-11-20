@@ -265,7 +265,8 @@ void app.whenReady().then(async () => {
     await click('Back to stack');
     await wait("!!document.querySelector('.explanation-reader')");
     await click('Summary');
-    assert.equal(await js("document.querySelectorAll('.stack-overview-member').length"), 3);
+    // A tab's content shows in the render after the click (PrSummary's deferred tab).
+    await wait("document.querySelectorAll('.stack-overview-member').length===3");
     await click('Explanation');
     await wait("!!document.querySelector('.explanation-section')");
     await click('Review queue');

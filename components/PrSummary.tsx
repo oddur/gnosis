@@ -36,7 +36,7 @@ import { useAgentBrief, type AgentBriefComment } from '../lib/agent-brief';
 import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PrFocus } from '../lib/deep-link';
 import { AlarmClock, ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
 import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
@@ -282,6 +282,11 @@ function PrSummaryContent({
   usePrReadVisit(item.subject.members, tab === 'summary' && item.subject.kind === 'pr', 'summary');
   // Tabs stay mounted once visited. The set only grows while this PR is shown.
   const [visited, setVisited] = useState<ReadonlySet<WorkspaceTab>>(() => new Set([tab]));
+  // The tab whose content shows. A switch marks the chosen tab at once and reveals its content in a deferred render,
+  // so revealing a kept tab (Summary's timeline, Changes' large diff) never runs inside the click: on a large PR that
+  // took about 270 ms on Linux CI and delayed the next paint (#418).
+  const shown = useDeferredValue(tab);
+  const pending = (value: WorkspaceTab) => (value === tab && shown !== tab) || undefined;
   if (!visited.has(tab)) setVisited(new Set([...visited, tab]));
   const currentTab = useRef(tab);
   currentTab.current = tab;
@@ -553,7 +558,7 @@ function PrSummaryContent({
   const tabs = workspaceTabs;
   return (
     <Tabs.Root
-      value={tab}
+      value={shown}
       onValueChange={(value) => {
         if (tab === 'summary') remember();
         onTabChange(value as WorkspaceTab);
@@ -662,17 +667,17 @@ function PrSummaryContent({
           <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
-          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" /><PrTabLabel>Summary</PrTabLabel></Tabs.Trigger>
-          <Tabs.Trigger value="changes" data-tour="changes" {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" /><PrTabLabel>Changes</PrTabLabel></Tabs.Trigger>
-          <Tabs.Trigger value="commits" {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" /><PrTabLabel>Commits</PrTabLabel></Tabs.Trigger>
-          <Tabs.Trigger value="checks" {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" /><PrTabLabel>Checks</PrTabLabel>{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" /><PrTabLabel>Explanation</PrTabLabel></Tabs.Trigger>
-          <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" /><PrTabLabel>Local notes</PrTabLabel>{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="summary" data-pending={pending('summary')}><WorkspaceIcon tab="summary" /><PrTabLabel>Summary</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="changes" data-tour="changes" data-pending={pending('changes')} {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" /><PrTabLabel>Changes</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="commits" data-pending={pending('commits')} {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" /><PrTabLabel>Commits</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="checks" data-pending={pending('checks')} {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" /><PrTabLabel>Checks</PrTabLabel>{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="explanation" data-tour="explanation" data-pending={pending('explanation')}><WorkspaceIcon tab="explanation" /><PrTabLabel>Explanation</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="brief" data-pending={pending('brief')}><WorkspaceIcon tab="brief" /><PrTabLabel>Local notes</PrTabLabel>{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
         </div>
         {/* The header's Drafts and Review PR open here on every other section; Summary shows them in its body. */}
         {!stacked && tab !== 'summary' && tab !== 'changes' && <div className="pr-header-review-panel">{summaryReview.panel}</div>}
-        <KeptTab value="changes" tab={tab} visited={visited} arrival={arrival('changes')} className="pr-changes-tab">
+        <KeptTab value="changes" tab={shown} visited={visited} arrival={arrival('changes')} className="pr-changes-tab">
           {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={openFeedback} onOpenPr={changeScope} onOpenBrief={openBrief} /> :
             <KeptChangesView
               key={item.subject.id}
@@ -686,16 +691,16 @@ function PrSummaryContent({
             />
           )}
         </KeptTab>
-        <KeptTab value="brief" tab={tab} visited={visited} className="pr-changes-tab">
+        <KeptTab value="brief" tab={shown} visited={visited} className="pr-changes-tab">
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
         </KeptTab>
-        <KeptTab value="checks" tab={tab} visited={visited} arrival={arrival('checks')} className="pr-changes-tab">
+        <KeptTab value="checks" tab={shown} visited={visited} arrival={arrival('checks')} className="pr-changes-tab">
           <PrChecksView key={`${account}:${item.subject.id}`} stateKey={`${account}:${item.subject.id}`} subject={item.subject} {...checks} focus={checkFocus}
             onSource={(url, path, line, headSha) => {
               setInitialFile({ url, path, line, headSha }); onTabChange('changes');
             }} />
         </KeptTab>
-        <KeptTab value="commits" tab={tab} visited={visited} arrival={arrival('commits')} className="pr-changes-tab">
+        <KeptTab value="commits" tab={shown} visited={visited} arrival={arrival('commits')} className="pr-changes-tab">
           {preferences && (
             <PrCommitsView
               key={item.subject.id}
@@ -739,7 +744,7 @@ function PrSummaryContent({
             }}
           />
         </Tabs.Content>
-        <KeptTab value="summary" tab={tab} visited={visited} arrival={arrival('summary')} className="pr-summary-content conversation-page" ref={page} onScroll={remember}>
+        <KeptTab value="summary" tab={shown} visited={visited} arrival={arrival('summary')} className="pr-summary-content conversation-page" ref={page} onScroll={remember}>
           {/* The Conversation page (#418): the briefing and merge readiness, then the PR's timeline beside its details.
               Feedback lives here; links and saved tabs that name Feedback open this page at their thread. */}
           <div className="pr-summary-body">
