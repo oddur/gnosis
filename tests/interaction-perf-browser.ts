@@ -35,8 +35,6 @@ const budgets: Record<string, number> = {
   'tab Changes': 600,
   'tab Checks (first)': 350,
   'tab Checks': 300,
-  'tab Feedback (first)': 200,
-  'tab Feedback': 150,
   // Leaving Changes while the 3,000-line file shows, for Checks or Summary, and coming back. Before #352 leaving took
   // 104-144 ms: cached check reads rendered the whole PR page five or six more times, and the hidden diff view rendered
   // again. Coming back took 96-192 ms while the diffs' effects rendered the large file again. The diffs now keep
@@ -51,7 +49,7 @@ const budgets: Record<string, number> = {
   'expand large file': 450,
   // About 75 ms of it is one style recalculation per keystroke; see the report in #346.
   'comment keystroke': 150,
-  'feedback row': 120,
+  'feedback next item': 120,
   // Keyboard "Viewed & next" on the 600-file PR, pressed about 250 ms apart as a reader moving through files does.
   'viewed next key': 250,
 };
@@ -871,31 +869,30 @@ void app.whenReady().then(async () => {
     // ── Tabs ──────────────────────────────────────────────────────
     const selected = (label: string) => `${tab(label)}?.getAttribute('aria-selected')==='true'`;
     for (let round = 0; round < 2; round++)
-      for (const label of ['Changes', 'Checks', 'Feedback', 'Summary']) {
+      for (const label of ['Changes', 'Checks', 'Summary']) {
         const first = round === 0 && label !== 'Summary' ? ' (first)' : '';
         await measure(`tab ${label}${first}`, () => mouse(tab(label)), selected(label));
         if (label === 'Changes' && round === 0) {
           await wait("window.deepAll('[role=treeitem]').length>10");
           await sleep(800);
         }
-        if (label === 'Feedback' && round === 0) {
-          await wait("document.querySelectorAll('.feedback-row').length>5");
+        if (label === 'Summary' && round === 0) {
+          await wait("document.querySelectorAll('.feedback-entry').length>2");
           await sleep(500);
         }
       }
 
-    // ── Feedback: open conversations ──────────────────────────────
-    await mouse(tab('Feedback'));
-    await wait("document.querySelectorAll('.feedback-row').length>5");
-    const feedbackRows = await js<number>("document.querySelectorAll('.feedback-row').length");
+    // ── Feedback: move through the timeline ──────────────────────
+    await mouse(tab('Summary'));
+    await wait("document.querySelectorAll('.feedback-entry').length>2");
+    const feedbackRows = await js<number>("document.querySelectorAll('.feedback-entry').length");
     assert.ok(feedbackRows < 60, `Feedback with 440 conversations mounts only nearby rows: ${feedbackRows}`);
     for (let i = 0; i < 4; i++) {
-      const row = `document.querySelectorAll('.feedback-row')[${i + 1}]`;
-      const id = await js<string>(`${row}.dataset.feedbackId`);
+      const at = await js<string>("document.querySelector('.feedback-position').textContent");
       await measure(
-        'feedback row',
-        () => mouse(row),
-        `document.querySelector('.feedback-row[aria-current=true]')?.dataset.feedbackId===${JSON.stringify(id)}&&!!document.querySelector('.feedback-conversation')`
+        'feedback next item',
+        () => mouse("document.querySelector('[aria-label=\"Next item\"]')"),
+        `document.querySelector('.feedback-position').textContent!==${JSON.stringify('')}+${JSON.stringify(at)}&&!!document.querySelector('.feedback-entry[aria-current=true]')`
       );
     }
 

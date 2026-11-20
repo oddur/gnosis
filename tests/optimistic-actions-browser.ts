@@ -42,6 +42,7 @@ void app.whenReady().then(async () => {
     js(
       `(()=>{const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(text)});input.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );
+  const T1 = 'document.querySelector(\'.feedback-entry[data-feedback-id="t1"]\')';
   const held = () => js<string[]>('window.optimisticFixture.held()');
   const settle = (outcome = 'ok') => js(`window.optimisticFixture.settle(${JSON.stringify(outcome)})`);
   const capture = async (name: string) => {
@@ -54,11 +55,11 @@ void app.whenReady().then(async () => {
   /** Comments in the open thread with this exact text. */
   const copies = (text: string) =>
     js<number>(
-      `[...document.querySelectorAll('.feedback-conversation .github-thread-comments article')].filter(a=>a.querySelector('.github-comment-body, .markdown, p')&&a.textContent.includes(${JSON.stringify(text)})).length`
+      `[...document.querySelectorAll('.feedback-timeline .github-thread-comments article')].filter(a=>a.querySelector('.github-comment-body, .markdown, p')&&a.textContent.includes(${JSON.stringify(text)})).length`
     );
   const pendingComments = () =>
     js<number>(
-      "document.querySelectorAll('.feedback-conversation .github-thread-comments article[data-sending]').length"
+      "document.querySelectorAll('.feedback-timeline .github-thread-comments article[data-sending]').length"
     );
   // A write the test forgot to answer stalls a step: report where, before the runner's own timeout.
   setTimeout(() => {
@@ -102,57 +103,58 @@ void app.whenReady().then(async () => {
     // ── A reply: sending at once, then the real comment exactly once ──
     await js(`${row}.querySelector('.queue-row-main').click()`);
     await click('Open PR overview');
-    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Feedback')");
-    await click('Feedback');
+    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Summary')");
+    await click('Summary');
     await wait('!!document.querySelector(\'[data-feedback-id="t1"]\')');
     await js('document.querySelector(\'[data-feedback-id="t1"]\').click()');
-    await wait("document.querySelector('.feedback-conversation')?.textContent.includes('reconnect timer')");
-    await click('Reply');
-    await type('.feedback-conversation textarea', 'The timer now checks the closed flag.');
-    await click('Reply on GitHub');
-    await instantly("document.querySelector('.feedback-conversation .github-sending')?.textContent==='Sending…'");
+    await wait("document.querySelector('.feedback-entry[data-feedback-id=\"t1\"]')?.textContent.includes('reconnect timer')");
+    await wait(`[...${T1}.querySelectorAll('button')].some(b=>b.textContent.trim()==='Reply'&&b.getBoundingClientRect().width>0)`);
+    await click('Reply', T1);
+    await type('.feedback-entry[data-feedback-id=\"t1\"] textarea', 'The timer now checks the closed flag.');
+    await click('Reply on GitHub', T1);
+    await instantly("document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] .github-sending')?.textContent==='Sending…'");
     assert.equal(await pendingComments(), 1);
     assert.equal(
-      await js("!!document.querySelector('.feedback-conversation textarea')"),
+      await js("!!document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] textarea')"),
       false,
       'The composer closed: the text shows as the comment'
     );
     assert.deepEqual(await held(), ['thread-reply']);
     await capture('reply-pending');
     await settle('ok');
-    await wait("!document.querySelector('.feedback-conversation article[data-sending]')");
+    await wait("!document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] article[data-sending]')");
     assert.equal(await copies('The timer now checks the closed flag.'), 1, 'The real comment replaced the sending one');
     await js('window.optimisticFixture.refresh()');
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(await copies('The timer now checks the closed flag.'), 1, 'GitHub’s read shows it once, not twice');
 
     // ── A reply GitHub refuses: rolled back, the text kept, Retry sends it ──
-    await click('Reply');
-    await type('.feedback-conversation textarea', 'Also covered the shutdown test.');
-    await click('Reply on GitHub');
-    await instantly(`document.querySelectorAll('.feedback-conversation article[data-sending]').length===1`);
+    await click('Reply', T1);
+    await type('.feedback-entry[data-feedback-id=\"t1\"] textarea', 'Also covered the shutdown test.');
+    await click('Reply on GitHub', T1);
+    await instantly(`document.querySelectorAll('.feedback-entry[data-feedback-id=\"t1\"] article[data-sending]').length===1`);
     await settle('GitHub is unavailable (502). Try again in a moment.');
-    await wait("!!document.querySelector('.feedback-conversation [role=alert]')");
+    await wait("!!document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] [role=alert]')");
     assert.equal(await pendingComments(), 0, 'The sending comment is gone');
     assert.equal(await copies('Also covered the shutdown test.'), 0);
     assert.equal(
-      await js("document.querySelector('.feedback-conversation textarea')?.value"),
+      await js("document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] textarea')?.value"),
       'Also covered the shutdown test.',
       'The text is back in the composer'
     );
-    const alert = await js<string>("document.querySelector('.feedback-conversation [role=alert]').textContent");
+    const alert = await js<string>("document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] [role=alert]').textContent");
     assert.match(alert, /Reply wasn’t posted/);
     assert.match(alert, /GitHub is unavailable \(502\)/);
     await capture('reply-error');
-    await click('Retry');
+    await click('Retry', T1);
     await instantly(
-      "document.querySelectorAll('.feedback-conversation article[data-sending]').length===1 && !document.querySelector('.feedback-conversation [role=alert]')"
+      "document.querySelectorAll('.feedback-entry[data-feedback-id=\"t1\"] article[data-sending]').length===1 && !document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] [role=alert]')"
     );
     await settle('ok');
-    await wait("!document.querySelector('.feedback-conversation article[data-sending]')");
+    await wait("!document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] article[data-sending]')");
     assert.equal(await copies('Also covered the shutdown test.'), 1);
     assert.equal(
-      await js("document.querySelector('.feedback-conversation textarea')?.value ?? ''"),
+      await js("document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] textarea')?.value ?? ''"),
       '',
       'The sent text left the composer'
     );
@@ -161,33 +163,33 @@ void app.whenReady().then(async () => {
     assert.equal(await copies('Also covered the shutdown test.'), 1);
 
     // ── Resolve: at once, rolled back on failure, then resolved ──
-    await click('Resolve thread');
+    await click('Resolve thread', T1);
     await instantly(
-      "document.querySelector('.feedback-conversation .github-thread-state')?.textContent.includes('Resolving…')"
+      "document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] .github-thread-state')?.textContent.includes('Resolving…')"
     );
     await capture('resolve-pending');
     await settle('You do not have permission to resolve this thread.');
     await wait(
-      "document.querySelector('.feedback-conversation .github-thread-state')?.textContent.includes('Unresolved')"
+      "document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] .github-thread-state')?.textContent.includes('Unresolved')"
     );
     assert.match(
-      await js<string>("document.querySelector('.feedback-conversation [role=alert]').textContent"),
+      await js<string>("document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] [role=alert]').textContent"),
       /Thread wasn’t resolved\..*permission/
     );
     await capture('resolve-error');
-    await click('Retry');
+    await click('Retry', T1);
     await instantly(
-      "document.querySelector('.feedback-conversation .github-thread-state')?.textContent.includes('Resolving…')"
+      "document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] .github-thread-state')?.textContent.includes('Resolving…')"
     );
     await settle('ok');
     await wait(
-      "document.querySelector('.feedback-conversation .github-thread-state')?.textContent.includes('Resolved') && !document.querySelector('.feedback-conversation .github-thread-state')?.textContent.includes('Unresolved')"
+      "document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] .github-thread-state')?.textContent.includes('Resolved') && !document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] .github-thread-state')?.textContent.includes('Unresolved')"
     );
     await js('window.optimisticFixture.refresh()');
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.ok(
       await js(
-        "document.querySelector('.feedback-conversation .github-thread-state')?.textContent.includes('Resolved')"
+        "document.querySelector('.feedback-entry[data-feedback-id=\"t1\"] .github-thread-state')?.textContent.includes('Resolved')"
       )
     );
 

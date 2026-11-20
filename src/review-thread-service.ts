@@ -4,6 +4,7 @@ import { isCacheRecord } from '../lib/github-cache';
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { feedbackReplyBody } from '../lib/review-threads';
 import type {
+  FeedbackEvent,
   GitHubReviewComment,
   PrFeedback,
   FeedbackReview,
@@ -18,15 +19,45 @@ const bodyFields = 'id body createdAt updatedAt url isMinimized minimizedReason 
 const commentFields = `${bodyFields} viewerCanUpdate viewerCanDelete diffHunk pullRequestReview { id state }`;
 const reviewFields = `${bodyFields} state submittedAt`;
 type ReviewRequest = { requestedReviewer: { login?: string } | null };
+type Login = { login: string } | null;
+/** One node of `timelineItems`: commits, force-pushes, review requests, and merge, close and reopen events. */
+type TimelineNode =
+  | { __typename: 'PullRequestCommit'; id: string; commit: { oid: string; messageHeadline: string; committedDate: string; url?: string; author: { name: string | null; user: Login } | null } }
+  | { __typename: 'HeadRefForcePushedEvent'; id: string; createdAt: string; actor: Login; beforeCommit: { oid: string } | null; afterCommit: { oid: string } | null }
+  | { __typename: 'ReviewRequestedEvent'; id: string; createdAt: string; actor: Login; requestedReviewer: { login?: string; name?: string } | null }
+  | { __typename: 'MergedEvent' | 'ClosedEvent' | 'ReopenedEvent'; id: string; createdAt: string; actor: Login };
+const timelineFields = `timelineItems(last:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,REVIEW_REQUESTED_EVENT,MERGED_EVENT,CLOSED_EVENT,REOPENED_EVENT]) { pageInfo { hasPreviousPage } nodes { __typename ... on PullRequestCommit { id commit { oid messageHeadline committedDate url author { name user { login } } } } ... on HeadRefForcePushedEvent { id createdAt actor { login } beforeCommit { oid } afterCommit { oid } } ... on ReviewRequestedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { name } } } ... on MergedEvent { id createdAt actor { login } } ... on ClosedEvent { id createdAt actor { login } } ... on ReopenedEvent { id createdAt actor { login } } } }`;
+/** GitHub's timeline nodes as Feedback events; unknown kinds are skipped. */
+export function feedbackEvents(nodes: TimelineNode[]): FeedbackEvent[] {
+  return nodes.flatMap((node): FeedbackEvent[] => {
+    switch (node.__typename) {
+      case 'PullRequestCommit':
+        return [{ kind: 'commit', id: node.id, at: node.commit.committedDate, sha: node.commit.oid, message: node.commit.messageHeadline, author: node.commit.author?.user?.login ?? node.commit.author?.name ?? null, url: node.commit.url }];
+      case 'HeadRefForcePushedEvent':
+        return [{ kind: 'force-push', id: node.id, at: node.createdAt, actor: node.actor?.login ?? null, before: node.beforeCommit?.oid, after: node.afterCommit?.oid }];
+      case 'ReviewRequestedEvent': {
+        const reviewer = node.requestedReviewer?.login ?? node.requestedReviewer?.name;
+        return reviewer ? [{ kind: 'review-requested', id: node.id, at: node.createdAt, actor: node.actor?.login ?? null, reviewer }] : [];
+      }
+      case 'MergedEvent':
+      case 'ClosedEvent':
+      case 'ReopenedEvent':
+        return [{ kind: node.__typename === 'MergedEvent' ? 'merged' : node.__typename === 'ClosedEvent' ? 'closed' : 'reopened', id: node.id, at: node.createdAt, actor: node.actor?.login ?? null }];
+      default:
+        return [];
+    }
+  });
+}
 interface FeedbackPage {
   comments?: Page<GitHubReviewComment>;
   reviews?: Page<FeedbackReview>;
   reviewRequests?: Page<ReviewRequest>;
+  timelineItems?: { nodes: TimelineNode[]; pageInfo: { hasPreviousPage: boolean } };
   viewerCanUpdate?: boolean;
   state?: string;
 }
 const pageFields = 'pageInfo { hasNextPage endCursor }';
-const threadFields = `id path line startLine diffSide isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(first:20) { nodes { ${commentFields} } ${pageFields} }`;
+const threadFields = `id path line startLine diffSide isResolved isOutdated viewerCanResolve viewerCanUnresolve resolvedBy { login } comments(first:20) { nodes { ${commentFields} } ${pageFields} }`;
 interface Page<T> {
   nodes: T[];
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
@@ -34,7 +65,7 @@ interface Page<T> {
 const requestedReviewerFields = 'requestedReviewer { ... on User { login } }';
 /** The first page of a PR's discussion. `include` limits the feedback summary to the first page of a paginated read. */
 const pullFields = (include: string, after: string) =>
-  `headRefOid baseRefOid viewerCanUpdate state comments(first:50)${include} { nodes { ${bodyFields} } ${pageFields} } reviews(first:50)${include} { nodes { ${reviewFields} } ${pageFields} } reviewRequests(first:100)${include} { nodes { ${requestedReviewerFields} } ${pageFields} } reviewThreads(first:50${after}) { nodes { ${threadFields} } ${pageFields} }`;
+  `headRefOid baseRefOid viewerCanUpdate state comments(first:50)${include} { nodes { ${bodyFields} } ${pageFields} } reviews(first:50)${include} { nodes { ${reviewFields} } ${pageFields} } reviewRequests(first:100)${include} { nodes { ${requestedReviewerFields} } ${pageFields} } ${timelineFields.replace(') {', `)${include} {`)} reviewThreads(first:50${after}) { nodes { ${threadFields} } ${pageFields} }`;
 function feedbackOf(
   pr: FeedbackPage,
   comments: GitHubReviewComment[],
@@ -47,6 +78,9 @@ function feedbackOf(
     requestedReviewers: requests.flatMap((r) => (r.requestedReviewer?.login ? [r.requestedReviewer.login] : [])),
     viewerCanUpdate: pr.viewerCanUpdate === true,
     state: pr.state ?? 'OPEN',
+    ...(pr.timelineItems
+      ? { events: feedbackEvents(pr.timelineItems.nodes), earlierEvents: pr.timelineItems.pageInfo.hasPreviousPage }
+      : {}),
   };
 }
 type ThreadNode = Omit<GitHubReviewThread, 'comments'> & { comments: Page<GitHubReviewComment> };

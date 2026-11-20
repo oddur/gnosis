@@ -465,3 +465,135 @@ void test('the Changes file tree counts conversations open on the current diff',
   assert.equal(isOpenOnCurrentDiff({ ...conversation('done', by('jan', 'a')), isResolved: true }), false);
   assert.equal(isOpenOnCurrentDiff(conversation('draft', by('oddur', 'a', { pullRequestReview: { id: 'p', state: 'PENDING' } }))), false);
 });
+
+void test('the Feedback timeline reads oldest first, groups pushes and repeated bots, and maps GitHub events', async () => {
+  const { buildTimeline, botSummary } = await import('../lib/feedback-timeline');
+  const { feedbackEvents } = await import('../src/review-thread-service');
+  type Item = ReturnType<typeof feedbackItems>[number];
+  const owner = { ...member, description: 'Keep uploads ordered.', createdAt: '2026-11-01T08:00:00Z', author: 'oddur' } as ReviewMember;
+  const say = (id: string, login: string, at: string, bot = false) =>
+    ({ id, member: owner, kind: 'comment', relatedThreads: [], comments: [{ ...comment, id, createdAt: at, updatedAt: at, author: { login, avatarUrl: '', ...(bot ? { __typename: 'Bot' } : {}) } }] }) as Item;
+  const events = feedbackEvents([
+    { __typename: 'PullRequestCommit', id: 'k1', commit: { oid: 'a'.repeat(40), messageHeadline: 'One', committedDate: '2026-11-01T09:00:00Z', author: { name: 'Oddur', user: { login: 'oddur' } } } },
+    { __typename: 'PullRequestCommit', id: 'k2', commit: { oid: 'b'.repeat(40), messageHeadline: 'Two', committedDate: '2026-11-01T09:01:00Z', author: { name: 'Oddur', user: { login: 'oddur' } } } },
+    { __typename: 'HeadRefForcePushedEvent', id: 'f1', createdAt: '2026-11-01T11:00:00Z', actor: { login: 'oddur' }, beforeCommit: { oid: 'b'.repeat(40) }, afterCommit: { oid: 'c'.repeat(40) } },
+    { __typename: 'ReviewRequestedEvent', id: 'q1', createdAt: '2026-11-01T12:00:00Z', actor: { login: 'oddur' }, requestedReviewer: { name: 'core-team' } },
+    { __typename: 'ReviewRequestedEvent', id: 'q2', createdAt: '2026-11-01T12:00:00Z', actor: null, requestedReviewer: null },
+    { __typename: 'MergedEvent', id: 'm1', createdAt: '2026-11-02T08:00:00Z', actor: { login: 'maya' } },
+  ]);
+  assert.deepEqual(events.map((e) => e.kind), ['commit', 'commit', 'force-push', 'review-requested', 'merged'], 'Requests with no reviewer are skipped');
+  const timeline = buildTimeline(
+    [owner],
+    [
+      say('ci-1', 'github-actions[bot]', '2026-11-01T10:00:00Z', true),
+      say('ci-2', 'github-actions[bot]', '2026-11-01T10:01:00Z', true),
+      say('ci-3', 'github-actions[bot]', '2026-11-01T10:02:00Z', true),
+      say('human', 'maya', '2026-11-01T10:30:00Z'),
+      say('lone', 'linear[bot]', '2026-11-01T13:00:00Z'),
+    ],
+    new Map([[owner.url, { events }]])
+  );
+  assert.deepEqual(
+    timeline.map((e) => e.type),
+    ['description', 'commits', 'bots', 'item', 'event', 'event', 'item', 'event'],
+    'Description, one push, one bot row, a person, a force-push, a request, a lone bot, the merge'
+  );
+  assert.equal(timeline[1].type === 'commits' && timeline[1].commits.length, 2);
+  assert.equal(timeline[2].type === 'bots' && timeline[2].items.length, 3);
+  assert.equal(timeline[6].type === 'item' && timeline[6].bot, true, 'A [bot] login is quiet even without its type');
+  assert.deepEqual(
+    buildTimeline([owner], [say('human', 'maya', '2026-11-01T10:30:00Z')], new Map([[owner.url, { events }]]), { conversationOnly: true }).map((e) => e.type),
+    ['item'],
+    'Filtered views show conversations only'
+  );
+  assert.equal(botSummary(['A', 'B', 'C', 'D']), 'A, B, C, …');
+});
+
+void test('a big push is summarized by prefix, its merges grouped by branch, with a few meaningful subjects', async () => {
+  const { summarizeCommits, commitLines, mergeSource, commitKind, BIG_GROUP } = await import('../lib/feedback-timeline');
+  assert.equal(mergeSource("Merge branch 'local/cv2-scope' into local/cv3-filters"), 'local/cv2-scope');
+  assert.equal(mergeSource('Merge pull request #12 from klang/retry'), 'klang/retry');
+  assert.equal(mergeSource("Merge remote-tracking branch 'origin/main'"), 'origin/main');
+  assert.equal(mergeSource('Merged the docs'), undefined);
+  assert.equal(commitKind('feat(queue)!: bound the queue'), 'feat');
+  assert.equal(commitKind('Refactor: move filters'), 'refactor');
+  assert.equal(commitKind('Update README'), 'other');
+  assert.equal(commitKind('wip: try'), 'other', 'Unknown prefixes count as other');
+  let n = 0;
+  const commit = (message: string) => ({ kind: 'commit' as const, id: `k${++n}`, at: `2026-11-01T10:${String(n).padStart(2, '0')}:00Z`, sha: `${n}`.padStart(40, '0'), message, author: 'marijnz' });
+  const push = [
+    commit('fixup! refactor: x'),
+    ...Array.from({ length: 31 }, (_, i) => commit(`refactor: move filter ${i}`)),
+    ...Array.from({ length: 6 }, (_, i) => commit(`fix: guard ${i}`)),
+    ...Array.from({ length: 11 }, () => commit("Merge branch 'local/cv2-scope' into local/cv3-filters")),
+    ...Array.from({ length: 8 }, (_, i) => commit(`content: copy ${i}`)),
+    ...Array.from({ length: 3 }, (_, i) => commit(`docs: note ${i}`)),
+    commit('test: cover filters'),
+  ];
+  assert.ok(push.length > BIG_GROUP);
+  const summary = summarizeCommits(push);
+  assert.equal(summary.line, '31 refactor · 8 content · 6 fix · 3 docs · 1 test · 1 other · 11 merges from local/cv2-scope');
+  assert.deepEqual(summary.preview.map((c) => c.message), ['refactor: move filter 0', 'refactor: move filter 1', 'refactor: move filter 2', 'refactor: move filter 3'], 'Fixups and merges are not previewed');
+  const lines = commitLines(push);
+  assert.equal(lines.filter((l) => l.type === 'merges').length, 1, 'One line per merged branch');
+  const merges = lines.find((l) => l.type === 'merges');
+  assert.equal(merges?.type === 'merges' && merges.commits.length, 11);
+  assert.equal(lines.findIndex((l) => l.type === 'merges'), 38, 'The merge line sits where the first merge was');
+  assert.equal(lines.length, push.length - 10);
+});
+
+void test('Feedback previews read bot HTML as text, and find mentions, anchors and order', async () => {
+  const { plainCommentText, mentionsAccount, diffHunkAnchor, sortFeedback, chronologicalThread } = await import('../lib/feedback');
+  // klanggames/seed#36138: Linear's link-back comment showed its raw tags in the list.
+  assert.equal(
+    plainCommentText('<!-- linear-linkback -->\n<details>\n<summary><a href="https://linear.app/x">SEED-412 Confirm uploads</a></summary>\n<p>Linked &amp; tracked.</p>\n</details>'),
+    'SEED-412 Confirm uploads Linked & tracked.'
+  );
+  assert.equal(plainCommentText('## Keep [the guard](https://x) on **`retries`**'), 'Keep the guard on retries');
+  type Item = Parameters<typeof mentionsAccount>[0];
+  const item = (body: string, login = 'sam') =>
+    ({ id: 'i', member, kind: 'comment', comments: [{ ...comment, body, author: { login, avatarUrl: '' } }], relatedThreads: [] }) as Item;
+  assert.equal(mentionsAccount(item('@Oddur can you check?'), 'oddur'), true);
+  assert.equal(mentionsAccount(item('cc @oddur-bot'), 'oddur'), false);
+  assert.equal(mentionsAccount(item('see org/@oddur'), 'oddur'), false);
+  assert.equal(mentionsAccount(item('@oddur note to self', 'oddur'), 'oddur'), false, 'Your own comments do not mention you');
+  // GitHub's hunk ends on the commented line, on either side.
+  assert.deepEqual(diffHunkAnchor('@@ -33,7 +33,7 @@\n a\n b\n-c\n+d'), { line: 35, side: 'RIGHT' });
+  assert.deepEqual(diffHunkAnchor('@@ -10,3 +10,2 @@ fn()\n a\n-b'), { line: 11, side: 'LEFT' });
+  assert.equal(diffHunkAnchor('not a hunk'), undefined);
+  const thread = (id: string, path: string, line: number | null, at: string) =>
+    ({
+      id,
+      member,
+      kind: 'thread',
+      comments: [{ ...comment, createdAt: at, updatedAt: at, diffHunk: '@@ -1,1 +1,2 @@\n a\n+b' }],
+      relatedThreads: [],
+      thread: { id, path, line, startLine: null, diffSide: 'RIGHT', isResolved: false, isOutdated: line === null, viewerCanResolve: true, viewerCanUnresolve: false, comments: [] },
+    }) as Item;
+  const general = { ...item('Looks good'), id: 'g', comments: [{ ...comment, createdAt: '2026-11-01T09:00:00Z', updatedAt: '2026-11-01T09:00:00Z' }] };
+  const items = [thread('b20', 'b.ts', 20, '2026-11-05T00:00:00Z'), thread('a9', 'a.ts', 9, '2026-11-02T00:00:00Z'), general, thread('b-old', 'b.ts', null, '2026-11-04T00:00:00Z')];
+  assert.deepEqual(sortFeedback(items, 'file').map((i) => i.id), ['g', 'a9', 'b-old', 'b20'], 'PR conversation first, then path and line');
+  assert.deepEqual(sortFeedback(items, 'activity').map((i) => i.id), ['b20', 'b-old', 'a9', 'g']);
+  const out = chronologicalThread({ comments: [{ createdAt: '2026-11-02' }, { createdAt: '2026-11-01' }] });
+  assert.deepEqual(out.comments.map((c) => c.createdAt), ['2026-11-01', '2026-11-02']);
+});
+
+test('a review indexes its code threads by file path, then line, with line-less threads last', async () => {
+  const { threadIndex } = await import('../lib/feedback-timeline');
+  const threads = [
+    { id: 'a', path: 'src/b.ts', line: 39 },
+    { id: 'b', path: 'CLAUDE.md', line: 21 },
+    { id: 'c', path: 'src/b.ts', line: undefined },
+    { id: 'd', path: 'src/a.ts', line: 14 },
+    { id: 'e', path: 'src/b.ts', line: 15 },
+  ];
+  const files = threadIndex(threads, (t) => t.path, (t) => t.line);
+  assert.deepEqual(
+    files.map((f) => [f.path, f.lines.map((l) => l.thread.id)]),
+    [
+      ['CLAUDE.md', ['b']],
+      ['src/a.ts', ['d']],
+      ['src/b.ts', ['e', 'a', 'c']],
+    ]
+  );
+});

@@ -22,7 +22,8 @@ void app.whenReady().then(async () => {
     const stack = await js<string>("(async()=>(await window.electronAPI.workbenchQueue()).items.find(i=>i.subject.kind==='stack').subject.id)()");
     await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await wait("document.querySelectorAll('.stack-overview-member').length===3");
-    assert.equal(await js("!!document.querySelector('.pr-description')"), false, 'Stack summary has no arbitrary selected PR description');
+    // Conversation (#418): each member's description opens its PR's part of the stack timeline; no single PR's details panel.
+    assert.equal(await js("!!document.querySelector('.pr-summary-page .pr-details')"), false, 'Stack conversation has no arbitrary selected PR details');
     assert.equal(await js('window.reads.length'), 0, 'Stack overview does not mark members read');
     assert.equal(await js('window.starts.length'), 0);
     await wait("document.querySelector('.stack-overview').textContent.includes('No checks reported') && document.querySelector('.stack-overview').textContent.includes('Checks unavailable') && !!document.querySelector('.stack-check-result.is-danger')");
