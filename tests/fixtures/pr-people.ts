@@ -232,42 +232,33 @@ export function installPrPeopleFixture(mocks: Record<string, unknown>, items: Qu
     editPrPeople: async (edit: PrPeopleEdit): Promise<PrPeopleEditResult> => {
       record.edits.push(structuredClone(edit));
       if (readOnly) throw new Error('You need triage or write access to klang/engine.');
-      // Like main: a write GitHub took in part rolls back, then the part it took is shown again.
-      let partial: Extract<PrPeopleEditResult, { status: 'partial' }> | undefined;
-      try {
-        await service.run(
-          url,
-          prPeopleChange(edit),
-          () =>
-            new Promise<void>((resolve, reject) => {
-              held.push({
-                edit,
-                settle: (outcome) => {
-                  record.settled.push(`${edit.field}:${outcome === 'ok' ? 'ok' : outcome === 'partial' ? 'partial' : 'failed'}`);
-                  if (outcome === 'ok') {
-                    onGitHub(edit);
-                    resolve();
-                  } else if (outcome === 'partial' && edit.field === 'reviewers') {
-                    // GitHub took the additions and refused the removals.
-                    const applied: PrPeopleEdit = { ...edit, remove: [], removeTeams: [] };
-                    onGitHub(applied);
-                    partial = { status: 'partial', applied, remaining: { ...edit, add: [], addTeams: [] }, error: 'Reviews may only be removed by a maintainer.' };
-                    reject(new Error(partial.error));
-                  } else reject(new Error(outcome));
-                },
-              });
-            })
-        );
-      } catch (error) {
-        if (!partial) throw error;
-        // Like main: no patch for the part GitHub took; its read right after the write shows it.
-        service.applied(url, prPeopleChange(partial.applied));
-        readGitHub();
-        record.results.push(partial);
-        return partial;
-      }
-      record.results.push({ status: 'done' });
-      return { status: 'done' };
+      // Like main: a write GitHub takes in part keeps showing that part; the refused part rolls back.
+      const result = await service.run(
+        url,
+        prPeopleChange(edit),
+        () =>
+          new Promise<PrPeopleEditResult>((resolve, reject) => {
+            held.push({
+              edit,
+              settle: (outcome) => {
+                record.settled.push(`${edit.field}:${outcome === 'ok' ? 'ok' : outcome === 'partial' ? 'partial' : 'failed'}`);
+                if (outcome === 'ok') {
+                  onGitHub(edit);
+                  resolve({ status: 'done' });
+                } else if (outcome === 'partial' && edit.field === 'reviewers') {
+                  // GitHub took the additions and refused the removals.
+                  const applied: PrPeopleEdit = { ...edit, remove: [], removeTeams: [] };
+                  onGitHub(applied);
+                  resolve({ status: 'partial', applied, remaining: { ...edit, add: [], addTeams: [] }, error: 'Reviews may only be removed by a maintainer.' });
+                } else reject(new Error(outcome));
+              },
+            });
+          }),
+        undefined,
+        (value) => (value.status === 'partial' ? prPeopleChange(value.applied) : undefined)
+      );
+      record.results.push(result);
+      return result;
     },
   });
   Object.assign(window, {
@@ -291,6 +282,8 @@ export function installPrPeopleFixture(mocks: Record<string, unknown>, items: Qu
         refreshed.forEach((listener) => listener({ action: 'close-pr', urls: [url], phase: 'settled' }));
       },
       refresh: () => readGitHub(),
+      /** Main stopped following a write up before GitHub showed it. */
+      gaveUp: () => refreshed.forEach((listener) => listener({ action: 'edit-labels', urls: [url], phase: 'gave-up' })),
       patches: () => service.layer.list().map((patch) => `${patch.change.action}:${patch.status}`),
       failSearch: (query: string) => failingQueries.add(query),
       clearSearchFailures: () => failingQueries.clear(),

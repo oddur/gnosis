@@ -7,6 +7,7 @@ import {
   validatePrPeopleEdit,
   PR_PEOPLE_ACCESS_TTL_MS,
   PR_PEOPLE_CANDIDATES_TTL_MS,
+  TRANSIENT_TTL_MS,
 } from '../src/pr-metadata-write-service';
 import { createOptimisticService } from '../src/optimistic-service';
 import { GITHUB_WRITE_EFFECTS, type GitHubWriteAction, type WriteDetails } from '../lib/github-write-refresh';
@@ -139,13 +140,18 @@ function fixture(options: { permission?: string; archived?: boolean; owner?: str
   let clock = 1_000;
   const service = createPrMetadataWriteService({
     now: () => clock,
-    optimistic: (u, change, write) =>
-      optimistic.run(u, change, async () => {
-        shownDuringWrite.push(optimistic.metadata(metadata));
-        await duringWrite?.();
-        return write();
-      }),
-    applied: (u, change) => optimistic.applied(u, change),
+    optimistic: (u, change, write, narrow) =>
+      optimistic.run(
+        u,
+        change,
+        async () => {
+          shownDuringWrite.push(optimistic.metadata(metadata));
+          await duringWrite?.();
+          return write();
+        },
+        undefined,
+        narrow
+      ),
     refresh: async (action, urls, write, details) => {
       try {
         const value = await write();
@@ -281,9 +287,10 @@ void test('a partial success keeps what GitHub took and returns the rest for Ret
   assert.ok(result.status === 'partial');
   assert.deepEqual([result.applied, result.remaining], [reviewers({ remove: ['sam'] }), reviewers({ add: ['outsider'] })]);
   assert.match(result.error, /collaborators/);
-  // No optimistic copy of the applied part: the read after the write shows GitHub's own state.
-  assert.equal(f.optimistic.layer.list().length, 0);
-  assert.deepEqual(f.optimistic.metadata(f.metadata).requestedReviewers, ['sam']);
+  // Right after the partial result, every window still shows the part GitHub took: sam is no longer requested. The
+  // refused addition is gone.
+  assert.deepEqual(f.optimistic.metadata(f.metadata).requestedReviewers, []);
+  assert.deepEqual(f.optimistic.layer.list().map((p) => p.change), [prPeopleChange(reviewers({ remove: ['sam'] }))]);
   // Retry sends only the remaining part.
   f.failures.clear();
   f.calls.length = 0;
@@ -298,7 +305,7 @@ void test('assignees: GitHub skipping some counts as a partial change, skipping 
   assert.deepEqual(result.applied, { url, field: 'assignees', add: ['dev-1'], remove: ['lena'] });
   assert.deepEqual(result.remaining, { url, field: 'assignees', add: ['ghost'], remove: [] });
   assert.match(result.error, /didn’t assign ghost/);
-  assert.equal(f.optimistic.layer.list().length, 0, 'GitHub’s read shows the applied part, not a patch');
+  assert.deepEqual(f.optimistic.metadata(f.metadata).assignees, ['dev-1'], 'The part GitHub took still shows');
   const g = fixture();
   await assert.rejects(g.service.edit(g.client, { url, field: 'assignees', add: ['ghost'], remove: [] }), /didn’t assign ghost/);
   assert.deepEqual(g.optimistic.metadata(g.metadata).assignees, ['lena'], 'Rolled back');
@@ -534,7 +541,7 @@ void test('after a partial edit, GitHub’s order of steps decides, not the orde
   const result = await f.service.edit(f.client, reviewers({ add: ['outsider'], remove: ['maya'] }));
   assert.ok(result.status === 'partial');
   assert.ok(!f.optimistic.metadata(f.metadata).requestedReviewers.includes('maya'), 'The earlier request no longer shows maya');
-  assert.equal(f.optimistic.layer.list().length, 0, 'Nothing left to override GitHub’s read');
+  assert.deepEqual(f.optimistic.layer.list().map((p) => p.change), [prPeopleChange(reviewers({ remove: ['maya'] }))], 'Only the part GitHub took');
 });
 
 void test('a forget during an access read keeps that read from being saved', async () => {
@@ -680,6 +687,8 @@ void test('a passing team list failure keeps the pages read and is tried again; 
   assert.equal(first.complete, false);
   assert.equal(first.teamsUnavailable, undefined);
   f.failures.clear();
+  // Kept briefly (round 6): the next open after that reads again.
+  f.tick(TRANSIENT_TTL_MS + 1);
   const second = await f.service.candidates(f.client, { url, field: 'reviewers' });
   assert.equal(second.teams.length, 150, 'Read again on the next open');
   assert.equal(second.complete, true);
@@ -703,6 +712,49 @@ void test('cached suggestions never leave a failed access read unhandled', async
   } finally {
     process.off('unhandledRejection', listener);
   }
+});
+
+void test('an edit keeps the saved access current instead of reading it again', async () => {
+  const f = fixture();
+  await f.service.access(f.client, url);
+  await f.service.edit(f.client, { url, field: 'labels', add: [{ name: 'docs' }], remove: [] });
+  await f.service.edit(f.client, reviewers({ addTeams: [{ slug: 'team-1', name: 'Team 1' }], removeTeams: [{ slug: 'core', name: 'Core team' }] }));
+  await f.service.edit(f.client, { url, field: 'milestone', milestone: { number: 3, title: 'v1', dueOn: null } });
+  const access = await f.service.access(f.client, url);
+  assert.equal(f.queries.filter((q) => q.kind === 'access').length, 1, 'No access read after the edits');
+  assert.deepEqual(access.requestedTeams, [{ slug: 'team-1', name: 'Team 1' }]);
+  assert.equal(access.milestone?.title, 'v1');
+});
+
+void test('labels are checked by name all at once', async () => {
+  const f = fixture();
+  let inFlight = 0;
+  let most = 0;
+  const getLabel = f.client.issues.getLabel.bind(f.client.issues);
+  Object.assign(f.client.issues, {
+    getLabel: async (p: Parameters<typeof getLabel>[0]) => {
+      most = Math.max(most, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return getLabel(p);
+    },
+  });
+  await f.service.edit(f.client, { url, field: 'labels', add: [{ name: 'docs' }, { name: 'bug' }, { name: 'zz-archived' }], remove: [] });
+  assert.equal(most, 3);
+});
+
+void test('after a passing team list failure, typing filters the pages read instead of reading teams again', async () => {
+  const f = fixture({ teams: 150 });
+  f.failures.set('repos.listTeams:page2', fail('Server Error', 502));
+  await f.service.candidates(f.client, { url, field: 'reviewers' });
+  const reads = () => f.calls.filter((c) => c.method === 'repos.listTeams').length;
+  const first = reads();
+  for (const query of ['t', 'te', 'tea', 'team 9']) await f.service.candidates(f.client, { url, field: 'reviewers', query });
+  assert.equal(reads(), first, 'No team reads while typing');
+  f.tick(TRANSIENT_TTL_MS + 1);
+  f.failures.clear();
+  const later = await f.service.candidates(f.client, { url, field: 'reviewers' });
+  assert.equal(later.teams.length, 150, 'Read again soon after');
 });
 
 void test('forgetting access sends the next read to GitHub, as after a merge or close', async () => {

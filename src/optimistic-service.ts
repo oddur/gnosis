@@ -60,7 +60,12 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
       urls: string | string[],
       change: OptimisticChange,
       write: () => Promise<T>,
-      result?: (value: T) => OptimisticResult
+      result?: (value: T) => OptimisticResult,
+      /**
+       * The part GitHub took when it took only part, from the write's value. The patch keeps showing that part, and
+       * patches confirmed while the write ran stop applying its items: GitHub carried them out after those.
+       */
+      narrow?: (value: T) => OptimisticChange | undefined
     ): Promise<T> {
       const viewer = deps.viewer();
       const targets = [...new Set(typeof urls === 'string' ? [urls] : urls)];
@@ -82,12 +87,15 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
       } catch {
         // The write succeeded. Matching by text replaces the optimistic copy instead.
       }
+      const part = narrow?.(value);
+      if (part)
+        for (const patch of patches) {
+          // Before the confirm, so `applied` trims the others and leaves this patch alone.
+          layer.applied(patch.url, part);
+          layer.narrow(patch.id, part);
+        }
       for (const patch of patches) if (layer.confirm(patch.id, details)) changed(patch.url, kinds);
       return value;
-    },
-    /** GitHub carried out `change` without a patch of its own (`layer.applied`). */
-    applied(url: string, change: OptimisticChange) {
-      if (layer.applied(url, change)) changed(url, optimisticKinds(change));
     },
     /** A copy read from GitHub. Patches it shows stop applying to its kind. */
     observe(url: string, kind: OptimisticKind, base: GitHubReviewThreads | PrMetadata | QueueSignals) {

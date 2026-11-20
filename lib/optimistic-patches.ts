@@ -703,6 +703,12 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
       }
       return changed;
     },
+    /** GitHub took only part of the write: the patch shows that part from now on. */
+    narrow(id: string, change: OptimisticChange): OptimisticPatch | undefined {
+      const patch = byId(id);
+      if (patch) patch.change = change;
+      return patch;
+    },
     /** The write failed: roll back. Returns the removed patch. */
     fail(id: string): OptimisticPatch | undefined {
       const patch = byId(id);

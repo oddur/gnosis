@@ -39,10 +39,16 @@ import type { PrLabel } from '../lib/types';
  */
 export interface PrMetadataWriteDeps {
   now?: () => number;
-  /** Shows `change` at once and rolls it back when the write throws: main's `optimistic.run`. */
-  optimistic: <T>(url: string, change: OptimisticChange, write: () => Promise<T>) => Promise<T>;
-  /** GitHub carried out `change` without a patch: earlier confirmed patches on its items stop applying them. */
-  applied: (url: string, change: OptimisticChange) => void;
+  /**
+   * Shows `change` at once and rolls it back when the write throws: main's `optimistic.run`. `narrow` names the part
+   * GitHub took when it took only part: the change keeps showing that part.
+   */
+  optimistic: <T>(
+    url: string,
+    change: OptimisticChange,
+    write: () => Promise<T>,
+    narrow?: (value: T) => OptimisticChange | undefined
+  ) => Promise<T>;
   /** Runs the write, then reads the PR again until it shows the change: main's `gitHubWrite`. */
   refresh: <T>(
     action: GitHubWriteAction,
@@ -56,6 +62,8 @@ export interface PrMetadataWriteDeps {
 export const PR_PEOPLE_ACCESS_TTL_MS = 60_000;
 /** Candidates per repository and query. A big organization is read a page at a time, as the reader types. */
 export const PR_PEOPLE_CANDIDATES_TTL_MS = 10 * 60_000;
+/** A list read only in part, after a passing failure: long enough for one search, short enough to retry soon. */
+export const TRANSIENT_TTL_MS = 30_000;
 const CANDIDATE_ENTRIES = 300;
 const PAGE = { users: 50, labels: 100, milestones: 50, teams: 100 } as const;
 /** Teams are listed per repository without a search: at most this many pages are read. */
@@ -176,12 +184,6 @@ class StepPartial extends Error {
     super(message);
   }
 }
-/** A write GitHub took only part of. Main keeps showing the applied part; the renderer offers Retry for the rest. */
-class PartialEdit extends Error {
-  constructor(readonly result: Extract<PrPeopleEditResult, { status: 'partial' }>) {
-    super(result.error);
-  }
-}
 /** The parts of a list edit, merged back into one edit. */
 function merge(parts: PrPeopleEdit[]): PrPeopleEdit | undefined {
   if (!parts.length) return undefined;
@@ -205,7 +207,7 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     generation: Map<string, number>;
     /** Whether each PR was open, as the latest fresh read of it said. */
     observed: Map<string, boolean>;
-    candidates: Map<string, { at: number; items: unknown[]; complete: boolean; failed?: boolean }>;
+    candidates: Map<string, { at: number; items: unknown[]; complete: boolean; failed?: boolean; ttl?: number }>;
     pending: Map<string, Promise<unknown>>;
   }
   const accounts = new WeakMap<Octokit, Account>();
@@ -288,7 +290,7 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     const needle = query.trim().toLowerCase();
     const fresh = (key: string) => {
       const saved = a.candidates.get(key);
-      return saved && now() - saved.at < PR_PEOPLE_CANDIDATES_TTL_MS ? saved : undefined;
+      return saved && now() - saved.at < (saved.ttl ?? PR_PEOPLE_CANDIDATES_TTL_MS) ? saved : undefined;
     };
     // A complete page for a shorter query already holds every match for this one.
     for (let length = needle.length; length >= 0; length--) {
@@ -299,10 +301,9 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     const key = `${scope}|${kind}|${needle}`;
     return once(a, `candidates|${key}`, async () => {
       const { transient, ...value } = await read();
-      // A passing failure, such as a timeout or a rate limit, is tried again on the next open.
-      if (transient) return value;
       a.candidates.delete(key);
-      a.candidates.set(key, { at: now(), ...value });
+      // A passing failure, such as a timeout or a rate limit, is kept briefly: the next open tries again, typing does not.
+      a.candidates.set(key, { at: now(), ...value, ...(transient ? { ttl: TRANSIENT_TTL_MS } : {}) });
       while (a.candidates.size > CANDIDATE_ENTRIES) a.candidates.delete(a.candidates.keys().next().value as string);
       return value;
     });
@@ -547,15 +548,17 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
   async function assertLabelsExist(client: Octokit, edit: PrPeopleEdit) {
     if (edit.field !== 'labels') return;
     const repo = target(edit.url);
-    // An exact, uncached lookup: a saved candidate page can still list a label deleted since.
-    for (const label of edit.add) {
-      try {
-        await client.issues.getLabel({ owner: repo.owner, repo: repo.repo, name: label.name, headers: NO_CACHE });
-      } catch (error) {
-        if (status(error) === 404) throw new Error(`${repo.full} has no label named “${label.name}”.`);
-        throw error;
-      }
-    }
+    // An exact, uncached lookup per label, all at once: a saved candidate page can still list a label deleted since.
+    await Promise.all(
+      edit.add.map(async (label) => {
+        try {
+          await client.issues.getLabel({ owner: repo.owner, repo: repo.repo, name: label.name, headers: NO_CACHE });
+        } catch (error) {
+          if (status(error) === 404) throw new Error(`${repo.full} has no label named “${label.name}”.`);
+          throw error;
+        }
+      })
+    );
   }
 
   async function edit(client: Octokit, input: unknown): Promise<PrPeopleEditResult> {
@@ -575,26 +578,33 @@ export function createPrMetadataWriteService(deps: PrMetadataWriteDeps) {
     const result = await deps.refresh(
       writeAction(request.field),
       [request.url],
-      async (): Promise<PrPeopleEditResult> => {
-        try {
-          return await deps.optimistic(request.url, prPeopleChange(request), async () => {
-            const outcome = await apply(client, request);
-            if (outcome.status === 'partial') throw new PartialEdit(outcome);
-            return outcome;
-          });
-        } catch (error) {
-          if (!(error instanceof PartialEdit)) throw error;
-          // GitHub took part of it. The optimistic change is gone; GitHub's own copy shows what happened: the refresh
-          // reads the PR at once and follows up, like any successful write, until it shows the part that was applied.
-          // Edits confirmed while this one ran came before its steps: they stop applying the items it changed.
-          deps.applied(request.url, prPeopleChange(error.result.applied));
-          return error.result;
-        }
-      },
+      // A partial success keeps showing the part GitHub took, in every window, until the read after the write shows it;
+      // the refused part rolls back. The refresh follows the applied part up like any successful write.
+      () =>
+        deps.optimistic(
+          request.url,
+          prPeopleChange(request),
+          () => apply(client, request),
+          (outcome) => (outcome.status === 'partial' ? prPeopleChange(outcome.applied) : undefined)
+        ),
       (outcome) => ({ expect: expectationOf(outcome.status === 'partial' ? outcome.applied : request) })
     );
-    forget(client, [request.url]);
+    // Access holds the team requests' slugs and the milestone: keep them current without another read.
+    keepAccess(client, result.status === 'partial' ? result.applied : request);
     return result;
+  }
+  /** The saved access after an edit GitHub took: team requests and the milestone as they are now. */
+  function keepAccess(client: Octokit, done: PrPeopleEdit) {
+    const a = account(client);
+    const saved = a.access.get(done.url);
+    if (!saved) return;
+    if (done.field === 'reviewers' && (done.addTeams.length || done.removeTeams.length)) {
+      const removed = (team: PrTeamCandidate) => done.removeTeams.some((other) => sameLogin(other.slug, team.slug));
+      const kept = saved.requestedTeams.filter((team) => !removed(team));
+      const added = done.addTeams.filter((team) => !kept.some((other) => sameLogin(other.slug, team.slug)));
+      a.access.set(done.url, { ...saved, requestedTeams: [...kept, ...added] });
+    }
+    if (done.field === 'milestone') a.access.set(done.url, { ...saved, milestone: done.milestone });
   }
   /**
    * Who may edit changed: a merge, close or reopen changes whether reviews can be requested, and an edit changes the

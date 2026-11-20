@@ -71,6 +71,8 @@ void app.whenReady().then(async () => {
     await sleep(80);
   };
   const refresh = () => js('window.prPeopleFixture.refresh()');
+  /** A commit and its effects are done: two frames on. */
+  const frames = () => js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   const shot = async (name: string) => {
     if (!shots) return;
     await js('document.fonts.ready');
@@ -178,12 +180,20 @@ void app.whenReady().then(async () => {
     // Closing applies at once, before GitHub answers.
     await instantly(`/zelda-ops/.test(${section('reviewers')}.innerText) && /owen/.test(${section('reviewers')}.innerText) && !/\\bsam\\b/.test(${section('reviewers')}.innerText)`);
     assert.deepEqual(await held(), ['reviewers']);
+    // The save disables the editor for a moment; its button keeps keyboard focus, never dropping it to the page.
+    await frames();
+    assert.ok(await js<boolean>(`document.activeElement === document.querySelector(${JSON.stringify(edit('reviewers'))})`), 'Focus stays on the edit button while it saves');
     const sent = await js<{ add: string[]; remove: string[] }>('window.prPeopleFixture.record.edits.at(-1)');
     assert.deepEqual([sent.add, sent.remove], [['zelda-ops', 'owen'], ['sam']], 'One write with the whole change');
     await settle();
     await refresh();
     await wait(`/zelda-ops/.test(${section('reviewers')}.innerText) && !/\\bsam\\b/.test(${section('reviewers')}.innerText)`);
     await wait("window.prPeopleFixture.patches().length===0");
+
+    // ── A write main gave up following still has access read again ──
+    const readsBefore = await js<number>('window.prPeopleFixture.record.access');
+    await js('window.prPeopleFixture.gaveUp()');
+    await wait(`window.prPeopleFixture.record.access>${readsBefore}`);
 
     // ── Re-request: maya approved earlier. A double click sends one request. ──
     const before = await js<number>('window.prPeopleFixture.record.edits.length');
@@ -307,8 +317,6 @@ void app.whenReady().then(async () => {
     };
     /** Opens a command made for the field, counted on its edit button. */
     const opens = (field: string) => js<number>(`Number(document.querySelector(${JSON.stringify(edit(field))})?.getAttribute('data-request-opens') ?? 0)`);
-    /** A commit and its effects are done: two frames on. */
-    const frames = () => js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
     /** Toggles a label and closes the picker: a labels save GitHub holds until `settle`. */
     const labelSave = async (name: string) => {
       await open('labels');
