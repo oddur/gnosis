@@ -150,7 +150,8 @@ function KeptTab({ value, tab, visited, className, children, ref, onScroll, arri
   if (!visited.has(value)) return null;
   const tabKey = arrival && `pr-tab:${value}:${arrival.subjectId}`;
   return (
-    <Tabs.Content value={value} className={className} forceMount ref={ref} onScroll={onScroll}>
+    // `tab` is the shown tab: the panel stays as it was until the deferred render swaps it (data-state overrides Radix's).
+    <Tabs.Content value={value} className={className} forceMount ref={ref} onScroll={onScroll} data-state={tab === value ? 'active' : 'inactive'}>
       <Activity mode={tab === value ? 'visible' : 'hidden'}>
         <ScrollKeeper />
         {children}
@@ -282,11 +283,16 @@ function PrSummaryContent({
   usePrReadVisit(item.subject.members, tab === 'summary' && item.subject.kind === 'pr', 'summary');
   // Tabs stay mounted once visited. The set only grows while this PR is shown.
   const [visited, setVisited] = useState<ReadonlySet<WorkspaceTab>>(() => new Set([tab]));
-  // The tab whose content shows. A switch marks the chosen tab at once and reveals its content in a deferred render,
-  // so revealing a kept tab (Summary's timeline, Changes' large diff) never runs inside the click: on a large PR that
-  // took about 270 ms on Linux CI and delayed the next paint (#418).
+  // The tab whose content shows. Radix's value follows the chosen tab, so every click and key counts at once; the panels
+  // swap in a deferred render, so revealing a kept tab (Summary's timeline, Changes' large diff) never runs inside the
+  // click: on a large PR that took about 270 ms on Linux CI and delayed the next paint (#418). The tabs' selected state
+  // follows the shown panel, so a selected tab always means its content shows; the chosen tab is marked at once.
   const shown = useDeferredValue(tab);
-  const pending = (value: WorkspaceTab) => (value === tab && shown !== tab) || undefined;
+  const tabState = (value: WorkspaceTab) => ({
+    'aria-selected': shown === value,
+    'data-state': shown === value ? 'active' : 'inactive',
+    'data-chosen': (value === tab && shown !== tab) || undefined,
+  });
   if (!visited.has(tab)) setVisited(new Set([...visited, tab]));
   const currentTab = useRef(tab);
   currentTab.current = tab;
@@ -558,7 +564,7 @@ function PrSummaryContent({
   const tabs = workspaceTabs;
   return (
     <Tabs.Root
-      value={shown}
+      value={tab}
       onValueChange={(value) => {
         if (tab === 'summary') remember();
         onTabChange(value as WorkspaceTab);
@@ -667,12 +673,12 @@ function PrSummaryContent({
           <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
-          <Tabs.Trigger value="summary" data-pending={pending('summary')}><WorkspaceIcon tab="summary" /><PrTabLabel>Summary</PrTabLabel></Tabs.Trigger>
-          <Tabs.Trigger value="changes" data-tour="changes" data-pending={pending('changes')} {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" /><PrTabLabel>Changes</PrTabLabel></Tabs.Trigger>
-          <Tabs.Trigger value="commits" data-pending={pending('commits')} {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" /><PrTabLabel>Commits</PrTabLabel></Tabs.Trigger>
-          <Tabs.Trigger value="checks" data-pending={pending('checks')} {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" /><PrTabLabel>Checks</PrTabLabel>{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="explanation" data-tour="explanation" data-pending={pending('explanation')}><WorkspaceIcon tab="explanation" /><PrTabLabel>Explanation</PrTabLabel></Tabs.Trigger>
-          <Tabs.Trigger value="brief" data-pending={pending('brief')}><WorkspaceIcon tab="brief" /><PrTabLabel>Local notes</PrTabLabel>{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="summary" {...tabState('summary')}><WorkspaceIcon tab="summary" /><PrTabLabel>Summary</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="changes" {...tabState('changes')} data-tour="changes" {...tabIntentHandlers('changes')}><WorkspaceIcon tab="changes" /><PrTabLabel>Changes</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="commits" {...tabState('commits')} {...tabIntentHandlers('commits')}><WorkspaceIcon tab="commits" /><PrTabLabel>Commits</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="checks" {...tabState('checks')} {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" /><PrTabLabel>Checks</PrTabLabel>{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="explanation" {...tabState('explanation')} data-tour="explanation"><WorkspaceIcon tab="explanation" /><PrTabLabel>Explanation</PrTabLabel></Tabs.Trigger>
+          <Tabs.Trigger value="brief" {...tabState('brief')}><WorkspaceIcon tab="brief" /><PrTabLabel>Local notes</PrTabLabel>{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
         </div>
         {/* The header's Drafts and Review PR open here on every other section; Summary shows them in its body. */}
@@ -713,7 +719,7 @@ function PrSummaryContent({
             />
           )}
         </KeptTab>
-        <Tabs.Content value="explanation" className="pr-changes-tab" forceMount>
+        <Tabs.Content value="explanation" className="pr-changes-tab" forceMount data-state={shown === 'explanation' ? 'active' : 'inactive'}>
           <PrExplanation
             item={item}
             entries={explanations}

@@ -2601,9 +2601,9 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-overview-tabs { display:flex;gap:24px;padding:0 var(--pr-frame-inset);width:100%;border-bottom:1px solid var(--border);flex-shrink:0; }
 .pr-overview-tabs button { padding:12px 0 10px;font-size:var(--type-control);color:var(--muted-foreground);border-bottom:2px solid transparent; }
 .pr-overview-tabs button[data-state=active] { color:var(--primary);font-weight:600;border-bottom-color:var(--primary); }
-/* A chosen tab reads as selected at once; its content follows in a deferred render, and the old tab stops reading as selected. */
-.pr-overview-tabs button[data-pending] { color:var(--primary);font-weight:600;border-bottom-color:var(--primary); }
-.pr-overview-tabs:has(button[data-pending]) button[data-state=active]:not([data-pending]) { color:var(--muted-foreground);font-weight:inherit;border-bottom-color:transparent; }
+/* A chosen tab reads as selected at once; its panel follows in a deferred render (PrSummary), and the shown tab stops reading as selected. */
+.pr-overview-tabs button[data-chosen] { color:var(--primary);font-weight:600;border-bottom-color:var(--primary); }
+.pr-overview-tabs:has(button[data-chosen]) button[data-state=active] { color:var(--muted-foreground);font-weight:inherit;border-bottom-color:transparent; }
 .pr-overview-tabs button:focus-visible { outline:2px solid var(--ring);outline-offset:-2px;border-radius:var(--radius-sm) var(--radius-sm) 0 0; }
 /* Each label reserves its semibold width, so selecting a tab never moves the tabs after it. */
 .pr-tab-label { display:inline-grid; }
