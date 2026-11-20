@@ -188,6 +188,10 @@ void app.whenReady().then(async () => {
     await capture('narrow-conversation-dark');
     win.setContentSize(1280, 800);
     await js("document.documentElement.classList.remove('dark');window.failFeedback=false");
+    // An item is read after it stays mostly on screen for a moment (READ_DWELL_MS); make sure the review is read before
+    // leaving, rather than relying on how long earlier steps kept it on screen (a slow runner scrolls on sooner).
+    await show('r-120');
+    await wait(`!!${entry('r-120')}&&!${entry('r-120')}.querySelector('.pr-unread-dot')`);
     await tab('Commits');
     await tab('Summary');
     await wait("document.querySelectorAll('.feedback-entry').length>0");

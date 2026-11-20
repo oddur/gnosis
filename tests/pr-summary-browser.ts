@@ -113,8 +113,15 @@ void app.whenReady().then(async () => {
       'Read-only task boxes announce the task text'
     );
     assert.match(await js<string>("document.querySelector('.pr-description pre').textContent"), /outbox.flush/);
+    // Description images load lazily, when near the view. The description sits below the band (#418), and a window
+    // the screen clamps (a 1024 x 768 Windows runner) can leave them below the fold: bring each into view first,
+    // scrolling the page itself so the app's frames stay put.
+    const reveal = (alt: string) =>
+      js(`(()=>{const img=document.querySelector('img[alt="${alt}"]'),page=img?.closest('.pr-summary-content');if(img&&page)page.scrollTop+=img.getBoundingClientRect().top-page.getBoundingClientRect().top-80})()`);
+    await reveal('Reconnect flow');
     await wait('document.querySelector(\'img[alt="Reconnect flow"]\')?.naturalWidth === 600');
     await js("document.querySelector('.pr-description details:not(.mermaid-source)').open = true");
+    await reveal('HTML reconnect screenshot');
     await wait('document.querySelector(\'img[alt="HTML reconnect screenshot"]\')?.naturalWidth === 600');
     assert.equal(
       await js("document.querySelector('img[alt=\"HTML reconnect screenshot\"]').hasAttribute('onerror')"),
@@ -156,7 +163,10 @@ void app.whenReady().then(async () => {
     await capture('pr-summary-mermaid-dark');
     await js("document.querySelector('.pr-summary-content').scrollTop = 0");
     const descriptionAt = await js<string>("JSON.stringify({top:document.querySelector('.pr-description').getBoundingClientRect().top,band:document.querySelector('.conversation-band')?.getBoundingClientRect().height,scroll:document.querySelector('.pr-summary-content').scrollTop,inner:innerHeight})");
-    assert.ok(JSON.parse(descriptionAt).top < 500, `The author description should be in the first laptop viewport: ${descriptionAt}`);
+    // At laptop widths the details sit beside the timeline. A window the screen clamps below 1100px (the 1024px
+    // Windows runner) shows them as a strip above the description instead (tests/conversation-browser.ts checks that).
+    const beside = await js<boolean>("(()=>{const side=document.querySelector('.conversation-sidebar')?.getBoundingClientRect(),main=document.querySelector('.conversation-main')?.getBoundingClientRect();return !!side&&!!main&&side.left>=main.right-1})()");
+    if (beside) assert.ok(JSON.parse(descriptionAt).top < 500, `The author description should be in the first laptop viewport: ${descriptionAt}`);
     await capture('pr-summary-dark');
     window.setSize(980, 700);
     await capture('pr-summary-laptop');
@@ -252,7 +262,10 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('.stack-context [aria-current=page] .stack-parent-link').textContent"), /#121/);
     const descriptionTop = await js<number>(`document.querySelector('.pr-description').getBoundingClientRect().top`);
     await js(`document.querySelector('.stack-context').open=true`);
-    assert.equal(await js(`document.querySelector('.pr-description').getBoundingClientRect().top`), descriptionTop, 'Expanding stack context must not push down the description');
+    // Beside the timeline the stack context opens in its own column; as a strip above the description (below 1100px,
+    // as on the 1024px Windows runner) it moves the description down, as any strip content does.
+    const besideNow = await js<boolean>("(()=>{const side=document.querySelector('.conversation-sidebar')?.getBoundingClientRect(),main=document.querySelector('.conversation-main')?.getBoundingClientRect();return !!side&&!!main&&side.left>=main.right-1})()");
+    if (besideNow) assert.equal(await js(`document.querySelector('.pr-description').getBoundingClientRect().top`), descriptionTop, 'Expanding stack context must not push down the description');
     await capture('pr-summary-stack-context');
     window.setSize(980, 700);
     await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/121')");
