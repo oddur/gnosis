@@ -103,12 +103,22 @@ void app.whenReady().then(async () => {
     assert.match(await text('assignees'), /lena/);
     assert.match(await text('labels'), /bug/);
     assert.match(await text('milestone'), /No milestone/);
+    // GitHub takes no review request from a bot: its row never offers one.
+    assert.match(await text('reviewers'), /coverage-app\s*Commented/);
+    assert.ok(await js<boolean>(`!document.querySelector('[aria-label="Request a review from coverage-app again"]')`), 'No re-request for a bot');
+    assert.ok(await js<boolean>(`!!document.querySelector('[aria-label="Request a review from maya again"]')`));
+    // A long team name reads in full beside its verdict.
+    assert.ok(
+      await js<boolean>(`(()=>{const e=${section('reviewers')}.querySelector('.pr-people-team > span');return e.scrollWidth<=e.clientWidth+1})()`),
+      'The team name is not cut off'
+    );
 
     // ── Reviewers: current first, then who reviewed and who GitHub suggests; never the author ──
     await open('reviewers');
     const first = await items();
     assert.deepEqual(first.slice(0, 4), ['user:sam', 'team:platform reviewers', 'user:maya', 'user:owen'], `Reviewer order: ${first.join()}`);
     assert.ok(!first.includes('user:lena'), 'The PR author is never offered as a reviewer');
+    assert.ok(!first.includes('user:coverage-app'), 'A bot is never offered as a reviewer');
     assert.ok(first.includes('team:release crew'), 'Teams with access are offered');
     assert.match(await js<string>(`document.querySelector(${JSON.stringify(option('user:maya'))}).textContent`), /Approved · request again/);
     assert.match(await js<string>(`document.querySelector(${JSON.stringify(option('team:release crew'))}).textContent`), /Team/);
@@ -128,6 +138,16 @@ void app.whenReady().then(async () => {
     );
     await highlighted('user:zelda-ops');
     await key('Enter');
+    await wait(`document.querySelector(${JSON.stringify(option('user:zelda-ops'))})?.hasAttribute('data-selected')`);
+    // A refused search says so, with Retry, instead of loading forever.
+    await js("window.prPeopleFixture.failSearch('qq')");
+    await fill('qq');
+    await wait("/Couldn’t load the list\\. Search is temporarily unavailable/.test(document.querySelector('.pr-people-popup')?.textContent ?? '')");
+    await js('window.prPeopleFixture.clearSearchFailures()');
+    await press('.pr-people-load-error button');
+    await js("document.querySelector('.pr-people-popup [data-slot=combobox-input]').focus()");
+    await wait("/No matching people or teams/.test(document.querySelector('.pr-people-popup')?.textContent ?? '')");
+    await fill('zel');
     await wait(`document.querySelector(${JSON.stringify(option('user:zelda-ops'))})?.hasAttribute('data-selected')`);
     await fill('');
     await wait(`!!document.querySelector(${JSON.stringify(option('user:sam'))})`);
@@ -154,15 +174,36 @@ void app.whenReady().then(async () => {
     await wait(`/zelda-ops/.test(${section('reviewers')}.innerText) && !/\\bsam\\b/.test(${section('reviewers')}.innerText)`);
     await wait("window.prPeopleFixture.patches().length===0");
 
-    // ── Re-request: maya approved earlier ──
-    await press('[aria-label="Request a review from maya again"]');
+    // ── Re-request: maya approved earlier. A double click sends one request. ──
+    const before = await js<number>('window.prPeopleFixture.record.edits.length');
+    await js(`(()=>{const b=document.querySelector('[aria-label="Request a review from maya again"]');b.click();b.click()})()`);
     await instantly(`/maya\\s*Requested again/.test(${section('reviewers')}.innerText)`);
     assert.ok(!(await js<boolean>(`!!document.querySelector('[aria-label="Request a review from maya again"]')`)));
     const again = await js<{ add: string[] }>('window.prPeopleFixture.record.edits.at(-1)');
     assert.deepEqual(again.add, ['maya']);
+    assert.equal(await js<number>('window.prPeopleFixture.record.edits.length'), before + 1, 'One request for a double click');
     await settle();
     await refresh();
     await wait(`/maya\\s*Requested again/.test(${section('reviewers')}.innerText)`);
+
+    // ── Partial success: GitHub takes the addition and refuses the removal; Retry sends the removal only ──
+    await open('reviewers');
+    await press(option('user:zelda-ops'));
+    await fill('dev-01');
+    await highlighted('user:dev-01');
+    await key('Enter');
+    await key('Escape');
+    await closed();
+    await instantly(`/dev-01/.test(${section('reviewers')}.innerText) && !/zelda-ops/.test(${section('reviewers')}.innerText)`);
+    await settle('partial');
+    await wait(`/Some reviewer changes weren’t made\\./.test(${section('reviewers')}.innerText)`);
+    await wait(`/dev-01/.test(${section('reviewers')}.innerText) && /zelda-ops/.test(${section('reviewers')}.innerText.split('Some reviewer')[0])`);
+    await press('.pr-people-section[data-field=reviewers] .write-failure-actions button');
+    const rest = await js<{ add: string[]; remove: string[] }>('window.prPeopleFixture.record.edits.at(-1)');
+    assert.deepEqual([rest.add, rest.remove], [[], ['zelda-ops']], 'Retry sends only what did not happen');
+    await settle();
+    await refresh();
+    await wait(`/dev-01/.test(${section('reviewers')}.innerText) && !/zelda-ops/.test(${section('reviewers')}.innerText)`);
 
     // ── Assignees: rolls back when GitHub refuses, then Retry ──
     await open('assignees');
@@ -272,6 +313,14 @@ void app.whenReady().then(async () => {
     await sleep(400);
     await shot('read-only-light');
     assert.equal(await js('window.prPeopleFixture.record.edits.length'), 0, 'A read-only account sends nothing');
+    assert.deepEqual(errors, [], errors.join('\n'));
+
+    // ── A failed access read says so, retries, and offers Retry ──
+    await openPr('pr-summary&github-sync&pr-people&pr-people-access-fail');
+    await wait("/Couldn’t check whether you can edit this PR/.test(document.querySelector('.pr-people-access-error')?.textContent ?? '')");
+    assert.ok(await js<boolean>("document.querySelectorAll('.pr-people-edit[aria-disabled=true]').length>0"));
+    await press('.pr-people-access-error button');
+    await wait(`!document.querySelector('.pr-people-access-error') && !document.querySelector('.pr-people-edit[aria-disabled]')`);
     assert.deepEqual(errors, [], errors.join('\n'));
     console.log('PR people and labels checks passed.');
     app.exit(0);

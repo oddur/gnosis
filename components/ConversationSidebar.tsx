@@ -9,8 +9,8 @@ import type { GitHubReviewThreads } from '../lib/review-threads';
 import type { PrStatus } from '../lib/types';
 import type { ReviewMember } from '../lib/workbench';
 import type { ReactNode } from 'react';
-import { PrPeopleEditor, PrPeopleFailure, ReRequestReview, usePrPeople } from './PrPeopleEditor';
-import { editList, type PrPeopleField } from '../lib/pr-people';
+import { PrPeopleAccessError, PrPeopleEditor, PrPeopleFailure, ReRequestFailure, ReRequestReview, usePrPeople } from './PrPeopleEditor';
+import { editList, formatDueOn, type PrPeopleField } from '../lib/pr-people';
 import { useCommandScope } from '../lib/command-center';
 
 type Verdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | 'PENDING';
@@ -40,16 +40,6 @@ export function reviewerVerdicts(snapshot: Pick<GitHubReviewThreads, 'feedback'>
   for (const login of [...requested, ...(snapshot?.feedback?.requestedReviewers ?? [])])
     if (!verdicts.has(login) || verdicts.get(login) === 'COMMENTED') verdicts.set(login, 'PENDING');
   return [...verdicts.entries()].map(([login, verdict]) => ({ login, verdict }));
-}
-
-/** A command palette entry opens the picker once the palette has closed and handed focus back. */
-function afterPalette(run: () => void) {
-  let frames = 0;
-  const wait = () => {
-    if (document.querySelector('.global-command') && frames++ < 30) requestAnimationFrame(wait);
-    else run();
-  };
-  requestAnimationFrame(wait);
 }
 
 const date = (value: string) => {
@@ -85,7 +75,7 @@ export function ConversationSidebar({
   const people = usePrPeople(m, status);
   const { view } = people;
   const [editing, setEditing] = useState<PrPeopleField | null>(null);
-  const editor = (field: PrPeopleField, reviewed?: { login: string; verdict: string }[]) => (
+  const editor = (field: PrPeopleField, reviewed?: { login: string; verdict: string; typename?: string }[]) => (
     <PrPeopleEditor
       field={field}
       member={m}
@@ -101,8 +91,10 @@ export function ConversationSidebar({
     snapshot?.feedback?.requestedReviewers ?? []
   );
   const shown = snapshot?.feedback ? { feedback: { ...snapshot.feedback, requestedReviewers: requestedInDiscussion } } : snapshot;
-  const reviewers = reviewerVerdicts(shown, view.reviewers);
-  const requested = new Set([...view.reviewers, ...requestedInDiscussion].map((login) => login.toLowerCase()));
+  // Who reviewed, with GitHub's account type, so a bot is never offered a review request.
+  const typenames = new Map((snapshot?.feedback?.reviews ?? []).flatMap((review) => (review.author ? [[review.author.login.toLowerCase(), review.author.__typename]] : [])));
+  const reviewers = reviewerVerdicts(shown, view.requestedReviewers).map((reviewer) => ({ ...reviewer, typename: typenames.get(reviewer.login.toLowerCase()) }));
+  const requested = new Set([...view.requestedReviewers, ...requestedInDiscussion].map((login) => login.toLowerCase()));
   const canEdit = !!people.access?.canEdit;
   const command = (field: PrPeopleField, label: string, icon: LucideIcon, keywords: string) => ({
     id: `pr-people:${field}`,
@@ -110,7 +102,9 @@ export function ConversationSidebar({
     label,
     keywords,
     group: `PR #${m.number}`,
-    perform: () => afterPalette(() => setEditing(field)),
+    // The picker takes focus: it opens once the palette has closed and handed focus back.
+    afterClose: true,
+    perform: () => setEditing(field),
   });
   useCommandScope(
     'pr-people',
@@ -131,9 +125,10 @@ export function ConversationSidebar({
           <h2>Reviewers</h2>
           {editor('reviewers', reviewers)}
         </div>
-        {reviewers.length || view.teams.length ? (
+        <PrPeopleAccessError people={people} />
+        {reviewers.length || view.requestedTeams.length ? (
           <ul className="conversation-reviewers">
-            {reviewers.map(({ login, verdict }) => {
+            {reviewers.map(({ login, verdict, typename }) => {
               // An earlier reviewer asked again: GitHub shows the request; the earlier verdict stays in the title.
               const again = verdict !== 'PENDING' && requested.has(login.toLowerCase());
               const { icon: Icon, label, tone } = again ? VERDICTS.PENDING : VERDICTS[verdict];
@@ -149,12 +144,14 @@ export function ConversationSidebar({
                       <Icon size={13} aria-hidden="true" />
                       {again ? 'Requested again' : label}
                     </span>
-                    {verdict !== 'PENDING' && !again && <ReRequestReview member={m} login={login} people={people} />}
+                    {verdict !== 'PENDING' && !again && (
+                      <ReRequestReview member={m} login={login} typename={typename} people={people} feedback={snapshot?.feedback} />
+                    )}
                   </span>
                 </li>
               );
             })}
-            {view.teams.map((team) => (
+            {view.requestedTeams.map((team) => (
               <li key={team}>
                 <span className="pr-people-team" title={`Team ${team}`}>
                   <Users size={13} aria-hidden="true" />
@@ -172,6 +169,9 @@ export function ConversationSidebar({
           <p className="conversation-empty-value">No reviewers yet</p>
         )}
         <PrPeopleFailure url={m.url} field="reviewers" />
+        {reviewers.map(({ login }) => (
+          <ReRequestFailure key={login} url={m.url} login={login} />
+        ))}
       </section>
       <section className="pr-people-section" data-field="assignees">
         <div className="pr-people-heading">
@@ -211,7 +211,7 @@ export function ConversationSidebar({
             <p className="pr-people-milestone">
               <Milestone size={13} aria-hidden="true" />
               <span>{view.milestone.title}</span>
-              {view.milestone.dueOn && <span className="pr-people-due">Due {date(view.milestone.dueOn)}</span>}
+              {view.milestone.dueOn && <span className="pr-people-due">Due {formatDueOn(view.milestone.dueOn)}</span>}
             </p>
           ) : (
             <p className="conversation-empty-value">No milestone</p>

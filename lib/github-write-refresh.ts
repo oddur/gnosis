@@ -205,8 +205,9 @@ export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
     queue: true,
   },
   'edit-assignees': { kinds: ['metadata'], probes: ['metadata'], seen: editSeen, queue: true },
-  'edit-labels': { kinds: ['metadata'], probes: ['metadata'], seen: editSeen },
-  'edit-milestone': { kinds: ['metadata'], probes: ['metadata'], seen: editSeen },
+  // Searches that filter by label or milestone catch up once GitHub shows the change.
+  'edit-labels': { kinds: ['metadata'], probes: ['metadata'], seen: editSeen, queue: true },
+  'edit-milestone': { kinds: ['metadata'], probes: ['metadata'], seen: editSeen, queue: true },
   // New runs start a moment after GitHub accepts a rerun.
   'rerun-checks': {
     kinds: ['checks', 'signals'],

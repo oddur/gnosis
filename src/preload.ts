@@ -443,12 +443,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
   getPrActionState: (url: string, force = false): Promise<import('../lib/pr-actions').PrActionState> =>
     ipcRenderer.invoke('get-pr-action-state', url, force),
-  getPrPeopleAccess: (url: string, force = false): Promise<import('../lib/pr-people').PrPeopleAccess> =>
-    ipcRenderer.invoke('get-pr-people-access', url, force),
+  getPrPeopleAccess: (url: string): Promise<import('../lib/pr-people').PrPeopleAccess> =>
+    ipcRenderer.invoke('get-pr-people-access', url),
   getPrPeopleCandidates: (
     request: import('../lib/pr-people').PrPeopleCandidateRequest
   ): Promise<import('../lib/pr-people').PrPeopleCandidates> => ipcRenderer.invoke('get-pr-people-candidates', request),
-  editPrPeople: (edit: import('../lib/pr-people').PrPeopleEdit): Promise<void> => ipcRenderer.invoke('edit-pr-people', edit),
+  editPrPeople: (edit: import('../lib/pr-people').PrPeopleEdit): Promise<import('../lib/pr-people').PrPeopleEditResult> =>
+    ipcRenderer.invoke('edit-pr-people', edit),
   getStackMergePlan: (urls: string[]): Promise<import('../lib/pr-actions').PrMergePlan> =>
     ipcRenderer.invoke('get-stack-merge-plan', urls),
   performPrAction: (

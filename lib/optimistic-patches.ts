@@ -1,7 +1,16 @@
 import type { QueueSignals } from './queue-signals';
 import type { FeedbackReview, GitHubReviewComment, GitHubReviewThread, GitHubReviewThreads } from './review-threads';
 import type { DiffSide, PrLabel, PrMetadata } from './types';
-import { editList, metadataShows, same as sameName, showsEdit, type PrMetadataExpectation } from './pr-people';
+import { sameLogin } from './github-actors';
+import {
+  applyPeopleChange,
+  editList,
+  isPeopleChange,
+  metadataShows,
+  peopleExpectation,
+  showsEdit,
+  withoutSuperseded,
+} from './pr-people';
 
 /**
  * Optimistic GitHub writes. Each write Gnosis makes adds one patch, keyed by what it changes, before the write starts.
@@ -95,11 +104,14 @@ export function optimisticKey(url: string, change: OptimisticChange, id: string)
       return `auto-merge|${url}`;
     case 'request-review':
       return `request-review|${url}|${change.reviewer.toLowerCase()}`;
-    // Each edit is its own change: a second edit before the first settles applies over it, and either rolls back alone.
+    // One milestone at a time: a newer choice replaces the older one.
+    case 'edit-milestone':
+      return `edit-milestone|${url}`;
+    // Each list edit is its own change: a second edit before the first settles applies over it, and either rolls back
+    // alone. `begin` takes out of the older one whatever the newer one decides (lib/pr-people.ts `withoutSuperseded`).
     case 'edit-reviewers':
     case 'edit-assignees':
     case 'edit-labels':
-    case 'edit-milestone':
       return `${change.action}|${url}|${id}`;
     default:
       // Every new comment is its own target.
@@ -138,27 +150,7 @@ export function optimisticKinds(change: OptimisticChange): OptimisticKind[] {
   }
 }
 
-/** What a PR copy shows once a people or label edit is visible. */
-function editExpectation(change: OptimisticChange): PrMetadataExpectation | undefined {
-  switch (change.action) {
-    case 'edit-reviewers':
-      return {
-        requestedReviewers: { add: change.add, remove: change.remove },
-        requestedTeams: { add: change.addTeams, remove: change.removeTeams },
-      };
-    case 'edit-assignees':
-      return { assignees: { add: change.add, remove: change.remove } };
-    case 'edit-labels':
-      return { labels: { add: change.add.map((label) => label.name), remove: change.remove } };
-    case 'edit-milestone':
-      return { milestone: change.milestone?.title ?? null };
-    default:
-      return undefined;
-  }
-}
-
-const same = (a: string | undefined | null, b: string | undefined | null) =>
-  !!a && !!b && a.toLowerCase() === b.toLowerCase();
+const same = sameLogin;
 const text = (value: string) => value.replace(/\r\n/g, '\n').trim();
 const isoAt = (ms: number) => new Date(ms).toISOString();
 const optimisticId = (patch: OptimisticPatch, suffix = '') => `${OPTIMISTIC_ID_PREFIX}${patch.id}${suffix}`;
@@ -277,8 +269,7 @@ export function seenInMetadata(
     Partial<Pick<PrMetadata, 'requestedTeams' | 'assignees' | 'labels' | 'milestone'>>
 ): boolean {
   const { change, before } = patch;
-  const expected = editExpectation(change);
-  if (expected) return metadataShows(base, expected);
+  if (isPeopleChange(change)) return metadataShows(base, peopleExpectation(change));
   switch (change.action) {
     case 'mark-ready':
       return !base.isDraft;
@@ -502,6 +493,14 @@ export function applyToDiscussion(patch: OptimisticPatch, base: GitHubReviewThre
   }
 }
 
+/** A queue member whose review request from the reader ended: its role becomes the reader's other relation to it. */
+function leftReviewRequested(base: PrMetadata, patch: OptimisticPatch): { role?: string } {
+  const role = (base as { role?: string }).role;
+  return role === 'review-requested'
+    ? { role: same((base as { author?: string }).author, patch.viewer.login) ? 'author' : 'watched' }
+    : {};
+}
+
 export function applyToMetadata<T extends PrMetadata>(patch: OptimisticPatch, base: T): T {
   const { change, before } = patch;
   let next: T = base;
@@ -529,32 +528,19 @@ export function applyToMetadata<T extends PrMetadata>(patch: OptimisticPatch, ba
       return { ...next, autoMerge: null };
     case 'request-review':
       return { ...next, requestedReviewers: [...base.requestedReviewers, change.reviewer] };
-    case 'edit-reviewers':
-      return {
-        ...next,
-        requestedReviewers: editList(base.requestedReviewers, change.add, change.remove),
-        requestedTeams: editList(base.requestedTeams, change.addTeams, change.removeTeams),
-      };
-    case 'edit-assignees':
-      return { ...next, assignees: editList(base.assignees ?? [], change.add, change.remove) };
-    case 'edit-labels': {
-      const labels = editList(base.labels, change.add.map((label) => label.name), change.remove);
-      // The chips keep their colors: GitHub's details for labels it showed, the picked label's for new ones.
-      const details = [...(base.labelDetails ?? []), ...change.add];
-      const labelDetails = labels.flatMap((name) => details.find((label) => sameName(label.name, name)) ?? []);
-      return { ...next, labels, labelDetails };
+    case 'edit-reviewers': {
+      const edited = applyPeopleChange(next, change);
+      // The reader took back their own review request: the queue row leaves Review requested at once, as after a review.
+      return change.remove.some((login) => same(login, patch.viewer.login)) ? { ...edited, ...leftReviewRequested(base, patch) } : edited;
     }
+    case 'edit-assignees':
+    case 'edit-labels':
     case 'edit-milestone':
-      return { ...next, milestone: change.milestone };
+      return applyPeopleChange(next, change);
     case 'submit-review': {
       // GitHub ends the reader's review request with the review. The queue row leaves Review requested at once.
       const requestedReviewers = base.requestedReviewers.filter((login) => !same(login, patch.viewer.login));
-      const role = (base as { role?: string }).role;
-      const member =
-        role === 'review-requested'
-          ? { role: same((base as { author?: string }).author, patch.viewer.login) ? 'author' : 'watched' }
-          : {};
-      return { ...next, requestedReviewers, ...member };
+      return { ...next, requestedReviewers, ...leftReviewRequested(base, patch) };
     }
     default:
       return next;
@@ -663,6 +649,14 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
       };
       // A newer write to the same target replaces the older one and moves to the end.
       patches.delete(key);
+      // A newer people or label edit decides the items it names: older edits on that field stop applying them.
+      if (isPeopleChange(input.change))
+        for (const older of [...patches.values()]) {
+          if (older.url !== input.url || !isPeopleChange(older.change)) continue;
+          const rest = withoutSuperseded(older.change, input.change);
+          if (!rest) patches.delete(older.key);
+          else if (rest !== older.change) older.change = rest;
+        }
       patches.set(key, patch);
       return patch;
     },

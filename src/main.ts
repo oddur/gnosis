@@ -4118,7 +4118,7 @@ const prMergeMonitor = createPrMergeMonitor({
 handleInteractive('get-pr-action-state', async (_event, url: string, force: boolean) => optimistic.actionState(await prActions.read(discussionClient(), url, force)));
 // Reviewers, assignees, labels and the milestone (src/pr-metadata-write-service.ts), through the optimistic layer and the write refresh.
 const prPeople = createPrMetadataWriteService({ optimistic: (url, change, write) => optimistic.run(url, change, write), refresh: gitHubWrite });
-handleInteractive('get-pr-people-access', (_event, url: string, force?: boolean) => prPeople.access(discussionClient(), url, force === true));
+handleInteractive('get-pr-people-access', (_event, url: string) => prPeople.access(discussionClient(), url));
 handleInteractive('get-pr-people-candidates', (_event, request: import('../lib/pr-people').PrPeopleCandidateRequest) => prPeople.candidates(discussionClient(), request));
 handleInteractive('edit-pr-people', (_event, edit: import('../lib/pr-people').PrPeopleEdit) => prPeople.edit(discussionClient(), edit));
 handleInteractive('get-stack-merge-plan', (_event, urls: string[]) => prActions.stackPlan(discussionClient(), urls, true));

@@ -213,9 +213,9 @@ declare global {
       conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest) => Promise<import('../lib/conflict-resolution').ConflictReply>;
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
       /** Who may change the PR's reviewers, assignees, labels and milestone. */
-      getPrPeopleAccess: (url: string, force?: boolean) => Promise<import('../lib/pr-people').PrPeopleAccess>;
+      getPrPeopleAccess: (url: string) => Promise<import('../lib/pr-people').PrPeopleAccess>;
       getPrPeopleCandidates: (request: import('../lib/pr-people').PrPeopleCandidateRequest) => Promise<import('../lib/pr-people').PrPeopleCandidates>;
-      editPrPeople: (edit: import('../lib/pr-people').PrPeopleEdit) => Promise<void>;
+      editPrPeople: (edit: import('../lib/pr-people').PrPeopleEdit) => Promise<import('../lib/pr-people').PrPeopleEditResult>;
       getStackMergePlan: (urls: string[]) => Promise<import('../lib/pr-actions').PrMergePlan>;
       performPrAction: (request: import('../lib/pr-actions').PrActionRequest) => Promise<import('../lib/pr-actions').PrActionResult>;
       /** The Overview's "Since yesterday" events after `since` (#390). Local only. */

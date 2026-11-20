@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Combobox as ComboboxPrimitive } from '@base-ui/react/combobox';
 import { Milestone, Pencil, RefreshCw, Users } from 'lucide-react';
 import {
@@ -14,13 +14,18 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { prLabelColors } from './PrLabels';
 import { WriteFailureNotice } from './WriteFailureNotice';
-import { clearWriteFailure, reportWriteFailure } from '../lib/write-failures';
+import { optimisticWrite, reportWriteFailure, useWriteInFlight } from '../lib/write-failures';
 import { githubAvatarUrl } from '../lib/github-profile';
+import { sameLogin } from '../lib/github-actors';
 import {
+  applyPeopleChange,
+  canBeRequested,
   diffSelection,
-  editList,
+  fieldBlockedReason,
+  formatDueOn,
   matchesQuery,
-  same,
+  prPeopleChange,
+  prPeopleView,
   type PrMilestoneCandidate,
   type PrPeopleAccess,
   type PrPeopleCandidates,
@@ -33,45 +38,10 @@ import type { PrLabel, PrStatus } from '../lib/types';
 import type { ReviewMember } from '../lib/workbench';
 
 /** What the details column shows for a PR's people and labels: GitHub's copy with the reader's edits in flight. */
-export interface PrPeopleView {
-  reviewers: string[];
-  teams: string[];
-  assignees: string[];
-  labels: string[];
-  labelDetails: PrLabel[];
-  milestone: { title: string; dueOn: string | null } | null;
-}
-export function prPeopleView(member: ReviewMember, status?: PrStatus): PrPeopleView {
-  const meta = status ?? member;
-  return {
-    reviewers: meta.requestedReviewers,
-    teams: meta.requestedTeams,
-    assignees: member.assignees ?? [],
-    labels: member.labels,
-    labelDetails: member.labelDetails ?? [],
-    milestone: status?.milestone ?? member.milestone,
-  };
-}
-/** The view with an edit applied. Applying one GitHub already shows changes nothing. */
-export function withPeopleEdit(view: PrPeopleView, edit: PrPeopleEdit): PrPeopleView {
-  switch (edit.field) {
-    case 'reviewers':
-      return {
-        ...view,
-        reviewers: editList(view.reviewers, edit.add, edit.remove),
-        teams: editList(view.teams, edit.addTeams.map((t) => t.name), edit.removeTeams.map((t) => t.name)),
-      };
-    case 'assignees':
-      return { ...view, assignees: editList(view.assignees, edit.add, edit.remove) };
-    case 'labels': {
-      const labels = editList(view.labels, edit.add.map((l) => l.name), edit.remove);
-      const known = [...view.labelDetails, ...edit.add];
-      return { ...view, labels, labelDetails: labels.flatMap((name) => known.find((l) => same(l.name, name)) ?? []) };
-    }
-    case 'milestone':
-      return { ...view, milestone: edit.milestone && { title: edit.milestone.title, dueOn: edit.milestone.dueOn } };
-  }
-}
+export type PrPeopleView = ReturnType<typeof prPeopleView>;
+/** The view with an edit applied, exactly as main's optimistic layer applies it (lib/pr-people.ts). */
+export const withPeopleEdit = (view: PrPeopleView, edit: PrPeopleEdit): PrPeopleView =>
+  applyPeopleChange(view, prPeopleChange(edit));
 
 // Edits sent to main and not yet answered. Main shows them in every window through its optimistic layer; this copy
 // covers the moment before its push arrives, so the column never shows the old value after the picker closes.
@@ -84,37 +54,62 @@ const subscribe = (listener: () => void) => {
 };
 const NONE: PrPeopleEdit[] = [];
 export const peopleFailureKey = (url: string, field: PrPeopleField) => `pr-people:${field}:${url}`;
+/** The same key as Feedback's request-review button, so the two never send one request twice. */
+export const reRequestKey = (url: string, login: string) => `request-review:${url}:${login.toLowerCase()}`;
+const PARTIAL_TITLE: Record<PrPeopleField, string> = {
+  reviewers: 'Some reviewer changes weren’t made.',
+  assignees: 'Some assignee changes weren’t made.',
+  labels: 'Some label changes weren’t made.',
+  milestone: 'Milestone wasn’t changed.',
+};
 
-/** Sends one edit. A failure rolls back (main already did) and leaves a notice with Retry under the field. */
-export async function sendPeopleEdit(edit: PrPeopleEdit): Promise<boolean> {
-  const key = peopleFailureKey(edit.url, edit.field);
-  clearWriteFailure(key);
-  inFlight.set(edit.url, [...(inFlight.get(edit.url) ?? []), edit]);
-  emit();
-  try {
-    await window.electronAPI.editPrPeople(edit);
-    return true;
-  } catch (error) {
-    reportWriteFailure({ key, action: `edit-${edit.field}`, error, retry: () => sendPeopleEdit(edit) });
-    return false;
-  } finally {
-    const rest = (inFlight.get(edit.url) ?? []).filter((item) => item !== edit);
-    if (rest.length) inFlight.set(edit.url, rest);
-    else inFlight.delete(edit.url);
-    emit();
-  }
+/**
+ * Sends one edit through the shared optimistic write path: a second send to the same target while one is in flight is
+ * dropped, a refusal leaves a notice with Retry under the field (main already rolled it back), and a partial success
+ * keeps what GitHub took and offers Retry for the rest only.
+ */
+export function sendPeopleEdit(edit: PrPeopleEdit, key = peopleFailureKey(edit.url, edit.field)): Promise<unknown> {
+  return optimisticWrite({
+    key,
+    action: key.startsWith('request-review:') ? 'request-review' : `edit-${edit.field}`,
+    write: async () => {
+      inFlight.set(edit.url, [...(inFlight.get(edit.url) ?? []), edit]);
+      emit();
+      try {
+        const result = await window.electronAPI.editPrPeople(edit);
+        if (result.status === 'partial')
+          reportWriteFailure({
+            key,
+            action: `edit-${edit.field}`,
+            title: PARTIAL_TITLE[edit.field],
+            error: new Error(result.error),
+            retry: () => sendPeopleEdit(result.remaining, key),
+          });
+        return result;
+      } finally {
+        const rest = (inFlight.get(edit.url) ?? []).filter((item) => item !== edit);
+        if (rest.length) inFlight.set(edit.url, rest);
+        else inFlight.delete(edit.url);
+        emit();
+      }
+    },
+  });
 }
+
+/** Retries after a failed access read: soon, then less often. Focus and opening an editor retry at once. */
+const ACCESS_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 /** Who may edit, read once per PR (main caches it per minute), and read again after a write to the PR. */
 export function usePrPeople(member: ReviewMember, status?: PrStatus) {
   const url = member.url;
   const [access, setAccess] = useState<{ url: string; value?: PrPeopleAccess; error?: string }>();
+  const [attempt, setAttempt] = useState(0);
   const pending = useSyncExternalStore(subscribe, () => inFlight.get(url) ?? NONE);
   useEffect(() => {
     let cancelled = false;
-    const read = (force = false) =>
+    const read = () =>
       window.electronAPI
-        .getPrPeopleAccess(url, force)
+        .getPrPeopleAccess(url)
         .then((value) => !cancelled && setAccess({ url, value }))
         .catch((error: unknown) => !cancelled && setAccess({ url, error: error instanceof Error ? error.message : String(error) }));
     void read();
@@ -125,10 +120,26 @@ export function usePrPeople(member: ReviewMember, status?: PrStatus) {
       cancelled = true;
       stop?.();
     };
-  }, [url]);
-  const view = useMemo(() => pending.reduce(withPeopleEdit, prPeopleView(member, status)), [member, status, pending]);
+  }, [url, attempt]);
   const current = access?.url === url ? access : undefined;
-  return { view, access: current?.value, accessError: current?.error, pending };
+  const failed = !!current?.error;
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  // A failed read is tried again with backoff, and whenever the window gets focus.
+  const failures = useRef(0);
+  useEffect(() => {
+    if (!failed) {
+      failures.current = 0;
+      return;
+    }
+    const timer = setTimeout(retry, ACCESS_RETRY_MS[Math.min(failures.current++, ACCESS_RETRY_MS.length - 1)]);
+    window.addEventListener('focus', retry);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('focus', retry);
+    };
+  }, [failed, attempt, retry]);
+  const view = useMemo(() => pending.reduce(withPeopleEdit, prPeopleView(member, status)), [member, status, pending]);
+  return { view, access: current?.value, accessError: current?.error, pending, retryAccess: retry };
 }
 export type PrPeopleState = ReturnType<typeof usePrPeople>;
 
@@ -216,9 +227,7 @@ function OptionContent({ option }: { option: Option }) {
           <Milestone size={14} aria-hidden="true" />
           <span className="pr-people-option-text">
             <strong>{option.milestone.title}</strong>
-            {option.milestone.dueOn && (
-              <span>Due {new Date(option.milestone.dueOn).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>
-            )}
+            {option.milestone.dueOn && <span>Due {formatDueOn(option.milestone.dueOn)}</span>}
           </span>
         </span>
       ) : (
@@ -227,44 +236,69 @@ function OptionContent({ option }: { option: Option }) {
   }
 }
 
-/** Candidates for a field, the first page saved per repository; a typed query reads GitHub only when that page was partial. */
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * Candidates for a field: the first page, saved per repository in main; a typed query reads GitHub only when that page
+ * was partial. Every result of this opening is kept, so a person found by one query stays pickable after the next. A
+ * failed read is recorded for its query and can be retried.
+ */
 function useCandidates(url: string, field: PrPeopleField, open: boolean, query: string) {
-  const [base, setBase] = useState<{ value?: PrPeopleCandidates; error?: string }>({});
-  // Every search this opening made: a person found by one query stays pickable, and selected, after the next.
-  const [found, setFound] = useState<PrPeopleCandidates[]>([]);
+  const [base, setBase] = useState<{ key: string; value?: PrPeopleCandidates; error?: string }>();
+  const [found, setFound] = useState<{ key: string; results: PrPeopleCandidates[]; failed: Record<string, string> }>();
+  const [attempt, setAttempt] = useState(0);
+  const key = `${url}|${field}`;
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setFound([]);
+    // Another PR or field never shows the previous one's candidates.
+    setBase({ key });
+    setFound({ key, results: [], failed: {} });
     window.electronAPI
       .getPrPeopleCandidates({ url, field, query: '' })
-      .then((value) => !cancelled && setBase({ value }))
-      .catch((error: unknown) => !cancelled && setBase({ error: error instanceof Error ? error.message : String(error) }));
+      .then((value) => !cancelled && setBase({ key, value }))
+      .catch((error: unknown) => !cancelled && setBase({ key, error: errorText(error) }));
     return () => {
       cancelled = true;
     };
-  }, [url, field, open]);
+  }, [url, field, key, open, attempt]);
+  const own = base?.key === key ? base : undefined;
+  const searches = found?.key === key ? found : undefined;
   const needle = query.trim();
-  const partial = !!base.value && !base.value.complete;
+  const partial = !!own?.value && !own.value.complete;
+  const answered = !!searches?.results.some((result) => result.query === needle);
+  const failure = needle ? searches?.failed[needle] : undefined;
   useEffect(() => {
-    if (!open || !partial || !needle) return;
+    if (!open || !partial || !needle || answered || failure) return;
     let cancelled = false;
     // Typing pauses before GitHub is asked: one request per word, not per key.
     const timer = setTimeout(() => {
       window.electronAPI
         .getPrPeopleCandidates({ url, field, query: needle })
-        .then((value) => !cancelled && setFound((previous) => [...previous, value]))
-        .catch(() => {
-          // The saved first page still answers; GitHub's search is a refinement.
-        });
+        .then((value) => !cancelled && setFound((previous) => previous?.key === key ? { ...previous, results: [...previous.results, value] } : previous))
+        .catch((error: unknown) =>
+          !cancelled && setFound((previous) => previous?.key === key ? { ...previous, failed: { ...previous.failed, [needle]: errorText(error) } } : previous)
+        );
     }, 250);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [url, field, open, partial, needle]);
-  const searching = partial && !!needle && !found.some((result) => result.query === needle);
-  return { base: base.value, error: base.error, found, searching };
+  }, [url, field, key, open, partial, needle, answered, failure]);
+  const retry = () => {
+    if (own?.error) setAttempt((n) => n + 1);
+    else if (failure)
+      setFound((previous) =>
+        previous && { ...previous, failed: Object.fromEntries(Object.entries(previous.failed).filter(([query]) => query !== needle)) }
+      );
+  };
+  return {
+    base: own?.value,
+    error: own?.error ?? failure,
+    found: searches?.results ?? [],
+    searching: partial && !!needle && !answered && !failure,
+    retry,
+  };
 }
 
 const VERDICT_HINT: Record<string, string> = {
@@ -291,7 +325,7 @@ export function PrPeopleEditor({
   member: ReviewMember;
   people: PrPeopleState;
   /** Reviewers who already reviewed, with their verdicts: picking one requests their review again. */
-  reviewed?: { login: string; verdict: string }[];
+  reviewed?: { login: string; verdict: string; typename?: string }[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -310,23 +344,22 @@ export function PrPeopleEditor({
   /** The options and selection as the picker opened: order stays put while the reader toggles. */
   const [initial, setInitial] = useState<{ keys: string[]; options: Option[] }>({ keys: [], options: [] });
   const candidates = useCandidates(member.url, field, open, query);
+  const saving = useWriteInFlight(peopleFailureKey(member.url, field));
   const author = access?.author || member.author;
   const label = FIELD_LABEL[field];
   const disabledReason = accessError
     ? `Couldn’t check your access: ${accessError}`
     : !access
       ? 'Checking your access…'
-      : access.canEdit
-        ? undefined
-        : access.reason;
+      : (fieldBlockedReason(access, field) ?? (saving ? 'Saving the last change…' : undefined));
 
   const current = useMemo((): Option[] => {
     switch (field) {
       case 'reviewers':
         return [
-          ...view.reviewers.map((login): Option => ({ key: userKey(login), kind: 'user', person: { login } })),
-          ...view.teams.map((name): Option => {
-            const known = access?.requestedTeams.find((team) => same(team.name, name));
+          ...view.requestedReviewers.map((login): Option => ({ key: userKey(login), kind: 'user', person: { login } })),
+          ...view.requestedTeams.map((name): Option => {
+            const known = access?.requestedTeams.find((team) => sameLogin(team.name, name));
             return { key: teamKey({ name }), kind: 'team', team: known ?? { name, slug: slugOf(name) } };
           }),
         ];
@@ -336,12 +369,12 @@ export function PrPeopleEditor({
         return view.labels.map((name) => ({
           key: labelKey(name),
           kind: 'label',
-          label: view.labelDetails.find((l) => same(l.name, name)) ?? { name },
+          label: view.labelDetails.find((l) => sameLogin(l.name, name)) ?? { name },
         }));
       case 'milestone': {
         if (!view.milestone) return [];
         // The PR copies hold the title; the access read adds the number a candidate is keyed by.
-        const known = access?.milestone && same(access.milestone.title, view.milestone.title) ? access.milestone : undefined;
+        const known = access?.milestone && sameLogin(access.milestone.title, view.milestone.title) ? access.milestone : undefined;
         return [
           known
             ? { key: milestoneKey(known), kind: 'milestone', milestone: known }
@@ -352,8 +385,10 @@ export function PrPeopleEditor({
   }, [field, view, access]);
 
   /** Every option the picker knows: the field's values, GitHub's suggestions and the candidates read so far. */
-  const options = useMemo(() => {
+  const { options, fromRepo } = useMemo(() => {
     const byKey = new Map<string, Option>();
+    /** Labels the repository has: only these can be added. */
+    const repoLabels = new Set<string>();
     const add = (option: Option) => {
       const existing = byKey.get(option.key);
       // Richer candidate details replace the bare value; a hint, once known, stays.
@@ -363,15 +398,20 @@ export function PrPeopleEditor({
       else if (existing.kind !== 'milestone') byKey.set(option.key, { ...existing, ...option } as Option);
     };
     for (const option of initial.options) add(option);
-    const lists = [candidates.base, ...candidates.found];
-    for (const list of lists) {
+    for (const list of [candidates.base, ...candidates.found]) {
       if (!list) continue;
-      for (const person of list.users) if (field !== 'reviewers' || !same(person.login, author)) add({ key: userKey(person.login), kind: 'user', person });
+      if (field === 'reviewers')
+        for (const person of list.suggested) add({ key: userKey(person.login), kind: 'user', person, hint: 'Suggested' });
+      for (const person of list.users)
+        if (field !== 'reviewers' || canBeRequested(person.login, author)) add({ key: userKey(person.login), kind: 'user', person });
       for (const team of list.teams) add({ key: teamKey(team), kind: 'team', team });
-      for (const l of list.labels) add({ key: labelKey(l.name), kind: 'label', label: l });
+      for (const l of list.labels) {
+        repoLabels.add(labelKey(l.name));
+        add({ key: labelKey(l.name), kind: 'label', label: l });
+      }
       for (const m of list.milestones) add({ key: milestoneKey(m), kind: 'milestone', milestone: m });
     }
-    return byKey;
+    return { options: byKey, fromRepo: repoLabels };
   }, [initial, candidates.base, candidates.found, field, author]);
 
   const ordered = useMemo(() => {
@@ -386,18 +426,15 @@ export function PrPeopleEditor({
     [ordered, options, query]
   );
 
-  /** Opening: the current values first, then who GitHub suggests and who already reviewed. */
+  /** Opening: the current values first, then who already reviewed (GitHub's suggestions follow as they load). */
   function begin() {
     const start: Option[] = [];
     if (field === 'milestone') start.push({ key: NO_MILESTONE, kind: 'milestone', milestone: null });
     start.push(...current);
-    if (field === 'reviewers') {
-      for (const { login, verdict } of reviewed)
-        if (!same(login, author) && VERDICT_HINT[verdict])
+    if (field === 'reviewers')
+      for (const { login, verdict, typename } of reviewed)
+        if (canBeRequested(login, author, typename) && VERDICT_HINT[verdict])
           start.push({ key: userKey(login), kind: 'user', person: { login }, hint: `${VERDICT_HINT[verdict]} · request again` });
-      for (const person of access?.suggestedReviewers ?? [])
-        start.push({ key: userKey(person.login), kind: 'user', person, hint: 'Suggested' });
-    }
     if (field === 'assignees' && access?.viewer)
       start.push({ key: userKey(access.viewer), kind: 'user', person: { login: access.viewer }, hint: 'You' });
     const seen = new Set<string>();
@@ -422,17 +459,16 @@ export function PrPeopleEditor({
 
   /** Closing applies what changed, as one write. */
   function finish(keys: string[]) {
-    const before = initial.keys;
-    const { add, remove } = diffSelection(before, keys);
+    const { add, remove } = diffSelection(initial.keys, keys);
     if (!add.length && !remove.length) return;
     const pick = (list: string[]) => list.flatMap((key) => options.get(key) ?? []);
     const url = member.url;
     switch (field) {
       case 'reviewers': {
-        const added = pick(add);
-        const removed = pick(remove);
         const logins = (list: Option[]) => list.flatMap((o) => (o.kind === 'user' ? [o.person.login] : []));
         const teams = (list: Option[]) => list.flatMap((o) => (o.kind === 'team' ? [o.team] : []));
+        const added = pick(add);
+        const removed = pick(remove);
         void sendPeopleEdit({ url, field, add: logins(added), remove: logins(removed), addTeams: teams(added), removeTeams: teams(removed) });
         return;
       }
@@ -442,9 +478,10 @@ export function PrPeopleEditor({
         return;
       }
       case 'labels': {
-        const chosen = pick(add).flatMap((o) => (o.kind === 'label' ? [o.label] : []));
+        // Only labels the repository has: never one carried over from another repository's list.
+        const chosen = pick(add.filter((key) => fromRepo.has(key))).flatMap((o) => (o.kind === 'label' ? [o.label] : []));
         const dropped = pick(remove).flatMap((o) => (o.kind === 'label' ? [o.label.name] : []));
-        void sendPeopleEdit({ url, field, add: chosen, remove: dropped });
+        if (chosen.length || dropped.length) void sendPeopleEdit({ url, field, add: chosen, remove: dropped });
         return;
       }
       case 'milestone': {
@@ -456,6 +493,7 @@ export function PrPeopleEditor({
     }
   }
   const setOpen = (next: boolean) => {
+    if (next && accessError) people.retryAccess();
     if (next && disabledReason) return;
     if (!next && session.current) {
       session.current = false;
@@ -471,22 +509,28 @@ export function PrPeopleEditor({
       aria-label={label.edit}
       aria-disabled={disabledReason ? true : undefined}
       aria-description={disabledReason}
+      aria-busy={saving || undefined}
       data-field={field}
     >
       <Pencil size={14} aria-hidden="true" />
     </ComboboxPrimitive.Trigger>
   );
   const footer =
-    field === 'milestone'
-      ? undefined
-      : field === 'reviewers' && candidates.base?.teamsUnavailable
-        ? 'Teams aren’t available to this sign-in.'
-        : `${draft.length} selected`;
-  const empty = candidates.error
-    ? `Couldn’t load the list. ${candidates.error}`
-    : !candidates.base || candidates.searching
-      ? 'Loading…'
-      : label.empty;
+    field === 'reviewers' && candidates.base?.teamsUnavailable ? 'Teams aren’t available to this sign-in.' : `${draft.length} selected`;
+  const failed = candidates.error;
+  const empty = failed ? (
+    <span className="pr-people-load-error" role="alert">
+      Couldn’t load the list. {failed}{' '}
+      {/* Keeps focus in the search field, so arrows and Enter go on working after Retry. */}
+      <button type="button" onPointerDown={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()} onClick={candidates.retry}>
+        Retry
+      </button>
+    </span>
+  ) : !candidates.base || candidates.searching ? (
+    'Loading…'
+  ) : (
+    label.empty
+  );
   const multiple = field !== 'milestone';
   const shared = {
     items: ordered,
@@ -501,7 +545,7 @@ export function PrPeopleEditor({
   const content = (
     <ComboboxContent container={container} collisionBoundary={[]} className="pr-people-popup" data-field={field}>
       <ComboboxInput aria-label={label.search} placeholder={`${label.search}…`} />
-      <ComboboxEmpty>{filtered.length ? null : empty}</ComboboxEmpty>
+      <ComboboxEmpty>{filtered.length && !failed ? null : empty}</ComboboxEmpty>
       <ComboboxList>
         {(key: string) => {
           const option = options.get(key);
@@ -555,16 +599,40 @@ export function PrPeopleEditor({
   );
 }
 
-/** Asks an earlier reviewer to review again: one click, shown at once, rolled back if GitHub refuses. */
-export function ReRequestReview({ member, login, people }: { member: ReviewMember; login: string; people: PrPeopleState }) {
-  if (!people.access?.canEdit || same(login, people.access.author)) return null;
+/**
+ * Asks an earlier reviewer to review again: one click, shown at once, rolled back if GitHub refuses. Offered where
+ * Feedback offers its request-review button: an open PR the reader can update, never for the author or a bot.
+ */
+export function ReRequestReview({
+  member,
+  login,
+  typename,
+  people,
+  feedback,
+}: {
+  member: ReviewMember;
+  login: string;
+  typename?: string;
+  people: PrPeopleState;
+  feedback?: { viewerCanUpdate: boolean; state: string };
+}) {
+  const busy = useWriteInFlight(reRequestKey(member.url, login));
+  const access = people.access;
+  if (!access || fieldBlockedReason(access, 'reviewers') || !canBeRequested(login, access.author, typename)) return null;
+  if (feedback && (!feedback.viewerCanUpdate || feedback.state !== 'OPEN')) return null;
   return (
     <button
       type="button"
       className="workbench-icon pr-people-rerequest"
       aria-label={`Request a review from ${login} again`}
       title={`Request a review from ${login} again`}
-      onClick={() => void sendPeopleEdit({ url: member.url, field: 'reviewers', add: [login], remove: [], addTeams: [], removeTeams: [] })}
+      disabled={busy}
+      onClick={() =>
+        void sendPeopleEdit(
+          { url: member.url, field: 'reviewers', add: [login], remove: [], addTeams: [], removeTeams: [] },
+          reRequestKey(member.url, login)
+        )
+      }
     >
       <RefreshCw size={13} aria-hidden="true" />
     </button>
@@ -573,4 +641,23 @@ export function ReRequestReview({ member, login, people }: { member: ReviewMembe
 
 export function PrPeopleFailure({ url, field }: { url: string; field: PrPeopleField }) {
   return <WriteFailureNotice failureKey={peopleFailureKey(url, field)} className="pr-people-failure" />;
+}
+/** A re-request's failure, under the reviewer list. */
+export function ReRequestFailure({ url, login }: { url: string; login: string }) {
+  return <WriteFailureNotice failureKey={reRequestKey(url, login)} className="pr-people-failure" />;
+}
+
+/** The access read failed: say so once, with Retry, instead of leaving the editors silently disabled. */
+export function PrPeopleAccessError({ people }: { people: PrPeopleState }) {
+  if (!people.accessError) return null;
+  return (
+    <p className="write-failure pr-people-access-error" role="status">
+      <span>Couldn’t check whether you can edit this PR.</span>
+      <span className="write-failure-actions">
+        <button type="button" onClick={people.retryAccess}>
+          Retry
+        </button>
+      </span>
+    </p>
+  );
 }

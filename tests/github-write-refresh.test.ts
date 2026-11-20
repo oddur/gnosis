@@ -277,7 +277,7 @@ void test('links into a PR on GitHub name that PR', () => {
 void test('every GitHub write in the app is in the inventory', () => {
   const root = path.resolve(import.meta.dirname, '..');
   const pattern =
-    /\bmutation(?=\s*[($A-Z{])|'(?:POST|PUT|PATCH|DELETE) \/repos|\.(?:pulls|issues|reactions|actions|repos|git)\.(?:create|update|delete|remove|add|merge|requestReviewers|reRun|cancel|dismiss|submit)\w*\(|^\s+'push',$/gm;
+    /\bmutation(?=\s*[($A-Z{])|'(?:POST|PUT|PATCH|DELETE) \/repos|\.(?:pulls|issues|reactions|actions|repos|git)\.(?:create|update|delete|remove|add|set|merge|requestReviewers|reRun|cancel|dismiss|submit)\w*\(|^\s+'push',$/gm;
   const found = new Set<string>();
   for (const dir of ['src', 'lib']) {
     for (const file of fs.readdirSync(path.join(root, dir))) {
@@ -300,7 +300,7 @@ void test('every GitHub write in the app is in the inventory', () => {
     'src/pr-metadata-write-service.ts: .issues.addAssignees(',
     'src/pr-metadata-write-service.ts: .issues.addLabels(',
     'src/pr-metadata-write-service.ts: .issues.removeAssignees(',
-    'src/pr-metadata-write-service.ts: .issues.removeLabel(',
+    'src/pr-metadata-write-service.ts: .issues.setLabels(',
     'src/pr-metadata-write-service.ts: .issues.update(',
     'src/pr-metadata-write-service.ts: .pulls.removeRequestedReviewers(',
     'src/pr-metadata-write-service.ts: .pulls.requestReviewers(',

@@ -5690,11 +5690,16 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .pr-people-edit-wrap { display:inline-flex; }
 .conversation-reviewer-state { display:inline-flex; align-items:center; gap:2px; flex-shrink:0; }
 .pr-people-rerequest.workbench-icon { width:24px; height:24px; }
-.pr-people-team { display:inline-flex; align-items:center; gap:6px; min-width:0; color:var(--foreground); }
-.pr-people-team > span:not(.sr-only) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Team names wrap rather than truncate: "Platform reviewers" must read in full beside its verdict. */
+.pr-people-team { display:inline-flex; align-items:flex-start; gap:6px; min-width:0; color:var(--foreground); line-height:1.4; }
+.pr-people-team > svg { flex-shrink:0; margin-top:3px; }
+.pr-people-team > span:not(.sr-only) { min-width:0; overflow-wrap:anywhere; }
 .pr-people-milestone { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; color:var(--foreground); }
 .pr-people-due { color:var(--muted-foreground); font-size:var(--type-caption); }
 .pr-people-failure { margin-top:2px; }
+.pr-people-access-error { margin:0; }
+.pr-people-load-error button { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
+.pr-people-edit[aria-busy=true] { opacity:.6; cursor:progress; }
 .pr-people-popup.selection-popup { width:320px; max-width:var(--available-width); }
 .pr-people-option { display:flex; align-items:center; gap:8px; width:100%; min-width:0; }
 .pr-people-option-text { display:flex; flex-direction:column; min-width:0; line-height:1.35; }
