@@ -53,10 +53,23 @@ const analyser =
   };
 
 /** A stand-in Mergiraf binary for the failure-path cases. */
-async function mergirafFor(mode, dir) {
+async function mergirafFor(mode, dir, caseDir) {
   if (!mode || mode === 'real') return MERGIRAF;
   if (mode === 'missing') return path.join(dir, 'no-mergiraf');
   const script = path.join(dir, 'mergiraf-wrapper.sh');
+  // A resolver output written by hand, from the case's canned/ directory, for a file that has one; Mergiraf for the
+  // rest. The review probes use it to replay a wrong output exactly.
+  if (mode === 'canned') {
+    const canned = path.join(caseDir, 'canned');
+    await fs.writeFile(
+      script,
+      `#!/bin/sh\nfor a in "$@"; do case "$a" in --path-name=*) name="\${a#--path-name=}";; esac; done\n` +
+        `file='${canned}'/"$name"\nif [ -f "$file" ]; then cat "$file"; grep -q '^<<<<<<<' "$file" && exit 1; exit 0; fi\n` +
+        `exec '${MERGIRAF}' "$@"\n`,
+      { mode: 0o755 }
+    );
+    return script;
+  }
   const body = {
     fail: 'echo "mergiraf: internal error" >&2\nexit 134\n',
     hang: 'sleep 60\n',
@@ -190,7 +203,7 @@ export async function runCase(c, { keep = false } = {}) {
       mergiraf: () => binary,
       suggest: () => Promise.reject(new Error('No AI in the conflict lab.')),
     });
-    const binary = await mergirafFor(meta.mergiraf, dir);
+    const binary = await mergirafFor(meta.mergiraf, dir, c.dir);
     const run = (request) => service.run(request, new AbortController().signal);
     const analyse = analyser(meta.languagesOff);
 
