@@ -5419,6 +5419,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-status { flex:none; display:inline-flex; align-items:center; gap:4px; padding-left:8px; font-size:var(--type-caption); font-weight:500; line-height:1.45; color:var(--muted-foreground); white-space:nowrap; }
 .morning-status.is-next { color:var(--foreground); }
 .morning-status.is-conflicts { color:var(--color-danger); }
+/* Starred (lib/overview-starred.ts) uses the same rows. A merged or closed starred PR stays as a quiet done row at the
+   end: its title muted, as a chain's PRs are; its state icon and "Merged" or "Closed" say what happened. */
+.morning-row.is-done .morning-title-text, .morning-stack.is-done > .morning-stack-head .morning-title-text { color:var(--muted-foreground); }
 /* Stacks: a header with the name, the repository once and the next step, then the chain in merge order on a thin
    connector, as on the stack page (StackDependencyChain). The step and the numbers never truncate; titles do, at
    their end. */

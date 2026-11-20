@@ -26,6 +26,26 @@ export interface PrGenerationActions {
 }
 export type PrGenerationActionsFor = (members: ReviewMember[]) => PrGenerationActions;
 
+/**
+ * The star toggle, in one set of words wherever it is offered (the queue's menus and the Overview's): "Star PR #312"
+ * and "Unstar PR #312", and for a stack "Star all PRs in this stack" and "Unstar PRs in this stack". Unstarring a stack
+ * unstars every PR of it. `busy`: a star change is being saved, so the toggle waits rather than being dropped.
+ */
+export function starAction({ members, starred, busy, onStarChange }: {
+  members: readonly ReviewMember[];
+  starred: boolean;
+  busy?: boolean;
+  onStarChange: (members: ReviewMember[], starred: boolean) => unknown;
+}): EntryActionGroups[number][number] {
+  const stack = members.length > 1;
+  return {
+    label: stack ? (starred ? 'Unstar PRs in this stack' : 'Star all PRs in this stack') : `${starred ? 'Unstar' : 'Star'} PR #${members[0].number}`,
+    icon: <Star size={15} />,
+    disabled: busy,
+    run: () => onStarChange([...members], !starred),
+  };
+}
+
 export function prEntryActionGroups({
   members,
   starredUrls,
@@ -97,16 +117,7 @@ export function prEntryActionGroups({
         : []),
     ],
     [
-      {
-        label: stack
-          ? starred
-            ? 'Unstar PRs in this stack'
-            : 'Star all PRs in this stack'
-          : `${starred ? 'Unstar' : 'Star'} PR #${members[0].number}`,
-        icon: <Star size={15} />,
-        disabled: busy,
-        run: () => onStarChange(members, !starred),
-      },
+      starAction({ members, starred, busy, onStarChange }),
       ...(onRefresh
         ? [{ label: 'Refresh GitHub status', icon: <RefreshCw size={15} />, disabled: busy, run: onRefresh }]
         : []),
