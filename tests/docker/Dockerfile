@@ -21,10 +21,9 @@ COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci
 COPY --chown=node:node resources/mergiraf/manifest.json resources/mergiraf/COPYING resources/mergiraf/NOTICE.md resources/mergiraf/
 COPY --chown=node:node scripts/prepare-mergiraf.mjs scripts/
-# test-browser-docker.mjs downloads the Linux runtime into .cache/mergiraf on the host. When its version
-# stamp matches, prepare:mergiraf keeps it and does not download from codeberg.org.
-ARG TARGETARCH
-COPY --chown=node:node .cache/mergiraf/linux-${TARGETARCH}/ resources/mergiraf/runtime/
+# test-browser-docker.mjs prepares the Linux runtime for this architecture on the host and passes it as the
+# `mergiraf` build context. Its version stamp matches, so prepare:mergiraf keeps it and does not download.
+COPY --chown=node:node --from=mergiraf . resources/mergiraf/runtime/
 RUN npm run prepare:mergiraf
 
 # Same SUID sandbox setup as CI, so Electron runs sandboxed as a non-root user.
