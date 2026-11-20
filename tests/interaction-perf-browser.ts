@@ -480,6 +480,8 @@ void app.whenReady().then(async () => {
       send();
     };
     const click = (expression: string) => async () => {
+      // A sync tick re-renders the queue, so a row's badge can be missing for a moment. Wait for it.
+      await wait(`!!(${expression})`, 100);
       const { x, y } = await point(expression);
       return () => {
         win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
