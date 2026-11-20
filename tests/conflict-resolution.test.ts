@@ -998,3 +998,36 @@ void test('a base branch that keeps moving stops after a few merges and pushes n
   assert.equal(reply.baseMoved?.conflicts, 0);
   assert.ok(reply.preview);
 });
+
+void test('a restack check that fails early waits for every read it started', async () => {
+  const { prepareRestack } = await import('../src/conflict-restack');
+  const finished: string[] = [];
+  const urls = ['https://github.com/test/repo/pull/2', 'https://github.com/test/repo/pull/3'];
+  const session = {
+    url: 'https://github.com/test/repo/pull/1',
+    account: 'tester',
+    commitSha: 'a'.repeat(40),
+    headRepo: 'test/repo',
+    headBranch: 'feature',
+  } as Parameters<typeof prepareRestack>[0];
+  const read = async (url: string) => {
+    // The dependents answer late; the root answers at once from another account, so its check fails first.
+    if (url !== session.url) await new Promise((resolve) => setTimeout(resolve, 20));
+    finished.push(url);
+    return { url, account: url === session.url ? 'someone-else' : 'tester' } as Awaited<
+      ReturnType<Parameters<typeof prepareRestack>[2]['read']>
+    >;
+  };
+  await assert.rejects(
+    prepareRestack(session, urls, {
+      git: () => Promise.reject(new Error('no git expected')),
+      read,
+      directory: '',
+      remote: () => '',
+      signal: new AbortController().signal,
+      report: () => {},
+    }),
+    /Cannot update/
+  );
+  assert.deepEqual(finished.sort(), [session.url, ...urls].sort(), 'no read is still running when the check rejects');
+});

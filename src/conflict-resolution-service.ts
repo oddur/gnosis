@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { settleInOrder } from '../lib/bounded';
 import fs from 'node:fs/promises';
 import {
   CONFLICT_FILE_LIMIT,
@@ -760,7 +761,7 @@ export function createConflictResolutionService(deps: Deps) {
       if (restack?.status === 'prepared') {
         // Recover a successful atomic push whose response or local persistence was interrupted.
         const urls = restack.branches.map((branch) => branch.url);
-        const states = await Promise.all(deps.readMany ? deps.readMany(urls) : urls.map((u) => deps.read(u)));
+        const states = await settleInOrder(deps.readMany ? deps.readMany(urls) : urls.map((u) => deps.read(u)));
         assertAccount(ctx);
         if (
           states.length &&
