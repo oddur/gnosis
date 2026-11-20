@@ -130,17 +130,7 @@ export function movesInput(
   return hunks ? { mode: 'modified', text: after.content, hunks } : null;
 }
 
-/**
- * A PR used this recently never leaves to make room: past `MOVES_PR_ENTRIES` the store holds more for a while, so
- * views that show many PRs at once (a large stack) never evict each other's in turn.
- */
-export const MOVES_PR_IDLE_MS = 30_000;
-
-export function createMovesStore(
-  worker: MovesWorker,
-  now: () => number = Date.now,
-  { idleMs = MOVES_PR_IDLE_MS }: { idleMs?: number } = {}
-) {
+export function createMovesStore(worker: MovesWorker, now: () => number = Date.now) {
   const prs = new Map<string, PrState>();
   /** Each tracked file revision's PR revision. */
   const byKey = new Map<string, string>();
@@ -151,8 +141,12 @@ export function createMovesStore(
     for (const listener of listeners) listener();
   };
 
-  /** PRs that left to make room, by URL: a view that shows one tracks it again (`evictions`). */
-  const evicted = new Map<string, number>();
+  /**
+   * Views that track each PR revision and have not released it. A held PR never leaves: not to make room, not with
+   * the inspection data, not for a newer head. Only PRs no view holds leave, the least recently used first.
+   */
+  const holds = new Map<string, number>();
+  const held = (revision: string) => (holds.get(revision) ?? 0) > 0;
   function drop(revision: string) {
     const pr = prs.get(revision);
     if (!pr) return false;
@@ -328,13 +322,11 @@ export function createMovesStore(
       pr.at = now();
       return marksOf(pr, fileKey);
     },
-    /** Counts PRs dropped, so views that track PRs track one again that left while shown. */
-    /** How many times these PRs left to make room: a view that shows them tracks them again when it grows. */
-    evictions: (urls: readonly string[]) => urls.reduce((n, url) => n + (evicted.get(url) ?? 0), 0),
     /**
-     * Starts matching a PR's files, or picks up where it left off: called with every file Changes lists, each time
-     * they change. Files whose text is here (an added file's patch, a side in the cache) are fingerprinted now; `text`
-     * finds a modified file's sides in the cache. Returns the files still waiting for a side, for the caller to read.
+     * Starts matching a PR's files, or picks up where it left off, and holds the PRs for the caller until it releases
+     * them: called by each view with every file it shows, each time they change. Files whose text is here (an added
+     * file's patch, a side in the cache) are fingerprinted now; `text` finds a modified file's sides in the cache.
+     * Returns the files still waiting for a side, for the caller to read, and the release.
      */
     track(
       entries: readonly { snapshot: PrChanges; file: PrChangeFile }[],
@@ -342,7 +334,7 @@ export function createMovesStore(
       text: (snapshot: PrChanges, file: PrChangeFile) => { after?: PrFileSide; before?: PrFileSide } | undefined,
       /** What `allowed` says, as a string: a change of Settings plans the PR again. */
       settings = ''
-    ): { snapshot: PrChanges; file: PrChangeFile }[] {
+    ): { waiting: { snapshot: PrChanges; file: PrChangeFile }[]; release: () => void } {
       const byRevision = new Map<string, { snapshot: PrChanges; file: PrChangeFile }[]>();
       for (const entry of entries) {
         if (!tracked(entry.snapshot)) continue;
@@ -351,8 +343,8 @@ export function createMovesStore(
       }
       const waiting: { snapshot: PrChanges; file: PrChangeFile }[] = [];
       let dropped = false;
-      // PRs this call creates never make room for each other.
-      const created = new Set<PrState>();
+      // Held before anything leaves: nothing this call touches can make room for something else it touches.
+      for (const revision of byRevision.keys()) holds.set(revision, (holds.get(revision) ?? 0) + 1);
       for (const [revision, list] of byRevision) {
         const signature = `${settings}\u0001${list
           .map(({ file }) => `${file.path}\u0000${file.changeId}\u0000${file.status}`)
@@ -366,8 +358,8 @@ export function createMovesStore(
         }
         if (!pr) {
           const url = list[0].snapshot.url;
-          // A new head replaces the PR's old revision: its notes would name lines that moved.
-          for (const [other, state] of prs) if (state.url === url && drop(other)) dropped = true;
+          // A new head replaces the PR's old revision, unless a view still shows that one.
+          for (const [other, state] of prs) if (state.url === url && !held(other) && drop(other)) dropped = true;
           pr = {
             url,
             revision,
@@ -401,20 +393,6 @@ export function createMovesStore(
                   : { family, state: 'failed', reason: plan.reason === 'off' ? 'Language off' : 'No patch' }
               );
             }
-          // The least recently used PRs leave, whole.
-          created.add(pr);
-          // The least recently used PRs leave, whole, if idle: none this call made, none used just now.
-          while (prs.size > MOVES_PR_ENTRIES) {
-            let oldest: PrState | undefined;
-            for (const state of prs.values())
-              if (!created.has(state) && now() - state.at >= idleMs && (!oldest || state.at < oldest.at))
-                oldest = state;
-            if (!oldest) break;
-            if (drop(oldest.revision)) {
-              dropped = true;
-              evicted.set(oldest.url, (evicted.get(oldest.url) ?? 0) + 1);
-            }
-          }
         }
         pr.at = now();
         if (pr.skipped) continue;
@@ -429,8 +407,26 @@ export function createMovesStore(
         }
         recheck(pr);
       }
+      // PRs no view holds make room, the least recently used first.
+      while (prs.size > MOVES_PR_ENTRIES) {
+        let oldest: PrState | undefined;
+        for (const state of prs.values())
+          if (!held(state.revision) && (!oldest || state.at < oldest.at)) oldest = state;
+        if (!oldest || !drop(oldest.revision)) break;
+        dropped = true;
+      }
       if (dropped) changed();
-      return waiting;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        for (const revision of byRevision.keys()) {
+          const left = (holds.get(revision) ?? 0) - 1;
+          if (left > 0) holds.set(revision, left);
+          else holds.delete(revision);
+        }
+      };
+      return { waiting, release };
     },
     /**
      * A file's sides were read (for its scopes, lib/use-syntax-contents.ts): its fingerprints can start. The input
@@ -462,10 +458,11 @@ export function createMovesStore(
     uses(into: Map<string, number>) {
       for (const pr of prs.values()) if ((into.get(pr.url) ?? -Infinity) < pr.at) into.set(pr.url, pr.at);
     },
-    /** Drops these PRs, or every PR, with the rest of their inspection data. */
+    /** Drops these PRs, or every PR, with the rest of their inspection data: all but those a view holds. */
     forget(urls?: ReadonlySet<string>) {
       let dropped = false;
-      for (const [revision, pr] of [...prs]) if ((!urls || urls.has(pr.url)) && drop(revision)) dropped = true;
+      for (const [revision, pr] of [...prs])
+        if ((!urls || urls.has(pr.url)) && !held(revision) && drop(revision)) dropped = true;
       if (dropped) changed();
     },
     stats() {

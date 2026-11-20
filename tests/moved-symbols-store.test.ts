@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createMovesStore, MOVES_MAX_FILES, MOVES_PR_ENTRIES, type MovesWorker } from '../lib/moved-symbols-core';
-import { currentChanges, movesFilePlan } from '../lib/moved-symbols-plan';
+import { MOVES_KEY, currentChanges, movesFailureKey, movesFilePlan } from '../lib/moved-symbols-plan';
 import { moveEditsLabel, moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
 import {
   moveEdits,
@@ -122,7 +122,11 @@ void test('A topic’s file with some of the hunks is fingerprinted from the PR�
   const store = createMovesStore(worker);
   const pr = snapshot(1);
   const file = modified('src/a.ts');
-  assert.equal(store.track([{ snapshot: pr, file }], allowed, nothing).length, 1, 'The file waits for its new side');
+  assert.equal(
+    store.track([{ snapshot: pr, file }], allowed, nothing).waiting.length,
+    1,
+    'The file waits for its new side'
+  );
   // An Explanation topic's file: the same revision key, only the first hunk.
   const topic = { ...file, patch: file.patch?.split(/\n(?=@@)/)[0] };
   store.noteText(pr, topic, text('x\n'.repeat(20)));
@@ -135,7 +139,7 @@ void test('A topic’s file with some of the hunks is fingerprinted from the PR�
 function trackPair(store: ReturnType<typeof createMovesStore>, pr: PrChanges) {
   const from = modified('src/a.ts'),
     to = added('src/b.ts');
-  store.track(
+  const { release } = store.track(
     [
       { snapshot: pr, file: from },
       { snapshot: pr, file: to },
@@ -143,8 +147,11 @@ function trackPair(store: ReturnType<typeof createMovesStore>, pr: PrChanges) {
     allowed,
     () => ({ after: text('x\n'.repeat(20)) })
   );
-  return { from, to };
+  return { from, to, release };
 }
+/** A view that tracks a PR and goes away at once: the PR is no longer held. */
+const passing = (store: ReturnType<typeof createMovesStore>, n: number) =>
+  store.track([{ snapshot: snapshot(n), file: added(`src/${n}.ts`) }], allowed, nothing).release();
 async function answer(reads: ReturnType<typeof fakeWorker>['reads']) {
   for (const read of reads.splice(0))
     read.resolve(read.input.mode === 'added' ? { before: [], after: [print(1)] } : { before: [print(1)], after: [] });
@@ -154,14 +161,14 @@ async function answer(reads: ReturnType<typeof fakeWorker>['reads']) {
 void test('A PR tracked again after it left shows each note once', async () => {
   const { worker, reads } = fakeWorker();
   let clock = 0;
-  const store = createMovesStore(worker, () => ++clock, { idleMs: 0 });
+  const store = createMovesStore(worker, () => ++clock);
   const pr = snapshot(1);
-  const { to } = trackPair(store, pr);
+  const { to, release } = trackPair(store, pr);
   await answer(reads);
   assert.equal(store.peek(keyOf(pr, to))?.marks.length, 1);
-  // Other PRs push it out, then it is tracked again.
-  for (let n = 2; n <= MOVES_PR_ENTRIES + 1; n++)
-    store.track([{ snapshot: snapshot(n), file: added('src/c.ts') }], allowed, nothing);
+  // Its view goes away; other PRs push it out, then it is tracked again.
+  release();
+  for (let n = 2; n <= MOVES_PR_ENTRIES + 1; n++) passing(store, n);
   assert.equal(store.peek(keyOf(pr, to)), undefined, 'It left whole, marks too');
   trackPair(store, pr);
   await answer(reads);
@@ -171,14 +178,11 @@ void test('A PR tracked again after it left shows each note once', async () => {
 void test('PRs leave least recently used first, and a PR still waiting for files is kept while used', async () => {
   const { worker, reads } = fakeWorker();
   let clock = 0;
-  const store = createMovesStore(worker, () => ++clock, { idleMs: 0 });
+  const store = createMovesStore(worker, () => ++clock);
   const waitingPr = snapshot(1);
   const { to } = trackPair(store, waitingPr);
   // Many files of other PRs, more than any file limit would hold; the waiting PR is used again in between.
-  for (let n = 2; n <= MOVES_PR_ENTRIES + 10; n++) {
-    store.track([{ snapshot: snapshot(n), file: added(`src/${n}.ts`) }], allowed, nothing);
-    if (n % 5 === 0) trackPair(store, waitingPr);
-  }
+  for (let n = 2; n <= MOVES_PR_ENTRIES + 10; n++) passing(store, n);
   await answer(reads);
   assert.equal(store.peek(keyOf(waitingPr, to))?.marks.length, 1, 'Its family still matched');
   const stats = store.stats();
@@ -191,8 +195,9 @@ void test('A new head replaces the PR’s old revision, and the PR counts as use
   let clock = 100;
   const store = createMovesStore(worker, () => clock);
   const old = snapshot(1, 'head-1');
-  const { to } = trackPair(store, old);
+  const { to, release } = trackPair(store, old);
   await answer(reads);
+  release();
   assert.equal(store.peek(keyOf(old, to))?.marks.length, 1);
   clock = 200;
   store.track([{ snapshot: snapshot(1, 'head-2'), file: added('src/b.ts') }], allowed, nothing);
@@ -289,16 +294,14 @@ void test('Only lines the body diff matched dim: a comment line added in the mov
 void test('A shown PR is the last to leave, and one that left while shown can be tracked again', async () => {
   const { worker, reads } = fakeWorker();
   let clock = 0;
-  const store = createMovesStore(worker, () => ++clock, { idleMs: 0 });
+  const store = createMovesStore(worker, () => ++clock);
   const shown = snapshot(1);
   const { to } = trackPair(store, shown);
   await answer(reads);
   for (let n = 2; n <= MOVES_PR_ENTRIES + 5; n++) {
-    store.track([{ snapshot: snapshot(n), file: added('src/c.ts') }], allowed, nothing);
-    // A mounted diff reads its marks on every render.
+    passing(store, n);
     assert.equal(store.peek(keyOf(shown, to))?.marks.length, 1, `Still shown after PR ${n}`);
   }
-  assert.equal(store.evictions([shown.url]), 0, 'Never evicted while shown');
 });
 
 void test('New Settings or another file list plan the PR again', () => {
@@ -409,27 +412,45 @@ void test('A subscription told at once (a hidden window) still hears the next ch
 
 // ── Third review ────────────────────────────────────────────────────────────
 
-void test('One call tracking more PRs than the store keeps evicts none of them, and views do not evict each other in turn', () => {
-  const { worker } = fakeWorker();
+void test('PRs a view holds never leave: not to make room, not with the idle sweep; unheld ones leave oldest first', async () => {
+  const { worker, reads } = fakeWorker();
   let clock = 0;
-  const store = createMovesStore(worker, () => clock);
-  // A large stack: more revisions than the store keeps, all in one call.
+  const store = createMovesStore(worker, () => ++clock);
+  // A large stack: more revisions than the store keeps, all in one call, which evicts none of them.
   const stack = Array.from({ length: MOVES_PR_ENTRIES + 6 }, (_, i) => ({
     snapshot: snapshot(i + 1),
     file: added('src/a.ts'),
   }));
-  store.track(stack, allowed, nothing);
+  const view = store.track(stack, allowed, nothing);
   assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES + 6, 'None of them left');
-  // Another view tracks its PR right away: the stack's PRs were just used, so none leaves for it.
-  store.track([{ snapshot: snapshot(100), file: added('src/a.ts') }], allowed, nothing);
-  const urls = stack.map((entry) => entry.snapshot.url);
-  assert.equal(store.evictions(urls), 0, 'The stack is not told to track again');
-  // Long after, idle PRs make room, and only the evicted PR's views hear of it.
-  clock += 60_000;
-  store.track([{ snapshot: snapshot(101), file: added('src/a.ts') }], allowed, nothing);
+  // Another view comes and goes: on the next track, its PR is the one that leaves, never the stack's.
+  passing(store, 100);
+  const shown = snapshot(1);
+  const { to } = trackPair(store, shown);
+  await answer(reads);
+  assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES + 6);
+  assert.ok(!store.stats().prs.some((p) => p.url.endsWith('/100')));
+  // The idle sweep forgets the stack's PRs with their inspection data: a view still shows them, so they stay.
+  store.forget(new Set(stack.map((entry) => entry.snapshot.url)));
+  assert.equal(store.peek(keyOf(shown, to))?.marks.length, 1, 'Still there for the view that shows it');
+  // Once released, they leave on the next track, the least recently used first, down to the limit.
+  view.release();
+  passing(store, 200);
   assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES);
-  assert.ok(store.evictions(urls) > 0);
-  assert.equal(store.evictions(['https://github.com/a/b/pull/101']), 0);
+  assert.ok(
+    store.stats().prs.some((p) => p.url === shown.url),
+    'The PR the pair view still holds stays'
+  );
+});
+
+void test('A moves read that ends without the file fails its family; another read only when the file cannot be read', () => {
+  const key = 'file';
+  for (const cause of ['budget', 'retries', 'content', 'cap'] as const)
+    assert.equal(movesFailureKey(key + MOVES_KEY, cause), key);
+  assert.equal(movesFailureKey(key, 'cap'), undefined, 'The scope cap refusing a scope read');
+  assert.equal(movesFailureKey(key, 'retries'), undefined, 'A scope read out of tries');
+  assert.equal(movesFailureKey(key, 'budget'), undefined);
+  assert.equal(movesFailureKey(key, 'content'), key, 'A file that cannot be read');
 });
 
 void test('Only the member’s current file list counts: an older head’s is read again', () => {
@@ -447,4 +468,6 @@ void test('Only the member’s current file list counts: an older head’s is re
     currentChanges(member, () => otherBase),
     undefined
   );
+  // A member with no base (a saved explanation's) is current by its head.
+  assert.ok(currentChanges({ ...member, baseSha: '' }, () => otherBase));
 });

@@ -59,7 +59,27 @@ export function currentChanges(
   peek: (member: InspectionRevision) => PrChanges | undefined
 ): PrChanges | undefined {
   const snapshot = peek(member);
-  return snapshot && snapshot.metadata.headSha === member.headSha && snapshot.metadata.baseSha === member.baseSha
+  // A member without a base (a saved explanation's) is current by its head alone.
+  return snapshot &&
+    snapshot.metadata.headSha === member.headSha &&
+    (!member.baseSha || snapshot.metadata.baseSha === member.baseSha)
     ? snapshot
     : undefined;
+}
+
+/**
+ * A moves read's queue key (lib/use-syntax-contents.ts): the file's key with this after it. It is an entry of its own,
+ * never joined to the scope read of the same file, so the scope cap or a view's refusal never takes it out of the
+ * queue; the read itself is shared in the inspection cache.
+ */
+export const MOVES_KEY = '\u0000moves';
+/**
+ * The file revision whose moved-symbol family a read's end fails, or undefined (#398). A moves read that ends without
+ * the file fails its family whatever the cause (its budget spent, its tries run out, the file not readable): nothing
+ * else will read it. Another read fails it only when the file cannot be read at all; the scope cap refusing a scope
+ * read, or a scope read's tries running out, says nothing about the moves read.
+ */
+export function movesFailureKey(key: string, cause: 'content' | 'budget' | 'cap' | 'retries'): string | undefined {
+  if (key.endsWith(MOVES_KEY)) return key.slice(0, -MOVES_KEY.length);
+  return cause === 'content' ? key : undefined;
 }

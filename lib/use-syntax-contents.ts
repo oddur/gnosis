@@ -28,14 +28,14 @@ import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import {
   MOVES_MAX_FILES,
   failMovesKey,
-  movesEvictions,
   noteMovesFailure,
   noteMovesText,
-  onMoves,
   trackMoves,
 } from './moved-symbols-store';
+import { MOVES_KEY, movesFailureKey } from './moved-symbols-plan';
 /** The moves reads' budgets, one per head: `moves:<head>`. */
 const MOVES_BUDGET = 'moves:';
+
 /** Reads for moved symbols per PR, apart from the reads scopes may make (`SYNTAX_CONTENTS_PER_PR`). */
 const MOVES_READS = MOVES_MAX_FILES;
 /**
@@ -50,11 +50,12 @@ export const syntaxContents = createSyntaxContentsScheduler();
 // still hold is swept when idle.
 onInspectionForget((urls) => syntaxContents.forget(urls));
 onInspectionUses((into) => syntaxContents.lastUses(into));
-// A file whose contents cannot be read, or whose moves read its own budget refused, leaves its moved-symbol family
-// unmatched rather than waiting for it forever (#398). Another job's refusal (the scope cap, a view, the predicted next
-// PR) says nothing about the moves read, and tries that ran out may still pass on a later read.
-syntaxContents.onFailure((key, failure, cause, job) => {
-  if (cause === 'content' || (cause === 'budget' && job.budget?.name.startsWith(MOVES_BUDGET))) failMovesKey(key, failure.message);
+// A moves read that ends without the file (its budget spent, its tries run out, the file not readable) leaves the
+// file's moved-symbol family unmatched rather than waiting for it forever (#398). Of other reads, only a file that
+// cannot be read at all says anything about moves: a scope read refused by the scope cap does not.
+syntaxContents.onFailure((key, failure, cause) => {
+  const file = movesFailureKey(key, cause);
+  if (file) failMovesKey(file, failure.message);
 });
 // Each read's tier, wait, run time, tries and outcome, so an export shows why breadcrumbs came late.
 addDiagnosticsSource('syntaxContents', () => syntaxContentsDiagnostics(syntaxContents.stats()));
@@ -322,26 +323,24 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
     },
     () => epoch
   );
-  // A PR of these files that left the store to make room is tracked again; other PRs leaving re-run nothing.
-  const urls = [...new Set(files.map((file) => file.snapshot.url))];
-  const dropped = useSyncExternalStore(onMoves, () => movesEvictions(urls));
   useEffect(() => {
     if (!settings.enabled || !files.length) return;
     const enabled = (path: string) => pathEnabled(settings, path);
     const byKey = new Map(files.map((file) => [`${file.snapshot.url}\u0000${file.file.path}`, file]));
-    const waiting = trackMoves(files, enabled, (snapshot, file) => {
+    // The view holds its PRs while it shows them: they never leave the store meanwhile (lib/moved-symbols-core.ts).
+    const { waiting, release } = trackMoves(files, enabled, (snapshot, file) => {
       const request = inspectionFileRequest(snapshot, file);
       const both = inspectionFiles.peek(request);
       return both ?? { after: inspectionFiles.peekAfter(request) };
     }, setting);
-    if (!waiting.length || waiting.length > SYNTAX_PREFETCH_FILES) return;
+    if (!waiting.length || waiting.length > SYNTAX_PREFETCH_FILES) return release;
     const jobs = waiting.flatMap(({ snapshot, file }): SyntaxContentsJob[] => {
       const entry = byKey.get(`${snapshot.url}\u0000${file.path}`);
       if (!entry) return [];
       // A budget per head: a force-push starts afresh.
       const budget = { name: `${MOVES_BUDGET}${snapshot.metadata.headSha}`, limit: MOVES_READS };
       const plan = syntaxContentsPlan(snapshot, file, enabled);
-      if (plan) return [{ ...syntaxContentsJob(entry, plan), budget }];
+      if (plan) return [{ ...syntaxContentsJob(entry, plan), key: entry.key + MOVES_KEY, budget }];
       // An added or deleted file without a patch has no scope read: it is read whole, through the same queue.
       if (!movesWholeReadable(file)) {
         noteMovesFailure(snapshot, file, file.patch ? 'Not read' : 'Too large');
@@ -349,8 +348,12 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
       }
       return [movesWholeJob(entry, budget)];
     });
-    return jobs.length ? syntaxContents.prefetch(`${owner}:moves`, jobs, 1) : undefined;
-  }, [owner, signature, setting, restart, dropped]);
+    const stop = jobs.length ? syntaxContents.prefetch(`${owner}:moves`, jobs, 1) : undefined;
+    return () => {
+      stop?.();
+      release();
+    };
+  }, [owner, signature, setting, restart]);
 }
 
 /** An added or deleted file without a patch that is not obviously too large to fingerprint. */
@@ -361,7 +364,7 @@ const movesWholeReadable = (file: PrChangeFile) =>
 function movesWholeJob({ key, snapshot, file }: SyntaxFile, budget: SyntaxContentsJob['budget']): SyntaxContentsJob {
   const request = inspectionFileRequest(snapshot, file);
   return {
-    key,
+    key: key + MOVES_KEY,
     pr: snapshot.url,
     budget,
     ready: () => {
