@@ -297,3 +297,25 @@ void test('a probe GraphQL cannot answer exactly is inconclusive against a Graph
   // Same-source copies still settle.
   assert.ok(replySeen({ metadata: { ...baseline, reviewCommentCount: 8 } }, { before: { metadata: baseline } }));
 });
+
+void test('a missing PR, as GitHub answers it (null plus NOT_FOUND at the field), is a 404 without a REST read', async () => {
+  const prs = [pull(1)];
+  const f = fixture(prs, {
+    graphql: (query) => {
+      const data = answerPrQuery(query, (_o, _r, n) => prs.find((p) => p.number === n));
+      // The shape of a live answer for a PR number that does not exist.
+      return Promise.reject(
+        Object.assign(new Error('Could not resolve to a PullRequest with the number of 99.'), {
+          data,
+          errors: [{ type: 'NOT_FOUND', path: ['p1', 'pullRequest'], message: 'Could not resolve to a PullRequest with the number of 99.' }],
+        })
+      );
+    },
+  });
+  const result = await getPrMetadataBatch(f.octokit, [url(1), url(99)]);
+  const missing = result.get(url(99));
+  assert.ok(missing && 'error' in missing);
+  assert.equal((missing.error as { status?: number }).status, 404);
+  assert.ok('metadata' in (result.get(url(1)) ?? {}));
+  assert.equal(f.counts.rest, 0, 'the missing PR costs no REST read');
+});

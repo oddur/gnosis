@@ -15,8 +15,10 @@ export interface AliasedAnswer<T> {
   error: (...path: (string | number)[]) => Error | undefined;
   /** Every error's path; empty for a complete answer. */
   errorPaths: (string | number)[][];
+  /** True when the only errors at or under this path are GitHub's NOT_FOUND exactly at it, as for a missing PR. */
+  notFound: (...path: (string | number)[]) => boolean;
 }
-type GraphError = { message?: string; path?: (string | number)[] };
+type GraphError = { message?: string; type?: string; path?: (string | number)[] };
 const under = (path: readonly (string | number)[], prefix: readonly (string | number)[]) =>
   prefix.every((key, i) => path[i] === key);
 
@@ -31,7 +33,7 @@ export async function aliasedGraphql<T extends object>(
 ): Promise<AliasedAnswer<T>> {
   try {
     const data = await client.graphql<T>(query, variables);
-    return { data, failed: () => false, error: () => undefined, errorPaths: [] };
+    return { data, failed: () => false, error: () => undefined, errorPaths: [], notFound: () => false };
   } catch (thrown) {
     const partial = thrown as { data?: T | null; errors?: GraphError[] };
     const errors = Array.isArray(partial.errors) ? partial.errors : [];
@@ -40,6 +42,10 @@ export async function aliasedGraphql<T extends object>(
     return {
       data: partial.data,
       errorPaths: errors.map((e) => e.path ?? []),
+      notFound: (...prefix) => {
+        const found = errors.filter((e) => under(e.path ?? [], prefix));
+        return !!found.length && found.every((e) => e.type === 'NOT_FOUND' && e.path?.length === prefix.length);
+      },
       failed: (...prefix) => !!find(prefix),
       error: (...prefix) => {
         const found = find(prefix);

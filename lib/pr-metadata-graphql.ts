@@ -191,7 +191,12 @@ export async function getPrMetadataBatch(
         if (metadata) {
           reportPrHead(octokit, metadata.url, metadata.headSha, { updatedAt: metadata.updatedAt, source: 'metadata' });
           results.set(url, { metadata });
-        } else if (answer && !answer.failed(alias) && (entry === null || entry?.pullRequest === null))
+        } else if (
+          answer &&
+          (entry === null || entry?.pullRequest === null) &&
+          // GitHub answers a missing PR with `pullRequest: null` and a NOT_FOUND error at that field: REST's 404.
+          (!answer.failed(alias) || answer.notFound(alias, 'pullRequest'))
+        )
           results.set(url, { error: Object.assign(new Error(`GitHub could not find ${url}.`), { status: 404 }) });
         else rest.push(url);
       }
