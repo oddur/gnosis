@@ -404,11 +404,6 @@ void app.whenReady().then(async () => {
         read: span(at(readStart), at(readEnd)),
         toWorker: span(at(readEnd), at(posted)),
         workerQueue: done !== undefined && done > start ? Math.round(num(t.workerWait) ?? 0) : 0,
-        // Prefetch parses that finished while this file waited for the worker. The one worker cannot stop a parse it has
-        // started, so one may finish first; more means the file queued behind prefetch. Order, not speed.
-        prefetchAhead: done !== undefined && done > start
-          ? [...byPath.entries()].filter(([other, o]) => other !== path && o.tier === 'prefetch' && (num(o.parseDone) ?? -1) > Math.max(start, posted ?? start) && (num(o.parseDone) ?? Infinity) < done).length
-          : 0,
         parse: done !== undefined && done > start ? Math.round(worker - (num(t.workerWait) ?? 0)) : 0,
         message: done !== undefined && done > start && posted !== undefined ? Math.round(Math.max(0, done - Math.max(start, posted) - worker)) : 0,
         before: span(at(done), at(num(t.beforeDone))),
@@ -490,12 +485,11 @@ void app.whenReady().then(async () => {
           large.first.total !== undefined && large.lastParse !== undefined && large.first.total < large.lastParse,
           `The first file's breadcrumbs show before prefetch has parsed every file (${large.first.total} ms, last parse ${large.lastParse} ms)`
         );
-        // The first file's parse, and the file jumped to, do not wait behind prefetched ones: checked by queue order,
-        // and the wait itself reported against its budget.
-        assert.ok(large.first.prefetchAhead <= 1, `The first file's parse does not wait behind prefetched ones (${large.first.prefetchAhead} finished first)`);
-        assert.ok(large.mid.prefetchAhead <= 1, `Nor does the file jumped to (${large.mid.prefetchAhead} finished first)`);
-        assertPerf(`syntax scope: first file's parse queue wait, reads of ${latency} ms`, large.first.workerQueue, 400);
-        assertPerf(`syntax scope: jumped-to file's parse queue wait, reads of ${latency} ms`, large.mid.workerQueue, 400);
+        // Scheduling, not speed, so it holds on CI: a file waiting behind the prefetched ones waits for seconds (prefetch
+        // finishes 2 s or more after the start), so 400 ms leaves a wide margin. The page cannot see the worker's queue order: the
+        // times it records are when answers arrive, which a busy page delays and reorders.
+        assert.ok(large.first.workerQueue < 400, `The first file's parse does not wait behind prefetched ones (${large.first.workerQueue} ms)`);
+        assert.ok(large.mid.workerQueue < 400, `Nor does the file jumped to (${large.mid.workerQueue} ms)`);
         assert.ok(large.frames >= 20, `Files resolve one by one, not in one frame (${large.frames} frames for ${large.parsed} files)`);
         assert.ok(large.resolved['2s'] < large.parsed || latency < 50, 'With GitHub-like reads, files keep resolving after 2 s');
       }

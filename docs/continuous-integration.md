@@ -43,7 +43,7 @@ When `CI` is set (GitHub Actions sets `CI=true`), every browser suite and unit t
 
 Some checks that use time stay enforced on CI, because they check behaviour, not speed:
 
-- Order and placement: the file the reader jumps to parses before prefetched files (`--syntax-scope`), and parsing runs in the syntax worker, not on the page.
+- Scheduling (`--syntax-scope`): the file in view, and the file the reader jumps to, wait less than 400 ms for the syntax worker, where waiting behind prefetch takes seconds; and parsing runs in the worker, not on the page.
 - Heap growth after a forced garbage collection (`--renderer-heap`): that is about leaks, not load.
 - Instant views (`--instant-views`): a prepared PR or the saved queue shows well before the fixture's slow network or slow start would answer.
 - Timeouts with wide margins: an interactive read stops waiting for a 1 s fetch (`local-clone`), and a status read waits for a stuck preload for about 250 ms (`pr-status`). Quit flushing (`quit-flush`) uses mocked timers.
