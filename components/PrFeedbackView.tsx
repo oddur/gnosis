@@ -3,7 +3,7 @@ import { FeedbackCodeThread } from './FeedbackCodeThread';
 import type { Preferences } from '../lib/types';
 import { Popover } from 'radix-ui';
 import { SearchableSelect } from './SearchableSelect';
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { GitHubReviewThreads } from '../lib/review-threads';
 import {
   ArrowDown,
@@ -351,6 +351,15 @@ export function PrFeedbackView({
       page.removeAttribute('data-feedback-scroller');
     };
   }, [scroller]);
+  // The timeline's rows render in a transition after the page shows, never inside the tab switch that reveals it: the
+  // page is kept hidden behind other tabs (PrSummary's KeptTab), and rendering its rows, code excerpts and measuring
+  // them in the click took about 270 ms on Linux CI (#418). Hidden, the rows unmount; the frame keeps its height, so
+  // the page's scroll position holds.
+  const [rowsShown, setRowsShown] = useState(false);
+  useLayoutEffect(() => {
+    startTransition(() => setRowsShown(true));
+    return () => setRowsShown(false);
+  }, []);
   const virtual = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -1242,7 +1251,7 @@ export function PrFeedbackView({
         >
           {rows.length ? (
             <Timeline className="feedback-timeline-rail" style={{ height: virtual.getTotalSize(), position: 'relative' }}>
-              {virtual.getVirtualItems().map((v) => {
+              {rowsShown && virtual.getVirtualItems().map((v) => {
                 const row = rows[v.index];
                 return (
                   <TimelineRowShell
