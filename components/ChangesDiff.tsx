@@ -1420,7 +1420,7 @@ export function ChangesDiff<A>({
         if (block?.kind !== 'hunk' || !block.slices.length) return undefined;
         // The line is in a hunk collapsed as a quiet change: it opens, and the jump aims again once it renders.
         if (block.quiet?.hidden) {
-          latestNoise.current?.show(block.blockKeys);
+          latestNoise.current?.show(block.blockKeys, false);
           return undefined;
         }
         const index = Math.min(block.slices.length - 1, Math.floor(place.row / HUNK_SLICE_SIZE));

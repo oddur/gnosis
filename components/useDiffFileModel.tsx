@@ -61,7 +61,8 @@ export interface DiffNoise {
   filter: NoiseFilter;
   /** Blocks the reader opened, by `blockKey`: they show whatever their kind. */
   shown: ReadonlySet<string>;
-  show: (keys: readonly string[]) => void;
+  /** Opens blocks; `anchor` keeps the top line in view (off for a jump, which places the view itself). */
+  show: (keys: readonly string[], anchor?: boolean) => void;
   /** The whole diff as the filter sees it: whether every change is hidden, and how much is. */
   file?: FileNoise;
   /** Every change is hidden and the reader opened none: the file shows as one bar. */
@@ -293,8 +294,8 @@ export function useDiffFileModel({
       kinds: noise.kinds,
       filter: noiseFilter,
       shown: noiseShown,
-      show: (keys) => {
-        if (sectionRef.current) keepDiffLineInView(sectionRef.current);
+      show: (keys, anchor = true) => {
+        if (anchor && sectionRef.current) keepDiffLineInView(sectionRef.current);
         const value = new Set([...noiseShown, ...keys]);
         openedNoise.delete(revealKey);
         openedNoise.set(revealKey, value);
