@@ -20,7 +20,7 @@
  */
 import { checkView, type CheckView } from './check-summary';
 import { prTarget, type DeepLinkTarget } from './deep-link';
-import { commentsOf, mergeCaveats, prNeed, rebaseWords } from './morning';
+import { commentsOf, mergeCaveats, prNeed, rebaseWords, reviewFirst } from './morning';
 import { isOpenPr } from './pr-lifecycle';
 import { sameLogin } from './github-actors';
 import { OVERVIEW_REASON_LABEL, type OverviewModel, type OverviewRow, type OverviewSinceSource } from './overview';
@@ -34,7 +34,7 @@ export const STARRED_TIERS: readonly StarredTier[] = ['you', 'merge', 'others', 
 /** Entries shown before "Show all N". */
 export const STARRED_SHOWN = 8;
 /** The one action a line offers, as Next up's rows do. Absent: Enter opens it. */
-export type StarredAction = 'merge' | 'review' | 'rereview' | 'reply' | 'rerun' | 'open';
+export type StarredAction = 'merge' | 'review' | 'rereview' | 'reply' | 'rerun' | 'open' | 'nudge';
 
 export interface StarredLine {
   /** The PR's URL. */
@@ -54,6 +54,8 @@ export interface StarredLine {
   /** Its lane state changed since the last visit (`OverviewEntry.isNew`). */
   isNew?: boolean;
   action?: StarredAction;
+  /** `nudge`: the requested reviewer Remind re-requests. */
+  reviewer?: string;
   /** The PR has merge conflicts: shown with the conflict icon. */
   conflicts?: boolean;
   /** Orders lines within a tier: people blocked on you before fixes, approved merges before the rest. */
@@ -140,17 +142,21 @@ function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model'>, item
   // Updated since your review, when another reason leads: a reply on a PR that also changed.
   const also = need.kind !== 'review' && need.all.has('updated-since-review') ? ' · updated since your review' : '';
   const first = reasons[0];
+  // A fix behind the reason that leads: "Awaiting your reply · failing checks".
+  const fixReasons = need.fix?.entries.find((candidate) => candidate.member.url === member.url)?.reasons ?? [];
+  const fixWords = (list: readonly string[]) => (list.includes('checks-failed') ? 'Failing checks' : list.includes('conflicts') ? 'Conflicts' : rebaseWords(item.subject, member).replace(/^n/, 'N'));
   if (need.kind === 'answer') {
     const person = row.focus.url === member.url ? row.person : undefined;
-    if (first === 'replies') return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'reply', why: `${person ? `${person} is waiting on your reply` : OVERVIEW_REASON_LABEL.replies}${also}` };
-    return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'open', why: `${person ? `${person} requested changes` : OVERVIEW_REASON_LABEL['changes-requested']}${also}` };
+    const fix = need.fix ? ` · ${lower(fixWords(fixReasons))}` : '';
+    if (first === 'replies') return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'reply', why: `${person ? `${person} is waiting on your reply` : OVERVIEW_REASON_LABEL.replies}${fix}${also}` };
+    return { ...lined, tier: 'you', rank: 0, actionable: true, action: 'open', why: `${person ? `${person} requested changes` : OVERVIEW_REASON_LABEL['changes-requested']}${fix}${also}` };
   }
   if (need.kind === 'review') {
     const again = reasons.includes('updated-since-review');
     return { ...lined, tier: 'you', rank: 0, actionable: true, action: again ? 'rereview' : 'review', why: again ? OVERVIEW_REASON_LABEL['updated-since-review'] : OVERVIEW_REASON_LABEL['review-requested'] };
   }
   if (need.kind === 'fix') {
-    const why = first === 'checks-failed' ? 'Failing checks' : first === 'conflicts' ? 'Conflicts' : rebaseWords(item.subject, member).replace(/^n/, 'N');
+    const why = fixWords(reasons);
     return { ...lined, tier: 'you', rank: 1, actionable: true, action: first === 'checks-failed' ? 'rerun' : 'open', why: `${why}${also}`, ...(reasons.includes('conflicts') ? { conflicts: true } : {}) };
   }
   if (need.kind === 'merge' || need.kind === 'parked') {
@@ -162,14 +168,18 @@ function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model'>, item
     if (need.gate === 'checks') return { ...lined, tier: 'others', rank: 0, why: fresh?.checks.state === 'failure' ? 'Failing checks' : OVERVIEW_REASON_LABEL['checks-pending'] };
     // Ready to merge, as `readyMerges` counts it. Only an approved, passing PR gets the Merge button and counts as
     // work, as in Next up; one without review or checks says what it goes ahead without, and opens.
+    // You owe a review in its stack: as in Next up, the review comes first, and this PR offers no Merge yet.
+    if (need.owed) return { ...lined, tier: 'merge', rank: 1, why: `${reviewFirst(need.owed)}, then merge` };
     const caveats = mergeCaveats(row, checkView([fresh]));
     const approved = need.gate === 'approved';
     return { ...lined, tier: 'merge', rank: approved ? 0 : 1, actionable: approved, action: approved ? 'merge' : 'open', why: ['Ready to merge', ...words.map(lower), ...(approved ? [] : caveats.filter((caveat) => caveat !== 'no review'))].join(' · ') };
   }
   // Waiting on others: who it waits on.
   if (reasons.includes('review-pending')) {
-    const reviewer = member.requestedReviewers.find((name) => !sameLogin(name, input.login)) ?? member.requestedTeams[0];
-    return { ...lined, tier: 'others', rank: 0, why: reviewer ? `Waits on review from ${reviewer}` : 'Awaiting review' };
+    const person = member.requestedReviewers.find((name) => !sameLogin(name, input.login));
+    const reviewer = person ?? member.requestedTeams[0];
+    // A requested person can be reminded from here, as in Waiting on others (Remind).
+    return { ...lined, tier: 'others', rank: 0, why: reviewer ? `Waits on review from ${reviewer}` : 'Awaiting review', ...(person ? { action: 'nudge' as const, reviewer: person } : {}) };
   }
   return { ...lined, tier: 'others', rank: 0, why: OVERVIEW_REASON_LABEL['checks-pending'] };
 }

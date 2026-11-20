@@ -67,7 +67,7 @@ void test('Starred orders by what needs you: your action, then ready to merge, t
     [1, 'quiet', 'Approved'],
     [6, 'done', 'Merged'],
   ]);
-  assert.deepEqual(section.entries.map((entry) => entry.lead.action), ['review', 'rerun', 'merge', undefined, undefined, undefined]);
+  assert.deepEqual(section.entries.map((entry) => entry.lead.action), ['review', 'rerun', 'merge', 'nudge', undefined, undefined]);
   // Open PRs carry their check state; a merged one has none, and claims nothing.
   assert.equal(section.entries[0].check?.label, 'passing');
   assert.equal(section.entries.at(-1)?.check, undefined);
@@ -320,4 +320,91 @@ void test('The star toggle waits while a star change is saved', () => {
   assert.equal(starAction({ members: [m], starred: true, busy: true, onStarChange: () => undefined }).disabled, true);
   assert.equal(starAction({ members: [m], starred: true, onStarChange: () => undefined }).label, 'Unstar PR #99');
   assert.equal(starAction({ members: [m, pr(100)], starred: true, onStarChange: () => undefined }).label, 'Unstar PRs in this stack');
+});
+
+// ── Review fixes, round 2 (#441) ──
+
+void test('A reply or change request leads a starred PR\'s line, with its fix after it, as Next up ranks them', () => {
+  const status: Record<string, QueueSignals> = {};
+  const both = mine(110);
+  status[both.url] = signals(both, { checks: 'failure', decision: 'CHANGES_REQUESTED', opinions: [{ id: '1', author: 'lena', state: 'CHANGES_REQUESTED', at: iso(HOUR) }] });
+  const replied = mine(111);
+  status[replied.url] = signals(replied, { checks: 'failure' });
+  const items = [item([both]), item([replied], { responses: { [replied.url]: { changesRequested: false, unresolvedThreads: 1, awaitingReply: 1, complete: true } } })];
+  // Unstarred, Next up offers each as the person blocked on you, not as a fix.
+  const plain = page(items, status);
+  assert.deepEqual(plain.page.next.items.map((entry) => [entry.member.number, entry.kind]).sort(), [[110, 'changes'], [111, 'reply']]);
+  const { section } = page(items.map((value) => star(value)), status);
+  const by = Object.fromEntries(section.entries.map((entry) => [entry.lead.member.number, [entry.tier, entry.lead.rank, entry.why, entry.lead.action]]));
+  assert.deepEqual(by[110], ['you', 0, 'lena requested changes · failing checks', 'open']);
+  assert.deepEqual(by[111], ['you', 0, 'Awaiting your reply · failing checks', 'reply']);
+});
+
+void test('A PR above the merge PR waits for its own parent: straight and branching stacks', () => {
+  const status: Record<string, QueueSignals> = {};
+  const a = mine(120, { headBranch: 'a' });
+  const b = mine(121, { baseBranch: 'a', headBranch: 'b' });
+  const c = mine(122, { baseBranch: 'b', headBranch: 'c' });
+  for (const m of [a, b, c]) status[m.url] = approved(m);
+  const straight = page([star(item([a, b, c]))], status).section.entries[0];
+  assert.deepEqual(straight.lines.map((line) => line.why), ['Ready to merge · approved by lena', 'Waits for #120 to merge', 'Waits for #121 to merge']);
+  // A→B and A→C: both wait for A.
+  const root = mine(130, { headBranch: 'r' });
+  const left = mine(131, { baseBranch: 'r', headBranch: 'l' });
+  const right = mine(132, { baseBranch: 'r', headBranch: 'q' });
+  for (const m of [root, left, right]) status[m.url] = approved(m);
+  const branching: QueueItem = {
+    subject: { id: 'stack-130', kind: 'stack', title: 'Stack 130', members: [root, left, right], edges: [left, right].map((child) => ({ parent: root.url, child: child.url, evidence: 'branch' as const })), warnings: [] },
+    attention: 'other',
+  };
+  const lines = page([star(branching)], status).section.entries[0].lines;
+  assert.deepEqual(Object.fromEntries(lines.map((line) => [line.member.number, line.why])), { 130: 'Ready to merge · approved by lena', 131: 'Waits for #130 to merge', 132: 'Waits for #130 to merge' });
+});
+
+void test('A starred PR waiting on a reviewer offers Remind, also when a Waiting on others stack points at it', () => {
+  const status: Record<string, QueueSignals> = {};
+  const base = mine(140, { headBranch: 'a', requestedReviewers: ['lena'] });
+  const child = mine(141, { baseBranch: 'a', headBranch: 'b' });
+  const top = mine(142, { baseBranch: 'b', headBranch: 'c' });
+  for (const m of [base, child, top]) status[m.url] = signals(m, { checks: 'success' });
+  const value = page([item([base, child, top])], status, [star(item([base]))]);
+  const stack = value.page.others.find((group) => group.kind === 'stacks')?.children?.[0];
+  assert.equal(stack?.step?.inStarred, true);
+  const line = value.section.entries[0].lead;
+  assert.deepEqual([line.action, line.reviewer, line.why], ['nudge', 'lena', 'Waits on review from lena']);
+});
+
+void test('When you owe a review in a starred stack, its base says to review first, offers no Merge and is not counted', () => {
+  const status: Record<string, QueueSignals> = {};
+  const base = mine(160, { headBranch: 'a' });
+  const child = pr(161, { baseBranch: 'a', headBranch: 'b', requestedReviewers: [LOGIN] });
+  status[base.url] = approved(base);
+  status[child.url] = signals(child, { checks: 'success' });
+  const plain = page([item([base, child])], status);
+  // Next up: the review is the stack's step, and the merge follows it.
+  assert.match(plain.page.next.items[0].why, /then merge #160$/);
+  const starred = page([star(item([base, child]))], status);
+  const lines = starred.section.entries[0].lines;
+  assert.deepEqual(lines.map((line) => [line.member.number, line.why, line.action ?? null, line.actionable]), [
+    [160, 'Review #161 first, then merge', null, false],
+    [161, 'Review requested', 'review', true],
+  ]);
+  assert.equal(starred.section.entries[0].lead.member.number, 161);
+  assert.equal(starred.page.count, plain.page.count);
+});
+
+void test('A starred PR that needs a decision counts in the tab only where an unstarred one would', () => {
+  const status: Record<string, QueueSignals> = {};
+  // Five quick merges fill Next up, so the stale fix is in Needs a decision, not Next up.
+  const merges = [171, 172, 173, 174, 175].map((n) => {
+    const m = mine(n);
+    status[m.url] = approved(m);
+    return item([m]);
+  });
+  const stale = mine(176, { createdAt: iso(20 * DAY), updatedAt: iso(10 * DAY) });
+  status[stale.url] = signals(stale, { checks: 'failure' });
+  const plain = page([...merges, item([stale])], status);
+  assert.ok(plain.page.decide.some((entry) => entry.member.url === stale.url));
+  const starred = page([...merges, star(item([stale]))], status);
+  assert.equal(starred.page.count, plain.page.count);
 });
