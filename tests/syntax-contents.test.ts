@@ -15,7 +15,7 @@ import {
 } from '../lib/syntax-contents';
 import { inspectionRank, type InspectionMode, type PrChangeFile, type PrFileSide } from '../lib/pr-changes';
 import { createPrFileCache } from '../lib/pr-file-cache';
-import { createParseQueue, higherPriority, type ParseJob, type SyntaxPriority } from '../lib/syntax-parse-queue';
+import { createFollowers, createParseQueue, higherPriority, type ParseJob, type SyntaxPriority } from '../lib/syntax-parse-queue';
 import {
   DEFAULT_CODE_INTELLIGENCE,
   codeIntelligenceSettings,
@@ -542,6 +542,20 @@ void test('A file’s noise comparison waits a tier below its parses, so breadcr
   assert.deepEqual(order, ['v1', 'n1', 'n1-old', 'v1-noise', 'p1', 'n1-noise', 'p1-noise']);
 });
 
+void test('Moved-symbol fingerprints wait two tiers below their file, behind every breadcrumb and comparison (#398)', () => {
+  const queue = createParseQueue<ParseJob>();
+  const add = (key: string, priority: SyntaxPriority, side: ParseJob['side'] = 'after') => queue.add({ key, priority, side });
+  add('v1-symbols', 'view', 'symbols');
+  add('p1-symbols', 'prefetch', 'symbols');
+  add('p1', 'prefetch');
+  add('v1-noise', 'view', 'noise');
+  add('n1', 'near');
+  add('n1-noise', 'near', 'noise');
+  const order: string[] = [];
+  for (let job = queue.take(); job; job = queue.take()) order.push(job.key);
+  assert.deepEqual(order, ['n1', 'v1-noise', 'p1', 'n1-noise', 'v1-symbols', 'p1-symbols']);
+});
+
 void test('An added file’s new side and a deleted file’s old side come whole from the patch, when it holds them whole', () => {
   assert.equal(wholeFileText('@@ -0,0 +1,3 @@\n+pub struct A {\n+    x: u32,\n+}\n', 'after'), 'pub struct A {\n    x: u32,\n}\n');
   assert.equal(wholeFileText('@@ -0,0 +1,2 @@\n+a\n+b\n\\ No newline at end of file', 'after'), 'a\nb', 'No line break at the end');
@@ -552,4 +566,78 @@ void test('An added file’s new side and a deleted file’s old side come whole
   assert.equal(wholeFileText('@@ -1,2 +1,2 @@\n-a\n+b\n c', 'after'), undefined, 'A modified file');
   assert.equal(wholeFileText('@@ -0,0 +1,1 @@\n+a\n@@ -0,0 +3,1 @@\n+c', 'after'), undefined, 'Two hunks');
   assert.equal(wholeFileText('@@ -0,0 +1,2 @@\n+a\n+b', 'before'), undefined, 'The other side');
+});
+
+void test('Moved-symbol reads count against their own budget, never the PR’s cap that scopes need (#398)', async () => {
+  const { scheduler, job, started, finish } = harness({ perPr: 2, concurrency: 1 });
+  const budget = { name: 'moves', limit: 2 };
+  scheduler.prefetch('moves', [job('m1', { budget }), job('m2', { budget }), job('m3', { budget })], 1);
+  await finish('m1');
+  await finish('m2');
+  assert.deepEqual(started, ['m1', 'm2'], 'The budget stops the third moves read');
+  // The PR's own cap is untouched: two scope reads still run.
+  scheduler.prefetch('scopes', [job('s1'), job('s2'), job('s3')]);
+  await finish('s1');
+  await finish('s2');
+  assert.deepEqual(started, ['m1', 'm2', 's1', 's2']);
+  assert.equal(scheduler.stats().started['https://github.com/a/b/pull/1'], 2, 'Only scope reads count against the PR cap');
+});
+
+void test('The moves prefetch ranks below the open PR’s scope reads (#398)', async () => {
+  const { scheduler, job, started, finish } = harness({ concurrency: 1 });
+  const budget = { name: 'moves', limit: 10 };
+  scheduler.prefetch('moves', [job('m1', { budget }), job('m2', { budget })], 1);
+  scheduler.prefetch('scopes', [job('s1'), job('s2')]);
+  // m1 started before the scope reads were asked for; after it, both scope reads go before m2.
+  await finish('m1');
+  await finish('s1');
+  await finish('s2');
+  assert.deepEqual(started, ['m1', 's1', 's2', 'm2']);
+});
+
+void test('A parse queued again under its key returns the one it replaced, so its caller can be answered (#398)', () => {
+  const queue = createParseQueue<ParseJob & { id: number }>();
+  assert.equal(queue.add({ key: 'a', priority: 'prefetch', side: 'symbols', id: 1 }), undefined);
+  assert.equal(queue.add({ key: 'a', priority: 'view', side: 'symbols', id: 2 })?.id, 1);
+  assert.equal(queue.size, 1);
+});
+
+void test('A replaced request hears the answer of the job that replaced it, not an older running one’s (#398)', () => {
+  const followers = createFollowers();
+  // Job 1 runs under key k; job 2 queues under k, then job 3 replaces job 2.
+  followers.replace(3, 2);
+  assert.deepEqual(followers.answer(1), [1], 'The running job answers only its own request');
+  assert.deepEqual(followers.answer(3), [3, 2], 'Job 3 answers job 2’s request too');
+  // A chain: 5 replaced 4, 6 replaced 5.
+  followers.replace(5, 4);
+  followers.replace(6, 5);
+  assert.deepEqual(followers.answer(6), [6, 5, 4]);
+  // A job taken to the other worker takes its followers; a running job keeps its own.
+  followers.replace(8, 7);
+  assert.deepEqual(followers.drop(9), [], 'Nothing to drop for a job that replaced none');
+  assert.deepEqual(followers.drop(8), [7]);
+  assert.equal(followers.size, 0);
+});
+
+void test('Failures say what ended them: a scope cap is not a moves read’s budget, and tries that ran out may pass (#398)', async () => {
+  const { scheduler, job, finish } = harness({ perPr: 1, concurrency: 1, retryMs: [] });
+  const heard: string[] = [];
+  scheduler.onFailure((key, _failure, cause) => heard.push(`${key}:${cause}`));
+  // The scope cap refuses a scope read: that is not the moves read's concern.
+  scheduler.prefetch('scopes', [job('s1'), job('s2')]);
+  await finish('s1');
+  assert.deepEqual(heard, ['s2:cap']);
+  // A moves read past its own budget is.
+  const budget = { name: 'moves:head', limit: 1 };
+  scheduler.prefetch('moves', [job('m1', { budget }), job('m2', { budget })], 1);
+  await finish('m1');
+  assert.ok(heard.includes('m2:budget'), heard.join(','));
+  // A read that fails for a reason that can pass, out of tries: retries, not content.
+  scheduler.prefetch('more', [job('m3', { budget: { name: 'moves:other', limit: 5 } })], 1);
+  await finish('m3', new Error('socket hang up'));
+  assert.ok(heard.includes('m3:retries'), heard.join(','));
+  // A file that is not text: content.
+  scheduler.prefetch('binary', [job('m4', { budget: { name: 'moves:other', limit: 5 } })], 1);
+  await finish('m4', new Error('This binary file has no text preview'));
+  assert.ok(heard.includes('m4:content'), heard.join(','));
 });

@@ -36,6 +36,11 @@ export interface SyntaxContentsJob {
   /** True when the contents are already cached: nothing is sent. */
   ready?: () => boolean;
   /**
+   * A read with a budget of its own (moved symbols, #398) counts against it instead of the PR's cap, so it never uses
+   * up the reads scopes need. A view that asks for the same file while it waits takes it into the PR's cap.
+   */
+  budget?: { name: string; limit: number };
+  /**
    * Reads the file at the tier's priority. Called again with `'view'` while a prefetch read runs, when the view asks
    * for the file: the cache sends the higher-priority request, and main joins it to the read in flight.
    */
@@ -46,6 +51,13 @@ export interface SyntaxContentsFailure {
   message: string;
   retryable: boolean;
 }
+/**
+ * What ended a read, for listeners (`onFailure`): the file's contents cannot be read (`content`: too large, binary,
+ * missing), its job's own budget was spent (`budget`), the PR's scope cap was (`cap`), or tries that could pass ran out
+ * (`retries`), which a later read may still overcome.
+ */
+export type SyntaxContentsFailureCause = 'content' | 'budget' | 'cap' | 'retries';
+type FailureListener = (key: string, failure: SyntaxContentsFailure, cause: SyntaxContentsFailureCause, job: SyntaxContentsJob) => void;
 /** One read, for the diagnostics export: how long it waited and ran, how many tries it took, and how it ended. */
 export interface SyntaxContentsRead {
   key: string;
@@ -216,6 +228,11 @@ export function createSyntaxContentsScheduler({
   const entries = new Map<string, Entry>();
   const owners = new Map<string, Set<string>>();
   const started = new Map<string, Set<string>>();
+  /** Reads started under each PR's own budgets, by PR and budget name. */
+  const budgets = new Map<string, Set<string>>();
+  const budgetKey = (job: SyntaxContentsJob) => `${job.pr}\u0000${job.budget?.name ?? ''}`;
+  /** Whether a read counts against its own budget: it has one, and no view waits for it. */
+  const budgeted = (entry: { job: SyntaxContentsJob; waiters: Map<unknown, unknown> }) => !!entry.job.budget && !entry.waiters.size;
   const failed = new Map<string, { pr: string } & SyntaxContentsFailure>();
   // When each PR in `started` or `failed` was last touched, so the idle sweep finds PRs only these still hold.
   const used = new Map<string, number>();
@@ -235,17 +252,28 @@ export function createSyntaxContentsScheduler({
   const watchers = new Map<string, Set<() => void>>();
 
   const wanted = (entry: Entry) => entry.waiters.size > 0 || entry.owners.size > 0;
-  const capped = (job: SyntaxContentsJob) => {
+  const capped = (job: SyntaxContentsJob, waited = false) => {
+    if (job.budget && !waited) {
+      const own = budgets.get(budgetKey(job));
+      return !own?.has(job.key) && !started.get(job.pr)?.has(job.key) && (own?.size ?? 0) >= job.budget.limit;
+    }
     const keys = started.get(job.pr);
     return !keys?.has(job.key) && (keys?.size ?? 0) >= perPr;
   };
   const tooLarge = (job: SyntaxContentsJob) => job.characters !== undefined && job.characters > maxCharacters;
   /** Why a job is not read, or undefined when it may be. */
-  const refusal = (job: SyntaxContentsJob): SyntaxContentsFailure | undefined => {
+  const refusal = (job: SyntaxContentsJob, waited = false): SyntaxContentsFailure | undefined => {
     const known = failed.get(job.key);
     if (known) return { message: known.message, retryable: known.retryable };
     if (tooLarge(job)) return { message: 'This file is too large to show its structure.', retryable: false };
-    if (capped(job)) return { message: 'This PR read as many files for structure as it may.', retryable: false };
+    if (capped(job, waited)) return { message: 'This PR read as many files for structure as it may.', retryable: false };
+  };
+  /** Why `refusal` refused, in the order it checks. */
+  const refusalCause = (job: SyntaxContentsJob, waited = false): SyntaxContentsFailureCause => {
+    const known = failed.get(job.key);
+    if (known) return known.retryable ? 'retries' : 'content';
+    if (tooLarge(job)) return 'content';
+    return job.budget && !waited ? 'budget' : 'cap';
   };
   function drop(key: string, entry: Entry) {
     if (entries.get(key) !== entry) return;
@@ -307,10 +335,16 @@ export function createSyntaxContentsScheduler({
     }
     return prefetch;
   }
+  /** Hear of every read that is refused or fails for good, whoever asked: moved symbols mark the file's family. */
+  const failureListeners = new Set<FailureListener>();
+  const told = (key: string, failure: SyntaxContentsFailure, cause: SyntaxContentsFailureCause, job: SyntaxContentsJob) => {
+    for (const listener of failureListeners) listener(key, failure, cause, job);
+  };
   function fail(key: string, entry: Entry, failure: SyntaxContentsFailure) {
     failed.set(key, { pr: entry.job.pr, ...failure });
     used.set(entry.job.pr, now());
     for (const onFail of entry.waiters.values()) onFail?.(failure);
+    told(key, failure, failure.retryable ? 'retries' : 'content', entry.job);
   }
   function pump() {
     if (now() < pausedUntil) {
@@ -322,10 +356,11 @@ export function createSyntaxContentsScheduler({
       if (!item) return;
       const [key, entry] = item;
       const { job } = entry;
-      const refused = refusal(job);
+      const refused = refusal(job, entry.waiters.size > 0);
       if (refused) {
         drop(key, entry);
         for (const onFail of entry.waiters.values()) onFail?.(refused);
+        told(key, refused, refusalCause(job, entry.waiters.size > 0), job);
         continue;
       }
       if (job.ready?.()) {
@@ -333,8 +368,10 @@ export function createSyntaxContentsScheduler({
         for (const waiter of entry.waiters.keys()) waiter();
         continue;
       }
-      let keys = started.get(job.pr);
-      if (!keys) started.set(job.pr, (keys = new Set()));
+      const ledger = budgeted(entry) ? budgets : started;
+      const ledgerKey = budgeted(entry) ? budgetKey(job) : job.pr;
+      let keys = ledger.get(ledgerKey);
+      if (!keys) ledger.set(ledgerKey, (keys = new Set()));
       keys.add(key);
       used.set(job.pr, now());
       const tier: SyntaxContentsTier = entry.waiters.size ? 'view' : 'prefetch';
@@ -471,7 +508,11 @@ export function createSyntaxContentsScheduler({
       owners.set(owner, keys);
       jobs.forEach((job, index) => {
         const entry = entryFor(job);
-        if (!isEntry(entry) || keys.has(job.key)) return;
+        if (!isEntry(entry)) {
+          told(job.key, entry, refusalCause(job), job);
+          return;
+        }
+        if (keys.has(job.key)) return;
         entry.owners.set(owner, rank * 1_000_000 + index);
         keys.add(job.key);
       });
@@ -512,6 +553,11 @@ export function createSyntaxContentsScheduler({
       hidden = value;
       if (!value) pump();
     },
+    /** Tells `listener` of each read refused or failed for good, by key; the return stops it. */
+    onFailure(listener: FailureListener): () => void {
+      failureListeners.add(listener);
+      return () => failureListeners.delete(listener);
+    },
     /** Drops every prefetch that has not started. */
     stopPrefetch() {
       for (const owner of [...owners.keys()]) release(owner);
@@ -523,6 +569,7 @@ export function createSyntaxContentsScheduler({
      */
     forget(prs?: ReadonlySet<string>) {
       for (const pr of [...started.keys()]) if (!prs || prs.has(pr)) started.delete(pr);
+      for (const key of [...budgets.keys()]) if (!prs || prs.has(key.slice(0, key.indexOf('\u0000')))) budgets.delete(key);
       for (const pr of [...used.keys()]) if (!prs || prs.has(pr)) used.delete(pr);
       for (const [key, failure] of failed) if (!prs || prs.has(failure.pr)) failed.delete(key);
       for (const [key, entry] of [...entries])

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } fro
 import {
   createSyntaxContentsScheduler,
   syntaxContentsDiagnostics,
+  permanentFailure,
   syntaxContentsPlan,
   syntaxReadMode,
   SYNTAX_PREDICTED_FILES,
@@ -24,6 +25,26 @@ import { preferencesReady, startupPreferences } from './startup-preferences';
 import { syntaxLanguage } from './syntax-scope';
 import { traceStructure } from './structure-trace';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
+import {
+  MOVES_MAX_FILES,
+  failMovesKey,
+  noteMovesFailure,
+  noteMovesText,
+  trackMoves,
+} from './moved-symbols-store';
+import { MOVES_KEY, movesFailureKey } from './moved-symbols-plan';
+/** The moves reads' budgets, one per head: `moves:<head>`. */
+const MOVES_BUDGET = 'moves:';
+
+/** A moves read whose tries ran out is queued again this long after. */
+const MOVES_RETRY_MS = 5 * 60_000;
+/** Reads for moved symbols per PR, apart from the reads scopes may make (`SYNTAX_CONTENTS_PER_PR`). */
+const MOVES_READS = MOVES_MAX_FILES;
+/**
+ * An added or deleted file without a patch with more lines than this is too large to fingerprint (the worker takes at
+ * most `SYMBOLS_MAX_CHARACTERS`): it is not read, and its family is not matched.
+ */
+const MOVES_WHOLE_LINES = 10_000;
 
 /** The page's one queue of contents reads for hunk scopes (#393): view reads first, then prefetch. */
 export const syntaxContents = createSyntaxContentsScheduler();
@@ -31,6 +52,20 @@ export const syntaxContents = createSyntaxContentsScheduler();
 // still hold is swept when idle.
 onInspectionForget((urls) => syntaxContents.forget(urls));
 onInspectionUses((into) => syntaxContents.lastUses(into));
+// A moves read that ends without the file (its budget spent, its tries run out, the file not readable) leaves the
+// file's moved-symbol family unmatched rather than waiting for it forever (#398). Of other reads, only a file that
+// cannot be read at all says anything about moves: a scope read refused by the scope cap does not.
+syntaxContents.onFailure((key, failure, cause) => {
+  const file = movesFailureKey(key, cause);
+  if (!file) return;
+  failMovesKey(file.key, { reason: failure.message, recoverable: file.recoverable });
+  // A moves read whose tries ran out (the network went away) is tried again later, with fresh tries.
+  if (file.recoverable)
+    setTimeout(() => {
+      syntaxContents.retry(key);
+      bump();
+    }, MOVES_RETRY_MS);
+});
 // Each read's tier, wait, run time, tries and outcome, so an export shows why breadcrumbs came late.
 addDiagnosticsSource('syntaxContents', () => syntaxContentsDiagnostics(syntaxContents.stats()));
 
@@ -153,7 +188,14 @@ export function syntaxContentsJob(
     key,
     pr: snapshot.url,
     characters: plan.characters,
-    ready: () => (plan.both ? !!inspectionFiles.peek(request) : !!inspectionFiles.peekAfter(request)),
+    ready: () => {
+      const both = inspectionFiles.peek(request);
+      const after = both?.after ?? inspectionFiles.peekAfter(request);
+      const ready = plan.both ? !!both : !!after;
+      // Contents another read brought in (a topic, a gap) skip this read: moved symbols take them from here.
+      if (ready) noteMovesText(snapshot, file, after, both?.before);
+      return ready;
+    },
     run: async (tier) => {
       const mode = syntaxReadMode(tier);
       const priority: SyntaxPriority = tier === 'view' ? 'near' : 'prefetch';
@@ -164,11 +206,16 @@ export function syntaxContentsJob(
         parse(`${key}:after`, snapshot.url, file.path, contents.after, priority);
         parse(`${key}:before`, snapshot.url, file.previousPath ?? file.path, contents.before, priority);
         compare({ key, snapshot, file }, contents.after, priority);
+        noteMovesText(snapshot, file, contents.after, contents.before);
+        syntaxContents.retry(key + MOVES_KEY);
       } else {
         const after = await inspectionFiles.readAfter(request, mode);
         traceStructure(key, { readEnd: performance.now() });
         parse(`${key}:after`, snapshot.url, file.path, after, priority);
         compare({ key, snapshot, file }, after, priority);
+        noteMovesText(snapshot, file, after);
+        // The file read: a moves read that ran out of tries for it starts afresh.
+        syntaxContents.retry(key + MOVES_KEY);
       }
     },
   };
@@ -266,6 +313,106 @@ export function useSyntaxPrefetch(
       stop?.();
     };
   }, [owner, signature, restart, setting]);
+}
+
+/**
+ * Moved and renamed symbols (#398) for every file of the open PRs, the ones a filter hides too: a hidden file can hold a
+ * symbol's other end, or a rival. Files whose text is here are fingerprinted at once (lib/moved-symbols-store.ts); the
+ * rest are read after the view's prefetch (rank 1, below the open PR's scope reads), in diff order, and fingerprinted as
+ * they land. Viewed files are read too: the main prefetch leaves them to their view reads, but a move into them is
+ * still a move. These reads count against a budget of their own (`MOVES_READS`), never the reads scopes need; they
+ * pause and stop with the prefetch, and start again with it (`epoch`). A PR with more files to read than the prefetch
+ * limit is left unmatched, as scopes leave it to view reads.
+ */
+export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], settings: CodeIntelligenceSettings) {
+  const signature = files.map((file) => file.key).join('\n');
+  const setting = JSON.stringify(settings);
+  // Prefetch stops while the window is hidden; it starts again here as it does for scopes.
+  const restart = useSyncExternalStore(
+    (listener) => {
+      epochListeners.add(listener);
+      return () => epochListeners.delete(listener);
+    },
+    () => epoch
+  );
+  useEffect(() => {
+    if (!settings.enabled || !files.length) return;
+    const enabled = (path: string) => pathEnabled(settings, path);
+    const byKey = new Map(files.map((file) => [`${file.snapshot.url}\u0000${file.file.path}`, file]));
+    // The view holds its PRs while it shows them: they never leave the store meanwhile (lib/moved-symbols-core.ts).
+    const { waiting, release } = trackMoves(files, enabled, (snapshot, file) => {
+      const request = inspectionFileRequest(snapshot, file);
+      const both = inspectionFiles.peek(request);
+      return both ?? { after: inspectionFiles.peekAfter(request) };
+    }, setting);
+    if (!waiting.length || waiting.length > SYNTAX_PREFETCH_FILES) return release;
+    // Files the store still wants get fresh tries: a moves read that ran out of them is queued again.
+    for (const { snapshot, file } of waiting) {
+      const entry = byKey.get(`${snapshot.url}\u0000${file.path}`);
+      if (entry) syntaxContents.retry(entry.key + MOVES_KEY);
+    }
+    const jobs = waiting.flatMap(({ snapshot, file }): SyntaxContentsJob[] => {
+      const entry = byKey.get(`${snapshot.url}\u0000${file.path}`);
+      if (!entry) return [];
+      // A budget per head: a force-push starts afresh.
+      const budget = { name: `${MOVES_BUDGET}${snapshot.metadata.headSha}`, limit: MOVES_READS };
+      const plan = syntaxContentsPlan(snapshot, file, enabled);
+      // Only the text moves need: a modified file's new side (its old side is rebuilt from the patch), a deleted
+      // file's old one. No breadcrumbs are parsed and no comparison made that no view asked for.
+      if (plan) return [movesReadJob(entry, budget, file.status === 'deleted', plan.characters)];
+      // An added or deleted file without a patch has no scope read: it is read whole, through the same queue.
+      if (!movesWholeReadable(file)) {
+        noteMovesFailure(snapshot, file, file.patch ? 'Not read' : 'Too large');
+        return [];
+      }
+      return [movesReadJob(entry, budget, true)];
+    });
+    const stop = jobs.length ? syntaxContents.prefetch(`${owner}:moves`, jobs, 1) : undefined;
+    return () => {
+      stop?.();
+      release();
+    };
+  }, [owner, signature, setting, restart]);
+}
+
+/** An added or deleted file without a patch that is not obviously too large to fingerprint. */
+const movesWholeReadable = (file: PrChangeFile) =>
+  !file.patch && (file.status === 'added' || file.status === 'deleted') && file.additions + file.deletions <= MOVES_WHOLE_LINES;
+
+/**
+ * A file's read for its moved symbols alone: the new side, or both sides when `both` (a deleted file's old side, an
+ * added or deleted file without a patch). The text goes to the moves store and nowhere else.
+ */
+function movesReadJob(
+  { key, snapshot, file }: SyntaxFile,
+  budget: SyntaxContentsJob['budget'],
+  both: boolean,
+  characters?: number
+): SyntaxContentsJob {
+  const request = inspectionFileRequest(snapshot, file);
+  return {
+    key: key + MOVES_KEY,
+    pr: snapshot.url,
+    budget,
+    characters,
+    ready: () => {
+      const contents = inspectionFiles.peek(request);
+      const after = contents?.after ?? (both ? undefined : inspectionFiles.peekAfter(request));
+      if (contents || after) noteMovesText(snapshot, file, after, contents?.before);
+      return both ? !!contents : !!after;
+    },
+    run: async (tier) => {
+      try {
+        if (both) {
+          const contents = await inspectionFiles.read(request, syntaxReadMode(tier));
+          noteMovesText(snapshot, file, contents.after, contents.before);
+        } else noteMovesText(snapshot, file, await inspectionFiles.readAfter(request, syntaxReadMode(tier)));
+      } catch (error) {
+        if (permanentFailure(error)) noteMovesFailure(snapshot, file, error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+    },
+  };
 }
 
 /** Warms the first supported files of the predicted next PR, after the open PR's prefetch. */

@@ -5,6 +5,7 @@ import { blockKey, fileNoise, noiseLabel, type NoiseBlock, type NoiseFilter, typ
 import type { SyntaxPriority } from './syntax-parse-queue';
 import type { GapHunk } from './diff-gaps';
 import { whenSettled } from './use-syntax-contents';
+import { settledSubscription } from './settled-subscription';
 
 const NO_KINDS: ReadonlyMap<string, NoiseKind> = new Map();
 
@@ -85,19 +86,7 @@ export interface QuietSummary {
  * Comparisons as they land, told once the view is still: while the reader scrolls, files compared one after another
  * would each make every list of files go through its files again, in the frames of the scroll.
  */
-function settledNoise(listener: () => void): () => void {
-  let pending: (() => void) | undefined;
-  const stop = onNoise(() => {
-    pending ??= whenSettled(() => {
-      pending = undefined;
-      listener();
-    });
-  });
-  return () => {
-    stop();
-    pending?.();
-  };
-}
+const settledNoise = settledSubscription(onNoise, whenSettled);
 const EMPTY: QuietSummary = { files: new Map(), compared: 0, quiet: 0, touched: 0, lines: { whitespace: 0, formatting: 0, comments: 0 }, shown: 0 };
 const SEP = '\u0000';
 

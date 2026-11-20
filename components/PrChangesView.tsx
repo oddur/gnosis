@@ -17,6 +17,7 @@ import { DiffWorkerPool, diffThemeName } from '../lib/diff-worker-pool';
 import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useSyntaxPrefetch } from '../lib/use-syntax-contents';
+import { MoveNavigation, type MoveTarget } from '../lib/use-moved-symbols';
 import { noiseFilterOf } from '../lib/review-diff';
 import { useQuietSummary } from '../lib/use-semantic-noise';
 import { anchorReader } from '../lib/quiet-changes';
@@ -506,6 +507,25 @@ export function PrChangesView({
     const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (visible[i] ? [warmFile(visible[i].key)] : []));
     return () => cancel.forEach((stop) => stop());
   }, [activeKey, entries, visibleSignature]);
+  /** Selects a file and scrolls to its lines, without leaving the view: a chat trace chip, a move's note. */
+  const jumpToLines = (entry: Entry, lines: Pick<ChangesInitialFile, 'line' | 'endLine' | 'side'>) => {
+    void select(entry.key);
+    // Clear first so repeating the same jump scrolls again.
+    setChatJump(undefined);
+    requestAnimationFrame(() =>
+      setChatJump({ url: entry.snapshot.url, path: entry.file.path, headSha: entry.snapshot.metadata.headSha, ...lines })
+    );
+  };
+  const openMoveLatest = useRef<(target: MoveTarget) => void>(() => {});
+  openMoveLatest.current = (target) => {
+    const found = entries.find((e) => e.snapshot.url === target.url && e.file.path === target.path);
+    if (!found) return;
+    // The move's lines are the revision it was matched in: a newer head opens just the file.
+    if (found.snapshot.metadata.headSha === target.headSha) jumpToLines(found, { line: target.line, endLine: target.endLine, side: target.side });
+    else void select(found.key);
+  };
+  // Stable, so every diff below keeps its context value.
+  const [openMove] = useState(() => (target: MoveTarget) => openMoveLatest.current(target));
   async function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
@@ -599,6 +619,7 @@ export function PrChangesView({
       }
     : null;
   return (
+    <MoveNavigation.Provider value={openMove}>
     <section
       ref={workspace}
       className="pr-changes"
@@ -952,23 +973,12 @@ export function PrChangesView({
             onOpenTraceStep={(step) => {
               const target = chatEntry && entries.find((e) => e.snapshot === chatEntry.snapshot && (e.file.path === step.path || e.file.previousPath === step.path));
               if (!target || !step.path) return;
-              void select(target.key);
-              // Clear first so repeating the same jump scrolls again.
-              setChatJump(undefined);
-              requestAnimationFrame(() =>
-                setChatJump({
-                  url: target.snapshot.url,
-                  path: target.file.path,
-                  headSha: target.snapshot.metadata.headSha,
-                  line: step.startLine,
-                  endLine: step.endLine,
-                  side: step.side,
-                })
-              );
+              jumpToLines(target, { line: step.startLine, endLine: step.endLine, side: step.side });
             }}
           />
         )}
       </div>
     </section>
+    </MoveNavigation.Provider>
   );
 }
