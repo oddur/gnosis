@@ -212,6 +212,10 @@ declare global {
       ) => () => void;
       conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest) => Promise<import('../lib/conflict-resolution').ConflictReply>;
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
+      /** Who may change the PR's reviewers, assignees, labels and milestone. */
+      getPrPeopleAccess: (url: string) => Promise<import('../lib/pr-people').PrPeopleAccess>;
+      getPrPeopleCandidates: (request: import('../lib/pr-people').PrPeopleCandidateRequest) => Promise<import('../lib/pr-people').PrPeopleCandidates>;
+      editPrPeople: (edit: import('../lib/pr-people').PrPeopleEdit) => Promise<import('../lib/pr-people').PrPeopleEditResult>;
       /** Every PR's action state from one aliased read per repository; each entry fails alone. */
       getPrActionStates: (
         urls: string[],

@@ -19,6 +19,8 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Command, CommandInput, CommandList, CommandGroup, CommandItem } from './ui/command';
+import { toast } from './ui/toast';
+import { commandRunner, createAfterClose } from '../lib/after-close';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import type { AppCommand } from '../lib/command-center';
@@ -79,6 +81,21 @@ export function GlobalCommandPalette({
     [remotePending, setRemotePending] = useState(false);
   const selectionTouched = useRef(false);
   const actionPending = useRef(false);
+  /** A command that runs after the palette closes (`AppCommand.afterClose`); a failure shows as a toast. */
+  const afterClose = useMemo(
+    () => createAfterClose((message) => toast.add({ title: 'Command failed', description: message, type: 'error' })),
+    []
+  );
+  const runCommand = commandRunner({
+    busy: () => actionPending.current,
+    run: (perform) => void run(perform),
+    afterClose,
+    close: onClose,
+  });
+  // A command left from an earlier opening never runs on a later close.
+  useEffect(() => {
+    if (open) afterClose.clear();
+  }, [open, afterClose]);
   const remoteInFlight = useRef(false);
   const sequence = useRef(0),
     remoteSequence = useRef(0),
@@ -238,7 +255,7 @@ export function GlobalCommandPalette({
     selected
       ? void run(() => navigate(selected.document.destination), selected.document)
       : selectedCommand
-        ? void run(selectedCommand.perform)
+        ? runCommand(selectedCommand)
         : selectedRemote
           ? void run(() => navigate({ kind: 'home', url: selectedRemote.url }))
           : undefined;
@@ -264,6 +281,7 @@ export function GlobalCommandPalette({
             !opener.current.closest('[hidden]')
           )
             opener.current.focus();
+          void afterClose.run();
         }}
       >
         <DialogTitle className="sr-only">Search and navigate Gnosis</DialogTitle>
@@ -429,7 +447,7 @@ export function GlobalCommandPalette({
                       key={command.id}
                       value={command.id}
                       disabled={busy}
-                      onSelect={() => void run(command.perform)}
+                      onSelect={() => runCommand(command)}
                     >
                       <CommandActionIcon command={command} />
                       <span className="global-command-result-copy">

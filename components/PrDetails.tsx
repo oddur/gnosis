@@ -10,6 +10,7 @@ import { DiffStats } from './DiffStats';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReactNode } from 'react';
 import { countRender } from '../lib/render-count';
+import { formatDueOn } from '../lib/pr-people';
 
 export interface PrOverviewContent {
   evidence: ReactNode;
@@ -179,7 +180,7 @@ export function PrDetails({
               <dt>Milestone</dt>
               <dd>
                 {meta.milestone?.title || 'None'}
-                {meta.milestone?.dueOn && ` · due ${date(meta.milestone.dueOn)}`}
+                {meta.milestone?.dueOn && ` · due ${formatDueOn(meta.milestone.dueOn)}`}
               </dd>
             </dl>
           </details>

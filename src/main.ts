@@ -39,6 +39,7 @@ import { createGitHubSyncService, type GitHubSyncRead } from './github-sync-serv
 import { getPrMetadataBatch, readMetadataLike } from '../lib/pr-metadata-graphql';
 import { mapBounded } from '../lib/bounded';
 import { createOptimisticService } from './optimistic-service';
+import { createPrMetadataWriteService } from './pr-metadata-write-service';
 import { prActionChange, type OptimisticChange, type OptimisticKind } from '../lib/optimistic-patches';
 import { feedbackReplyBody } from '../lib/review-threads';
 import { createGitHubWriteRefresher, githubPrUrl, startRestBaselines, type GitHubWriteAction, type WriteDetails, type WriteObservation, type GitHubWriteEvent } from '../lib/github-write-refresh';
@@ -2253,6 +2254,9 @@ async function fetchPrStatus(prUrl: string, force = false, expectedHead?: string
   const { status, metadata } = await prStatus.read(getGitHubClient(token), prUrl, force, expectedHead);
   try {
     if (getResolvedToken() !== token) return null;
+    // Opened, closed or merged since the editors read access: they read it again (pr-metadata-write-service).
+    const lifecycle = status.lifecycle ?? (status.stale ? undefined : metadata);
+    if (lifecycle) prPeople.observe(getGitHubClient(token), { url: prUrl, state: lifecycle.state, merged: lifecycle.merged });
     workbench.updatePrMetadata(metadata);
     if (cachedLogin && status.signals && workbench.observeReadSignals(cachedLogin, [status.signals])) readStateChanged();
     // A review the reader made on GitHub changes "updated since your review": rebuild the queue.
@@ -4158,6 +4162,12 @@ const prMergeMonitor = createPrMergeMonitor({
   changed: (_client, urls) => githubWrites.after('stack-merged', urls),
 });
 handleInteractive('get-pr-action-state', async (_event, url: string, force: boolean) => optimistic.actionState(await prActions.read(discussionClient(), url, force)));
+// Reviewers, assignees, labels and the milestone (src/pr-metadata-write-service.ts), through the optimistic layer and the write refresh.
+const PR_PEOPLE_ACCESS_ACTIONS = new Set<GitHubWriteAction>(['merge', 'merge-queue', 'stack-merged', 'close-pr', 'external']);
+const prPeople = createPrMetadataWriteService({ optimistic: (url, change, write, narrow) => optimistic.run(url, change, write, undefined, narrow), refresh: gitHubWrite });
+handleInteractive('get-pr-people-access', (_event, url: string) => prPeople.access(discussionClient(), url));
+handleInteractive('get-pr-people-candidates', (_event, request: import('../lib/pr-people').PrPeopleCandidateRequest) => prPeople.candidates(discussionClient(), request));
+handleInteractive('edit-pr-people', (_event, edit: import('../lib/pr-people').PrPeopleEdit) => prPeople.edit(discussionClient(), edit));
 handleInteractive('get-pr-action-states', async (_event, urls: string[], force: unknown) => {
   if (!Array.isArray(urls) || urls.length > 100 || urls.some(url => typeof url !== 'string'))
     throw new Error('Choose at most 100 PRs.');
@@ -4464,6 +4474,8 @@ function publishGitHubUpdatesNow(updates: GitHubSyncUpdate[]) {
       if (previous && previous.headSha === update.value.headSha && previous.baseSha !== update.value.baseSha) {
         githubSync.invalidate([update.url], ['signals', 'checks', 'discussion']);
       }
+      // Opened, closed or merged, seen by sync or a change signal: who may request reviews is read again.
+      prPeople.observe(getGitHubClient(cachedToken), update.value);
       syncMetadata.delete(update.url);
       syncMetadata.set(update.url, update.value);
       while (syncMetadata.size > 500) syncMetadata.delete(syncMetadata.keys().next().value as string);
@@ -4997,6 +5009,8 @@ const githubWrites = createGitHubWriteRefresher({
   },
   blockedUntil: () => (cachedToken ? githubClients.backoff(cachedToken, false, ['core', 'graphql'])?.retryAt : undefined),
   refreshed: event => {
+    // A merge, close or reopen changes who may request reviews: the editors read access again (pr-metadata-write-service).
+    if (PR_PEOPLE_ACCESS_ACTIONS.has(event.action) && cachedToken) prPeople.forget(getGitHubClient(cachedToken), event.urls);
     // Every window, and the menu bar panel through the queue broadcast.
     broadcastToAllWindows('github-write-refreshed', event);
     notifyLocalChange('workbench-changed');

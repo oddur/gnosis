@@ -5703,6 +5703,38 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .conversation-verdict[data-tone=danger] { --tone:var(--color-danger); }
 .conversation-verdict[data-tone=review] { --tone:var(--ring); }
 .conversation-empty-value { font-size:var(--type-control); }
+/* Reviewers, assignees, labels and the milestone: a heading with a small edit button, as in GitHub's sidebar. The
+   picker is the shared selection popup (components/PrPeopleEditor.tsx). */
+.pr-people-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:24px; }
+.pr-people-edit.workbench-icon { width:24px; height:24px; margin-right:-4px; }
+.pr-people-edit[data-popup-open] { background:var(--accent); color:var(--accent-foreground); }
+.pr-people-edit[aria-disabled=true] { opacity:.5; cursor:not-allowed; }
+.pr-people-edit[aria-disabled=true]:hover { background:transparent; color:var(--muted-foreground); }
+.pr-people-edit-wrap { display:inline-flex; }
+.conversation-reviewer-state { display:inline-flex; align-items:center; gap:2px; flex-shrink:0; }
+.pr-people-rerequest.workbench-icon { width:24px; height:24px; }
+/* Team names wrap rather than truncate: "Platform reviewers" must read in full beside its verdict. */
+.pr-people-team { display:inline-flex; align-items:flex-start; gap:6px; min-width:0; color:var(--foreground); line-height:1.4; }
+.pr-people-team > svg { flex-shrink:0; margin-top:3px; }
+.pr-people-team > span:not(.sr-only) { min-width:0; overflow-wrap:anywhere; }
+.pr-people-milestone { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; color:var(--foreground); }
+.pr-people-due { color:var(--muted-foreground); font-size:var(--type-caption); }
+.pr-people-failure { margin-top:2px; }
+.pr-people-access-error { margin:0; }
+.pr-people-load-error button { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
+.pr-people-edit[aria-busy=true] { opacity:.6; cursor:progress; }
+.pr-people-popup.selection-popup { width:320px; max-width:var(--available-width); }
+.pr-people-option { display:flex; align-items:center; gap:8px; width:100%; min-width:0; }
+.pr-people-option-text { display:flex; flex-direction:column; min-width:0; line-height:1.35; }
+.pr-people-option-text strong { font-weight:600; }
+.pr-people-option-text span, .pr-people-option-description { color:var(--muted-foreground); font-size:var(--type-caption); font-weight:400; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pr-people-option-hint { margin-left:auto; padding-left:8px; color:var(--muted-foreground); font-size:var(--type-caption); font-weight:400; white-space:nowrap; }
+.pr-people-team-icon { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:24px; height:24px; border-radius:4px; background:var(--secondary); color:var(--foreground); }
+.pr-people-avatar { flex-shrink:0; }
+.pr-people-label-option { flex-direction:column; align-items:flex-start; gap:2px; }
+.pr-people-label-option .pr-label { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.pr-people-option-description { max-width:100%; }
+.pr-people-option-none { color:var(--muted-foreground); }
 .conversation-sidebar.is-stack { gap:0; }
 /* The description reads at prose size, always whole. */
 .feedback-description-card .pr-markdown { font-size:var(--type-prose); }
@@ -5748,6 +5780,10 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* The narrow strip: sections share the row and wrap; none widens the page. */
 @container (max-width:1100px) {
   .conversation-sidebar:not(.is-stack) > section { flex:1 1 220px; min-width:0; max-width:100%; }
+  /* People and labels are short: four of them share a row of the strip. */
+  .conversation-sidebar:not(.is-stack) > .pr-people-section { flex-basis:150px; }
+  /* Reviewer rows carry a verdict beside the name: they keep a wider share. */
+  .conversation-sidebar:not(.is-stack) > .pr-people-section[data-field=reviewers] { flex-basis:260px; }
 }
 /* Collapsed readiness never widens the band: its one line shrinks and ellipsizes. */
 .band-readiness .pr-readiness { min-width:0; overflow:hidden; }
