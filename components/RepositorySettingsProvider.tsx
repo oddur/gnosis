@@ -83,6 +83,14 @@ export function RepositorySettingsProvider({ children }: { children: ReactNode }
             const key = repositoryKey(name);
             return { ...current, repositorySettings: normalizeRepositorySettings({ ...current.repositorySettings, [key]: { ...current.repositorySettings?.[key], notifications: level } }) };
           }),
+        setShowMergedConflicts: (name: string, show: boolean) =>
+          update((current) => {
+            const key = repositoryKey(name);
+            const value: RepositorySettings = { ...current.repositorySettings?.[key] };
+            delete value.showMergedConflicts;
+            if (!show) value.showMergedConflicts = false;
+            return { ...current, repositorySettings: normalizeRepositorySettings({ ...current.repositorySettings, [key]: value }) };
+          }),
         allowBotNotifications: (login: string) =>
           update((current) => {
             const saved = normalizeNotificationPreferences(current);

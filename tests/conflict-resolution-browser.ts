@@ -1016,7 +1016,7 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /Merged · Combined both sides’ changes/);
     assert.equal(await js(`${block(0)}.querySelector('details').open`), false, 'Merged starts collapsed');
-    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /The file parses\. No definition was lost\./);
+    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /The file parses\. No definition or added line was lost\./);
     assert.equal(await stage(), 'resolved', 'With the switch on, a Merged file still waits for your review');
     await captureAll('buckets-merged');
     // Off: files whose every conflict is Merged are marked reviewed for you. Nothing is pushed.
@@ -1030,12 +1030,27 @@ void app.whenReady().then(async () => {
     await captureAll('buckets-skip-review');
     await js(`${showMerged}.click()`);
     await wait(`${showMerged}.checked`);
+    // On is the default, so turning it back on removes the setting instead of saving true.
+    await wait(
+      "window.electronAPI.loadPreferences().then(p=>!p.repositorySettings?.['klang/engine'] || !('showMergedConflicts' in p.repositorySettings['klang/engine']))"
+    );
     // Undo moves a Merged conflict to Decide with both sides.
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
     await wait(
       "document.querySelector('[data-conflict-summary]')?.textContent==='3 files conflict. 1 of 4 conflicts are merged and checked. 3 need you.'"
     );
+    // Review probe: the proposal is one click away from Decide, and Reset file returns to the proposals.
+    await click('Use the proposal');
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await click('Reset file');
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    assert.equal(await exists('Reset file'), false, 'The proposals are the reset point');
+    assert.ok(await exists('Start from Git’s conflict'));
+    await click('Start from Git’s conflict');
+    await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Close');
     console.log(
       'Conflict workspace passed: labelled versions, per-block undo, shortcuts, review before mark, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'

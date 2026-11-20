@@ -6,7 +6,14 @@ import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { blockProposals, blockResolutions, carryFile, withProposals } from '../lib/conflict-carry';
 import { parseConflicts } from '../lib/conflict-blocks';
-import { blockBuckets, bucketSummary, summarySentence, verifyProposals, type Analyse } from '../lib/conflict-verify';
+import {
+  blockBuckets,
+  bucketSummary,
+  proposalKey,
+  summarySentence,
+  verifyProposals,
+  type Analyse,
+} from '../lib/conflict-verify';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 
 /** Conflict buckets and their checks (phase 1 of the conflict redesign), with the real tree-sitter grammars. */
@@ -209,4 +216,12 @@ void test('review probe: carrying a draft forward uses the fresh proposal for a 
   assert.equal(carried.file.result, withProposals(original, proposals));
   assert.equal(carried.file.resolved, false);
   assert.deepEqual(carried.file.proposals, proposals);
+});
+
+void test('review probe: a check result belongs to the proposals it checked', () => {
+  // The workspace keys each result by this fingerprint, so a pass for earlier proposals never marks new ones Merged.
+  const before = file([merged(imports), merged(three + four)]);
+  const after = file([merged(imports), merged(three)]);
+  assert.notEqual(proposalKey(before), proposalKey(after));
+  assert.equal(proposalKey(before), proposalKey(file([merged(imports), merged(three + four)])));
 });

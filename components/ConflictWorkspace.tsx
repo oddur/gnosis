@@ -55,10 +55,18 @@ import {
   WORKFLOW_PUSH_WARNING,
 } from '../lib/github-access';
 import { useGitHubAccess } from '../lib/use-github-access';
-import { blockBuckets, bucketSummary, summarySentence, verifyProposals, type Verdict } from '../lib/conflict-verify';
+import {
+  blockBuckets,
+  bucketSummary,
+  proposalKey,
+  summarySentence,
+  verifyProposals,
+  type Verdict,
+} from '../lib/conflict-verify';
+import { withProposals } from '../lib/conflict-carry';
 import { checkSyntax } from '../lib/syntax-scope-client';
-import { preferencesUpdated, useRepositorySettings } from '../lib/use-repository-settings';
-import { normalizeRepositorySettings, repositoryKey, type RepositorySettings } from '../lib/repository-settings';
+import { useRepositorySettings } from '../lib/use-repository-settings';
+import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
 import { GitHubScopeActions, GitHubScopePrompt } from './GitHubScopePrompt';
 
 const GUIDE_KEY = 'gnosis-conflict-guide';
@@ -297,38 +305,36 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const done = useRef<HTMLButtonElement>(null);
   const focusIntent = useRef(true);
   const author = useMemo(() => (session ? findAuthor(session.url) : undefined), [session?.url]);
-  // Checks of each file's proposals, by path. A file's entry is missing while its checks run.
-  const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
-  const verdictKeys = useRef(new Map<string, string>());
+  // Checks of each file's proposals, by path, with the fingerprint of the proposals they checked. A result for other
+  // proposals never counts: the file's proposals are Check until their own checks finish.
+  const [verdicts, setVerdicts] = useState<Record<string, { key: string; verdict: Verdict }>>({});
+  const checking = useRef(new Map<string, string>());
+  const verdictOf = (f: ConflictFile) => {
+    const entry = f.proposals ? verdicts[f.path] : undefined;
+    return entry?.key === proposalKey(f) ? entry.verdict : undefined;
+  };
   useEffect(() => {
     for (const f of session?.files ?? []) {
       if (!f.proposals) continue;
-      const key = JSON.stringify([f.original, f.proposals]);
-      if (verdictKeys.current.get(f.path) === key) continue;
-      verdictKeys.current.set(f.path, key);
-      void verifyProposals(f, checkSyntax).then((verdict) => {
-        if (verdictKeys.current.get(f.path) === key) setVerdicts((previous) => ({ ...previous, [f.path]: verdict }));
-      });
+      const key = proposalKey(f);
+      if (checking.current.get(f.path) === key) continue;
+      checking.current.set(f.path, key);
+      void verifyProposals(f, checkSyntax)
+        .catch(() => ({ merged: false, note: 'Gnosis couldn’t check this result.' }))
+        .then((verdict) => setVerdicts((previous) => ({ ...previous, [f.path]: { key, verdict } })));
     }
   }, [session?.files]);
-  const repositories = useRepositorySettings().settings;
+  const { settings: repositories, setShowMergedConflicts } = useRepositorySettings();
   const repo = session ? repositoryKey(session.baseRepo) : '';
   // Unset means on: Merged conflicts still wait for your review.
   const showMerged = (repositories[repo] as RepositorySettings | undefined)?.showMergedConflicts !== false;
-  async function setShowMerged(value: boolean) {
-    const current = await window.electronAPI.loadPreferences();
-    const next = {
-      ...current,
-      repositorySettings: normalizeRepositorySettings({
-        ...current.repositorySettings,
-        [repo]: { ...current.repositorySettings?.[repo], showMergedConflicts: value },
-      }),
-    };
-    await window.electronAPI.savePreferences(next);
-    preferencesUpdated(next);
-  }
 
   const file = session?.files.find((f) => f.path === selected);
+  // Saved drafts' buckets change only with the session or a check result; the open draft's follow each keystroke.
+  const savedBuckets = useMemo(
+    () => new Map(session?.files.map((f) => [f.path, blockBuckets(f, f.result, verdictOf(f))])),
+    [session?.files, verdicts]
+  );
   const fileStates = useMemo(
     () =>
       session?.files.map((f) => {
@@ -339,13 +345,14 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           stage,
           conflicts: f.unsupported ? 0 : conflictCount(text),
           contents: text,
-          buckets: blockBuckets(f, text, verdicts[f.path]),
+          buckets:
+            text === f.result ? (savedBuckets.get(f.path) ?? []) : blockBuckets(f, text, verdictOf(f)),
         };
       }) ?? [],
-    [session, selected, contents, verdicts]
+    [session, selected, contents, savedBuckets]
   );
   const summary = bucketSummary(
-    fileStates.map((s) => ({ buckets: s.buckets, verdict: verdicts[s.file.path], reviewed: s.stage === 'reviewed' }))
+    fileStates.map((s) => ({ buckets: s.buckets, verdict: verdictOf(s.file), reviewed: s.stage === 'reviewed' }))
   );
   const reviewedCount = fileStates.filter((s) => s.stage === 'reviewed').length;
   const fileStage = fileStates.find(({ file: f }) => f.path === selected)?.stage;
@@ -580,6 +587,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       (reply) => setSession(reply.session)
     );
   }, [showMerged, busy, error, confirming, session, verdicts]);
+  const resetTarget = (f: ConflictFile) => (f.proposals ? withProposals(f.original, f.proposals) : f.original);
+  function resetTo(text: string) {
+    setContents(text);
+    setMode('conflicts');
+    setEpoch((n) => n + 1);
+    focusIntent.current = true;
+  }
   function showResult() {
     setMode('result');
     setEpoch((n) => n + 1);
@@ -912,7 +926,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             </p>
             {session.files.some((f) => f.proposals) && (
               <label>
-                <input type="checkbox" checked={showMerged} onChange={(e) => void setShowMerged(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={showMerged}
+                  disabled={!setShowMergedConflicts}
+                  onChange={(e) => void setShowMergedConflicts?.(repo, e.target.checked)}
+                />
                 Show me every merged conflict
               </label>
             )}
@@ -1260,17 +1279,23 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                             model={model}
                             onSuggest={suggest}
                           />
-                          {contents !== file.original && (
+                          {/* Reset returns to what preparation proposed; Git's conflict is a separate step back. */}
+                          {file.proposals && contents !== file.original && (
                             <Button
                               size="sm"
                               variant="ghost"
                               disabled={!canEdit}
-                              onClick={() => {
-                                setContents(file.original);
-                                setMode('conflicts');
-                                setEpoch((n) => n + 1);
-                                focusIntent.current = true;
-                              }}
+                              onClick={() => resetTo(file.original)}
+                            >
+                              Start from Git’s conflict
+                            </Button>
+                          )}
+                          {contents !== resetTarget(file) && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={!canEdit}
+                              onClick={() => resetTo(resetTarget(file))}
                             >
                               <RotateCcw aria-hidden="true" />
                               Reset file
@@ -1343,7 +1368,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                                 onChange={setContents}
                                 onAllResolved={() => primary.current?.focus()}
                                 proposals={file.proposals}
-                                verdict={verdicts[file.path]}
+                                verdict={verdictOf(file)}
                               />
                             ) : (
                               <File file={{ name: selected, contents }} options={options} />

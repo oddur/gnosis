@@ -136,6 +136,25 @@ function lineCounts(text: string) {
   return { counts, texts };
 }
 
+const proposalKeys = new WeakMap<object, string>();
+/**
+ * A cheap fingerprint of a file's conflict and proposals (FNV-1a and length), remembered per file object. A check
+ * result counts only for the proposals it checked.
+ */
+export function proposalKey(file: Pick<ConflictFile, 'original' | 'proposals'>) {
+  let key = proposalKeys.get(file);
+  if (key === undefined) {
+    const text = [file.original, ...(file.proposals ?? []).map((p) => (p ? `${p.source}\u0001${p.text}` : ''))].join(
+      '\u0000'
+    );
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+    key = `${(hash >>> 0).toString(36)}:${text.length}`;
+    proposalKeys.set(file, key);
+  }
+  return key;
+}
+
 /**
  * Each conflict block's bucket in the displayed draft. A block that still holds its proposal is Merged when the
  * checks passed, else Check; `verdict` undefined means the checks are still running. A block you chose is Decided.

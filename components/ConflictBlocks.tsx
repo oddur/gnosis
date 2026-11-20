@@ -133,7 +133,7 @@ function Block({
   labels: ConflictLabels;
   shortcuts: boolean;
   disabled: boolean;
-  onChoose: (choice: BlockChoice) => void;
+  onChoose: (choice: BlockPick) => void;
   onUndo?: () => void;
   proposal?: ConflictProposal | null;
   /** The file's checks; undefined while they run. */
@@ -161,6 +161,17 @@ function Block({
           )}
         </Button>
       ))}
+      {proposal && choice !== 'proposal' && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled}
+          data-choice="proposal"
+          onClick={() => onChoose('proposal')}
+        >
+          Use the proposal
+        </Button>
+      )}
     </div>
   );
   const undo = onUndo && (
@@ -348,7 +359,7 @@ export function ConflictView({
   const openBlocks = () => [...(root.current?.querySelectorAll<HTMLElement>(pendingSelector) ?? [])];
   const indexOf = (element: Element | null) =>
     Number(element?.closest('[data-conflict-index]')?.getAttribute('data-conflict-index') ?? -1);
-  function choose(index: number, choice: BlockChoice | undefined) {
+  function choose(index: number, choice: BlockPick | undefined) {
     const next = [...model.choices];
     next[index] = choice;
     pendingFocus.current = choice ? { after: index } : { at: index };
