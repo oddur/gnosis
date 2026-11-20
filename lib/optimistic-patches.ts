@@ -69,8 +69,6 @@ export interface OptimisticPatch {
   change: OptimisticChange;
   viewer: OptimisticViewer;
   startedAt: number;
-  /** When the write started, among all writes: later writes apply over earlier ones and supersede them. */
-  order: number;
   status: 'pending' | 'confirmed';
   confirmedAt?: number;
   result?: OptimisticResult;
@@ -634,11 +632,6 @@ export interface OptimisticBegin {
   change: OptimisticChange;
   viewer: OptimisticViewer;
   before?: OptimisticPatch['before'];
-  /**
-   * The write's place among all writes, from `sequence()`, when the patch stands for a write that began earlier, such
-   * as the part of an edit GitHub took. Later writes keep applying over it, and it never supersedes them.
-   */
-  order?: number;
 }
 
 export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
@@ -648,11 +641,10 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
   /** In the order the writes started, so later writes apply over earlier ones. */
   const patches = new Map<string, OptimisticPatch>();
   const byId = (id: string) => [...patches.values()].find((patch) => patch.id === id);
-  let writes = 0;
   const live = (url: string, kind: OptimisticKind) =>
-    [...patches.values()]
-      .filter((patch) => patch.url === url && !patch.settled.includes(kind) && optimisticKinds(patch.change).includes(kind))
-      .sort((a, b) => a.order - b.order);
+    [...patches.values()].filter(
+      (patch) => patch.url === url && !patch.settled.includes(kind) && optimisticKinds(patch.change).includes(kind)
+    );
   const finished = (patch: OptimisticPatch) =>
     optimisticKinds(patch.change).every((kind) => patch.settled.includes(kind));
 
@@ -667,7 +659,6 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
         change: input.change,
         viewer: input.viewer,
         startedAt: now(),
-        order: input.order ?? ++writes,
         status: 'pending',
         before: input.before ?? {},
         settled: [],
@@ -684,7 +675,8 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
       // GitHub took the newer decision: earlier writes on the same items stop applying them. Only now, so a newer write
       // that fails leaves the earlier ones as they were.
       for (const older of [...patches.values()]) {
-        if (older === patch || older.url !== patch.url || older.order >= patch.order) continue;
+        if (older === patch) break;
+        if (older.url !== patch.url) continue;
         const rest = supersededBy(older.change, patch.change);
         if (!rest) patches.delete(older.key);
         else older.change = rest;
@@ -760,8 +752,6 @@ export function createOptimisticLayer(options: OptimisticLayerOptions = {}) {
         base
       );
     },
-    /** A place among all writes, for a write whose patch begins later (`OptimisticBegin.order`). */
-    sequence: () => ++writes,
     has: (url: string) => [...patches.values()].some((patch) => patch.url === url),
     list: (url?: string) => [...patches.values()].filter((patch) => !url || patch.url === url),
     clear() {

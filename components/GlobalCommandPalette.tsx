@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { Command, CommandInput, CommandList, CommandGroup, CommandItem } from './ui/command';
 import { toast } from './ui/toast';
-import { createAfterClose } from '../lib/after-close';
+import { commandRunner, createAfterClose } from '../lib/after-close';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import type { AppCommand } from '../lib/command-center';
@@ -86,11 +86,12 @@ export function GlobalCommandPalette({
     () => createAfterClose((message) => toast.add({ title: 'Command failed', description: message, type: 'error' })),
     []
   );
-  const runCommand = (command: AppCommand) => {
-    if (!command.afterClose) return void run(command.perform);
-    afterClose.set(command.perform);
-    onClose();
-  };
+  const runCommand = commandRunner({
+    busy: () => actionPending.current,
+    run: (perform) => void run(perform),
+    afterClose,
+    close: onClose,
+  });
   // A command left from an earlier opening never runs on a later close.
   useEffect(() => {
     if (open) afterClose.clear();

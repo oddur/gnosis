@@ -60,15 +60,13 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
       urls: string | string[],
       change: OptimisticChange,
       write: () => Promise<T>,
-      result?: (value: T) => OptimisticResult,
-      /** The write's place among all writes, when it began before this patch (`OptimisticBegin.order`). */
-      options: { order?: number } = {}
+      result?: (value: T) => OptimisticResult
     ): Promise<T> {
       const viewer = deps.viewer();
       const targets = [...new Set(typeof urls === 'string' ? [urls] : urls)];
       if (!viewer || !targets.length) return write();
       const kinds = optimisticKinds(change);
-      const patches = targets.map((url) => layer.begin({ url, change, viewer, before: deps.before(url), order: options.order }));
+      const patches = targets.map((url) => layer.begin({ url, change, viewer, before: deps.before(url) }));
       watchExpiry();
       for (const url of targets) changed(url, kinds);
       let value: T;

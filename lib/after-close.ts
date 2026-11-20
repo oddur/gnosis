@@ -26,3 +26,24 @@ export function createAfterClose(report: (message: string) => void) {
     },
   };
 }
+
+/**
+ * How the palette runs a chosen command: at once through `run`, or, for `afterClose` commands, once the palette has
+ * closed. Either way nothing starts while an earlier action is still running.
+ */
+export function commandRunner(input: {
+  busy: () => boolean;
+  run: (perform: () => void | Promise<void>) => void;
+  afterClose: Pick<ReturnType<typeof createAfterClose>, 'set'>;
+  close: () => void;
+}) {
+  return (command: { perform: () => void | Promise<void>; afterClose?: boolean }) => {
+    if (input.busy()) return;
+    if (!command.afterClose) {
+      input.run(command.perform);
+      return;
+    }
+    input.afterClose.set(command.perform);
+    input.close();
+  };
+}
