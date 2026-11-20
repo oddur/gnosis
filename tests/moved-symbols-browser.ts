@@ -267,8 +267,10 @@ void app.whenReady().then(async () => {
     );
     await click('Open PR overview');
     await sleep(4000);
-    const summaryOnly = await js<{ reads: number; tracked: number }>(
-      `import('/lib/moved-symbols-store.ts').then(m=>({reads:window.fileReads,tracked:m.movedSymbolsStats().prs.length}))`
+    // `fileReads` counts every file read of the page (queue preparation too); `structureReads` counts the structure
+    // queue's reads, which on Summary alone are the moves reads; `fingerprints`, the files fingerprinted.
+    const summaryOnly = await js<{ reads: number; tracked: number; structureReads: number; fingerprints: number }>(
+      `Promise.all([import('/lib/moved-symbols-store.ts'),import('/lib/use-syntax-contents.ts')]).then(([m,c])=>({reads:window.fileReads,tracked:m.movedSymbolsStats().prs.length,structureReads:c.syntaxContents.stats().reads,fingerprints:m.movedSymbolsStats().reads.reads}))`
     );
     console.log('SUMMARY ONLY', JSON.stringify(summaryOnly));
     assert.equal(summaryOnly.tracked, 0, 'Summary alone tracks no PR for moves');
