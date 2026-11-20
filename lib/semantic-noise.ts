@@ -196,7 +196,7 @@ export function comparisonTexts(
 
 // ── Per-language rules ──────────────────────────────────────────────────────
 
-const COMMENTS = new Set(['comment', 'line_comment', 'block_comment', 'html_comment', 'doc_comment', 'multiline_comment']);
+export const COMMENTS: ReadonlySet<string> = new Set(['comment', 'line_comment', 'block_comment', 'html_comment', 'doc_comment', 'multiline_comment']);
 /** Extras that only join lines. Python's `\` continuation changes nothing once the tree is the same. */
 const LAYOUT_EXTRAS = new Set(['line_continuation']);
 
@@ -891,21 +891,17 @@ export interface NoiseParser {
 }
 
 /**
- * Classifies each block of `texts` (comparisonTexts). `parse` parses with the file's grammar; trees are deleted
- * before this returns.
+ * Both sides' trees for `texts` (comparisonTexts): the new side parses whole; the old side reuses it, edited block by
+ * block from the last up, since the two texts differ only in the blocks' lines. Every edit starts and ends at a line
+ * start. The caller deletes both.
  */
-export function classifyBlocks(
+export function comparisonTrees(
   parser: NoiseParser,
-  language: SyntaxLanguage,
-  texts: { before: string; after: string; blocks: readonly SideBlock[] }
-): { kind: NoiseKind; reason?: string }[] {
+  texts: { before: string; after: string; blocks: readonly SideBlock[] },
+  oldStarts = starts(texts.before),
+  newStarts = starts(texts.after)
+): { oldTree: TreeSitter.Tree | null; newTree: TreeSitter.Tree | null } {
   const { blocks } = texts;
-  if (!blocks.length) return [];
-  const all = (reason: string) => blocks.map(() => ({ kind: 'code' as const, reason }));
-  const oldStarts = starts(texts.before),
-    newStarts = starts(texts.after);
-  // The new side parses whole; the old side reuses it, edited block by block from the last up, since the two texts
-  // differ only in the blocks' lines. Every edit starts and ends at a line start.
   const newTree = parser.parse(texts.after);
   let oldTree: TreeSitter.Tree | null = null;
   if (newTree) {
@@ -928,6 +924,26 @@ export function classifyBlocks(
     oldTree = parser.parse(texts.before, edited);
     edited.delete();
   }
+  return { oldTree, newTree };
+}
+
+/**
+ * Classifies each block of `texts` (comparisonTexts). `parse` parses with the file's grammar; trees are deleted
+ * before this returns.
+ */
+export function classifyBlocks(
+  parser: NoiseParser,
+  language: SyntaxLanguage,
+  texts: { before: string; after: string; blocks: readonly SideBlock[] },
+  /** Reads both trees before they are deleted: moved symbols fingerprint from the same parse (lib/syntax-scope.ts). */
+  trees?: (before: TreeSitter.Tree | null, after: TreeSitter.Tree | null) => void
+): { kind: NoiseKind; reason?: string }[] {
+  const { blocks } = texts;
+  if (!blocks.length) return [];
+  const all = (reason: string) => blocks.map(() => ({ kind: 'code' as const, reason }));
+  const oldStarts = starts(texts.before),
+    newStarts = starts(texts.after);
+  const { oldTree, newTree } = comparisonTrees(parser, texts, oldStarts, newStarts);
   try {
     if (!oldTree || !newTree) return all('parse-error');
     if (oldTree.rootNode.hasError || newTree.rootNode.hasError) return all('parse-error');
@@ -1027,8 +1043,14 @@ export function classifyBlocks(
     }
     return quietKinds(blocks, texts, before, after, oldStarts, newStarts, reasons, strictSame);
   } finally {
-    oldTree?.delete();
-    newTree?.delete();
+    try {
+      trees?.(oldTree, newTree);
+    } catch {
+      // The trees' reader fails on its own (moved symbols mark the file): the classification above still stands.
+    } finally {
+      oldTree?.delete();
+      newTree?.delete();
+    }
   }
 }
 
@@ -1068,12 +1090,18 @@ export function classifyNoise(
   parser: NoiseParser,
   language: SyntaxLanguage,
   after: string,
-  hunks: readonly HunkLike[]
+  hunks: readonly HunkLike[],
+  /** Reads the two texts and their trees before the trees are deleted; not called when the hunks do not match. */
+  trees?: (
+    texts: NonNullable<ReturnType<typeof comparisonTexts>>,
+    before: TreeSitter.Tree | null,
+    after: TreeSitter.Tree | null
+  ) => void
 ): NoiseBlock[] {
   const blocks = changeBlocks(hunks);
   const texts = comparisonTexts(after, hunks);
   if (!texts || texts.blocks.length !== blocks.length) return blocks.map((block) => ({ ...block, kind: 'code', reason: 'mismatch' }));
-  const kinds = classifyBlocks(parser, language, texts);
+  const kinds = classifyBlocks(parser, language, texts, trees && ((before, now) => trees(texts, before, now)));
   return blocks.map((block, i) => ({ ...block, ...kinds[i] }));
 }
 
