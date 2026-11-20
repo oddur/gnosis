@@ -1552,19 +1552,19 @@ export function createWorkbenchService(deps: Deps) {
       let generationStarted = false;
       try {
         const octokit = deps.client?.() ?? getGitHubClient(deps.auth().token);
-        const context = [];
-        for (const m of subject.members) {
-          controller.signal.throwIfAborted();
-          const { owner, repo, pullNumber } = parsePrUrl(m.url);
-          const files = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
-            () => getChangedFiles(octokit, owner, repo, pullNumber)));
-          context.push({
-            pr: m.url,
-            title: m.title,
-            description: m.description.slice(0, 4000),
-            files: files.slice(0, 60).map((f) => ({ path: f.filename, patch: f.patch?.slice(0, 2000) })),
-          });
-        }
+        controller.signal.throwIfAborted();
+        // Each member's file list is its own REST read, so they run together.
+        const memberFiles = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
+          () => Promise.all(subject.members.map((m) => {
+            const { owner, repo, pullNumber } = parsePrUrl(m.url);
+            return getChangedFiles(octokit, owner, repo, pullNumber);
+          }))));
+        const context = subject.members.map((m, i) => ({
+          pr: m.url,
+          title: m.title,
+          description: m.description.slice(0, 4000),
+          files: memberFiles[i].slice(0, 60).map((f) => ({ path: f.filename, patch: f.patch?.slice(0, 2000) })),
+        }));
         controller.signal.throwIfAborted();
         const assertRevision = async () => {
           const current = await abortable(withGitHubPriority(manualItem ? 'foreground' : 'background',
@@ -2116,8 +2116,9 @@ export function createWorkbenchService(deps: Deps) {
         if (override.parent === override.child) throw new Error('A PR cannot depend on itself.');
         const octokit = deps.client?.() ?? getGitHubClient(deps.auth().token);
         const members = new Map(s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)));
-        for (const url of [override.parent, override.child])
-          if (!members.has(url)) members.set(url, await fetchMember(octokit, url));
+        const missing = [override.parent, override.child].filter((url) => !members.has(url));
+        for (const [i, member] of (await Promise.all(missing.map((url) => fetchMember(octokit, url)))).entries())
+          members.set(missing[i], member);
         if (
           groupSubjects([...members.values()], proposed, s.subjects).some((sub) =>
             sub.warnings.some((w) => w.includes('Conflicting stack'))

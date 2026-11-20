@@ -34,6 +34,24 @@ async function assertRevision(
   if (current.merged || current.state !== 'open') throw new Error('This PR is no longer open for review.');
   return { owner, repo, pull_number: pullNumber };
 }
+/**
+ * The revision check and the line inventory are independent reads, so they run together. A changed revision is
+ * reported first, as when the check ran alone.
+ */
+async function revisionAndLines(
+  client: Octokit,
+  req: Pick<SubmitReviewRequest, 'prUrl' | 'headSha' | 'baseSha' | 'baseBranch'>,
+  needLines = true
+) {
+  const { owner, repo, pullNumber } = parsePrUrl(req.prUrl);
+  const [revision, lines] = await Promise.allSettled([
+    assertRevision(client, req),
+    needLines ? lineInventory(client, { owner, repo, pull_number: pullNumber }) : Promise.resolve(new Map<string, Set<string>>()),
+  ]);
+  if (revision.status === 'rejected') throw revision.reason;
+  if (lines.status === 'rejected') throw lines.reason;
+  return { target: revision.value, lines: lines.value };
+}
 async function lineInventory(client: Octokit, target: { owner: string; repo: string; pull_number: number }) {
   const files = await client.paginate(client.pulls.listFiles, {
     ...target,
@@ -52,8 +70,7 @@ const coordinates = (c: Comment) => ({
 
 export async function createReviewComment(client: Octokit, req: CreateReviewCommentRequest) {
   validateBody(req.body);
-  const target = await assertRevision(client, req);
-  const lines = await lineInventory(client, target);
+  const { target, lines } = await revisionAndLines(client, req);
   if (!validCommentRange(req, lines.get(req.path)))
     throw new Error('These lines are outside GitHub’s current diff. Select lines in a changed section.');
   await assertRevision(client, req);
@@ -65,8 +82,7 @@ export async function createReviewComment(client: Octokit, req: CreateReviewComm
 export async function submitPrReview(client: Octokit, req: SubmitReviewRequest, signature: boolean) {
   if (!['COMMENT', 'APPROVE', 'REQUEST_CHANGES'].includes(req.event)) throw new Error('Unknown review action.');
   for (const comment of req.comments) validateBody(comment.body);
-  const target = await assertRevision(client, req);
-  const lines = req.comments.length ? await lineInventory(client, target) : new Map<string, Set<string>>();
+  const { target, lines } = await revisionAndLines(client, req, req.comments.length > 0);
   const valid = req.comments.filter((c) => validCommentRange(c, lines.get(c.path)));
   const dropped = req.comments.filter((c) => !valid.includes(c));
   let body = req.body;

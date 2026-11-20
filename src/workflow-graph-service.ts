@@ -441,16 +441,24 @@ async function readGraph(
         const jobs: WorkflowJob[] = [],
           warnings: string[] = [];
         const loadJobs = async () => {
-          for (let page = 1; page <= 5; page++) {
-            const { data: batch } = await client.actions.listJobsForWorkflowRunAttempt({
-              owner,
-              repo,
-              run_id: run.id,
-              attempt_number: run.run_attempt ?? 1,
-              per_page: 100,
-              page,
-              headers: { 'cache-control': 'no-cache' },
-            });
+          const readPage = async (page: number) =>
+            (
+              await client.actions.listJobsForWorkflowRunAttempt({
+                owner,
+                repo,
+                run_id: run.id,
+                attempt_number: run.run_attempt ?? 1,
+                per_page: 100,
+                page,
+                headers: { 'cache-control': 'no-cache' },
+              })
+            ).data;
+          // The first page gives the job count; the remaining pages (at most 5 in all) are read together.
+          const first = await readPage(1);
+          const pageCount = Math.min(5, Math.max(1, Math.ceil(first.total_count / 100)));
+          const pages = [first, ...(await Promise.all(Array.from({ length: pageCount - 1 }, (_, i) => readPage(i + 2))))];
+          for (const [index, batch] of pages.entries()) {
+            const page = index + 1;
             runInfo.jobCount = batch.total_count;
             for (const job of batch.jobs) {
               const checkId = /\/check-runs\/(\d+)$/.exec(job.check_run_url)?.[1];

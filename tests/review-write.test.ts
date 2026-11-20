@@ -139,3 +139,38 @@ void test('failed comment writes are never automatically replayed', async () => 
   await assert.rejects(createReviewComment(h.client, request), /Forbidden/);
   assert.equal(h.writes.length, 1);
 });
+
+void test('posting reads the revision and the changed lines together, and a moved head still wins', async () => {
+  let inFlight = 0,
+    peak = 0,
+    head = 'head';
+  const client = createGitHubClientPool({
+    fetch: (async (url: string, init: RequestInit) => {
+      let data: unknown;
+      if (init.method === 'POST') data = { html_url: 'https://github.com/o/r/pull/2#comment', node_id: 'C' };
+      else {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        if (url.includes('/files')) {
+          if (head === 'moved') return new Response(JSON.stringify({ message: 'Server Error' }), { status: 500 });
+          data = [{ filename: 'queue.ts', patch: '@@ -2,3 +2,3 @@\n context\n-old\n+new\n end' }];
+        } else
+          data = {
+            title: 'Test',
+            user: { login: 'author' },
+            base: { ref: 'main', sha: 'base', repo: { full_name: 'o/r' } },
+            head: { ref: 'feature', sha: head, repo: { full_name: 'o/r' } },
+            state: 'open',
+            merged: false,
+          };
+      }
+      return new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch,
+  }).client('parallel');
+  await createReviewComment(client, request);
+  assert.equal(peak, 2, 'the first revision check and the file list run at the same time');
+  head = 'moved';
+  await assert.rejects(createReviewComment(client, { ...request, line: 3, startLine: undefined }), /changed/);
+});

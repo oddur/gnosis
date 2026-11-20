@@ -103,12 +103,20 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
         const root = snapshots[0],
           tip = snapshots[snapshots.length - 1];
         const [owner, repo] = (root.metadata.baseRepo ?? '').split('/');
+        // Each pair's merge base is its own read (REST only), so they run together; the checks keep stack order.
+        const bases = await Promise.allSettled(
+          snapshots.slice(1).map(
+            async (child, i) =>
+              (await clones.read(root.metadata.baseRepo, (clone) => clone.mergeBase(snapshots[i].metadata.headSha, child.metadata.headSha))) ??
+              (await getMergeBase(client, owner, repo, snapshots[i].metadata.headSha, child.metadata.headSha))
+          )
+        );
         for (let i = 1; i < snapshots.length; i++) {
           const parent = snapshots[i - 1],
             child = snapshots[i];
-          const base =
-            (await clones.read(root.metadata.baseRepo, (clone) => clone.mergeBase(parent.metadata.headSha, child.metadata.headSha))) ??
-            (await getMergeBase(client, owner, repo, parent.metadata.headSha, child.metadata.headSha));
+          const settled = bases[i - 1];
+          if (settled.status === 'rejected') throw settled.reason;
+          const base = settled.value;
           if (base !== parent.metadata.headSha)
             throw new Error(
               `PR #${child.url.split('/').pop()} does not include the current commits from PR #${parent.url.split('/').pop()}. Update its branch or review by PR.`

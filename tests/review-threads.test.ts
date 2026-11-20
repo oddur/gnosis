@@ -63,8 +63,13 @@ const pr = (threads: unknown) => ({
 
 void test('threads and replies paginate fully, coalesce file reads, cache briefly, and isolate accounts', async () => {
   const h = harness((query, vars) => {
+    // Long threads read their next reply page together, one alias per thread.
     if (query.includes('ThreadReplies'))
-      return response({ data: { node: { comments: page([{ ...comment, id: 'C2', databaseId: 102 }]) } } });
+      return response({
+        data: Object.fromEntries(
+          [...query.matchAll(/(t\d+): node\(/g)].map(([, alias]) => [alias, { comments: page([{ ...comment, id: 'C2', databaseId: 102 }]) }])
+        ),
+      });
     return response(
       pr(
         vars.cursor
@@ -542,4 +547,30 @@ void test('a write through Gnosis keeps the queue’s last discussion, marked st
   assert.equal(kept?.threads.length, 1, 'The count does not drop to 0 after a write');
   assert.equal(kept.stale, true);
   assert.equal(service.stale(client, review.prUrl), undefined, 'Discussion views read GitHub again');
+});
+
+void test('long threads read their remaining replies in one aliased query', async () => {
+  const replies: string[] = [];
+  const h = harness((query) => {
+    if (query.includes('ThreadReplies')) {
+      const aliases = [...query.matchAll(/(t\d+): node\(id:"([^"]+)"\)/g)];
+      replies.push(aliases.map(([, , id]) => id).join(','));
+      return response({
+        data: Object.fromEntries(
+          aliases.map(([, alias, id]) => [alias, { comments: page([{ ...comment, id: `${id}-reply`, databaseId: 200 }]) }])
+        ),
+      });
+    }
+    return response(
+      pr(page(['T1', 'T2', 'T3', 'T4'].map((id, i) => ({ ...thread, id, comments: page([comment], i < 3 ? 'more' : null) }))))
+    );
+  });
+  const service = createReviewThreadService(() => 0);
+  const result = await service.list(h.pool.client('one'), review.prUrl);
+  assert.equal(h.calls.length, 2, 'one discussion query, one query for every long thread; before, one per thread');
+  assert.deepEqual(replies, ['T1,T2,T3']);
+  assert.deepEqual(
+    result.threads.map((t) => t.comments.map((c) => c.id)),
+    [['C1', 'T1-reply'], ['C1', 'T2-reply'], ['C1', 'T3-reply'], ['C1']]
+  );
 });

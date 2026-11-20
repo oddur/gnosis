@@ -36,6 +36,7 @@ import { createConflictResolutionService } from './conflict-resolution-service';
 import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-resolution';
 import { parseGitHubSyncInterest } from '../lib/github-sync';
 import { createGitHubSyncService, type GitHubSyncRead } from './github-sync-service';
+import { mapBounded } from '../lib/bounded';
 import { getPrMetadataBatch, withReviewerOrder } from '../lib/pr-metadata-graphql';
 import { createOptimisticService } from './optimistic-service';
 import { prActionChange, type OptimisticChange, type OptimisticKind } from '../lib/optimistic-patches';
@@ -761,16 +762,24 @@ async function runProactiveCheck() {
       index.filter((e) => e.status === 'generating').map((e) => e.prUrl)
     );
 
-    let updateCount = 0;
-    for (const [prUrl, entry] of openCompletedByPr) {
-      if (updateCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
-      if (generatingPrUrls.has(prUrl)) continue;
-      // Local reviews are pinned to commit shas — nothing to poll.
-      if (isLocalUrl(prUrl)) continue;
-
+    // Local reviews are pinned to commit shas — nothing to poll.
+    const candidates = [...openCompletedByPr].filter(([prUrl]) => !generatingPrUrls.has(prUrl) && !isLocalUrl(prUrl));
+    // Conditional REST reads, which GitHub answers with a free 304 while a PR is unchanged; 5 run at a time.
+    const reads = await mapBounded(candidates, 5, async ([prUrl]) => {
       try {
         const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-        const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+        return { prData: await getPrMetadata(octokit, owner, repo, pullNumber) };
+      } catch (error) {
+        return { error };
+      }
+    });
+    let updateCount = 0;
+    for (const [i, [prUrl, entry]] of candidates.entries()) {
+      if (updateCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
+      try {
+        const read = reads[i];
+        if ('error' in read) throw read.error;
+        const { prData } = read;
 
         if (!prData.repoArchived && prData.headSha !== entry.prHeadSha) {
           console.log(`[proactive] PR head changed for ${prUrl} (${entry.prHeadSha?.slice(0, 7)} → ${prData.headSha.slice(0, 7)}), re-reviewing`);
@@ -3332,13 +3341,26 @@ async function readCommentEvents(candidates: CommentCandidate[]) {
   const login = cachedLogin;
   if (!token || !login) return;
   const client = getGitHubClient(token);
-  for (const candidate of candidates) {
+  // Five discussions share one GraphQL preload; a PR it could not save completely is read by itself.
+  const saved = new Set<string>(), attempted = new Set<string>();
+  for (const [index, candidate] of candidates.entries()) {
     if ((githubClients.backoff(token, true, ['graphql'])?.retryAt ?? 0) > Date.now()) return;
     const member = workbench.knownMember(candidate.url);
     if (!member) continue;
+    if (!attempted.has(candidate.url)) {
+      const group = [...new Set(candidates.slice(index).filter(c => !attempted.has(c.url) && workbench.knownMember(c.url)).map(c => c.url))].slice(0, 5);
+      for (const url of group) attempted.add(url);
+      if (group.length > 1)
+        try {
+          const preloaded = await withGitHubPriority('background', () => reviewThreads.preload(client, group));
+          for (const url of preloaded.saved) saved.add(url);
+        } catch {
+          // Each PR reads its own discussion below.
+        }
+    }
     let discussion;
     try {
-      discussion = await withGitHubPriority('background', () => reviewThreads.list(client, candidate.url, true));
+      discussion = await withGitHubPriority('background', () => reviewThreads.list(client, candidate.url, !saved.has(candidate.url)));
     } catch (error) {
       console.warn('[notifications] Could not read the discussion for a mention or reply:', error instanceof Error ? error.message : error);
       continue;

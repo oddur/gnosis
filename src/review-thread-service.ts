@@ -153,6 +153,8 @@ async function graphql<T>(client: Octokit, query: string, variables: Record<stri
   if (!result.data) throw new Error('GitHub returned no review discussion data.');
   return result.data;
 }
+/** Long review threads whose next reply page shares one aliased `node(id:)` query. */
+const THREADS_PER_QUERY = 25;
 function nextCursor<T>(page: Page<T>, previous: string | null) {
   if (!page.pageInfo.hasNextPage) return null;
   const next = page.pageInfo.endCursor;
@@ -205,33 +207,45 @@ export function createReviewThreadService(now = Date.now) {
           }
           return all;
         }
-        feedback = feedbackOf(
-          pr,
-          await collect(pr.comments, 'comments', bodyFields),
-          await collect(pr.reviews, 'reviews', reviewFields),
-          await collect(pr.reviewRequests, 'reviewRequests', requestedReviewerFields)
-        );
+        // The three lists page independently, so their remaining pages load together.
+        const [comments, reviews, requests] = await Promise.all([
+          collect(pr.comments, 'comments', bodyFields),
+          collect(pr.reviews, 'reviews', reviewFields),
+          collect(pr.reviewRequests, 'reviewRequests', requestedReviewerFields),
+        ]);
+        feedback = feedbackOf(pr, comments, reviews, requests);
       }
       if (revision && (revision.headSha !== pr.headRefOid || revision.baseSha !== pr.baseRefOid))
         throw new Error('The PR changed while loading discussions. Refresh comments to try again.');
       revision = { headSha: pr.headRefOid, baseSha: pr.baseRefOid };
-      for (const thread of pr.reviewThreads.nodes) {
-        let comments = thread.comments;
-        const all = [...comments.nodes];
-        let after = nextCursor(comments, null);
-        while (after) {
-          const more: { node: { comments: Page<GitHubReviewComment> } | null } = await graphql(
+      // Every thread with more replies than the first page reads its next page in one aliased query, 25 threads each.
+      const replies = pr.reviewThreads.nodes.map((thread) => ({
+        thread,
+        all: [...thread.comments.nodes],
+        after: nextCursor(thread.comments, null),
+      }));
+      for (let open = replies.filter((r) => r.after); open.length; open = replies.filter((r) => r.after)) {
+        for (let i = 0; i < open.length; i += THREADS_PER_QUERY) {
+          const batch = open.slice(i, i + THREADS_PER_QUERY);
+          const more = await graphql<Record<string, { comments: Page<GitHubReviewComment> } | null>>(
             client,
-            `query ThreadReplies($id:ID!,$after:String!) { rateLimit { cost } node(id:$id) { ... on PullRequestReviewThread { comments(first:100,after:$after) { nodes { ${commentFields} } ${pageFields} } } } }`,
-            { id: thread.id, after }
+            `query ThreadReplies { rateLimit { cost } ${batch
+              .map(
+                (r, j) =>
+                  `t${j}: node(id:${JSON.stringify(r.thread.id)}) { ... on PullRequestReviewThread { comments(first:100,after:${JSON.stringify(r.after)}) { nodes { ${commentFields} } ${pageFields} } } }`
+              )
+              .join(' ')} }`,
+            {}
           );
-          if (!more.node) throw new Error('This discussion is no longer available. Refresh comments.');
-          comments = more.node.comments;
-          all.push(...comments.nodes);
-          after = nextCursor(comments, after);
+          for (const [j, r] of batch.entries()) {
+            const node = more[`t${j}`];
+            if (!node) throw new Error('This discussion is no longer available. Refresh comments.');
+            r.all.push(...node.comments.nodes);
+            r.after = nextCursor(node.comments, r.after);
+          }
         }
-        threads.push({ ...thread, comments: all });
       }
+      for (const { thread, all } of replies) threads.push({ ...thread, comments: all });
       cursor = nextCursor(pr.reviewThreads, cursor);
     } while (cursor);
     return { ...revision, threads, checkedAt: now(), ...(feedback ? { feedback } : {}) };
