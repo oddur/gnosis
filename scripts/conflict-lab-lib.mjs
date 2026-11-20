@@ -104,6 +104,10 @@ export function gitRunner(cwd, extraEnv = {}) {
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0',
+    // User config is ignored for reproducible commits, so pushes to GitHub authenticate through the gh CLI.
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
+    GIT_CONFIG_VALUE_0: '!gh auth git-credential',
     GIT_AUTHOR_NAME: 'Conflict Lab',
     GIT_AUTHOR_EMAIL: 'conflict-lab@example.com',
     GIT_COMMITTER_NAME: 'Conflict Lab',
