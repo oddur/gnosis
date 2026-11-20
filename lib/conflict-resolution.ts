@@ -16,6 +16,13 @@ export interface ConflictFile {
    * with these applied. The renderer checks them (lib/conflict-verify.ts) before it calls one Merged.
    */
   proposals?: (ConflictProposal | null)[];
+  /**
+   * Structural merge's result for the whole file, when it also changes lines outside Git's conflicts and so cannot be
+   * split into per-block proposals. Always Check, never Merged. Accepting it makes it the draft, like a Suggest result.
+   */
+  wholeFile?: ConflictProposal;
+  /** Why structural merge proposed nothing for this file during preparation, such as a timeout. */
+  structuralNote?: string;
 }
 /** One conflict block resolved during preparation: by your earlier resolution, or by structural merge. */
 export interface ConflictProposal {

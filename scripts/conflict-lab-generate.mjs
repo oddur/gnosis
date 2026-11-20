@@ -898,6 +898,8 @@ function outcome(result) {
     notes,
     comparisons,
     fixNotes: files.map((f) => f.fixNote).filter(Boolean),
+    wholeFile: files.some((f) => f.wholeFileProposal),
+    wholeFileCorrect: files.some((f) => f.wholeFileProposal === 'correct'),
   };
 }
 const good = (comparisons) => comparisons.length > 0 && comparisons.every((c) => c !== 'differs');
@@ -921,6 +923,8 @@ export function matrixReport(results, cases) {
     wrongFixed: 0,
     lostToFixes: 0,
     cleanWrong: 0,
+    wholeFile: 0,
+    wholeFileCorrect: 0,
   });
   const totals = { auto: stat(), must: stat() };
   for (const r of results) {
@@ -934,8 +938,11 @@ export function matrixReport(results, cases) {
     for (const t of [s, auto ? totals.auto : totals.must]) {
       t.n++;
       if (o.kind === 'error') t.error++;
-      else if (o.kind === 'check') t.check++;
-      else if (o.kind === 'decide') t.decide++;
+      else if (o.kind === 'check') {
+        t.check++;
+        if (o.wholeFile) t.wholeFile++;
+        if (o.wholeFileCorrect) t.wholeFileCorrect++;
+      } else if (o.kind === 'decide') t.decide++;
       else if (o.kind === 'clean') {
         t.clean++;
         if (auto && good(o.comparisons)) t.correct++;
@@ -980,7 +987,8 @@ export function matrixReport(results, cases) {
   const headline =
     `Of ${conflicting} generated conflicts we should handle automatically, ${pct(a.correct - (a.clean - a.cleanWrong), conflicting)} are Merged and correct, ` +
     `${pct(a.check, conflicting)} go to Check, ${pct(a.decide, conflicting)} go to Decide, and ${pct(a.wrong, conflicting)} are wrongly Merged (must be 0). ` +
-    `Git merged ${a.clean} more on its own. Of ${totals.must.n} cases that must not be Merged, ${totals.must.wrong} were Merged.`;
+    `Git merged ${a.clean} more on its own. Of ${totals.must.n} cases that must not be Merged, ${totals.must.wrong} were Merged. ` +
+    `${a.wholeFile + totals.must.wholeFile} cases are whole-file proposals in Check; ${a.wholeFileCorrect + totals.must.wholeFileCorrect} of them are correct.`;
   const out = ['# Conflict lab: permutation matrix', '', headline, ''];
   out.push(
     `Cases: ${results.length} (${cases.length} generated). Cell: Merged-or-Git% / correct% / wrong-Merged% (n). Must-not patterns: correct% is "not Merged".`,
@@ -1008,8 +1016,8 @@ export function matrixReport(results, cases) {
   );
   out.push('## Where each pattern ended up (all languages)', '');
   out.push(
-    '| pattern | n | Merged | Git merged | correct | Check | Decide | wrong Merged | wrong with proposed checks | correct lost to proposed checks |',
-    '|---|---|---|---|---|---|---|---|---|---|'
+    '| pattern | n | Merged | Git merged | correct | Check | Decide | wrong Merged | wrong with proposed checks | correct lost to proposed checks | whole-file proposals (correct) |',
+    '|---|---|---|---|---|---|---|---|---|---|---|'
   );
   for (const [pattern, p] of Object.entries(PATTERNS)) {
     if (!cells.has(pattern)) continue;
@@ -1018,7 +1026,7 @@ export function matrixReport(results, cases) {
       stat()
     );
     out.push(
-      `| ${p.auto ? '' : '(must not) '}${pattern} | ${s.n} | ${s.merged} | ${s.clean} | ${p.auto ? s.correct : s.n - s.merged} | ${s.check} | ${s.decide} | ${s.wrong} | ${s.wrongFixed} | ${s.lostToFixes} |`
+      `| ${p.auto ? '' : '(must not) '}${pattern} | ${s.n} | ${s.merged} | ${s.clean} | ${p.auto ? s.correct : s.n - s.merged} | ${s.check} | ${s.decide} | ${s.wrong} | ${s.wrongFixed} | ${s.lostToFixes} | ${s.wholeFile} (${s.wholeFileCorrect}) |`
     );
   }
   out.push(

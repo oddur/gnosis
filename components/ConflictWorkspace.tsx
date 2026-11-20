@@ -61,6 +61,7 @@ import {
   proposalKey,
   summarySentence,
   verifyProposals,
+  verifyWholeFile,
   type Verdict,
 } from '../lib/conflict-verify';
 import { withProposals } from '../lib/conflict-carry';
@@ -310,16 +311,16 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [verdicts, setVerdicts] = useState<Record<string, { key: string; verdict: Verdict }>>({});
   const checking = useRef(new Map<string, string>());
   const verdictOf = (f: ConflictFile) => {
-    const entry = f.proposals ? verdicts[f.path] : undefined;
+    const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
     return entry?.key === proposalKey(f) ? entry.verdict : undefined;
   };
   useEffect(() => {
     for (const f of session?.files ?? []) {
-      if (!f.proposals) continue;
+      if (!f.proposals && !f.wholeFile) continue;
       const key = proposalKey(f);
       if (checking.current.get(f.path) === key) continue;
       checking.current.set(f.path, key);
-      void verifyProposals(f, checkSyntax)
+      void (f.wholeFile ? verifyWholeFile(f, f.wholeFile, checkSyntax) : verifyProposals(f, checkSyntax))
         .catch(() => ({ merged: false, note: 'Gnosis couldn’t check this result.' }))
         // A slower check of earlier proposals never replaces the result for the current ones.
         .then((verdict) => {
@@ -1373,6 +1374,17 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                                 onAllResolved={() => primary.current?.focus()}
                                 proposals={file.proposals}
                                 verdict={verdictOf(file)}
+                                note={file.structuralNote}
+                                wholeFile={
+                                  file.wholeFile && markersRemain
+                                    ? {
+                                        proposal: file.wholeFile,
+                                        ours: file.ours,
+                                        // The same step as Suggest a resolution → structural merge.
+                                        onUse: () => suggest('mergiraf', 'file'),
+                                      }
+                                    : undefined
+                                }
                               />
                             ) : (
                               <File file={{ name: selected, contents }} options={options} />

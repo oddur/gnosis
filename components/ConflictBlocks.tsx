@@ -124,6 +124,7 @@ function Block({
   onUndo,
   proposal,
   verdict,
+  note,
 }: {
   name: string;
   block: ConflictBlock;
@@ -138,6 +139,8 @@ function Block({
   proposal?: ConflictProposal | null;
   /** The file's checks; undefined while they run. */
   verdict?: Verdict;
+  /** Why structural merge proposed nothing for this file, shown on its Decide conflicts. */
+  note?: string;
 }) {
   const title = `Conflict ${index + 1} of ${total}`;
   const actions = (
@@ -295,6 +298,7 @@ function Block({
           Decide
         </span>
         <span>Line {block.line}</span>
+        {note && <span className="conflict-block-note">{note}</span>}
       </header>
       <div className="conflict-sides">
         <Side name={name} side="ours" label={labels.ours} text={block.ours} />
@@ -335,6 +339,8 @@ export function ConflictView({
   onAllResolved,
   proposals,
   verdict,
+  note,
+  wholeFile,
 }: {
   name: string;
   original: string;
@@ -342,6 +348,9 @@ export function ConflictView({
   /** What preparation resolved, per block, and its checks (lib/conflict-verify.ts). */
   proposals?: readonly (ConflictProposal | null)[];
   verdict?: Verdict;
+  note?: string;
+  /** Structural merge's whole-file result, shown first as one thing to check. */
+  wholeFile?: { proposal: ConflictProposal; ours: string; onUse: () => void };
   labels: ConflictLabels;
   onChange: (contents: string) => void;
   disabled?: boolean;
@@ -394,7 +403,8 @@ export function ConflictView({
       },
       choose(choice) {
         if (disabled) return false;
-        const blocks = openBlocks();
+        // 1, 2 and 3 choose in a conflict, never in the whole-file proposal.
+        const blocks = openBlocks().filter((block) => indexOf(block) >= 0);
         const active = document.activeElement?.closest<HTMLElement>(pendingSelector);
         const target = active && blocks.includes(active) ? active : blocks.at(0);
         if (!target) return false;
@@ -412,6 +422,7 @@ export function ConflictView({
   );
   return (
     <div ref={root} className="conflict-view" data-undoable={model.undoable || undefined}>
+      {wholeFile && <WholeFile name={name} {...wholeFile} verdict={verdict} labels={labels} disabled={disabled} />}
       {model.segments.map((segment, i) =>
         segment.kind === 'text' ? (
           <ContextText
@@ -435,11 +446,71 @@ export function ConflictView({
             onChoose={(choice) => choose(segment.index, choice)}
             proposal={proposals?.[segment.index]}
             verdict={verdict}
+            note={note}
             onUndo={model.undoable ? () => choose(segment.index, undefined) : undefined}
           />
         )
       )}
     </div>
+  );
+}
+
+/**
+ * Structural merge's result for the whole file. It also changes lines outside the conflicts, so it is never Merged:
+ * you read it next to the PR and use it, or choose each conflict below yourself.
+ */
+function WholeFile({
+  name,
+  proposal,
+  ours,
+  onUse,
+  verdict,
+  labels,
+  disabled,
+}: {
+  name: string;
+  proposal: ConflictProposal;
+  ours: string;
+  onUse: () => void;
+  verdict?: Verdict;
+  labels: ConflictLabels;
+  disabled: boolean;
+}) {
+  const note = verdict?.note ?? 'Checking the result…';
+  return (
+    <section
+      className="conflict-block conflict-whole-file"
+      data-state="whole-file"
+      data-bucket="check"
+      data-conflict-index={-1}
+      tabIndex={0}
+      aria-label={`Whole file. Check: structural merge combined both sides. ${note}`}
+    >
+      <header className="conflict-block-header">
+        <strong>Whole file</strong>
+        <span className="conflict-bucket" data-bucket="check">
+          <CircleHelp size={13} aria-hidden="true" />
+          Check · Combined both sides’ changes
+        </span>
+      </header>
+      <p>
+        Mergiraf’s result also changes lines outside the conflicts, so read the whole file. It stays in Check even when
+        its checks pass. {note}
+      </p>
+      <ResultDiff
+        name={name}
+        before={ours}
+        after={proposal.text}
+        beforeLabel={labels.ours}
+        afterLabel="Proposed result"
+      />
+      <div className="conflict-block-actions">
+        <Button size="sm" variant="outline" disabled={disabled} data-choice="whole-file" onClick={onUse}>
+          Use this result
+        </Button>
+        <span>Or choose each conflict below yourself.</span>
+      </div>
+    </section>
   );
 }
 

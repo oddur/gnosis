@@ -59,6 +59,8 @@ interface Deps {
   /** `read` for many PRs at once, one promise per URL in order. */
   readMany?: (urls: string[]) => Promise<PrActionState>[];
   mergiraf: () => string;
+  /** Milliseconds for structural merge while preparing, and for its retry: 5000 and 10000. Tests shorten them. */
+  structuralTimeouts?: [number, number];
   suggest: (
     context: { session: ConflictSession; file: ConflictFile; instructions: string },
     signal: AbortSignal
@@ -630,7 +632,9 @@ export function createConflictResolutionService(deps: Deps) {
   }
   /**
    * Runs structural merge on every text conflict that your earlier resolutions did not settle, a few files at a time.
-   * Each conflict it resolves becomes a proposal; the ones it leaves, and any file it fails on, stay as Git wrote them.
+   * Each conflict it resolves becomes a proposal. A result that also changes lines outside the conflicts is kept whole,
+   * for you to check. A file that runs out of time gets one more try on its own, with the Suggest budget. Any file it
+   * still fails on stays as Git wrote it, with a note that says why.
    */
   async function mergeStructurally(
     ctx: Context,
@@ -641,28 +645,48 @@ export function createConflictResolutionService(deps: Deps) {
     report: (text: string) => void
   ) {
     const queue = files.filter((file) => !file.unsupported && file.source !== 'rerere');
+    if (!queue.length) return files;
     // A development build without `npm run prepare:mergiraf` has no binary: the conflicts stay as Git wrote them.
-    if (!queue.length || !(await exists(deps.mergiraf()))) return files;
+    if (!(await exists(deps.mergiraf()))) {
+      for (const file of queue) file.structuralNote = 'Structural merge isn’t available in this build.';
+      return files;
+    }
     report(`Combining both sides’ changes in ${queue.length} ${queue.length === 1 ? 'file' : 'files'}.`);
-    const work = async () => {
-      for (let file = queue.shift(); file; file = queue.shift()) {
-        try {
-          const proposals = blockProposals(
-            file.original,
-            await mergiraf(ctx, id, branches, file, signal, 5000),
-            'mergiraf'
-          );
-          if (!proposals) continue;
-          file.proposals = proposals;
-          file.result = withProposals(file.original, proposals);
-          file.source = 'mergiraf';
-        } catch (error) {
-          signal.throwIfAborted();
-          console.warn(`[conflicts] Structural merge skipped ${file.path}.`, error);
-        }
+    /** Keeps what structural merge proposed for one file. False when it ran out of time. */
+    const propose = async (file: ConflictFile, budget: number) => {
+      const started = Date.now();
+      let output: string;
+      try {
+        output = await mergiraf(ctx, id, branches, file, signal, budget);
+      } catch (error) {
+        signal.throwIfAborted();
+        console.warn(`[conflicts] Structural merge skipped ${file.path}.`, error);
+        if (error instanceof Error && error.message.startsWith('The operation timed out')) return false;
+        file.structuralNote = 'Structural merge couldn’t combine this file.';
+        return true;
       }
+      const proposals = blockProposals(file.original, output, 'mergiraf');
+      if (proposals) {
+        file.proposals = proposals;
+        file.result = withProposals(file.original, proposals);
+        file.source = 'mergiraf';
+      } else if (!hasConflictMarkers(output)) file.wholeFile = { source: 'mergiraf', text: output };
+      // Out of time, Mergiraf falls back to Git's line merge and says nothing.
+      else if (Date.now() - started >= budget) return false;
+      else file.structuralNote = 'Structural merge couldn’t combine this file.';
+      return true;
+    };
+    const late: ConflictFile[] = [];
+    const [first, retry] = deps.structuralTimeouts ?? [5000, 10_000];
+    const work = async () => {
+      for (let file = queue.shift(); file; file = queue.shift()) if (!(await propose(file, first))) late.push(file);
     };
     await Promise.all([work(), work(), work(), work()]);
+    for (const file of late)
+      if (!(await propose(file, retry))) {
+        console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
+        file.structuralNote = 'Structural merge timed out.';
+      }
     return files;
   }
   async function preparation(
@@ -795,6 +819,12 @@ export function createConflictResolutionService(deps: Deps) {
         const old = before.get(file.path);
         if (!old || old.unsupported || file.unsupported || conflictKeys(old.original) !== conflictKeys(file.original))
           return true;
+        // A whole-file proposal covers every line, so it carries only when the file's three versions are the same.
+        if (old.wholeFile) {
+          if (old.base !== file.base || old.ours !== file.ours || old.theirs !== file.theirs) return true;
+          file.wholeFile = old.wholeFile;
+        }
+        if (old.structuralNote) file.structuralNote = old.structuralNote;
         if (old.proposals) {
           file.proposals = old.proposals;
           file.result = withProposals(file.original, old.proposals);
@@ -1277,13 +1307,10 @@ export function createConflictResolutionService(deps: Deps) {
               }
               file.explanation = result.explanation;
             } else {
-              file.result = await mergiraf(
-                ctx,
-                id,
-                { head: session.headBranch, base: session.baseBranch },
-                file,
-                signal
-              );
+              // Preparation already ran Mergiraf on these three versions and kept its whole-file result.
+              file.result =
+                file.wholeFile?.text ??
+                (await mergiraf(ctx, id, { head: session.headBranch, base: session.baseBranch }, file, signal));
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'
                 : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
@@ -1291,6 +1318,7 @@ export function createConflictResolutionService(deps: Deps) {
             file.source = request.engine;
             // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals.
             delete file.proposals;
+            delete file.wholeFile;
             file.resolved = false;
           }
         } else {
