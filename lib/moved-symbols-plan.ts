@@ -74,12 +74,27 @@ export function currentChanges(
  */
 export const MOVES_KEY = '\u0000moves';
 /**
- * The file revision whose moved-symbol family a read's end fails, or undefined (#398). A moves read that ends without
- * the file fails its family whatever the cause (its budget spent, its tries run out, the file not readable): nothing
- * else will read it. Another read fails it only when the file cannot be read at all; the scope cap refusing a scope
- * read, or a scope read's tries running out, says nothing about the moves read.
+ * The file revision whose moved-symbol family a read's end fails, and whether a later read can mend it, or undefined
+ * (#398). A moves read that ends without the file fails its family whatever the cause (its budget spent, its tries run
+ * out, the file not readable): nothing else will read it. Tries that ran out are recoverable: a later read of the file
+ * (a scope read, the moves read queued again) revives it. Another read fails a family only when the file cannot be
+ * read at all; the scope cap refusing a scope read, or a scope read's tries running out, says nothing about moves.
  */
-export function movesFailureKey(key: string, cause: 'content' | 'budget' | 'cap' | 'retries'): string | undefined {
-  if (key.endsWith(MOVES_KEY)) return key.slice(0, -MOVES_KEY.length);
-  return cause === 'content' ? key : undefined;
+export function movesFailureKey(
+  key: string,
+  cause: 'content' | 'budget' | 'cap' | 'retries'
+): { key: string; recoverable: boolean } | undefined {
+  if (key.endsWith(MOVES_KEY)) return { key: key.slice(0, -MOVES_KEY.length), recoverable: cause === 'retries' };
+  return cause === 'content' ? { key, recoverable: false } : undefined;
 }
+
+/** A member's whole revision, for a file list read for it (`keptRead`): a retargeted member is another revision. */
+export const memberRevisionKey = (member: InspectionRevision) =>
+  `${member.url}\u0000${member.headSha}\u0000${member.baseSha}`;
+/**
+ * Whether a file list read for a member is kept apart for it: it is for the member's head, but another base than the
+ * member says (GitHub knows a newer one), so the cache lookup by the member's revision never finds it. A list for the
+ * member's own base is found in the cache.
+ */
+export const keptRead = (member: InspectionRevision, snapshot: PrChanges) =>
+  snapshot.metadata.headSha === member.headSha && snapshot.metadata.baseSha !== member.baseSha;

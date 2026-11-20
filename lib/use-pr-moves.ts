@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState, useSyncExternalStore } from 'react';
 import { inspectionData } from './inspection-cache';
 import { fileRevisionKey, type InspectionRevision, type PrChanges } from './pr-changes';
-import { currentChanges } from './moved-symbols-plan';
+import { currentChanges, keptRead, memberRevisionKey } from './moved-symbols-plan';
 import { codeIntelligenceSettings } from './code-intelligence';
 import { useMovesPrefetch, type SyntaxFile } from './use-syntax-contents';
 
@@ -18,10 +18,10 @@ export function usePrMoves(members: readonly InspectionRevision[], preferences: 
   const settings = useMemo(() => codeIntelligenceSettings(preferences), [preferences]);
   const on = preferences !== null && preferences !== undefined && settings.enabled;
   const revisions = members.map((member) => `${member.url}\u0000${member.baseSha}\u0000${member.headSha}`).join('\n');
-  // File lists this hook read itself, by member revision: the one read for a member is tracked, whatever base GitHub
-  // gave it, and never read again.
+  // File lists this hook read itself whose base differs from the member's (GitHub knows a newer base), by the member's
+  // whole revision: tracked as read, and not read again. A retargeted member is another revision, read afresh.
   const [read, setRead] = useState<ReadonlyMap<string, PrChanges>>(new Map());
-  const revisionKey = (member: InspectionRevision) => `${member.url}\u0000${member.headSha}`;
+  const revisionKey = memberRevisionKey;
   useEffect(() => {
     if (!on) return;
     let cancelled = false;
@@ -29,7 +29,8 @@ export function usePrMoves(members: readonly InspectionRevision[], preferences: 
       if (currentChanges(member, inspectionData.peekChanges) || read.has(revisionKey(member))) continue;
       void inspectionData.readChanges(member, false, true).then(
         (snapshot) => {
-          if (!cancelled && snapshot.metadata.headSha === member.headSha)
+          // A list for the member's own base is in the cache, and found there.
+          if (!cancelled && keptRead(member, snapshot))
             setRead((known) => new Map(known).set(revisionKey(member), snapshot));
         },
         () => {}

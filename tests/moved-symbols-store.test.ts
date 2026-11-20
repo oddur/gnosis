@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createMovesStore, MOVES_MAX_FILES, MOVES_PR_ENTRIES, type MovesWorker } from '../lib/moved-symbols-core';
-import { MOVES_KEY, currentChanges, movesFailureKey, movesFilePlan } from '../lib/moved-symbols-plan';
+import {
+  MOVES_KEY,
+  currentChanges,
+  keptRead,
+  memberRevisionKey,
+  movesFailureKey,
+  movesFilePlan,
+} from '../lib/moved-symbols-plan';
 import { moveEditsLabel, moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
 import {
   moveEdits,
@@ -312,9 +319,9 @@ void test('New Settings or another file list plan the PR again', () => {
     { snapshot: pr, file: added('src/a.ts') },
     { snapshot: pr, file: added('src/b.js') },
   ];
-  store.track(files, (path) => !path.endsWith('.js'), nothing, 'js-off');
+  store.track(files, (path) => !path.endsWith('.js'), nothing, 'js-off').release();
   assert.equal(store.stats().prs[0].families[0].failed, 1, 'The JavaScript file is off');
-  store.track(files, allowed, nothing, 'all-on');
+  store.track(files, allowed, nothing, 'all-on').release();
   assert.equal(store.stats().prs[0].families[0].failed, 0, 'Turned on: planned again');
   store.track([...files, { snapshot: pr, file: added('src/c.ts') }], allowed, nothing, 'all-on');
   assert.equal(store.stats().prs[0].families[0].files, 3, 'A new file: planned again');
@@ -425,13 +432,14 @@ void test('PRs a view holds never leave: not to make room, not with the idle swe
   assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES + 6, 'None of them left');
   // Another view comes and goes: on the next track, its PR is the one that leaves, never the stack's.
   passing(store, 100);
-  const shown = snapshot(1);
+  const shown = snapshot(500);
   const { to } = trackPair(store, shown);
   await answer(reads);
-  assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES + 6);
+  assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES + 7, "The stack and the pair view's PR");
   assert.ok(!store.stats().prs.some((p) => p.url.endsWith('/100')));
   // The idle sweep forgets the stack's PRs with their inspection data: a view still shows them, so they stay.
-  store.forget(new Set(stack.map((entry) => entry.snapshot.url)));
+  store.forget(new Set([...stack.map((entry) => entry.snapshot.url), shown.url]));
+  assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES + 7, 'Nothing held left');
   assert.equal(store.peek(keyOf(shown, to))?.marks.length, 1, 'Still there for the view that shows it');
   // Once released, they leave on the next track, the least recently used first, down to the limit.
   view.release();
@@ -445,12 +453,17 @@ void test('PRs a view holds never leave: not to make room, not with the idle swe
 
 void test('A moves read that ends without the file fails its family; another read only when the file cannot be read', () => {
   const key = 'file';
-  for (const cause of ['budget', 'retries', 'content', 'cap'] as const)
-    assert.equal(movesFailureKey(key + MOVES_KEY, cause), key);
+  for (const cause of ['budget', 'content', 'cap'] as const)
+    assert.deepEqual(movesFailureKey(key + MOVES_KEY, cause), { key, recoverable: false });
+  assert.deepEqual(
+    movesFailureKey(key + MOVES_KEY, 'retries'),
+    { key, recoverable: true },
+    'Tries that ran out can be mended'
+  );
   assert.equal(movesFailureKey(key, 'cap'), undefined, 'The scope cap refusing a scope read');
   assert.equal(movesFailureKey(key, 'retries'), undefined, 'A scope read out of tries');
   assert.equal(movesFailureKey(key, 'budget'), undefined);
-  assert.equal(movesFailureKey(key, 'content'), key, 'A file that cannot be read');
+  assert.deepEqual(movesFailureKey(key, 'content'), { key, recoverable: false }, 'A file that cannot be read');
 });
 
 void test('Only the member’s current file list counts: an older head’s is read again', () => {
@@ -470,4 +483,135 @@ void test('Only the member’s current file list counts: an older head’s is re
   );
   // A member with no base (a saved explanation's) is current by its head.
   assert.ok(currentChanges({ ...member, baseSha: '' }, () => otherBase));
+});
+
+// ── Fifth review ────────────────────────────────────────────────────────────
+
+void test('A moves read out of tries is mended by a later read: the family is matched after all', async () => {
+  const { worker, reads, matches } = fakeWorker();
+  const store = createMovesStore(worker);
+  const pr = snapshot(1);
+  const from = modified('src/a.ts');
+  store.track(
+    [
+      { snapshot: pr, file: from },
+      { snapshot: pr, file: added('src/b.ts') },
+    ],
+    allowed,
+    nothing
+  );
+  store.failKey(keyOf(pr, from), 'socket hang up', true);
+  await answer(reads);
+  assert.equal(store.stats().prs[0].families[0].state, 'incomplete');
+  // A scope read brings the file in later.
+  store.noteText(pr, from, text('x\n'.repeat(20)));
+  await answer(reads);
+  assert.equal(store.stats().prs[0].families[0].state, 'matched');
+  assert.equal(matches(), 1);
+  // A later view's track asks for no read of it: it is done.
+  assert.equal(
+    store.track(
+      [
+        { snapshot: pr, file: from },
+        { snapshot: pr, file: added('src/b.ts') },
+      ],
+      allowed,
+      nothing
+    ).waiting.length,
+    0
+  );
+});
+
+void test('A recoverable failure never replaces a lasting one, and a file still wanting its text is read again', () => {
+  const { worker } = fakeWorker();
+  const store = createMovesStore(worker);
+  const pr = snapshot(1);
+  const from = modified('src/a.ts');
+  const entries = [
+    { snapshot: pr, file: from },
+    { snapshot: pr, file: added('src/b.ts') },
+  ];
+  store.track(entries, allowed, nothing);
+  store.failKey(keyOf(pr, from), 'socket hang up', true);
+  assert.equal(store.track(entries, allowed, nothing).waiting.length, 1, 'Queued again');
+  store.failKey(keyOf(pr, from), 'This binary file has no text preview');
+  assert.equal(store.track(entries, allowed, nothing).waiting.length, 0, 'A lasting failure is not read again');
+  store.failKey(keyOf(pr, from), 'socket hang up', true);
+  assert.equal(store.track(entries, allowed, nothing).waiting.length, 0, 'Still lasting');
+});
+
+void test('A failure does not undo a file whose fingerprints another read already started', async () => {
+  const { worker, reads, matches } = fakeWorker();
+  const store = createMovesStore(worker);
+  const pr = snapshot(1);
+  trackPair(store, pr);
+  // Both files are reading; the moves read of a.ts then fails.
+  store.failKey(keyOf(pr, modified('src/a.ts')), 'This PR read as many files for structure as it may.');
+  await answer(reads);
+  assert.equal(store.stats().prs[0].families[0].state, 'matched');
+  assert.equal(matches(), 1);
+});
+
+void test('A PR a view holds counts as used now, so the idle sweep leaves it', () => {
+  const { worker } = fakeWorker();
+  let clock = 100;
+  const store = createMovesStore(worker, () => clock);
+  const pr = snapshot(1);
+  const { release } = trackPair(store, pr);
+  clock = 10_000;
+  const uses = new Map<string, number>();
+  store.uses(uses);
+  assert.equal(uses.get(pr.url), 10_000);
+  release();
+  const later = new Map<string, number>();
+  store.uses(later);
+  assert.equal(later.get(pr.url), 100, 'Once released, its last use');
+});
+
+void test('Another view’s file list joins a PR a view holds, without dropping it', async () => {
+  const { worker, reads } = fakeWorker();
+  const store = createMovesStore(worker);
+  const pr = snapshot(1);
+  const { to } = trackPair(store, pr);
+  await answer(reads);
+  assert.equal(store.peek(keyOf(pr, to))?.marks.length, 1);
+  // A second view of the same revision lists another file too.
+  const extra = added('src/c.ts');
+  const second = store.track(
+    [
+      { snapshot: pr, file: modified('src/a.ts') },
+      { snapshot: pr, file: to },
+      { snapshot: pr, file: extra },
+    ],
+    allowed,
+    () => ({ after: text('x\n'.repeat(20)) })
+  );
+  assert.equal(store.stats().prs[0].families[0].files, 3, 'The new file joined the plan');
+  assert.equal(store.peek(keyOf(pr, to))?.marks.length, 1, 'The first view’s notes stay');
+  await answer(reads);
+  assert.equal(store.stats().prs[0].families[0].state, 'matched', 'Matched again with the new file');
+  second.release();
+});
+
+void test('A file list read for a member is kept only when its base differs, under the member’s whole revision', () => {
+  const member = { url: 'https://github.com/a/b/pull/1', baseSha: 'base-1', headSha: 'head' };
+  assert.equal(
+    keptRead(member, {
+      ...snapshot(1, 'head'),
+      metadata: { baseSha: 'base-1', headSha: 'head' },
+    } as unknown as PrChanges),
+    false
+  );
+  assert.equal(
+    keptRead(member, {
+      ...snapshot(1, 'head'),
+      metadata: { baseSha: 'base-2', headSha: 'head' },
+    } as unknown as PrChanges),
+    true
+  );
+  assert.notEqual(
+    memberRevisionKey(member),
+    memberRevisionKey({ ...member, baseSha: 'base-2' }),
+    'A retarget is another key'
+  );
 });

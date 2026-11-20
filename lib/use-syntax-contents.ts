@@ -36,6 +36,8 @@ import { MOVES_KEY, movesFailureKey } from './moved-symbols-plan';
 /** The moves reads' budgets, one per head: `moves:<head>`. */
 const MOVES_BUDGET = 'moves:';
 
+/** A moves read whose tries ran out is queued again this long after. */
+const MOVES_RETRY_MS = 5 * 60_000;
 /** Reads for moved symbols per PR, apart from the reads scopes may make (`SYNTAX_CONTENTS_PER_PR`). */
 const MOVES_READS = MOVES_MAX_FILES;
 /**
@@ -55,7 +57,14 @@ onInspectionUses((into) => syntaxContents.lastUses(into));
 // cannot be read at all says anything about moves: a scope read refused by the scope cap does not.
 syntaxContents.onFailure((key, failure, cause) => {
   const file = movesFailureKey(key, cause);
-  if (file) failMovesKey(file, failure.message);
+  if (!file) return;
+  failMovesKey(file.key, failure.message, file.recoverable);
+  // A moves read whose tries ran out (the network went away) is tried again later, with fresh tries.
+  if (file.recoverable)
+    setTimeout(() => {
+      syntaxContents.retry(key);
+      bump();
+    }, MOVES_RETRY_MS);
 });
 // Each read's tier, wait, run time, tries and outcome, so an export shows why breadcrumbs came late.
 addDiagnosticsSource('syntaxContents', () => syntaxContentsDiagnostics(syntaxContents.stats()));
@@ -198,12 +207,15 @@ export function syntaxContentsJob(
         parse(`${key}:before`, snapshot.url, file.previousPath ?? file.path, contents.before, priority);
         compare({ key, snapshot, file }, contents.after, priority);
         noteMovesText(snapshot, file, contents.after, contents.before);
+        syntaxContents.retry(key + MOVES_KEY);
       } else {
         const after = await inspectionFiles.readAfter(request, mode);
         traceStructure(key, { readEnd: performance.now() });
         parse(`${key}:after`, snapshot.url, file.path, after, priority);
         compare({ key, snapshot, file }, after, priority);
         noteMovesText(snapshot, file, after);
+        // The file read: a moves read that ran out of tries for it starts afresh.
+        syntaxContents.retry(key + MOVES_KEY);
       }
     },
   };
@@ -334,6 +346,11 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
       return both ?? { after: inspectionFiles.peekAfter(request) };
     }, setting);
     if (!waiting.length || waiting.length > SYNTAX_PREFETCH_FILES) return release;
+    // Files the store still wants get fresh tries: a moves read that ran out of them is queued again.
+    for (const { snapshot, file } of waiting) {
+      const entry = byKey.get(`${snapshot.url}\u0000${file.path}`);
+      if (entry) syntaxContents.retry(entry.key + MOVES_KEY);
+    }
     const jobs = waiting.flatMap(({ snapshot, file }): SyntaxContentsJob[] => {
       const entry = byKey.get(`${snapshot.url}\u0000${file.path}`);
       if (!entry) return [];

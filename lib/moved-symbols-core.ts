@@ -64,7 +64,8 @@ export interface FileMoves {
 type FileState =
   | { family: string; state: 'waiting' | 'reading' }
   | { family: string; state: 'done'; prints: FilePrints; file: MoveFile }
-  | { family: string; state: 'failed'; reason: string };
+  /** `recoverable`: tries that could pass ran out; a later read of the file revives it. */
+  | { family: string; state: 'failed'; reason: string; recoverable?: boolean };
 interface FamilyState {
   files: string[];
   state: 'waiting' | 'matching' | 'matched' | 'incomplete';
@@ -155,18 +156,29 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     return true;
   }
 
-  function fail(pr: PrState, key: string, reason: string) {
+  /**
+   * A read of the file ended without it. A file whose fingerprints are under way or done keeps them: another read
+   * brought its text. A recoverable failure never replaces a lasting one.
+   */
+  function fail(pr: PrState, key: string, reason: string, recoverable = false) {
     const entry = pr.files.get(key);
-    if (!entry || entry.state === 'done' || entry.state === 'failed') return;
-    pr.files.set(key, { family: entry.family, state: 'failed', reason });
+    if (!entry || entry.state === 'done' || entry.state === 'reading') return;
+    if (entry.state === 'failed' && (!entry.recoverable || recoverable)) return;
+    pr.files.set(key, { family: entry.family, state: 'failed', reason, ...(recoverable ? { recoverable } : {}) });
     recheck(pr);
   }
+  /** Whether a file still wants its text: waiting for it, or failed in a way a later read can mend. */
+  const wanting = (entry: FileState | undefined) =>
+    entry?.state === 'waiting' || (entry?.state === 'failed' && !!entry.recoverable);
 
   function fingerprint(pr: PrState, key: string, input: SymbolsInput) {
     const entry = pr.files.get(key),
       plan = pr.planned.get(key);
-    if (entry?.state !== 'waiting' || !plan) return;
+    if (!entry || !wanting(entry) || !plan) return;
     pr.files.set(key, { family: entry.family, state: 'reading' });
+    // A file mended after a failure that could pass: its family waits for it again instead of staying incomplete.
+    const family = pr.families.get(entry.family);
+    if (family?.state === 'incomplete') family.state = 'waiting';
     const live = () => prs.get(pr.revision) === pr && pr.files.get(key)?.state === 'reading';
     void worker
       .readSymbols({
@@ -214,6 +226,37 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
       );
   }
 
+  /** Plans a held PR's files it does not have yet; a family that gains one is matched again once it is read. */
+  function merge(
+    pr: PrState,
+    list: readonly { snapshot: PrChanges; file: PrChangeFile }[],
+    allowed: (path: string) => boolean
+  ) {
+    if (pr.skipped) return;
+    for (const { snapshot, file } of list) {
+      const key = keyOf(snapshot, file);
+      if (pr.planned.has(key)) continue;
+      const plan = movesFilePlan(snapshot, file, allowed);
+      if (!plan) continue;
+      const family = languageFamily(plan.language);
+      const state = pr.families.get(family) ?? { files: [], state: 'waiting' as const };
+      state.files.push(key);
+      if (state.state !== 'matching') {
+        state.state = 'waiting';
+        state.result = undefined;
+      }
+      pr.families.set(family, state);
+      pr.planned.set(key, { snapshot, file, language: movesLanguage(file) ?? plan.language });
+      byKey.set(key, pr.revision);
+      pr.files.set(
+        key,
+        plan.readable
+          ? { family, state: 'waiting' }
+          : { family, state: 'failed', reason: plan.reason === 'off' ? 'Language off' : 'No patch' }
+      );
+    }
+  }
+
   /** Matches each family whose files are all fingerprinted. */
   function recheck(pr: PrState) {
     if (pr.skipped) return;
@@ -235,9 +278,16 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
         continue;
       }
       state.state = 'matching';
+      const planned = state.files.length;
       void worker.readMoves(moveFiles).then(
         (result) => {
           if (prs.get(pr.revision) !== pr || pr.families.get(family) !== state) return;
+          // Files joined the family meanwhile (`merge`): it is matched again once they are read.
+          if (state.files.length !== planned) {
+            state.state = 'waiting';
+            recheck(pr);
+            return;
+          }
           state.state = 'matched';
           state.result = result;
           publish(pr, state.files, result.moves);
@@ -351,10 +401,14 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
           .sort()
           .join('\u0001')}`;
         let pr = prs.get(revision);
-        // Another file list or other Settings: the PR is planned again from scratch.
         if (pr && pr.signature !== signature) {
-          if (drop(revision)) dropped = true;
-          pr = undefined;
+          // Another view holds it as it was planned: its files stay, and this view's new files join the plan.
+          if ((holds.get(revision) ?? 0) > 1) merge(pr, list, allowed);
+          else {
+            // Another file list or other Settings, and no other view: the PR is planned again from scratch.
+            if (drop(revision)) dropped = true;
+            pr = undefined;
+          }
         }
         if (!pr) {
           const url = list[0].snapshot.url;
@@ -398,10 +452,10 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
         if (pr.skipped) continue;
         for (const [key, entry] of pr.files) {
           const plan = pr.planned.get(key);
-          if (entry.state !== 'waiting' || !plan) continue;
+          if (!wanting(entry) || !plan) continue;
           const sides = text(plan.snapshot, plan.file);
           const input = movesInput(plan.file, sides?.after, sides?.before);
-          if (input === null) pr.files.set(key, { family: entry.family, state: 'failed', reason: 'Not text' });
+          if (input === null) fail(pr, key, 'Not text');
           else if (input) fingerprint(pr, key, input);
           else waiting.push({ snapshot: plan.snapshot, file: plan.file });
         }
@@ -438,7 +492,7 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
       const key = keyOf(snapshot, file);
       const pr = prs.get(byKey.get(key) ?? '');
       const plan = pr?.planned.get(key);
-      if (!pr || !plan || pr.files.get(key)?.state !== 'waiting') return;
+      if (!pr || !plan || !wanting(pr.files.get(key))) return;
       const input = movesInput(plan.file, after, before);
       if (input === null) fail(pr, key, 'Not text');
       else if (input) fingerprint(pr, key, input);
@@ -450,13 +504,17 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
       if (pr) fail(pr, key, reason);
     },
     /** A read of a file revision (`fileRevisionKey`) was refused or failed for good: its family is not matched. */
-    failKey(key: string, reason: string) {
+    failKey(key: string, reason: string, recoverable = false) {
       const pr = prs.get(byKey.get(key) ?? '');
-      if (pr) fail(pr, key, reason);
+      if (pr) fail(pr, key, reason, recoverable);
     },
     /** When each PR was last used, for the inspection caches' idle sweep (#355). */
     uses(into: Map<string, number>) {
-      for (const pr of prs.values()) if ((into.get(pr.url) ?? -Infinity) < pr.at) into.set(pr.url, pr.at);
+      // A PR a view holds is in use now: the idle sweep leaves it, with its queued reads and their budget.
+      for (const pr of prs.values()) {
+        const at = held(pr.revision) ? now() : pr.at;
+        if ((into.get(pr.url) ?? -Infinity) < at) into.set(pr.url, at);
+      }
     },
     /** Drops these PRs, or every PR, with the rest of their inspection data: all but those a view holds. */
     forget(urls?: ReadonlySet<string>) {
