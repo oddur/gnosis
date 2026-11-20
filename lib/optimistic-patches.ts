@@ -1,6 +1,7 @@
 import type { QueueSignals } from './queue-signals';
 import type { FeedbackReview, GitHubReviewComment, GitHubReviewThread, GitHubReviewThreads } from './review-threads';
-import type { DiffSide, PrMetadata } from './types';
+import type { DiffSide, PrLabel, PrMetadata } from './types';
+import { editList, metadataShows, same as sameName, showsEdit, type PrMetadataExpectation } from './pr-people';
 
 /**
  * Optimistic GitHub writes. Each write Gnosis makes adds one patch, keyed by what it changes, before the write starts.
@@ -30,7 +31,12 @@ export type OptimisticChange =
   | { action: 'mark-ready' | 'convert-draft' }
   | { action: 'enable-auto-merge'; method: string }
   | { action: 'disable-auto-merge' }
-  | { action: 'request-review'; reviewer: string };
+  | { action: 'request-review'; reviewer: string }
+  // Reviewers, assignees, labels and the milestone (lib/pr-people.ts). Teams by name, as the PR copies hold them.
+  | { action: 'edit-reviewers'; add: string[]; remove: string[]; addTeams: string[]; removeTeams: string[] }
+  | { action: 'edit-assignees'; add: string[]; remove: string[] }
+  | { action: 'edit-labels'; add: PrLabel[]; remove: string[] }
+  | { action: 'edit-milestone'; milestone: { title: string; dueOn: string | null } | null };
 export type OptimisticAction = OptimisticChange['action'];
 export type OptimisticKind = 'discussion' | 'metadata' | 'signals';
 
@@ -89,6 +95,12 @@ export function optimisticKey(url: string, change: OptimisticChange, id: string)
       return `auto-merge|${url}`;
     case 'request-review':
       return `request-review|${url}|${change.reviewer.toLowerCase()}`;
+    // Each edit is its own change: a second edit before the first settles applies over it, and either rolls back alone.
+    case 'edit-reviewers':
+    case 'edit-assignees':
+    case 'edit-labels':
+    case 'edit-milestone':
+      return `${change.action}|${url}|${id}`;
     default:
       // Every new comment is its own target.
       return `comment|${url}|${id}`;
@@ -117,7 +129,31 @@ export function optimisticKinds(change: OptimisticChange): OptimisticKind[] {
     case 'disable-auto-merge':
       return ['metadata'];
     case 'request-review':
+    case 'edit-reviewers':
       return ['discussion', 'metadata'];
+    case 'edit-assignees':
+    case 'edit-labels':
+    case 'edit-milestone':
+      return ['metadata'];
+  }
+}
+
+/** What a PR copy shows once a people or label edit is visible. */
+function editExpectation(change: OptimisticChange): PrMetadataExpectation | undefined {
+  switch (change.action) {
+    case 'edit-reviewers':
+      return {
+        requestedReviewers: { add: change.add, remove: change.remove },
+        requestedTeams: { add: change.addTeams, remove: change.removeTeams },
+      };
+    case 'edit-assignees':
+      return { assignees: { add: change.add, remove: change.remove } };
+    case 'edit-labels':
+      return { labels: { add: change.add.map((label) => label.name), remove: change.remove } };
+    case 'edit-milestone':
+      return { milestone: change.milestone?.title ?? null };
+    default:
+      return undefined;
   }
 }
 
@@ -228,6 +264,8 @@ export function seenInDiscussion(patch: OptimisticPatch, base: GitHubReviewThrea
     }
     case 'request-review':
       return !!base.feedback?.requestedReviewers.some((login) => same(login, change.reviewer));
+    case 'edit-reviewers':
+      return !!base.feedback && showsEdit(base.feedback.requestedReviewers, change.add, change.remove);
     default:
       return true;
   }
@@ -235,9 +273,12 @@ export function seenInDiscussion(patch: OptimisticPatch, base: GitHubReviewThrea
 
 export function seenInMetadata(
   patch: OptimisticPatch,
-  base: Pick<PrMetadata, 'isDraft' | 'autoMerge' | 'requestedReviewers' | 'commentCount' | 'reviewCommentCount'>
+  base: Pick<PrMetadata, 'isDraft' | 'autoMerge' | 'requestedReviewers' | 'commentCount' | 'reviewCommentCount'> &
+    Partial<Pick<PrMetadata, 'requestedTeams' | 'assignees' | 'labels' | 'milestone'>>
 ): boolean {
   const { change, before } = patch;
+  const expected = editExpectation(change);
+  if (expected) return metadataShows(base, expected);
   switch (change.action) {
     case 'mark-ready':
       return !base.isDraft;
@@ -446,6 +487,16 @@ export function applyToDiscussion(patch: OptimisticPatch, base: GitHubReviewThre
             feedback: { ...base.feedback, requestedReviewers: [...base.feedback.requestedReviewers, change.reviewer] },
           }
         : base;
+    case 'edit-reviewers':
+      return base.feedback
+        ? {
+            ...base,
+            feedback: {
+              ...base.feedback,
+              requestedReviewers: editList(base.feedback.requestedReviewers, change.add, change.remove),
+            },
+          }
+        : base;
     default:
       return base;
   }
@@ -478,6 +529,23 @@ export function applyToMetadata<T extends PrMetadata>(patch: OptimisticPatch, ba
       return { ...next, autoMerge: null };
     case 'request-review':
       return { ...next, requestedReviewers: [...base.requestedReviewers, change.reviewer] };
+    case 'edit-reviewers':
+      return {
+        ...next,
+        requestedReviewers: editList(base.requestedReviewers, change.add, change.remove),
+        requestedTeams: editList(base.requestedTeams, change.addTeams, change.removeTeams),
+      };
+    case 'edit-assignees':
+      return { ...next, assignees: editList(base.assignees ?? [], change.add, change.remove) };
+    case 'edit-labels': {
+      const labels = editList(base.labels, change.add.map((label) => label.name), change.remove);
+      // The chips keep their colors: GitHub's details for labels it showed, the picked label's for new ones.
+      const details = [...(base.labelDetails ?? []), ...change.add];
+      const labelDetails = labels.flatMap((name) => details.find((label) => sameName(label.name, name)) ?? []);
+      return { ...next, labels, labelDetails };
+    }
+    case 'edit-milestone':
+      return { ...next, milestone: change.milestone };
     case 'submit-review': {
       // GitHub ends the reader's review request with the review. The queue row leaves Review requested at once.
       const requestedReviewers = base.requestedReviewers.filter((login) => !same(login, patch.viewer.login));
@@ -725,6 +793,14 @@ export function failureTitle(action: OptimisticAction): string {
       return 'Auto-merge wasn’t turned off.';
     case 'request-review':
       return 'Review wasn’t requested.';
+    case 'edit-reviewers':
+      return 'Reviewers weren’t changed.';
+    case 'edit-assignees':
+      return 'Assignees weren’t changed.';
+    case 'edit-labels':
+      return 'Labels weren’t changed.';
+    case 'edit-milestone':
+      return 'Milestone wasn’t changed.';
   }
 }
 

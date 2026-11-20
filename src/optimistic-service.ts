@@ -101,12 +101,18 @@ export function createOptimisticService(deps: OptimisticServiceDeps) {
         isDraft: status.isDraft,
         autoMerge: status.autoMerge,
         requestedReviewers: status.requestedReviewers,
+        requestedTeams: status.requestedTeams,
+        labels: status.labels,
+        milestone: status.milestone,
       } as PrMetadata);
       return {
         ...status,
         isDraft: shown.isDraft,
         autoMerge: shown.autoMerge,
         requestedReviewers: shown.requestedReviewers,
+        requestedTeams: shown.requestedTeams,
+        labels: shown.labels,
+        milestone: shown.milestone,
         ...(metadata ? { metadata } : {}),
         ...(status.signals ? { signals: layer.signals(status.signals) } : {}),
       };

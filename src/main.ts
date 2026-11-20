@@ -37,6 +37,7 @@ import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-r
 import { parseGitHubSyncInterest } from '../lib/github-sync';
 import { createGitHubSyncService } from './github-sync-service';
 import { createOptimisticService } from './optimistic-service';
+import { createPrMetadataWriteService } from './pr-metadata-write-service';
 import { prActionChange, type OptimisticChange, type OptimisticKind } from '../lib/optimistic-patches';
 import { feedbackReplyBody } from '../lib/review-threads';
 import { createGitHubWriteRefresher, githubPrUrl, type GitHubWriteAction, type WriteDetails, type WriteObservation, type GitHubWriteEvent } from '../lib/github-write-refresh';
@@ -4115,6 +4116,11 @@ const prMergeMonitor = createPrMergeMonitor({
   changed: (_client, urls) => githubWrites.after('stack-merged', urls),
 });
 handleInteractive('get-pr-action-state', async (_event, url: string, force: boolean) => optimistic.actionState(await prActions.read(discussionClient(), url, force)));
+// Reviewers, assignees, labels and the milestone (src/pr-metadata-write-service.ts), through the optimistic layer and the write refresh.
+const prPeople = createPrMetadataWriteService({ optimistic: (url, change, write) => optimistic.run(url, change, write), refresh: gitHubWrite });
+handleInteractive('get-pr-people-access', (_event, url: string, force?: boolean) => prPeople.access(discussionClient(), url, force === true));
+handleInteractive('get-pr-people-candidates', (_event, request: import('../lib/pr-people').PrPeopleCandidateRequest) => prPeople.candidates(discussionClient(), request));
+handleInteractive('edit-pr-people', (_event, edit: import('../lib/pr-people').PrPeopleEdit) => prPeople.edit(discussionClient(), edit));
 handleInteractive('get-stack-merge-plan', (_event, urls: string[]) => prActions.stackPlan(discussionClient(), urls, true));
 handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) => {
   const client = discussionClient();
