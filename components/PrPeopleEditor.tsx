@@ -117,7 +117,8 @@ export function usePrPeople(member: ReviewMember, status?: PrStatus) {
         .catch((error: unknown) => !cancelled && setAccess({ url, error: error instanceof Error ? error.message : String(error) }));
     void read();
     const stop = window.electronAPI.onGitHubWriteRefreshed?.((event) => {
-      if (event.phase === 'settled' && event.urls.includes(url)) void read();
+      // Settled, or given up on: either way GitHub may have changed what the reader can do.
+      if ((event.phase === 'settled' || event.phase === 'gave-up') && event.urls.includes(url)) void read();
     });
     return () => {
       cancelled = true;
@@ -640,17 +641,17 @@ export function PrPeopleEditor({
       {content}
     </Combobox>
   );
-  return disabledReason ? (
+  // One element tree whether or not the editor is disabled: a save in flight disables it for a moment, and a remounted
+  // button would drop keyboard focus to the page. The tooltip only opens while there is a reason to show.
+  return (
     <TooltipProvider delayDuration={350}>
-      <Tooltip>
+      <Tooltip {...(disabledReason ? {} : { open: false })}>
         <TooltipTrigger asChild>
           <span className="pr-people-edit-wrap">{picker}</span>
         </TooltipTrigger>
         <TooltipContent>{disabledReason}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
-  ) : (
-    picker
   );
 }
 
