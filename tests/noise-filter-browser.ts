@@ -345,9 +345,9 @@ void app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'mouseUp', x: crumb.x, y: crumb.y, button: 'left', clickCount: 1 });
     await wait(`![...document.querySelectorAll(${JSON.stringify(row('src/noise/mixed.ts') + ' [data-noise-bar]')})].some(e=>e.getAttribute('data-noise-bar')==='Whitespace only')`, 200);
     await wait(`window.deepAll('[data-here]',document.querySelector(${JSON.stringify(row('src/noise/mixed.ts'))})).length>0`, 200);
-    const landed = await js<{ line: number; header: number }>(`(()=>{const g=document.querySelector(${JSON.stringify(row('src/noise/mixed.ts'))});const l=window.deepAll('[data-line]',g).find(e=>e.textContent.includes('export function compute(a: number')&&e.dataset.lineType!=='change-deletion');const h=g.querySelector('.diff-gap[data-hunk-header][data-stuck]');return {line:Math.round(l.getBoundingClientRect().top),header:h?Math.round(h.getBoundingClientRect().bottom):-1}})()`);
+    const landed = await js<{ line: number; header: number }>(`(()=>{const g=document.querySelector(${JSON.stringify(row('src/noise/mixed.ts'))});const l=window.deepAll('[data-line]',g).filter(e=>e.textContent.includes('export function compute(')&&e.getBoundingClientRect().height>0).sort((x,y)=>x.getBoundingClientRect().top-y.getBoundingClientRect().top)[0];const h=g.querySelector('.diff-gap[data-hunk-header][data-stuck]');return {line:Math.round(l.getBoundingClientRect().top),header:h?Math.round(h.getBoundingClientRect().bottom):-1}})()`);
     console.log('Jump into a quiet hunk:', JSON.stringify(landed));
-    assert.ok(landed.header < 0 || Math.abs(landed.line - landed.header) <= 4, `The jump lands on the signature, under the pinned header: ${JSON.stringify(landed)}`);
+    assert.ok(landed.header < 0 || Math.abs(landed.line - landed.header) <= 4, `The jump lands on the signature's first row (its old line, then its new one), under the pinned header: ${JSON.stringify(landed)}`);
 
     // ── Parity: an Explanation topic of src/noise/mixed.ts shows the same bars ──
     // The jump opened the signature's hunk in Changes; the topic keeps its own openings, so reload for a fair compare.
