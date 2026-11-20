@@ -4,7 +4,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
-import { blockProposals, withProposals } from '../lib/conflict-carry';
+import { blockProposals, blockResolutions, withProposals } from '../lib/conflict-carry';
+import { parseConflicts } from '../lib/conflict-blocks';
 import { blockBuckets, bucketSummary, summarySentence, verifyProposals, type Analyse } from '../lib/conflict-verify';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 
@@ -71,7 +72,7 @@ void test('a resolver’s output becomes per-conflict proposals only where the t
 
 void test('a result that parses and keeps every definition is Merged', async () => {
   const verdict = await verifyProposals(file([merged(imports), merged(three + four)]), analyse);
-  assert.deepEqual(verdict, { merged: true, note: 'The file parses. No definition was lost.' });
+  assert.deepEqual(verdict, { merged: true, note: 'The file parses. No definition or added line was lost.' });
 });
 
 void test('a lost definition, a duplicate, a parse error, markers or mixed line endings keep the proposal in Check', async () => {
@@ -153,4 +154,47 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
     summarySentence({ files: 3, conflicts: 9, merged: 7, needs: 2, checking: 0 }),
     '3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you.'
   );
+});
+
+void test('review probe: a lone newline between conflicts never cuts a resolution short', () => {
+  // Structural merge wrote `b1\nc1\n` and more; the earliest "\n" after the first conflict used to make its proposal
+  // "b1" and lose c1. Where the split is not unique, neither conflict gets a proposal: both go to Decide.
+  const twoBlocks =
+    'a\n<<<<<<< feature\nb\n=======\nB\n>>>>>>> main\n\n<<<<<<< feature\nc\n=======\nC\n>>>>>>> main\nz\n';
+  const output = 'a\nb1\nc1\n\nm\nz\n';
+  assert.deepEqual(blockResolutions(parseConflicts(twoBlocks), output), [undefined, undefined]);
+  assert.equal(blockProposals(twoBlocks, output, 'mergiraf'), undefined);
+  // Unique anchors on both sides still give each conflict its own text.
+  const anchored = twoBlocks.replace('>>>>>>> main\n\n<<<<<<<', '>>>>>>> main\nmiddle\n<<<<<<<');
+  assert.deepEqual(blockResolutions(parseConflicts(anchored), 'a\nb1\nc1\nmiddle\nC\nz\n'), ['b1\nc1\n', 'C\n']);
+});
+
+void test('review probe: a lost line that is no definition keeps the proposal in Check', async () => {
+  // The imports conflict kept only the PR's import: every definition survives, main's import does not.
+  const verdict = await verifyProposals(file([merged("import { b } from './b';\n"), merged(three + four)]), analyse);
+  assert.deepEqual(verdict, { merged: false, note: "import { c } from './c'; from main is missing from the result." });
+  const config = await verifyProposals(
+    {
+      path: 'config.json',
+      base: '{\n  "a": 1\n}\n',
+      ours: '{\n  "a": 1,\n  "b1": 2\n}\n',
+      theirs: '{\n  "a": 1,\n  "c1": 3\n}\n',
+      original:
+        '{\n<<<<<<< feature\n  "a": 1,\n  "b1": 2\n||||||| ancestor\n  "a": 1\n=======\n  "a": 1,\n  "c1": 3\n>>>>>>> main\n}\n',
+      proposals: [merged('  "a": 1,\n  "b1": 2\n')],
+    },
+    analyse
+  );
+  assert.equal(config.merged, false, config.note);
+});
+
+void test('review probe: a lost definition is excused only by its exact name, in the same undecided conflict', async () => {
+  // main's side of the open imports conflict names `fourteen` and `four` as imports, not definitions: four() was lost
+  // by the proposal for the other conflict, and nothing excuses it.
+  const imported = "import { fourteen, four } from './c';\n";
+  const f = file([null, merged(three)], {
+    theirs: theirs.replace("import { c } from './c';\n", imported),
+    original: original.replace("import { c } from './c';\n", imported),
+  });
+  assert.deepEqual(await verifyProposals(f, analyse), { merged: false, note: 'four is missing from the result.' });
 });

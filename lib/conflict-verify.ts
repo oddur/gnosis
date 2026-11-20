@@ -69,17 +69,71 @@ export async function verifyProposals(
   const [, ours, theirs, result] = parsed;
   if (result.errors && !ours.errors && !theirs.errors) return { merged: false, note: 'The result doesn’t parse.' };
   const [b, o, t, r] = parsed.map((p) => symbols(p.definitions));
+  let blockDefinitions: Promise<{ ours: SyntaxDefinition[]; theirs: SyntaxDefinition[] }[]> | undefined;
+  const pendingDefinitions = async (wanted: string) => {
+    blockDefinitions ??= Promise.all(
+      open.map(async (s) => ({
+        ours: (await analyse(language, s.block.ours)).definitions,
+        theirs: (await analyse(language, s.block.theirs)).definitions,
+      }))
+    );
+    const count = (list: SyntaxDefinition[]) => list.filter((d) => d.name === wanted).length;
+    return (await blockDefinitions).reduce((sum, d) => sum + Math.max(0, count(d.theirs) - count(d.ours)), 0);
+  };
   const name = (key: string) => key.slice(key.lastIndexOf('.') + 1).replace(/^\S+ /, '');
   for (const key of new Set([...o.keys(), ...t.keys()])) {
     const [inBase, inOurs, inTheirs, inResult] = [b, o, t, r].map((m) => m.get(key) ?? 0);
-    // A side that removed one meant to: only what both sides kept is expected.
-    const expected = inOurs < inBase || inTheirs < inBase ? Math.min(inOurs, inTheirs) : Math.max(inOurs, inTheirs);
-    if (inResult < expected && !open.some((s) => s.block.theirs.includes(name(key))))
+    const missing = expectedCount(inBase, inOurs, inTheirs) - inResult;
+    // The probe holds the PR's side of an undecided conflict: a definition that main's side of that same conflict
+    // defines, by its exact name, is not expected yet.
+    if (missing > 0 && (inTheirs <= inOurs || missing > (await pendingDefinitions(name(key)))))
       return { merged: false, note: `${name(key)} is missing from the result.` };
     if (inResult > Math.max(inOurs, inTheirs, inOurs + inTheirs - inBase))
       return { merged: false, note: `${name(key)} is defined twice in the result.` };
   }
-  return { merged: true, note: 'The file parses. No definition was lost.' };
+  // Definitions miss imports, statements and config lines. Every line a side added must be in the result too, unless
+  // the other side removed it; whitespace is ignored, so a reindent passes. Your own earlier resolutions may drop a
+  // side on purpose, so they are not held to this.
+  if (proposals.some((p) => p?.source === 'mergiraf')) {
+    const [lb, lo, lt, lr] = [file.base, file.ours, file.theirs, probe].map(lineCounts);
+    for (const [line, text] of new Map([...lo.texts, ...lt.texts])) {
+      const [inBase, inOurs, inTheirs, inResult] = [lb, lo, lt, lr].map((m) => m.counts.get(line) ?? 0);
+      if (inOurs <= inBase && inTheirs <= inBase) continue;
+      const pending = open.reduce(
+        (sum, s) =>
+          sum +
+          Math.max(
+            0,
+            (lineCounts(s.block.theirs).counts.get(line) ?? 0) - (lineCounts(s.block.ours).counts.get(line) ?? 0)
+          ),
+        0
+      );
+      if (expectedCount(inBase, inOurs, inTheirs) - inResult > pending) {
+        const shown = text.length > 60 ? `${text.slice(0, 59)}…` : text;
+        return {
+          merged: false,
+          note: `${shown} from ${inOurs > inResult ? 'the PR' : 'main'} is missing from the result.`,
+        };
+      }
+    }
+  }
+  return { merged: true, note: 'The file parses. No definition or added line was lost.' };
+}
+
+/** How many copies the result needs: what both sides kept when a side removed some, else the larger side. */
+const expectedCount = (base: number, ours: number, theirs: number) =>
+  ours < base || theirs < base ? Math.min(ours, theirs) : Math.max(ours, theirs);
+/** Non-blank lines with their whitespace removed, counted, and one original spelling of each. */
+function lineCounts(text: string) {
+  const counts = new Map<string, number>();
+  const texts = new Map<string, string>();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/\s+/g, '');
+    if (!line) continue;
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+    if (!texts.has(line)) texts.set(line, raw.trim());
+  }
+  return { counts, texts };
 }
 
 /**

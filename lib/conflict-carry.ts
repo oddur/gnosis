@@ -43,7 +43,8 @@ const blockKey = (segment: Extract<ConflictSegment, { kind: 'conflict' }>) =>
 
 /**
  * The text that replaced each conflict block in `result`, or undefined when the text around the blocks was edited
- * too. An entry is undefined when that block is still open in the result.
+ * too. An entry is undefined when that block is still open in the result, or when the result can be split in more
+ * than one way around it.
  */
 export function blockResolutions(segments: ConflictSegment[], result: string): (string | undefined)[] | undefined {
   // Whole-side choices are exact; free text between unchanged lines is the fallback for edits and suggestions.
@@ -54,42 +55,61 @@ export function blockResolutions(segments: ConflictSegment[], result: string): (
       const choice = choices[s.index];
       return [choice && choice !== 'proposal' ? chosenText(s.block, choice) : undefined];
     });
-  const blocks = segments.filter((s) => s.kind === 'conflict').length;
-  const found: (string | undefined)[] = new Array<string | undefined>(blocks).fill(undefined);
-  const failed = new Set<string>();
-  const walk = (i: number, at: number): boolean => {
+  // Every way the result can be split into the unchanged texts and the blocks between them. A block is known only
+  // when every split agrees on where it starts and ends: text between blocks such as a lone "\n" can match in
+  // several places, and the earliest match would cut a resolution short.
+  const ends = (i: number, at: number): number[] => {
+    const segment = segments[i];
+    if (segment.kind === 'text') return result.startsWith(segment.text, at) ? [at + segment.text.length] : [];
+    const next = segments.at(i + 1);
+    if (!next) return [result.length];
+    const found: number[] = [];
+    if (next.kind === 'text') {
+      for (let end = result.indexOf(next.text, at); end >= 0; end = result.indexOf(next.text, end + 1)) found.push(end);
+    } else {
+      // Two blocks with no text between them can only be split where a whole-side choice ends.
+      for (const text of [
+        segment.block.raw,
+        ...(['ours', 'theirs', 'both'] as const).map((c) => chosenText(segment.block, c)),
+      ])
+        if (result.startsWith(text, at)) found.push(at + text.length);
+    }
+    return found;
+  };
+  const memo = new Map<string, boolean>();
+  const completes = (i: number, at: number): boolean => {
     if (i === segments.length) return at === result.length;
     const key = `${i}:${at}`;
-    if (failed.has(key)) return false;
-    const segment = segments[i];
-    if (segment.kind === 'text') {
-      if (result.startsWith(segment.text, at) && walk(i + 1, at + segment.text.length)) return true;
-    } else {
-      const next = segments.at(i + 1);
-      const ends: number[] = [];
-      if (!next) ends.push(result.length);
-      else if (next.kind === 'text') {
-        for (let end = result.indexOf(next.text, at); end >= 0; end = result.indexOf(next.text, end + 1))
-          ends.push(end);
-      } else {
-        // Two blocks with no text between them can only be split where a whole-side choice ends.
-        for (const text of [
-          segment.block.raw,
-          ...(['ours', 'theirs', 'both'] as const).map((c) => chosenText(segment.block, c)),
-        ])
-          if (result.startsWith(text, at)) ends.push(at + text.length);
-      }
-      for (const end of ends) {
-        const text = result.slice(at, end);
-        found[segment.index] = text === segment.block.raw ? undefined : text;
-        if (walk(i + 1, end)) return true;
-      }
-      found[segment.index] = undefined;
+    let known = memo.get(key);
+    if (known === undefined) {
+      known = ends(i, at).some((end) => completes(i + 1, end));
+      memo.set(key, known);
     }
-    failed.add(key);
-    return false;
+    return known;
   };
-  return walk(0, 0) ? found : undefined;
+  if (!completes(0, 0)) return undefined;
+  const spans = new Map<number, Set<string>>();
+  let positions = new Set([0]);
+  for (let i = 0; i < segments.length; i++) {
+    const next = new Set<number>();
+    const segment = segments[i];
+    for (const at of positions)
+      for (const end of ends(i, at)) {
+        if (!completes(i + 1, end)) continue;
+        next.add(end);
+        if (segment.kind === 'conflict')
+          spans.set(segment.index, (spans.get(segment.index) ?? new Set()).add(`${at}:${end}`));
+      }
+    positions = next;
+  }
+  return segments.flatMap((s) => {
+    if (s.kind !== 'conflict') return [];
+    const only = spans.get(s.index);
+    if (only?.size !== 1) return [undefined];
+    const [at, end] = [...only][0].split(':').map(Number);
+    const text = result.slice(at, end);
+    return [text === s.block.raw ? undefined : text];
+  });
 }
 
 export interface CarriedFile {
