@@ -41,6 +41,8 @@ export interface GitHubReviewThread {
   isOutdated: boolean;
   viewerCanResolve: boolean;
   viewerCanUnresolve: boolean;
+  /** Who resolved the thread. Absent in older saved discussions; GitHub does not say when. */
+  resolvedBy?: { login: string } | null;
   comments: GitHubReviewComment[];
   /** A write to the thread GitHub has not confirmed yet. See lib/optimistic-patches.ts. */
   sending?: 'comment' | 'resolving' | 'reopening';
@@ -49,12 +51,22 @@ export interface FeedbackReview extends GitHubReviewComment {
   state: string;
   submittedAt: string | null;
 }
+/** What happened on a PR besides comments and reviews, for the Feedback timeline. */
+export type FeedbackEvent =
+  | { kind: 'commit'; id: string; at: string; sha: string; message: string; author: string | null; url?: string }
+  | { kind: 'force-push'; id: string; at: string; actor: string | null; before?: string; after?: string }
+  | { kind: 'review-requested'; id: string; at: string; actor: string | null; reviewer: string }
+  | { kind: 'merged' | 'closed' | 'reopened'; id: string; at: string; actor: string | null };
 export interface PrFeedback {
   comments: GitHubReviewComment[];
   reviews: FeedbackReview[];
   requestedReviewers: string[];
   viewerCanUpdate: boolean;
   state: string;
+  /** The latest timeline events, oldest first. Absent in older saved discussions. */
+  events?: FeedbackEvent[];
+  /** GitHub has earlier events than `events` holds. */
+  earlierEvents?: boolean;
 }
 export type FeedbackAction =
   | { prUrl: string; action: 'reply'; sourceId: string; body: string }

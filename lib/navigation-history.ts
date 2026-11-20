@@ -3,6 +3,11 @@ import type { QueueItem } from './workbench';
 
 export type HistoryDirection = -1 | 1;
 export type WorkspaceTab = 'summary' | 'changes' | 'commits' | 'explanation' | 'checks' | 'brief' | 'feedback';
+/**
+ * Feedback became part of the Conversation page (`summary`, #418). Saved tabs, history, deep links and notifications
+ * may still name `feedback`; they open Conversation, with their thread or filter carried separately.
+ */
+export const conversationTab = (tab: WorkspaceTab): WorkspaceTab => (tab === 'feedback' ? 'summary' : tab);
 export interface HomeLocation {
   account: string;
   filters: QueueFilters;

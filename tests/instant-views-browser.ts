@@ -125,7 +125,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.pr-description')");
 
     // 4. Feedback opens on its saved discussion while GitHub is slow.
-    const feedback = await timeTo("document.body.innerText.includes('Saved discussion for this PR.')", "window.openTab('Feedback')");
+    const feedback = await timeTo("document.body.innerText.includes('Saved discussion for this PR.')", "window.openTab('Summary')");
     metrics.feedbackSavedCopy = feedback;
     check(feedback.ms >= 0 && !feedback.loading.length, 'Feedback shows its saved discussion with no loading state');
 

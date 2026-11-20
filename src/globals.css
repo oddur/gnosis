@@ -4782,22 +4782,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-actions-filter { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); white-space:nowrap; cursor:pointer; }
 .feedback-actions-filter input { accent-color:var(--primary); }
 .feedback-sync { font-size:var(--type-caption); color:var(--muted-foreground); }
-.feedback-list { overflow:auto; border-right:1px solid var(--border); min-width:0; overscroll-behavior:contain; }
-.feedback-row:hover { background:var(--muted); }
-.feedback-row[aria-current=true] { background:var(--accent); color:var(--accent-foreground); }
 .feedback-row:focus-visible { outline:2px solid var(--ring); outline-offset:-3px; }
-.feedback-row-meta { display:flex; align-items:center; gap:8px; font-size:var(--type-caption); color:var(--muted-foreground); }
-.feedback-row-meta time { margin-left:auto; white-space:nowrap; }
 .feedback-row.is-unread .feedback-row-title { font-weight:650; }
-.feedback-row-location svg { flex:none; }
 .feedback-source { display:flex; align-items:center; gap:5px; font-size:var(--type-caption); line-height:1.4; color:var(--muted-foreground); overflow-wrap:anywhere; }
 .feedback-source svg { width:13px; height:13px; flex:none; }
-.feedback-conversation-header h2:focus-visible { outline:2px solid var(--ring); outline-offset:4px; border-radius:2px; }
-.feedback-conversation-header > button { flex:none; }
-.feedback-code { margin:0 0 20px; padding:12px 0; border:1px solid var(--border); border-radius:6px; background:var(--muted); overflow:auto; font-size:var(--type-control); line-height:1.6; tab-size:4; }
-.feedback-code > span { display:block; padding:0 12px; white-space:pre; min-width:max-content; }
-.feedback-code > span[data-change=added] { background:var(--status-success-bg); }
-.feedback-code > span[data-change=removed] { background:var(--status-danger-bg); }
 .feedback-message { font-size:var(--type-body); line-height:1.6; }
 .feedback-message > header { display:flex; align-items:center; flex-wrap:wrap; gap:10px; font-size:var(--type-caption); margin-bottom:16px; }
 .feedback-message > header time { color:var(--muted-foreground); }
@@ -4807,30 +4795,13 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-message form label { display:block; margin-bottom:8px; font-weight:600; font-size:var(--type-control); }
 .feedback-reply-hint, .feedback-context-unavailable { color:var(--muted-foreground); font-size:var(--type-control); margin:8px 0 16px; }
 .feedback-reply-actions { display:flex; gap:8px; }
-.feedback-related { margin-top:28px; padding-top:20px; border-top:1px solid var(--border); }
-.feedback-related h3 { font-size:var(--type-control); font-weight:600; margin-bottom:8px; }
-.feedback-related button { display:flex; align-items:baseline; gap:8px; width:100%; padding:10px 0; text-align:left; font-size:var(--type-control); border-bottom:1px solid var(--border); cursor:pointer; }
-.feedback-related button > span:first-of-type { flex:1; overflow-wrap:anywhere; }
-.feedback-related button > span:last-child { color:var(--muted-foreground); font-size:var(--type-caption); }
-.feedback-related button svg { flex:none; }
 .feedback-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:32px 24px; min-height:220px; height:100%; text-align:center; }
 .feedback-empty > svg { width:24px; height:24px; color:var(--muted-foreground); }
 .feedback-empty h2 { font-size:16px; font-weight:600; }
 .feedback-empty p { font-size:var(--type-control); line-height:1.6; color:var(--muted-foreground); max-width:36ch; }
 .feedback-notice { padding:10px 20px; background:var(--muted); border-bottom:1px solid var(--border); font-size:var(--type-control); line-height:1.5; }
 .feedback-notice details p { margin-top:8px; overflow-wrap:anywhere; }
-.feedback-back { display:none; }
 @container (max-width:760px) {
-  .feedback-panes { display:block; position:relative; overflow:hidden; }
-  .feedback-list, .feedback-conversation { height:100%; }
-  .feedback-workspace[data-conversation-open=true] .feedback-list { position:absolute; inset:0; visibility:hidden; pointer-events:none; }
-  .feedback-workspace[data-conversation-open=false] .feedback-conversation { display:none; }
-  .feedback-back { display:inline-flex; }
-  .feedback-workspace[data-conversation-open=true] .feedback-filters, .feedback-workspace[data-conversation-open=true] .feedback-pr-filter, .feedback-workspace[data-conversation-open=true] .feedback-actions-filter { display:none; }
-  .feedback-conversation-header { flex-wrap:wrap; padding:12px 16px; }
-  .feedback-conversation-header > div { flex-basis:100%; order:1; }
-  .feedback-conversation-header > button:last-child { margin-left:auto; }
-  .feedback-conversation-body { padding:16px; }
   .feedback-sync { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
   .feedback-pr-filter { max-width:200px; }
 }
@@ -4848,9 +4819,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-sync-error { display:flex; align-items:center; flex-wrap:wrap; gap:2px 8px; padding-block:6px; }
 .feedback-sync-error > span { flex:1; min-width:150px; }
 .feedback-error-details p + p { margin-top:12px; }
-.feedback-row-update { display:flex; align-items:baseline; gap:5px; font-size:var(--type-caption); color:var(--muted-foreground); }
-.feedback-row-update svg, .feedback-row-update > span:last-child { flex:none; }
-.feedback-row-update > span:first-of-type { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .feedback-post-error { padding:10px 0; font-size:var(--type-control); line-height:1.5; color:var(--foreground); }
 .feedback-post-error > p { font-weight:600; }
 .feedback-post-error details { margin-top:4px; color:var(--muted-foreground); }
@@ -4888,19 +4856,13 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-merge-plan .stack-plan-task[hidden] { display:none; }
 .stack-merge-plan[data-blocked] h2 > svg { color:var(--color-danger); }
 
-.feedback-conversation-header .feedback-source { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
-.feedback-conversation-header .feedback-source svg { display:inline;vertical-align:-2px; }
 .feedback-thread-navigation > button:last-child:not([aria-label]) { margin-left:auto; }
-.feedback-thread-detail { display:flex; flex-direction:column; gap:16px; }
-.feedback-code-context .feedback-code { margin-bottom:0;padding-block:6px;line-height:1.5; }
 .feedback-full-file { margin-top:12px;scroll-margin-top:48px; }
 .feedback-full-file > p { font-size:var(--type-caption);line-height:1.5;margin-bottom:8px; }
 .feedback-full-file > p[role=status] { display:flex;align-items:center;gap:8px; }
 .feedback-full-file .commit-stream-file > .changes-file-header { position:static; }
 .feedback-full-file :is(.changes-source, .changes-file-context) { display:none; }
 .feedback-full-file .changes-file-header { padding:8px; }
-.feedback-response-dock .github-thread-actions { margin:0;padding:0;align-items:center;gap:8px; }
-.feedback-response-dock .github-thread-actions > span { color:var(--muted-foreground);font-size:var(--type-caption); }
 .feedback-resolution { display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border);flex-shrink:0;min-width:0;color:var(--muted-foreground);font-size:var(--type-caption); }
 .feedback-resolution > span { white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0; }
 .feedback-resolution > svg,.feedback-resolution > button { flex-shrink:0; }
@@ -4908,72 +4870,48 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .feedback-complete { overflow:auto;justify-content:flex-start;padding-top:32px; }
 .feedback-complete h2:focus-visible { outline:2px solid var(--ring);outline-offset:4px; }
 @container (max-width:760px) {
-  .feedback-panes { display:block; }
-  .feedback-conversation-header > div { flex-basis:100%; }
 }
 
 
 .feedback-toolbar { display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;padding:4px 12px;border-bottom:1px solid var(--border);flex-shrink:0; }
 
-.feedback-panes { display:grid;grid-template-columns:clamp(260px,26%,360px) minmax(0,1fr);flex:1;min-height:0; }
 
-.feedback-row { display:flex;flex-direction:column;gap:6px;padding:12px 16px;border-bottom:1px solid var(--border);text-align:left;background:transparent;color:var(--foreground);cursor:pointer;min-width:0; }
 
-.feedback-row-title { font-size:var(--type-body);line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere; }
 
-.feedback-row-location { display:flex;align-items:center;gap:6px;min-width:0;font-size:var(--type-caption);color:var(--muted-foreground); }
 
-.feedback-conversation { display:flex;flex-direction:column;min-width:0;min-height:0;padding-inline:16px; }
 
-.feedback-conversation-header { display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0; }
 
-.feedback-conversation-header h2 { display:flex;align-items:center;gap:8px;max-width:100%;width:fit-content;margin:4px 0 0;font-size:var(--type-body);font-weight:600;min-width:0;overflow-wrap:anywhere; }
 
 .feedback-thread-navigation { display:flex;align-items:center;gap:4px;font-size:var(--type-caption);font-variant-numeric:tabular-nums;flex-shrink:0; }
 
-.feedback-conversation-body { padding:16px;overflow:auto;flex:0 1 auto;min-height:0;overscroll-behavior:contain; }
 
-.feedback-code-context { min-width:0;margin:0;border-top:1px solid var(--border);padding-top:12px; }
 
-.feedback-code-heading { display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--type-control);font-weight:500;line-height:1.5;list-style:none;padding-block:4px; }
 
-.feedback-response-dock { flex-shrink:0;min-height:48px;display:flex;align-items:center;padding:8px 16px;border-top:1px solid var(--border);background:var(--background); }
 
-.feedback-conversation > :is(.feedback-conversation-header,.feedback-conversation-body,.feedback-response-dock,.feedback-resolution) { width:100%;max-width:880px;align-self:flex-start; }
-.feedback-conversation-header > div { flex:1 1 200px;min-width:0; }
-.feedback-file-directory { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-foreground);font-size:var(--type-caption);line-height:1.5;margin-top:2px; }
-.feedback-row-file { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.feedback-row-state { display:inline-flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;font-size:var(--type-caption); }
-.feedback-row[data-resolved=true]:not(.is-unread) .feedback-row-title { color:var(--muted-foreground); }
-.feedback-row[aria-current=true] .feedback-row-title { color:var(--accent-foreground); }
-.feedback-row[aria-current=true] :is(.feedback-row-meta,.feedback-source,.feedback-file-directory) { color:var(--selection-muted); }
-.feedback-row[data-resolved=true] .feedback-row-state { color:var(--color-success); }
-.feedback-row .feedback-source { min-width:0; }
-.feedback-row .feedback-source > span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.feedback-row[data-event=true] { gap:4px;padding-block:10px; }
-.feedback-row[data-event=true] .feedback-row-title { font-size:var(--type-control);font-weight:500; }
-.feedback-row-meta > span:first-child { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0; }
-.feedback-code-heading::-webkit-details-marker { display:none; }
-.feedback-code-heading > svg { flex-shrink:0; }
-.feedback-code-context[open] > .feedback-code-heading > svg { transform:rotate(90deg); }
-.feedback-code-tools { display:flex;justify-content:flex-end;margin-bottom:4px; }
-.feedback-conversation .github-thread { margin:0;border:0;background:transparent; }
-.feedback-conversation .github-thread > summary { padding:0 0 12px; }
-.feedback-conversation .github-thread-comments article { padding:16px 0; }
-.feedback-conversation .github-thread[data-resolved=true] .github-comment-body { color:var(--foreground); }
-.feedback-conversation .github-thread form { padding-inline:0; }
-.feedback-conversation .github-thread-state { white-space:nowrap; }
+
+/* Feedback reads a code thread where it belongs (FeedbackCodeThread): in the shared diff, framed as an Explanation
+   topic's file is, with the thread's card under the line it is anchored to. The conversation reads oldest first: the
+   opening comment, then its replies indented on a quiet rail. Other threads on the file show at their lines as one-line
+   links, and in a list below the code. */
+.feedback-code-thread { flex:none; }
+.feedback-code-thread .changes-file-stats > [data-earlier] { color:var(--file-fg); font-weight:500; }
+.feedback-code-note { padding:8px 14px; border-bottom:1px solid var(--border); background:var(--card); color:var(--muted-foreground); font-size:var(--type-caption); line-height:1.5; }
+.feedback-code-unplaced { padding:4px 0 8px; }
+.feedback-code-thread .github-thread { margin:10px 12px 4px; }
+.feedback-code-thread .github-thread > summary { padding:8px 12px; min-height:36px; }
+.feedback-code-thread .github-thread-comments > article { padding:12px 14px; }
+.feedback-code-thread .github-thread-comments > article + article { margin-left:30px; padding-left:14px; border-top:0; border-left:1px solid var(--border); }
+.feedback-code-thread .github-thread form { padding:4px 14px 12px; }
+.feedback-order { display:flex; align-items:center; gap:2px; padding-left:8px; border-left:1px solid var(--border); }
+.feedback-row-mention { display:inline-flex; align-items:center; gap:3px; flex:none; color:var(--foreground); font-weight:600; white-space:nowrap; }
+.feedback-verdict { display:inline-flex; align-items:center; gap:4px; font-weight:600; color:var(--foreground); }
+.feedback-verdict[data-state=CHANGES_REQUESTED] { color:var(--color-danger); }
+.feedback-verdict[data-state=APPROVED] { color:var(--color-success); }
+.feedback-verdict > svg { flex:none; }
+.feedback-message > header .feedback-verdict { padding:1px 8px; border:1px solid currentColor; border-radius:999px; font-size:var(--type-caption); }
 @container (max-width:760px) {
-  .feedback-panes { display:block; }
-  .feedback-conversation { padding-inline:0; }
-  .feedback-conversation-header { padding:8px 12px;gap:4px 8px; }
-  .feedback-conversation-header > div { flex-basis:100%;order:1; }
-  .feedback-thread-navigation { order:2;width:100%; }
-  .feedback-conversation-body { padding:12px; }
 }
 
-.feedback-file-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.feedback-conversation-header h2 > svg { flex-shrink:0; }
 /* At extreme zoom, every section scrolls the whole page the same way instead of squeezing its pane to zero. */
 @media(max-height:500px) {
   .pr-summary-page { overflow-y:auto; }
@@ -5354,7 +5292,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .pr-state-icon:is(.is-draft, .is-unknown) { color:var(--muted-foreground); }
 /* Slots that sized the old PR icon keep their size and spacing. */
 .feedback-source > .pr-state-icon { width:13px; height:13px; }
-.feedback-conversation-header .feedback-source > .pr-state-icon { vertical-align:-2px; }
 .global-command [cmdk-item] > .pr-state-icon { margin-top:2px; }
 .app-toast-subtitle > .pr-state-icon { margin-right:4px; vertical-align:-1px; }
 .sync-health-pr { display:inline-flex; align-items:center; gap:4px; }
@@ -5568,3 +5505,288 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* The merge-conflict icon (`conflictIcon`) beside words that name a PR's conflicts with its base. */
 .stack-conflict-icon, .queue-filter-conflict-icon { display:inline; vertical-align:-2px; margin-right:4px; }
 .stack-conflict-icon, .pr-readiness-row .is-conflict { color:var(--color-danger); }
+
+/* Feedback as one timeline (#418): the PR's conversation oldest first across the full width, with a slim bar of counts,
+   filters and next-unresolved navigation above it. People's comments are cards; bots, pushes and events are quieter
+   one-line rows, so they keep their place in time without competing. Prose keeps its measure; code runs wide and
+   wraps. The keyboard cursor (aria-current) and focus use the ring, with the position also in the bar. */
+.feedback-timeline-workspace { display:flex; flex-direction:column; height:100%; min-height:0; }
+.feedback-timeline-workspace .feedback-toolbar { gap:4px 12px; padding:6px 16px; background:var(--background); position:relative; z-index:6; }
+.feedback-timeline-workspace .feedback-thread-navigation { gap:4px; padding-left:12px; border-left:1px solid var(--border); }
+.feedback-position { min-width:8ch; text-align:center; color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+.feedback-timeline-workspace .feedback-pr-filter { margin-left:auto; }
+.feedback-timeline-workspace .feedback-pr-filter ~ .feedback-actions-filter, .feedback-timeline-workspace .feedback-thread-navigation + .feedback-actions-filter { margin-left:auto; }
+.feedback-timeline { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-inline:24px; outline:none; }
+.feedback-timeline > .feedback-empty { height:auto; min-height:320px; }
+.feedback-entry-card { border:1px solid var(--border); background:var(--card); color:var(--foreground); overflow:clip; }
+.feedback-entry-body { padding:12px 14px; }
+.feedback-entry-body .github-comment-body, .feedback-entry-body .markdown-body { max-width:var(--measure-prose); }
+.feedback-message .feedback-reply-actions, .feedback-message > [role=status], .feedback-reply-form { padding:0 14px 12px; }
+.feedback-reply-form label { display:block; margin-bottom:6px; font-weight:600; font-size:var(--type-control); }
+.feedback-message[data-quiet] { background:transparent; border-style:dashed; }
+.feedback-message[data-quiet] .github-comment-body { font-size:var(--type-control); color:var(--muted-foreground); }
+.feedback-bot-tag { padding:0 5px; border:1px solid var(--border); border-radius:4px; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); }
+.feedback-bots { display:flex; flex-direction:column; gap:8px; }
+.feedback-bots-summary { display:flex; align-items:center; gap:8px; width:100%; min-height:36px; padding:6px 12px; border:1px dashed var(--border); border-radius:8px; background:transparent; color:var(--muted-foreground); font-size:var(--type-control); text-align:left; cursor:pointer; }
+.feedback-bots-summary:hover { background:var(--muted); color:var(--foreground); }
+.feedback-bots-summary strong { color:var(--foreground); }
+.feedback-bots-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feedback-commits code, .timeline-title code { font-family:var(--font-mono); font-size:var(--type-caption); }
+.feedback-bots-summary time { margin-left:auto; flex:none; font-size:var(--type-caption); }
+.feedback-chevron { flex:none; transition:transform 150ms ease-out; }
+[aria-expanded=true] > .feedback-chevron, .feedback-bots[data-open] .feedback-chevron { transform:rotate(90deg); }
+.feedback-event { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; min-height:32px; padding:4px 14px; color:var(--muted-foreground); font-size:var(--type-control); }
+.feedback-event > svg { flex:none; }
+.feedback-event strong { color:var(--foreground); font-weight:600; }
+.feedback-event time { font-size:var(--type-caption); }
+.feedback-event a { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
+.feedback-commit-message { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feedback-new-since { display:flex; align-items:center; gap:12px; padding:6px 0; color:var(--ring); font-size:var(--type-caption); font-weight:600; }
+.feedback-new-since::before, .feedback-new-since::after { content:''; flex:1; height:1px; background:currentColor; }
+.feedback-thread-entry .review-file-group { background:var(--card); }
+.feedback-inline-thread { padding-bottom:4px; }
+.feedback-thread-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:6px 12px 10px; font-family:var(--font-sans); }
+.feedback-thread-actions .github-thread-actions { margin:0; padding:0; gap:8px; }
+.feedback-thread-actions:empty { display:none; }
+.feedback-timeline-workspace .feedback-complete { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:12px 24px; border-bottom:1px solid var(--border); background:var(--card); }
+.feedback-timeline-workspace .feedback-complete > svg { flex:none; width:18px; height:18px; color:var(--color-success); }
+.feedback-timeline-workspace .feedback-complete > div { flex:1 1 320px; }
+.feedback-timeline-workspace .feedback-complete h2 { font-size:var(--type-body); font-weight:600; }
+.feedback-timeline-workspace .feedback-complete p { font-size:var(--type-control); color:var(--muted-foreground); }
+.feedback-sent { color:var(--muted-foreground); font-size:var(--type-control); }
+@container (max-width:760px) {
+  .feedback-timeline { padding-inline:12px; }
+  .feedback-timeline-workspace .feedback-toolbar { padding:6px 12px; }
+  .feedback-timeline-workspace .feedback-thread-navigation { border-left:0; padding-left:0; }
+  .feedback-entry-actions { margin-left:0; }
+}
+@media (prefers-reduced-motion: reduce) { .feedback-chevron { transition:none; } }
+/* Timeline excerpts are short and sit in virtualized rows: their file and hunk headers stay in place. */
+.feedback-thread-entry .review-file-group > .changes-file-header, .feedback-thread-entry .diff-hunk > .diff-gap[data-hunk-header] { position:static; }
+.feedback-thread-entry .changes-diff { --diff-sticky-offset:0px; }
+.feedback-timeline-workspace .feedback-toolbar { gap:4px 8px; }
+.feedback-timeline-workspace .feedback-pr-filter { width:150px; min-width:120px; }
+.feedback-message[data-quiet] .feedback-entry-body { padding:6px 14px 8px; }
+
+/* Feedback's rail (round 3): the timeline's structure is a rail of nodes (components/ui/timeline.tsx, adapted from ReUI).
+   Each node names its item's kind with an icon inside a small tinted circle and an accessible label; tone repeats the
+   words. The sentence beside the node says who did what; badges carry state; meta (PR, time) is quietest; the card
+   below holds the body. Rhythm: 8px from title to card, 24px between items, 32px before a day. The line runs behind
+   the nodes, dimmer through what the reader has seen, ring-tinted from "New since you last looked", and dashed where
+   the conversation paused for two days or more. Each virtualized row draws its own full-height segment, so rows placed
+   back to back draw one continuous line. */
+.timeline { --timeline-rail:40px; --timeline-node:24px; --timeline-line:var(--border); }
+.timeline-item { position:relative; padding:0 0 24px var(--timeline-rail); outline:none; }
+.timeline-separator { position:absolute; left:calc(var(--timeline-node) / 2 + 3px); top:0; bottom:0; width:2px; background:var(--timeline-line); }
+.timeline-separator[data-tone=seen] { background:color-mix(in oklab, var(--timeline-line) 70%, transparent); }
+.timeline-separator[data-tone=new] { background:color-mix(in oklab, var(--ring) 45%, var(--timeline-line)); }
+.timeline-separator[data-tone=gap] { width:0; background:none; border-left:2px dashed color-mix(in oklab, var(--muted-foreground) 45%, transparent); }
+.timeline-item[data-edge=first] > .timeline-separator { top:16px; }
+.timeline-item[data-edge=last] > .timeline-separator { bottom:auto; height:16px; }
+.timeline-item[data-edge=only] > .timeline-separator { display:none; }
+.timeline-indicator { --tone:var(--muted-foreground); position:absolute; left:4px; top:4px; z-index:1; display:grid; place-items:center; width:var(--timeline-node); height:var(--timeline-node); border-radius:50%; border:1px solid color-mix(in oklab, var(--tone) 40%, var(--border)); background:color-mix(in oklab, var(--tone) 14%, var(--background)); color:var(--tone); box-shadow:0 0 0 3px var(--background); }
+.timeline-indicator > svg { stroke-width:2; }
+.timeline-indicator[data-tone=neutral] { --tone:var(--foreground); }
+.timeline-indicator[data-tone=quiet] { --tone:var(--muted-foreground); background:var(--background); }
+.timeline-indicator[data-tone=success] { --tone:var(--color-success); }
+.timeline-indicator[data-tone=danger] { --tone:var(--color-danger); }
+.timeline-indicator[data-tone=warning] { --tone:var(--color-warning); }
+.timeline-indicator[data-tone=info] { --tone:var(--color-info); }
+.timeline-indicator[data-tone=review] { --tone:var(--ring); }
+/* Unread: a small filled dot on the node's shoulder. The title's New badge says it in words. */
+.timeline-indicator[data-unread]::after { content:''; position:absolute; top:-2px; right:-2px; width:8px; height:8px; border-radius:50%; background:var(--ring); box-shadow:0 0 0 2px var(--background); }
+/* The keyboard cursor rings its node; keyboard focus also outlines the sentence. */
+.feedback-entry[aria-current=true] > .timeline-indicator { box-shadow:0 0 0 3px var(--background), 0 0 0 5px var(--ring); }
+.feedback-entry:focus-visible > .timeline-header { outline:2px solid var(--ring); outline-offset:3px; border-radius:6px; }
+.timeline-header { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; min-height:32px; }
+.timeline-title { min-width:0; font-size:var(--type-body); font-weight:450; line-height:1.4; color:var(--foreground); text-wrap:pretty; }
+.timeline-title .timeline-actor, .timeline-actor-name { font-weight:650; color:var(--foreground); }
+.timeline-title code, .timeline-object { padding:1px 5px; border-radius:4px; background:var(--muted); font-family:var(--font-mono); font-size:var(--type-code); font-weight:400; }
+.timeline-header[data-quiet] .timeline-title { font-size:var(--type-control); color:var(--muted-foreground); }
+.timeline-badges { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.timeline-meta { display:inline-flex; align-items:center; gap:8px; color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.timeline-meta .feedback-source { font-size:var(--type-caption); }
+.timeline-meta-text { color:var(--muted-foreground); font-size:var(--type-caption); }
+.timeline-actions { display:inline-flex; align-items:center; gap:2px; margin-left:auto; }
+.timeline-actions button { color:var(--muted-foreground); }
+.timeline-actions button:hover { color:var(--foreground); }
+/* Item actions stay out of the way until the item is pointed at, focused or under the cursor. */
+.feedback-entry:not(:hover):not(:focus-within):not([aria-current=true]) > .timeline-header .timeline-actions { opacity:0; }
+.timeline-content { margin-top:8px; min-width:0; }
+.feedback-badge { --tone:var(--muted-foreground); display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 7px; border:1px solid color-mix(in oklab, var(--tone) 40%, var(--border)); border-radius:999px; background:color-mix(in oklab, var(--tone) 10%, var(--background)); color:var(--tone); font-size:var(--type-caption); font-weight:550; line-height:1; white-space:nowrap; }
+.feedback-badge[data-tone=new], .feedback-badge[data-tone=review] { --tone:var(--ring); }
+.feedback-badge[data-tone=success] { --tone:var(--color-success); }
+.feedback-badge[data-tone=warning] { --tone:var(--color-warning); }
+.feedback-badge[data-tone=danger] { --tone:var(--color-danger); }
+.feedback-badge .pr-unread-dot { width:6px; height:6px; }
+.timeline-badges .feedback-verdict { height:20px; padding:0 7px; border:1px solid currentColor; border-radius:999px; font-size:var(--type-caption); font-weight:550; }
+/* Days part the rail with more space above; a long pause says how long. */
+.feedback-entry[data-entry-type=day] { padding-top:4px; padding-bottom:8px; }
+.feedback-entry[data-entry-type=day] .timeline-title { font-size:var(--type-control); font-weight:650; color:var(--foreground); }
+.feedback-entry[data-entry-type=day] .timeline-indicator { top:8px; }
+.feedback-gap-label { padding:0 7px; border:1px dashed var(--border); border-radius:999px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.feedback-entry[data-entry-type=divider] { padding-bottom:16px; }
+.feedback-entry[data-entry-type=divider] .timeline-title { color:var(--ring); font-size:var(--type-control); font-weight:650; }
+/* Pushes are a compact list, not a card. */
+.feedback-commits { display:flex; flex-direction:column; margin:0; padding:0; list-style:none; max-width:min(100%, 960px); }
+.feedback-commits li { display:flex; align-items:center; gap:10px; min-height:28px; font-size:var(--type-control); }
+.feedback-commits li code { color:var(--muted-foreground); }
+.feedback-message-header { display:flex; align-items:center; gap:8px; min-height:32px; padding:4px 8px 0 14px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.feedback-message-header .timeline-actions { opacity:1; }
+.feedback-bots-hint { margin-left:auto; flex:none; font-size:var(--type-caption); }
+.feedback-resolved-summary .feedback-chevron { margin-right:2px; }
+.feedback-entry-body { padding:12px 16px; }
+.feedback-message[data-quiet] .feedback-entry-body { padding:8px 14px; }
+/* The bar is quieter than the content: muted labels until chosen. */
+.feedback-timeline-workspace .feedback-filters button[aria-pressed=false] { color:var(--muted-foreground); }
+.feedback-timeline-workspace .feedback-filters button[aria-pressed=false]:hover { color:var(--foreground); }
+.feedback-timeline-workspace .feedback-toolbar { border-bottom-color:color-mix(in oklab, var(--border) 70%, transparent); }
+.dark .timeline-title { letter-spacing:.002em; }
+@container (max-width:760px) {
+  .timeline { --timeline-rail:34px; }
+  .timeline-actions { margin-left:0; }
+  .feedback-entry:not(:hover):not(:focus-within):not([aria-current=true]) > .timeline-header .timeline-actions { opacity:1; }
+}
+/* Events without a card sit closer together than conversations. */
+.timeline-item:has(> .timeline-header[data-quiet]):not(:has(> .timeline-content)) { padding-bottom:12px; }
+
+/* The Conversation page (#418): the PR header, then a band with the briefing and merge readiness that scrolls away,
+   then the timeline beside the PR's details. The page scrolls as one; the timeline's bar and the details column stay
+   pinned. Below 1100px the details become a compact strip above the timeline. */
+.conversation-page { padding-top:4px; }
+.feedback-timeline-workspace[data-page] { display:block; height:auto; min-height:0; }
+.conversation-band { display:flex; flex-direction:column; gap:8px; padding:0 0 8px; }
+.conversation-band:empty { display:none; }
+.conversation-grid { display:grid; grid-template-columns:minmax(0,1fr); }
+.conversation-grid[data-sidebar] { grid-template-columns:minmax(0,1fr) 300px; gap:0 28px; align-items:start; }
+.conversation-main, .conversation-side { min-width:0; }
+.feedback-timeline-workspace[data-page] .feedback-toolbar { position:sticky; top:0; z-index:7; padding-inline:0; }
+.feedback-timeline-workspace[data-page] .feedback-timeline { flex:none; overflow:visible; padding-inline:0; }
+.conversation-side { position:sticky; top:0; align-self:start; max-height:calc(100cqh - 8px); overflow:auto; overscroll-behavior:contain; padding-top:8px; }
+.conversation-sidebar { display:flex; flex-direction:column; gap:20px; font-size:var(--type-control); color:var(--foreground); }
+.conversation-sidebar > section { display:flex; flex-direction:column; gap:8px; padding-top:12px; border-top:1px solid var(--border); }
+.conversation-sidebar > section:first-child { border-top:0; padding-top:0; }
+.conversation-sidebar h2 { font-size:var(--type-control); font-weight:650; color:var(--foreground); }
+.conversation-sidebar p { color:var(--muted-foreground); line-height:1.5; }
+.conversation-sidebar > section > button { align-self:flex-start; padding-inline:0; }
+.conversation-sidebar dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; align-items:baseline; }
+.conversation-sidebar dt { color:var(--muted-foreground); font-size:var(--type-caption); }
+.conversation-sidebar dd { min-width:0; overflow-wrap:anywhere; }
+.conversation-sidebar .pr-branches { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.conversation-reviewers { display:flex; flex-direction:column; gap:8px; margin:0; padding:0; list-style:none; }
+.conversation-reviewers li { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+.conversation-verdict { --tone:var(--muted-foreground); display:inline-flex; align-items:center; gap:4px; color:var(--tone); font-size:var(--type-caption); font-weight:550; white-space:nowrap; }
+.conversation-verdict[data-tone=success] { --tone:var(--color-success); }
+.conversation-verdict[data-tone=danger] { --tone:var(--color-danger); }
+.conversation-verdict[data-tone=review] { --tone:var(--ring); }
+.conversation-empty-value { font-size:var(--type-control); }
+.conversation-sidebar.is-stack { gap:0; }
+/* The description reads at prose size, always whole. */
+.feedback-description-card .pr-markdown { font-size:var(--type-prose); }
+.feedback-description-card { position:relative; }
+.feedback-description-stats { gap:6px; height:24px; font-variant-numeric:tabular-nums; }
+@container (max-width:1100px) {
+  .conversation-grid[data-sidebar] { grid-template-columns:minmax(0,1fr); }
+  .conversation-side { order:-1; position:static; max-height:none; overflow:visible; padding:0 0 12px; }
+  .conversation-sidebar:not(.is-stack) { flex-direction:row; flex-wrap:wrap; gap:8px 28px; padding:10px 0 12px; border-bottom:1px solid var(--border); }
+  .conversation-sidebar:not(.is-stack) > section { border-top:0; padding-top:0; gap:4px; }
+  .conversation-sidebar:not(.is-stack) dl { display:flex; flex-wrap:wrap; gap:4px 16px; }
+  .conversation-sidebar:not(.is-stack) dl > :is(dt:nth-of-type(n+3), dd:nth-of-type(n+3)) { display:none; }
+}
+/* The description fills its card; its paragraphs keep the reading measure (.pr-summary-body .pr-markdown). */
+.feedback-description-card .markdown-body { max-width:none; }
+
+/* The Conversation bar is one row of compact controls at laptop widths. */
+.feedback-timeline-workspace[data-page] .feedback-toolbar { padding-block:4px; }
+
+/* Density for the laptop fold (#418): the band's readiness reads as one block whose reasons flow on one line where
+   they fit; the details column narrows below 1400px; the bar's buttons are tighter so it stays one row. */
+.conversation-band .pr-readiness-compact .pr-summary-decision { padding-block:8px; }
+.conversation-band .pr-readiness-compact ul { display:flex; flex-wrap:wrap; gap:2px 18px; margin-block:4px 0; }
+.conversation-band .pr-readiness-compact li { margin:0; }
+.feedback-timeline-workspace[data-page] .feedback-toolbar button[data-size=sm] { padding-inline:8px; }
+@container (min-width:1101px) and (max-width:1400px) { .conversation-grid[data-sidebar] { grid-template-columns:minmax(0,1fr) 260px; gap:0 24px; } }
+
+/* The band's readiness, collapsed: verdict, checked time and reasons, then the PR's actions, on one line where they fit;
+   at narrower widths the actions wrap under the reasons. Details opens the full reasons and the actions' notes. */
+.band-readiness { display:flex; align-items:flex-start; gap:4px 12px; }
+.band-readiness > :first-child { flex:1; min-width:0; }
+.band-readiness:not([data-open]) .pr-summary-decision > :not(.pr-merge-detail, .pr-actions), .band-readiness:not([data-open]) .pr-merge-requirements { display:none; }
+.band-readiness:not([data-open]) .pr-merge-detail { display:flex; align-items:baseline; gap:4px 12px; flex:1 1 20rem; min-width:0; }
+.band-readiness:not([data-open]) .pr-actions .pr-action-note:not([role]) { display:none; }
+.band-readiness .pr-action-controls { gap:6px; }
+.band-readiness:not([data-open]) .pr-summary-decision-heading { flex:none; }
+.band-readiness:not([data-open]) .pr-merge-detail ul { display:block; flex:1; min-width:0; margin:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--muted-foreground); }
+.band-readiness:not([data-open]) .pr-merge-detail li { display:inline; }
+.band-readiness:not([data-open]) .pr-merge-detail li + li::before { content:' · '; }
+.band-readiness-toggle { flex:none; margin-top:4px; }
+.feedback-timeline-workspace[data-page] .feedback-review-requests-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+
+/* The narrow strip: sections share the row and wrap; none widens the page. */
+@container (max-width:1100px) {
+  .conversation-sidebar:not(.is-stack) > section { flex:1 1 220px; min-width:0; max-width:100%; }
+}
+/* Collapsed readiness never widens the band: its one line shrinks and ellipsizes. */
+.band-readiness .pr-readiness { min-width:0; overflow:hidden; }
+.band-readiness:not([data-open]) .pr-summary-decision { display:flex; flex-direction:row; flex-wrap:wrap; align-items:center; gap:6px 16px; min-width:0; }
+/* Nothing on the Conversation page scrolls sideways; wide content wraps or scrolls inside its own block. */
+.conversation-page { overflow-x:hidden; }
+.feedback-code-thread .diff-gap :is(.diff-gap-message, .diff-gap-trailing) { white-space:normal; }
+
+/* The PR description leads the Conversation page (#418, round 5): its own section above the timeline's bar, not an
+   entry in the stream. Who opened the PR and when, the change stats into Changes and Edit on GitHub sit on one line;
+   the description reads at prose size, its start shown until opened. A stack lists each PR's description as one line
+   that opens in place; the PR picker shows one PR's description in full. */
+.conversation-description { display:flex; flex-direction:column; gap:6px; padding-bottom:8px; }
+.conversation-description-pr { display:flex; flex-direction:column; gap:6px; }
+.conversation-description-header { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; min-height:32px; color:var(--muted-foreground); font-size:var(--type-body); }
+.conversation-description-header .timeline-actor { font-weight:650; color:var(--foreground); }
+.conversation-description-header time { font-size:var(--type-caption); }
+.conversation-description-edit { margin-left:auto; color:var(--muted-foreground); }
+.conversation-stack-descriptions { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:8px; background:var(--card); }
+.conversation-member-description + .conversation-member-description { border-top:1px solid var(--border); }
+.conversation-member-description > summary { display:flex; align-items:center; gap:8px; min-height:40px; padding:6px 12px; list-style:none; cursor:pointer; font-size:var(--type-control); }
+.conversation-member-description > summary::-webkit-details-marker { display:none; }
+.conversation-member-description[open] > summary .feedback-chevron { transform:rotate(90deg); }
+.conversation-member-description > summary:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; border-radius:8px; }
+.conversation-member-title { flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+.conversation-member-excerpt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted-foreground); }
+.conversation-member-description > .conversation-description-pr { padding:0 12px 12px; }
+
+/* Big groups (#418): a push of more than BIG_GROUP commits, a long bot run or a run of events shows what is in it,
+   a short preview and Show all, which opens it in place. Merges inside an opened push read as one line per branch. */
+.feedback-group { display:flex; flex-direction:column; gap:4px; }
+.feedback-group-summary { color:var(--muted-foreground); font-size:var(--type-control); line-height:1.5; font-variant-numeric:tabular-nums; }
+.feedback-group-toggle { align-self:flex-start; margin-left:-8px; color:var(--ring); }
+.feedback-group-toggle:hover { color:var(--foreground); }
+.feedback-group .feedback-commits li > time { flex:none; color:var(--muted-foreground); font-size:var(--type-caption); }
+.feedback-merge-group { flex-direction:column; align-items:stretch !important; }
+.feedback-merge-toggle { display:inline-flex; align-items:center; gap:6px; min-height:28px; color:var(--muted-foreground); font-size:var(--type-control); text-align:left; cursor:pointer; }
+.feedback-merge-toggle:hover { color:var(--foreground); }
+.feedback-merge-toggle:focus-visible { outline:2px solid var(--ring); outline-offset:2px; border-radius:4px; }
+.feedback-merge-toggle code { font-family:var(--font-mono); font-size:var(--type-caption); }
+.feedback-merge-group > .feedback-commits { margin-left:20px; }
+
+/* A review's code threads: a heading, one row per file, a chip per line. The review's own text stays prose above it. */
+.feedback-review-index { margin:0 16px 4px; padding-top:10px; border-top:1px solid var(--border); }
+/* Rows stay a reading width, so a file's lines sit near its name on a wide page. */
+.feedback-review-files, .feedback-review-index-head { max-width:52rem; }
+.feedback-review-index-head { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 6px; font-size:var(--type-control); font-weight:600; color:var(--foreground); }
+.feedback-review-files { display:grid; gap:2px; margin:0; padding:0; list-style:none; }
+.feedback-review-file { display:flex; align-items:center; flex-wrap:wrap; gap:4px 12px; min-height:28px; min-width:0; }
+.feedback-review-path { display:flex; align-items:center; gap:8px; flex:1 1 16rem; min-width:0; font-size:var(--type-control); }
+.feedback-review-name { flex:none; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:550; }
+.feedback-review-folder { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; color:var(--muted-foreground); font-size:var(--type-caption); }
+.feedback-review-lines { display:flex; flex-wrap:wrap; gap:4px; flex:0 1 auto; max-width:100%; }
+.feedback-line-chip { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px; border:1px solid var(--border); border-radius:6px; background:var(--background); color:var(--foreground); font-family:var(--font-mono); font-size:var(--type-code); font-variant-numeric:tabular-nums; cursor:pointer; }
+.feedback-line-chip svg { flex:none; }
+.feedback-line-chip[data-state=unresolved] svg { color:var(--ring); }
+.feedback-line-chip[data-state=resolved] { color:var(--muted-foreground); }
+.feedback-line-chip[data-state=resolved] svg { color:var(--color-success); }
+.feedback-line-chip:hover { border-color:color-mix(in oklab, var(--ring) 50%, var(--border)); background:var(--accent); }
+.feedback-line-chip:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+.feedback-review-more { margin:2px 0 0 -8px; color:var(--muted-foreground); }
+.feedback-message-footer { display:flex; align-items:center; gap:4px; padding:0 8px 6px; }
+.feedback-message-footer button { color:var(--muted-foreground); }
+.feedback-message-footer button:hover { color:var(--foreground); }
+.feedback-message .feedback-review-index + .feedback-message-footer { padding-top:4px; }

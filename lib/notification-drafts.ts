@@ -27,16 +27,22 @@ export const peekReplyDraft = (key: string) => kept.get(key);
 
 /**
  * For a thread's reply box: `apply` receives a kept draft once, when the box mounts or when the draft arrives.
- * `sent` runs when a retry of that text went through.
+ * `sent` runs when a retry of that text went through. `visible` keeps a box in a hidden workspace tab from taking the
+ * draft: the PR's Conversation page may be open in several tabs (#418), and the reader opens the one in front.
  */
-export function useKeptReplyDraft(key: string, apply: (text: string) => void, sent: (text: string) => void) {
+export function useKeptReplyDraft(key: string, apply: (text: string) => void, sent: (text: string) => void, visible?: () => boolean) {
   const handlers = useRef({ apply, sent });
   handlers.current = { apply, sent };
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   useEffect(() => {
+    // The draft stays kept until a retry or a reply sends it: each box that shows the thread offers it once, so the
+    // copy the reader opens has it even when another tab's copy of the same Conversation showed it first (#418).
+    let applied: string | undefined;
     const take = () => {
       const text = kept.get(key);
-      if (text === undefined) return;
-      kept.delete(key);
+      if (text === undefined || text === applied || (visibleRef.current && !visibleRef.current())) return;
+      applied = text;
       handlers.current.apply(text);
     };
     take();

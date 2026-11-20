@@ -50,6 +50,10 @@ interface Props {
   stickyUnder?: RefObject<HTMLElement | null>;
   /** The file is expanded: collapsed files read nothing. */
   active?: boolean;
+  /** The Pierre theme, when the hunks carry no saved highlighting: Feedback's GitHub hunks use the reader's code theme. */
+  theme?: string;
+  /** Gaps name only their hidden lines (Feedback's comment excerpts are not a topic's chosen hunks). */
+  plainGaps?: boolean;
   /** The file is marked Viewed: its outline's symbols read as viewed. */
   fileViewed?: boolean;
   /** Marks the file Viewed, offered once every symbol of its outline is ticked. */
@@ -86,6 +90,8 @@ export function ReviewDiff({
   source,
   stickyUnder,
   active = true,
+  theme,
+  plainGaps,
   fileViewed,
   onMarkFileViewed,
 }: Props) {
@@ -189,7 +195,7 @@ export function ReviewDiff({
   const single = fileStatus === 'added' || fileStatus === 'deleted';
   const unified = single || diffLayout === 'unified';
   const options: FileDiffOptions<Location, undefined> = {
-    theme: reviewDiffTheme(hunks),
+    theme: theme ?? reviewDiffTheme(hunks),
     preferredHighlighter: DIFF_HIGHLIGHTER,
     themeType: 'dark',
     diffStyle: single ? 'unified' : diffLayout,
@@ -330,6 +336,7 @@ export function ReviewDiff({
           stickyUnder={stickyUnder}
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
           lineCount={model.lineCount}
+          plainGaps={plainGaps}
         />
       )}
       {saved.unreadable.map((hunk) => (

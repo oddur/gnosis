@@ -1,7 +1,8 @@
 import { workspaceSections as sections } from '../lib/interface-icons';
 import type { WorkspaceTab } from '../lib/navigation-history';
 
-export const workspaceTabs = (Object.keys(sections) as WorkspaceTab[]).map(tab => ({
+// Feedback is no longer a tab of its own: it opens Conversation (`conversationTab`).
+export const workspaceTabs = (Object.keys(sections) as WorkspaceTab[]).filter(tab => tab !== 'feedback').map(tab => ({
   value: tab, label: sections[tab].label, workspaceTab: tab,
 }));
 

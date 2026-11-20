@@ -31,7 +31,7 @@ interface Frame {
   focusRing: boolean;
 }
 
-const sections = ['Summary', 'Changes', 'Commits', 'Checks', 'Feedback', 'Explanation', 'Local notes'] as const;
+const sections = ['Summary', 'Changes', 'Commits', 'Checks', 'Explanation', 'Local notes'] as const;
 const tolerance = 0.5;
 
 void app.whenReady().then(async () => {
@@ -195,8 +195,6 @@ void app.whenReady().then(async () => {
       "!!document.querySelector('.pr-changes-tab[data-state=active] .changes-file-header, .pr-changes-tab[data-state=active] .changes-file-tree')",
     Commits: "!!document.querySelector('.pr-changes-tab[data-state=active] .commit-row')",
     Checks: "!!document.querySelector('.pr-changes-tab[data-state=active] .pr-checks-workspace')",
-    Feedback:
-      "!!document.querySelector('.pr-changes-tab[data-state=active] .feedback-workspace, .pr-changes-tab[data-state=active] .feedback-empty')",
     Explanation:
       "!!document.querySelector('.pr-changes-tab[data-state=active] .explanation-reader, .pr-changes-tab[data-state=active] .explanation-empty')",
     'Local notes': "!!document.querySelector('.pr-changes-tab[data-state=active] .agent-brief')",

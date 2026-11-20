@@ -121,7 +121,8 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.remove('dark')");
     await click('Summary');
     await click('Commits');
-    await wait("!!document.querySelector('.commit-row[aria-pressed=true]') && !document.querySelector('.commit-row[aria-pressed=true] .pr-unread-dot')");
+    // The panel shows in the render after the click (PrSummary's deferred tab); hidden rows exist before that.
+    await wait("!!document.querySelector('.commit-row[aria-pressed=true]')?.checkVisibility() && !document.querySelector('.commit-row[aria-pressed=true] .pr-unread-dot')");
     // The completion marker uses the existing durable Viewed store.
     assert.equal(await js("Object.keys(JSON.parse(localStorage.getItem('gnosis-file-progress:v1')).marks).some(k=>k.startsWith('commit-viewed:'))"), true);
     await js("document.querySelector('.changes-file-actions input[type=checkbox]').click()");

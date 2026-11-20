@@ -223,7 +223,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.briefing-panel .loading-indicator')"), false, 'Status opens without a loading state');
     assert.ok((await js<string[]>('window.liveReads')).includes('status'), 'GitHub had not answered');
     await click('Open PR overview');
-    await click('Feedback');
+    await click('Summary');
     // GitHub reads never answer here, so the comment can only come from the saved copy.
     await wait("document.body.innerText.includes('Preloaded discussion is ready.')");
 

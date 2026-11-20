@@ -17,11 +17,12 @@ export const subjectIcons = {
 };
 
 export const workspaceSections = {
+  // The PR's description, timeline and details on one page. Feedback is part of it (#418).
   summary: { label: 'Summary', icon: LayoutList },
   changes: { label: 'Changes', icon: FileDiff },
   commits: { label: 'Commits', icon: subjectIcons.commit },
   checks: { label: 'Checks', icon: ListChecks },
-  feedback: { label: 'Feedback', icon: MessagesSquare },
+  feedback: { label: 'Summary', icon: LayoutList },
   explanation: { label: 'Explanation', icon: BookOpen },
   brief: { label: 'Local notes', icon: NotebookPen },
 } satisfies Record<WorkspaceTab, { label: string; icon: LucideIcon }>;

@@ -368,7 +368,7 @@ export function workspaceTabDescription(tab: WorkspaceTabEntry) {
         explanation: 'Explanation',
         checks: 'Checks',
         brief: 'Local notes',
-        feedback: 'Feedback',
+        feedback: 'Summary',
       } as Record<string, string>
     )[tab.section] ?? tab.section;
   return [tab.label, tab.detail, section].filter(Boolean).join(' · ');

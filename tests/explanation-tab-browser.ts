@@ -53,7 +53,6 @@ void app.whenReady().then(async () => {
       'Changes',
       'Commits',
       'Checks',
-      'Feedback',
       'Explanation',
       'Local notes',
     ]);

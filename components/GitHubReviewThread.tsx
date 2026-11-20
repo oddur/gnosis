@@ -8,7 +8,7 @@ import { optimisticWrite, useWriteInFlight } from '../lib/write-failures';
 import { WriteFailureNotice } from './WriteFailureNotice';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
 import { CommentMarkdown } from './CommentMarkdown';
-import { useKeptReplyDraft } from '../lib/notification-drafts';
+import { replyDraftSent, useKeptReplyDraft } from '../lib/notification-drafts';
 import { timeAgo } from '../lib/utils';
 import {
   isPendingComment,
@@ -18,6 +18,12 @@ import {
   type ReviewThreadAction,
   type ReviewCommentAction,
 } from '../lib/review-threads';
+
+/** Outside a background workspace tab: the reader sees this box, or it is not in a workspace panel at all. */
+export const inFrontPanel = (element: Element | null) => {
+  const panel = element?.closest('.workspace-panel');
+  return !panel || panel.getAttribute('data-workspace-active') === 'true';
+};
 
 /** A comment hidden on GitHub stays collapsed behind its reason, as on GitHub. */
 export function HiddenComment({ comment }: { comment: Pick<GitHubReviewComment, 'body' | 'minimizedReason'> }) {
@@ -58,7 +64,8 @@ export function GitHubReviewThread({
   useKeptReplyDraft(
     `thread:${thread.id}`,
     (text) => { setDraft((current) => (current.trim() ? current : text)); setReplying(true); },
-    (text) => { if (draft.trim() === text.trim()) { setDraft(''); setReplying(false); } }
+    (text) => { if (draft.trim() === text.trim()) { setDraft(''); setReplying(false); } },
+    () => inFrontPanel(root.current)
   );
   // One reply per thread at a time: a second one waits until GitHub answers the first.
   const replySending = useWriteInFlight(`thread-reply:${thread.id}`);
@@ -71,6 +78,7 @@ export function GitHubReviewThread({
     return () => cancelAnimationFrame(frame);
   }, [replying, actionContainer]);
   const inputId = useId();
+  const root = useRef<HTMLDetailsElement>(null);
   const [editing, setEditing] = useState<string>();
   const [deleting, setDeleting] = useState<string>();
   const [editBody, setEditBody] = useSessionDraft(`thread-edit:${thread.id}`, '');
@@ -114,7 +122,11 @@ export function GitHubReviewThread({
           if (typeof current !== 'string' || !current.trim()) writeSessionDraft(draftId, text);
           writeSessionDraft(replyingId, true);
         },
-        write: () => onAction('reply', body),
+        write: async () => {
+          await onAction('reply', body);
+          // A kept notification draft with this text is sent now; other boxes stop offering it.
+          replyDraftSent(`thread:${thread.id}`, body);
+        },
       });
       return;
     }
@@ -168,6 +180,7 @@ export function GitHubReviewThread({
   const published = thread.comments.length - pendingCount;
   return (
     <details
+      ref={root}
       className="github-thread"
       data-thread-id={thread.id}
       data-resolved={thread.isResolved}

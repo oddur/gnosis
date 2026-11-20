@@ -529,24 +529,30 @@ function gapControls(part: GapBarPart, status: GapStatus, reveal: (direction: Ga
 
 /**
  * The lines after a file's last hunk: one quiet code-line row, on the code's background under a hairline, with what it
- * holds and the action at the code's text column ("82 more lines · Show"). It heads nothing, so it never pins.
+ * holds and the action at the code's text column ("82 more lines · Show", or "More lines · Show" when the length is
+ * unknown). It heads nothing, so it never pins. On Feedback, with nothing to show and no length, it is left out.
  */
 function TrailingBar({
   part,
   status,
   onReveal,
   onRetry,
+  plain,
 }: {
   part: GapBarPart;
   status: GapStatus;
+  /** Feedback's excerpt: with nothing to show and no length, the bar is left out. */
+  plain?: boolean;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
   onRetry?: () => void;
 }) {
   const { hidden } = part;
   const known = hidden !== undefined;
   const busy = status.kind === 'loading' || status.kind === 'refreshing';
+  // An excerpt that cannot load more (GitHub's saved hunk on Feedback) and does not know what follows says nothing.
+  if (plain && !known && !onReveal) return null;
   const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
-  const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines may follow';
+  const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines';
   let body: ReactNode;
   if (onReveal && blocked(status)) body = gapControls(part, status, () => () => {}, onRetry).body;
   else
@@ -596,12 +602,15 @@ function GapBar({
   range,
   counts,
   onShowDefinition,
+  plain,
   onCollapseScope,
 }: {
   part: GapBarPart;
   status: GapStatus;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
   onRetry?: () => void;
+  /** Name a gap by its hidden lines only, never as changes left out of a topic (Feedback). */
+  plain?: boolean;
   scope?: HunkScope;
   /** The hunk below sits outside every definition of a parsed file: it is at the top level. */
   fileOnly?: boolean;
@@ -621,12 +630,13 @@ function GapBar({
   const busy = status.kind === 'loading' || status.kind === 'refreshing';
   const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
   // A topic that leaves out changes between its hunks says so: those lines are not the after side's alone.
-  const label = part.gap.opaque ? OPAQUE : known ? `${lines(hidden)} hidden` : 'More lines may follow';
+  const opaque = plain && part.gap.opaque ? (known ? `${lines(hidden)} hidden` : 'Lines hidden') : OPAQUE;
+  const label = part.gap.opaque ? opaque : known ? `${lines(hidden)} hidden` : 'More lines may follow';
   const { gutter, body } = part.gap.opaque
     ? {
         // Unchanged lines next to the hunks still show; the change between them belongs to another topic.
         gutter: onReveal && gapControls({ ...part, hidden: undefined, above: !!part.more?.down, below: !!part.more?.up }, status, reveal).gutter,
-        body: <span className="diff-gap-count">{OPAQUE}</span>,
+        body: <span className="diff-gap-count">{opaque}</span>,
       }
     : onReveal
       ? gapControls(part, status, reveal, onRetry)
@@ -1068,6 +1078,7 @@ export function ChangesDiff<A>({
   stickyUnder,
   scopeAt,
   canReveal,
+  plainGaps,
   navigator,
   rails = NO_RAILS,
   onCollapseScope,
@@ -1103,6 +1114,8 @@ export function ChangesDiff<A>({
   scopeAt?: (point: LinePoint) => readonly SyntaxDefinition[] | undefined;
   /** Whether a gap can show its lines; by default every gap can when `onReveal` is set. */
   canReveal?: (gap: GapBarPart['gap']) => boolean;
+  /** Gaps name only their hidden lines: Feedback shows a comment's excerpt, not a topic's chosen hunks. */
+  plainGaps?: boolean;
   /** Set while the diff can take the reader to a line, as its pinned crumbs do: the file's outline uses it. */
   navigator?: RefObject<DiffNavigator | null>;
   /** Definitions shown whole by show scope (lib/show-scope.ts), for their rails. */
@@ -1681,6 +1694,7 @@ export function ChangesDiff<A>({
           range={next?.kind === 'hunk' && next.changed ? next.range : undefined}
           counts={next?.kind === 'hunk' && next.changed ? next.counts : undefined}
           onShowDefinition={onShowDefinition}
+          plain={plainGaps}
           onCollapseScope={onCollapseScope}
         />
       ) : (
@@ -1690,6 +1704,7 @@ export function ChangesDiff<A>({
           status={status}
           onReveal={!canReveal || canReveal(block.gap) ? onReveal : undefined}
           onRetry={onRetry}
+          plain={plainGaps}
         />
       );
       // A bar below the last hunk heads nothing.
