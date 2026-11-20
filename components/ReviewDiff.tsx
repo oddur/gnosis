@@ -324,6 +324,7 @@ export function ReviewDiff({
           rails={model.rails}
           onCollapseScope={model.collapseScope}
           noise={model.noise}
+          moves={model.moves}
           outline={{
             quiet: model.quietSymbols,
             symbols: model.symbols,

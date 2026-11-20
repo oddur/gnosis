@@ -37,6 +37,7 @@ import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { MoveNavigation, type MoveTarget } from '../lib/use-moved-symbols';
 import type { PrFocus } from '../lib/deep-link';
 import { AlarmClock, ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
 import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
@@ -551,7 +552,14 @@ function PrSummaryContent({
     />
   );
   const tabs = workspaceTabs;
+  // A moved symbol's note in an Explanation topic or a code thread opens its other end in Changes (#398). Changes
+  // provides its own, which stays in the view.
+  const openMove = useCallback((target: MoveTarget) => {
+    setInitialFile({ url: target.url, path: target.path, headSha: target.headSha, line: target.line, endLine: target.endLine, side: target.side });
+    onTabChange('changes');
+  }, [onTabChange]);
   return (
+    <MoveNavigation.Provider value={openMove}>
     <Tabs.Root
       value={tab}
       onValueChange={(value) => {
@@ -783,6 +791,7 @@ function PrSummaryContent({
         </KeptTab>
       </main>
     </Tabs.Root>
+    </MoveNavigation.Provider>
   );
 }
 

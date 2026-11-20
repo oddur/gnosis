@@ -16,7 +16,8 @@ import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { DiffWorkerPool, diffThemeName } from '../lib/diff-worker-pool';
 import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { useSyntaxPrefetch } from '../lib/use-syntax-contents';
+import { useMovesPrefetch, useSyntaxPrefetch } from '../lib/use-syntax-contents';
+import { MoveNavigation, type MoveTarget } from '../lib/use-moved-symbols';
 import { noiseFilterOf } from '../lib/review-diff';
 import { useQuietSummary } from '../lib/use-semantic-noise';
 import { anchorReader } from '../lib/quiet-changes';
@@ -419,6 +420,9 @@ export function PrChangesView({
   // Quiet changes (#396): what the reader hides, and each file's comparison as it lands, for the tree and progress.
   const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
   useSyntaxPrefetch(prefetchOwner, scopeFiles, (file) => progress.isFileViewed(file.key), codeSettings, noiseFilter);
+  // Moved and renamed symbols (#398) are matched across every file of the PR, those a filter hides too.
+  const moveFiles = useMemo(() => entries.map((e) => ({ key: viewKey(e), snapshot: e.snapshot, file: e.file })), [entries]);
+  useMovesPrefetch(prefetchOwner, moveFiles, codeSettings);
   // Comparisons land for every view's files. This view renders again only when its own quiet files change: a string
   // of them is the store's snapshot, so other views' comparisons cost it a lookup per file and no render.
   const quietKeys = useMemo(() => visible.map((e) => ({ key: e.key, fileKey: viewKey(e) })), [entries, visibleSignature]);
@@ -506,6 +510,19 @@ export function PrChangesView({
     const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (visible[i] ? [warmFile(visible[i].key)] : []));
     return () => cancel.forEach((stop) => stop());
   }, [activeKey, entries, visibleSignature]);
+  // A move's note in another file goes there, as a chat trace chip does, without leaving the view.
+  const openMoveLatest = useRef<(target: MoveTarget) => void>(() => {});
+  openMoveLatest.current = (target) => {
+    const found = entries.find((e) => e.snapshot.url === target.url && e.file.path === target.path && e.snapshot.metadata.headSha === target.headSha);
+    if (!found) return;
+    void select(found.key);
+    setChatJump(undefined);
+    requestAnimationFrame(() =>
+      setChatJump({ url: target.url, path: target.path, headSha: target.headSha, line: target.line, endLine: target.endLine, side: target.side })
+    );
+  };
+  // Stable, so every diff below keeps its context value.
+  const [openMove] = useState(() => (target: MoveTarget) => openMoveLatest.current(target));
   async function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
@@ -599,6 +616,7 @@ export function PrChangesView({
       }
     : null;
   return (
+    <MoveNavigation.Provider value={openMove}>
     <section
       ref={workspace}
       className="pr-changes"
@@ -970,5 +988,6 @@ export function PrChangesView({
         )}
       </div>
     </section>
+    </MoveNavigation.Provider>
   );
 }

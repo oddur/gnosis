@@ -16,6 +16,8 @@ import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
 import { traceStructure } from './structure-trace';
 import { higherPriority, type SyntaxPriority } from './syntax-parse-queue';
+import type { FilePrints, MoveFile, MovesResult } from './moved-symbols';
+import type { SymbolsInput } from './syntax-scope';
 
 /**
  * The page's side of the tree-sitter worker (#393). Grammars are assets of the renderer build, so they load offline
@@ -101,6 +103,11 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
         else if ('noise' in response) {
           (entry.resolve as (value: NoiseBlock[]) => void)(response.noise);
           noiseTimings.get(response.id)?.(response.timing);
+        } else if ('symbols' in response) {
+          (entry.resolve as (value: FilePrints) => void)(response.symbols);
+          symbolTimings.get(response.id)?.(response.timing);
+        } else if ('moves' in response) {
+          (entry.resolve as (value: MovesResult) => void)(response.moves);
         } else {
           (entry.resolve as (value: SyntaxDefinition[]) => void)(response.definitions);
           timings.get(response.id)?.(response.timing);
@@ -469,3 +476,77 @@ addDiagnosticsSource('semanticNoise', () => ({
   comparing: noisePending.size,
   timings: noiseClassifyTimings.slice(-10),
 }));
+
+// ── Moved and renamed symbols (#398) ────────────────────────────────────────
+
+type SymbolTiming = Extract<SyntaxResponse, { symbols: unknown }>['timing'];
+const symbolTimings = new Map<number, (timing: SymbolTiming) => void>();
+/** The last fingerprint reads, newest last, for the diagnostics export and the browser checks. */
+export const symbolReadTimings: (SymbolTiming & { key: string; language: SyntaxLanguage; characters: number })[] = [];
+/** Every fingerprint read since the page loaded: how many, and the worker time they took in all and at most. */
+export const symbolReadTotals = { reads: 0, ms: 0, maxMs: 0, waitMs: 0 };
+/** Files larger than this are not fingerprinted, as for the noise comparison: both sides parse in the one worker. */
+export const SYMBOLS_MAX_CHARACTERS = NOISE_MAX_CHARACTERS;
+
+/**
+ * A file's moved-symbol candidates, fingerprinted in the worker (lib/moved-symbols.ts), below every other parse.
+ * Rejects when the language is off, the file too large, or the worker not available. The caller keeps the result.
+ */
+export function readSymbols(request: {
+  key: string;
+  url: string;
+  language: SyntaxLanguage;
+  input: SymbolsInput;
+  priority?: SyntaxPriority;
+}): Promise<FilePrints> {
+  if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
+  if (request.input.text.length > SYMBOLS_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));
+  return start('front').then(
+    (instance) =>
+      new Promise<FilePrints>((resolve, reject) => {
+        if (!instance) {
+          reject(Error('The syntax worker is not available'));
+          return;
+        }
+        const id = ++nextId;
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+        symbolTimings.set(id, (timing) => {
+          symbolTimings.delete(id);
+          symbolReadTimings.push({ ...timing, key: request.key, language: request.language, characters: request.input.text.length });
+          symbolReadTotals.reads++;
+          symbolReadTotals.ms += timing.ms;
+          symbolReadTotals.maxMs = Math.max(symbolReadTotals.maxMs, timing.ms);
+          symbolReadTotals.waitMs += timing.wait ?? 0;
+          if (symbolReadTimings.length > 50) symbolReadTimings.shift();
+        });
+        instance.postMessage({
+          type: 'symbols',
+          id,
+          key: request.key,
+          url: request.url,
+          language: request.language,
+          input: request.input,
+          runtimeUrl: absolute(runtimeWasm),
+          grammarUrl: absolute(GRAMMARS[request.language]),
+          priority: request.priority ?? 'prefetch',
+          side: 'symbols',
+        } satisfies SyntaxRequest);
+      })
+  );
+}
+
+/** A PR's moves, matched in the worker from its files' fingerprints, between two parses. */
+export function readMoves(files: MoveFile[]): Promise<MovesResult> {
+  return start('front').then(
+    (instance) =>
+      new Promise<MovesResult>((resolve, reject) => {
+        if (!instance) {
+          reject(Error('The syntax worker is not available'));
+          return;
+        }
+        const id = ++nextId;
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+        instance.postMessage({ type: 'moves', id, files } satisfies SyntaxRequest);
+      })
+  );
+}

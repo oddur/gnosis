@@ -1,5 +1,15 @@
 import type * as TreeSitter from 'web-tree-sitter';
-import { classifyNoise, type NoiseBlock } from './semantic-noise';
+import { classifyNoise, comparisonTexts, type NoiseBlock } from './semantic-noise';
+import {
+  MIN_LINES,
+  MOVE_GROUPS,
+  changedRows,
+  placeBefore,
+  sideCandidates,
+  treeTokens,
+  type FilePrints,
+  type SymbolSides,
+} from './moved-symbols';
 
 /**
  * Enclosing definitions for diff hunks, from a tree-sitter parse (#393).
@@ -677,6 +687,76 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       own.setLanguage(language);
       const blocks = classifyNoise({ parse: (text, previous) => own.parse(text, previous) }, id, after, hunks);
       return { blocks, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+    },
+    /**
+     * Moved and renamed symbols (lib/moved-symbols.ts): the fingerprints of a file's candidates, the definitions most
+     * of whose lines its diff removes or adds. A modified file comes as its new side and hunks, and its old side is
+     * the new one with the hunks undone, as for the noise comparison; an added or deleted file is its one side.
+     */
+    async symbols(id: SyntaxLanguage, input: SymbolsInput): Promise<SymbolsResult> {
+      const loading = !languages.has(id);
+      const t0 = performance.now();
+      const { language, query } = await load(id);
+      const t1 = performance.now();
+      if (!parser) throw Error('The parser did not start');
+      parser.setLanguage(language);
+      const sides = symbolSides(input);
+      if (!sides) throw Error('The file does not match its diff');
+      const read = (side: { text: string; changed: Uint8Array } | undefined) => {
+        if (!side || !side.changed.some((row) => row)) return [];
+        const tree = parser?.parse(side.text);
+        if (!tree) throw Error('The file did not parse');
+        try {
+          const definitions = collectDefinitions(tree, query, id);
+          // Most files change no whole definition: their tokens are never read.
+          const worth = definitions.some((d) => {
+            if (!MOVE_GROUPS[d.kind] || d.end - d.start + 1 < MIN_LINES) return false;
+            let touched = 0;
+            for (let r = d.start - 1; r < d.end; r++) touched += side.changed[r] ?? 0;
+            return touched >= MIN_LINES;
+          });
+          return worth ? sideCandidates(definitions, treeTokens(tree, side.text), side.changed) : [];
+        } finally {
+          tree.delete();
+        }
+      };
+      const prints = { before: placeBefore(read(sides.before), sides.at), after: read(sides.after) };
+      return { prints, ms: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+    },
+  };
+}
+
+export type SymbolsInput =
+  | { mode: 'modified'; text: string; hunks: Parameters<typeof classifyNoise>[3] }
+  | { mode: 'added' | 'deleted'; text: string };
+export interface SymbolsResult {
+  prints: FilePrints;
+  /** Milliseconds parsing both sides and fingerprinting them; `load` is grammar loading, when this call loaded it. */
+  ms: number;
+  load?: number;
+}
+
+/** A file's sides for its symbols: their texts, their changed rows, and where old rows sit in the new file. */
+export function symbolSides(input: SymbolsInput): SymbolSides | undefined {
+  const rows = (text: string) => text.split('\n').length;
+  if (input.mode !== 'modified') {
+    const side = { text: input.text, changed: new Uint8Array(rows(input.text) + 1).fill(1) };
+    return input.mode === 'added' ? { after: side } : { before: side };
+  }
+  const texts = comparisonTexts(input.text, input.hunks);
+  if (!texts) return undefined;
+  const { blocks } = texts;
+  return {
+    before: { text: texts.before, changed: changedRows(rows(texts.before), blocks.map((b) => ({ row: b.oldRow, count: b.oldCount }))) },
+    after: { text: texts.after, changed: changedRows(rows(texts.after), blocks.map((b) => ({ row: b.newRow, count: b.newCount }))) },
+    at: (row) => {
+      let offset = 0;
+      for (const block of blocks) {
+        if (row < block.oldRow) break;
+        if (row < block.oldRow + block.oldCount) return [block.newRow + 1, block.newRow + Math.max(1, block.newCount)];
+        offset += block.newCount - block.oldCount;
+      }
+      return [row + offset + 1, row + offset + 1];
     },
   };
 }

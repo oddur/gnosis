@@ -1,6 +1,7 @@
 import * as TreeSitter from 'web-tree-sitter';
-import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
+import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage, type SymbolsInput } from './syntax-scope';
 import type { NoiseBlock } from './semantic-noise';
+import { matchMoves, type FilePrints, type MoveFile, type MovesResult } from './moved-symbols';
 import { createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
 import javascriptTags from '../src/assets/tree-sitter/javascript-tags.scm?raw';
 import typescriptTags from '../src/assets/tree-sitter/typescript-tags.scm?raw';
@@ -49,6 +50,25 @@ export type SyntaxRequest =
       priority: SyntaxPriority;
       side: 'noise';
     }
+  /**
+   * Moved and renamed symbols (#398): one file's candidates and their fingerprints (lib/moved-symbols.ts), from its
+   * new side and hunks, or the one side of an added or deleted file. It queues below every other parse.
+   */
+  | {
+      type: 'symbols';
+      id: number;
+      /** A file revision, such as `fileRevisionKey(...) + ':symbols'`. */
+      key: string;
+      url: string;
+      language: SyntaxLanguage;
+      input: SymbolsInput;
+      runtimeUrl: string;
+      grammarUrl: string;
+      priority: SyntaxPriority;
+      side: 'symbols';
+    }
+  /** A PR's moves, from its files' fingerprints: matched at once, between parses. */
+  | { type: 'moves'; id: number; files: MoveFile[] }
   /** The view came nearer a file whose parse waits: it moves up to `priority`. */
   | { type: 'priority'; key: string; priority: SyntaxPriority }
   /** The parse moves to the other worker, if it has not started here: the answer says whether it was taken. */
@@ -69,6 +89,12 @@ export type SyntaxResponse =
       noise: NoiseBlock[];
       timing: { classify: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority };
     }
+  | {
+      id: number;
+      symbols: FilePrints;
+      timing: { ms: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority };
+    }
+  | { id: number; moves: MovesResult }
   | { id: number; error: string }
   | { id: number; taken: boolean };
 
@@ -116,7 +142,7 @@ const engine = createSyntaxEngine(TreeSitter, {
 const cache = new Map<string, { url: string; definitions: SyntaxDefinition[] }>();
 /** Comparisons, by file revision and change blocks: a few bytes per block. */
 const noiseCache = new Map<string, { url: string; noise: NoiseBlock[] }>();
-type Job = Extract<SyntaxRequest, { type: 'definitions' | 'noise' }> & { received: number };
+type Job = Extract<SyntaxRequest, { type: 'definitions' | 'noise' | 'symbols' }> & { received: number };
 // One parse at a time, nearest the reader first (lib/syntax-parse-queue.ts); a cached file answers at once.
 const queue = createParseQueue<Job>();
 /** Grammars to load once no parse waits. */
@@ -135,6 +161,20 @@ const yieldToMessages = () =>
 
 async function run(job: Job) {
   const wait = performance.now() - job.received;
+  if (job.type === 'symbols') {
+    try {
+      const result = await engine.symbols(job.language, job.input);
+      // Kept on the page only (lib/moved-symbols-store.ts): the worker has nothing to answer twice.
+      self.postMessage({
+        id: job.id,
+        symbols: result.prints,
+        timing: { ms: result.ms, load: result.load, cached: false, wait, priority: job.priority },
+      } satisfies SyntaxResponse);
+    } catch (error) {
+      self.postMessage({ id: job.id, error: error instanceof Error ? error.message : String(error) } satisfies SyntaxResponse);
+    }
+    return;
+  }
   if (job.type === 'noise') {
     try {
       const result = await engine.noise(job.language, job.text, job.hunks);
@@ -210,6 +250,21 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
       grammarUrls.set(language, grammarUrl);
       if (!warming.includes(language)) warming.push(language);
     }
+    void drain();
+    return;
+  }
+  if (message.type === 'moves') {
+    try {
+      self.postMessage({ id: message.id, moves: matchMoves(message.files) } satisfies SyntaxResponse);
+    } catch (error) {
+      self.postMessage({ id: message.id, error: error instanceof Error ? error.message : String(error) } satisfies SyntaxResponse);
+    }
+    return;
+  }
+  if (message.type === 'symbols') {
+    runtimeUrl ||= message.runtimeUrl;
+    grammarUrls.set(message.language, message.grammarUrl);
+    queue.add({ ...message, received: performance.now() });
     void drain();
     return;
   }

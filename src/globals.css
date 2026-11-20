@@ -1960,6 +1960,13 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-noise-label { color:var(--diff-header-fg); }
 .diff-gap[data-noise-bar], .diff-gap[data-noise-file] { border-bottom:1px solid color-mix(in oklab, var(--diff-header-fg) 10%, var(--diff-code-bg, #22272e)); }
 .diff-gap[data-noise-file] { min-height:calc(var(--leading-code) * 1.75); }
+/* Moved symbols (#398): a moved symbol's note, one quiet code line right above it, in the code column of its diff:
+   where it came from or went, linked, and how much of it changed. The lines it carried over unchanged are dimmed
+   inside the diff (ChangesDiff's CSS), so its real edits read first. */
+.diff-gap.diff-move-note { min-height:var(--leading-code); padding:0; border:0; background:transparent; container-type:normal; }
+.diff-move-note .diff-gap-trailing { padding-left:0; color:var(--diff-header-muted); }
+.diff-move-note code { font:inherit; color:var(--diff-header-fg); }
+.diff-move-note .diff-gap-text code { color:inherit; }
 .changes-file-noise { display:inline-flex; align-items:center; gap:4px; }
 .changes-file-noise svg { flex:none; }
 .changes-progress-quiet { color:var(--muted-foreground); }

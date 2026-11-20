@@ -542,6 +542,20 @@ void test('A file’s noise comparison waits a tier below its parses, so breadcr
   assert.deepEqual(order, ['v1', 'n1', 'n1-old', 'v1-noise', 'p1', 'n1-noise', 'p1-noise']);
 });
 
+void test('Moved-symbol fingerprints wait two tiers below their file, behind every breadcrumb and comparison (#398)', () => {
+  const queue = createParseQueue<ParseJob>();
+  const add = (key: string, priority: SyntaxPriority, side: ParseJob['side'] = 'after') => queue.add({ key, priority, side });
+  add('v1-symbols', 'view', 'symbols');
+  add('p1-symbols', 'prefetch', 'symbols');
+  add('p1', 'prefetch');
+  add('v1-noise', 'view', 'noise');
+  add('n1', 'near');
+  add('n1-noise', 'near', 'noise');
+  const order: string[] = [];
+  for (let job = queue.take(); job; job = queue.take()) order.push(job.key);
+  assert.deepEqual(order, ['n1', 'v1-noise', 'p1', 'n1-noise', 'v1-symbols', 'p1-symbols']);
+});
+
 void test('An added file’s new side and a deleted file’s old side come whole from the patch, when it holds them whole', () => {
   assert.equal(wholeFileText('@@ -0,0 +1,3 @@\n+pub struct A {\n+    x: u32,\n+}\n', 'after'), 'pub struct A {\n    x: u32,\n}\n');
   assert.equal(wholeFileText('@@ -0,0 +1,2 @@\n+a\n+b\n\\ No newline at end of file', 'after'), 'a\nb', 'No line break at the end');

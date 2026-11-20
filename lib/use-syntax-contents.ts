@@ -24,6 +24,9 @@ import { preferencesReady, startupPreferences } from './startup-preferences';
 import { syntaxLanguage } from './syntax-scope';
 import { traceStructure } from './structure-trace';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
+import { MOVES_MAX_FILES, noteMovesFailure, noteMovesText, trackMoves } from './moved-symbols-store';
+/** Added or deleted files without a patch read whole for moved symbols, per PR. */
+const MOVES_WHOLE_READS = 20;
 
 /** The page's one queue of contents reads for hunk scopes (#393): view reads first, then prefetch. */
 export const syntaxContents = createSyntaxContentsScheduler();
@@ -153,7 +156,14 @@ export function syntaxContentsJob(
     key,
     pr: snapshot.url,
     characters: plan.characters,
-    ready: () => (plan.both ? !!inspectionFiles.peek(request) : !!inspectionFiles.peekAfter(request)),
+    ready: () => {
+      const both = inspectionFiles.peek(request);
+      const after = both?.after ?? inspectionFiles.peekAfter(request);
+      const ready = plan.both ? !!both : !!after;
+      // Contents another read brought in (a topic, a gap) skip this read: moved symbols take them from here.
+      if (ready) noteMovesText(snapshot, file, after, both?.before);
+      return ready;
+    },
     run: async (tier) => {
       const mode = syntaxReadMode(tier);
       const priority: SyntaxPriority = tier === 'view' ? 'near' : 'prefetch';
@@ -164,11 +174,13 @@ export function syntaxContentsJob(
         parse(`${key}:after`, snapshot.url, file.path, contents.after, priority);
         parse(`${key}:before`, snapshot.url, file.previousPath ?? file.path, contents.before, priority);
         compare({ key, snapshot, file }, contents.after, priority);
+        noteMovesText(snapshot, file, contents.after, contents.before);
       } else {
         const after = await inspectionFiles.readAfter(request, mode);
         traceStructure(key, { readEnd: performance.now() });
         parse(`${key}:after`, snapshot.url, file.path, after, priority);
         compare({ key, snapshot, file }, after, priority);
+        noteMovesText(snapshot, file, after);
       }
     },
   };
@@ -266,6 +278,47 @@ export function useSyntaxPrefetch(
       stop?.();
     };
   }, [owner, signature, restart, setting]);
+}
+
+/**
+ * Moved and renamed symbols (#398) for every file of the open PRs, the ones a filter hides too: a hidden file can hold a
+ * symbol's other end, or a rival. Files whose text is here are fingerprinted at once (lib/moved-symbols-store.ts); the
+ * rest are read after the view's prefetch, in diff order, as scopes read them, and fingerprinted as they land. Viewed
+ * files are read too: the main prefetch leaves them to their view reads, but a move into them is still a move.
+ */
+export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], settings: CodeIntelligenceSettings) {
+  const signature = files.map((file) => file.key).join('\n');
+  const setting = JSON.stringify(settings);
+  useEffect(() => {
+    if (!settings.enabled || !files.length) return;
+    const byKey = new Map(files.map((file) => [`${file.snapshot.url}\u0000${file.file.path}`, file]));
+    const waiting = trackMoves(files, (path) => pathEnabled(settings, path), (snapshot, file) => {
+      const request = inspectionFileRequest(snapshot, file);
+      const both = inspectionFiles.peek(request);
+      return both ?? { after: inspectionFiles.peekAfter(request) };
+    });
+    if (!waiting.length || waiting.length > MOVES_MAX_FILES) return;
+    let cancelled = false;
+    let whole = 0;
+    const jobs = waiting.flatMap(({ snapshot, file }) => {
+      const entry = byKey.get(`${snapshot.url}\u0000${file.path}`);
+      const plan = entry && syntaxContentsPlan(snapshot, file, (path) => pathEnabled(settings, path));
+      if (entry && plan) return [syntaxContentsJob(entry, plan)];
+      // An added or deleted file without a patch has no scope read: it is read whole, in the background, a few at most.
+      if (!file.patch && whole++ < MOVES_WHOLE_READS)
+        void inspectionFiles.read(inspectionFileRequest(snapshot, file), true).then(
+          (contents) => !cancelled && noteMovesText(snapshot, file, contents.after, contents.before),
+          (error: unknown) => !cancelled && noteMovesFailure(snapshot, file, error instanceof Error ? error.message : String(error))
+        );
+      else noteMovesFailure(snapshot, file, 'Not read');
+      return [];
+    });
+    const stop = jobs.length ? syntaxContents.prefetch(`${owner}:moves`, jobs) : undefined;
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [owner, signature, setting]);
 }
 
 /** Warms the first supported files of the predicted next PR, after the open PR's prefetch. */

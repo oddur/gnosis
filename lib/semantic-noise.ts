@@ -196,7 +196,7 @@ export function comparisonTexts(
 
 // ── Per-language rules ──────────────────────────────────────────────────────
 
-const COMMENTS = new Set(['comment', 'line_comment', 'block_comment', 'html_comment', 'doc_comment', 'multiline_comment']);
+export const COMMENTS: ReadonlySet<string> = new Set(['comment', 'line_comment', 'block_comment', 'html_comment', 'doc_comment', 'multiline_comment']);
 /** Extras that only join lines. Python's `\` continuation changes nothing once the tree is the same. */
 const LAYOUT_EXTRAS = new Set(['line_continuation']);
 

@@ -9,6 +9,9 @@
  * A file's formatting and comment comparison (`noise`, lib/semantic-noise.ts) parses both sides again, and only hides
  * noise: it waits one tier lower than its file, so a file on screen compares after the breadcrumbs of files near the
  * view, and after the old sides of its own tier.
+ *
+ * A file's moved-symbol fingerprints (`symbols`, lib/moved-symbols.ts) parse both sides once more and only add labels:
+ * they wait two tiers lower, behind every breadcrumb and comparison of the files around the view.
  */
 export type SyntaxPriority = 'view' | 'near' | 'prefetch';
 const RANK: Record<SyntaxPriority, number> = { view: 0, near: 1, prefetch: 2 };
@@ -19,16 +22,18 @@ export const higherPriority = (a: SyntaxPriority, b: SyntaxPriority): SyntaxPrio
 export interface ParseJob {
   key: string;
   priority: SyntaxPriority;
-  side: 'after' | 'before' | 'noise';
+  side: 'after' | 'before' | 'noise' | 'symbols';
 }
-const SIDE_RANK = { after: 0, before: 1, noise: 2 } as const;
+const SIDE_RANK = { after: 0, before: 1, noise: 2, symbols: 3 } as const;
+/** Tiers a side waits below its file's own: noise one, moved symbols two (they only add labels). */
+const SIDE_DROP = { after: 0, before: 0, noise: 1, symbols: 2 } as const;
 
 export function createParseQueue<T extends ParseJob>() {
   const jobs = new Map<string, { job: T; seq: number }>();
   let seq = 0;
   /** Lower comes first: tier, then side, then order within the tier. */
   const order = ({ job, seq: at }: { job: T; seq: number }): [number, number, number] => [
-    RANK[job.priority] + (job.side === 'noise' ? 1 : 0),
+    RANK[job.priority] + SIDE_DROP[job.side],
     SIDE_RANK[job.side],
     job.priority === 'prefetch' ? at : -at,
   ];
