@@ -298,6 +298,39 @@ void app.whenReady().then(async () => {
     await refresh();
     assert.deepEqual(await held(), []);
 
+    // ── A command is handled once: leaving Summary and coming back never reopens the picker ──
+    const tab = (label: string) =>
+      `[...document.querySelectorAll('.workspace-panel[data-workspace-active=true] .pr-overview-tabs [role=tab]')].find(t=>t.textContent.trim()===${JSON.stringify(label)})`;
+    const toTab = async (label: string) => {
+      await js(`(()=>{const t=${tab(label)};t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+      await wait(`${tab(label)}?.getAttribute('aria-selected')==='true'`);
+    };
+    await toTab('Changes');
+    await toTab('Summary');
+    await wait(`!!${section('labels')}`);
+    await sleep(500);
+    assert.ok(await js<boolean>("!document.querySelector('.pr-people-popup')"), 'No picker opens by itself on return');
+    assert.ok(await js<boolean>("![...document.querySelectorAll('[aria-roledescription=notification]')].some(t=>/Edit labels/.test(t.textContent))"), 'No toast on return');
+
+    // ── A waiting command is replaced by a newer one for another field ──
+    await open('labels');
+    await press(option('label:transport'));
+    await press('.pr-people-footer button');
+    await closed();
+    assert.deepEqual(await held(), ['labels']);
+    assert.match(await palette('> edit labels'), /Edit labels/);
+    await key('Enter');
+    await sleep(300);
+    assert.match(await palette('> edit assignees'), /Edit assignees/);
+    await key('Enter');
+    await wait("document.querySelector('.pr-people-popup')?.dataset.field==='assignees'");
+    await key('Escape');
+    await closed();
+    await settle();
+    await sleep(500);
+    assert.ok(await js<boolean>("!document.querySelector('.pr-people-popup')"), 'The replaced labels command does not open after the save');
+    await refresh();
+
     // ── Screenshots: dark, then narrow ──
     await js("document.documentElement.classList.add('dark')");
     await open('reviewers');

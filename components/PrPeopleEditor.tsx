@@ -322,7 +322,7 @@ export function PrPeopleEditor({
   people,
   reviewed = [],
   open,
-  openRequest = 0,
+  openRequest,
   onOpenChange,
 }: {
   field: PrPeopleField;
@@ -331,8 +331,11 @@ export function PrPeopleEditor({
   /** Reviewers who already reviewed, with their verdicts: picking one requests their review again. */
   reviewed?: { login: string; verdict: string; typename?: string }[];
   open: boolean;
-  /** Changes when a command asks the picker to open, as a click on its button does. */
-  openRequest?: number;
+  /**
+   * The latest command to open a picker, for any field, numbered. Each is handled once, by the field it names; one
+   * that existed before this editor mounted, or that effects replay as the tab hides and shows, is not.
+   */
+  openRequest?: { field: PrPeopleField; n: number };
   onOpenChange: (open: boolean) => void;
 }) {
   const { view, access, accessError } = people;
@@ -511,12 +514,21 @@ export function PrPeopleEditor({
   // A command opens the picker through the same checks as the button. While the field's last change is still saving,
   // it opens once that finishes, so neither change is lost.
   const waiting = useRef(false);
+  const handled = useRef(openRequest?.n ?? 0);
   useEffect(() => {
-    if (!openRequest) return;
+    if (!openRequest || openRequest.n <= handled.current) return;
+    handled.current = openRequest.n;
+    // A command for another field replaces one still waiting here.
+    waiting.current = false;
+    if (openRequest.field !== field) return;
     if (saving) waiting.current = true;
     else if (disabledReason) toast.add({ title: label.edit, description: disabledReason, type: 'error' });
     else setOpen(true);
   }, [openRequest]);
+  // Another PR: a picker waiting for this one's save never opens there.
+  useEffect(() => {
+    waiting.current = false;
+  }, [member.url]);
   useEffect(() => {
     if (saving || !waiting.current) return;
     waiting.current = false;
