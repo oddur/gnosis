@@ -19,6 +19,8 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Command, CommandInput, CommandList, CommandGroup, CommandItem } from './ui/command';
+import { toast } from './ui/toast';
+import { createAfterClose } from '../lib/after-close';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import type { AppCommand } from '../lib/command-center';
@@ -79,13 +81,20 @@ export function GlobalCommandPalette({
     [remotePending, setRemotePending] = useState(false);
   const selectionTouched = useRef(false);
   const actionPending = useRef(false);
-  /** A command that runs after the palette closes (`AppCommand.afterClose`). */
-  const afterClose = useRef<AppCommand['perform'] | null>(null);
+  /** A command that runs after the palette closes (`AppCommand.afterClose`); a failure shows as a toast. */
+  const afterClose = useMemo(
+    () => createAfterClose((message) => toast.add({ title: 'Command failed', description: message, type: 'error' })),
+    []
+  );
   const runCommand = (command: AppCommand) => {
     if (!command.afterClose) return void run(command.perform);
-    afterClose.current = command.perform;
+    afterClose.set(command.perform);
     onClose();
   };
+  // A command left from an earlier opening never runs on a later close.
+  useEffect(() => {
+    if (open) afterClose.clear();
+  }, [open, afterClose]);
   const remoteInFlight = useRef(false);
   const sequence = useRef(0),
     remoteSequence = useRef(0),
@@ -271,9 +280,7 @@ export function GlobalCommandPalette({
             !opener.current.closest('[hidden]')
           )
             opener.current.focus();
-          const next = afterClose.current;
-          afterClose.current = null;
-          void next?.();
+          void afterClose.run();
         }}
       >
         <DialogTitle className="sr-only">Search and navigate Gnosis</DialogTitle>
