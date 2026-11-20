@@ -6,6 +6,8 @@ import type {
   GitHubSyncUpdate,
   GitHubSyncFailure,
 } from '../lib/github-sync';
+/** Targets per read. Signals: one aliased query. Checks: bounded pages. Discussion: one preload. Metadata: parallel REST. */
+const SYNC_BATCH: Record<GitHubSyncKind, number> = { signals: 25, checks: 5, discussion: 5, metadata: 6 };
 const intervals: Record<GitHubSyncKind, number> = {
   metadata: 30_000,
   signals: 25_000,
@@ -35,6 +37,11 @@ interface Task {
 export const ROW_REFRESH_LIMIT = 15;
 /** A row refresh asked for before the row subscribed waits this long for its subscription. */
 const ROW_REFRESH_WAIT_MS = 10_000;
+/** A batched read where some targets failed alone; each failed target backs off as if it had been read by itself. */
+export interface GitHubSyncRead {
+  updates: GitHubSyncUpdate[];
+  failed: { url: string; error: unknown }[];
+}
 interface Deps {
   account: () => string | null;
   enabled: () => boolean;
@@ -46,7 +53,7 @@ interface Deps {
     requestedFollowUp: boolean,
     /** Rows the reader just switched to (`refreshRows`): foreground, automatic, and fresher than a visible row. */
     refresh?: boolean
-  ) => Promise<GitHubSyncUpdate[]>;
+  ) => Promise<GitHubSyncUpdate[] | GitHubSyncRead>;
   publish: (updates: GitHubSyncUpdate[]) => void;
   failed?: (failures: GitHubSyncFailure[]) => void;
   now?: () => number;
@@ -167,10 +174,11 @@ export function createGitHubSyncService(deps: Deps) {
         const priority = followUp ? 'active' : candidates[0].priority;
         // Rows the reader just switched to are read together, apart from routine visible rows.
         const refresh = !followUp && priority === 'visible' && !!candidates[0].boosted;
-        // Batch light signals and bounded check pages; leave capacity for newly active PRs.
+        // Batch light signals and bounded check pages; leave capacity for newly active PRs. Discussions share one
+        // GraphQL preload of five PRs; metadata reads run as parallel conditional REST reads, which stay free on a 304.
         const batch = candidates
           .filter((task) => followingUp(task) === followUp && (followUp || task.priority === priority) && (!refresh || !!task.boosted))
-          .slice(0, kind === 'signals' ? 25 : kind === 'checks' ? 5 : 1);
+          .slice(0, SYNC_BATCH[kind]);
         const versions = batch.map((task) => task.version);
         pendingKinds.add(kind);
         batch.forEach((task) => {
@@ -179,8 +187,26 @@ export function createGitHubSyncService(deps: Deps) {
           task.lastAttempt = now();
           if (followUp) task.followUpRemaining = (task.followUpRemaining ?? 1) - 1;
         });
+        const fail = (error: unknown, only?: Set<string>) => {
+          const failures: GitHubSyncFailure[] = [];
+          for (const [index, task] of batch.entries()) {
+            if (task.version !== versions[index] || (only && !only.has(task.target.url))) continue;
+            task.failures++;
+            task.due = Math.max(
+              deps.backoff(kind, !followUp)?.retryAt ?? 0,
+              now() + Math.min(300_000, 15_000 * 2 ** Math.min(task.failures, 5))
+            );
+            failures.push({
+              kind,
+              url: task.target.url,
+              message: error instanceof Error ? error.message : String(error),
+              retryAt: task.due,
+            });
+          }
+          if (failures.length) deps.failed?.(failures);
+        };
         try {
-          const updates = await deps.read(
+          const read = await deps.read(
             kind,
             batch.map((task) => task.target),
             priority,
@@ -188,11 +214,15 @@ export function createGitHubSyncService(deps: Deps) {
             refresh
           );
           if (generation !== epoch || deps.account() !== account) return;
+          const updates = Array.isArray(read) ? read : read.updates;
+          const failed = Array.isArray(read) ? [] : read.failed;
+          for (const { url, error } of failed) fail(error, new Set([url]));
           const acceptStarted = performance.now();
           const accepted: GitHubSyncUpdate[] = [];
           for (const [index, task] of batch.entries()) {
             if (!task.observed || tasks.get(`${kind}:${task.target.url}`) !== task || task.version !== versions[index])
               continue;
+            if (failed.some((failure) => failure.url === task.target.url)) continue;
             const update = updates.find((update) => update.url === task.target.url && update.kind === kind);
             if (!update) {
               task.due = now() + 60_000;
@@ -222,22 +252,7 @@ export function createGitHubSyncService(deps: Deps) {
           noteWork(`github-sync accept ${kind}`, acceptStarted);
         } catch (error) {
           if (generation !== epoch || deps.account() !== account) return;
-          const failures: GitHubSyncFailure[] = [];
-          for (const [index, task] of batch.entries()) {
-            if (task.version !== versions[index]) continue;
-            task.failures++;
-            task.due = Math.max(
-              deps.backoff(kind, !followUp)?.retryAt ?? 0,
-              now() + Math.min(300_000, 15_000 * 2 ** Math.min(task.failures, 5))
-            );
-            failures.push({
-              kind,
-              url: task.target.url,
-              message: error instanceof Error ? error.message : String(error),
-              retryAt: task.due,
-            });
-          }
-          deps.failed?.(failures);
+          fail(error);
         } finally {
           batch.forEach((task) => {
             task.pending = false;

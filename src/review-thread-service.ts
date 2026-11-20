@@ -380,6 +380,15 @@ export function createReviewThreadService(now = Date.now) {
         if (!current.value && cache.get(prUrl) === current) cache.delete(prUrl);
       }
     },
+    /** Local data only. Whether `list` without `refresh` would answer from a saved copy, without a request. */
+    fresh(client: Octokit, prUrl: string) {
+      const entry = cacheFor(client).get(prUrl);
+      if (entry?.pending) return true;
+      const persistent = githubCacheFor(client);
+      const saved = persistent?.get(`review-threads:${prUrl}`, isSavedThreads);
+      if (saved && !saved.revalidate && saved.value.expires > now() && saved.value.expires <= now() + 60_000) return true;
+      return !!entry?.value && entry.expires > now() && (!persistent || entry.version === persistent.version());
+    },
     /** Local data only. The saved record's identity and age, for deciding whether to refresh it. */
     saved(client: Octokit, prUrl: string) {
       const saved = githubCacheFor(client)?.get(`review-threads:${prUrl}`, isSavedThreads);

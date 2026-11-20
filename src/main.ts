@@ -35,7 +35,8 @@ import { stackDependencyOrder } from '../lib/stack-overview';
 import { createConflictResolutionService } from './conflict-resolution-service';
 import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-resolution';
 import { parseGitHubSyncInterest } from '../lib/github-sync';
-import { createGitHubSyncService } from './github-sync-service';
+import { createGitHubSyncService, type GitHubSyncRead } from './github-sync-service';
+import { getPrMetadataBatch, withReviewerOrder } from '../lib/pr-metadata-graphql';
 import { createOptimisticService } from './optimistic-service';
 import { prActionChange, type OptimisticChange, type OptimisticKind } from '../lib/optimistic-patches';
 import { feedbackReplyBody } from '../lib/review-threads';
@@ -4130,7 +4131,7 @@ const prMergeMonitor = createPrMergeMonitor({
   changed: (_client, urls) => githubWrites.after('stack-merged', urls),
 });
 handleInteractive('get-pr-action-state', async (_event, url: string, force: boolean) => optimistic.actionState(await prActions.read(discussionClient(), url, force)));
-handleInteractive('get-pr-action-states', async (_event, urls: string[], force: boolean) => {
+handleInteractive('get-pr-action-states', async (_event, urls: string[], force: unknown) => {
   if (!Array.isArray(urls) || urls.length > 100 || urls.some(url => typeof url !== 'string'))
     throw new Error('Choose at most 100 PRs.');
   const settled = await Promise.allSettled(prActions.readMany(discussionClient(), urls, force === true));
@@ -4518,19 +4519,19 @@ async function refreshChangedPrs(urls: string[], source: ChangeSource | 'head') 
   if (!token) return;
   const client = getGitHubClient(token);
   const targets = [...new Set(urls)].filter(url => !workbench.mutedUrls().has(url)).slice(0, CHANGED_REFRESH_LIMIT);
+  // Changed PRs never answer a conditional read with a free 304, so they share one aliased query (25 PRs each).
+  // A PR that fails is skipped; the others still publish.
+  const batch = await withGitHubPriority('foreground', () => getPrMetadataBatch(client, targets, { fresh: true }), { automatic: true });
+  if (token !== cachedToken) return;
   const read: PrMetadata[] = [];
   for (const url of targets) {
-    try {
-      const { owner, repo, pullNumber } = parsePrUrl(url);
-      const value = await withGitHubPriority('foreground', () => getPrMetadata(client, owner, repo, pullNumber, true), { automatic: true });
-      if (token !== cachedToken) return;
-      read.push(value);
-      publishGitHubUpdates([{ kind: 'metadata', url, value }]);
-    } catch (error) {
-      // A rate limit stops the sweep. Another PR's failure does not.
-      if (githubRateLimit(error)) break;
-    }
+    const result = batch.get(url);
+    if (!result || 'error' in result) continue;
+    const saved = syncMetadata.get(url) ?? workbench.knownMember(url);
+    const value = saved ? withReviewerOrder(result.metadata, saved) : result.metadata;
+    read.push(value);
   }
+  if (read.length) publishGitHubUpdates(read.map(value => ({ kind: 'metadata' as const, url: value.url, value })));
   const open = read.filter(value => value.state === 'open' && !value.merged);
   if (open.length) {
     try {
@@ -4626,7 +4627,7 @@ const githubSync = createGitHubSyncService({
     const client = getGitHubClient(token);
     // Rows the reader just switched to read like the open PR: foreground, automatic, with the 25 s signals cache.
     const urgent = priority === 'active' || !!refresh;
-    const values = await withGitHubPriority(urgent ? 'foreground' : 'background', async (): Promise<GitHubSyncUpdate[]> => {
+    const values = await withGitHubPriority(urgent ? 'foreground' : 'background', async (): Promise<GitHubSyncUpdate[] | GitHubSyncRead> => {
       if (kind === 'signals') {
         const requests = targets.flatMap(target => {
           const headSha = target.headSha ?? syncMetadata.get(target.url)?.headSha;
@@ -4650,15 +4651,30 @@ const githubSync = createGitHubSyncService({
         const values = await readPrChecksBatch(client, requests, { force: true });
         return values.map(value => ({ kind, url: value.url, value }));
       }
-      const results: GitHubSyncUpdate[] = [];
-      for (const target of targets) {
+      // Discussions that need a read share one GraphQL preload; `list` then answers from it, and reads by itself only
+      // a PR the preload could not save completely.
+      if (kind === 'discussion') {
+        const stale = targets.filter(target => !reviewThreads.fresh(client, target.url)).map(target => target.url);
+        if (stale.length > 1) await reviewThreads.preload(client, stale).catch((error: unknown) => {
+          if (githubRateLimit(error)) throw error;
+        });
+      }
+      // Metadata stays one conditional REST read per PR, which GitHub answers with a free 304 while nothing changed;
+      // the reads run together. Each PR fails alone, as when it was read by itself.
+      const settled = await Promise.allSettled(targets.map(async (target): Promise<GitHubSyncUpdate> => {
         if (kind === 'metadata') {
           const { owner, repo, pullNumber } = parsePrUrl(target.url);
-          const value = await getPrMetadata(client, owner, repo, pullNumber, true);
-          results.push({ kind, url: target.url, value });
-        } else results.push({ kind, url: target.url, value: await reviewThreads.list(client, target.url) });
-      }
-      return results;
+          return { kind, url: target.url, value: await getPrMetadata(client, owner, repo, pullNumber, true) };
+        }
+        return { kind, url: target.url, value: await reviewThreads.list(client, target.url) };
+      }));
+      // A rate limit stops the whole batch, as it would have stopped the next read.
+      const limited = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected' && !!githubRateLimit(result.reason));
+      if (limited) throw limited.reason;
+      return {
+        updates: settled.flatMap(result => result.status === 'fulfilled' ? [result.value] : []),
+        failed: settled.flatMap((result, i) => result.status === 'rejected' ? [{ url: targets[i].url, error: result.reason as unknown }] : []),
+      };
     }, { automatic: !requestedFollowUp });
     return token === cachedToken ? values : [];
   },

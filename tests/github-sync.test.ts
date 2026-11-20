@@ -554,3 +554,41 @@ void test('a view refresh waits out an automatic rate-limit pause', async () => 
   await sync.tick();
   assert.deepEqual(reads.map((read) => read.refresh), [false, true]);
 });
+
+void test('metadata and discussion read several PRs together, and one PR failing backs off alone', async () => {
+  const calls: { kind: string; urls: string[] }[] = [];
+  const failures: { url: string; message: string }[] = [];
+  const published: GitHubSyncUpdate[] = [];
+  const sync = createGitHubSyncService({
+    now: () => 0,
+    account: () => 'alice',
+    enabled: () => true,
+    backoff: () => undefined,
+    read: (kind, targets) => {
+      calls.push({ kind, urls: targets.map((t) => t.url) });
+      const failed = targets.filter((t) => t.url.endsWith('/2'));
+      return Promise.resolve({
+        updates: targets
+          .filter((t) => !failed.includes(t))
+          .map((t) => ({ kind, url: t.url, value: { title: t.url, headSha: 'a', updatedAt: '' } }) as unknown as GitHubSyncUpdate),
+        failed: failed.map((t) => ({ url: t.url, error: new Error('Not Found') })),
+      });
+    },
+    publish: (updates) => published.push(...updates),
+    failed: (value) => failures.push(...value),
+  });
+  const targets = Array.from({ length: 8 }, (_, n) => target(n + 1));
+  sync.observe('1:metadata', { kind: 'metadata', priority: 'active', targets });
+  sync.observe('1:discussion', { kind: 'discussion', priority: 'active', targets });
+  await sync.tick();
+  const sizes = Object.fromEntries(calls.map((c) => [c.kind, c.urls.length]));
+  assert.deepEqual(sizes, { discussion: 5, metadata: 6 }, 'one preload of five discussions; six parallel metadata reads');
+  assert.deepEqual(
+    failures.map((f) => [f.url, f.message]),
+    [
+      [target(2).url, 'Not Found'],
+      [target(2).url, 'Not Found'],
+    ]
+  );
+  assert.equal(published.length, 9, 'every other PR in both batches is accepted');
+});
