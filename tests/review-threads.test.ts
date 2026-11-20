@@ -626,3 +626,30 @@ void test('a rate limit on one preload group fails only that group; the others s
   assert.deepEqual(settled.map((r) => r.status), [...Array<string>(5).fill('fulfilled'), ...Array<string>(5).fill('rejected')]);
   assert.deepEqual(listed, urls.slice(0, 5), 'the limited group is not read one PR at a time either');
 });
+
+void test('a preload rate limit does not fail a PR whose read was already in flight; it joins that read', async () => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  // GitHub answers the discussion read only once the test lets it.
+  const pool = createGitHubClientPool({
+    fetch: (async () => {
+      await held;
+      return response(pr(page([{ ...thread, comments: page([comment]) }])));
+    }) as unknown as typeof fetch,
+  });
+  const client = pool.client('in-flight');
+  const service = createReviewThreadService(() => 0);
+  const [a, b] = ['https://github.com/o/r/pull/1', 'https://github.com/o/r/pull/2'];
+  const inFlight = service.list(client, a, true);
+  const limit = Object.assign(new Error('API rate limit exceeded'), {
+    status: 403,
+    response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 60) } },
+  });
+  Object.assign(service, { preload: () => Promise.reject(limit) });
+  const settled = service.listMany(client, [a, b], true);
+  release();
+  const [first, second] = await settled;
+  assert.equal(first.status, 'fulfilled', 'the in-flight read answers it');
+  assert.equal(second.status, 'rejected');
+  await inFlight;
+});

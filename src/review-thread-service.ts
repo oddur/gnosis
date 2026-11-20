@@ -414,7 +414,8 @@ export function createReviewThreadService(now = Date.now) {
           try {
             for (const url of (await service.preload(client, group)).saved) saved.add(url);
           } catch (error) {
-            if (githubRateLimit(error)) for (const url of group) limited.set(url, error);
+            // A PR with a read in flight was left out of the preload; it joins that read through `list`.
+            if (githubRateLimit(error)) for (const url of group) if (!cacheFor(client).get(url)?.pending) limited.set(url, error);
             // Otherwise each PR of this group reads its own discussion below.
           }
         }

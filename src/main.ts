@@ -3372,6 +3372,11 @@ const commentEvents = createCommentEventReader<GitHubReviewThreads>({
     const token = getResolvedToken();
     return token ? githubClients.backoff(token, true, ['graphql'])?.retryAt : undefined;
   },
+  // Reads and retries belong to the account that queued them.
+  account: () => {
+    const token = getResolvedToken();
+    return token && cachedLogin ? `${cachedLogin}\n${token}` : undefined;
+  },
   schedule: (run, delay) => { setTimeout(run, delay).unref(); },
   warn: (message, error) => { console.warn(`[notifications] ${message}`, error instanceof Error ? error.message : error); },
 });
