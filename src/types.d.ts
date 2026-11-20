@@ -212,6 +212,11 @@ declare global {
       ) => () => void;
       conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest) => Promise<import('../lib/conflict-resolution').ConflictReply>;
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
+      /** Every PR's action state from one aliased read per repository; each entry fails alone. */
+      getPrActionStates: (
+        urls: string[],
+        force?: boolean
+      ) => Promise<({ state: import('../lib/pr-actions').PrActionState } | { error: string })[]>;
       getStackMergePlan: (urls: string[]) => Promise<import('../lib/pr-actions').PrMergePlan>;
       performPrAction: (request: import('../lib/pr-actions').PrActionRequest) => Promise<import('../lib/pr-actions').PrActionResult>;
       /** The Overview's "Since yesterday" events after `since` (#390). Local only. */

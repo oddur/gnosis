@@ -510,3 +510,36 @@ void test('an optimistic reply or thread by the reader never awaits the readerâ€
   assert.equal(needed.unresolvedThreads, 2, 'both threads count as unresolved, as on GitHub');
   assert.equal(responseNeeded(own, 'oddur', undefined, base).awaitingReply, 1);
 });
+
+void test('a comment count from the other API neither confirms nor drops an optimistic comment', () => {
+  const { layer } = harness();
+  const metadata = (reviewCommentCount: number, source: 'graphql' | 'rest') =>
+    ({ url, isDraft: false, autoMerge: null, requestedReviewers: [], reviewCommentCount, source }) as unknown as Parameters<
+      typeof layer.metadata
+    >[0];
+  // The count before the reply came from GraphQL: 7.
+  const patch = layer.begin({
+    url,
+    viewer,
+    change: { action: 'thread-reply', threadId: 'T1', body: 'Done.' },
+    before: { reviewCommentCount: 7, source: 'graphql' },
+  });
+  layer.confirm(patch.id, { comment: { id: 'C9', url: `${url}#discussion_r9` } });
+  // A REST copy whose counter already reads 8 (or more) is not proof: the patch keeps applying.
+  assert.equal(layer.observe(url, 'metadata', metadata(9, 'rest')), false);
+  assert.equal(layer.metadata(metadata(6, 'rest')).reviewCommentCount, 8, 'a lagging REST copy still shows the reply');
+  assert.ok(layer.list(url).length, 'not dropped');
+  // A GraphQL copy that shows the reply settles the metadata.
+  assert.equal(layer.observe(url, 'metadata', metadata(8, 'graphql')), true);
+  // The same rule for a delete: GraphQL 8 before; a lagging REST 7 is not proof, GraphQL 7 is.
+  const removal = layer.begin({
+    url,
+    viewer,
+    change: { action: 'comment-delete', threadId: 'T1', commentId: 'C1' },
+    before: { reviewCommentCount: 8, source: 'graphql' },
+  });
+  layer.confirm(removal.id);
+  assert.equal(layer.observe(url, 'metadata', metadata(7, 'rest')), false);
+  assert.equal(layer.metadata(metadata(8, 'rest')).reviewCommentCount, 7);
+  assert.equal(layer.observe(url, 'metadata', metadata(7, 'graphql')), true);
+});

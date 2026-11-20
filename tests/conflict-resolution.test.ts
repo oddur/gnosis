@@ -404,6 +404,42 @@ void test('paused restack survives restart, accepts reviewed edits and reuses th
   assert.equal(await f.git('show', 'tip:sample.ts'), 'export const answer = 5;');
 });
 
+void test('restack reads the whole stack in one batch to prepare and one to publish', async (t) => {
+  const f = await stackedFixture(t);
+  const batches: string[][] = [];
+  let single = 0;
+  const service = createConflictResolutionService({
+    ...f.deps,
+    read: (url) => {
+      single++;
+      return f.deps.read(url);
+    },
+    readMany: (urls) => {
+      batches.push(urls);
+      return urls.map((url) => f.deps.read(url));
+    },
+  });
+  const run = (r: Parameters<typeof service.run>[0]) => service.run(r, new AbortController().signal);
+  const { session } = await run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.equal(session.restack?.status, 'prepared');
+  const before = single;
+  const published = await run({
+    kind: 'restack-publish',
+    id: session.id,
+    version: session.version,
+    previewToken: session.restack.token,
+    reviewed: f.urls,
+  });
+  assert.equal(published.session.restack?.status, 'published');
+  assert.deepEqual(batches, [
+    [f.state.url, ...f.urls],
+    [f.state.url, ...f.urls],
+  ]);
+  // Publishing reads nothing one PR at a time; before, it read the root and then each branch in turn.
+  assert.equal(single - before, 0);
+  assert.equal(await f.git('rev-parse', 'tip^'), await f.git('rev-parse', 'child'));
+});
+
 void test('rerere remembers reviewed resolutions across PRs without marking the proposal reviewed', async (t) => {
   const f = await stackedFixture(t);
   const service = createConflictResolutionService({
@@ -961,4 +997,37 @@ void test('a base branch that keeps moving stops after a few merges and pushes n
   const reply = await f.run({ kind: 'preview', id: f.session.id, version: f.session.version });
   assert.equal(reply.baseMoved?.conflicts, 0);
   assert.ok(reply.preview);
+});
+
+void test('a restack check that fails early waits for every read it started', async () => {
+  const { prepareRestack } = await import('../src/conflict-restack');
+  const finished: string[] = [];
+  const urls = ['https://github.com/test/repo/pull/2', 'https://github.com/test/repo/pull/3'];
+  const session = {
+    url: 'https://github.com/test/repo/pull/1',
+    account: 'tester',
+    commitSha: 'a'.repeat(40),
+    headRepo: 'test/repo',
+    headBranch: 'feature',
+  } as Parameters<typeof prepareRestack>[0];
+  const read = async (url: string) => {
+    // The dependents answer late; the root answers at once from another account, so its check fails first.
+    if (url !== session.url) await new Promise((resolve) => setTimeout(resolve, 20));
+    finished.push(url);
+    return { url, account: url === session.url ? 'someone-else' : 'tester' } as Awaited<
+      ReturnType<Parameters<typeof prepareRestack>[2]['read']>
+    >;
+  };
+  await assert.rejects(
+    prepareRestack(session, urls, {
+      git: () => Promise.reject(new Error('no git expected')),
+      read,
+      directory: '',
+      remote: () => '',
+      signal: new AbortController().signal,
+      report: () => {},
+    }),
+    /Cannot update/
+  );
+  assert.deepEqual(finished.sort(), [session.url, ...urls].sort(), 'no read is still running when the check rejects');
 });

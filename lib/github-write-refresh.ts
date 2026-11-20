@@ -45,8 +45,11 @@ export interface WriteObservation {
     | 'requestedReviewers'
     | 'commentCount'
     | 'reviewCommentCount'
+    | 'source'
   >;
   signals?: Pick<QueueSignals, 'headSha' | 'checks' | 'latestReview' | 'mine' | 'readiness' | 'comments'>;
+  /** A REST copy read just before a comment write whose baseline came from GraphQL (`COUNTED_WRITES`). */
+  restMetadata?: WriteObservation['metadata'];
 }
 export interface WriteDetails {
   /** The state before the write. Main captures it from local copies before the write starts. */
@@ -81,10 +84,80 @@ const merged = ({ metadata, signals }: WriteObservation) =>
   !!metadata?.merged || metadata?.state === 'closed' || signals?.readiness?.state === 'MERGED';
 const headMoved = ({ metadata }: WriteObservation, details: WriteDetails) =>
   !!metadata && (!before(details) || metadata.headSha !== before(details)?.headSha);
+/**
+ * Whether two copies' comment counts can be compared. GraphQL counts comments as they are; REST's counters can lag,
+ * so a count from one API never confirms or refutes a count from the other. A copy without a source is from REST.
+ */
+export const sameCountSource = (a: { source?: string } | undefined, b: { source?: string } | undefined) =>
+  (a?.source ?? 'rest') === (b?.source ?? 'rest');
+/** A read from the other API is inconclusive: the write is not settled on it, and the follow-up reads again. */
+/**
+ * The pre-write copy a probe's counts compare with: the baseline, or the REST copy read before the write, whichever
+ * came from the probe's API. Undefined when neither did: the probe is inconclusive.
+ */
+const countBaseline = (metadata: NonNullable<WriteObservation['metadata']>, details: WriteDetails) => {
+  const { metadata: baseline, restMetadata } = details.before ?? {};
+  if (baseline && sameCountSource(metadata, baseline)) return baseline;
+  if (restMetadata && sameCountSource(metadata, restMetadata)) return restMetadata;
+  return undefined;
+};
 const commentsAdded =
   (field: 'commentCount' | 'reviewCommentCount') =>
-  ({ metadata }: WriteObservation, details: WriteDetails) =>
-    !!metadata && (!before(details) || count(metadata[field]) > count(before(details)?.[field]));
+  ({ metadata }: WriteObservation, details: WriteDetails) => {
+    if (!metadata) return false;
+    if (!before(details)) return true;
+    const baseline = countBaseline(metadata, details);
+    return !!baseline && count(metadata[field]) > count(baseline[field]);
+  };
+
+/**
+ * Writes whose follow-up compares comment counts. When the baseline came from GraphQL, main reads the PR through REST
+ * before the write too, so a probe GraphQL cannot answer exactly still has a same-API copy to compare with.
+ */
+export const COUNTED_WRITES: ReadonlySet<GitHubWriteAction> = new Set<GitHubWriteAction>([
+  'review-comment',
+  'thread-reply',
+  'comment-delete',
+  'feedback-reply',
+]);
+
+/**
+ * For a comment write whose baseline came from GraphQL, starts a REST read of each PR and attaches it as
+ * `restMetadata` when it answers. The caller starts the write right away and awaits the returned promise only after
+ * the write, so neither the optimistic patch nor the write waits for it. The promise never rejects and gives up after
+ * `waitMs`. A copy that is late, missing or read after GitHub applied the write can only leave a REST probe
+ * inconclusive: a count that already includes the write never looks like a new change.
+ */
+export function startRestBaselines(
+  action: GitHubWriteAction,
+  before: ReadonlyMap<string, WriteObservation>,
+  read: (url: string) => Promise<WriteObservation['metadata']>,
+  waitMs = 2_000
+): Promise<void> {
+  if (!COUNTED_WRITES.has(action)) return Promise.resolve();
+  const reads = [...before].flatMap(([url, observation]) =>
+    observation.metadata?.source === 'graphql'
+      ? [
+          read(url).then(
+            (metadata) => {
+              observation.restMetadata = metadata;
+            },
+            () => {
+              // No REST copy: a REST probe stays inconclusive.
+            }
+          ),
+        ]
+      : []
+  );
+  if (!reads.length) return Promise.resolve();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    Promise.all(reads).then(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, waitMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   // The merge commit and the closed state can trail a confirmed merge.
@@ -168,8 +241,12 @@ export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
   'comment-delete': {
     kinds: ['metadata', 'signals', 'discussion'],
     probes: ['metadata'],
-    seen: ({ metadata }, details) =>
-      !!metadata && (!before(details) || count(metadata.reviewCommentCount) < count(before(details)?.reviewCommentCount)),
+    seen: ({ metadata }, details) => {
+      if (!metadata) return false;
+      if (!before(details)) return true;
+      const baseline = countBaseline(metadata, details);
+      return !!baseline && count(metadata.reviewCommentCount) < count(baseline.reviewCommentCount);
+    },
   },
   'feedback-reply': {
     kinds: ['metadata', 'signals', 'discussion'],
@@ -241,12 +318,16 @@ export interface GitHubWriteRefresherDeps {
   baseline: (url: string) => WriteObservation;
   /** Marks saved copies stale and schedules watched views. Local, synchronous. */
   invalidate: (urls: string[], kinds: GitHubSyncKind[], followUpKinds: GitHubSyncKind[]) => void;
-  /** Reads GitHub again, bypassing saved copies, and publishes the result. */
+  /**
+   * Reads GitHub again, bypassing saved copies, and publishes the result. `before` is the write's baseline: a metadata
+   * read must come from the same source, so its comment counts compare with the baseline's.
+   */
   read: (
     probe: WriteProbe,
     target: { url: string; headSha?: string },
     phase: 'immediate' | 'follow-up',
-    action: GitHubWriteAction
+    action: GitHubWriteAction,
+    before?: WriteObservation
   ) => Promise<WriteObservation[WriteProbe] | undefined>;
   /** When GitHub reads are paused for the budget or a rate limit, the time they resume. */
   blockedUntil?: () => number | undefined;
@@ -299,7 +380,7 @@ export function createGitHubWriteRefresher(deps: GitHubWriteRefresherDeps) {
     for (const probe of job.effect.probes) {
       try {
         if (probe === 'metadata') {
-          seen.metadata = (await deps.read('metadata', { url: job.url }, phase, job.action)) as WriteObservation['metadata'];
+          seen.metadata = (await deps.read('metadata', { url: job.url }, phase, job.action, job.details.before)) as WriteObservation['metadata'];
         } else {
           const headSha = seen.metadata?.headSha ?? job.details.before?.metadata?.headSha;
           seen.signals = (await deps.read('signals', { url: job.url, headSha }, phase, job.action)) as WriteObservation['signals'];

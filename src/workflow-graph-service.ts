@@ -18,6 +18,7 @@ import type {
   WorkflowJob,
 } from '../lib/workflow-graph';
 import { assembleWorkflow, parseWorkflow } from './workflow-definition';
+import { readBlobs } from '../lib/github-graphql-batch';
 
 const cacheScope = new AsyncLocalStorage<{ client: Octokit; generation: number | undefined }>();
 const pending = new WeakMap<Octokit, Map<string, GitHubWork<unknown>>>();
@@ -259,19 +260,11 @@ interface SourceFile {
   path: string;
   sha: string;
 }
-interface Blob {
-  text: string | null;
-  byteSize: number;
-  isTruncated: boolean;
-  isBinary: boolean;
-}
-type SourceResponse = Record<string, Record<string, Blob | null> | null>;
 const sourceKey = (file: SourceFile) => `workflow-source:v1:${file.owner}/${file.repo}/${file.path}@${file.sha}`;
 const isSavedSource = (v: unknown): v is Saved<string> =>
   !!v && typeof v === 'object' && 'value' in v && 'at' in v && typeof v.at === 'number';
 /**
- * Reads the root workflow and every pinned reusable workflow in one GraphQL query, at most 32 files
- * per query and 50 in total, and saves each usable blob under its REST cache key. Anything it cannot
+ * Reads the root workflow and every pinned reusable workflow through the shared aliased blob reader, 50 in total, and saves each usable blob under its REST cache key. Anything it cannot
  * save is left for `definitions()` to read through REST. Never throws.
  */
 async function primeWorkflowSources(client: Octokit, files: SourceFile[]): Promise<void> {
@@ -290,51 +283,35 @@ async function primeWorkflowSources(client: Octokit, files: SourceFile[]): Promi
         )
     );
     const missing = unique.slice(0, 50).filter((_, i) => !saved[i]);
-    const batches: SourceFile[][] = [];
-    for (let i = 0; i < missing.length; i += 32) batches.push(missing.slice(i, i + 32));
-    await Promise.all(
-      batches.map(async (batch) => {
-        const repos = [...new Set(batch.map((file) => `${file.owner}/${file.repo}`))];
-        const query = `query { rateLimit { cost } ${repos
-          .map((name, r) => {
-            const [owner, repo] = name.split('/');
-            return `r${r}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { ${batch
-              .flatMap((file, f) =>
-                `${file.owner}/${file.repo}` === name
-                  ? [
-                      `f${f}: object(expression:${JSON.stringify(`${file.sha}:${file.path}`)}) { ... on Blob { text byteSize isTruncated isBinary } }`,
-                    ]
-                  : []
-              )
-              .join(' ')} }`;
-          })
-          .join('\n')} }`;
-        let data: SourceResponse | undefined;
-        try {
-          data = await client.graphql<SourceResponse>(query);
-        } catch (error) {
-          // A missing file or repository fails only its own field; keep the rest.
-          data = (error as { data?: SourceResponse }).data;
-        }
-        if (!data) return;
-        for (const [f, file] of batch.entries()) {
-          const blob = data[`r${repos.indexOf(`${file.owner}/${file.repo}`)}`]?.[`f${f}`];
-          if (
-            !blob ||
-            typeof blob.text !== 'string' ||
-            blob.isBinary ||
-            blob.isTruncated ||
-            blob.byteSize > 256_000 ||
-            cache.version() !== generation
-          )
-            continue;
-          cache.set(sourceKey(file), { value: blob.text, at: Date.now() } satisfies Saved<string>);
-        }
-      })
+    // The shared aliased blob reader; a symlink, a large or binary file, or a failed alias is left to REST.
+    const answers = await readBlobs(
+      client,
+      missing.map((file) => ({ owner: file.owner, repo: file.repo, ref: file.sha, path: file.path }))
     );
+    for (const [i, file] of missing.entries()) {
+      const answer = answers[i];
+      if (answer.kind !== 'text' || cache.version() !== generation) continue;
+      cache.set(sourceKey(file), { value: answer.text, at: Date.now() } satisfies Saved<string>);
+    }
   } catch {
     /* Each source falls back to its own REST read. */
   }
+}
+/**
+ * A run attempt's job pages, at most 5 (500 jobs). The first page gives the job count; the remaining pages are read
+ * together. Jobs can be added while they load, so the largest count seen decides whether more pages are needed.
+ */
+export async function readJobPages<P extends { total_count: number }>(
+  readPage: (page: number) => Promise<P>
+): Promise<{ pages: P[]; total: number }> {
+  const pages = [await readPage(1)];
+  const total = () => Math.max(...pages.map((page) => page.total_count));
+  const wanted = () => Math.min(5, Math.max(1, Math.ceil(total() / 100)));
+  while (pages.length < wanted()) {
+    const from = pages.length;
+    pages.push(...(await Promise.all(Array.from({ length: wanted() - from }, (_, i) => readPage(from + i + 1)))));
+  }
+  return { pages, total: total() };
 }
 const workflowPath = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 /** The root workflow and every reusable workflow the run reports with an exact revision. */
@@ -441,17 +418,22 @@ async function readGraph(
         const jobs: WorkflowJob[] = [],
           warnings: string[] = [];
         const loadJobs = async () => {
-          for (let page = 1; page <= 5; page++) {
-            const { data: batch } = await client.actions.listJobsForWorkflowRunAttempt({
-              owner,
-              repo,
-              run_id: run.id,
-              attempt_number: run.run_attempt ?? 1,
-              per_page: 100,
-              page,
-              headers: { 'cache-control': 'no-cache' },
-            });
-            runInfo.jobCount = batch.total_count;
+          const readPage = async (page: number) =>
+            (
+              await client.actions.listJobsForWorkflowRunAttempt({
+                owner,
+                repo,
+                run_id: run.id,
+                attempt_number: run.run_attempt ?? 1,
+                per_page: 100,
+                page,
+                headers: { 'cache-control': 'no-cache' },
+              })
+            ).data;
+          const { pages, total: jobTotal } = await readJobPages(readPage);
+          for (const [index, batch] of pages.entries()) {
+            const page = index + 1;
+            runInfo.jobCount = jobTotal;
             for (const job of batch.jobs) {
               const checkId = /\/check-runs\/(\d+)$/.exec(job.check_run_url)?.[1];
               jobs.push({
@@ -466,7 +448,7 @@ async function readGraph(
                 steps: job.steps ?? [],
               });
             }
-            if (page * 100 >= batch.total_count) break;
+            if (page * 100 >= jobTotal) break;
             if (page === 5) warnings.push('Showing the first 500 jobs. Open GitHub for the full run.');
           }
         };

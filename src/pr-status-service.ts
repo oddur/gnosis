@@ -1,5 +1,6 @@
 import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
+import { aliasedGraphql } from '../lib/github-graphql-batch';
 import { isCacheRecord } from '../lib/github-cache';
 import { LATEST_REVIEW_FIELDS, parsePrUrl, summarizeLatestReviews, type LatestReviews } from '../lib/github';
 import { checkCounts, type CheckTarget, type PrChecks } from '../lib/pr-checks';
@@ -249,21 +250,11 @@ export function createPrStatusService({ metadata, reviews, checks, signals, now 
         )
         .join('\n')} }`;
       const run = (async () => {
-        const response = await client.request('POST /graphql', { query });
-        const result = response.data as {
-          data?: Record<string, { pullRequest: PreloadedPull | null } | null> | null;
-          errors?: { message: string; path?: (string | number)[] }[];
-        };
-        const failed = new Set<string>();
-        for (const error of result.errors ?? []) {
-          // An error without a path, such as a rate limit, invalidates the whole response.
-          if (typeof error.path?.[0] !== 'string') throw new Error(error.message);
-          failed.add(error.path[0]);
-        }
-        if (!result.data) throw new Error('GitHub returned no PR status data.');
+        // An error without a path, such as a rate limit, fails the whole preload; one under an alias skips that PR.
+        const answer = await aliasedGraphql<Record<string, { pullRequest: PreloadedPull | null } | null>>(client, query);
         const saved: string[] = [];
         for (const [i, { target }] of parsed.entries()) {
-          const pr = failed.has(`p${i}`) ? undefined : result.data[`p${i}`]?.pullRequest;
+          const pr = answer.failed(`p${i}`) ? undefined : answer.data[`p${i}`]?.pullRequest;
           // A new head, a write during the query, or a newer read must not be replaced by this copy.
           if (pr) reportPrHead(client, target.url, pr.headRefOid, { updatedAt: pr.updatedAt, source: 'status' });
           if (!pr || pr.headRefOid !== target.headSha || !cache || cache.version() !== version) continue;

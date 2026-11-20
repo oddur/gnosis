@@ -624,4 +624,6 @@ export interface PrMetadata {
   mergeableState: string | null;
   autoMerge: { method: string } | null;
   milestone: { title: string; dueOn: string | null } | null;
+  /** Which API produced this copy. GraphQL comment counts may run ahead of REST's counters. Absent in older copies. */
+  source?: 'graphql' | 'rest';
 }
