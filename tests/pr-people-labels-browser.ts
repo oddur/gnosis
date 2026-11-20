@@ -305,30 +305,79 @@ void app.whenReady().then(async () => {
       await js(`(()=>{const t=${tab(label)};t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
       await wait(`${tab(label)}?.getAttribute('aria-selected')==='true'`);
     };
+    /** Opens a command made for the field, counted on its edit button. */
+    const opens = (field: string) => js<number>(`Number(document.querySelector(${JSON.stringify(edit(field))})?.getAttribute('data-request-opens') ?? 0)`);
+    /** A commit and its effects are done: two frames on. */
+    const frames = () => js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+    /** Toggles a label and closes the picker: a labels save GitHub holds until `settle`. */
+    const labelSave = async (name: string) => {
+      await open('labels');
+      await press(option(`label:${name}`));
+      await press('.pr-people-footer button');
+      await closed();
+      assert.deepEqual(await held(), ['labels']);
+    };
+    const labelsOpened = await opens('labels');
+    const accessReads = await js<number>('window.prPeopleFixture.record.access');
     await toTab('Changes');
     await toTab('Summary');
-    await wait(`!!${section('labels')}`);
-    await sleep(500);
+    // Coming back reads access again, in the effects that would replay the command: once that read is made, they ran.
+    await wait(`window.prPeopleFixture.record.access>${accessReads}`);
+    await frames();
+    assert.equal(await opens('labels'), labelsOpened, 'The handled command is not replayed');
     assert.ok(await js<boolean>("!document.querySelector('.pr-people-popup')"), 'No picker opens by itself on return');
     assert.ok(await js<boolean>("![...document.querySelectorAll('[aria-roledescription=notification]')].some(t=>/Edit labels/.test(t.textContent))"), 'No toast on return');
 
+    /** The labels save has finished and the effects that follow it ran. */
+    const saved = async () => {
+      await wait(`!document.querySelector(${JSON.stringify(edit('labels'))})?.hasAttribute('aria-busy')`);
+      await frames();
+    };
+
     // ── A waiting command is replaced by a newer one for another field ──
-    await open('labels');
-    await press(option('label:transport'));
-    await press('.pr-people-footer button');
-    await closed();
-    assert.deepEqual(await held(), ['labels']);
+    await labelSave('transport');
     assert.match(await palette('> edit labels'), /Edit labels/);
     await key('Enter');
-    await sleep(300);
+    await wait("!document.querySelector('.global-command-dialog')");
     assert.match(await palette('> edit assignees'), /Edit assignees/);
     await key('Enter');
     await wait("document.querySelector('.pr-people-popup')?.dataset.field==='assignees'");
     await key('Escape');
     await closed();
+    const beforeReplaced = await opens('labels');
     await settle();
-    await sleep(500);
-    assert.ok(await js<boolean>("!document.querySelector('.pr-people-popup')"), 'The replaced labels command does not open after the save');
+    await saved();
+    assert.equal(await opens('labels'), beforeReplaced, 'The replaced labels command does not open after the save');
+    assert.ok(await js<boolean>("!document.querySelector('.pr-people-popup')"));
+    await refresh();
+
+    // ── Opening another field's picker drops a waiting command, and nothing closes that picker ──
+    await labelSave('needs-review');
+    assert.match(await palette('> edit labels'), /Edit labels/);
+    await key('Enter');
+    await wait("!document.querySelector('.global-command-dialog')");
+    await open('assignees');
+    const beforeClick = await opens('labels');
+    await settle();
+    await saved();
+    assert.equal(await opens('labels'), beforeClick, 'The dropped labels command does not open');
+    assert.equal(await js('document.querySelector(\'.pr-people-popup\')?.dataset.field'), 'assignees', 'The open picker stays open');
+    await key('Escape');
+    await closed();
+    await refresh();
+
+    // ── Hiding and showing Summary keeps a waiting command: it opens once the save finishes ──
+    await labelSave('needs-review');
+    assert.match(await palette('> edit labels'), /Edit labels/);
+    await key('Enter');
+    await wait("!document.querySelector('.global-command-dialog')");
+    await toTab('Changes');
+    await toTab('Summary');
+    await wait(`!!${section('labels')}`);
+    await settle();
+    await wait("document.querySelector('.pr-people-popup')?.dataset.field==='labels'");
+    await key('Escape');
+    await closed();
     await refresh();
 
     // ── Screenshots: dark, then narrow ──

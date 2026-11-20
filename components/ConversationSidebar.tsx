@@ -84,6 +84,7 @@ export function ConversationSidebar({
       people={people}
       reviewed={reviewed}
       open={editing === field}
+      editing={editing}
       openRequest={openRequest}
       onOpenChange={(open) => setEditing((current) => (open ? field : current === field ? null : current))}
     />

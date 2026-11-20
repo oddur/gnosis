@@ -322,6 +322,7 @@ export function PrPeopleEditor({
   people,
   reviewed = [],
   open,
+  editing = null,
   openRequest,
   onOpenChange,
 }: {
@@ -331,6 +332,8 @@ export function PrPeopleEditor({
   /** Reviewers who already reviewed, with their verdicts: picking one requests their review again. */
   reviewed?: { login: string; verdict: string; typename?: string }[];
   open: boolean;
+  /** The field whose picker is open, if any. */
+  editing?: PrPeopleField | null;
   /**
    * The latest command to open a picker, for any field, numbered. Each is handled once, by the field it names; one
    * that existed before this editor mounted, or that effects replay as the tab hides and shows, is not.
@@ -515,6 +518,20 @@ export function PrPeopleEditor({
   // it opens once that finishes, so neither change is lost.
   const waiting = useRef(false);
   const handled = useRef(openRequest?.n ?? 0);
+  /** Another field's picker is open. A command never closes it: that would skip its `finish` and lose its change. */
+  const anotherOpen = editing !== null && editing !== field;
+  /** Opens for a command, counted on the button for checks (`data-request-opens`). */
+  const requestOpen = () => {
+    waiting.current = false;
+    if (anotherOpen) return;
+    if (disabledReason) {
+      toast.add({ title: label.edit, description: disabledReason, type: 'error' });
+      return;
+    }
+    const button = trigger.current;
+    button?.setAttribute('data-request-opens', String(Number(button.getAttribute('data-request-opens') ?? 0) + 1));
+    setOpen(true);
+  };
   useEffect(() => {
     if (!openRequest || openRequest.n <= handled.current) return;
     handled.current = openRequest.n;
@@ -522,18 +539,22 @@ export function PrPeopleEditor({
     waiting.current = false;
     if (openRequest.field !== field) return;
     if (saving) waiting.current = true;
-    else if (disabledReason) toast.add({ title: label.edit, description: disabledReason, type: 'error' });
-    else setOpen(true);
+    else requestOpen();
   }, [openRequest]);
-  // Another PR: a picker waiting for this one's save never opens there.
+  // The reader opened another field's picker: a command still waiting here is dropped.
   useEffect(() => {
+    if (anotherOpen) waiting.current = false;
+  }, [anotherOpen]);
+  // Another PR (not a remount of this one): a picker waiting for this PR's save never opens there.
+  const shownUrl = useRef(member.url);
+  useEffect(() => {
+    if (shownUrl.current === member.url) return;
+    shownUrl.current = member.url;
     waiting.current = false;
   }, [member.url]);
   useEffect(() => {
     if (saving || !waiting.current) return;
-    waiting.current = false;
-    if (disabledReason) toast.add({ title: label.edit, description: disabledReason, type: 'error' });
-    else setOpen(true);
+    requestOpen();
   }, [saving]);
 
   const button = (
