@@ -19,6 +19,8 @@ export interface StructureTrace {
   load?: number;
   parse?: number;
   query?: number;
+  /** Jobs of a lower tier the worker started while this parse waited (lib/syntax-scope.worker.ts). */
+  passedBy?: number;
   /** The parse's priority when it started: 'view', 'near' or 'prefetch'. */
   tier?: string;
   beforeDone?: number;

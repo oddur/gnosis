@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { assertPerf } from './perf-budget';
@@ -42,11 +42,16 @@ void app.whenReady().then(async () => {
   const entry = (id: string) => `document.querySelector('.feedback-entry[data-feedback-id="${id}"]')`;
   const inView = (id: string) =>
     js<boolean>(`(()=>{const e=${entry(id)},t=document.querySelector('[data-feedback-scroller]');if(!e)return false;const a=e.getBoundingClientRect(),b=t.getBoundingClientRect();return a.top>=b.top-2&&a.top<b.bottom-40})()`);
+  /** Resizes the page and waits until it shows the new width and the timeline has measured its rows again. */
+  const resize = async (width: number, height: number) => {
+    win.setContentSize(width, height);
+    await wait(`innerWidth===${width}`);
+    if (await js('!!document.querySelector(".feedback-timeline")')) await waitSettled(win.webContents, 'feedback-timeline');
+  };
   const capture = async (name: string, prepare?: () => Promise<unknown>) => {
     if (!shots) return;
     for (const width of [1280, 1600, 760]) {
-      win.setContentSize(width, 800);
-      await sleep(250);
+      await resize(width, 800);
       await prepare?.();
       // scrollIntoView can scroll the app's own frames; put them back so shots show the whole window.
       await js("(()=>{let e=document.querySelector('[data-feedback-scroller]')?.parentElement;while(e){if(e.scrollTop)e.scrollTop=0;e=e.parentElement}})()");
@@ -58,8 +63,7 @@ void app.whenReady().then(async () => {
       }
     }
     await js("document.documentElement.classList.remove('dark')");
-    win.setContentSize(1280, 800);
-    await sleep(200);
+    await resize(1280, 800);
     await prepare?.();
   };
   try {
@@ -154,9 +158,12 @@ void app.whenReady().then(async () => {
     await capture('new-since');
 
     // Collect the whole timeline by scrolling: one order across every kind of item.
-    const collected = await js<{ index: number; type: string; id?: string; at: string; text: string; node?: string; label?: string; role?: string }[]>(`(async()=>{
-      const t=document.querySelector('[data-feedback-scroller]');const seen=new Map();t.scrollTop=0;window.__railGaps=[];window.__nodeClones={};
-      for(let i=0;i<80;i++){await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    // Each step reads the rows once the virtualizer has measured them (waitSettled), then scrolls on.
+    await js("document.querySelector('[data-feedback-scroller]').scrollTop=0;window.__seen=new Map();window.__railGaps=[];window.__nodeClones={}");
+    for (let i = 0; i < 80; i++) {
+      await waitSettled(win.webContents, 'feedback-timeline');
+      const end = await js<boolean>(`(()=>{
+        const t=document.querySelector('[data-feedback-scroller]');const seen=window.__seen;
         const mounted=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index);
         for(const e of mounted){const n=e.querySelector(':scope > .timeline-indicator');
           if(n&&!window.__nodeClones[n.dataset.nodeKind])window.__nodeClones[n.dataset.nodeKind]=n.cloneNode(true);
@@ -165,8 +172,12 @@ void app.whenReady().then(async () => {
         for(let k=0;k+1<mounted.length;k++){const a=mounted[k],b=mounted[k+1];if(Number(b.dataset.index)!==Number(a.dataset.index)+1)continue;
           const sa=a.querySelector(':scope > .timeline-separator').getBoundingClientRect(),sb=b.querySelector(':scope > .timeline-separator').getBoundingClientRect();
           window.__railGaps.push(Math.abs(sb.top-sa.bottom)+Math.abs(sb.left-sa.left));}
-        if(t.scrollTop+t.clientHeight>=t.scrollHeight-2)break;t.scrollTop+=t.clientHeight*0.8;}
-      return [...seen.values()].sort((a,b)=>a.index-b.index)})()`);
+        if(t.scrollTop+t.clientHeight>=t.scrollHeight-2)return true;t.scrollTop+=t.clientHeight*0.8;return false})()`);
+      if (end) break;
+    }
+    const collected = await js<{ index: number; type: string; id?: string; at: string; text: string; node?: string; label?: string; role?: string }[]>(
+      '[...window.__seen.values()].sort((a,b)=>a.index-b.index)'
+    );
     // Every row has a rail node that names its kind in words, not colour alone.
     for (const row of collected) assert.ok(row.node && row.label && row.role === 'img', `Row ${row.index} (${row.type}) has a labelled node: ${JSON.stringify(row)}`);
     const nodeOf = (id: string) => collected.find((row) => row.id === id)?.node;
@@ -232,7 +243,7 @@ void app.whenReady().then(async () => {
     await js(`${big}.querySelector('.feedback-merge-toggle').click()`);
     await wait(`${big}?.querySelectorAll('.feedback-merge-group .feedback-commits > li').length===11`);
     // The row grew: the virtualizer measures it, and the rail runs on without a gap.
-    await sleep(300);
+    await waitSettled(win.webContents, 'feedback-timeline');
     const grown = await js<number[]>(`(()=>{const rows=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index);const out=[];
       for(let k=0;k+1<rows.length;k++){const a=rows[k],b=rows[k+1];if(Number(b.dataset.index)!==Number(a.dataset.index)+1)continue;const sa=a.querySelector(':scope > .timeline-separator').getBoundingClientRect(),sb=b.querySelector(':scope > .timeline-separator').getBoundingClientRect();out.push(Math.abs(sb.top-sa.bottom))}return out})()`);
     assert.ok(grown.length > 0 && Math.max(...grown) <= 1, `The rail stays continuous after a push opens: ${JSON.stringify(grown)}`);
@@ -257,8 +268,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual((await rowsOf()).slice(4), ['IssuerIsConsciousCondition.cs uL21', 'PhysicalAccessControl.cs uL62,rL70', 'CLAUDE.md uL21']);
     assert.match(await js<string>(`[...${review}.querySelectorAll('.feedback-line-chip')].find(b=>b.dataset.state==='resolved').textContent`), /L70 in PhysicalAccessControl\.cs, resolved/, 'A chip names its state in words, not colour alone');
     for (const width of [760, 1280]) {
-      win.setContentSize(width, 800);
-      await sleep(300);
+      await resize(width, 800);
       const spill = await js<string[]>(`(()=>{const card=${review}.querySelector('.feedback-entry-card').getBoundingClientRect();return [...${review}.querySelectorAll('.feedback-review-file, .feedback-line-chip, .feedback-review-path')].filter(e=>{const r=e.getBoundingClientRect();return r.right>card.right+0.5||r.left<card.left-0.5}).map(e=>e.className)})()`);
       assert.deepEqual(spill, [], `Nothing in the review index spills out at ${width}px`);
       assert.ok(await js(`${review}.scrollWidth<=${review}.clientWidth+1`), `The review does not scroll sideways at ${width}px`);
@@ -271,7 +281,7 @@ void app.whenReady().then(async () => {
 
     // Bots: collapsed, then expanded in place.
     const botsKey = await js<string>(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const b=document.querySelector('.feedback-entry[data-entry-type=bots]');if(b){b.scrollIntoView({block:'start'});return b.dataset.entryKey}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);
-    await sleep(200);
+    await waitSettled(win.webContents, 'feedback-timeline');
     await capture('bots-collapsed', () => js(`document.querySelector('[data-entry-key="${botsKey}"]')?.scrollIntoView({block:'start'})`));
     await js(`document.querySelector('[data-entry-key="${botsKey}"] .feedback-bots-summary').click()`);
     await wait(`document.querySelectorAll('[data-entry-key="${botsKey}"] .feedback-message').length===3`);
@@ -314,8 +324,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`!!${entry('t-main')}.querySelector('textarea')`), false, 'The composer stays closed until Reply');
     await capture('code-thread', () => js(`${entry('t-main')}?.scrollIntoView({block:'start'})`));
     for (const width of [1280, 1600, 1920]) {
-      win.setContentSize(width, 900);
-      await sleep(300);
+      await resize(width, 900);
       const size = await js<{ timeline: number; card: number; workspace: number }>(
         `(()=>{const w=document.querySelector('.feedback-workspace').getBoundingClientRect().width,t=document.querySelector('.feedback-timeline').clientWidth,c=${entry('t-main')}.querySelector('.review-file-group').getBoundingClientRect().width;return {timeline:t,card:c,workspace:w}})()`
       );
@@ -324,15 +333,14 @@ void app.whenReady().then(async () => {
       // A stack has no details column; the timeline's bar stays pinned while the page scrolls (tests/conversation-browser.ts covers the column).
       const back = await js<number>("document.querySelector('[data-feedback-scroller]').scrollTop");
       await js("document.querySelector('[data-feedback-scroller]').scrollTop+=1500");
-      await sleep(200);
+      await waitSettled(win.webContents, 'feedback-timeline');
       const pinned = await js<{ bar: number; page: number }>("(()=>({page:document.querySelector('[data-feedback-scroller]').getBoundingClientRect().top,bar:document.querySelector('.feedback-toolbar').getBoundingClientRect().top}))()");
       assert.ok(Math.abs(pinned.bar - pinned.page) <= 12, `The bar stays pinned at ${width}px: ${JSON.stringify(pinned)}`);
       await js(`document.querySelector('[data-feedback-scroller]').scrollTop=${back}`);
-      await sleep(200);
+      await waitSettled(win.webContents, 'feedback-timeline');
     }
 
-    win.setContentSize(1280, 800);
-    await sleep(300);
+    await resize(1280, 800);
     await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');for(let i=0;i<80&&!${entry('t-second')};i++){t.scrollTop+=300;await new Promise(r=>requestAnimationFrame(r))}${entry('t-second')}?.scrollIntoView({block:'start'})})()`);
     await wait(`!!${entry('t-second')}?.closest('.feedback-timeline') && !!${entry('t-second')}.querySelector('.changes-diff diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
     const overflow = await js<{ host: number; thread: number; timeline: boolean }>(`(()=>{const e=${entry('t-second')};const h=e.querySelector('.changes-diff diffs-container');const pre=h.shadowRoot.querySelector('pre');const th=e.querySelector('.github-thread');
@@ -364,7 +372,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[data-feedback-scroller]').scrollTop=0");
     await capture('timeline', () => js("document.querySelector('[data-feedback-scroller]').scrollTop=0"));
     await js("document.querySelector('[data-feedback-scroller]').scrollTop=600");
-    await sleep(150);
+    await waitSettled(win.webContents, 'feedback-timeline');
     assert.ok(await js("document.querySelector('.feedback-toolbar').getBoundingClientRect().top>=0"));
     await capture('sticky-bar', () => js("document.querySelector('[data-feedback-scroller]').scrollTop=600"));
     await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');t.scrollTop=0;for(let i=0;i<80;i++){const e=${entry('r-maya')};if(e){e.scrollIntoView({block:'start'});return}t.scrollTop+=400;await new Promise(r=>requestAnimationFrame(r))}})()`);

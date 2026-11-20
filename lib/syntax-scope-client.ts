@@ -233,6 +233,7 @@ export function readDefinitions(request: {
             traceStructure(file, {
               parseDone: performance.now(),
               workerWait: timing.wait,
+              passedBy: timing.passedBy,
               load: timing.load,
               parse: timing.parse,
               query: timing.query,

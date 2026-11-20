@@ -96,6 +96,8 @@ export type SyntaxResponse =
         cached: boolean;
         wait?: number;
         priority?: SyntaxPriority;
+        /** Jobs of a lower tier that started while this parse waited: 0 when the queue kept to its order. */
+        passedBy?: number;
         /** Parses the worker has made in all, for the cost checks. */
         parses?: number;
       };
@@ -164,7 +166,9 @@ const cache = new Map<string, { url: string; definitions: SyntaxDefinition[] }>(
 /** Comparisons, by file revision and change blocks: a few bytes per block. */
 const noiseCache = new Map<string, { url: string; noise: NoiseBlock[]; symbols?: FilePrints; symbolsError?: string }>();
 type MovesJob = Extract<SyntaxRequest, { type: 'moves' }> & { key: string; priority: SyntaxPriority; side: 'symbols' };
-type Job = (Extract<SyntaxRequest, { type: 'definitions' | 'noise' | 'symbols' }> | MovesJob) & { received: number };
+// The queue counts `passedBy` on each job (lib/syntax-parse-queue.ts). It stops growing once the job starts, so a parse
+// that ran as prefetch before the view asked for it reports what passed it until then.
+type Job = (Extract<SyntaxRequest, { type: 'definitions' | 'noise' | 'symbols' }> | MovesJob) & { received: number; passedBy?: number };
 /** Requests a newer job with the same key replaced in the queue: they hear that job's answer (createFollowers). */
 const followers = createFollowers();
 function enqueue(job: Job) {
@@ -251,6 +255,7 @@ async function run(job: Job) {
         cached: false,
         wait,
         priority: job.priority,
+        passedBy: job.passedBy ?? 0,
         parses: engine.parses(),
       },
     });

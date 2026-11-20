@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { Timeline, TimelineContent, TimelineHeader, TimelineIndicator, TimelineItem, TimelineSeparator, TimelineTitle } from './ui/timeline';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualizerSettled } from '../lib/test-settled';
 import { Button } from './ui/button';
 import { FileTypeIcon } from './FileTypeIcon';
 import { GitHubAuthor } from './GitHubAuthor';
@@ -378,6 +379,7 @@ export function PrFeedbackView({
     paddingStart: 4,
     paddingEnd: 48,
   });
+  useVirtualizerSettled('feedback-timeline', virtual, rowsShown);
   /** Scroll an entry to the top of the timeline and move the keyboard cursor to it. */
   function goTo(key: string | undefined, focus = true) {
     if (!key) return;

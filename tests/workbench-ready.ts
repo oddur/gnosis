@@ -14,6 +14,23 @@ export async function waitForWorkbenchQueue(contents: WebContents, expectedItems
   throw new Error(`Workbench queue did not become ready: ${JSON.stringify(state)}`);
 }
 
+/**
+ * Waits until the app says `key` has settled (lib/test-settled.ts). The check runs in the page each time it is asked,
+ * so a scroll or click the test just made counts. Read layout after this, not after a sleep or a number of frames.
+ */
+export async function waitSettled(contents: WebContents, key: string, timeoutMs = 15_000): Promise<void> {
+  const check = `window.__gnosisSettled ? window.__gnosisSettled.settled(${JSON.stringify(key)}) : null`;
+  const deadline = Date.now() + timeoutMs;
+  let reason: unknown;
+  while (Date.now() < deadline) {
+    reason = await contents.executeJavaScript(check);
+    if (reason === true) return;
+    if (reason === null) throw new Error(`waitSettled('${key}'): the page did not install the settled registry`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`'${key}' did not settle within ${timeoutMs / 1000}s: ${String(reason)}`);
+}
+
 const loadTimeoutMs = 60_000;
 
 /** loadURL did not settle, or the fixture never rendered after it did. */
@@ -38,7 +55,7 @@ export async function loadWorkbenchPage(window: BrowserWindow, url: string): Pro
       if (!(error instanceof LoadStalled)) throw error;
       console.warn(`${error.message}; loading it once more.\n${await diagnostics.report()}`);
       diagnostics.mark('loading the page once more');
-      await stopLoading(window.webContents);
+      await abandon(window.webContents);
       await loadAndRender(window, url, 60_000);
     }
   } catch (error) {
@@ -63,7 +80,7 @@ export async function reloadWorkbenchPage(window: BrowserWindow, ready: string):
       if (!(error instanceof LoadStalled)) throw error;
       console.warn(`${error.message}; reloading once more.\n${await diagnostics.report()}`);
       diagnostics.mark('reloading the page once more');
-      await stopLoading(window.webContents);
+      await abandon(window.webContents);
       await reloadUntil(window, ready, 60_000);
     }
   } catch (error) {
@@ -132,6 +149,26 @@ async function loadAndRender(window: BrowserWindow, url: string, renderTimeoutMs
   // The load event can fire while the dev server still holds the fixture's module requests. On Windows CI
   // over a thousand stayed pending for a minute and the page never rendered, so this is retried as a stall.
   throw new LoadStalled(`Fixture did not render after loading ${url}`);
+}
+
+/**
+ * Stops a stalled page before it loads again. Stopping cancels the module requests the dev server still holds, and the
+ * page then reports "Failed to fetch dynamically imported module" as an uncaught error (noise-filter on Windows CI).
+ * Suites count console errors, and that one is ours, not the app's, so the stalled page drops its errors first. The
+ * page loaded next is a new document and reports its errors as usual.
+ */
+async function abandon(contents: WebContents): Promise<void> {
+  const quiet = `window.addEventListener('error',e=>e.preventDefault(),true);window.addEventListener('unhandledrejection',e=>e.preventDefault(),true);true`;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // The frame answers while the page loads; a page that does not answer at all has nothing left to report.
+  await Promise.race([
+    contents.mainFrame.executeJavaScript(quiet).catch(() => false),
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, 5_000);
+    }),
+  ]);
+  clearTimeout(timer);
+  await stopLoading(contents);
 }
 
 /** A new loadURL while the stalled one is still loading would see that load's abort as its own failure. */
