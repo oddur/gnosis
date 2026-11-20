@@ -734,7 +734,9 @@ export function OverviewPage(props: OverviewPageProps) {
       <RepoNames.Provider value={repoNames}>
         <Viewer.Provider value={account ?? ''}>
           <Unread.Provider value={unreadOf}>
-            <div className="overview-body">{body}</div>
+            <Nudged.Provider value={nudged}>
+              <div className="overview-body">{body}</div>
+            </Nudged.Provider>
           </Unread.Provider>
         </Viewer.Provider>
       </RepoNames.Provider>
@@ -921,6 +923,8 @@ const useRepoLabel = () => {
   const names = useContext(RepoNames);
   return useCallback((repo: string) => repositoryLabel(names, repo), [names]);
 };
+/** The reminders sent from this page, by key: a starred line's Remind then says "Reminded". */
+const Nudged = createContext<ReadonlySet<string>>(new Set());
 /** The signed-in account: the You group shows its avatar. */
 const Viewer = createContext('');
 /** Whether any of these PRs has unread activity: every PR line's menu enables Mark as read from it. */
@@ -1655,16 +1659,31 @@ const DecisionRow = memo(
 );
 
 /** A starred line's one action, in Next up's words. */
-const STARRED_ACTION: Readonly<Record<StarredAction, string>> = { merge: 'Merge', review: 'Review', rereview: 'Review again', reply: 'Reply', rerun: 'Rerun', open: 'Open' };
+const STARRED_ACTION: Readonly<Record<StarredAction, string>> = { merge: 'Merge', review: 'Review', rereview: 'Review again', reply: 'Reply', rerun: 'Rerun', open: 'Open', nudge: 'Remind' };
+/** The key a starred line's Remind is remembered by once sent: it then says "Reminded". */
+const starredNudgeKey = (line: Pick<StarredLine, 'id'>) => `nudge:starred:${line.id}`;
 /** Where a starred line opens: its lane row's target, else the PR. */
 const openStarred = (line: StarredLine, item: QueueItem, actions: RowActions) => (line.row ? actions.open(line.row, line.target) : actions.openItem(item, line.target));
 
 /** The line's action: Merge, Rerun, or an open in Next up's words. A stack's PRs show theirs on hover and focus. */
 function StarredQuick({ line, item, actions, reveal = false }: { line: StarredLine; item: QueueItem; actions: RowActions; reveal?: boolean }) {
+  const nudged = useContext(Nudged);
   const { member, row, action } = line;
   if (!action) return null;
   if (action === 'merge' && row?.merge) return <MergeAction row={row} actions={actions} />;
   if (action === 'rerun') return <RerunFailed members={[member]} onChanged={actions.refresh} reveal={reveal} />;
+  if (action === 'nudge' && line.reviewer) {
+    const reviewer = line.reviewer;
+    const key = starredNudgeKey(line);
+    if (nudged.has(key)) return <span className="morning-done">Reminded</span>;
+    return (
+      <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title={`Remind ${reviewer} to review #${member.number}… · A`}
+        onClick={() => actions.nudge({ key, kind: 'person', label: reviewer, detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer, members: [member] } })}>
+        <NudgeIcon size={13} aria-hidden="true" />
+        Remind
+      </Button>
+    );
+  }
   const words = STARRED_ACTION[action];
   return (
     <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title={`${words} #${member.number} · A`} onClick={() => openStarred(line, item, actions)}>
@@ -1676,7 +1695,7 @@ function StarredQuick({ line, item, actions, reveal = false }: { line: StarredLi
 const starredSpoken = (line: StarredLine, repo: string, waited: string) =>
   [line.why, `${repo} #${line.member.number}`, line.check?.spoken ?? '', extrasSpoken(line.comments, waited)].filter(Boolean).join(', ');
 const starredLineSig = (line: StarredLine, now: number) =>
-  [line.id, line.tier, line.why, line.member.title, line.member.isDraft, line.member.state, line.member.merged, line.check?.label, line.comments, line.since, age(line.since, now), line.isNew, line.action, line.row?.signature, line.target.kind].join('~');
+  [line.id, line.tier, line.why, line.member.title, line.member.isDraft, line.member.state, line.member.merged, line.check?.label, line.comments, line.since, age(line.since, now), line.isNew, line.action, line.reviewer, line.row?.signature, line.target.kind].join('~');
 const starredSig = (entry: StarredEntry, now: number) =>
   [entry.id, entry.title, entry.why, entry.tier, entry.check?.label, entry.comments, entry.isNew, entry.lead.id, ...entry.lines.map((line) => starredLineSig(line, now))].join('|');
 

@@ -140,7 +140,16 @@ void app.whenReady().then(async () => {
       '#332 | Run phases on a worker pool | Conflicts | passing',
     ]);
     // Actions, in Next up's words; a merged row has none and no check state.
-    assert.deepEqual(await js(`[...document.querySelectorAll('${section('starred')} .morning-rows > .morning-row [data-quick-action], ${section('starred')} .morning-stack-head [data-quick-action]')].map(b=>b.textContent.trim())`), ['Review', 'Rerun', 'Merge']);
+    assert.deepEqual(await js(`[...document.querySelectorAll('${section('starred')} .morning-rows > .morning-row [data-quick-action], ${section('starred')} .morning-stack-head [data-quick-action]')].map(b=>b.textContent.trim())`), ['Review', 'Rerun', 'Merge', 'Remind']);
+    // A starred PR waiting on lena can be reminded from Starred: A opens the confirmation, and the row then says so.
+    await js(`document.querySelector('${P} [data-overview-row="starred|${url('klang/cli', 341)}"]').focus()`);
+    await key('a');
+    await wait(`document.querySelector('[data-overview-dialog="nudge"] h2')?.textContent === 'Remind lena?'`);
+    await js(`document.querySelector('[data-overview-dialog="nudge"] [data-overview-confirm]').click()`);
+    await wait(`!document.querySelector('[data-overview-dialog="nudge"]')`);
+    await wait(`document.querySelector('${P} [data-overview-row-item="starred|${url('klang/cli', 341)}"] .morning-done')?.textContent === 'Reminded'`);
+    const nudges = await js<{ kind: string; url: string }[]>('window.fixtureOverview.writes');
+    assert.ok(nudges.some((w) => w.kind === 'nudge:lena' && w.url === url('klang/cli', 341)), 'Remind re-requests lena on #341');
     assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-row-item="starred|${url('klang/engine', 350)}"]').classList.contains('is-done')`), true, 'a merged starred PR is a quiet done row');
     assert.equal(await js(`!!document.querySelector('${section('starred')} [data-overview-row-item="starred|${url('klang/engine', 350)}"] [data-overview-check]')`), false);
     assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-row-item="starred|${url('klang/engine', 350)}"] [data-pr-state]')?.dataset.prState`), 'merged');
