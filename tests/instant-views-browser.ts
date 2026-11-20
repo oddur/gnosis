@@ -1,7 +1,6 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
-import { withinPerf } from './perf-budget';
 
 /**
  * Instant views (#343, #344). Saved copies render at once while a slow GitHub revalidates, and neighbours and hovered
@@ -84,8 +83,8 @@ void app.whenReady().then(async () => {
     metrics.queueAfterFirstRenderMs = Math.round(start.queue - start.firstRender);
     metrics.queueFromNavigationMs = Math.round(start.queue);
     metrics.queueLoadingStates = start.loading.map((entry) => entry.title);
-    check(start.snapshot === undefined || start.queue < start.snapshot, 'The saved queue paints before main answers');
-    check(withinPerf('instant views: saved queue after first render', start.queue - start.firstRender, QUEUE_BUDGET_MS), 'The saved queue paints within its budget');
+    check(start.queue - start.firstRender <= QUEUE_BUDGET_MS && (start.snapshot === undefined || start.queue < start.snapshot),
+      'The saved queue paints before main answers');
     check(!start.loading.some((entry) => entry.title.includes('Loading review queue')), 'No queue loading screen with a saved queue');
     const firstChecks = await js<string[]>('window.instantViews.firstChecks');
     metrics.firstFrameChecks = firstChecks;
@@ -145,15 +144,13 @@ void app.whenReady().then(async () => {
     const records = await js<{ key: string; outcome: string; ttcMs: number }[]>('window.__gnosisPredict.records()');
     const arrival = records.filter((record) => record.key.startsWith('pr-open:')).at(-1);
     metrics.neighbourArrival = arrival;
-    check(jMove.ms >= 0 && !jMove.loading.length && arrival?.outcome === 'hit',
+    check(jMove.ms >= 0 && jMove.ms <= SWITCH_BUDGET_MS && !jMove.loading.length && arrival?.outcome === 'hit',
       'j to a prepared neighbour shows its diff with no loading state (a predictor hit)');
-    check(withinPerf('instant views: j to a prepared neighbour', jMove.ms, SWITCH_BUDGET_MS), 'j to a prepared neighbour is within its budget');
     // And back with k: the PR we came from is still prepared.
     const kMove = await timeTo(changesReady + "&&!!document.querySelector('.pr-overview-heading h1')?.textContent.includes('Fix reconnect')",
       "document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'k',bubbles:true}))");
     metrics.kBackChanges = kMove;
-    check(kMove.ms >= 0 && !kMove.loading.length, 'k back to the previous PR shows with no loading state');
-    check(withinPerf('instant views: k back to the previous PR', kMove.ms, SWITCH_BUDGET_MS), 'k back to the previous PR is instant');
+    check(kMove.ms >= 0 && kMove.ms <= SWITCH_BUDGET_MS && !kMove.loading.length, 'k back to the previous PR is instant');
 
     // 6. Hover: resting on a row prepares it once; a quick sweep while scrolling prepares nothing.
     await click('Review queue');
@@ -194,8 +191,7 @@ void app.whenReady().then(async () => {
     await js(`${row(hoverTitle)}.querySelector('.queue-row-main').click()`);
     const open = await timeTo("!!document.querySelector('.pr-description')", "[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Open PR overview').click()");
     metrics.openHoveredPr = open;
-    check(open.ms >= 0 && !open.loading.length, 'A hovered PR opens with no loading state');
-    check(withinPerf('instant views: open a hovered PR', open.ms, SWITCH_BUDGET_MS), 'A hovered PR opens within its budget');
+    check(open.ms >= 0 && open.ms <= SWITCH_BUDGET_MS && !open.loading.length, 'A hovered PR opens with no loading state');
     const changes = await timeTo(changesReady, "window.openTab('Changes')");
     metrics.hoveredPrChanges = changes;
     check(changes.ms >= 0 && !changes.loading.length, 'Changes of a hovered PR opens with no loading state');

@@ -13,7 +13,14 @@ import { AssertionError } from 'node:assert';
  * Mac. Set GNOSIS_PERF_STRICT=1 to enforce the budgets as written, or GNOSIS_PERF_BUDGET_SCALE to choose another
  * factor. The factor keeps regressions visible: the slowdowns these checks were written for were 2.5x or more over budget.
  */
-export const PERF_BUDGET_SCALE = process.env.GNOSIS_PERF_STRICT === '1' ? 1 : Number(process.env.GNOSIS_PERF_BUDGET_SCALE ?? 1.6);
+export const PERF_BUDGET_SCALE = process.env.GNOSIS_PERF_STRICT === '1' ? 1 : budgetScale(process.env.GNOSIS_PERF_BUDGET_SCALE);
+
+function budgetScale(value: string | undefined) {
+  if (value === undefined || value === '') return 1.6;
+  const scale = Number(value);
+  if (!Number.isFinite(scale) || scale <= 0) throw new Error(`GNOSIS_PERF_BUDGET_SCALE must be a number above 0, not ${JSON.stringify(value)}`);
+  return scale;
+}
 
 const flag = (value: string | undefined) => !!value && value !== '0' && value.toLowerCase() !== 'false';
 
@@ -27,21 +34,31 @@ export function perfBudget(ms: number) {
 type PerfOptions = { unit?: string; detail?: string };
 
 const shown = (value: number) => (Number.isFinite(value) ? Math.round(value * 10) / 10 : value);
+/** A GitHub Actions workflow command's message, with the characters it treats specially escaped. */
+const commandMessage = (text: string) => text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
 
 /**
  * Logs `value` against `budget` and returns whether the check passes: always true when timing is report-only, else
- * `value <= budget`. For suites that collect failures before they fail; others use assertPerf.
+ * `value <= budget`. A value that is not a finite number is a broken measurement and fails in every mode. For suites
+ * that collect failures before they fail; others use assertPerf.
  */
 export function withinPerf(name: string, value: number, budget: number, { unit = 'ms', detail }: PerfOptions = {}) {
+  if (!Number.isFinite(value)) {
+    console.log(`[perf] ${name}: measured ${String(value)} ${unit}, not a number`);
+    return false;
+  }
   const over = !(value <= budget);
   const line = `[perf] ${name}: ${shown(value)} ${unit} (budget ${budget} ${unit})${over ? (PERF_ENFORCED ? ' OVER BUDGET' : ' over budget (report-only)') : ''}${over && detail ? ` ${detail}` : ''}`;
   console.log(line);
-  if (over && !PERF_ENFORCED && process.env.GITHUB_ACTIONS) console.log(`::warning title=Perf budget (report-only)::${line.replace(/\r?\n/g, ' ')}`);
+  if (over && !PERF_ENFORCED && process.env.GITHUB_ACTIONS) console.log(`::warning title=Perf budget (report-only)::${commandMessage(line)}`);
   return !over || !PERF_ENFORCED;
 }
 
 /** A timing or memory assertion: fails when `value` is over `budget` and timing is enforced, and only logs otherwise. */
 export function assertPerf(name: string, value: number, budget: number, options: PerfOptions = {}) {
-  if (!withinPerf(name, value, budget, options))
-    throw new AssertionError({ message: `${name}: ${shown(value)} ${options.unit ?? 'ms'} is over the budget of ${budget} ${options.unit ?? 'ms'}${options.detail ? ` ${options.detail}` : ''}`, actual: value, expected: budget, operator: '<=' });
+  if (!withinPerf(name, value, budget, options)) {
+    const unit = options.unit ?? 'ms';
+    const problem = Number.isFinite(value) ? `${shown(value)} ${unit} is over the budget of ${budget} ${unit}` : `measured ${String(value)}, not a number`;
+    throw new AssertionError({ message: `${name}: ${problem}${options.detail ? ` ${options.detail}` : ''}`, actual: value, expected: budget, operator: '<=' });
+  }
 }
