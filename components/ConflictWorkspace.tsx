@@ -321,7 +321,11 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       checking.current.set(f.path, key);
       void verifyProposals(f, checkSyntax)
         .catch(() => ({ merged: false, note: 'Gnosis couldn’t check this result.' }))
-        .then((verdict) => setVerdicts((previous) => ({ ...previous, [f.path]: { key, verdict } })));
+        // A slower check of earlier proposals never replaces the result for the current ones.
+        .then((verdict) => {
+          if (checking.current.get(f.path) === key)
+            setVerdicts((previous) => ({ ...previous, [f.path]: { key, verdict } }));
+        });
     }
   }, [session?.files]);
   const { settings: repositories, setShowMergedConflicts } = useRepositorySettings();

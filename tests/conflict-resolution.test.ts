@@ -784,7 +784,15 @@ void test('preparation runs structural merge on every conflicted file and keeps 
   await f.git('add', '.');
   await f.git('commit', '-m', 'Another PR merged');
   f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  // Second review probe: conflicts that did not change keep their proposals; structural merge does not run again.
+  const binaryPath = f.deps.mergiraf;
+  let structural = 0;
+  f.deps.mergiraf = () => {
+    structural++;
+    return binaryPath();
+  };
   const moved = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(structural, 0, 'Unchanged conflicts reuse their proposals');
   assert.equal(moved.baseMoved?.conflicts, 0);
   const after = moved.session.files.find((file) => file.path === 'numbers.ts');
   assert.ok(after);

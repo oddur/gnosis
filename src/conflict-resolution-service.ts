@@ -19,6 +19,7 @@ import {
   RETARGETED,
   blockProposals,
   carryFile,
+  conflictKeys,
   relabelMarkers,
   revisionChange,
   withProposals,
@@ -786,14 +787,27 @@ export function createConflictResolutionService(deps: Deps) {
       };
       const prepared = await prepare(ctx, session.id, spec, signal, report);
       const fresh = await conflictFiles(ctx, session.id, prepared, signal);
-      // Every file of the fresh merge gets its proposals again: a conflict the carry cannot reuse takes the fresh
-      // proposal, so the draft and its proposals always describe the same blocks.
-      await remember(ctx, session.headRepo, fresh, signal);
+      // A file whose conflicts are the same as before keeps its proposals. Every other file gets them again, so a
+      // conflict the carry cannot reuse takes the fresh proposal and the draft and its proposals describe the same
+      // blocks.
+      const before = new Map(previous.map((file) => [file.path, file]));
+      const changed = fresh.filter((file) => {
+        const old = before.get(file.path);
+        if (!old || old.unsupported || file.unsupported || conflictKeys(old.original) !== conflictKeys(file.original))
+          return true;
+        if (old.proposals) {
+          file.proposals = old.proposals;
+          file.result = withProposals(file.original, old.proposals);
+          file.source = old.source;
+        }
+        return false;
+      });
+      await remember(ctx, session.headRepo, changed, signal);
       await mergeStructurally(
         ctx,
         session.id,
         { head: session.headBranch, base: session.baseBranch },
-        fresh,
+        changed,
         signal,
         report
       );
