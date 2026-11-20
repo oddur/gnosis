@@ -12,6 +12,11 @@
  *   with Nudge. Stacks are one line each, with the step that moves them; Enter or a click expands the chain in merge
  *   order, base first, and expanded stacks are remembered per account (`overviewStacksKey`).
  * - **Needs a decision:** your PRs failing, never approved or idle for over a week, with Close PR (Snooze in the menu).
+ * - **Starred**, first, above them all, only when something is starred: the PRs and stacks the user starred as their
+ *   top work, most actionable first, each with its state and one action (lib/overview-starred.ts). A starred PR is
+ *   listed there and nowhere else on the page. A stack lists its PRs under it in merge order, on the chain the stacks
+ *   in Waiting on others use; merged and closed starred PRs stay at the end as quiet done rows until unstarred. Eight
+ *   show, then "Show all N". Every row menu can star or unstar its PRs; an unstarred row leaves the section.
  *
  * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), except in a stack's chain, which shows every PR
  * of the stack as a full line and links to the section that also lists one ("↑ Next up"). Every heading counts what it
@@ -77,11 +82,13 @@ import {
   type PersonGroup,
 } from '../lib/morning';
 import { sinceLabel, sinceLine, sinceSummary } from '../lib/since-log';
+import { STARRED_SHOWN, starredSection, type StarredAction, type StarredEntry, type StarredLine, type StarredSection } from '../lib/overview-starred';
 import { openSnoozePicker } from '../lib/snooze-picker';
 import { writeErrorDetail } from '../lib/write-failures';
 import { TeamRequestsNote } from './TeamRequestsNote';
 import type { QueueItem, ReviewMember, WorkbenchQueue } from '../lib/workbench';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
+import { starAction } from './PrEntryActions';
 import { PrPreviewTooltip } from './EntityBadge';
 import { PrActions } from './PrActions';
 import { PrStateIcon } from './PrStateIcon';
@@ -94,7 +101,7 @@ import { Button } from './ui/button';
 import { toast } from './ui/toast';
 
 export interface OverviewPageProps {
-  queue: Pick<WorkbenchQueue, 'items' | 'sync' | 'readStates'>;
+  queue: Pick<WorkbenchQueue, 'items' | 'sync' | 'readStates' | 'starredItems' | 'starredPrs'>;
   login: string | null;
   /** The status store scope, the signed-in account. */
   scope: string | null;
@@ -120,6 +127,10 @@ export interface OverviewPageProps {
   /** Opens the queue grouped by Action, at this group. */
   onShowLane: (group: OverviewActionGroup) => void;
   onMarkRead: (urls: string[]) => void;
+  /** Stars or unstars PRs, as the queue's star toggle does. Without it, row menus offer no star. */
+  onStarChange?: (members: ReviewMember[], starred: boolean) => void;
+  /** A star change is being saved: the star toggle waits, as in the queue. */
+  starBusy?: boolean;
   /** Opens an item in this window when no workspace tabs are available. */
   onOpenItem: (item: QueueItem) => void;
   onRepositories: () => void;
@@ -134,9 +145,10 @@ export interface OverviewPageProps {
  */
 const ASKED_MS = 5_000;
 
-type Section = 'next' | 'you' | 'others' | 'decide';
-const SECTIONS: readonly Section[] = ['next', 'you', 'others', 'decide'];
+type Section = 'starred' | 'next' | 'you' | 'others' | 'decide';
+const SECTIONS: readonly Section[] = ['starred', 'next', 'you', 'others', 'decide'];
 const SECTION_LABEL: Readonly<Record<Section, string>> = {
+  starred: 'Starred',
   next: 'Next up',
   you: 'Waiting on you',
   others: 'Waiting on others',
@@ -146,6 +158,10 @@ const SECTION_LABEL: Readonly<Record<Section, string>> = {
 const DECIDE_SHOWN = 6;
 /** The section a row id belongs to: ids are `${section}|…`. */
 const sectionOf = (id: string) => id.slice(0, id.indexOf('|')) as Section;
+/** Starred's "Show all N", by its id in the opened set. A starred stack's own id there means it is collapsed. */
+const STARRED_MORE = 'starred|more';
+/** The starred entries shown: `STARRED_SHOWN`, or all of them after "Show all N". */
+const starredShown = (section: Pick<StarredSection, 'entries'>, open: Open) => (open.has(STARRED_MORE) ? section.entries : section.entries.slice(0, STARRED_SHOWN));
 /** The quiet line under Next up: the rest of the merges nobody reviewed. */
 const MORE_UNREVIEWED = 'next|more-unreviewed';
 const prs = (n: number) => `${n} ${n === 1 ? 'PR' : 'PRs'}`;
@@ -189,7 +205,9 @@ interface RowRef {
 
 export function OverviewPage(props: OverviewPageProps) {
   const { queue, login, scope, authenticated, hasRepositories, loading, refreshing, visible, live, keyboard, teamRequests, excluded, error, onDismissError, setup, onRepositories, onConnect, onModel } = props;
-  const view = useOverview({ items: queue.items, login: authenticated ? login : null, scope: authenticated ? scope : null, live, visible, ready: !loading, teamRequests, excluded });
+  // Starred work: main's starred entries, merged and closed ones included while they stay starred.
+  const starredItems = useMemo(() => queue.starredItems ?? queue.items.filter((item) => item.starred), [queue.starredItems, queue.items]);
+  const view = useOverview({ items: queue.items, starred: starredItems, login: authenticated ? login : null, scope: authenticated ? scope : null, live, visible, ready: !loading, teamRequests, excluded });
   useEffect(() => { onModel?.(view); }, [view, onModel]);
   const account = authenticated ? login : null;
   const extras = useMorningExtras(view, account, visible);
@@ -219,10 +237,18 @@ export function OverviewPage(props: OverviewPageProps) {
   // PRs closing on GitHub leave the page at once; a refusal brings them back.
   const [closing, setClosing] = useState<ReadonlySet<string>>(new Set());
   const [nudged, setNudged] = useState<ReadonlySet<string>>(new Set());
-  const morning = useMemo(
-    () => morningPage({ model: view, now, login: account ?? '', signals: view.statusOf, rereviewLines: extras.rereviewLines, replies: extras.replies, hidden: closing }),
-    [view, now, account, extras.rereviewLines, extras.replies, closing]
+  const starred = useMemo(
+    () => starredSection({ items: account ? starredItems : [], model: view, now, login: account ?? '', signals: view.statusOf, hidden: closing, excluded }),
+    [starredItems, view, now, account, closing, excluded]
   );
+  const morning = useMemo(
+    () => morningPage({ model: view, now, login: account ?? '', signals: view.statusOf, rereviewLines: extras.rereviewLines, replies: extras.replies, hidden: closing, starred }),
+    [view, now, account, extras.rereviewLines, extras.replies, closing, starred]
+  );
+  // Which PRs are starred, for the row menus' Star and Unstar: one string, so a sync tick that changes no star keeps
+  // the row actions, and with them every memoized row, as they were.
+  const starKey = (queue.starredPrs ?? []).map((entry) => entry.member.url).sort().join(' ');
+  const starredUrls = useMemo(() => new Set(starKey ? starKey.split(' ') : []), [starKey]);
   // The tab title counts Next up and Waiting on you, each PR once (lib/morning.ts, `morningCount`).
   useEffect(() => {
     if (account && !loading) publishOverviewCount(account, morning.count);
@@ -254,11 +280,17 @@ export function OverviewPage(props: OverviewPageProps) {
   // Every row id per section in reading order, and what each row is.
   const { order, refs } = useMemo(() => {
     const refs = new Map<string, RowRef>();
-    const order: Record<Section, string[]> = { next: [], you: [], others: [], decide: [] };
+    const order: Record<Section, string[]> = { starred: [], next: [], you: [], others: [], decide: [] };
     const push = (section: Section, id: string, ref: RowRef) => {
       order[section].push(id);
       refs.set(id, ref);
     };
+    // Starred first: each entry, then a stack's PRs while it is expanded, as it is by default.
+    for (const entry of starredShown(starred, opened)) {
+      push('starred', entry.id, { row: entry.lead.row, members: entry.lines.filter((line) => line.tier !== 'done').map((line) => line.member) });
+      if (entry.kind === 'stack' && !opened.has(entry.id))
+        for (const line of entry.lines) push('starred', `${entry.id}|${line.id}`, { row: line.row, members: line.tier === 'done' ? [] : [line.member] });
+    }
     for (const item of morning.next.items) push('next', item.id, { row: item.row, members: item.row.entries.map((entry) => entry.member).filter((member) => item.urls.includes(member.url)) });
     // The quiet line under Next up is the section's last stop: j/k and Tab reach it like a row.
     if (nextMoreLine(morning.next)) push('next', MORE_UNREVIEWED, { members: [] });
@@ -293,7 +325,7 @@ export function OverviewPage(props: OverviewPageProps) {
       }
     for (const item of allDecisions ? morning.decide : morning.decide.slice(0, DECIDE_SHOWN)) push('decide', item.id, { row: item.row, members: [item.member] });
     return { order, refs };
-  }, [morning, opened, allDecisions]);
+  }, [morning, starred, opened, allDecisions]);
   const latest = useRef({ order, refs });
   latest.current = { order, refs };
   // One roving tab stop per section: the row last focused there, else its first.
@@ -304,16 +336,18 @@ export function OverviewPage(props: OverviewPageProps) {
   };
 
   const root = useRef<HTMLDivElement>(null);
-  const open = useCallback(
-    (row: OverviewRow, target: DeepLinkTarget = row.target) => {
+  /** Opens `target` in a workspace tab, else the item in this window. */
+  const openItem = useCallback(
+    (item: QueueItem, target: DeepLinkTarget) => {
       if (navigation?.openTarget)
         void navigation.openTarget(target).catch((error: unknown) =>
           toast.add({ type: 'error', title: 'Could not open this PR', description: error instanceof Error ? error.message : String(error) })
         );
-      else callbacks.current.onOpenItem(row.item);
+      else callbacks.current.onOpenItem(item);
     },
     [navigation]
   );
+  const open = useCallback((row: OverviewRow, target: DeepLinkTarget = row.target) => openItem(row.item, target), [openItem]);
   const focusRow = useCallback((id: string | undefined) => {
     if (!id) return;
     setCurrent((value) => (value[sectionOf(id)] === id ? value : { ...value, [sectionOf(id)]: id }));
@@ -351,6 +385,8 @@ export function OverviewPage(props: OverviewPageProps) {
   // Groups that hold them open first; then the rows are marked for a moment, scrolled to, and the first is focused.
   const latestMorning = useRef(morning);
   latestMorning.current = morning;
+  const latestStarred = useRef(starred);
+  latestStarred.current = starred;
   const marked = useRef<{ timer: number; ids: string[] }>({ timer: 0, ids: [] });
   const showRows = useCallback(
     (urls: readonly string[], given: { place?: Section; line?: boolean } = {}) => {
@@ -359,8 +395,14 @@ export function OverviewPage(props: OverviewPageProps) {
       const wanted = new Set(urls);
       const page = latestMorning.current;
       const holds = (lines: readonly GroupLine[]) => lines.some((line) => wanted.has(line.id));
+      const stars = latestStarred.current.entries;
       setOpened((value) => {
         const next = new Set(value);
+        // Starred: a collapsed stack that holds them expands, and so does the list when they are past its cap.
+        if (!options.place || options.place === 'starred' || given.line) {
+          for (const entry of stars) if (entry.kind === 'stack' && entry.urls.some((url) => wanted.has(url))) next.delete(entry.id);
+          if (stars.slice(STARRED_SHOWN).some((entry) => entry.urls.some((url) => wanted.has(url)))) next.add(STARRED_MORE);
+        }
         for (const [section, groups] of [['you', page.you], ['others', page.others]] as const) {
           if (options.place && options.place !== section) continue;
           for (const group of groups) {
@@ -389,7 +431,8 @@ export function OverviewPage(props: OverviewPageProps) {
       // After the groups have opened.
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const { order: rows, refs: known } = latest.current;
-        const sections = options.place ? [options.place] : SECTIONS;
+        // A merge count's rows: Next up's and its quiet line, and the starred merges it counts too.
+        const sections: readonly Section[] = given.line ? ['starred', 'next'] : options.place ? [options.place] : SECTIONS;
         let ids = sections.flatMap((section) => rows[section]).filter((id) => {
           if (id === MORE_UNREVIEWED) return !!options.line;
           const ref = known.get(id);
@@ -463,6 +506,8 @@ export function OverviewPage(props: OverviewPageProps) {
     root.current?.querySelector<HTMLElement>(`[data-overview-row="${CSS.escape(entry.id)}"]`)?.focus({ preventScroll: true });
   });
 
+  const starrable = !!props.onStarChange && authenticated;
+  const starBusy = !!props.starBusy;
   const [nudging, setNudging] = useState<PersonGroup | null>(null);
   const [closingPr, setClosingPr] = useState<ReviewMember | null>(null);
   const actions = useMemo<RowActions>(
@@ -491,8 +536,19 @@ export function OverviewPage(props: OverviewPageProps) {
           ),
       keyDown: onRowKeyDown,
       reveal,
+      openItem,
+      ...(starrable
+        ? {
+            star: {
+              has: (members: readonly ReviewMember[]) => members.some((member) => starredUrls.has(member.url)),
+              busy: starBusy,
+              change: (members: readonly ReviewMember[], value: boolean) => callbacks.current.onStarChange?.([...members], value),
+            },
+          }
+        : {}),
     }),
-    [open, snooze, toggle, onRowKeyDown, reveal]
+    // `starredUrls` changes only when a star does, so a sync tick keeps these actions.
+    [open, openItem, snooze, toggle, onRowKeyDown, reveal, starredUrls, starrable, starBusy]
   );
   const confirmClose = useCallback((request: Parameters<typeof window.electronAPI.performPrAction>[0], member: ReviewMember) => {
     setClosingPr(null);
@@ -524,6 +580,7 @@ export function OverviewPage(props: OverviewPageProps) {
   const ready = authenticated && !(loading && !queue.items.length) && !(!queue.items.length && !hasRepositories);
   // Next up counts its rows; the other headings count the PRs they list (lib/morning.ts, "Counts").
   const counts: Counts = {
+    starred: starred.entries.length,
     next: nextCount(morning.next.items),
     you: sectionCount(morning.you),
     others: sectionCount(morning.others),
@@ -565,8 +622,21 @@ export function OverviewPage(props: OverviewPageProps) {
         </div>
       )}
       <div className="morning">
+        {/* Only when something is starred: with no stars, the page starts at Next up. */}
+        {starred.entries.length > 0 && (
+          <MorningSection section="starred" count={counts.starred} empty={null}
+            footer={starred.entries.length > STARRED_SHOWN && (
+              <button type="button" className="overview-tile-all" aria-expanded={opened.has(STARRED_MORE)} data-overview-more="starred" onClick={() => toggle(STARRED_MORE)}>
+                {opened.has(STARRED_MORE) ? 'Show fewer' : `Show all ${starred.entries.length}`}
+              </button>
+            )}>
+            {starredShown(starred, opened).map((entry) => (
+              <StarredRows key={entry.id} entry={entry} now={now} collapsed={opened.has(entry.id)} tabStop={tabStop('starred')} actions={actions} />
+            ))}
+          </MorningSection>
+        )}
         <MorningSection section="next" count={counts.next}
-          empty="Nothing needs you right now."
+          empty={morning.starredHolds.next ? 'Nothing else needs you right now.' : 'Nothing needs you right now.'}
           footer={more && (
             // The rest of the unreviewed merges wait in the queue, grouped by Action at Merge.
             <button type="button" className="morning-more-quiet" data-overview-more-unreviewed data-overview-row={MORE_UNREVIEWED} data-overview-row-item={MORE_UNREVIEWED} tabIndex={tabStop('next') === MORE_UNREVIEWED ? 0 : -1}
@@ -584,10 +654,10 @@ export function OverviewPage(props: OverviewPageProps) {
           footer={counts.you > 0 ? youPointer : null}>
           {morning.you.map((value) => group('you', value))}
         </MorningSection>
-        <MorningSection section="others" count={counts.others} empty="None of your PRs are waiting on anyone.">
+        <MorningSection section="others" count={counts.others} empty={morning.starredHolds.others ? 'None of your other PRs are waiting on anyone.' : 'None of your PRs are waiting on anyone.'}>
           {morning.others.map((value) => group('others', value))}
         </MorningSection>
-        <MorningSection section="decide" count={counts.decide} quiet empty="Nothing to decide. None of your PRs has been stuck for over a week.">
+        <MorningSection section="decide" count={counts.decide} quiet empty={morning.starredHolds.decide ? 'Nothing else to decide.' : 'Nothing to decide. None of your PRs has been stuck for over a week.'}>
           {(allDecisions ? morning.decide : morning.decide.slice(0, DECIDE_SHOWN)).map((item) => (
             <DecisionRow key={item.id} item={item} waited={waitingLabel(item.since, now)} tabStop={tabStop('decide') === item.id} actions={actions} />
           ))}
@@ -664,7 +734,9 @@ export function OverviewPage(props: OverviewPageProps) {
       <RepoNames.Provider value={repoNames}>
         <Viewer.Provider value={account ?? ''}>
           <Unread.Provider value={unreadOf}>
-            <div className="overview-body">{body}</div>
+            <Nudged.Provider value={nudged}>
+              <div className="overview-body">{body}</div>
+            </Nudged.Provider>
           </Unread.Provider>
         </Viewer.Provider>
       </RepoNames.Provider>
@@ -833,6 +905,10 @@ interface RowActions {
   keyDown: (event: ReactKeyboardEvent) => void;
   /** Scrolls to and focuses the rows that list `urls` in `place`: a chain line's "↑ Next up", a stack's next step. */
   reveal: (urls: readonly string[], place: AlsoPlace) => void;
+  /** Opens a PR that has no row in the lanes, such as a quiet or merged starred PR. */
+  openItem: (item: QueueItem, target: DeepLinkTarget) => void;
+  /** Which PRs are starred, and the queue's star toggle. Absent where stars cannot change. */
+  star?: { has: (members: readonly ReviewMember[]) => boolean; busy: boolean; change: (members: readonly ReviewMember[], starred: boolean) => void };
 }
 
 /** The opened ids under a group (itself included), as one key, so a group renders again only when its own change. */
@@ -847,6 +923,8 @@ const useRepoLabel = () => {
   const names = useContext(RepoNames);
   return useCallback((repo: string) => repositoryLabel(names, repo), [names]);
 };
+/** The reminders sent from this page, by key: a starred line's Remind then says "Reminded". */
+const Nudged = createContext<ReadonlySet<string>>(new Set());
 /** The signed-in account: the You group shows its avatar. */
 const Viewer = createContext('');
 /** Whether any of these PRs has unread activity: every PR line's menu enables Mark as read from it. */
@@ -1004,7 +1082,7 @@ function Conflicts({ children = 'Conflicts' }: { children?: ReactNode }) {
  * The number, check and status never truncate; the title truncates first, at its end. A PR's title previews the PR
  * on hover and focus (`PrPreviewTooltip`).
  */
-function RowShell({ id, tabStop, actions, label, title, number, numberLabel, preview, prs: listed, repos, detail, check, comments, status, waited, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, as: Tag = 'li', className = '', icon, onActivate }: {
+function RowShell({ id, tabStop, actions, label, title, number, numberLabel, preview, prs: listed, repos, detail, check, comments, status, waited, meta, quick, menu, menuLabel, description, expanded, depth = 0, isNew = false, unread = false, as: Tag = 'li', className = '', icon, onActivate }: {
   id: string;
   tabStop: boolean;
   actions: RowActions;
@@ -1038,6 +1116,8 @@ function RowShell({ id, tabStop, actions, label, title, number, numberLabel, pre
   /** 1 for a group's PRs, 2 for a stack's chain inside the stacks group. */
   depth?: number;
   isNew?: boolean;
+  /** Unread activity on the PR, as the queue row marks it: the same dot, when the row is not new. */
+  unread?: boolean;
   as?: 'li' | 'div';
   className?: string;
   /** Before the title: the row's icon (`PrIcon`, `GroupIcon`), or a stack chain's node. */
@@ -1079,7 +1159,11 @@ function RowShell({ id, tabStop, actions, label, title, number, numberLabel, pre
   const inner = (trigger: ReactNode) => (
     <div className="morning-row-inner">
       <span className="overview-row-gutter">
-        {isNew && <span className="pr-unread-dot" role="img" aria-label="New since your last visit" title="New since your last visit" />}
+        {isNew ? (
+          <span className="pr-unread-dot" role="img" aria-label="New since your last visit" title="New since your last visit" />
+        ) : unread ? (
+          <span className="pr-unread-dot" role="img" aria-label="Unread activity" title="Unread activity" data-overview-unread />
+        ) : null}
         {expanded !== undefined && <ChevronRight size={14} aria-hidden="true" className="morning-chevron" />}
       </span>
       {icon}
@@ -1217,7 +1301,7 @@ const lineSig = (line: GroupLine, now: number) =>
 const groupSig = (group: PersonGroup, now: number): string =>
   [
     group.key, group.label, group.detail, group.repos.join(), group.check?.label ?? '', group.nudge?.members.length ?? 0, group.step?.text ?? '', group.step?.action ?? '',
-    group.step?.row?.signature ?? '', group.step?.inNext ? 'in-next' : '', group.rows.map((row) => row.signature).join(),
+    group.step?.row?.signature ?? '', group.step?.inNext ? 'in-next' : group.step?.inStarred ? 'in-starred' : '', group.rows.map((row) => row.signature).join(),
     ...group.lines.map((line) => lineSig(line, now)),
     ...(group.chain ?? []).map((node) => `${lineSig(node.line, now)}:${node.also ?? ''}`),
     ...(group.children ?? []).map((child) => groupSig(child, now)),
@@ -1296,7 +1380,7 @@ function LineRow({ id, line, now, depth, tabStop, actions, showRepo, qualify = f
 }
 
 /** The sections above Waiting on others, and the one below it. */
-const ALSO_UP: Readonly<Record<AlsoPlace, boolean>> = { next: true, you: true, decide: false };
+const ALSO_UP: Readonly<Record<AlsoPlace, boolean>> = { starred: true, next: true, you: true, decide: false };
 /**
  * The end of a chain line whose PR another section lists: "↑ Next up", "↓ Needs a decision". It scrolls to that row
  * and focuses it. It is the line's action, so A on the line follows it too.
@@ -1454,10 +1538,11 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions, qualify }:
   const size = stack.chain?.length ?? stack.urls.length;
   const spoken = `Stack ${stackLine(stack, names)}`;
   const stepUrls = step.action === 'review' && step.row ? step.row.entries.map((entry) => entry.member.url) : [step.member.url];
-  const quick = step.inNext ? (
-    <button type="button" className="morning-more-quiet morning-also" {...SHORTCUT} data-overview-also="next" data-overview-next-step
-      title="The next step is a row in Next up · A" onClick={() => actions.reveal(stepUrls, 'next')}>
-      next step in Next up
+  const elsewhere = step.inNext ? 'next' : step.inStarred ? 'starred' : undefined;
+  const quick = elsewhere ? (
+    <button type="button" className="morning-more-quiet morning-also" {...SHORTCUT} data-overview-also={elsewhere} data-overview-next-step
+      title={`The next step is a row in ${PLACE_LABEL[elsewhere]} · A`} onClick={() => actions.reveal(stepUrls, elsewhere)}>
+      next step in {PLACE_LABEL[elsewhere]}
       <ArrowUp size={12} aria-hidden="true" />
     </button>
   ) : step.action === 'merge' && step.row ? (
@@ -1502,7 +1587,7 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions, qualify }:
         icon={<GroupIcon group={stack} />}
         repos={stack.repos}
         detail={
-          step.inNext ? (
+          elsewhere ? (
             prs(size)
           ) : (
             <>
@@ -1514,9 +1599,9 @@ function StackChain({ id, stack, now, open, tabStop, nudged, actions, qualify }:
         }
         quick={quick}
         expanded={expanded}
-        menu={stackMenu(id, stack, actions, unread(stack.lines.map((line) => line.member)), openBase)}
+        menu={stackMenu(id, stack.lines.map((line) => line.member), actions, unread(stack.lines.map((line) => line.member)), openBase, { members: (step.row ?? stack.rows[0]).item.subject.members })}
         menuLabel={`stack ${stack.label}`}
-        description={`${spoken}. ${expanded ? 'Expanded' : 'Collapsed'}. ${step.inNext ? 'The next step is in Next up; A goes there' : what}`}
+        description={`${spoken}. ${expanded ? 'Expanded' : 'Collapsed'}. ${elsewhere ? `The next step is in ${PLACE_LABEL[elsewhere]}; A goes there` : what}`}
         onActivate={() => actions.toggle(id)}
       />
       {expanded && (
@@ -1573,6 +1658,172 @@ const DecisionRow = memo(
     a.item.conflicts === b.item.conflicts && a.item.since === b.item.since && a.waited === b.waited && a.tabStop === b.tabStop && a.actions === b.actions
 );
 
+/** A starred line's one action, in Next up's words. */
+const STARRED_ACTION: Readonly<Record<StarredAction, string>> = { merge: 'Merge', review: 'Review', rereview: 'Review again', reply: 'Reply', rerun: 'Rerun', open: 'Open', nudge: 'Remind' };
+/** The key a starred line's Remind is remembered by once sent: it then says "Reminded". */
+const starredNudgeKey = (line: Pick<StarredLine, 'id'>) => `nudge:starred:${line.id}`;
+/** Where a starred line opens: its lane row's target, else the PR. */
+const openStarred = (line: StarredLine, item: QueueItem, actions: RowActions) => (line.row ? actions.open(line.row, line.target) : actions.openItem(item, line.target));
+
+/** The line's action: Merge, Rerun, or an open in Next up's words. A stack's PRs show theirs on hover and focus. */
+function StarredQuick({ line, item, actions, reveal = false }: { line: StarredLine; item: QueueItem; actions: RowActions; reveal?: boolean }) {
+  const nudged = useContext(Nudged);
+  const { member, row, action } = line;
+  if (!action) return null;
+  if (action === 'merge' && row?.merge) return <MergeAction row={row} actions={actions} />;
+  if (action === 'rerun') return <RerunFailed members={[member]} onChanged={actions.refresh} reveal={reveal} />;
+  if (action === 'nudge' && line.reviewer) {
+    const reviewer = line.reviewer;
+    const key = starredNudgeKey(line);
+    if (nudged.has(key)) return <span className="morning-done">Reminded</span>;
+    return (
+      <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title={`Remind ${reviewer} to review #${member.number}… · A`}
+        onClick={() => actions.nudge({ key, kind: 'person', label: reviewer, detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer, members: [member] } })}>
+        <NudgeIcon size={13} aria-hidden="true" />
+        Remind
+      </Button>
+    );
+  }
+  const words = STARRED_ACTION[action];
+  // An owed line's Review opens the owed review, and says which PR; the line itself opens its own PR.
+  const onAction = () => (line.actionRow ? actions.open(line.actionRow, line.actionTarget) : openStarred(line, item, actions));
+  return (
+    <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title={`${words} #${line.actionNumber ?? member.number} · A`} onClick={onAction}>
+      {words}
+    </Button>
+  );
+}
+/** A starred line read aloud: "Review requested, engine #321, checks passing, waiting 5 days". A draft's why says "Draft". */
+const starredSpoken = (line: StarredLine, repo: string, waited: string) =>
+  [line.why, `${repo} #${line.member.number}`, line.check?.spoken ?? '', extrasSpoken(line.comments, waited)].filter(Boolean).join(', ');
+const starredLineSig = (line: StarredLine, now: number) =>
+  [line.id, line.tier, line.why, line.member.title, line.member.isDraft, line.member.state, line.member.merged, line.check?.label, line.comments, line.since, age(line.since, now), line.isNew, line.action, line.reviewer, line.row?.signature, line.target.kind].join('~');
+const starredSig = (entry: StarredEntry, now: number) =>
+  [entry.id, entry.title, entry.why, entry.tier, entry.check?.label, entry.comments, entry.isNew, entry.lead.id, ...entry.lines.map((line) => starredLineSig(line, now))].join('|');
+
+/**
+ * One starred entry. A PR is one line, as in Next up: its state, number, title, repository, why, check state,
+ * comments, age and one action. A stack is a header with its name, how many PRs and its most actionable PR's state,
+ * then, until it is collapsed, its PRs in merge order on the chain the stacks in Waiting on others use.
+ */
+/**
+ * One starred PR line: a PR entry's own row, or one PR in a starred stack's chain (`chain`), where its action shows on
+ * hover and focus. `star`: what the menu's star toggle acts on, when it is not the PR alone.
+ */
+function StarredLineRow({ id, line, item, now, tabStop, actions, chain = false, lead = false, star }: {
+  id: string;
+  line: StarredLine;
+  item: QueueItem;
+  now: number;
+  tabStop: boolean;
+  actions: RowActions;
+  chain?: boolean;
+  lead?: boolean;
+  star?: { members: readonly ReviewMember[]; starred: boolean };
+}) {
+  const label = useRepoLabel();
+  const unread = useContext(Unread);
+  const { member } = line;
+  const waited = age(line.since, now);
+  const done = line.tier === 'done';
+  const opens = () => openStarred(line, item, actions);
+  return (
+    <RowShell
+      id={id}
+      tabStop={tabStop}
+      actions={actions}
+      depth={chain ? 1 : 0}
+      className={[chain ? 'is-chain' : '', chain && lead ? 'is-next' : '', done ? 'is-done' : ''].filter(Boolean).join(' ')}
+      icon={
+        chain ? (
+          <span className="stack-chain-node" data-overview-icon="pr" aria-hidden="true">
+            <PrStateIcon pr={member} size={14} decorative />
+          </span>
+        ) : (
+          <PrIcon member={member} />
+        )
+      }
+      label={chain ? member.title : `${member.title}\n${line.why}`}
+      title={member.title}
+      number={member.number}
+      preview={{ url: member.url, number: member.number, title: member.title }}
+      prs={[member.url]}
+      repos={chain ? undefined : [member.repo]}
+      detail={line.conflicts ? <Conflicts>{line.why}</Conflicts> : line.why}
+      check={line.check}
+      comments={line.comments}
+      waited={{ since: line.since, source: line.source, label: waited }}
+      quick={<StarredQuick line={line} item={item} actions={actions} reveal={chain} />}
+      menu={prMenu(id, opens, actions, unread([member]), member, [member], undefined, { snooze: !done, ...(star ? { star } : {}) })}
+      menuLabel={`PR #${member.number}`}
+      isNew={!!line.isNew}
+      unread={unread([member])}
+      description={starredSpoken(line, label(member.repo), waited)}
+      onActivate={opens}
+    />
+  );
+}
+
+/**
+ * One starred entry. A PR is one line, as in Next up: its state, number, title, repository, why, check state,
+ * comments, age and one action. A stack is a header with its name, how many PRs and its most actionable PR's state,
+ * then, until it is collapsed, its PRs in merge order on the chain the stacks in Waiting on others use.
+ *
+ * The entry is starred, so its menu always offers Unstar: for a stack, every PR of it, the ones hidden from the page
+ * (snoozed, muted or closing) included, so a stack whose starred PR is hidden can still be unstarred.
+ */
+const StarredRows = memo(
+  function StarredRows({ entry, now, collapsed, tabStop, actions }: { entry: StarredEntry; now: number; collapsed: boolean; tabStop: string | undefined; actions: RowActions }) {
+    const label = useRepoLabel();
+    const unread = useContext(Unread);
+    const { lead, item } = entry;
+    const done = entry.tier === 'done';
+    const subject = item.subject.members;
+    const star = { members: subject, starred: true };
+    if (entry.kind === 'pr') return <StarredLineRow id={entry.id} line={lead} item={item} now={now} tabStop={tabStop === entry.id} actions={actions} star={star} />;
+    const members = entry.lines.map((line) => line.member);
+    const repos = [...new Set(members.map((member) => member.repo))];
+    const expanded = !collapsed;
+    const waited = age(entry.since, now);
+    const spoken = `Stack ${entry.title}, ${reposSpoken(repos, label)}, ${entry.why}`;
+    return (
+      <li className={`morning-stack${expanded ? ' is-expanded' : ''}${done ? ' is-done' : ''}`} data-overview-stack={entry.id}>
+        <RowShell
+          as="div"
+          id={entry.id}
+          tabStop={tabStop === entry.id}
+          actions={actions}
+          className="morning-stack-head"
+          label={`${entry.title}\n${entry.why}`}
+          title={entry.title}
+          icon={<GroupIcon group={{ kind: 'stack', label: entry.title }} />}
+          repos={repos}
+          detail={entry.why}
+          check={entry.check}
+          comments={entry.comments}
+          waited={{ since: entry.since, source: entry.source, label: waited }}
+          quick={<StarredQuick line={lead} item={item} actions={actions} />}
+          expanded={expanded}
+          menu={stackMenu(entry.id, members, actions, unread(members), () => openStarred(lead, item, actions), { snooze: !done, members: subject, starred: true })}
+          menuLabel={`stack ${entry.title}`}
+          unread={!expanded && unread(members)}
+          description={`${spoken}${entry.check ? `, ${entry.check.spoken}` : ''}, waiting ${spokenWaiting(waited)}. ${expanded ? 'Expanded' : 'Collapsed'}`}
+          onActivate={() => actions.toggle(entry.id)}
+        />
+        {expanded && (
+          <ul className="morning-chain" aria-label={spoken}>
+            {entry.lines.map((line) => {
+              const id = `${entry.id}|${line.id}`;
+              return <StarredLineRow key={id} id={id} line={line} item={item} now={now} tabStop={tabStop === id} actions={actions} chain lead={line === lead} />;
+            })}
+          </ul>
+        )}
+      </li>
+    );
+  },
+  (a, b) => starredSig(a.entry, a.now) === starredSig(b.entry, b.now) && a.collapsed === b.collapsed && a.tabStop === b.tabStop && a.actions === b.actions
+);
+
 declare global {
   interface Window {
     /** Browser checks count Overview row renders when `__countRenders` is set. */
@@ -1587,12 +1838,14 @@ const menuFor = (row: OverviewRow) => (row.kind === 'stack' ? `stack ${row.title
  * The menu every PR row shares: open, snooze, mark read, copy, Open on GitHub. `members`: the PRs the row stands for,
  * which Snooze and Mark as read act on; one PR's row says "Snooze PR…", a row for several of a stack "Snooze stack…".
  */
-function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boolean, member: ReviewMember, members: readonly ReviewMember[], target?: DeepLinkTarget): EntryActionGroups {
+function prMenu(id: string, row: OverviewRow | (() => void), actions: RowActions, unread: boolean, member: ReviewMember, members: readonly ReviewMember[], target?: DeepLinkTarget, options: { snooze?: boolean; star?: { members: readonly ReviewMember[]; starred: boolean } } = {}): EntryActionGroups {
+  const open = typeof row === 'function' ? row : () => actions.open(row, target);
   return [
-    [{ label: 'Open', run: () => actions.open(row, target) }],
+    [{ label: 'Open', run: open }],
     [
-      { label: members.length > 1 ? 'Snooze stack…' : 'Snooze PR…', run: () => actions.snooze(id) },
+      ...(options.snooze === false ? [] : [{ label: members.length > 1 ? 'Snooze stack…' : 'Snooze PR…', run: () => actions.snooze(id) }]),
       { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(members.map((entry) => entry.url)) },
+      ...(options.star ? starItem(actions, options.star.members, options.star.starred) : starItem(actions, members)),
     ],
     [
       { label: 'Copy link', run: () => actions.copy(member.url, 'Link') },
@@ -1602,13 +1855,23 @@ function prMenu(id: string, row: OverviewRow, actions: RowActions, unread: boole
     [{ label: 'Open on GitHub', run: () => void window.electronAPI.openExternal(member.url) }],
   ];
 }
-/** A stack header's menu: the stack's part of `prMenu` (open its base, snooze the stack, mark it read). */
-function stackMenu(id: string, stack: PersonGroup, actions: RowActions, unread: boolean, open: () => void): EntryActionGroups {
+/**
+ * The queue's star toggle, in the queue's words (`prEntryActionGroups`): "Star PR #312" and "Unstar PR #312", and for
+ * a stack "Star all PRs in this stack" and "Unstar PRs in this stack". Unstarring a stack unstars every PR of it.
+ */
+function starItem(actions: RowActions, members: readonly ReviewMember[], starred?: boolean): EntryActionGroups[number] {
+  const star = actions.star;
+  if (!star || !members.length) return [];
+  return [starAction({ members, starred: starred ?? star.has(members), busy: star.busy, onStarChange: star.change })];
+}
+/** A stack header's menu: the stack's part of `prMenu` (open its base, snooze the stack, mark it read, star it). */
+function stackMenu(id: string, listed: readonly ReviewMember[], actions: RowActions, unread: boolean, open: () => void, options: { snooze?: boolean; members?: readonly ReviewMember[]; starred?: boolean } = {}): EntryActionGroups {
   return [
     [{ label: 'Open', run: open }],
     [
-      { label: 'Snooze stack…', run: () => actions.snooze(id) },
-      { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(stack.lines.map((line) => line.member.url)) },
+      ...(options.snooze === false ? [] : [{ label: 'Snooze stack…', run: () => actions.snooze(id) }]),
+      { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(listed.map((member) => member.url)) },
+      ...starItem(actions, options.members ?? listed, options.starred),
     ],
   ];
 }

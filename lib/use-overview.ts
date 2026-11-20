@@ -4,6 +4,7 @@ import { useOverviewStatus } from './use-queue-signals';
 import { statusFreshness, type StatusFreshness } from './overview-freshness';
 import { queueSignalKey } from './queue-signals';
 import { useStatusNow } from './status-clock';
+import { starredStatusRequests } from './overview-starred';
 import type { QueueItem, ReviewMember } from './workbench';
 import type { QueueSignals } from './queue-signals';
 
@@ -19,7 +20,7 @@ export interface OverviewView extends OverviewModel {
   statusOf: (member: Pick<ReviewMember, 'url'>) => QueueSignals | undefined;
 }
 
-/** At most this many PRs are read for status: twelve 25-PR batches. Your own PRs come first. */
+/** At most this many PRs are read for status: twelve 25-PR batches. Starred PRs come first, then your own. */
 const SIGNAL_LIMIT = 300;
 
 function readVisit(key: string | null): OverviewVisit | undefined {
@@ -49,6 +50,8 @@ function saveVisit(key: string, visit: OverviewVisit) {
  */
 export function useOverview(input: {
   items: readonly QueueItem[];
+  /** The starred entries: the Starred section shows their status, merged and closed ones aside. */
+  starred?: readonly QueueItem[];
   login: string | null;
   /** The status store scope: the signed-in account. */
   scope: string | null;
@@ -59,11 +62,13 @@ export function useOverview(input: {
   teamRequests?: boolean;
   excluded?: ReadonlySet<string>;
 }): OverviewView {
-  const { items, login, scope, live, visible, ready, teamRequests, excluded } = input;
-  const requests = useMemo(
-    () => (login ? overviewStatusRequests(items, login, { teamRequests, excluded }).slice(0, SIGNAL_LIMIT) : []),
-    [items, login, teamRequests, excluded]
-  );
+  const { items, starred, login, scope, live, visible, ready, teamRequests, excluded } = input;
+  const requests = useMemo(() => {
+    if (!login) return [];
+    const stars = starredStatusRequests(starred ?? [], excluded);
+    const listed = new Set(stars.map((request) => request.url));
+    return [...stars, ...overviewStatusRequests(items, login, { teamRequests, excluded }).filter((request) => !listed.has(request.url))].slice(0, SIGNAL_LIMIT);
+  }, [items, starred, login, teamRequests, excluded]);
   // Visible priority while the Overview is the shown tab; background while it only resolves the queue's lane filter.
   const { values, checking, pending } = useOverviewStatus(scope, requests, live && !!login, visible);
   // The clock ticks only while the lanes are shown or kept current. HomePage calls this hook for Group by Action; with the
