@@ -53,6 +53,7 @@ yarn-error.log*
 /.impeccable/critique/
 
 /resources/mergiraf/runtime/
+/resources/.mergiraf-runtime.tmp-*
 
 # browser extension build output
 /dist-extension/
