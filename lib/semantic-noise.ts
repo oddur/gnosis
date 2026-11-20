@@ -1045,6 +1045,8 @@ export function classifyBlocks(
   } finally {
     try {
       trees?.(oldTree, newTree);
+    } catch {
+      // The trees' reader fails on its own (moved symbols mark the file): the classification above still stands.
     } finally {
       oldTree?.delete();
       newTree?.delete();

@@ -15,7 +15,7 @@ import {
 } from '../lib/syntax-contents';
 import { inspectionRank, type InspectionMode, type PrChangeFile, type PrFileSide } from '../lib/pr-changes';
 import { createPrFileCache } from '../lib/pr-file-cache';
-import { createParseQueue, higherPriority, type ParseJob, type SyntaxPriority } from '../lib/syntax-parse-queue';
+import { createFollowers, createParseQueue, higherPriority, type ParseJob, type SyntaxPriority } from '../lib/syntax-parse-queue';
 import {
   DEFAULT_CODE_INTELLIGENCE,
   codeIntelligenceSettings,
@@ -600,4 +600,44 @@ void test('A parse queued again under its key returns the one it replaced, so it
   assert.equal(queue.add({ key: 'a', priority: 'prefetch', side: 'symbols', id: 1 }), undefined);
   assert.equal(queue.add({ key: 'a', priority: 'view', side: 'symbols', id: 2 })?.id, 1);
   assert.equal(queue.size, 1);
+});
+
+void test('A replaced request hears the answer of the job that replaced it, not an older running one’s (#398)', () => {
+  const followers = createFollowers();
+  // Job 1 runs under key k; job 2 queues under k, then job 3 replaces job 2.
+  followers.replace(3, 2);
+  assert.deepEqual(followers.answer(1), [1], 'The running job answers only its own request');
+  assert.deepEqual(followers.answer(3), [3, 2], 'Job 3 answers job 2’s request too');
+  // A chain: 5 replaced 4, 6 replaced 5.
+  followers.replace(5, 4);
+  followers.replace(6, 5);
+  assert.deepEqual(followers.answer(6), [6, 5, 4]);
+  // A job taken to the other worker takes its followers; a running job keeps its own.
+  followers.replace(8, 7);
+  assert.deepEqual(followers.drop(9), [], 'Nothing to drop for a job that replaced none');
+  assert.deepEqual(followers.drop(8), [7]);
+  assert.equal(followers.size, 0);
+});
+
+void test('Failures say what ended them: a scope cap is not a moves read’s budget, and tries that ran out may pass (#398)', async () => {
+  const { scheduler, job, finish } = harness({ perPr: 1, concurrency: 1, retryMs: [] });
+  const heard: string[] = [];
+  scheduler.onFailure((key, _failure, cause) => heard.push(`${key}:${cause}`));
+  // The scope cap refuses a scope read: that is not the moves read's concern.
+  scheduler.prefetch('scopes', [job('s1'), job('s2')]);
+  await finish('s1');
+  assert.deepEqual(heard, ['s2:cap']);
+  // A moves read past its own budget is.
+  const budget = { name: 'moves:head', limit: 1 };
+  scheduler.prefetch('moves', [job('m1', { budget }), job('m2', { budget })], 1);
+  await finish('m1');
+  assert.ok(heard.includes('m2:budget'), heard.join(','));
+  // A read that fails for a reason that can pass, out of tries: retries, not content.
+  scheduler.prefetch('more', [job('m3', { budget: { name: 'moves:other', limit: 5 } })], 1);
+  await finish('m3', new Error('socket hang up'));
+  assert.ok(heard.includes('m3:retries'), heard.join(','));
+  // A file that is not text: content.
+  scheduler.prefetch('binary', [job('m4', { budget: { name: 'moves:other', limit: 5 } })], 1);
+  await finish('m4', new Error('This binary file has no text preview'));
+  assert.ok(heard.includes('m4:content'), heard.join(','));
 });

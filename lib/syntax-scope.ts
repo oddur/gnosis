@@ -707,6 +707,7 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       if (!parser) throw Error('The parser did not start');
       parser.setLanguage(language);
       let symbols: FilePrints | undefined;
+      let symbolsError: string | undefined;
       const blocks = classifyNoise(
         { parse: (text, previous) => parse(text, previous) },
         id,
@@ -714,18 +715,25 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
         hunks,
         withSymbols
           ? (texts, beforeTree, afterTree) => {
-              if (!beforeTree || !afterTree) return;
-              const sides = symbolSidesOf(texts);
-              const before = sideCandidatesOf(beforeTree, sides.before, query, id),
-                now = sideCandidatesOf(afterTree, sides.after, query, id);
-              symbols = { before: placeBefore(before.prints, sides.at), after: now.prints };
-              if (before.capped || now.capped) symbols.capped = true;
+              try {
+                if (!beforeTree || !afterTree) throw Error('The file did not parse');
+                const sides = symbolSidesOf(texts);
+                const before = sideCandidatesOf(beforeTree, sides.before, query, id),
+                  now = sideCandidatesOf(afterTree, sides.after, query, id);
+                const found: FilePrints = { before: placeBefore(before.prints, sides.at), after: now.prints };
+                if (before.capped || now.capped) found.capped = true;
+                symbols = found;
+              } catch (error) {
+                // Only the symbols fail: the comparison's blocks are returned all the same.
+                symbolsError = error instanceof Error ? error.message : String(error);
+              }
             }
           : undefined
       );
       // No change blocks: nothing parsed, and nothing moved.
       if (withSymbols && !symbols && !blocks.length) symbols = { before: [], after: [] };
-      return { blocks, symbols, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+      if (withSymbols && !symbols) symbolsError ??= 'The file does not match its diff';
+      return { blocks, symbols, symbolsError, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
     },
     /**
      * Moved and renamed symbols (lib/moved-symbols.ts): the fingerprints of a file's candidates, the definitions most
@@ -868,6 +876,8 @@ export interface NoiseResult {
   blocks: NoiseBlock[];
   /** The file's moved-symbol candidates, when asked for and the hunks match the text. */
   symbols?: FilePrints;
+  /** Why the candidates were asked for and not found; the blocks stand regardless. */
+  symbolsError?: string;
   /** Milliseconds parsing both sides and comparing them; `load` is grammar loading, when this call loaded it. */
   classify: number;
   load?: number;

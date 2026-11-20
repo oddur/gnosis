@@ -80,3 +80,34 @@ export function createParseQueue<T extends ParseJob>() {
     },
   };
 }
+
+/**
+ * Requests whose queued job a newer one with the same key replaced, by the replacing job's id: each hears the answer
+ * of the job that replaced it (and of whatever replaced that), never an older job's that happened to share the key and
+ * was already running.
+ */
+export function createFollowers() {
+  const byJob = new Map<number, number[]>();
+  return {
+    /** Job `next` replaced the waiting job `replaced`: its request, and those it had replaced, follow `next`. */
+    replace(next: number, replaced: number) {
+      byJob.set(next, [...(byJob.get(next) ?? []), replaced, ...(byJob.get(replaced) ?? [])]);
+      byJob.delete(replaced);
+    },
+    /** The requests a job's answer goes to: its own, then those it replaced. They leave. */
+    answer(job: number): number[] {
+      const ids = [job, ...(byJob.get(job) ?? [])];
+      byJob.delete(job);
+      return ids;
+    },
+    /** The requests a job replaced, which leave with it (a job taken to the other worker). */
+    drop(job: number): number[] {
+      const ids = byJob.get(job) ?? [];
+      byJob.delete(job);
+      return ids;
+    },
+    get size() {
+      return byJob.size;
+    },
+  };
+}

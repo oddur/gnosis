@@ -16,7 +16,7 @@ import {
   type MovesResult,
   type SymbolMove,
 } from '../lib/moved-symbols';
-import { patchHunks } from '../lib/semantic-noise';
+import { classifyNoise, patchHunks } from '../lib/semantic-noise';
 import { wholeFileText } from '../lib/syntax-contents';
 import { movesFilePlan } from '../lib/moved-symbols-plan';
 import type { PrChangeFile, PrFileContents } from '../lib/pr-changes';
@@ -656,5 +656,25 @@ void describe('moved symbols: the browser fixtures', () => {
     assert.equal(result.capped, false);
     // Bounded: the match is a small part of the work, and well under a frame's budget per file.
     assertPerf('moved symbols: matching the large PR', result.ms, 250);
+  });
+});
+
+void describe('moved symbols: third review', () => {
+  void test('a failure reading the trees for symbols leaves the noise classification as it is', async () => {
+    await engine.warm('typescript');
+    const language = await TreeSitter.Language.load(await fs.readFile(path.join(assets, 'typescript.wasm')));
+    const parser = new TreeSitter.Parser();
+    parser.setLanguage(language);
+    const noiseParser = { parse: (value: string, previous?: TreeSitter.Tree | null) => parser.parse(value, previous) };
+    const before = text(['export const a = 1;', 'export function f() {', '  return  1;', '}']);
+    const after = text(['export const a = 1;', 'export function f() {', '  return 1;', '}']);
+    const hunks = hunksOf(before, after);
+    const plain = classifyNoise(noiseParser, 'typescript', after, hunks);
+    const failing = classifyNoise(noiseParser, 'typescript', after, hunks, () => {
+      throw Error('symbols failed');
+    });
+    assert.deepEqual(failing, plain);
+    assert.equal(plain[0].kind, 'whitespace');
+    parser.delete();
   });
 });

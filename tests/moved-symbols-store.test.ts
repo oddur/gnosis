@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createMovesStore, MOVES_MAX_FILES, MOVES_PR_ENTRIES, type MovesWorker } from '../lib/moved-symbols-core';
-import { movesFilePlan } from '../lib/moved-symbols-plan';
+import { currentChanges, movesFilePlan } from '../lib/moved-symbols-plan';
 import { moveEditsLabel, moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
 import {
   moveEdits,
@@ -154,7 +154,7 @@ async function answer(reads: ReturnType<typeof fakeWorker>['reads']) {
 void test('A PR tracked again after it left shows each note once', async () => {
   const { worker, reads } = fakeWorker();
   let clock = 0;
-  const store = createMovesStore(worker, () => ++clock);
+  const store = createMovesStore(worker, () => ++clock, { idleMs: 0 });
   const pr = snapshot(1);
   const { to } = trackPair(store, pr);
   await answer(reads);
@@ -171,7 +171,7 @@ void test('A PR tracked again after it left shows each note once', async () => {
 void test('PRs leave least recently used first, and a PR still waiting for files is kept while used', async () => {
   const { worker, reads } = fakeWorker();
   let clock = 0;
-  const store = createMovesStore(worker, () => ++clock);
+  const store = createMovesStore(worker, () => ++clock, { idleMs: 0 });
   const waitingPr = snapshot(1);
   const { to } = trackPair(store, waitingPr);
   // Many files of other PRs, more than any file limit would hold; the waiting PR is used again in between.
@@ -289,7 +289,7 @@ void test('Only lines the body diff matched dim: a comment line added in the mov
 void test('A shown PR is the last to leave, and one that left while shown can be tracked again', async () => {
   const { worker, reads } = fakeWorker();
   let clock = 0;
-  const store = createMovesStore(worker, () => ++clock);
+  const store = createMovesStore(worker, () => ++clock, { idleMs: 0 });
   const shown = snapshot(1);
   const { to } = trackPair(store, shown);
   await answer(reads);
@@ -298,9 +298,7 @@ void test('A shown PR is the last to leave, and one that left while shown can be
     // A mounted diff reads its marks on every render.
     assert.equal(store.peek(keyOf(shown, to))?.marks.length, 1, `Still shown after PR ${n}`);
   }
-  const drops = store.drops();
-  store.forget(new Set([shown.url]));
-  assert.ok(store.drops() > drops, 'A drop is counted, so a view that shows the PR tracks it again');
+  assert.equal(store.evictions([shown.url]), 0, 'Never evicted while shown');
 });
 
 void test('New Settings or another file list plan the PR again', () => {
@@ -407,4 +405,46 @@ void test('A subscription told at once (a hidden window) still hears the next ch
   emit();
   assert.equal(heard, 3);
   stop();
+});
+
+// ── Third review ────────────────────────────────────────────────────────────
+
+void test('One call tracking more PRs than the store keeps evicts none of them, and views do not evict each other in turn', () => {
+  const { worker } = fakeWorker();
+  let clock = 0;
+  const store = createMovesStore(worker, () => clock);
+  // A large stack: more revisions than the store keeps, all in one call.
+  const stack = Array.from({ length: MOVES_PR_ENTRIES + 6 }, (_, i) => ({
+    snapshot: snapshot(i + 1),
+    file: added('src/a.ts'),
+  }));
+  store.track(stack, allowed, nothing);
+  assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES + 6, 'None of them left');
+  // Another view tracks its PR right away: the stack's PRs were just used, so none leaves for it.
+  store.track([{ snapshot: snapshot(100), file: added('src/a.ts') }], allowed, nothing);
+  const urls = stack.map((entry) => entry.snapshot.url);
+  assert.equal(store.evictions(urls), 0, 'The stack is not told to track again');
+  // Long after, idle PRs make room, and only the evicted PR's views hear of it.
+  clock += 60_000;
+  store.track([{ snapshot: snapshot(101), file: added('src/a.ts') }], allowed, nothing);
+  assert.equal(store.stats().prs.length, MOVES_PR_ENTRIES);
+  assert.ok(store.evictions(urls) > 0);
+  assert.equal(store.evictions(['https://github.com/a/b/pull/101']), 0);
+});
+
+void test('Only the member’s current file list counts: an older head’s is read again', () => {
+  const member = { url: 'https://github.com/a/b/pull/1', baseSha: 'base', headSha: 'head-2' };
+  assert.equal(
+    currentChanges(member, () => snapshot(1, 'head-1')),
+    undefined
+  );
+  assert.ok(currentChanges(member, () => snapshot(1, 'head-2')));
+  const otherBase = {
+    ...snapshot(1, 'head-2'),
+    metadata: { baseSha: 'base-0', headSha: 'head-2' },
+  } as unknown as PrChanges;
+  assert.equal(
+    currentChanges(member, () => otherBase),
+    undefined
+  );
 });

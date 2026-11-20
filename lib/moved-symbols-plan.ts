@@ -1,4 +1,4 @@
-import type { PrChangeFile, PrChanges } from './pr-changes';
+import type { InspectionRevision, PrChangeFile, PrChanges } from './pr-changes';
 import { syntaxLanguage, type SyntaxLanguage } from './syntax-scope';
 import { patchMayMove } from './moved-symbols';
 import { pathFileKinds } from './file-kinds';
@@ -48,4 +48,18 @@ export function movesFilePlan(
   if (!file.patch && file.status !== 'added' && file.status !== 'deleted')
     return { language, readable: false, reason: 'no-patch' };
   return { language, readable: true };
+}
+
+/**
+ * A PR member's file list for moved symbols, only when it is for the member's current base and head. The inspection
+ * cache falls back to an older head's list; tracking that would name lines that moved, and never read the current one.
+ */
+export function currentChanges(
+  member: InspectionRevision,
+  peek: (member: InspectionRevision) => PrChanges | undefined
+): PrChanges | undefined {
+  const snapshot = peek(member);
+  return snapshot && snapshot.metadata.headSha === member.headSha && snapshot.metadata.baseSha === member.baseSha
+    ? snapshot
+    : undefined;
 }

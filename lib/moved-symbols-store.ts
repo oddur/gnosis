@@ -18,7 +18,7 @@ export const onMoves: typeof store.onMoves = (listener) => store.onMoves(listene
 export const movesRevision = () => store.revision();
 export const peekFileMoves: typeof store.peek = (fileKey) => store.peek(fileKey);
 export const failMovesKey: typeof store.failKey = (key, reason) => store.failKey(key, reason);
-export const movesDrops = () => store.drops();
+export const movesEvictions = (urls: readonly string[]) => store.evictions(urls);
 
 onInspectionForget((urls) => store.forget(urls));
 onInspectionUses((into) => store.uses(into));

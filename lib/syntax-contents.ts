@@ -51,6 +51,13 @@ export interface SyntaxContentsFailure {
   message: string;
   retryable: boolean;
 }
+/**
+ * What ended a read, for listeners (`onFailure`): the file's contents cannot be read (`content`: too large, binary,
+ * missing), its job's own budget was spent (`budget`), the PR's scope cap was (`cap`), or tries that could pass ran out
+ * (`retries`), which a later read may still overcome.
+ */
+export type SyntaxContentsFailureCause = 'content' | 'budget' | 'cap' | 'retries';
+type FailureListener = (key: string, failure: SyntaxContentsFailure, cause: SyntaxContentsFailureCause, job: SyntaxContentsJob) => void;
 /** One read, for the diagnostics export: how long it waited and ran, how many tries it took, and how it ended. */
 export interface SyntaxContentsRead {
   key: string;
@@ -261,6 +268,13 @@ export function createSyntaxContentsScheduler({
     if (tooLarge(job)) return { message: 'This file is too large to show its structure.', retryable: false };
     if (capped(job, waited)) return { message: 'This PR read as many files for structure as it may.', retryable: false };
   };
+  /** Why `refusal` refused, in the order it checks. */
+  const refusalCause = (job: SyntaxContentsJob, waited = false): SyntaxContentsFailureCause => {
+    const known = failed.get(job.key);
+    if (known) return known.retryable ? 'retries' : 'content';
+    if (tooLarge(job)) return 'content';
+    return job.budget && !waited ? 'budget' : 'cap';
+  };
   function drop(key: string, entry: Entry) {
     if (entries.get(key) !== entry) return;
     entries.delete(key);
@@ -322,15 +336,15 @@ export function createSyntaxContentsScheduler({
     return prefetch;
   }
   /** Hear of every read that is refused or fails for good, whoever asked: moved symbols mark the file's family. */
-  const failureListeners = new Set<(key: string, failure: SyntaxContentsFailure) => void>();
-  const told = (key: string, failure: SyntaxContentsFailure) => {
-    for (const listener of failureListeners) listener(key, failure);
+  const failureListeners = new Set<FailureListener>();
+  const told = (key: string, failure: SyntaxContentsFailure, cause: SyntaxContentsFailureCause, job: SyntaxContentsJob) => {
+    for (const listener of failureListeners) listener(key, failure, cause, job);
   };
   function fail(key: string, entry: Entry, failure: SyntaxContentsFailure) {
     failed.set(key, { pr: entry.job.pr, ...failure });
     used.set(entry.job.pr, now());
     for (const onFail of entry.waiters.values()) onFail?.(failure);
-    told(key, failure);
+    told(key, failure, failure.retryable ? 'retries' : 'content', entry.job);
   }
   function pump() {
     if (now() < pausedUntil) {
@@ -346,7 +360,7 @@ export function createSyntaxContentsScheduler({
       if (refused) {
         drop(key, entry);
         for (const onFail of entry.waiters.values()) onFail?.(refused);
-        told(key, refused);
+        told(key, refused, refusalCause(job, entry.waiters.size > 0), job);
         continue;
       }
       if (job.ready?.()) {
@@ -495,7 +509,7 @@ export function createSyntaxContentsScheduler({
       jobs.forEach((job, index) => {
         const entry = entryFor(job);
         if (!isEntry(entry)) {
-          told(job.key, entry);
+          told(job.key, entry, refusalCause(job), job);
           return;
         }
         if (keys.has(job.key)) return;
@@ -540,7 +554,7 @@ export function createSyntaxContentsScheduler({
       if (!value) pump();
     },
     /** Tells `listener` of each read refused or failed for good, by key; the return stops it. */
-    onFailure(listener: (key: string, failure: SyntaxContentsFailure) => void): () => void {
+    onFailure(listener: FailureListener): () => void {
       failureListeners.add(listener);
       return () => failureListeners.delete(listener);
     },

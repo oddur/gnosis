@@ -28,12 +28,14 @@ import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import {
   MOVES_MAX_FILES,
   failMovesKey,
-  movesDrops,
+  movesEvictions,
   noteMovesFailure,
   noteMovesText,
   onMoves,
   trackMoves,
 } from './moved-symbols-store';
+/** The moves reads' budgets, one per head: `moves:<head>`. */
+const MOVES_BUDGET = 'moves:';
 /** Reads for moved symbols per PR, apart from the reads scopes may make (`SYNTAX_CONTENTS_PER_PR`). */
 const MOVES_READS = MOVES_MAX_FILES;
 /**
@@ -48,9 +50,12 @@ export const syntaxContents = createSyntaxContentsScheduler();
 // still hold is swept when idle.
 onInspectionForget((urls) => syntaxContents.forget(urls));
 onInspectionUses((into) => syntaxContents.lastUses(into));
-// A read refused (too large, past a cap) or failed for good leaves its file unread: its moved-symbol family is not
-// matched, rather than waiting for it forever (#398).
-syntaxContents.onFailure((key, failure) => failMovesKey(key, failure.message));
+// A file whose contents cannot be read, or whose moves read its own budget refused, leaves its moved-symbol family
+// unmatched rather than waiting for it forever (#398). Another job's refusal (the scope cap, a view, the predicted next
+// PR) says nothing about the moves read, and tries that ran out may still pass on a later read.
+syntaxContents.onFailure((key, failure, cause, job) => {
+  if (cause === 'content' || (cause === 'budget' && job.budget?.name.startsWith(MOVES_BUDGET))) failMovesKey(key, failure.message);
+});
 // Each read's tier, wait, run time, tries and outcome, so an export shows why breadcrumbs came late.
 addDiagnosticsSource('syntaxContents', () => syntaxContentsDiagnostics(syntaxContents.stats()));
 
@@ -317,8 +322,9 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
     },
     () => epoch
   );
-  // A PR that left the store while still shown is tracked again.
-  const dropped = useSyncExternalStore(onMoves, movesDrops);
+  // A PR of these files that left the store to make room is tracked again; other PRs leaving re-run nothing.
+  const urls = [...new Set(files.map((file) => file.snapshot.url))];
+  const dropped = useSyncExternalStore(onMoves, () => movesEvictions(urls));
   useEffect(() => {
     if (!settings.enabled || !files.length) return;
     const enabled = (path: string) => pathEnabled(settings, path);
@@ -333,7 +339,7 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
       const entry = byKey.get(`${snapshot.url}\u0000${file.path}`);
       if (!entry) return [];
       // A budget per head: a force-push starts afresh.
-      const budget = { name: `moves:${snapshot.metadata.headSha}`, limit: MOVES_READS };
+      const budget = { name: `${MOVES_BUDGET}${snapshot.metadata.headSha}`, limit: MOVES_READS };
       const plan = syntaxContentsPlan(snapshot, file, enabled);
       if (plan) return [{ ...syntaxContentsJob(entry, plan), budget }];
       // An added or deleted file without a patch has no scope read: it is read whole, through the same queue.

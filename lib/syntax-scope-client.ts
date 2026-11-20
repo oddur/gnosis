@@ -103,7 +103,7 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
           entry.reject(Error(response.error));
         }
         else if ('noise' in response) {
-          (entry.resolve as (value: Comparison) => void)({ blocks: response.noise, symbols: response.symbols });
+          (entry.resolve as (value: Comparison) => void)({ blocks: response.noise, symbols: response.symbols, symbolsError: response.symbolsError });
           noiseTimings.get(response.id)?.(response.timing);
         } else if ('symbols' in response) {
           (entry.resolve as (value: FilePrints) => void)(response.symbols);
@@ -341,8 +341,10 @@ type NoiseHunks = Extract<SyntaxRequest, { type: 'noise' }>['hunks'];
 interface Comparison {
   blocks: NoiseBlock[];
   symbols?: FilePrints;
+  /** Why candidates asked for are absent: the blocks stand regardless. */
+  symbolsError?: string;
 }
-const noiseMemo = new Map<string, { url: string; blocks: NoiseBlock[]; symbols?: FilePrints; at: number }>();
+const noiseMemo = new Map<string, { url: string; blocks: NoiseBlock[]; symbols?: FilePrints; symbolsError?: string; at: number }>();
 const noisePending = new Map<string, { url: string; promise: Promise<Comparison>; priority: SyntaxPriority; lane: Lane; symbols: boolean }>();
 /** The newest whole-file comparison of each file revision, for views that list files (the file tree, the stats). */
 const noiseByFile = new Map<string, { url: string; blocks: NoiseBlock[] }>();
@@ -399,9 +401,9 @@ function compare(request: NoiseRequest): Promise<Comparison> {
   const key = noiseKey(request.fileKey, request.hunks);
   const symbols = !!request.whole;
   const known = noiseMemo.get(key);
-  if (known && (!symbols || known.symbols)) {
+  if (known && (!symbols || known.symbols || known.symbolsError)) {
     known.at = Date.now();
-    return Promise.resolve({ blocks: known.blocks, symbols: known.symbols });
+    return Promise.resolve({ blocks: known.blocks, symbols: known.symbols, symbolsError: known.symbolsError });
   }
   if (request.text.length > NOISE_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));
   const priority = request.priority ?? 'view';
@@ -458,10 +460,10 @@ function compare(request: NoiseRequest): Promise<Comparison> {
   );
   noisePending.set(key, { url: request.url, promise, priority, lane, symbols });
   void promise.then(
-    ({ blocks, symbols: prints }) => {
+    ({ blocks, symbols: prints, symbolsError }) => {
       if (noisePending.get(key)?.promise !== promise) return;
       noisePending.delete(key);
-      noiseMemo.set(key, { url: request.url, blocks, symbols: prints, at: Date.now() });
+      noiseMemo.set(key, { url: request.url, blocks, symbols: prints, symbolsError, at: Date.now() });
       for (const old of noiseMemo.keys()) {
         if (noiseMemo.size <= MEMO_ENTRIES) break;
         noiseMemo.delete(old);
@@ -536,9 +538,12 @@ export function readSymbols(request: {
     const key = noiseKey(request.fileKey, input.hunks);
     const known = noiseMemo.get(key);
     if (known?.symbols) return Promise.resolve(known.symbols);
+    if (known?.symbolsError) return Promise.reject(Error(known.symbolsError));
     const pending = noisePending.get(key);
     if (pending?.symbols)
-      return pending.promise.then((comparison) => comparison.symbols ?? Promise.reject(Error('The file does not match its diff')));
+      return pending.promise.then(
+        (comparison) => comparison.symbols ?? Promise.reject(Error(comparison.symbolsError ?? 'The file does not match its diff'))
+      );
   }
   if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
   if (input.text.length > SYMBOLS_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));

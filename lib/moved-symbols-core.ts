@@ -130,7 +130,17 @@ export function movesInput(
   return hunks ? { mode: 'modified', text: after.content, hunks } : null;
 }
 
-export function createMovesStore(worker: MovesWorker, now: () => number = Date.now) {
+/**
+ * A PR used this recently never leaves to make room: past `MOVES_PR_ENTRIES` the store holds more for a while, so
+ * views that show many PRs at once (a large stack) never evict each other's in turn.
+ */
+export const MOVES_PR_IDLE_MS = 30_000;
+
+export function createMovesStore(
+  worker: MovesWorker,
+  now: () => number = Date.now,
+  { idleMs = MOVES_PR_IDLE_MS }: { idleMs?: number } = {}
+) {
   const prs = new Map<string, PrState>();
   /** Each tracked file revision's PR revision. */
   const byKey = new Map<string, string>();
@@ -141,11 +151,11 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     for (const listener of listeners) listener();
   };
 
-  let drops = 0;
+  /** PRs that left to make room, by URL: a view that shows one tracks it again (`evictions`). */
+  const evicted = new Map<string, number>();
   function drop(revision: string) {
     const pr = prs.get(revision);
     if (!pr) return false;
-    drops++;
     prs.delete(revision);
     for (const key of pr.files.keys()) if (byKey.get(key) === revision) byKey.delete(key);
     return true;
@@ -319,7 +329,8 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
       return marksOf(pr, fileKey);
     },
     /** Counts PRs dropped, so views that track PRs track one again that left while shown. */
-    drops: () => drops,
+    /** How many times these PRs left to make room: a view that shows them tracks them again when it grows. */
+    evictions: (urls: readonly string[]) => urls.reduce((n, url) => n + (evicted.get(url) ?? 0), 0),
     /**
      * Starts matching a PR's files, or picks up where it left off: called with every file Changes lists, each time
      * they change. Files whose text is here (an added file's patch, a side in the cache) are fingerprinted now; `text`
@@ -340,6 +351,8 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
       }
       const waiting: { snapshot: PrChanges; file: PrChangeFile }[] = [];
       let dropped = false;
+      // PRs this call creates never make room for each other.
+      const created = new Set<PrState>();
       for (const [revision, list] of byRevision) {
         const signature = `${settings}\u0001${list
           .map(({ file }) => `${file.path}\u0000${file.changeId}\u0000${file.status}`)
@@ -389,11 +402,18 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
               );
             }
           // The least recently used PRs leave, whole.
+          created.add(pr);
+          // The least recently used PRs leave, whole, if idle: none this call made, none used just now.
           while (prs.size > MOVES_PR_ENTRIES) {
             let oldest: PrState | undefined;
-            for (const state of prs.values()) if (state !== pr && (!oldest || state.at < oldest.at)) oldest = state;
+            for (const state of prs.values())
+              if (!created.has(state) && now() - state.at >= idleMs && (!oldest || state.at < oldest.at))
+                oldest = state;
             if (!oldest) break;
-            if (drop(oldest.revision)) dropped = true;
+            if (drop(oldest.revision)) {
+              dropped = true;
+              evicted.set(oldest.url, (evicted.get(oldest.url) ?? 0) + 1);
+            }
           }
         }
         pr.at = now();

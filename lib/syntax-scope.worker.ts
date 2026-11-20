@@ -2,7 +2,7 @@ import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage, type SymbolsInput } from './syntax-scope';
 import type { NoiseBlock } from './semantic-noise';
 import { matchMoves, type FilePrints, type MoveFile, type MovesResult } from './moved-symbols';
-import { createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
+import { createFollowers, createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
 import javascriptTags from '../src/assets/tree-sitter/javascript-tags.scm?raw';
 import typescriptTags from '../src/assets/tree-sitter/typescript-tags.scm?raw';
 import rustTags from '../src/assets/tree-sitter/rust-tags.scm?raw';
@@ -100,6 +100,8 @@ export type SyntaxResponse =
       noise: NoiseBlock[];
       /** The file's moved-symbol candidates, when asked for; absent when the hunks do not match the text. */
       symbols?: FilePrints;
+      /** Why they were asked for and are absent. */
+      symbolsError?: string;
       timing: { classify: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority; parses?: number };
     }
   | {
@@ -154,24 +156,19 @@ const engine = createSyntaxEngine(TreeSitter, {
 });
 const cache = new Map<string, { url: string; definitions: SyntaxDefinition[] }>();
 /** Comparisons, by file revision and change blocks: a few bytes per block. */
-const noiseCache = new Map<string, { url: string; noise: NoiseBlock[]; symbols?: FilePrints }>();
+const noiseCache = new Map<string, { url: string; noise: NoiseBlock[]; symbols?: FilePrints; symbolsError?: string }>();
 type MovesJob = Extract<SyntaxRequest, { type: 'moves' }> & { key: string; priority: SyntaxPriority; side: 'symbols' };
 type Job = (Extract<SyntaxRequest, { type: 'definitions' | 'noise' | 'symbols' }> | MovesJob) & { received: number };
-/**
- * Requests whose queued job a newer one with the same key replaced: they hear the newer one's answer, so no caller
- * waits for an answer that never comes.
- */
-const followers = new Map<string, number[]>();
+/** Requests a newer job with the same key replaced in the queue: they hear that job's answer (createFollowers). */
+const followers = createFollowers();
 function enqueue(job: Job) {
   const replaced = queue.add(job);
-  if (replaced) followers.set(job.key, [...(followers.get(job.key) ?? []), replaced.id]);
+  if (replaced) followers.replace(job.id, replaced.id);
   void drain();
 }
 /** Answers a job's request and every request it replaced. */
 function answer(job: Job, response: Omit<SyntaxResponse, 'id'>) {
-  const ids = [job.id, ...(followers.get(job.key) ?? [])];
-  followers.delete(job.key);
-  for (const id of ids) self.postMessage({ id, ...response } as SyntaxResponse);
+  for (const id of followers.answer(job.id)) self.postMessage({ id, ...response } as SyntaxResponse);
 }
 const failed = (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) });
 // One parse at a time, nearest the reader first (lib/syntax-parse-queue.ts); a cached file answers at once.
@@ -216,7 +213,7 @@ async function run(job: Job) {
   if (job.type === 'noise') {
     try {
       const result = await engine.noise(job.language, job.text, job.hunks, !!job.symbols);
-      noiseCache.set(job.key, { url: job.url, noise: result.blocks, symbols: result.symbols });
+      noiseCache.set(job.key, { url: job.url, noise: result.blocks, symbols: result.symbols, symbolsError: result.symbolsError });
       for (const key of noiseCache.keys()) {
         if (noiseCache.size <= CACHE_ENTRIES) break;
         noiseCache.delete(key);
@@ -224,6 +221,7 @@ async function run(job: Job) {
       answer(job, {
         noise: result.blocks,
         symbols: result.symbols,
+        symbolsError: result.symbolsError,
         timing: { classify: result.classify, load: result.load, cached: false, wait, priority: job.priority, parses: engine.parses() },
       });
     } catch (error) {
@@ -287,9 +285,9 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   if (message.type === 'take') {
     const removed = queue.remove((job) => job.key === message.key);
     // Requests the taken job had replaced are not answered by the other worker: they end here.
+    // Only jobs actually taken: a running job with the same key still answers the requests it replaced.
     for (const job of removed)
-      for (const id of followers.get(job.key) ?? []) self.postMessage({ id, error: 'The parse moved to the other worker' } satisfies SyntaxResponse);
-    followers.delete(message.key);
+      for (const id of followers.drop(job.id)) self.postMessage({ id, error: 'The parse moved to the other worker' } satisfies SyntaxResponse);
     self.postMessage({ id: message.id, taken: removed.length > 0 } satisfies SyntaxResponse);
     return;
   }
@@ -315,8 +313,8 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   }
   if (message.type === 'noise') {
     const known = noiseCache.get(message.key);
-    if (known && (!message.symbols || known.symbols)) {
-      self.postMessage({ id: message.id, noise: known.noise, symbols: known.symbols, timing: { classify: 0, cached: true } } satisfies SyntaxResponse);
+    if (known && (!message.symbols || known.symbols || known.symbolsError)) {
+      self.postMessage({ id: message.id, noise: known.noise, symbols: known.symbols, symbolsError: known.symbolsError, timing: { classify: 0, cached: true } } satisfies SyntaxResponse);
       return;
     }
     runtimeUrl ||= message.runtimeUrl;
