@@ -35,6 +35,7 @@ import type { QueueItem, ReviewMember } from '../lib/workbench';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReviewHistoryEntry } from '../lib/types';
 import { LOGIN, T0, member, mine, signals, readySignals } from './notification-fixtures';
+import { assertPerf } from './perf-budget';
 
 const item = (members: ReviewMember[], extra: Partial<QueueItem> = {}): QueueItem => ({
   subject: {
@@ -704,7 +705,7 @@ void test('edge cases: no author, a long repository name, and a thousand PRs', (
   const big = model(many.map((pr) => item([pr])), { signals: status });
   const took = performance.now() - started;
   assert.equal(big.counts.fix + big.counts.merge + big.parked, 1000);
-  assert.ok(took < 1500, `a thousand PRs took ${Math.round(took)} ms`);
+  assertPerf('overview model of a thousand PRs', took, 1500);
   // Nothing at all: every lane is empty and nothing is counted.
   const none = model([]);
   assert.deepEqual([none.actionable, none.parked, none.keys.length], [0, 0, 0]);

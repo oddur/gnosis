@@ -15,6 +15,13 @@ npm run test:browser:docker                             # full suite, as on Linu
 - Never set `GNOSIS_BROWSER_ON_HOST=1` unless the user asks for a check on the host, such as the macOS-only `--navigation-swipe` check.
 - If Docker isn't running, tell the user. Don't fall back to running the checks on the host.
 
+## Performance tests run locally only
+
+- CI does not enforce timing budgets. When `CI` is set, every suite still runs its functional assertions, and timing assertions only log their value against the budget.
+- After you change rendering, scrolling, sync, diff or queue code, run `npm run test:perf` on your own machine. Put its `[perf]` results in the PR description, and say which budgets went over.
+- Use `assertPerf` or `withinPerf` from `tests/perf-budget.ts` for any new timing budget, never a plain `assert`. `npm run test:perf` finds the tests that use it by itself. A check that guards behaviour (order, a leak, a timeout) must not depend on the machine's speed: use mocked timers, or check order instead of milliseconds.
+- See [Performance tests](docs/continuous-integration.md#performance-tests).
+
 ## Diff presentation
 
 - Diff presentation is shared: Changes (PrFileInspection/ChangesDiff) and Explanation slides (SlideView/ReviewDiff) must render diffs through the same components; any change to diff presentation must land in both, and both must be checked in screenshots and tests.

@@ -1,6 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
+import { assertPerf } from './perf-budget';
 app.disableHardwareAcceleration();
 
 /**
@@ -387,7 +388,8 @@ void app.whenReady().then(async () => {
       return {items:data.threads.length+data.feedback.comments.length+data.feedback.events.length,mounted:document.querySelectorAll('.feedback-entry').length,render,jump}})()`);
     console.log(`Large PR: ${JSON.stringify(large)}`);
     assert.ok(large.items > 500 && large.mounted < 40, `Only rows near the view mount: ${JSON.stringify(large)}`);
-    assert.ok(large.render < 1500 && large.jump < 1000, `A large timeline stays fast: ${JSON.stringify(large)}`);
+    assertPerf('feedback timeline: render 500+ items', large.render, 1500);
+    assertPerf('feedback timeline: jump to the end', large.jump, 1000);
 
     assert.equal(errors.filter((e) => !e.includes('favicon')).length, 0, errors.join('\n'));
     console.log('Feedback timeline passed: chronological order across item kinds, grouped pushes and bots, new-since divider, next unresolved, keyboard, full width, wrapped code, and a large PR.');
