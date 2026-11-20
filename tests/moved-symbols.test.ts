@@ -442,6 +442,75 @@ void describe('moved symbols: never a wrong move', () => {
   });
 });
 
+void describe('moved symbols: review regressions', () => {
+  const rewrite = (lines: string[], index: number) =>
+    lines.map((line, i) => (i === index ? `  total -= limit / (${index} + input.length);` : line));
+  void test('a tie’s copies still count as rivals: an edited copy as near to them as to its original matches nothing', async () => {
+    const original = tsFunction('accumulate', 'x', 10);
+    const edited = rewrite(original, 3);
+    // A near copy of the original, removed twice: a tie, which never matches, but a rival all the same.
+    const near = rewrite(original, 6);
+    const control = await moves([
+      { path: 'src/a.ts', before: [...filler('a', 2), ...original], after: filler('a', 2) },
+      { path: 'src/b.ts', before: filler('b', 2), after: [...filler('b', 2), ...edited] },
+    ]);
+    assert.equal(control.moves.length, 1, 'Without the rivals it is a move');
+    const result = await moves([
+      { path: 'src/a.ts', before: [...filler('a', 2), ...original], after: filler('a', 2) },
+      { path: 'src/b.ts', before: filler('b', 2), after: [...filler('b', 2), ...edited] },
+      { path: 'src/c.ts', before: [...filler('c', 2), ...near], after: filler('c', 2) },
+      { path: 'src/d.ts', before: [...filler('d', 2), ...near], after: filler('d', 2) },
+    ]);
+    assert.deepEqual(result.moves.map(spoken), []);
+  });
+
+  void test('small bodies count as rivals too', async () => {
+    // A rival under the similarity size floor still blocks: the floor only decides what may match.
+    const original = tsFunction('accumulate', 'x', 10);
+    const files = await Promise.all([
+      moveFile({ path: 'src/a.ts', before: [...filler('a', 2), ...original], after: filler('a', 2) }),
+      moveFile({ path: 'src/b.ts', before: filler('b', 2), after: [...filler('b', 2), ...rewrite(original, 3)] }),
+      moveFile({ path: 'src/c.ts', before: [...filler('c', 2), ...rewrite(original, 6)], after: filler('c', 2) }),
+    ]);
+    assert.equal(matchMoves(files).moves.length, 0, 'Two near rivals: no match');
+    const rival = files[2].prints.before[0];
+    // Token counts as if the bodies were small: the pair just over the floor, the rival just under it.
+    files[0].prints.before[0] = { ...files[0].prints.before[0], tokens: 70 };
+    files[1].prints.after[0] = { ...files[1].prints.after[0], tokens: 70 };
+    files[2].prints.before[0] = { ...rival, tokens: 59 };
+    assert.equal(matchMoves(files).moves.length, 0, 'A rival below the size floor still blocks the match');
+  });
+
+  void test('an edit in place parted from its removed block by blank lines is not a move', async () => {
+    // The old function is removed, two blank lines stay as context, and the edited, re-indented copy follows them.
+    const fn = (indent: string, op: string) =>
+      tsFunction('foo', 'x', 10)
+        .map((line, i) => (i === 6 ? line.replace('- Math', `${op} Math`) : line))
+        .map((line) => indent + line);
+    const result = await moves([
+      {
+        path: 'src/a.ts',
+        before: [...filler('a', 7), ...fn('', '-'), '', '', ...filler('b', 3)],
+        after: [...filler('a', 7), '', '', ...fn('    ', '+'), ...filler('b', 3)],
+      },
+    ]);
+    assert.deepEqual(result.moves.map(spoken), []);
+  });
+
+  void test('a side with more candidates than it keeps is reported, and refuses the match', async () => {
+    const many = Array.from({ length: 401 }, (_, i) => tsFunction(`f${i}`, `s${i}x`, 2)).flat();
+    const file = await moveFile({ path: 'src/many.ts', after: many });
+    assert.equal(file.prints.capped, true);
+    const source = await moveFile({
+      path: 'src/a.ts',
+      before: [...filler('a', 2), ...tsFunction('f0', 's0x', 2)],
+      after: filler('a', 2),
+    });
+    assert.equal(matchMoves([source, file]).moves.length, 0);
+    assert.equal(matchMoves([source, file]).capped, true);
+  });
+});
+
 void describe('moved symbols: limits', () => {
   void test('past the pair limit the similarity pass is dropped whole, exact matches stay', async () => {
     const files = await Promise.all([

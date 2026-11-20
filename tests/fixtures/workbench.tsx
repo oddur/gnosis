@@ -245,8 +245,9 @@ if (new URLSearchParams(location.search).has('noise-filter')) {
     d2Diagram: undefined,
   };
 }
-// Moved symbols in a slide (#398, tests/moved-symbols-browser.ts): the first topic shows every hunk of the
-// `?moved-symbols` files queue.ts and store.ts, so its notes are the same as in Changes.
+// Moved symbols in a slide (#398, tests/moved-symbols-browser.ts): the first topic shows queue.ts whole and only the
+// first two of store.ts's three hunks. The topic's file has the PR's revision key but some of its patch: moves are
+// still read from the PR's whole patch, so the topic's notes are Changes' notes for the hunks it shows.
 if (new URLSearchParams(location.search).has('moved-symbols')) {
   const files = movedSymbolsFiles.filter((file) => file.path === MOVE_FILES.queue || file.path === MOVE_FILES.store);
   review.changedFiles = files.map((file) => ({ filename: prefix + file.path, status: file.status, additions: file.additions, deletions: file.deletions }));
@@ -258,10 +259,13 @@ if (new URLSearchParams(location.search).has('moved-symbols')) {
     fileSummaries: [],
     inlineExplanations: [],
     diffHunks: files.flatMap((file) =>
-      (file.patch ?? '').split(/\n(?=@@)/).map((hunk) => {
-        const [header, ...body] = hunk.split('\n');
-        return { filePath: prefix + file.path, language: 'typescript', renderedHtml: '', hunkHeader: header, content: body.join('\n') };
-      })
+      (file.patch ?? '')
+        .split(/\n(?=@@)/)
+        .slice(0, file.path === MOVE_FILES.store ? 2 : undefined)
+        .map((hunk) => {
+          const [header, ...body] = hunk.split('\n');
+          return { filePath: prefix + file.path, language: 'typescript', renderedHtml: '', hunkHeader: header, content: body.join('\n') };
+        })
     ),
     reviewChecks: [],
     explainer: undefined,

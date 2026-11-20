@@ -511,15 +511,19 @@ export function PrChangesView({
     return () => cancel.forEach((stop) => stop());
   }, [activeKey, entries, visibleSignature]);
   // A move's note in another file goes there, as a chat trace chip does, without leaving the view.
+  /** Selects a file and scrolls to its lines, without leaving the view: a chat trace chip, a move's note. */
+  const jumpToLines = (entry: Entry, lines: Pick<ChangesInitialFile, 'line' | 'endLine' | 'side'>) => {
+    void select(entry.key);
+    // Clear first so repeating the same jump scrolls again.
+    setChatJump(undefined);
+    requestAnimationFrame(() =>
+      setChatJump({ url: entry.snapshot.url, path: entry.file.path, headSha: entry.snapshot.metadata.headSha, ...lines })
+    );
+  };
   const openMoveLatest = useRef<(target: MoveTarget) => void>(() => {});
   openMoveLatest.current = (target) => {
     const found = entries.find((e) => e.snapshot.url === target.url && e.file.path === target.path && e.snapshot.metadata.headSha === target.headSha);
-    if (!found) return;
-    void select(found.key);
-    setChatJump(undefined);
-    requestAnimationFrame(() =>
-      setChatJump({ url: target.url, path: target.path, headSha: target.headSha, line: target.line, endLine: target.endLine, side: target.side })
-    );
+    if (found) jumpToLines(found, { line: target.line, endLine: target.endLine, side: target.side });
   };
   // Stable, so every diff below keeps its context value.
   const [openMove] = useState(() => (target: MoveTarget) => openMoveLatest.current(target));
@@ -970,19 +974,7 @@ export function PrChangesView({
             onOpenTraceStep={(step) => {
               const target = chatEntry && entries.find((e) => e.snapshot === chatEntry.snapshot && (e.file.path === step.path || e.file.previousPath === step.path));
               if (!target || !step.path) return;
-              void select(target.key);
-              // Clear first so repeating the same jump scrolls again.
-              setChatJump(undefined);
-              requestAnimationFrame(() =>
-                setChatJump({
-                  url: target.snapshot.url,
-                  path: target.file.path,
-                  headSha: target.snapshot.metadata.headSha,
-                  line: step.startLine,
-                  endLine: step.endLine,
-                  side: step.side,
-                })
-              );
+              jumpToLines(target, { line: step.startLine, endLine: step.endLine, side: step.side });
             }}
           />
         )}

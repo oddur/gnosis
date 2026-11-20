@@ -98,6 +98,8 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
         waiting.delete(response.id);
         if ('error' in response) {
           timings.delete(response.id);
+          noiseTimings.delete(response.id);
+          symbolTimings.delete(response.id);
           entry.reject(Error(response.error));
         }
         else if ('noise' in response) {
@@ -116,6 +118,12 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
       instance.onerror = (event) => {
         event.preventDefault();
         for (const entry of waiting.values()) entry.reject(Error('The syntax worker stopped'));
+        // Their timing callbacks hold the requests' texts: they go with them.
+        for (const id of waiting.keys()) {
+          timings.delete(id);
+          noiseTimings.delete(id);
+          symbolTimings.delete(id);
+        }
         waiting.clear();
         if (workers.get(lane) === started) workers.delete(lane);
       };
@@ -501,6 +509,9 @@ export function readSymbols(request: {
 }): Promise<FilePrints> {
   if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
   if (request.input.text.length > SYMBOLS_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));
+  // The timing record keeps the size, not the request: the text is not held once the worker has it.
+  const { key, language } = request,
+    characters = request.input.text.length;
   return start('front').then(
     (instance) =>
       new Promise<FilePrints>((resolve, reject) => {
@@ -512,7 +523,7 @@ export function readSymbols(request: {
         waiting.set(id, { resolve: resolve as (value: never) => void, reject });
         symbolTimings.set(id, (timing) => {
           symbolTimings.delete(id);
-          symbolReadTimings.push({ ...timing, key: request.key, language: request.language, characters: request.input.text.length });
+          symbolReadTimings.push({ ...timing, key, language, characters });
           symbolReadTotals.reads++;
           symbolReadTotals.ms += timing.ms;
           symbolReadTotals.maxMs = Math.max(symbolReadTotals.maxMs, timing.ms);

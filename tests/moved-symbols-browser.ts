@@ -246,12 +246,10 @@ void app.whenReady().then(async () => {
     await wait(`window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(topic)})).length>=3`, 750);
     const topicNotes = await notes(topic);
     console.log('Topic notes:', JSON.stringify(topicNotes));
-    for (const note of [
-      ...queueNotes,
-      'Moved to src/moves/queue.ts:16 · 1 line edited',
-      'Moved from old L3 · unchanged',
-    ])
+    for (const note of [...queueNotes, 'Moved to src/moves/queue.ts:16 · 1 line edited', 'Moved to L49 · unchanged'])
       assert.ok(topicNotes.includes(note), `The topic shows "${note}" as Changes does`);
+    // The topic leaves out store.ts's third hunk: formatEntry's new copy and parseHeader's removal are not shown.
+    assert.ok(!topicNotes.some((note) => /old L3|readHeader/.test(note)), 'Hunks the topic leaves out have no notes');
     assert.ok(
       await js<boolean>(
         `window.deepAll('[data-line][data-moved-line]',document.querySelector(${JSON.stringify(topic)})).length>=8`

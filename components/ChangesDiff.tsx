@@ -32,6 +32,7 @@ import { blockKey, changeBlocks, hunkNoise, noiseLabel, type HunkNoise, type Noi
 import type { DiffMoves, DiffNoise } from './useDiffFileModel';
 import type { MoveMark } from '../lib/moved-symbols-store';
 import { MoveNavigation } from '../lib/use-moved-symbols';
+import { moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
 export type GapStatus =
@@ -869,13 +870,16 @@ function markRails(host: Element, rails: readonly ScopeRail[]) {
 }
 
 /**
- * Marks the changed rows of quiet blocks inside hunks that also change code (#396), by side and line (`a12`, `b9`),
- * on the rows and their gutter cells. Attributes change only where they differ.
+ * Marks changed rows by side and line (`a12`, `b9`) with an attribute, on the rows and their gutter cells: the quiet
+ * lines of hunks that also change code (#396, `data-noise-line`) and the lines a move carried over unchanged (#398,
+ * `data-moved-line`). One pass over the rows writes each attribute; attributes change only where they differ, and a
+ * diff with nothing to mark and nothing marked costs one query per attribute.
  */
-function markNoise(host: Element, lines: ReadonlySet<string>) {
+function markLines(host: Element, marks: readonly (readonly [attribute: string, lines: ReadonlySet<string>])[]) {
   const root = host.shadowRoot;
   if (!root) return;
-  if (!lines.size && !root.querySelector('[data-noise-line]')) return;
+  const live = marks.filter(([attribute, lines]) => lines.size || root.querySelector(`[${attribute}]`));
+  if (!live.length) return;
   const gutters = new Map<string, Element[]>();
   for (const cell of root.querySelectorAll('[data-column-number]')) {
     const index = cell.getAttribute('data-line-index') ?? '';
@@ -884,31 +888,13 @@ function markNoise(host: Element, lines: ReadonlySet<string>) {
   for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
     const type = row.dataset.lineType;
     const side = type === 'change-deletion' ? 'b' : type === 'change-addition' ? 'a' : undefined;
-    const on = !!side && lines.has(`${side}${row.dataset.line}`);
-    for (const element of [row, ...(gutters.get(row.getAttribute('data-line-index') ?? '') ?? [])].filter((e) => e.closest('[data-deletions]') === row.closest('[data-deletions]')))
-      if (element.hasAttribute('data-noise-line') !== on) element.toggleAttribute('data-noise-line', on);
-  }
-}
-
-/**
- * Marks the rows a move carried over unchanged (#398), by side and line (`a12`, `b9`), on the rows and their gutter
- * cells, as `markNoise` marks quiet lines. Attributes change only where they differ.
- */
-function markMoves(host: Element, lines: ReadonlySet<string>) {
-  const root = host.shadowRoot;
-  if (!root) return;
-  if (!lines.size && !root.querySelector('[data-moved-line]')) return;
-  const gutters = new Map<string, Element[]>();
-  for (const cell of root.querySelectorAll('[data-column-number]')) {
-    const index = cell.getAttribute('data-line-index') ?? '';
-    gutters.set(index, [...(gutters.get(index) ?? []), cell]);
-  }
-  for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
-    const type = row.dataset.lineType;
-    const side = type === 'change-deletion' ? 'b' : type === 'change-addition' ? 'a' : undefined;
-    const on = !!side && lines.has(`${side}${row.dataset.line}`);
-    for (const element of [row, ...(gutters.get(row.getAttribute('data-line-index') ?? '') ?? [])].filter((e) => e.closest('[data-deletions]') === row.closest('[data-deletions]')))
-      if (element.hasAttribute('data-moved-line') !== on) element.toggleAttribute('data-moved-line', on);
+    const elements = [row, ...(gutters.get(row.getAttribute('data-line-index') ?? '') ?? [])].filter(
+      (e) => e.closest('[data-deletions]') === row.closest('[data-deletions]')
+    );
+    for (const [attribute, lines] of live) {
+      const on = !!side && lines.has(`${side}${row.dataset.line}`);
+      for (const element of elements) if (element.hasAttribute(attribute) !== on) element.toggleAttribute(attribute, on);
+    }
   }
 }
 
@@ -930,7 +916,15 @@ function MoveNote({ mark, onGo }: { mark: MoveMark; onGo?: () => void }) {
   const place = mark.sameFile ? `${other.side === 'before' ? 'old ' : ''}L${other.start}` : `${other.path}:${other.start}`;
   const verb = into ? 'Moved from' : 'Moved to';
   // An exact match differs only in its name: a rename's edited lines are where the name is, and its body is the same.
-  const edits = mark.exact && mark.renamed ? 'body unchanged' : mark.edits.length ? `${lines(mark.edits.length)} edited` : mark.exact ? 'unchanged' : 'reformatted';
+  // An exact match has the same tokens, the name aside: a rename's differing lines are where the name is, and other
+  // differing lines only break or join lines.
+  const edits = mark.exact
+    ? mark.renamed
+      ? 'body unchanged'
+      : mark.edits.length
+        ? 'reformatted'
+        : 'unchanged'
+    : `${lines(mark.edits.length)} edited`;
   const where = mark.sameFile ? `line ${other.start} of this file${other.side === 'before' ? ', old side' : ''}` : `${other.path}, line ${other.start}`;
   const rename = mark.renamed ? `, renamed ${into ? 'from' : 'to'} ${other.name}` : '';
   const how = mark.exact ? 'the same code' : `${Math.round(mark.similarity * 100)}% similar`;
@@ -1243,8 +1237,10 @@ export function ChangesDiff<A>({
     onPostRender: (node: HTMLElement, ...rest: unknown[]) => {
       (options.onPostRender as ((node: HTMLElement, ...rest: unknown[]) => void) | undefined)?.(node, ...rest);
       markRails(node, latestRails.current);
-      markNoise(node, latestNoiseLines.current);
-      markMoves(node, latestMovedLines.current);
+      markLines(node, [
+        ['data-noise-line', latestNoiseLines.current],
+        ['data-moved-line', latestMovedLines.current],
+      ]);
     },
   } as FileDiffOptions<A, undefined>);
   const latestRender = useRef(renderAnnotation);
@@ -1314,15 +1310,7 @@ export function ChangesDiff<A>({
   const latestNoiseLines = useRef(noiseLines);
   latestNoiseLines.current = noiseLines;
   // Lines each move carried over unchanged: dimmed, so its real edits read first.
-  const movedLines = useMemo(() => {
-    const result = new Set<string>();
-    for (const mark of moves?.marks ?? []) {
-      const edits = new Set(mark.edits);
-      const prefix = mark.side === 'after' ? 'a' : 'b';
-      for (let line = mark.start; line <= mark.end; line++) if (!edits.has(line)) result.add(`${prefix}${line}`);
-    }
-    return result;
-  }, [moves?.marks]);
+  const movedLines = useMemo(() => movedLineKeys(moves?.marks ?? []), [moves?.marks]);
   const latestMovedLines = useRef(movedLines);
   latestMovedLines.current = movedLines;
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
@@ -1362,25 +1350,11 @@ export function ChangesDiff<A>({
     }
     return result;
   }, [annotations, slices]);
-  // Each move's note sits under the line above its symbol when the diff shows that line on the symbol's side, so it
-  // reads as the symbol's heading; else under its first line. A symbol whose first line is not shown has none.
+  // Each move's note heads its symbol (lib/moved-symbols-view.ts).
   const moveBySlice = useMemo(() => {
     const result = new Map<string, DiffLineAnnotation<A>[]>();
     if (!moves?.marks.length) return result;
-    const shown = { after: new Set<number>(), before: new Set<number>() };
-    for (const part of parts) {
-      if (part.kind !== 'hunk') continue;
-      let oldLine = part.hunk.oldStart,
-        newLine = part.hunk.newStart;
-      for (const row of part.hunk.rows) {
-        if (row.type !== '+') shown.before.add(oldLine++);
-        if (row.type !== '-') shown.after.add(newLine++);
-      }
-    }
-    for (const mark of moves.marks) {
-      const own = mark.side === 'after' ? shown.after : shown.before;
-      if (!own.has(mark.start)) continue;
-      const lineNumber = own.has(mark.start - 1) ? mark.start - 1 : mark.start;
+    for (const [mark, lineNumber] of moveNoteLines(parts, moves.marks)) {
       const side = mark.side === 'after' ? ('additions' as const) : ('deletions' as const);
       const owner = slices.find((slice) => {
         const [from, to] = side === 'deletions' ? slice.oldLines : slice.newLines;
@@ -1799,10 +1773,10 @@ export function ChangesDiff<A>({
     if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markRails(host, rails);
   }, [rails]);
   useEffect(() => {
-    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markNoise(host, noiseLines);
+    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markLines(host, [['data-noise-line', noiseLines]]);
   }, [noiseLines]);
   useEffect(() => {
-    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markMoves(host, movedLines);
+    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markLines(host, [['data-moved-line', movedLines]]);
   }, [movedLines]);
   // New definitions name the reader's place anew.
   useEffect(() => follow.current?.(), [scopeAt]);

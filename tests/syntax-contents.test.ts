@@ -567,3 +567,30 @@ void test('An added file’s new side and a deleted file’s old side come whole
   assert.equal(wholeFileText('@@ -0,0 +1,1 @@\n+a\n@@ -0,0 +3,1 @@\n+c', 'after'), undefined, 'Two hunks');
   assert.equal(wholeFileText('@@ -0,0 +1,2 @@\n+a\n+b', 'before'), undefined, 'The other side');
 });
+
+void test('Moved-symbol reads count against their own budget, never the PR’s cap that scopes need (#398)', async () => {
+  const { scheduler, job, started, finish } = harness({ perPr: 2, concurrency: 1 });
+  const budget = { name: 'moves', limit: 2 };
+  scheduler.prefetch('moves', [job('m1', { budget }), job('m2', { budget }), job('m3', { budget })], 1);
+  await finish('m1');
+  await finish('m2');
+  assert.deepEqual(started, ['m1', 'm2'], 'The budget stops the third moves read');
+  // The PR's own cap is untouched: two scope reads still run.
+  scheduler.prefetch('scopes', [job('s1'), job('s2'), job('s3')]);
+  await finish('s1');
+  await finish('s2');
+  assert.deepEqual(started, ['m1', 'm2', 's1', 's2']);
+  assert.equal(scheduler.stats().started['https://github.com/a/b/pull/1'], 2, 'Only scope reads count against the PR cap');
+});
+
+void test('The moves prefetch ranks below the open PR’s scope reads (#398)', async () => {
+  const { scheduler, job, started, finish } = harness({ concurrency: 1 });
+  const budget = { name: 'moves', limit: 10 };
+  scheduler.prefetch('moves', [job('m1', { budget }), job('m2', { budget })], 1);
+  scheduler.prefetch('scopes', [job('s1'), job('s2')]);
+  // m1 started before the scope reads were asked for; after it, both scope reads go before m2.
+  await finish('m1');
+  await finish('s1');
+  await finish('s2');
+  assert.deepEqual(started, ['m1', 's1', 's2', 'm2']);
+});

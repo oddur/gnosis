@@ -66,6 +66,11 @@ export const MARGIN = 0.1;
 const FLOOR = 0.4;
 /** The larger token count of a similarity pair is at most this many times the smaller. */
 export const SIZE_RATIO = 1.5;
+/**
+ * Pairs this far apart in size are still compared, as rivals: a body's 4-gram Jaccard with one `r` times its size is
+ * at most about 1/r, so past 1 / (SAME_NAME - MARGIN) a rival can never come within the margin of a match.
+ */
+const RIVAL_RATIO = 2;
 /** Shingles kept per sketch. Bodies with fewer distinct 4-grams keep them all, and compare exactly. */
 export const SKETCH = 256;
 /** Candidates per file side, per side of a PR, and similarity comparisons per PR. */
@@ -100,6 +105,8 @@ export interface SymbolPrint {
 export interface FilePrints {
   before: SymbolPrint[];
   after: SymbolPrint[];
+  /** A side held more than `MAX_FILE_CANDIDATES` candidates: the ones past it went unseen, so its family is refused. */
+  capped?: boolean;
 }
 
 // ── Hashing ─────────────────────────────────────────────────────────────────
@@ -258,7 +265,7 @@ export function sideCandidates(
   definitions: readonly SyntaxDefinition[],
   tokens: Tokens,
   changed: Uint8Array
-): SymbolPrint[] {
+): { prints: SymbolPrint[]; capped: boolean } {
   const result: SymbolPrint[] = [];
   for (const definition of definitions) {
     if (!MOVE_GROUPS[definition.kind]) continue;
@@ -274,10 +281,12 @@ export function sideCandidates(
       }
     if (!signature || code < MIN_LINES || touched < code * MIN_CHANGED) continue;
     const print = symbolPrint(definition, tokens);
-    if (print && print.tokens >= MIN_TOKENS) result.push(print);
-    if (result.length >= MAX_FILE_CANDIDATES) break;
+    if (!print || print.tokens < MIN_TOKENS) continue;
+    // Past the limit the rest go unseen: the side says so, and its family is not matched.
+    if (result.length >= MAX_FILE_CANDIDATES) return { prints: result, capped: true };
+    result.push(print);
   }
-  return result;
+  return { prints: result, capped: false };
 }
 
 // ── Matching ────────────────────────────────────────────────────────────────
@@ -321,6 +330,11 @@ export interface SymbolMove {
   similarity: number;
   /** Lines that differ between the two bodies, by the line diff of their tokens: old lines and new lines. */
   edits: { before: number[]; after: number[] };
+  /**
+   * Lines the line diff matched between the two bodies: carried over unchanged. Lines without code (comments, blank
+   * lines) are in neither list: nothing says whether they changed.
+   */
+  kept: { before: number[]; after: number[] };
 }
 export interface MovesResult {
   moves: SymbolMove[];
@@ -376,7 +390,10 @@ const end = (candidate: Candidate): MoveEnd => ({
 });
 
 /** Old and new lines that differ, by a line diff of the bodies' per-line token hashes (lines without code skipped). */
-export function bodyEdits(before: SymbolPrint, after: SymbolPrint): { before: number[]; after: number[] } {
+export function bodyEdits(
+  before: SymbolPrint,
+  after: SymbolPrint
+): { before: number[]; after: number[]; kept: { before: number[]; after: number[] } } {
   const lines = (print: SymbolPrint) => {
     const numbers: number[] = [],
       hashes: number[] = [];
@@ -389,18 +406,24 @@ export function bodyEdits(before: SymbolPrint, after: SymbolPrint): { before: nu
   };
   const old = lines(before),
     now = lines(after);
-  if (old.hashes.length + now.hashes.length > MAX_EDIT_LINES) return { before: old.numbers, after: now.numbers };
-  const edits = { before: [] as number[], after: [] as number[] };
+  if (old.hashes.length + now.hashes.length > MAX_EDIT_LINES)
+    return { before: old.numbers, after: now.numbers, kept: { before: [], after: [] } };
+  const edits = {
+    before: [] as number[],
+    after: [] as number[],
+    kept: { before: [] as number[], after: [] as number[] },
+  };
   let i = 0,
     j = 0;
   for (const part of diffArrays(old.hashes, now.hashes)) {
     const n = part.count;
     if (part.removed) for (let k = 0; k < n; k++) edits.before.push(old.numbers[i++]);
     else if (part.added) for (let k = 0; k < n; k++) edits.after.push(now.numbers[j++]);
-    else {
-      i += n;
-      j += n;
-    }
+    else
+      for (let k = 0; k < n; k++) {
+        edits.kept.before.push(old.numbers[i++]);
+        edits.kept.after.push(now.numbers[j++]);
+      }
   }
   return edits;
 }
@@ -430,6 +453,8 @@ export function matchMoves(
         into.push({ print, file, side, group: `${file.family}\u0000${MOVE_GROUPS[print.kind]}`, index });
       });
     }
+  // A file that held more candidates than it kept may hide a rival: nothing matches.
+  if (files.some((file) => file.prints.capped)) capped = true;
   const result: MovesResult = {
     moves: [],
     candidates: { before: removed.length, after: added.length },
@@ -492,9 +517,10 @@ export function matchMoves(
     // The same body more than once on a side: which copy went where is unknown.
     for (const c of [...r, ...a]) excluded.add(c);
   }
-  // 2. Similar.
-  const pool = (list: Candidate[]) =>
-    list.filter((c) => !consumed.has(c) && !excluded.has(c) && c.print.tokens >= MIN_SIMILAR_TOKENS);
+  // 2. Similar. Every candidate not yet matched is compared, as a rival at least: a tie's copies and small bodies
+  // never match by similarity, but an edited copy that is as near to one of them as to its own original is unknown.
+  const pool = (list: Candidate[]) => list.filter((c) => !consumed.has(c));
+  const matchable = (c: Candidate) => !excluded.has(c) && c.print.tokens >= MIN_SIMILAR_TOKENS;
   const buckets = new Map<string, Candidate[]>();
   for (const candidate of pool(removed)) {
     const list = buckets.get(candidate.group) ?? [];
@@ -506,6 +532,8 @@ export function matchMoves(
     from: Candidate;
     to: Candidate;
     similarity: number;
+    /** Both may match by similarity; any pair counts as a rival. */
+    matchable: boolean;
   }
   const pairs: Pair[] = [];
   const partners = new Map<Candidate, Pair[]>();
@@ -513,8 +541,8 @@ export function matchMoves(
   similar: for (const to of pool(added)) {
     const list = buckets.get(to.group);
     if (!list) continue;
-    const low = to.print.tokens / SIZE_RATIO,
-      high = to.print.tokens * SIZE_RATIO;
+    const low = to.print.tokens / RIVAL_RATIO,
+      high = to.print.tokens * RIVAL_RATIO;
     let first = 0,
       last = list.length;
     while (first < last) {
@@ -530,7 +558,8 @@ export function matchMoves(
       const from = list[i];
       const similarity = sketchSimilarity(from.print.sketch, to.print.sketch);
       if (similarity < FLOOR) continue;
-      const pair = { from, to, similarity };
+      const ratio = Math.max(from.print.tokens, to.print.tokens) / Math.min(from.print.tokens, to.print.tokens);
+      const pair = { from, to, similarity, matchable: matchable(from) && matchable(to) && ratio <= SIZE_RATIO };
       pairs.push(pair);
       for (const c of [from, to]) {
         const own = partners.get(c) ?? [];
@@ -552,7 +581,7 @@ export function matchMoves(
     };
     for (const pair of pairs) {
       const { from, to, similarity } = pair;
-      if (consumed.has(from) || consumed.has(to)) continue;
+      if (!pair.matchable || consumed.has(from) || consumed.has(to)) continue;
       if (similarity < (from.print.name === to.print.name ? SAME_NAME : RENAMED)) continue;
       if (similarity - Math.max(rival(from, pair), rival(to, pair)) < MARGIN) continue;
       if (inPlace(from, to)) continue;
@@ -577,7 +606,7 @@ export function matchMoves(
       exact,
       renamed: from.print.name !== to.print.name,
       similarity,
-      edits: bodyEdits(from.print, to.print),
+      ...(({ kept, ...edits }) => ({ edits, kept }))(bodyEdits(from.print, to.print)),
     }))
     .sort((x, y) => (x.to.file < y.to.file ? -1 : x.to.file > y.to.file ? 1 : x.to.start - y.to.start));
   result.ms = performance.now() - started;

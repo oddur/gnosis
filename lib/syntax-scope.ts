@@ -8,6 +8,7 @@ import {
   sideCandidates,
   treeTokens,
   type FilePrints,
+  type SymbolPrint,
   type SymbolSides,
 } from './moved-symbols';
 
@@ -702,8 +703,9 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       parser.setLanguage(language);
       const sides = symbolSides(input);
       if (!sides) throw Error('The file does not match its diff');
-      const read = (side: { text: string; changed: Uint8Array } | undefined) => {
-        if (!side || !side.changed.some((row) => row)) return [];
+      const read = (side: { text: string; changed: Uint8Array } | undefined): { prints: SymbolPrint[]; capped: boolean } => {
+        const none = { prints: [], capped: false };
+        if (!side || !side.changed.some((row) => row)) return none;
         const tree = parser?.parse(side.text);
         if (!tree) throw Error('The file did not parse');
         try {
@@ -715,12 +717,15 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
             for (let r = d.start - 1; r < d.end; r++) touched += side.changed[r] ?? 0;
             return touched >= MIN_LINES;
           });
-          return worth ? sideCandidates(definitions, treeTokens(tree, side.text), side.changed) : [];
+          return worth ? sideCandidates(definitions, treeTokens(tree, side.text), side.changed) : none;
         } finally {
           tree.delete();
         }
       };
-      const prints = { before: placeBefore(read(sides.before), sides.at), after: read(sides.after) };
+      const before = read(sides.before),
+        after = read(sides.after);
+      const prints: FilePrints = { before: placeBefore(before.prints, sides.at), after: after.prints };
+      if (before.capped || after.capped) prints.capped = true;
       return { prints, ms: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
     },
   };
@@ -746,17 +751,30 @@ export function symbolSides(input: SymbolsInput): SymbolSides | undefined {
   const texts = comparisonTexts(input.text, input.hunks);
   if (!texts) return undefined;
   const { blocks } = texts;
+  const afterChanged = changedRows(rows(texts.after), blocks.map((b) => ({ row: b.newRow, count: b.newCount })));
+  const afterLines = texts.after.split('\n');
+  // A new line that only separates changes (blank, or punctuation alone) or is itself changed belongs to the same
+  // change region: a removed block and an added one parted by blank context lines are one edit in place.
+  const joins = (line: number) => line >= 1 && line <= afterLines.length && (!!afterChanged[line - 1] || !/[\p{L}\p{N}_$]/u.test(afterLines[line - 1]));
+  const place = (row: number): [number, number] => {
+    let offset = 0;
+    for (const block of blocks) {
+      if (row < block.oldRow) break;
+      if (row < block.oldRow + block.oldCount) return [block.newRow + 1, block.newRow + Math.max(1, block.newCount)];
+      offset += block.newCount - block.oldCount;
+    }
+    return [row + offset + 1, row + offset + 1];
+  };
   return {
     before: { text: texts.before, changed: changedRows(rows(texts.before), blocks.map((b) => ({ row: b.oldRow, count: b.oldCount }))) },
-    after: { text: texts.after, changed: changedRows(rows(texts.after), blocks.map((b) => ({ row: b.newRow, count: b.newCount }))) },
+    after: { text: texts.after, changed: afterChanged },
     at: (row) => {
-      let offset = 0;
-      for (const block of blocks) {
-        if (row < block.oldRow) break;
-        if (row < block.oldRow + block.oldCount) return [block.newRow + 1, block.newRow + Math.max(1, block.newCount)];
-        offset += block.newCount - block.oldCount;
-      }
-      return [row + offset + 1, row + offset + 1];
+      let [first, last] = place(row);
+      while (joins(first - 1)) first--;
+      // A deleted block sits before `last`: the line it sits before may itself join the region.
+      if (!joins(last)) return [first, last];
+      while (joins(last + 1)) last++;
+      return [first, last];
     },
   };
 }
