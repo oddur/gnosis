@@ -1,5 +1,5 @@
-import { createMovesStore } from './moved-symbols-core';
-import { readMoves, readSymbols, symbolReadTotals, syntaxWorkerParses } from './syntax-scope-client';
+import { createMovesStore, movesApi } from './moved-symbols-core';
+import { readMoves, readSymbols, setSymbolsWanted, symbolReadTotals, syntaxWorkerParses } from './syntax-scope-client';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
 
@@ -11,13 +11,18 @@ export { MOVES_MAX_FILES, type FileMoves, type MoveMark } from './moved-symbols-
  * the definitions and the noise comparisons do (#355).
  */
 const store = createMovesStore({ readSymbols, readMoves });
-export const trackMoves: typeof store.track = (...args) => store.track(...args);
-export const noteMovesText: typeof store.noteText = (...args) => store.noteText(...args);
-export const noteMovesFailure: typeof store.noteFailure = (...args) => store.noteFailure(...args);
-export const onMoves: typeof store.onMoves = (listener) => store.onMoves(listener);
-export const movesRevision = () => store.revision();
-export const peekFileMoves: typeof store.peek = (fileKey) => store.peek(fileKey);
-export const failMovesKey: typeof store.failKey = (key, reason) => store.failKey(key, reason);
+export const {
+  trackMoves,
+  noteMovesText,
+  noteMovesFailure,
+  failMovesKey,
+  movesWanted,
+  onMoves,
+  movesRevision,
+  peekFileMoves,
+} = movesApi(store);
+// Whole-file comparisons fingerprint symbols only for files the store tracks and still wants.
+setSymbolsWanted(movesWanted);
 
 onInspectionForget((urls) => store.forget(urls));
 onInspectionUses((into) => store.uses(into));

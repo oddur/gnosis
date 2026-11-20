@@ -830,17 +830,6 @@ export interface SymbolsResult {
   load?: number;
 }
 
-/** A file's sides for its symbols: their texts, their changed rows, and where old rows sit in the new file. */
-export function symbolSides(input: SymbolsInput): SymbolSides | undefined {
-  const rows = (text: string) => text.split('\n').length;
-  if (input.mode !== 'modified') {
-    const side = { text: input.text, changed: new Uint8Array(rows(input.text) + 1).fill(1) };
-    return input.mode === 'added' ? { after: side } : { before: side };
-  }
-  const texts = comparisonTexts(input.text, input.hunks);
-  return texts && symbolSidesOf(texts);
-}
-
 /** A modified file's sides for its symbols, from the comparison's two texts (comparisonTexts). */
 function symbolSidesOf(texts: NonNullable<ReturnType<typeof comparisonTexts>>): SymbolSides & { before: { text: string; changed: Uint8Array }; after: { text: string; changed: Uint8Array } } {
   const rows = (text: string) => text.split('\n').length;

@@ -256,6 +256,23 @@ void app.whenReady().then(async () => {
     );
     await capture('explanation-moved-from', `${topic} .review-file-group`);
 
+    // ── Summary alone reads nothing for moves: no file list, no contents, nothing tracked ──
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?moved-symbols-large`);
+    await waitForWorkbenchQueue(win.webContents);
+    await install();
+    await js(`(()=>{window.fileReads=0;const api=window.electronAPI;const read=api.getPrChangeFile,after=api.getPrChangeFileAfter;
+      api.getPrChangeFile=(...a)=>{window.fileReads++;return read(...a)};api.getPrChangeFileAfter=(...a)=>{window.fileReads++;return after(...a)};})()`);
+    await js(
+      "[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()"
+    );
+    await click('Open PR overview');
+    await sleep(4000);
+    const summaryOnly = await js<{ reads: number; tracked: number }>(
+      `import('/lib/moved-symbols-store.ts').then(m=>({reads:window.fileReads,tracked:m.movedSymbolsStats().prs.length}))`
+    );
+    console.log('SUMMARY ONLY', JSON.stringify(summaryOnly));
+    assert.equal(summaryOnly.tracked, 0, 'Summary alone tracks no PR for moves');
+
     // ── Cost on a large PR ──
     await openChanges('moved-symbols-large');
     await js(

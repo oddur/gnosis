@@ -553,8 +553,9 @@ function PrSummaryContent({
     />
   );
   const tabs = workspaceTabs;
-  // Moved and renamed symbols (#398) are the PR's, whichever tab shows its diffs.
-  usePrMoves(item.subject.members, preferences);
+  // Moved and renamed symbols (#398) are the PR's, for whichever tab shows its diffs: from the first time Changes or
+  // Explanation opens, never for Summary alone.
+  usePrMoves(item.subject.members, preferences, visited.has('changes') || visited.has('explanation'));
   // A moved symbol's note in an Explanation topic or a code thread opens its other end in Changes (#398). Changes
   // provides its own, which stays in the view.
   const openMove = useCallback((target: MoveTarget) => {

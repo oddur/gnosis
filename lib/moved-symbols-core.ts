@@ -307,7 +307,10 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
     let touched = false;
     for (const key of keys) {
       const list = byFile.get(key);
-      const had = pr.moves.delete(key) || pr.marks.delete(key);
+      // Both go: a file's marks are made from its moves, and old marks would outlive a match again.
+      const hadMoves = pr.moves.delete(key),
+        hadMarks = pr.marks.delete(key);
+      const had = hadMoves || hadMarks;
       if (list) pr.moves.set(key, list);
       touched ||= had || !!list;
     }
@@ -504,9 +507,14 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
       if (pr) fail(pr, key, reason);
     },
     /** A read of a file revision (`fileRevisionKey`) was refused or failed for good: its family is not matched. */
-    failKey(key: string, reason: string, recoverable = false) {
+    failKey(key: string, failure: { reason: string; recoverable: boolean }) {
       const pr = prs.get(byKey.get(key) ?? '');
-      if (pr) fail(pr, key, reason, recoverable);
+      if (pr) fail(pr, key, failure.reason, failure.recoverable);
+    },
+    /** Whether the store wants a file revision's text: tracked, and not read yet (lib/syntax-scope-client.ts). */
+    wants(fileKey: string): boolean {
+      const pr = prs.get(byKey.get(fileKey) ?? '');
+      return !!pr && wanting(pr.files.get(fileKey));
     },
     /** When each PR was last used, for the inspection caches' idle sweep (#355). */
     uses(into: Map<string, number>) {
@@ -555,3 +563,20 @@ export function createMovesStore(worker: MovesWorker, now: () => number = Date.n
   };
 }
 export type MovesStore = ReturnType<typeof createMovesStore>;
+
+/**
+ * The store's calls as the app imports them (lib/moved-symbols-store.ts), each bound to the store: one place that
+ * forwards every argument, tested with the store itself.
+ */
+export function movesApi(store: MovesStore) {
+  return {
+    trackMoves: store.track.bind(store),
+    noteMovesText: store.noteText.bind(store),
+    noteMovesFailure: store.noteFailure.bind(store),
+    failMovesKey: store.failKey.bind(store),
+    movesWanted: store.wants.bind(store),
+    onMoves: store.onMoves.bind(store),
+    movesRevision: store.revision.bind(store),
+    peekFileMoves: store.peek.bind(store),
+  };
+}

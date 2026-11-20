@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createMovesStore, MOVES_MAX_FILES, MOVES_PR_ENTRIES, type MovesWorker } from '../lib/moved-symbols-core';
+import {
+  createMovesStore,
+  movesApi,
+  MOVES_MAX_FILES,
+  MOVES_PR_ENTRIES,
+  type MovesWorker,
+} from '../lib/moved-symbols-core';
 import {
   MOVES_KEY,
   currentChanges,
@@ -340,7 +346,7 @@ void test('A read refused or failed for good marks the family incomplete instead
     allowed,
     nothing
   );
-  store.failKey(keyOf(pr, file), 'This PR read as many files for structure as it may.');
+  store.failKey(keyOf(pr, file), { reason: 'This PR read as many files for structure as it may.', recoverable: false });
   await flush();
   assert.equal(store.stats().prs[0].families[0].state, 'incomplete');
   assert.equal(matches(), 0);
@@ -500,7 +506,7 @@ void test('A moves read out of tries is mended by a later read: the family is ma
     allowed,
     nothing
   );
-  store.failKey(keyOf(pr, from), 'socket hang up', true);
+  store.failKey(keyOf(pr, from), { reason: 'socket hang up', recoverable: true });
   await answer(reads);
   assert.equal(store.stats().prs[0].families[0].state, 'incomplete');
   // A scope read brings the file in later.
@@ -532,11 +538,11 @@ void test('A recoverable failure never replaces a lasting one, and a file still 
     { snapshot: pr, file: added('src/b.ts') },
   ];
   store.track(entries, allowed, nothing);
-  store.failKey(keyOf(pr, from), 'socket hang up', true);
+  store.failKey(keyOf(pr, from), { reason: 'socket hang up', recoverable: true });
   assert.equal(store.track(entries, allowed, nothing).waiting.length, 1, 'Queued again');
-  store.failKey(keyOf(pr, from), 'This binary file has no text preview');
+  store.failKey(keyOf(pr, from), { reason: 'This binary file has no text preview', recoverable: false });
   assert.equal(store.track(entries, allowed, nothing).waiting.length, 0, 'A lasting failure is not read again');
-  store.failKey(keyOf(pr, from), 'socket hang up', true);
+  store.failKey(keyOf(pr, from), { reason: 'socket hang up', recoverable: true });
   assert.equal(store.track(entries, allowed, nothing).waiting.length, 0, 'Still lasting');
 });
 
@@ -546,7 +552,10 @@ void test('A failure does not undo a file whose fingerprints another read alread
   const pr = snapshot(1);
   trackPair(store, pr);
   // Both files are reading; the moves read of a.ts then fails.
-  store.failKey(keyOf(pr, modified('src/a.ts')), 'This PR read as many files for structure as it may.');
+  store.failKey(keyOf(pr, modified('src/a.ts')), {
+    reason: 'This PR read as many files for structure as it may.',
+    recoverable: false,
+  });
   await answer(reads);
   assert.equal(store.stats().prs[0].families[0].state, 'matched');
   assert.equal(matches(), 1);
@@ -614,4 +623,49 @@ void test('A file list read for a member is kept only when its base differs, und
     memberRevisionKey({ ...member, baseSha: 'base-2' }),
     'A retarget is another key'
   );
+});
+
+// ── Sixth review ────────────────────────────────────────────────────────────
+
+void test('The app’s calls pass a recoverable failure through to the store: the file is read again', () => {
+  const { worker } = fakeWorker();
+  const store = createMovesStore(worker);
+  const api = movesApi(store);
+  const pr = snapshot(1);
+  const from = modified('src/a.ts');
+  const entries = [
+    { snapshot: pr, file: from },
+    { snapshot: pr, file: added('src/b.ts') },
+  ];
+  api.trackMoves(entries, allowed, nothing).release();
+  api.failMovesKey(keyOf(pr, from), { reason: 'socket hang up', recoverable: true });
+  assert.equal(api.movesWanted(keyOf(pr, from)), true, 'Still wanted: a later read can mend it');
+  assert.equal(api.trackMoves(entries, allowed, nothing).waiting.length, 1, 'Queued again');
+  api.failMovesKey(keyOf(pr, from), { reason: 'This binary file has no text preview', recoverable: false });
+  assert.equal(api.movesWanted(keyOf(pr, from)), false);
+});
+
+void test('A family matched again leaves no stale marks: moves and marks both go', async () => {
+  const { worker, reads } = fakeWorker();
+  const store = createMovesStore(worker);
+  const pr = snapshot(1);
+  const { to, release } = trackPair(store, pr);
+  await answer(reads);
+  assert.equal(store.peek(keyOf(pr, to))?.marks.length, 1, 'Marks made');
+  // A second view lists another file: the family is matched again, this time with no move.
+  worker.readMoves = () =>
+    Promise.resolve({ moves: [], candidates: { before: 0, after: 0 }, compared: 0, capped: false, ms: 0 });
+  const second = store.track(
+    [
+      { snapshot: pr, file: modified('src/a.ts') },
+      { snapshot: pr, file: to },
+      { snapshot: pr, file: added('src/c.ts') },
+    ],
+    allowed,
+    () => ({ after: text('x\n'.repeat(20)) })
+  );
+  await answer(reads);
+  assert.equal(store.peek(keyOf(pr, to)), undefined, 'The old note is gone');
+  second.release();
+  release();
 });

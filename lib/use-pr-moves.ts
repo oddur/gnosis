@@ -12,11 +12,16 @@ import { useMovesPrefetch, type SyntaxFile } from './use-syntax-contents';
  * moves as Changes' scope prefetch would (lib/use-syntax-contents.ts `useMovesPrefetch`). Nothing is tracked or read
  * until the preferences are loaded, nor while code intelligence is off.
  */
-export function usePrMoves(members: readonly InspectionRevision[], preferences: unknown) {
+export function usePrMoves(
+  members: readonly InspectionRevision[],
+  preferences: unknown,
+  /** A surface that shows the PR's diffs (Changes, Explanation) is open, or was: nothing is read before. */
+  active: boolean
+) {
   const owner = useId();
   const version = useSyncExternalStore(inspectionData.subscribe, inspectionData.getVersion);
   const settings = useMemo(() => codeIntelligenceSettings(preferences), [preferences]);
-  const on = preferences !== null && preferences !== undefined && settings.enabled;
+  const on = active && preferences !== null && preferences !== undefined && settings.enabled;
   const revisions = members.map((member) => `${member.url}\u0000${member.baseSha}\u0000${member.headSha}`).join('\n');
   // File lists this hook read itself whose base differs from the member's (GitHub knows a newer base), by the member's
   // whole revision: tracked as read, and not read again. A retargeted member is another revision, read afresh.

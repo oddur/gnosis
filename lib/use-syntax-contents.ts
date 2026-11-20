@@ -58,7 +58,7 @@ onInspectionUses((into) => syntaxContents.lastUses(into));
 syntaxContents.onFailure((key, failure, cause) => {
   const file = movesFailureKey(key, cause);
   if (!file) return;
-  failMovesKey(file.key, failure.message, file.recoverable);
+  failMovesKey(file.key, { reason: failure.message, recoverable: file.recoverable });
   // A moves read whose tries ran out (the network went away) is tried again later, with fresh tries.
   if (file.recoverable)
     setTimeout(() => {
@@ -357,13 +357,15 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
       // A budget per head: a force-push starts afresh.
       const budget = { name: `${MOVES_BUDGET}${snapshot.metadata.headSha}`, limit: MOVES_READS };
       const plan = syntaxContentsPlan(snapshot, file, enabled);
-      if (plan) return [{ ...syntaxContentsJob(entry, plan), key: entry.key + MOVES_KEY, budget }];
+      // Only the text moves need: a modified file's new side (its old side is rebuilt from the patch), a deleted
+      // file's old one. No breadcrumbs are parsed and no comparison made that no view asked for.
+      if (plan) return [movesReadJob(entry, budget, file.status === 'deleted', plan.characters)];
       // An added or deleted file without a patch has no scope read: it is read whole, through the same queue.
       if (!movesWholeReadable(file)) {
         noteMovesFailure(snapshot, file, file.patch ? 'Not read' : 'Too large');
         return [];
       }
-      return [movesWholeJob(entry, budget)];
+      return [movesReadJob(entry, budget, true)];
     });
     const stop = jobs.length ? syntaxContents.prefetch(`${owner}:moves`, jobs, 1) : undefined;
     return () => {
@@ -377,22 +379,34 @@ export function useMovesPrefetch(owner: string, files: readonly SyntaxFile[], se
 const movesWholeReadable = (file: PrChangeFile) =>
   !file.patch && (file.status === 'added' || file.status === 'deleted') && file.additions + file.deletions <= MOVES_WHOLE_LINES;
 
-/** An added or deleted file without a patch, read whole for its moved symbols. */
-function movesWholeJob({ key, snapshot, file }: SyntaxFile, budget: SyntaxContentsJob['budget']): SyntaxContentsJob {
+/**
+ * A file's read for its moved symbols alone: the new side, or both sides when `both` (a deleted file's old side, an
+ * added or deleted file without a patch). The text goes to the moves store and nowhere else.
+ */
+function movesReadJob(
+  { key, snapshot, file }: SyntaxFile,
+  budget: SyntaxContentsJob['budget'],
+  both: boolean,
+  characters?: number
+): SyntaxContentsJob {
   const request = inspectionFileRequest(snapshot, file);
   return {
     key: key + MOVES_KEY,
     pr: snapshot.url,
     budget,
+    characters,
     ready: () => {
-      const both = inspectionFiles.peek(request);
-      if (both) noteMovesText(snapshot, file, both.after, both.before);
-      return !!both;
+      const contents = inspectionFiles.peek(request);
+      const after = contents?.after ?? (both ? undefined : inspectionFiles.peekAfter(request));
+      if (contents || after) noteMovesText(snapshot, file, after, contents?.before);
+      return both ? !!contents : !!after;
     },
     run: async (tier) => {
       try {
-        const contents = await inspectionFiles.read(request, syntaxReadMode(tier));
-        noteMovesText(snapshot, file, contents.after, contents.before);
+        if (both) {
+          const contents = await inspectionFiles.read(request, syntaxReadMode(tier));
+          noteMovesText(snapshot, file, contents.after, contents.before);
+        } else noteMovesText(snapshot, file, await inspectionFiles.readAfter(request, syntaxReadMode(tier)));
       } catch (error) {
         if (permanentFailure(error)) noteMovesFailure(snapshot, file, error instanceof Error ? error.message : String(error));
         throw error;

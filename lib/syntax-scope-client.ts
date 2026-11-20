@@ -337,6 +337,11 @@ export const noiseClassifyTimings: (NoiseTiming & { key: string; language: Synta
  */
 export const NOISE_MAX_CHARACTERS = 400_000;
 type NoiseHunks = Extract<SyntaxRequest, { type: 'noise' }>['hunks'];
+let symbolsWanted: (fileKey: string) => boolean = () => false;
+/** Which files' whole comparisons fingerprint moved symbols too (lib/moved-symbols-store.ts). */
+export function setSymbolsWanted(wanted: (fileKey: string) => boolean) {
+  symbolsWanted = wanted;
+}
 /** A comparison: its blocks, and the file's moved-symbol candidates for a whole file's (#398). */
 interface Comparison {
   blocks: NoiseBlock[];
@@ -399,7 +404,9 @@ type NoiseRequest = {
 function compare(request: NoiseRequest): Promise<Comparison> {
   if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
   const key = noiseKey(request.fileKey, request.hunks);
-  const symbols = !!request.whole;
+  // A whole file's comparison also fingerprints moved symbols, for a file the moves store tracks and wants: not a
+  // commit range's, a stack comparison's, or a file of a language without functions.
+  const symbols = !!request.whole && symbolsWanted(request.fileKey);
   const known = noiseMemo.get(key);
   if (known && (!symbols || known.symbols || known.symbolsError)) {
     known.at = Date.now();
