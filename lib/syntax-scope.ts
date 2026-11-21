@@ -558,11 +558,8 @@ export interface RangeUnit {
   /** Its parameter list's text, as written, and whether it declares a return type. */
   signature?: string;
   returns?: boolean;
-  /** Its `value` field's text, and that field's node type: an enum member's explicit value, a JSON pair's value. */
-  value?: string;
-  valueKind?: string;
-  /** It has a `body` field: a Rust enum variant with fields. */
-  body?: boolean;
+  /** Its first line, spaces squashed: an import's whole text. */
+  head?: string;
 }
 /** The whole nodes in some lines and the node that holds them. Undefined when a node reaches past the lines. */
 export interface RangeUnits {
@@ -570,8 +567,10 @@ export interface RangeUnits {
   /** The node that holds `parent`: a Python method's `block` sits in a `class_definition`. */
   container?: string;
   units: RangeUnit[];
-  /** Every named child of the parent, the units included, for a JSON object or an enum body: its keys or members. */
+  /** Every named child of the parent, the units included, for a JSON object: its keys. */
   all?: RangeUnit[];
+  /** The node just before the units, comments aside: a decorator or attribute there attaches to what follows it. */
+  before?: string;
   /** For a JSON object: the keys of the pairs that hold it, from the document's top. */
   path?: string[];
 }
@@ -601,7 +600,6 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       const annotated = [c, target].some((n) =>
         n.children.some((x) => marks(x) || (x.type === 'modifiers' && x.children.some(marks)))
       );
-      const value = target.childForFieldName('value');
       const accessor = target.children.some((x) => !x.isNamed && (x.type === 'get' || x.type === 'set'));
       return {
         type: c.type,
@@ -620,8 +618,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
           : {}),
         ...(decorated ? { decorated } : {}),
         ...(annotated ? { annotated } : {}),
-        ...(value ? { value: squash(value.text), valueKind: value.type } : {}),
-        ...(target.childForFieldName('body') ? { body: true } : {}),
+        head: squash(c.text.split('\n')[0]),
       };
     };
     const units: RangeUnit[] = [];
@@ -632,8 +629,10 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       }
       units.push(unitOf(c));
     }
-    // An enum's members and an object's keys are read whole, and an object's place in its document.
-    const whole = ['object', 'enum_body', 'enum_member_declaration_list', 'enum_variant_list'].includes(node.type);
+    // An object's keys are read whole, and its place in its document.
+    const whole = node.type === 'object';
+    let previous = hit[0].previousNamedSibling;
+    while (previous && /comment/.test(previous.type)) previous = previous.previousNamedSibling;
     const path: string[] = [];
     if (node.type === 'object')
       for (let at: Node | null = node.parent; at; at = at.parent)
@@ -643,6 +642,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       ...(node.parent ? { container: node.parent.type } : {}),
       units,
       ...(whole ? { all: node.namedChildren.map(unitOf) } : {}),
+      ...(previous ? { before: previous.type } : {}),
       ...(node.type === 'object' ? { path } : {}),
     };
   }

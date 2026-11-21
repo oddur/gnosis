@@ -734,7 +734,14 @@ void test('#476: both sides adding order-free members or imports at one place ca
   assert.equal((await py(plain, '\n    def remove(self, id=log("x")):\n        return id\n')).merged, false);
   const typed = '\n    def remove(self, id: Id) -> Id:\n        return id\n';
   assert.equal((await py(plain, typed)).merged, false);
-  assert.equal((await py(plain, typed, 'from __future__ import annotations\n\n')).merged, true);
+  // Postponed annotations are no exception: a `__future__` line inside a docstring postpones nothing.
+  assert.equal((await py(plain, typed, '"""Notes.\n\nfrom __future__ import annotations\n"""\n\n')).merged, false);
+  assert.equal((await py(plain, typed, 'from __future__ import annotations\n\n')).merged, false);
+  // A `__name` is mangled with its class: `__helper` in Cart is `_Cart__helper`.
+  const mangled = '\n    def __helper(self):\n        return 1\n';
+  const spelledOut = '\n    def _Cart__helper(self):\n        return 2\n';
+  assert.equal((await py(mangled, spelledOut)).merged, false);
+  assert.equal((await py(plain, spelledOut)).merged, false);
   // A blank line inside a docstring is the docstring's text: the result must keep it.
   const doc = '\n    def add(self, item):\n        """Add.\n\n        More."""\n        return item\n';
   const docResult = (doc + other).replace('Add.\n\n', 'Add.\n');
@@ -743,6 +750,46 @@ void test('#476: both sides adding order-free members or imports at one place ca
       .merged,
     false
   );
+  // A decorator or attribute just above the insertion point attaches to whichever node comes first there.
+  const above = await samePlace(
+    'src/cart.ts',
+    `${head}  @memo\n`,
+    '  later() {\n    return 1;\n  }\n}\n',
+    add,
+    remove,
+    add + remove
+  );
+  assert.equal(above.merged, false);
+  const cfg = await samePlace(
+    'cart.rs',
+    'struct Cart;\nimpl Cart {\n    fn total(&self) -> u32 {\n        0\n    }\n    #[cfg(test)]\n',
+    '    fn later(&self) -> u32 {\n        1\n    }\n}\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n',
+    '    fn remove(&self) -> u32 {\n        3\n    }\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n    fn remove(&self) -> u32 {\n        3\n    }\n'
+  );
+  assert.equal(cfg.merged, false);
+  const impl = await samePlace(
+    'cart.rs',
+    'struct Cart;\nimpl Cart {\n    fn total(&self) -> u32 {\n        0\n    }\n',
+    '}\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n',
+    '    fn remove(&self) -> u32 {\n        3\n    }\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n    fn remove(&self) -> u32 {\n        3\n    }\n'
+  );
+  assert.equal(impl.merged, true, impl.note);
+  // Go: an import beside a function is two kinds; plain functions are not order-free; methods are.
+  const goFile = (ours: string, theirs: string) =>
+    samePlace('lab/lab.go', 'package lab\n\nimport "fmt"\n', '\nvar _ = fmt.Sprint\n', ours, theirs, ours + theirs);
+  assert.equal((await goFile('import "os"\n', 'func helper() {}\n')).merged, false);
+  assert.equal((await goFile('func a() {}\n', 'func b() {}\n')).merged, false);
+  assert.equal((await goFile('func (t T) A() {}\n', 'func (t T) B() {}\n')).merged, true);
+  // C#: `global using`, `using static` and aliases change names elsewhere; plain usings are order-free.
+  const usings = (ours: string, theirs: string) =>
+    samePlace('Program.cs', 'using System;\n', '\nclass P {}\n', ours, theirs, ours + theirs);
+  assert.equal((await usings('using System.Linq;\n', 'using System.Text;\n')).merged, true);
+  for (const odd of ['global using System.Text;\n', 'using static System.Math;\n', 'using Text = System.Text;\n'])
+    assert.equal((await usings('using System.Linq;\n', odd)).merged, false, odd);
   // The if (ok) / else case: statements, so still Check.
   const ok = await samePlace(
     'src/run.ts',
@@ -755,79 +802,57 @@ void test('#476: both sides adding order-free members or imports at one place ca
   assert.equal(ok.merged, false);
 });
 
-void test('#476: JSON keys and enums with explicit values are order-free, with no key, name or value twice', async () => {
-  // JSON: two keys in the middle of an object, either side first.
-  const json = (ours: string, theirs: string, text: string, head = '{\n  "a": 1,\n', tail = '  "z": 26\n}\n') =>
-    samePlace('config.json', head, tail, ours, theirs, text);
-  const b = '  "b": 2,\n';
-  const c = '  "c": 3,\n';
-  for (const text of [b + c, c + b]) {
-    const verdict = await json(b, c, text);
-    assert.equal(verdict.merged, true, verdict.note);
-  }
-  // The same key on both sides, or a key the object already has: Check.
-  assert.equal((await json(b, '  "b": 3,\n', b + '  "b": 3,\n')).merged, false);
-  assert.equal((await json(b, '  "z": 3,\n', b + '  "z": 3,\n')).merged, false);
-  // Appended at the end: both sides add the comma to the last key, the same change.
-  const end = await verifyProposals(
-    {
-      path: 'config.json',
-      base: '{\n  "a": 1\n}\n',
-      ours: '{\n  "a": 1,\n  "b": 2\n}\n',
-      theirs: '{\n  "a": 1,\n  "c": 3\n}\n',
-      original:
-        '{\n<<<<<<< feature\n  "a": 1,\n  "b": 2\n||||||| ancestor\n  "a": 1\n=======\n  "a": 1,\n  "c": 3\n>>>>>>> main\n}\n',
-      proposals: [{ source: 'mergiraf', text: '  "a": 1,\n  "b": 2,\n  "c": 3\n' }],
-    },
-    analyse
-  );
-  assert.equal(end.merged, true, end.note);
-  // package.json: keys are order-free only in the dependency lists and scripts. `exports` is read in order.
-  const pkg = (owner: string) =>
+void test('#476: package.json dependency lists are order-free; other JSON keys and every enum are Check', async () => {
+  const pkg = (owner: string, path = 'package.json') =>
     samePlace(
-      'package.json',
+      path,
       `{\n  "${owner}": {\n    "a": "1",\n`,
       '    "z": "26"\n  }\n}\n',
       '    "b": "2",\n',
       '    "c": "3",\n',
       '    "b": "2",\n    "c": "3",\n'
     );
-  assert.equal((await pkg('dependencies')).merged, true);
+  for (const owner of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    const verdict = await pkg(owner);
+    assert.equal(verdict.merged, true, `${owner}: ${verdict.note}`);
+  }
+  // Scripts (run-s globs), exports, any other file's keys (jest's moduleNameMapper matches in order): Check.
+  assert.equal((await pkg('scripts')).merged, false);
   assert.equal((await pkg('exports')).merged, false);
-  const nested = await samePlace(
+  assert.equal((await pkg('moduleNameMapper', 'jest.config.json')).merged, false);
+  assert.equal((await pkg('dependencies', 'config.json')).merged, false);
+  // The same package on both sides, or one the list already has: Check.
+  const twice = await samePlace(
     'package.json',
-    '{\n  "publishConfig": {\n    "dependencies": {\n      "a": "1",\n',
-    '      "z": "26"\n    }\n  }\n}\n',
-    '      "b": "2",\n',
-    '      "c": "3",\n',
-    '      "b": "2",\n      "c": "3",\n'
+    '{\n  "dependencies": {\n    "a": "1",\n',
+    '    "z": "26"\n  }\n}\n',
+    '    "b": "2",\n',
+    '    "z": "3",\n',
+    '    "b": "2",\n    "z": "3",\n'
   );
-  assert.equal(nested.merged, false, 'Only top-level lists');
+  assert.equal(twice.merged, false);
+  // Appended at the end: both sides add the comma to the last key, the same change.
+  const end = await verifyProposals(
+    {
+      path: 'package.json',
+      base: '{\n  "dependencies": {\n    "a": "1"\n  }\n}\n',
+      ours: '{\n  "dependencies": {\n    "a": "1",\n    "b": "2"\n  }\n}\n',
+      theirs: '{\n  "dependencies": {\n    "a": "1",\n    "c": "3"\n  }\n}\n',
+      original:
+        '{\n  "dependencies": {\n<<<<<<< feature\n    "a": "1",\n    "b": "2"\n||||||| ancestor\n    "a": "1"\n=======\n    "a": "1",\n    "c": "3"\n>>>>>>> main\n  }\n}\n',
+      proposals: [{ source: 'mergiraf', text: '    "a": "1",\n    "b": "2",\n    "c": "3"\n' }],
+    },
+    analyse
+  );
+  assert.equal(end.merged, true, end.note);
   // YAML keys: Check.
   const yaml = await samePlace('ci.yml', 'jobs:\n  a: 1\n', '  z: 26\n', '  b: 2\n', '  c: 3\n', '  b: 2\n  c: 3\n');
   assert.equal(yaml.merged, false);
-
-  // Enums whose members all carry their value.
-  const head = 'export enum Color {\n  Red = 1,\n';
-  const tail = '}\n';
-  const tsEnum = (ours: string, theirs: string, text: string, h = head) =>
-    samePlace('src/color.ts', h, tail, ours, theirs, text);
-  for (const text of ['  Green = 2,\n  Blue = 3,\n', '  Blue = 3,\n  Green = 2,\n']) {
-    const verdict = await tsEnum('  Green = 2,\n', '  Blue = 3,\n', text);
-    assert.equal(verdict.merged, true, verdict.note);
-  }
-  // A value or a name twice: Check.
-  assert.equal((await tsEnum('  Green = 2,\n', '  Blue = 2,\n', '  Green = 2,\n  Blue = 2,\n')).merged, false);
-  assert.equal((await tsEnum('  Green = 2,\n', '  Green = 3,\n', '  Green = 2,\n  Green = 3,\n')).merged, false);
-  assert.equal((await tsEnum('  Green = 2,\n', '  Blue = 0x1,\n', '  Green = 2,\n  Blue = 0x1,\n')).merged, false);
-  // One implicit member anywhere in the enum: Check.
-  assert.equal((await tsEnum('  Green,\n', '  Blue,\n', '  Green,\n  Blue,\n')).merged, false);
-  assert.equal(
-    (await tsEnum('  Green = 2,\n', '  Blue = 3,\n', '  Green = 2,\n  Blue = 3,\n', 'export enum Color {\n  Red,\n'))
-      .merged,
-    false
-  );
-  // C# and Rust enums with explicit values: Merged.
+  // Enums, even with explicit values, numbers or strings: Check.
+  const tsEnum = (ours: string, theirs: string) =>
+    samePlace('src/color.ts', "export enum Color {\n  Red = 'red',\n", '}\n', ours, theirs, ours + theirs);
+  assert.equal((await tsEnum("  Green = 'green',\n", "  Blue = 'blue',\n")).merged, false);
+  assert.equal((await tsEnum('  Green = 2,\n', '  Blue = 3,\n')).merged, false);
   const cs = await samePlace(
     'Color.cs',
     'enum Color\n{\n    Red = 1,\n',
@@ -836,26 +861,7 @@ void test('#476: JSON keys and enums with explicit values are order-free, with n
     '    Blue = 3,\n',
     '    Green = 2,\n    Blue = 3,\n'
   );
-  assert.equal(cs.merged, true, cs.note);
-  // C# char values: Check.
-  const chars = await samePlace(
-    'Color.cs',
-    "enum Color\n{\n    Red = 'r',\n",
-    '}\n',
-    "    Green = 'g',\n",
-    "    Blue = 'b',\n",
-    "    Green = 'g',\n    Blue = 'b',\n"
-  );
-  assert.equal(chars.merged, false);
-  const rs = await samePlace(
-    'color.rs',
-    'enum Color {\n    Red = 1,\n',
-    '}\n',
-    '    Green = 2,\n',
-    '    Blue = 3,\n',
-    '    Green = 2,\n    Blue = 3,\n'
-  );
-  assert.equal(rs.merged, true, rs.note);
+  assert.equal(cs.merged, false);
 });
 
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {

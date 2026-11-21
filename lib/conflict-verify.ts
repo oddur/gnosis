@@ -501,7 +501,7 @@ export async function verifyProposals(
         const counted =
           accountLines(block, proposal.text, indented, true) ??
           (indented ? undefined : accountLines(block, proposal.text, true, true));
-        if (orderFree(language, mine, theirs, { path: file.path, text: probe.text }) && counted === undefined) {
+        if (orderFree(language, mine, theirs, { path: file.path }) && counted === undefined) {
           const imports = [...(mine?.units ?? []), ...(theirs?.units ?? [])].every((u) =>
             /import|use_|using|comment/.test(u.type)
           );
@@ -981,7 +981,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 9;
+export const CHECKS_VERSION = 10;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A
