@@ -50,7 +50,7 @@ import { DEFAULT_FAST_CLAUDE_MODEL, PROVIDERS } from '../../lib/models';
 import { markHere } from '../../lib/diff-here';
 
 /** A file block that is collapsed: a jump into it opens it first. */
-const COLLAPSED_BLOCK = '.review-file-context[data-collapsed=true] .review-file-expand, .review-file-expand[aria-expanded="false"]';
+const COLLAPSED_BLOCK = '.review-file-expand[aria-expanded="false"]';
 
 export interface ChangesFileTarget {
   url: string;

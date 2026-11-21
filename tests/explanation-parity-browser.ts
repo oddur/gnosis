@@ -403,12 +403,24 @@ void app.whenReady().then(async () => {
     assert.ok(elsewhere.some((g) => g.block === 2 && g.target === '0'), 'The second block’s gap over the first block’s change names it');
     for (const g of elsewhere) {
       assert.equal(g.label, 'Shown in another part of this topic');
-      // Its header's own controls (the hunk below's location and definition) stay; nothing reveals lines.
       assert.ok(g.reveals.includes('Go to it'), 'The bar offers the jump');
-      assert.ok(!g.reveals.some((label) => /^(Show all|Show \d+ lines?|Show the rest)/.test(label)), `The bar reveals nothing: ${g.reveals.join(', ')}`);
     }
+    // Revealing everything such a bar offers stops before the other block's change: the bar stays, and no changed line
+    // of the second block shows in the first.
+    const changesOf = (n: number) =>
+      `window.deepAll('[data-line]',${block(n)}).filter(e=>/change-(addition|deletion)/.test(e.dataset.lineType??'')).map(e=>e.textContent)`;
+    for (let i = 0; i < 20; i++) {
+      const clicked = await js<boolean>(`(()=>{const b=[...${block(0)}.querySelectorAll('.diff-gap[data-elsewhere] button')].find(b=>/^Show (all|\\d+ lines?)|^Show$/.test(b.getAttribute('aria-label')??b.textContent.trim()));if(b)b.click();return !!b})()`);
+      if (!clicked) break;
+      await settle();
+    }
+    assert.ok(await js<boolean>(`!!${block(0)}.querySelector('.diff-gap[data-elsewhere]')`), 'The bar over the other block’s change stays');
+    const own = await js<string[]>(changesOf(0)),
+      other = await js<string[]>(changesOf(2));
+    assert.deepEqual(own.filter((text) => other.includes(text)), [], 'No change of the second block shows in the first');
     await js(`[...${block(0)}.querySelectorAll('.diff-gap[data-elsewhere="1"] button')].find(b=>b.textContent.trim()==='Go to it').click()`);
-    await wait(`(()=>{const s=document.querySelector('.explanation-document').getBoundingClientRect();const r=${block(2)}.getBoundingClientRect();return r.top>=s.top-1&&r.top<s.bottom-40})()`);
+    // It lands on the change: the line is marked in the second block, in view.
+    await wait(`(()=>{const s=document.querySelector('.explanation-document').getBoundingClientRect();const l=window.deepAll('[data-here]',${block(2)}).find(e=>e.matches('[data-line]'));if(!l)return false;const r=l.getBoundingClientRect();return r.top>=s.top&&r.bottom<=s.bottom})()`, 500);
     // A jump to a line in the second scope.ts block, collapsed first, opens that block and lands on the line.
     await js(`${block(2)}.querySelector('.review-file-expand').click()`);
     await wait(`${block(2)}.querySelector(':scope > .review-file-content').hidden`);

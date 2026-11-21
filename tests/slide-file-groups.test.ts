@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { elsewhereChanges, groupSlideHunks, resolveBlock, slideFiles } from '../lib/slide-file-groups';
-import { diffGaps, markElsewhere } from '../lib/diff-gaps';
+import { diffGaps, markElsewhere, revealedParts } from '../lib/diff-gaps';
 import { reviewGapHunks } from '../lib/review-gap-hunks';
 import { estimateCodeColumnHeight, estimateFileBlockHeight } from '../lib/review-gap-hunks';
 import { buildTopicContext } from '../lib/context-builder';
@@ -99,7 +99,7 @@ void test('hunks of one file that overlap or touch share a block, wherever the o
   assert.equal(groupSlideHunks([changed('a.ts', 12), changed('a.ts', 10)]).length, 1);
 });
 
-void test('in [A1, A3, B, A2], the gaps over A2 and over A1 and A3 reveal nothing and name the other block', () => {
+void test('in [A1, A3, B, A2], the gaps over A2 and over A1 and A3 stop before it and name the other block', () => {
   const [a1, a3, b, a2] = [changed('a.ts', 10), changed('a.ts', 100), changed('b.ts', 1), changed('a.ts', 50)];
   const groups = groupSlideHunks([a1, a3, b, a2]);
   assert.deepEqual(
@@ -120,7 +120,11 @@ void test('in [A1, A3, B, A2], the gaps over A2 and over A1 and A3 reveal nothin
   // A1 shows 10-14 with three lines of context, A3 100-104: the gap between them holds A2's change at 52.
   const between = first.find((gap) => gap.newStart <= 52 && (gap.newEnd ?? Infinity) >= 52);
   assert.ok(between);
-  assert.deepEqual([between.opaque, between.elsewhere, between.revealDown, between.revealUp], [true, 1, 0, 0]);
+  // It reveals 15-51 from A1 and 53-99 from A3, at most: never A2's change at 52.
+  assert.deepEqual(
+    [between.opaque, between.elsewhere, between.elsewhereLine, between.revealDown, between.revealUp],
+    [true, 1, 52, 37, 47]
+  );
   assert.ok(
     first.filter((gap) => gap !== between).every((gap) => gap.elsewhere === undefined),
     'gaps that hold no other block’s change still reveal'
@@ -131,6 +135,87 @@ void test('in [A1, A3, B, A2], the gaps over A2 and over A1 and A3 reveal nothin
     [0, 0],
     'A2’s gaps above and below cover A1 and A3'
   );
+});
+
+/** A saved hunk of `count` lines from `start` whose line `at` changes. */
+const long = (filePath: string, start: number, count: number, at: number): DiffHunk => ({
+  filePath,
+  hunkHeader: `@@ -${start},${count} +${start},${count} @@`,
+  content: Array.from({ length: count }, (_, i) =>
+    start + i === at ? `-old ${at}\n+new ${at}` : ` ctx ${start + i}`
+  ).join('\n'),
+  language: 'typescript',
+  renderedHtml: '',
+});
+
+void test('a block still reveals its own saved context up to the other block’s change', () => {
+  // A@10-40 changes line 25, A@60-90 line 75: each block shows its change with three lines of context.
+  const groups = groupSlideHunks([long('a.ts', 10, 31, 25), changed('b.ts', 1), long('a.ts', 60, 31, 75)]);
+  const elsewhere = elsewhereChanges(groups);
+  const shownAfterAll = (key: string) => {
+    const saved = reviewGapHunks(groups.find((g) => g.key === key)?.hunks ?? []);
+    const gaps = markElsewhere(diffGaps(saved.hunks, 200, { partial: true }) ?? [], elsewhere.get(key));
+    const reveals = Object.fromEntries(gaps.map((gap) => [gap.index, { down: Infinity, up: Infinity }]));
+    // The view has only the saved lines here, as before the after side is read.
+    return revealedParts(saved.hunks, gaps, reveals, saved.known)
+      .filter((part) => part.kind === 'gap')
+      .map((part) => [part.start, part.end, part.gap.elsewhere]);
+  };
+  // Block 0 shows 22-28; above, it reveals its saved 10-21; below, its saved 29-40, then hides the rest, which holds
+  // block 1's change.
+  assert.deepEqual(shownAfterAll(groups[0].key), [
+    [1, 9, undefined],
+    [41, 200, 1],
+  ]);
+  // Block 1 shows 72-78; above, it reveals its saved 60-71 and hides 1-59, which holds block 0's change; below, its
+  // saved 79-90.
+  assert.deepEqual(shownAfterAll(groups[2].key), [
+    [1, 59, 0],
+    [91, 200, undefined],
+  ]);
+});
+
+void test('a gap over changes of two other blocks names the nearest', () => {
+  const groups = groupSlideHunks([
+    changed('a.ts', 100),
+    changed('b.ts', 1),
+    changed('a.ts', 50),
+    changed('c.ts', 1),
+    changed('a.ts', 10),
+  ]);
+  assert.deepEqual(
+    groups.filter((g) => g.filePath === 'a.ts').map((g) => [g.run, g.hunks[0].hunkHeader]),
+    [
+      [0, '@@ -100,5 +100,5 @@'],
+      [1, '@@ -50,5 +50,5 @@'],
+      [2, '@@ -10,5 +10,5 @@'],
+    ]
+  );
+  const key = groups.find((g) => g.run === 2 && g.filePath === 'a.ts')?.key ?? '';
+  const saved = reviewGapHunks(groups.find((g) => g.key === key)?.hunks ?? []);
+  const gaps = markElsewhere(diffGaps(saved.hunks, 200, { partial: true }) ?? [], elsewhereChanges(groups).get(key));
+  const below = gaps.at(-1);
+  assert.deepEqual(
+    [below?.elsewhere, below?.elsewhereLine],
+    [1, 52],
+    'block 1’s change at 52 is nearer than block 0’s'
+  );
+});
+
+void test('changes are read from the rows the diff renders: a deletion with no new lines sits after its line', () => {
+  const deletion: DiffHunk = {
+    filePath: 'a.ts',
+    hunkHeader: '@@ -5,2 +4,0 @@',
+    content: '-gone 5\n-gone 6',
+    language: 'typescript',
+    renderedHtml: '',
+  };
+  const groups = groupSlideHunks([changed('a.ts', 40), changed('b.ts', 1), deletion]);
+  assert.deepEqual(elsewhereChanges(groups).get(groups[0].key), [{ start: 5, end: 5, run: 1 }]);
+  // A hunk saved without diff markers in an added file is all additions.
+  const added: DiffHunk = { ...deletion, hunkHeader: '@@ -0,0 +1,3 @@', content: 'one\ntwo\nthree' };
+  const fresh = groupSlideHunks([changed('a.ts', 40), changed('b.ts', 1), added]);
+  assert.deepEqual(elsewhereChanges(fresh, () => 'added').get(fresh[0].key), [{ start: 1, end: 3, run: 1 }]);
 });
 
 void test('a jump lands in the block that shows the line, the new side first', () => {
@@ -155,6 +240,12 @@ void test('a jump lands in the block that shows the line, the new side first', (
   assert.equal(resolve(3, 'LEFT', collapsed), 'second');
   assert.equal(resolve(400, undefined, collapsed), 'first', 'a line no block holds falls back to the first');
   assert.equal(resolve(undefined), 'first');
+  // A saved new-side span wins over a rendered old-side line.
+  const mixed: Block[] = [
+    { name: 'old shown', shows: { LEFT: true }, old: '40-45', new: '1-5' },
+    { name: 'new saved', shows: {}, old: '1-5', new: '40-45' },
+  ];
+  assert.equal(resolve(42, undefined, mixed), 'new saved');
 });
 
 void test('the code column estimate counts each block of a file', () => {

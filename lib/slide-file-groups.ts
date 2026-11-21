@@ -1,6 +1,7 @@
 import { parseHunkHeader } from './diff-parse';
 import type { ElsewhereChange } from './diff-gaps';
-import type { DiffHunk, DiffSide } from './types';
+import { prepareReviewHunk } from './review-diff';
+import type { DiffHunk, DiffSide, FileMetadata } from './types';
 
 /** One file block in an Explanation slide: some of the slide's hunks from one file, in reading order. */
 export interface SlideFileGroup {
@@ -109,39 +110,38 @@ export function resolveBlock<T>(
   ranges: (block: T, side: DiffSide) => string | undefined
 ): T | undefined {
   if (line === undefined || blocks.length < 2) return blocks[0];
-  const sides: DiffSide[] = side ? [side] : ['RIGHT', 'LEFT'];
-  for (const s of sides) {
-    const shown = blocks.find((block) => shows(block, s));
-    if (shown) return shown;
-  }
   const spans = (text: string | undefined) =>
     !!text &&
     text.split(',').some((range) => {
       const [start, end] = range.split('-').map(Number);
       return line >= start && line <= end;
     });
-  for (const s of sides) {
-    const saved = blocks.find((block) => spans(ranges(block, s)));
-    if (saved) return saved;
+  // The new side wins over any old-side match: rendered, then saved, before the old side's rendered and saved.
+  for (const s of side ? [side] : (['RIGHT', 'LEFT'] as const)) {
+    const found = blocks.find((block) => shows(block, s)) ?? blocks.find((block) => spans(ranges(block, s)));
+    if (found) return found;
   }
   return blocks[0];
 }
 
-/** Where a hunk's changes sit, in new-side lines: an added line is its line, a deleted one the new line after it. */
-function changeSpans(hunk: DiffHunk): Span[] {
-  const start = parseHunkHeader(hunk.hunkHeader)?.headStart;
-  if (start === undefined) return [];
+/**
+ * Where a hunk's changes sit, from its rows as the diff renders them (prepareReviewHunk), in new-side lines: an added
+ * line is its new line, a deleted one the new line after it.
+ */
+function changeSpans(hunk: DiffHunk, status?: FileMetadata['status']): Span[] {
+  const header = parseHunkHeader(hunk.hunkHeader);
+  const prepared = prepareReviewHunk(hunk, status);
+  if (!header || !prepared) return [];
   const out: Span[] = [];
-  let line = start;
-  for (const row of hunk.content.split('\n')) {
-    const type = row[0];
-    if (type === '\\') continue;
-    if (type === '+' || type === '-') {
-      const last = out.at(-1);
-      if (last && line <= last.end + 1) last.end = Math.max(last.end, line);
-      else out.push({ start: line, end: line });
-    }
-    if (type !== '-') line++;
+  // A side with no lines names the line before it.
+  let next = header.headCount ? header.headStart : header.headStart + 1;
+  for (const row of prepared.lines) {
+    if (row.headLineNumber != null) next = row.headLineNumber + 1;
+    if (row.type === 'context') continue;
+    const line = row.type === 'add' && row.headLineNumber != null ? row.headLineNumber : next;
+    const last = out.at(-1);
+    if (last && line <= last.end + 1) last.end = Math.max(last.end, line);
+    else out.push({ start: line, end: line });
   }
   return out;
 }
@@ -150,8 +150,13 @@ function changeSpans(hunk: DiffHunk): Span[] {
  * For each block, the changes other blocks of its file show. A gap over one of them must not reveal its lines as
  * unchanged code (lib/diff-gaps.ts `markElsewhere`).
  */
-export function elsewhereChanges(groups: readonly SlideFileGroup[]): Map<string, ElsewhereChange[]> {
-  const changes = new Map(groups.map((group) => [group.key, group.hunks.flatMap(changeSpans)]));
+export function elsewhereChanges(
+  groups: readonly SlideFileGroup[],
+  status?: (filePath: string) => FileMetadata['status'] | undefined
+): Map<string, ElsewhereChange[]> {
+  const changes = new Map(
+    groups.map((group) => [group.key, group.hunks.flatMap((hunk) => changeSpans(hunk, status?.(group.filePath)))])
+  );
   const out = new Map<string, ElsewhereChange[]>();
   for (const group of groups) {
     const others = groups.filter((other) => other.filePath === group.filePath && other.key !== group.key);

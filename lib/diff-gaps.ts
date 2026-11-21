@@ -53,6 +53,8 @@ export interface DiffGap {
    * block (its `run`) that shows it. The gap is opaque and reveals nothing (`markElsewhere`).
    */
   elsewhere?: number;
+  /** The new line of that change, for the jump to land on it. */
+  elsewhereLine?: number;
 }
 /** A change another block of the same file shows, in new-side lines (lib/slide-file-groups.ts). */
 export interface ElsewhereChange {
@@ -149,15 +151,37 @@ export function hunksFromDiff(diff: FileDiffMetadata): GapHunk[] {
 }
 
 /**
- * Gaps that cover a change another block of the topic shows reveal nothing: their lines are not unchanged code, and the
- * change shows once, in its own block. Each names that block, for a jump there.
+ * Gaps that cover a change another block of the topic shows keep that part hidden: its lines are not unchanged code,
+ * and the change shows once, in its own block. The lines between the gap's hunks and the nearest such change still
+ * reveal, as far as the gap could before. Each gap names the change nearest its hunks, for a jump there.
  */
 export function markElsewhere(gaps: DiffGap[], changes: readonly ElsewhereChange[] | undefined): DiffGap[] {
   if (!changes?.length) return gaps;
   return gaps.map((gap) => {
     const end = gap.newEnd ?? Infinity;
-    const hit = changes.find((change) => change.start <= end + 1 && change.end >= gap.newStart);
-    return hit ? { ...gap, opaque: true, revealDown: 0, revealUp: 0, elsewhere: hit.run } : gap;
+    const inside = changes.filter((change) => change.start <= end + 1 && change.end >= gap.newStart);
+    if (!inside.length) return gap;
+    const first = Math.min(...inside.map((change) => change.start)),
+      last = Math.max(...inside.map((change) => change.end));
+    // How far a gap reveals from the hunk above (down) and the hunk below (up): its lines up to the nearest change.
+    const down = Math.max(0, first - gap.newStart),
+      up = gap.newEnd === undefined ? 0 : Math.max(0, gap.newEnd - last);
+    const cap = (current: number | undefined, limit: number) => Math.min(gap.opaque ? (current ?? 0) : Infinity, limit);
+    // The nearest change: from the hunk above, from the hunk below, or either for a gap between two hunks.
+    const distance = (change: ElsewhereChange) =>
+      Math.min(
+        gap.index > 0 ? change.start - gap.newStart : Infinity,
+        gap.newEnd !== undefined ? gap.newEnd - change.end : Infinity
+      );
+    const nearest = inside.reduce((best, change) => (distance(change) < distance(best) ? change : best));
+    return {
+      ...gap,
+      opaque: true,
+      revealDown: cap(gap.revealDown, down),
+      revealUp: cap(gap.revealUp, up),
+      elsewhere: nearest.run,
+      elsewhereLine: nearest.start,
+    };
   });
 }
 

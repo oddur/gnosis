@@ -46,7 +46,7 @@ interface Props {
   commentScope?: string;
   /** Changes other blocks of the file show: gaps over them reveal nothing, and offer a jump to the block. */
   elsewhere?: readonly ElsewhereChange[];
-  onShowElsewhere?: (run: number) => void;
+  onShowElsewhere?: (run: number, line?: number) => void;
   commentCallbacks?: CommentCallbacks;
   threads?: GitHubReviewThread[];
   inlineExplanations?: InlineExplanation[];

@@ -461,7 +461,10 @@ export function SlideView({
   }, [slide.diffHunks, slide.affectedFiles]);
   // Per file: its blocks' keys and all of its hunks; per block: the changes its file's other blocks show.
   const files = useMemo(() => slideFiles(groupedHunks), [groupedHunks]);
-  const elsewhere = useMemo(() => elsewhereChanges(groupedHunks), [groupedHunks]);
+  const elsewhere = useMemo(
+    () => elsewhereChanges(groupedHunks, (filePath) => fileMetadataMap?.get(filePath)?.status),
+    [groupedHunks, fileMetadataMap]
+  );
   const keysOf = useCallback((filePath: string) => files.get(filePath)?.keys ?? [filePath], [files]);
   // Placeholder heights for files that content-visibility skips; `auto` keeps the real height once a file is seen.
   const contextLines = diffContextLines(diffAppearance);
@@ -863,16 +866,24 @@ export function SlideView({
         const split = (file?.blocks ?? 1) > 1;
         const ranges = split ? blockRanges(hunks) : undefined;
         // A gap over a change another block shows offers a jump there.
-        const showElsewhere = (target: number) => {
+        const showElsewhere = (target: number, line?: number) => {
           const targetKey = slideFileGroupKey(filePath, target);
           setFileExpansion((current) => ({ ...current, [targetKey]: true }));
-          requestAnimationFrame(() => {
+          // The block may have just opened: look for the change's line until its diff renders.
+          let frames = 0;
+          const land = () => {
             const element = [
               ...(rightPanelRef.current?.querySelectorAll<HTMLElement>('.review-file-group[data-file-path]') ?? []),
             ].find((g) => g.dataset.filePath === filePath && g.dataset.fileRun === String(target));
-            element?.scrollIntoView({ block: 'start' });
-            element?.querySelector<HTMLElement>('.review-file-expand')?.focus({ preventScroll: true });
-          });
+            if (!element) return;
+            const row = line === undefined ? null : findReviewLine(element, filePath, line, 'RIGHT');
+            if (!row && line !== undefined && frames++ < 30) return void requestAnimationFrame(land);
+            if (row) {
+              row.scrollIntoView({ block: 'center' });
+              markHere([row]);
+            } else element.scrollIntoView({ block: 'start' });
+          };
+          requestAnimationFrame(land);
         };
         const setFileGroupsExpanded = (value: boolean) =>
           setFileExpansion((current) => ({
