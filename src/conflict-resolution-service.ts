@@ -1577,6 +1577,7 @@ export function createConflictResolutionService(deps: Deps) {
           }
           file.result = request.contents;
           file.resolved = request.resolved;
+          if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -1584,6 +1585,8 @@ export function createConflictResolutionService(deps: Deps) {
           if (!files.length) throw new Error('Select an unresolved text file.');
           for (const file of files) {
             report(`Proposing a resolution for ${file.path}.`);
+            // A suggestion replaces the draft: your Keep choices were for the one before it.
+            file.picks = undefined;
             if (request.engine === 'agent') {
               if (file.base.length + file.ours.length + file.theirs.length > 220_000)
                 throw new Error('This file is too large for agent context. Use the manual editor.');

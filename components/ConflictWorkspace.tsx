@@ -21,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
+import { toast } from './ui/toast';
 import {
   ConflictView,
   DiffColumns,
@@ -408,9 +409,17 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   // Your Keep choices per file, so a choice that equals the proposal reads as yours. Reset and reopening clear them.
   const [picks, setPicks] = useState<Partial<Record<string, { original: string; picks: BlockPicks }>>>({});
   // A file whose conflict changed (main moved, or a fresh merge) starts without your earlier choices.
-  const picksOf = (f: ConflictFile) => {
+  // Choices are saved with the draft (ConflictFile.picks): after a reopen they come from there.
+  const picksOf = (f: ConflictFile): BlockPicks | undefined => {
     const entry = picks[f.path];
-    return entry?.original === f.original ? entry.picks : undefined;
+    return entry?.original === f.original ? entry.picks : f.picks?.map((pick) => pick ?? undefined);
+  };
+  const picksRef = useRef(picksOf);
+  picksRef.current = picksOf;
+  /** The choices to save for a file, when they differ from the saved ones. */
+  const picksToSave = (f: ConflictFile) => {
+    const own = Array.from(picksRef.current(f) ?? [], (pick) => pick ?? null);
+    return JSON.stringify(own.some(Boolean) ? own : []) === JSON.stringify(f.picks ?? []) ? undefined : own;
   };
   // Each saved draft's buckets, per file: a Keep press or a check result recomputes only the file it changed.
   const bucketCache = useRef(
@@ -530,7 +539,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     () => conflictLabels('merge', { head: session?.headBranch ?? 'PR', base: session?.baseBranch ?? 'base' }),
     [session?.headBranch, session?.baseBranch]
   );
-  const dirty = (!!file && contents !== file.result) || restackDirty;
+  const dirty = (!!file && (contents !== file.result || !!picksToSave(file))) || restackDirty;
 
   function select(path: string, value: ConflictSession, nextMode?: typeof mode) {
     const next: ConflictFile | undefined = value.files.find((f) => f.path === path) ?? value.files.at(0);
@@ -576,7 +585,14 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       const path = selectedRef.current;
       const text = contentsRef.current;
       const current = value.files.find((f) => f.path === path);
-      if (value.status === 'editing' && !value.stale && current && !current.unsupported && text !== current.result) {
+      const own = current && picksToSave(current);
+      if (
+        value.status === 'editing' &&
+        !value.stale &&
+        current &&
+        !current.unsupported &&
+        (text !== current.result || own)
+      ) {
         setSaveState('saving');
         value = (
           await window.electronAPI.conflictResolution({
@@ -585,7 +601,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             version: value.version,
             path,
             contents: text,
-            resolved: false,
+            resolved: text === current.result && current.resolved,
+            ...(own ? { picks: own } : {}),
           })
         ).session;
       }
@@ -674,7 +691,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   // The view stays mounted while another PR tab shows (Activity re-runs its effects): it opens the session once.
   const opened = useRef(false);
   useEffect(() => {
-    root.current?.focus({ preventScroll: true });
+    // Each time the Conflicts tab shows, the view takes the keys.
+    if (!root.current?.contains(document.activeElement)) root.current?.focus({ preventScroll: true });
     if (opened.current) return;
     opened.current = true;
     void load();
@@ -719,7 +737,11 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     const path = selected;
     let finished = false;
     void run(
-      (s) => ({ kind: 'save', id: s.id, version: s.version, path, contents, resolved: true }),
+      (s) => {
+        const saved = s.files.find((f) => f.path === path);
+        const own = saved && picksToSave(saved);
+        return { kind: 'save', id: s.id, version: s.version, path, contents, resolved: true, ...(own ? { picks: own } : {}) };
+      },
       (reply) => {
         const states = reply.session.files.map((f) => ({ file: f, stage: conflictFileStage(f) }));
         const next = nextPending(path, states);
@@ -751,8 +773,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       next[index] = choice;
       return { ...previous, [f.path]: { original: f.original, picks: next } };
     });
+  // No choices, also over the saved ones: Reset and a suggestion start the file again.
   const dropPicks = (path: string) =>
-    setPicks((previous) => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== path)));
+    setPicks((previous) => {
+      const f = sessionRef.current?.files.find((file) => file.path === path);
+      return f ? { ...previous, [path]: { original: f.original, picks: [] } } : previous;
+    });
   function resetTo(text: string) {
     if (file) dropPicks(file.path);
     // The footer speaks of the draft on screen: a suggestion's note goes with it.
@@ -861,10 +887,34 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   useEffect(() => {
     committed.current = { session, busy, error, dirty, saveState, verdictOf };
   });
+  // Notifications sit above the footer while it shows, so they never cover its controls.
+  const footer = useRef<HTMLElement>(null);
+  const footerShown = !!session && session.status === 'editing' && session.files.length > 0 && !confirming;
+  useEffect(() => {
+    const element = footer.current;
+    if (!element) return;
+    const style = document.documentElement.style;
+    const write = () => style.setProperty('--conflict-footer-reserve', `${Math.ceil(element.getBoundingClientRect().height) + 12}px`);
+    write();
+    const observer = new ResizeObserver(write);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      style.removeProperty('--conflict-footer-reserve');
+    };
+  }, [footerShown]);
   // Leaving the view, for another tab or another PR, saves the open draft: there is no Close step to wait for.
   useEffect(
     () => () => {
-      if (committed.current.dirty && !pending.current) void persist().catch(() => {});
+      if (committed.current.dirty && !pending.current)
+        void persist().catch((e: unknown) =>
+          toast.add({
+            type: 'error',
+            title: `Could not save your conflict draft for ${committed.current.session?.title ?? url}`,
+            description: `${e instanceof Error ? e.message : String(e)} Open Resolve conflicts again before you push.`,
+            timeout: 0,
+          })
+        );
     },
     []
   );
@@ -1580,7 +1630,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 )}
               </section>
             </div>
-            <footer className="conflict-footer">
+            <footer ref={footer} className="conflict-footer">
               {session.stale ? (
                 <>
                   <span className="conflict-footer-status" role="status">
