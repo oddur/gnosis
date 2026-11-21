@@ -1122,6 +1122,27 @@ void test('the service checks proposals itself and saves the verdict with the dr
   assert.equal(file.verdict, undefined);
 });
 
+void test('an engine that fails answers nothing, so nothing is saved; a file that does not parse still says so (#445)', async () => {
+  const definitions = () => Promise.reject(new Error('The grammar did not load'));
+  const broken = conflictChecker({ definitions, equivalent: () => Promise.resolve(false) });
+  const file = {
+    path: 'src/a.ts',
+    base: 'export const a = 0;\n',
+    ours: 'export const a = 1;\n',
+    theirs: 'export const a = 2;\n',
+    original: '<<<<<<< pr\nexport const a = 1;\n||||||| base\nexport const a = 0;\n=======\nexport const a = 2;\n>>>>>>> main\n',
+    proposals: [{ source: 'mergiraf' as const, text: 'export const a = (;\n' }],
+  };
+  assert.equal(await broken(file), undefined);
+  const assets = path.resolve('src/assets/tree-sitter');
+  const engine = createSyntaxEngine(TreeSitter, {
+    runtime: async () => new Uint8Array(await fs.readFile(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))),
+    grammar: async (language) => new Uint8Array(await fs.readFile(path.join(assets, `${language}.wasm`))),
+    tags: (name) => fs.readFile(path.join(assets, `${name}-tags.scm`), 'utf8'),
+  });
+  assert.deepEqual(await conflictChecker(engine)(file), { merged: false, note: 'The result doesn’t parse.' });
+});
+
 void test('a check that runs out of time answers nothing, and the worker restarts for the files after it (#445)', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-check-worker-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -1132,12 +1153,20 @@ void test('a check that runs out of time answers nothing, and the worker restart
     "const { parentPort } = require('node:worker_threads');\n" +
       "parentPort.on('message', (m) => { if (m.file.path !== 'slow.ts') parentPort.postMessage({ id: m.id, verdict: { merged: true, note: m.file.path } }); });\n"
   );
+  // Mocked timers: a file runs out of time only when the test moves the clock, however slowly a worker starts.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const checks = createConflictCheckWorker(script, () => ({ runtime: '', grammars: '' }), 60_000, 300);
   t.after(() => checks.dispose());
   const file = (name: string) => ({ path: name, base: '', ours: '', theirs: '', original: '' });
   // Each file's time starts when it runs: files queued behind two slow ones still get their verdicts.
-  const answers = await Promise.all(['slow.ts', 'a.ts', 'slow.ts', 'b.ts'].map((name) => checks.check(file(name))));
-  assert.deepEqual(answers, [undefined, { merged: true, note: 'a.ts' }, undefined, { merged: true, note: 'b.ts' }]);
+  const [slow, a, slowAgain, b] = ['slow.ts', 'a.ts', 'slow.ts', 'b.ts'].map((name) => checks.check(file(name)));
+  t.mock.timers.tick(300);
+  assert.equal(await slow, undefined);
+  assert.deepEqual(await a, { merged: true, note: 'a.ts' });
+  // a.ts answered before its own time ran out; the second slow file has the whole 300 ms from its own start.
+  t.mock.timers.tick(300);
+  assert.equal(await slowAgain, undefined);
+  assert.deepEqual(await b, { merged: true, note: 'b.ts' });
   checks.dispose();
   assert.equal(await checks.check(file('a.ts')), undefined, 'After dispose, no worker starts');
 });

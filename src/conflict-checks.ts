@@ -26,27 +26,39 @@ type Engine = Pick<ReturnType<typeof createSyntaxEngine>, 'definitions' | 'equiv
  * parsed, as in the renderer's syntax worker.
  */
 export function conflictChecker(engine: Engine, disabled: readonly SyntaxLanguage[] = []) {
-  const analyse: Analyse = async (...args) => {
-    const [language, text] = args;
-    if (disabled.includes(language)) throw Error('This language is off in Settings');
-    if (text.length > SYNTAX_MAX_CHARACTERS) throw Error('This file is too large to parse');
-    // Every argument and every field passes through, so the checks read what the renderer's worker answers.
-    return engine.definitions(...args);
+  return async (file: CheckedFile): Promise<Verdict | undefined> => {
+    // The checks turn a parse that throws into "couldn't parse". When the engine itself failed (the runtime, a grammar
+    // or its wasm file), that verdict says nothing about the file: it is not kept. A tree with an ERROR node still
+    // gives "doesn't parse".
+    let failure: unknown;
+    const failed = (error: unknown) => {
+      failure ??= error;
+      throw error;
+    };
+    const analyse: Analyse = async (...args) => {
+      const [language, text] = args;
+      if (disabled.includes(language)) throw Error('This language is off in Settings');
+      if (text.length > SYNTAX_MAX_CHARACTERS) throw Error('This file is too large to parse');
+      // Every argument and every field passes through, so the checks read what the renderer's worker answers.
+      return engine.definitions(...args).catch(failed);
+    };
+    const equivalent: Equivalent = (language, before, after) => {
+      if (disabled.includes(language)) return Promise.reject(Error('This language is off in Settings'));
+      if (Math.max(before.length, after.length) > NOISE_MAX_CHARACTERS)
+        return Promise.reject(Error('This file is too large to compare'));
+      return engine.equivalent(language, before, after).catch(failed);
+    };
+    try {
+      const verdict = await (file.wholeFile
+        ? verifyWholeFile(file, file.wholeFile, analyse)
+        : verifyProposals(file, analyse, false, equivalent));
+      if (failure === undefined) return verdict;
+    } catch (error) {
+      failure ??= error;
+    }
+    console.warn(`[conflicts] The checks failed on ${file.path}.`, failure);
+    return undefined;
   };
-  const equivalent: Equivalent = (language, before, after) => {
-    if (disabled.includes(language)) return Promise.reject(Error('This language is off in Settings'));
-    if (Math.max(before.length, after.length) > NOISE_MAX_CHARACTERS)
-      return Promise.reject(Error('This file is too large to compare'));
-    return engine.equivalent(language, before, after);
-  };
-  return (file: CheckedFile): Promise<Verdict | undefined> =>
-    (file.wholeFile
-      ? verifyWholeFile(file, file.wholeFile, analyse)
-      : verifyProposals(file, analyse, false, equivalent)
-    ).catch((error: unknown) => {
-      console.warn(`[conflicts] The checks failed on ${file.path}.`, error);
-      return undefined;
-    });
 }
 
 /** Where the worker finds the tree-sitter runtime and grammars: `src/assets/tree-sitter` in development. */
