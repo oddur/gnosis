@@ -1,7 +1,15 @@
 import { Worker } from 'node:worker_threads';
 import { NOISE_MAX_CHARACTERS } from '../lib/semantic-noise';
-import { verifyProposals, verifyWholeFile, type Analyse, type Equivalent, type Verdict } from '../lib/conflict-verify';
-import { withProposals } from '../lib/conflict-carry';
+import {
+  blockVerdict,
+  verifyProposals,
+  verifyWholeFile,
+  type Analyse,
+  type Equivalent,
+  type Verdict,
+} from '../lib/conflict-verify';
+import { parseConflicts } from '../lib/conflict-blocks';
+import { blockResolutions, withProposals } from '../lib/conflict-carry';
 import type { ConflictFile } from '../lib/conflict-resolution';
 import { SYNTAX_MAX_CHARACTERS, type createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
 
@@ -22,22 +30,39 @@ export type CheckedFile = Pick<
 type Engine = Pick<ReturnType<typeof createSyntaxEngine>, 'definitions' | 'equivalent'>;
 
 /**
- * Takes back each 'same' proposal the checks didn't confirm (#445 item 15): its conflict is yours to decide, with Git's
- * markers in a draft still as prepared, as if preparation had proposed nothing there. The fields to change on the file,
- * then to check it again once; undefined when there is nothing to take back.
+ * Takes back each 'same' proposal (#445 item 15) that its own check didn't Merge: it failed, or there is no verdict (an
+ * error, a timeout, a language that is off, a file over the limits). Fail closed: such a conflict is yours to decide.
+ * Where the draft still holds the proposal's text for it, Git's markers come back, and the file is no longer resolved;
+ * a conflict you changed keeps your text. The fields to change on the file; undefined when there is nothing to take back.
  */
 export function withoutUnconfirmed(
-  file: Pick<ConflictFile, 'original' | 'result' | 'proposals' | 'source'>,
+  file: Pick<ConflictFile, 'original' | 'result' | 'proposals' | 'source' | 'resolved'>,
   verdict: Verdict | undefined
-): Pick<ConflictFile, 'proposals' | 'result' | 'source' | 'structuralNote'> | undefined {
-  const drop = verdict?.unconfirmed?.filter((index) => file.proposals?.[index]?.source === 'same');
-  if (!drop?.length || !file.proposals) return undefined;
-  const kept = file.proposals.map((p, index) => (drop.includes(index) ? null : p));
-  const prepared = file.result === withProposals(file.original, file.proposals);
+): Pick<ConflictFile, 'proposals' | 'result' | 'source' | 'structuralNote' | 'resolved'> | undefined {
+  const proposals = file.proposals;
+  const drop = (proposals ?? []).flatMap((p, index) =>
+    p?.source === 'same' && blockVerdict(verdict, index)?.merged !== true ? [index] : []
+  );
+  if (!proposals || !drop.length) return undefined;
+  const kept = proposals.map((p, index) => (drop.includes(index) ? null : p));
+  const segments = parseConflicts(file.original);
+  const texts = blockResolutions(segments, file.result);
+  /** The draft rebuilt from its conflicts' texts, with Git's markers in `restore`. */
+  const draft = (restore: readonly number[]) =>
+    segments
+      .map((s) =>
+        s.kind === 'text' ? s.text : restore.includes(s.index) ? s.block.raw : (texts?.[s.index] ?? s.block.raw)
+      )
+      .join('');
+  // Only when the draft splits back into its conflicts exactly: anything else is left as it is.
+  const restore =
+    texts && draft([]) === file.result ? drop.filter((index) => texts[index] === proposals[index]?.text) : [];
+  const prepared = file.result === withProposals(file.original, proposals);
   const left = kept.some(Boolean);
   return {
     proposals: left ? kept : undefined,
-    result: prepared ? withProposals(file.original, kept) : file.result,
+    result: restore.length ? draft(restore) : file.result,
+    resolved: restore.length ? false : file.resolved,
     source: prepared && !left && file.source === 'mergiraf' ? 'manual' : file.source,
     structuralNote: left ? undefined : 'Structural merge couldn’t combine this file.',
   };

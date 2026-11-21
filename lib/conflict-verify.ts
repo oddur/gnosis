@@ -46,11 +46,6 @@ export interface Verdict extends BlockVerdict {
   passed?: boolean;
   /** Each conflict's own outcome, by block index. Absent: every proposal shares the file's. */
   blocks?: (BlockVerdict | undefined)[];
-  /**
-   * The conflicts whose 'same' proposal the syntax trees didn't confirm: both sides are not the same program, or they
-   * couldn't be compared. Such a proposal is taken back, and the conflict is yours to decide (src/conflict-checks.ts).
-   */
-  unconfirmed?: number[];
 }
 /** A conflict's own outcome: its entry in `blocks`, else the file's. Undefined while the checks run. */
 export const blockVerdict = (verdict: Verdict | undefined, index: number): BlockVerdict | undefined =>
@@ -183,7 +178,6 @@ export async function verifyProposals(
   /** The first failure of each conflict. */
   const failed = new Map<number, string>();
   const fail = (index: number, note: string) => void (failed.has(index) || failed.set(index, note));
-  const unconfirmed: number[] = [];
   const verdict = (passed: (index: number) => string): Verdict => {
     const blocks: (BlockVerdict | undefined)[] = [];
     for (const s of proposed) {
@@ -203,7 +197,6 @@ export async function verifyProposals(
       merged: !failed.size && proposed.length > 0,
       note: first?.note ?? '',
       ...(shared ? {} : { blocks }),
-      ...(unconfirmed.length ? { unconfirmed } : {}),
     };
   };
   const language = syntaxLanguage(file.path);
@@ -303,7 +296,6 @@ export async function verifyProposals(
           reformats.set(s.index, formatted.note);
           continue;
         }
-        if (same) unconfirmed.push(s.index);
         note = formatted?.note ?? (same ? NOT_SAME : note);
       }
       if (note) fail(s.index, note);
@@ -356,7 +348,7 @@ export function keepsLayout(block: { base: string; edited: string; formatted: st
 export const SAME_CHANGE = 'Both sides made the same change. Kept the PR’s layout.';
 /**
  * The PR's version was proposed for a change both sides seemed to make, but the trees don't show the same code. Seen
- * only until the proposal is taken back (Verdict `unconfirmed`).
+ * only until the proposal is taken back (src/conflict-checks.ts withoutUnconfirmed).
  */
 export const NOT_SAME =
   'Both sides changed these lines almost the same way, but Gnosis couldn’t show it is the same change. The result is the PR’s version. Check main’s change.';

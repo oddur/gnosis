@@ -345,18 +345,18 @@ void test('the PR’s version of the same change is Merged only when both sides 
     '    return names\n',
   ]);
   assert.deepEqual(list.verdict, merged);
-  // The review's traps the candidate check lets through: the trees differ, so the checks don't confirm the PR's
+  // The review's traps the candidate check lets through: the trees differ, so the checks don't Merge the PR's
   // version, and src/conflict-checks.ts takes it back.
   for (const [name, head, call, tail] of TRAPS) {
     const trap = await verify(name, [head, call, tail]);
     assert.deepEqual(trap.proposals, [{ source: 'same', text: call[0] }], name);
-    assert.deepEqual(trap.verdict, { merged: false, note: NOT_SAME, unconfirmed: [0] }, name);
+    assert.deepEqual(trap.verdict, { merged: false, note: NOT_SAME }, name);
   }
-  // Without the tree comparison (the language is off), it stays in Check.
+  // With no tree comparison given at all, nothing confirms it.
   const call = ["  f(\n    'x',\n  );\n", "  f('w');\n", '  f("x");\n'] as [string, string, string];
   const open = conflict('src/x.ts', ['function g() {\n', call, '}\n']);
   assert.deepEqual(open.proposals, [{ source: 'same', text: call[0] }]);
-  assert.deepEqual(await verifyProposals(open, analyse), { merged: false, note: NOT_SAME, unconfirmed: [0] });
+  assert.deepEqual(await verifyProposals(open, analyse), { merged: false, note: NOT_SAME });
   // Structural merge's own proposal of the same change: Merged as the PR's layout, never as main's.
   const pr = await verify('src/x.ts', ['function g() {\n', call, '}\n'], [{ source: 'mergiraf', text: call[0] }]);
   assert.deepEqual(pr.verdict, merged);
@@ -364,23 +364,57 @@ void test('the PR’s version of the same change is Merged only when both sides 
   assert.deepEqual(main.verdict, { merged: false, note: SAME_LINES });
 });
 
-void test('a same-change proposal the checks don’t confirm is taken back: Decide, with Git’s markers', async () => {
+void test('a same-change proposal its check didn’t Merge is taken back: Decide, with Git’s markers', async () => {
   const check = conflictChecker(engine);
+  /** The file once the service took back what its check didn't Merge. */
+  const settle = (f: ConflictFile, verdict: Awaited<ReturnType<typeof check>>) => {
+    const back = withoutUnconfirmed(f, verdict);
+    return back && { ...f, ...back };
+  };
   for (const [name, head, call, tail] of TRAPS) {
     const f = conflict(name, [head, call, tail]);
-    const verdict = await check(f);
-    assert.deepEqual(verdict?.unconfirmed, [0], name);
-    const back = withoutUnconfirmed(f, verdict);
-    assert.ok(back, name);
-    const after = { ...f, ...back };
+    const after = settle(f, await check(f));
+    assert.ok(after, name);
     assert.equal(after.proposals, undefined, name);
     assert.equal(after.result, f.original, 'The draft holds Git’s markers again');
     assert.equal(after.source, 'manual');
+    assert.equal(after.structuralNote, 'Structural merge couldn’t combine this file.');
     assert.deepEqual(blockBuckets(after, after.result, undefined), ['decide'], name);
   }
-  // A confirmed proposal, and a proposal that isn't 'same', are never taken back.
+  // Fail closed: with the language off, or no verdict at all (an error, a timeout), even the same change goes back.
   const quotes = conflict('src/x.ts', ['function g() {\n', ["  f('x');\n", "  f('w');\n", '  f("x");\n'], '}\n']);
-  assert.equal(withoutUnconfirmed(quotes, await check(quotes)), undefined);
+  for (const verdict of [await conflictChecker(engine, ['typescript'])(quotes), undefined]) {
+    const after = settle(quotes, verdict);
+    assert.equal(after?.result, quotes.original);
+    assert.deepEqual(blockBuckets(after, after.result, undefined), ['decide']);
+  }
+  // A confirmed same change stays Merged, and a proposal that isn't 'same' is never taken back.
+  const confirmed = await check(quotes);
+  assert.equal(settle(quotes, confirmed), undefined);
+  assert.deepEqual(blockBuckets(quotes, quotes.result, confirmed), ['merged']);
   const union = conflict('src/math.ts', [fn('alpha'), [fn('beta'), '', fn('gamma')]]);
-  assert.equal(withoutUnconfirmed(union, { merged: false, note: '', unconfirmed: [0] }), undefined);
+  assert.equal(settle(union, undefined), undefined);
+  // A draft you edited: the trap's conflict gets its markers back, the conflict you decided keeps your text.
+  const [, head, call, tail] = TRAPS[1];
+  const two = conflict('src/count.ts', [head, call, tail, ['const c = 1;\n', 'const c = 0;\n', 'const c = 2;\n']]);
+  assert.deepEqual(
+    two.proposals?.map((p) => p?.source ?? null),
+    ['same', null]
+  );
+  const decided = {
+    ...two,
+    result: two.result.replace(/<<<<<<< feature\nconst c[^]*>>>>>>> main\n/, 'const c = 2;\n'),
+  };
+  const edited = settle(decided, await check(decided));
+  assert.equal(edited?.result, two.original.replace(/<<<<<<< feature\nconst c[^]*>>>>>>> main\n/, 'const c = 2;\n'));
+  assert.deepEqual(blockBuckets(edited, edited.result, undefined), ['decide', 'decided']);
+  // You changed the trap's conflict yourself: its proposal goes, your text stays.
+  const mine = { ...two, result: two.result.replace(call[0], '  x = a + b;\n') };
+  assert.equal(settle(mine, await check(mine))?.result, mine.result);
+  // A file you marked reviewed is no longer resolved once its markers come back.
+  const [name, h, c, t] = TRAPS[0];
+  const reviewed = { ...conflict(name, [h, c, t]), resolved: true };
+  const back = settle(reviewed, await check(reviewed));
+  assert.equal(back?.result, reviewed.original);
+  assert.equal(back.resolved, false);
 });
