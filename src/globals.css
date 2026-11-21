@@ -1969,6 +1969,8 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    its side's code column. */
 .diff-move-lead { background:var(--diff-code-bg, #22272e); }
 .diff-move-lead[data-split] { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); }
+/* Each column's note sits on the row's bottom edge, right above its side's first row, when the other column's wraps. */
+.diff-move-lead[data-split] > div { align-self:end; }
 .diff-move-note[data-move-lead] .diff-gap-trailing { padding-left:var(--diff-code-inset); }
 .diff-move-note code { font:inherit; color:var(--diff-header-fg); }
 .diff-move-note .diff-gap-text code { color:inherit; }

@@ -10,7 +10,8 @@
  * gutter's edge, so the bar runs down the whole section. The signature's band pours out from the bar as it arrives,
  * blooms, settles to a softer tint and fades out over `HERE_MS`; the rest of the section blooms and fades with it, more
  * softly. Reduced motion shows the settled bands, still, for as long. Visual only: each band is a pseudo-element under
- * its row's text, so nothing moves, and marking writes attributes alone, with no layout read.
+ * its row's text, so nothing moves, and marking writes attributes alone, with no layout read. When the diff renders
+ * again while the band shows, and so writes its rows anew, the band moves to the rows in the same place.
  *
  * The rows live in Pierre's shadow roots, so the CSS is part of ChangesDiff's (`HERE_CSS`); gap bars use the same rules
  * in globals.css. Colours and their contrast are checked in tests/code-palette.test.ts (HERE_* in lib/code-palette.ts).
@@ -80,14 +81,20 @@ export function gutterOf(row: Element): Element | undefined {
   return column?.querySelector(`[data-column-number][data-line-index="${CSS.escape(index)}"]`) ?? undefined;
 }
 
-let shown: { elements: Element[]; timer: ReturnType<typeof setTimeout> } | undefined;
+/** A marked element, and how to find the element that replaces it in its diff's shadow root. */
+interface Marked extends HereTarget {
+  root?: ShadowRoot;
+  selector?: string;
+}
+let shown: { marked: Marked[]; timer: ReturnType<typeof setTimeout>; observer?: MutationObserver } | undefined;
 let flip = false;
 
 /** Ends the band, wherever it shows. */
 export function clearHere() {
   if (!shown) return;
   clearTimeout(shown.timer);
-  for (const element of shown.elements) {
+  shown.observer?.disconnect();
+  for (const { element } of shown.marked) {
     element.removeAttribute('data-here');
     element.removeAttribute('data-here-part');
   }
@@ -99,18 +106,50 @@ export interface HereTarget {
   element: Element;
   part?: 'body';
 }
+
+/** A code row or gutter cell by its column, line and visual row: the same place after the diff renders again. */
+function placeOf(element: Element): string | undefined {
+  const index = element.getAttribute('data-line-index');
+  if (index === null) return undefined;
+  const attribute = element.hasAttribute('data-line') ? 'data-line' : element.hasAttribute('data-column-number') ? 'data-column-number' : undefined;
+  if (!attribute) return undefined;
+  const column = element.closest('[data-deletions]') ? '[data-deletions] ' : element.closest('[data-additions]') ? '[data-additions] ' : '';
+  return `${column}[${attribute}="${CSS.escape(element.getAttribute(attribute) ?? '')}"][data-line-index="${CSS.escape(index)}"]`;
+}
+
 function mark(targets: readonly HereTarget[]): Element[] {
   clearHere();
   const live = targets.filter((target) => target.element.isConnected);
   if (!live.length) return [];
   flip = !flip;
-  for (const { element, part } of live) {
-    element.setAttribute('data-here', flip ? 'a' : 'b');
+  const letter = flip ? 'a' : 'b';
+  const apply = ({ element, part }: HereTarget) => {
+    element.setAttribute('data-here', letter);
     if (part) element.setAttribute('data-here-part', part);
+  };
+  const marked: Marked[] = live.map((target) => {
+    apply(target);
+    const root = target.element.getRootNode();
+    return root instanceof ShadowRoot ? { ...target, root, selector: placeOf(target.element) } : { ...target };
+  });
+  // Pierre writes a diff's rows anew each time the diff renders, which any render of the component around it does. A
+  // render while the band shows would drop it with the old rows, so the band moves to the rows that replace them.
+  const roots = new Set(marked.flatMap((entry) => (entry.root && entry.selector ? [entry.root] : [])));
+  let observer: MutationObserver | undefined;
+  if (roots.size) {
+    observer = new MutationObserver(() => {
+      for (const entry of marked) {
+        if (entry.element.isConnected || !entry.root || !entry.selector) continue;
+        const next = entry.root.querySelector(entry.selector);
+        if (!next) continue;
+        entry.element = next;
+        apply(entry);
+      }
+    });
+    for (const root of roots) observer.observe(root, { childList: true, subtree: true });
   }
-  const elements = live.map((target) => target.element);
-  shown = { elements, timer: setTimeout(clearHere, HERE_MS) };
-  return elements;
+  shown = { marked, timer: setTimeout(clearHere, HERE_MS), observer };
+  return live.map((target) => target.element);
 }
 
 /**
