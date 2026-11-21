@@ -13,6 +13,16 @@ Each conflict shows two labelled versions side by side: **This PR · branch** an
 3. **Mark reviewed** is available only after the current result has been shown. A file whose every conflict is Merged shows its results already, so its next step is **Mark reviewed**. It saves the file as **Reviewed** and opens the next file that needs work.
 4. When every file is reviewed, the confirmation opens directly.
 
+### Compare with
+
+The file header has a switch, **Compare with: PR · main · both**. Gnosis remembers the choice for every file and PR while the window stays open.
+
+- **PR** (the default) compares the result with the PR's version: what the author sees change on their branch.
+- **main** compares the result with the base branch's version: what the PR still changes after the merge.
+- **both** shows each conflict as three rows: the PR's side, the base branch's side and the result, each compared with the version before both changes. Only the conflicts show, with every line of each row; PR and main show the whole file. When the draft has no conflicts left, **both** is off and the view shows PR.
+
+The switch never hides a conflict. Each Check and Decide card stays under its conflict's lines in every mode. A conflict you have not decided shows its two sides, never one of them as the result: against main, the PR's lines stand in for it, and in both its result row says "Nothing is chosen yet." Lines you reveal in PR stay revealed when you switch to another mode and back.
+
 Structural merge runs on every file while the merge is prepared, so there is no engine to choose. **Ask <model>…** (the Bot icon) asks the selected model about the open file, with optional instructions. Its result is a draft: it never marks a file reviewed. The model gets the three versions, your draft and the PR context, without a checkout or test runner.
 
 When one side moved or renamed a function and the other side edited it, and structural merge proposed nothing for the file, Gnosis may propose the moved function with the other side's edit applied at its new place. It proposes this only when the move is unambiguous (one source, one target, the same body apart from the edit), every open conflict is at that function, the edit applies to lines the moving side did not change, and the result parses and keeps every line of both sides. The proposal covers the whole file and is always **Check**, never Merged: call sites in other files were not checked. **Use this result** puts it in the draft as it is. It is only an extra: a file with other proposals gets none, the draft stays as Git wrote it until you use it, and **Try structural merge again** stays where structural merge timed out. A move into another file is not proposed: that file merged cleanly and is not part of the resolution.

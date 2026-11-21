@@ -1599,6 +1599,7 @@ export function ConflictWorkspace({
                                 handle={view}
                                 name={selected}
                                 ours={file.ours}
+                                theirs={file.theirs}
                                 fileKey={diffKey}
                                 preferences={preferences}
                                 original={file.original}

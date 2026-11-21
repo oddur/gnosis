@@ -23,6 +23,7 @@ import {
   type ConflictLabels,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
+import type { CompareWith } from '../lib/conflict-diff';
 import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
 /** What the proposal is. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
@@ -137,9 +138,12 @@ export function Block({
   proposal,
   verdict,
   note,
+  compare = 'pr',
 }: {
   /** In the Conflicts view's diff (components/ConflictDiff.tsx): the diff shows the code, the card the decision. */
   inDiff?: boolean;
+  /** What the diff around the card compares the result with (#445 item 9), so the legend names its sides right. */
+  compare?: CompareWith;
   name: string;
   block: ConflictBlock;
   index: number;
@@ -319,10 +323,27 @@ export function Block({
         {note && <span className="conflict-block-note">{note}</span>}
       </header>
       {inDiff ? (
-        // The diff above shows the two sides: the PR's lines removed, the base branch's added. Neither is chosen.
+        // The diff above shows the two sides: against the PR, its lines removed and the base branch's added; against
+        // main, the other way round. In both, the rows above name them. Neither is chosen.
         <p className="conflict-diff-legend">
-          <span className="conflict-side-label" data-side="ours">{labels.ours}</span>
-          <span className="conflict-side-label" data-side="theirs">{labels.theirs}</span>
+          {compare !== 'both' && (
+            <>
+              <span
+                className="conflict-side-label"
+                data-side={compare === 'main' ? 'theirs' : 'ours'}
+                data-mark="removed"
+              >
+                {compare === 'main' ? labels.theirs : labels.ours}
+              </span>
+              <span
+                className="conflict-side-label"
+                data-side={compare === 'main' ? 'ours' : 'theirs'}
+                data-mark="added"
+              >
+                {compare === 'main' ? labels.ours : labels.theirs}
+              </span>
+            </>
+          )}
           <span>Nothing is chosen yet.</span>
         </p>
       ) : (
