@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a match arm at the end: main a catch-all `_ => 500`, the PR a specific arm. Either order is a guess about intent, and an arm after the catch-all never matches, so the union is never Merged.",
+  "language": "rust",
+  "category": "semantic/order",
+  "expected": {
+    "src/status.rs": "any-but-merged"
+  }
+}

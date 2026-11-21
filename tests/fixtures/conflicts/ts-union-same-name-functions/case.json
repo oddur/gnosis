@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a function named `clamp` in the same place, with different bodies.",
+  "language": "typescript",
+  "category": "semantic/duplicate",
+  "expected": {
+    "src/math.ts": "any-but-merged"
+  }
+}

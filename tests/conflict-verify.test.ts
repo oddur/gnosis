@@ -41,7 +41,7 @@ const engine = createSyntaxEngine(TreeSitter, {
   grammar: async (language) => new Uint8Array(await fs.readFile(path.join(assets, `${language}.wasm`))),
   tags: (name) => fs.readFile(path.join(assets, `${name}-tags.scm`), 'utf8'),
 });
-const analyse: Analyse = (language, text) => engine.definitions(language, text);
+const analyse: Analyse = (language, text, ranges) => engine.definitions(language, text, ranges);
 
 const base =
   "import { a } from './a';\n\nexport function one() {\n  return 1;\n}\n\nexport function two() {\n  return 2;\n}\n";
@@ -100,16 +100,25 @@ void test('a result that parses and keeps every definition is Merged', async () 
   assert.deepEqual(verdict, { merged: true, note: 'The file parses. Every line of both sides is accounted for.' });
 });
 
+const passed = { merged: true, note: 'The file parses. Every line of both sides is accounted for.' };
 void test('a lost definition, a duplicate, a parse error, markers or mixed line endings keep the proposal in Check', async () => {
+  // Each failure belongs to the conflict that caused it: the imports conflict stays Merged, with its own reason.
   const lost = await verifyProposals(file([merged(imports), merged(three)]), analyse);
-  assert.deepEqual(lost, { merged: false, note: 'export function four() { from main is missing from the result.' });
+  const missing = { merged: false, note: 'export function four() { from main is missing from the result.' };
+  assert.deepEqual(lost, { ...missing, blocks: [passed, missing] });
   const twice = await verifyProposals(file([merged(imports), merged(three + three + four)]), analyse);
-  assert.deepEqual(twice, { merged: false, note: 'three is defined twice in the result.' });
+  const duplicate = { merged: false, note: 'three is defined twice in the result.' };
+  assert.deepEqual(twice, { ...duplicate, blocks: [passed, duplicate] });
   const broken = await verifyProposals(
     file([merged(imports), merged(`${three}${four.replace('}\n', '\n')}`)]),
     analyse
   );
-  assert.deepEqual(broken, { merged: false, note: 'The result doesn’t parse.' });
+  const unparsed = { merged: false, note: 'This result doesn’t parse.' };
+  assert.deepEqual(broken, { ...unparsed, blocks: [passed, unparsed] });
+  assert.deepEqual(
+    blockBuckets(file([merged(imports), merged(three)]), withProposals(original, [merged(imports), merged(three)]), lost),
+    ['merged', 'check']
+  );
   const markers = await verifyProposals(file([merged('<<<<<<< x\n'), null]), analyse);
   assert.equal(markers.merged, false);
   const endings = await verifyProposals(file([merged("import { b } from './b';\r\n"), merged(three + four)]), analyse);
@@ -243,7 +252,8 @@ void test('review probe: a lone newline between conflicts never cuts a resolutio
 void test('review probe: a lost line that is no definition keeps the proposal in Check', async () => {
   // The imports conflict kept only the PR's import: every definition survives, main's import does not.
   const verdict = await verifyProposals(file([merged("import { b } from './b';\n"), merged(three + four)]), analyse);
-  assert.deepEqual(verdict, { merged: false, note: "import { c } from './c'; from main is missing from the result." });
+  const missing = { merged: false, note: "import { c } from './c'; from main is missing from the result." };
+  assert.deepEqual(verdict, { ...missing, blocks: [missing, passed] });
   const config = await verifyProposals(
     {
       path: 'config.json',

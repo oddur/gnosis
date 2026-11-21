@@ -26,6 +26,7 @@ import {
   withResult,
 } from '../lib/conflict-carry';
 import { conflictCount } from '../lib/conflict-blocks';
+import { withUnions } from '../lib/conflict-union';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
@@ -676,15 +677,18 @@ export function createConflictResolutionService(deps: Deps) {
       }
       // Out of time, Mergiraf falls back to Git's line merge and says nothing: whatever it printed is not its merge.
       if (Date.now() - started >= budget) return false;
-      const proposals = blockProposals(file.original, output, 'mergiraf');
+      const merged = blockProposals(file.original, output, 'mergiraf');
+      const whole = !merged && !hasConflictMarkers(output);
+      // Where it left a conflict open and both sides only added lines there, both additions (lib/conflict-union.ts).
+      const proposals = whole ? undefined : withUnions(file.path, file.original, merged);
       if (proposals) {
         file.proposals = proposals;
         if (!keepDraft) {
           file.result = withProposals(file.original, proposals);
           file.source = 'mergiraf';
         }
-      } else if (!hasConflictMarkers(output)) file.wholeFile = { source: 'mergiraf', text: output };
-      else file.structuralNote = 'Structural merge couldn’t combine this file.';
+      } else if (whole) file.wholeFile = { source: 'mergiraf', text: output };
+      if (!merged && !whole) file.structuralNote = 'Structural merge couldn’t combine this file.';
       file.structuralRan = true;
       return true;
     };

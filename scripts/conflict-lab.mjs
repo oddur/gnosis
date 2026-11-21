@@ -19,7 +19,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import * as TreeSitter from 'web-tree-sitter';
 import { createConflictResolutionService } from '../src/conflict-resolution-service.ts';
-import { blockBuckets, verifyProposals, verifyWholeFile } from '../lib/conflict-verify.ts';
+import { blockBuckets, blockVerdict, verifyProposals, verifyWholeFile } from '../lib/conflict-verify.ts';
 import { blockProposals } from '../lib/conflict-carry.ts';
 import { hasConflictMarkers } from '../lib/conflict-resolution.ts';
 import { parseConflicts } from '../lib/conflict-blocks.ts';
@@ -46,11 +46,11 @@ const engine = createSyntaxEngine(TreeSitter, {
 /** The renderer's checkSyntax, in Node: rejects for a language that is off in Settings or a text over the limit. */
 const analyser =
   (off = []) =>
-  async (language, text) => {
+  async (language, text, ranges) => {
     if (off.includes(language)) throw new Error('This language is off in Settings');
     if (text.length > SYNTAX_MAX_CHARACTERS) throw new Error('This file is too large to parse');
-    const { definitions, errors } = await engine.definitions(language, text);
-    return { definitions, errors };
+    const { definitions, errors, errorLines, units } = await engine.definitions(language, text, ranges);
+    return { definitions, errors, errorLines, units };
   };
 /** The renderer's checkFormatting, in Node, with the same limits. */
 const equivalence =
@@ -228,7 +228,7 @@ export async function runCase(c, { keep = false } = {}) {
             : undefined;
         const buckets = blockBuckets(f, f.result, verdict);
         // The checks proposed for #444, measured on the side: what the buckets would be with them.
-        const fixNote = verdict?.merged ? proposedChecks(f) : undefined;
+        const fixNote = buckets.includes('merged') ? proposedChecks(f) : undefined;
         const bucketsWithFixes = fixNote ? blockBuckets(f, f.result, { merged: false, note: fixNote }) : buckets;
         const expected = expectedFor(expectedFiles.get(f.path), buckets.length);
         expectedFiles.delete(f.path);
@@ -239,6 +239,9 @@ export async function runCase(c, { keep = false } = {}) {
           fixNote,
           expected,
           note: verdict?.note ?? f.structuralNote,
+          // Each conflict's own reason (#445 item 18), and which proposals are unions of both sides' additions.
+          notes: buckets.map((_, i) => (f.proposals?.[i] ? blockVerdict(verdict, i)?.note : undefined) ?? f.structuralNote),
+          sources: buckets.map((_, i) => f.proposals?.[i]?.source),
           unsupported: f.unsupported,
           source: f.source,
         };
@@ -451,7 +454,8 @@ export function blocks(results) {
             wrongWithFixes: wrongness(expected, withFixes, f.comparison),
             tier: f.tier,
             detail: f.detail,
-            note: f.note,
+            note: f.notes?.[i] ?? f.note,
+            source: f.sources?.[i],
             fixNote: f.fixNote,
             comparison: f.comparison,
             wholeFile: f.wholeFileProposal,

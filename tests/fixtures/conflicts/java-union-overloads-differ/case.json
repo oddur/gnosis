@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a `write` overload with a different parameter type, in the same place. Overloads with different signatures can both stay, in any order.",
+  "language": "java",
+  "category": "structure/both-add",
+  "expected": {
+    "src/main/java/lab/Log.java": "merged"
+  }
+}

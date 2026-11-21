@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a `retries` key to the same object, with different values.",
+  "language": "typescript",
+  "category": "semantic/same-constant",
+  "expected": {
+    "src/config.ts": "any-but-merged"
+  }
+}
