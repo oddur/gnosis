@@ -36,6 +36,7 @@ import {
   ruleCutsFor,
   writeRecorded,
   writeManifest,
+  commitRecording,
   plannerInput,
   fixtureHash,
   promptHash,
@@ -59,82 +60,84 @@ async function cuts(path: string, before: string | null, after: string | null, l
   return prepared.hunks.map((h) => found.get(h.id) ?? null);
 }
 
-void describe('rules: imports', () => {
-  const before = text("import { a } from './x';", "import fs from 'node:fs';", '', 'run(a);');
-  void test('an import widened from a module the file already imports is cut at every level', async () => {
-    const after = text("import { a, b } from './x';", "import fs from 'node:fs';", '', 'run(a);');
-    assert.deepEqual(await cuts('src/a.ts', before, after), ['import only']);
-    assert.deepEqual(await cuts('src/a.ts', before, after, 'aggressive'), ['import only']);
-  });
-  void test('an import of a package the file never imported is kept at Conservative and cut at Aggressive', async () => {
-    const after = text("import { a } from './x';", "import pLimit from 'p-limit';", "import fs from 'node:fs';", '', 'run(a);');
-    assert.deepEqual(await cuts('src/a.ts', before, after), [null]);
-    assert.match((await cuts('src/a.ts', before, after, 'aggressive'))[0] ?? '', /new dependency: p-limit/);
-  });
-  void test('multi-line imports, Rust use, Go blocks and Python parentheses are imports', async () => {
+void describe('rules: imports are cut only when they widen', () => {
+  const both = async (path: string, before: string, after: string) => [
+    ...(await cuts(path, before, after, 'conservative')),
+    ...(await cuts(path, before, after, 'aggressive')),
+  ];
+  void test('positives: a new plain name from a module the file already imports is cut at both levels', async () => {
+    // A new line in a multi-line TS import, and a new statement from a module already imported.
     assert.deepEqual(
-      await cuts('src/a.ts', text('import {', '  a,', "} from './x';", '', 'run(a);'), text('import {', '  a,', '  b,', "} from './x';", '', 'run(a);')),
-      ['import only']
+      await both('src/a.ts', text('import {', '  alpha,', "} from './x';", '', 'run(alpha);'), text('import {', '  alpha,', '  beta,', "} from './x';", '', 'run(alpha);')),
+      ['import only', 'import only']
     );
-    assert.deepEqual(await cuts('src/a.rs', text('use crate::error::Result;', 'fn f() {}'), text('use crate::error::{Error, Result};', 'fn f() {}')), ['import only']);
+    assert.deepEqual(
+      await both('src/a.ts', text("import { alpha } from './x';", '', 'run(alpha);'), text("import { alpha } from './x';", "import { beta } from './x';", '', 'run(alpha);')),
+      ['import only', 'import only']
+    );
+    // A standard-library spec in an existing Go block.
     const go = (extra: string) => text('package a', '', 'import (', '\t"fmt"', ...(extra ? [extra] : []), ')', '', 'func F() { fmt.Println() }');
-    assert.deepEqual(await cuts('a.go', go(''), go('\t"strings"')), ['import only'], 'A standard-library package is not a dependency');
-    assert.deepEqual(await cuts('a.go', go(''), go('\t"github.com/acme/x"')), [null], 'A new module is a new dependency');
+    assert.deepEqual(await both('a.go', go(''), go('\t"strings"')), ['import only', 'import only']);
+    // A Rust use from a path the file already uses, and a Java single-type import from a package it already imports.
     assert.deepEqual(
-      await cuts('a.py', text('from x import (', '    a,', ')', '', 'a()'), text('from x import (', '    a,', '    b,', ')', '', 'a()')),
-      ['import only']
+      await both('src/a.rs', text('use crate::error::Result;', '', 'fn f() {}'), text('use crate::error::Result;', 'use crate::error::Failure;', '', 'fn f() {}')),
+      ['import only', 'import only']
+    );
+    assert.deepEqual(
+      await both('src/A.java', text('package p;', 'import a.b.Alpha;', '', 'class A {}'), text('package p;', 'import a.b.Alpha;', 'import a.b.Beta;', '', 'class A {}')),
+      ['import only', 'import only']
     );
   });
-  void test('exports and re-exports are public API, never import-only', async () => {
-    assert.deepEqual(await cuts('src/api.ts', text("export { a } from './a';"), text("export { a } from './a';", "export { b } from './b';")), [null]);
-    assert.deepEqual(await cuts('src/a.rs', text('pub use a::A;', 'fn f() {}'), text('pub use a::A;', 'pub use b::B;', 'fn f() {}')), [null]);
+  void test('a changed import line is never a widening, even `{ a }` to `{ a, b }`', async () => {
+    assert.deepEqual(await both('src/a.ts', text("import { alpha } from './x';", '', 'run(alpha);'), text("import { alpha, beta } from './x';", '', 'run(alpha);')), [null, null]);
+    assert.deepEqual(await both('src/a.rs', text('use crate::error::Result;', 'fn f() {}'), text('use crate::error::{Failure, Result};', 'fn f() {}')), [null, null]);
   });
-  void test('side-effect imports are never import-only, added or removed, at any level', async () => {
-    const ts = (extra: string[]) => text("import { a } from './x';", ...extra, '', 'run(a);');
-    assert.deepEqual(await cuts('src/a.ts', ts([]), ts(["import './polyfill';"]), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('src/a.ts', ts(["import './polyfill';"]), ts([]), 'aggressive'), [null]);
+  void test('round 2: a lodash swap across hunks is kept', async () => {
+    const filler = Array.from({ length: 10 }, (_, i) => `const v${i} = ${i};`);
+    const before = text("import debounce from 'lodash/debounce';", ...filler, "import { map } from 'lodash-es';", '', 'debounce(map);');
+    const after = text(...filler, "import { map } from 'lodash-es';", "import { debounce } from 'lodash-es';", '', 'debounce(map);');
+    assert.deepEqual(await cuts('src/a.ts', before, after, 'aggressive'), [null, null]);
+  });
+  void test('round 2: a name that shadows a global is kept', async () => {
+    const before = text("import { map } from 'bluebird';", '', 'map([]);');
+    assert.deepEqual(await both('src/a.ts', before, text("import { map } from 'bluebird';", "import { Promise } from 'bluebird';", '', 'map([]);')), [null, null]);
+    // A name the old file already uses, as a local or anything else.
+    const local = text("import { map } from 'bluebird';", 'const filter = 1;', '', 'map([]);');
+    assert.deepEqual(await both('src/a.ts', local, text("import { map } from 'bluebird';", "import { filter } from 'bluebird';", 'const filter = 1;', '', 'map([]);')), [null, null]);
+  });
+  void test('round 2: Python is never import-only', async () => {
+    assert.deepEqual(await both('m.py', text('from .safe import read', '', 'read()'), text('from .safe import read', 'from .safe import open', '', 'read()')), [null, null]);
+    assert.deepEqual(await both('m.py', text('import os', 'import json', '', 'os.getcwd()'), text('import json', 'import os', '', 'os.getcwd()')), [null, null]);
+    assert.deepEqual(await both('app/apps.py', text('from django.apps import AppConfig', '', 'x = 1'), text('from django.apps import AppConfig', 'from . import signals', '', 'x = 1')), [null, null]);
+  });
+  void test('round 2: a C# namespace swap is kept', async () => {
+    assert.deepEqual(await both('A.cs', text('using System;', 'using Old.Json;', '', 'class A {}'), text('using System;', 'using New.Json;', '', 'class A {}')), [null, null]);
+  });
+  void test('round 2: `import type` is kept', async () => {
+    const before = text("import { alpha } from './x';", '', 'run(alpha);');
+    assert.deepEqual(await both('src/a.ts', before, text("import { alpha } from './x';", "import type { Beta } from './x';", '', 'run(alpha);')), [null, null]);
+    assert.deepEqual(await both('src/a.ts', before, text("import { alpha } from './x';", "import { type Beta } from './x';", '', 'run(alpha);')), [null, null]);
+  });
+  void test('aliases, defaults, namespaces, new modules, side effects and removals are kept', async () => {
+    const before = text("import { alpha } from './x';", '', 'run(alpha);');
+    const add = (line: string) => text("import { alpha } from './x';", line, '', 'run(alpha);');
+    for (const line of ["import { beta as b } from './x';", "import gamma from './x';", "import * as ns from './x';", "import { beta } from './y';", "import './x';"])
+      assert.deepEqual(await both('src/a.ts', before, add(line)), [null, null], line);
+    assert.deepEqual(await both('src/a.ts', add("import { beta } from './x';"), before), [null, null], 'A removal');
     const go = (extra: string) => text('package a', '', 'import (', '\t"fmt"', ...(extra ? [extra] : []), ')', '', 'func F() { fmt.Println() }');
-    assert.deepEqual(await cuts('a.go', go(''), go('\t_ "embed"'), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('a.go', go(''), go('\t. "strings"'), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('a.py', text('import os', '', 'os.getcwd()'), text('import os', 'import plugins', '', 'os.getcwd()'), 'aggressive'), [null]);
-    assert.deepEqual(
-      await cuts('a.py', text('import os', '', 'os.getcwd()'), text('from __future__ import annotations', 'import os', '', 'os.getcwd()'), 'aggressive'),
-      [null]
-    );
+    for (const spec of ['\t"github.com/acme/x"', '\t_ "embed"', '\t. "strings"', '\tstr "strings"'])
+      assert.deepEqual(await both('a.go', go(''), go(spec)), [null, null], spec);
+    assert.deepEqual(await both('src/a.rs', text('use crate::error::Result;', '', 'fn f() {}'), text('use crate::error::Result;', 'use other::Thing;', '', 'fn f() {}')), [null, null], 'A Rust path the file never used');
+    assert.deepEqual(await both('src/a.rs', text('use crate::error::Result;', '', 'fn f() {}'), text('use crate::error::Result;', 'pub use crate::error::Failure;', '', 'fn f() {}')), [null, null], 'pub use');
+    assert.deepEqual(await both('src/A.java', text('package p;', 'import a.b.Alpha;', '', 'class A {}'), text('package p;', 'import a.b.Alpha;', 'import a.b.*;', '', 'class A {}')), [null, null], 'A wildcard');
   });
-  void test('rebinding a name, or the same import under another name, is never import-only', async () => {
-    const ts = (line: string) => text(line, '', 'parse(input);');
-    assert.deepEqual(await cuts('src/a.ts', ts("import { strictParse as parse } from './p';"), ts("import { looseParse as parse } from './p';"), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('src/a.ts', ts("import { parse as p } from './p';"), ts("import { parse as q } from './p';"), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('src/a.ts', ts("import { parse } from './p';"), ts("import { parse } from './q';"), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('a.py', text('from p import strict as parse', '', 'parse()'), text('from p import loose as parse', '', 'parse()'), 'aggressive'), [null]);
-  });
-  void test('imports in a package’s entry file are its API', async () => {
-    const widened = [text("import { a } from './x';", '', 'run(a);'), text("import { a, b } from './x';", '', 'run(a);')] as const;
-    for (const path of ['src/index.ts', 'lib/index.js']) assert.deepEqual(await cuts(path, ...widened), [null], path);
-    assert.deepEqual(await cuts('pkg/__init__.py', text('from .a import A', '', 'x = 1'), text('from .a import A, B', '', 'x = 1')), [null]);
-    for (const path of ['src/lib.rs', 'src/net/mod.rs'])
-      assert.deepEqual(await cuts(path, text('use a::A;', 'fn f() {}'), text('use a::{A, B};', 'fn f() {}')), [null], path);
-  });
-  void test('a statement after an import on the same line keeps the hunk', async () => {
-    assert.deepEqual(await cuts('a.py', text('from x import a', '', 'a()'), text('from x import a, b; setup(debug=True)', '', 'a()'), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('src/a.ts', before, text("import { a, b } from './x'; run(b);", "import fs from 'node:fs';", '', 'run(a);'), 'aggressive'), [null]);
-  });
-  void test('import lines inside a template literal are not imports', async () => {
-    const ts = (extra: string[]) => text('const example = `', "import { a } from './x';", ...extra, '`;', 'show(example);');
-    assert.deepEqual(await cuts('src/a.ts', ts([]), ts(["import { b } from './y';"]), 'aggressive'), [null]);
-  });
-  void test('a hunk with an import and code is kept; a dynamic import is code', async () => {
-    assert.deepEqual(await cuts('src/a.ts', text("import { a } from './x';"), text("import { a } from './x';", 'run(a);'), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('src/a.ts', text('run();'), text("const { default: Zip } = await import('zip-lib');", 'run();'), 'aggressive'), [null]);
-  });
-  void test('no grammar, no import cut: MDX, CSS, and added files', async () => {
-    assert.deepEqual(
-      await cuts('docs/a.mdx', text('---', 'title: A', '---', '', '# A'), text('---', 'title: A', '---', "import Tabs from '@theme/Tabs';", '', '# A'), 'aggressive'),
-      [null]
-    );
-    assert.deepEqual(await cuts('src/a.scss', text('.a { color: red; }'), text("@use 'theme' with ($primary: blue);", '.a { color: red; }'), 'aggressive'), [null]);
-    assert.deepEqual(await cuts('src/new.ts', null, text("import { a } from './x';"), 'aggressive'), [null]);
+  void test('entry files, statements after an import, template literals and added files are kept', async () => {
+    const widened = [text("import { alpha } from './x';", '', 'run(alpha);'), text("import { alpha } from './x';", "import { beta } from './x';", '', 'run(alpha);')] as const;
+    for (const path of ['src/index.ts', 'lib/index.js']) assert.deepEqual(await both(path, ...widened), [null, null], path);
+    assert.deepEqual(await both('src/a.ts', widened[0], text("import { alpha } from './x';", "import { beta } from './x'; run(beta);", '', 'run(alpha);')), [null, null]);
+    const literal = (extra: string[]) => text("import { alpha } from './x';", 'const example = `', ...extra, '`;', 'show(example, alpha);');
+    assert.deepEqual(await both('src/a.ts', literal([]), literal(["import { beta } from './x';"])), [null, null]);
+    assert.deepEqual(await both('src/new.ts', null as unknown as string, text("import { alpha } from './x';")), [null, null]);
   });
 });
 
@@ -144,15 +147,21 @@ void describe('rules: comments a tool reads', () => {
     assert.deepEqual(await cuts('m.py', py(['    >>> add(1, 2)', '    3']), py(['    >>> add(1, 2)', '    4'])), [null]);
     assert.deepEqual(await cuts('m.py', py(['    More words.']), py(['    Other words.'])), ['comments only']);
   });
-  void test('a Rust doc comment with a fenced example is code', async () => {
-    const rs = (line: string) => text('/// Adds one.', '///', '/// ```', line, '/// ```', 'pub fn inc(x: u32) -> u32 { x + 1 }');
-    assert.deepEqual(await cuts('src/a.rs', rs('/// assert_eq!(inc(1), 2);'), rs('/// assert_eq!(inc(2), 3);')), [null]);
-    assert.deepEqual(
-      await cuts('src/a.rs', text('/// Adds one.', 'pub fn inc(x: u32) -> u32 { x + 1 }'), text('/// Adds 1.', 'pub fn inc(x: u32) -> u32 { x + 1 }')),
-      ['comments only']
-    );
+  void test('every Rust doc comment is code, an indented rustdoc example too; a plain comment is not', async () => {
+    const rs = (line: string) => text('/// Adds one.', '///', line, 'pub fn inc(x: u32) -> u32 { x + 1 }');
+    assert.deepEqual(await cuts('src/a.rs', rs('///     assert_eq!(inc(1), 2);'), rs('///     assert_eq!(inc(2), 3);')), [null]);
+    assert.deepEqual(await cuts('src/a.rs', text('/// Adds one.', 'pub fn inc(x: u32) -> u32 { x + 1 }'), text('/// Adds 1.', 'pub fn inc(x: u32) -> u32 { x + 1 }')), [null]);
+    assert.deepEqual(await cuts('src/a.rs', text('//! The crate.', 'pub fn f() {}'), text('//! This crate.', 'pub fn f() {}')), [null]);
+    assert.deepEqual(await cuts('src/a.rs', text('// Adds one.', 'pub fn inc(x: u32) -> u32 { x + 1 }'), text('// Adds 1.', 'pub fn inc(x: u32) -> u32 { x + 1 }')), ['comments only']);
   });
-  void test('a JSDoc type in a JavaScript file is code', async () => {
+  void test('a cgo preamble is code', async () => {
+    const go = (include: string) => text('package a', '', `// #include <${include}>`, 'import "C"', '', 'func F() {}');
+    assert.deepEqual(await cuts('a.go', go('a.h'), go('b.h')), [null]);
+    assert.deepEqual(await cuts('a.go', text('package a', '', '// F does a thing.', 'func F() {}'), text('package a', '', '// F does one thing.', 'func F() {}')), ['comments only']);
+  });
+  void test('a fenced example and a JSDoc type in a JavaScript file are code', async () => {
+    const ts = (line: string) => text('/**', ' * ```ts', line, ' * ```', ' */', 'export function inc(x: number) { return x + 1; }');
+    assert.deepEqual(await cuts('src/a.ts', ts(' * inc(1) === 2'), ts(' * inc(2) === 3')), [null]);
     const js = (type: string) => text('/**', ` * @param {${type}} name`, ' */', 'export function greet(name) { return name; }');
     assert.deepEqual(await cuts('src/a.js', js('string'), js('number')), [null]);
   });
@@ -203,6 +212,20 @@ void test('options: Reduce noise defaults to Conservative and normalizes unknown
 });
 
 void describe('planner', () => {
+  void test('the planner’s context lists the hunks the rules left out, so the index does not look incomplete', async () => {
+    const fixture = loadFixtures().find((f) => f.id === 'formatting-only');
+    assert.ok(fixture);
+    const prepared = prepareFixture(fixture);
+    const input = plannerInput(prepared, await ruleCutsFor(engine, prepared, 'conservative'), 'conservative');
+    assert.match(input.context, /<left_out_hunks count="1">\nLeft out as noise, not shown: these hunks are not in the hunk index and need no topic\./);
+    assert.match(input.context, /- src\/sync\/report\.ts:\d+-\d+ \(formatting\)\n<\/left_out_hunks>/);
+    assert.doesNotMatch(input.hunkIndex, /src\/sync\/report\.ts/, 'The left-out hunk is not in the index');
+    // When the rules would cut every hunk, the planner sees them all and no list.
+    const everything = new Map(prepared.hunks.map((h) => [h.id, 'formatting']));
+    const all = plannerInput(prepared, everything, 'conservative');
+    assert.doesNotMatch(all.context, /left_out_hunks/);
+    assert.match(all.hunkIndex, /src\/sync\/report\.ts/);
+  });
   void test('the prompt adds the noise directive and schema field only when the level is on', () => {
     assert.ok(!plannerUserSuffix('off').includes('"noise"'));
     assert.equal(noisePlannerDirective('off'), '');
@@ -376,6 +399,29 @@ void describe('the eval runner', () => {
     if (!fs.existsSync(path.join(FIXTURES, 'recorded')))
       assert.deepEqual(result.unrecorded.map((u) => u.level), ['conservative', 'aggressive'], 'Layer 2 reports "not recorded"');
   });
+  void test('a live run writes each level’s recording and manifest entry together, and a mixed manifest fails', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'noise-eval-'));
+    try {
+      const fixture = loadFixtures().find((f) => f.id === 'config-value');
+      assert.ok(fixture);
+      const prepared = prepareFixture(fixture);
+      const input = plannerInput(prepared, await ruleCutsFor(engine, prepared, 'conservative'), 'conservative');
+      const plan = { summary: '', riskLevel: 'low' as const, riskRationale: '', storyArc: '', topics: [] };
+      const record = { recordedAt: '', provider: 'claude', model: 'claude-sonnet-5-5', fixtureHash: fixtureHash(fixture) };
+      commitRecording('conservative', fixture.id, plan, record, { promptHash: promptHash('conservative'), evidenceHash: input.evidenceHash, options: input.options }, root);
+      assert.deepEqual(fs.readdirSync(path.join(root, 'recorded')).sort(), ['conservative', 'manifest.json'], 'No temporary files left');
+      const written = JSON.parse(fs.readFileSync(path.join(root, 'recorded', 'conservative', `${fixture.id}.json`), 'utf8')) as Record<string, unknown>;
+      assert.equal(written.model, 'claude-sonnet-5-5');
+      assert.deepEqual((await replay([fixture], root)).stale, []);
+      // Another fixture recorded with another model: the set mixes models.
+      const other = loadFixtures().find((f) => f.id === 'move');
+      assert.ok(other);
+      commitRecording('conservative', other.id, plan, { ...record, model: 'claude-opus-5-5', fixtureHash: fixtureHash(other) }, { promptHash: promptHash('conservative'), evidenceHash: 'x', options: {} }, root);
+      assert.match((await replay([fixture], root)).stale.join('\n'), /the manifest mixes providers or models/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
   void test('a recorded planner answer that cuts an essential hunk fails the run', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'noise-eval-'));
     try {
@@ -415,6 +461,16 @@ void describe('the eval runner', () => {
       // A changed fixture makes its recording stale.
       const changed = { ...fixture, description: fixture.description + ' Changed.' };
       assert.match((await replay([changed], root)).stale.join('\n'), /the fixture changed/);
+      // A recording made with another model than its manifest entry says.
+      const file = path.join(root, 'recorded', 'conservative', `${fixture.id}.json`);
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+      fs.writeFileSync(file, JSON.stringify({ ...saved, provider: 'codex', model: 'gpt-6.2-sol' }));
+      assert.match((await replay([fixture], root)).stale.join('\n'), /recorded with codex\/gpt-6\.2-sol, the manifest says claude\/claude-opus-5-5/);
+      // A manifest entry whose recording is gone.
+      fs.rmSync(file);
+      const gone = await replay([fixture], root);
+      assert.equal(gone.failed, true);
+      assert.match(gone.stale.join('\n'), /conservative\/drive-by-edits: the manifest has an entry but no recording/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

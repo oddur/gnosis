@@ -248,19 +248,19 @@ export function createConflictCheckWorker(
       }).then((response) => (response && 'verdict' in response ? response.verdict : undefined));
     },
     /**
-     * Reduce noise's comparison of an explanation's files. Fail closed: an error, a timeout or a stopped worker
-     * answers null for every file, so no hunk is cut by the rules that need a syntax tree.
+     * Reduce noise's comparison of an explanation's files, one job per file so each has its own time limit. Fail
+     * closed: a file that fails answers null; after a timeout, an error, a stopped worker or `signal`, the files not
+     * yet classified answer null too, so no hunk of theirs is cut by the rules that need a syntax tree.
      */
-    noise(files: readonly NoiseFile[]): Promise<(NoiseAnswer | null)[]> {
-      const none = () => files.map(() => null);
-      if (disposed || !files.length) return Promise.resolve(none());
-      return run({
-        id: ++serial,
-        kind: 'noise',
-        files: files.map(({ language, after, hunks, imports }) => ({ language, after, hunks, imports })),
-      }).then((response) =>
-        response && 'noise' in response && response.noise.length === files.length ? response.noise : none()
-      );
+    async noise(files: readonly NoiseFile[], signal?: AbortSignal): Promise<(NoiseAnswer | null)[]> {
+      const answers: (NoiseAnswer | null)[] = files.map(() => null);
+      for (const [index, { language, after, hunks, imports }] of files.entries()) {
+        if (disposed || signal?.aborted) break;
+        const response = await run({ id: ++serial, kind: 'noise', files: [{ language, after, hunks, imports }] });
+        if (!response || !('noise' in response) || response.noise.length !== 1) break;
+        answers[index] = response.noise[0];
+      }
+      return answers;
     },
     dispose() {
       disposed = true;

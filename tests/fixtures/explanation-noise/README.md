@@ -13,9 +13,9 @@ The fixtures reproduce the shapes of hunks found in merged PRs of oddur/gnosis a
 ## Files
 
 - `cases/<id>.json`: one fixture. `files[].before` and `files[].after` are the file's lines; `null` means that the file is added or deleted. `files[].hunks` has one label per hunk, in order. The runner makes the diff with 3 lines of context, as GitHub does. It stops if the number of labels is not the same as the number of hunks.
-- `recorded/<level>/<id>.json`: the planner's answer for a fixture at Conservative or Aggressive, written by `--live`.
+- `recorded/<level>/<id>.json`: the planner's answer for a fixture at Conservative or Aggressive, with the provider and model that gave it, written by `--live`. Each answer is written together with its manifest entry.
 - `recorded/manifest.json`: one entry for each fixture. An entry has the provider, the model ID, the effort and a hash of the fixture. For each level, it also has the prompt hash, the options, and an evidence hash. The evidence hash covers the planner context, the evidence and the set of hunks the rules cut. `--live --only <id>` replaces only that fixture's entry.
-- Replay fails when a recording is stale. A recording is stale when its fixture, the prompt or the planner's input changed after the recording, or when the manifest has no entry for it. Replay also fails when there are recordings but no manifest.
+- Replay fails when a recording is stale. A recording is stale when its fixture, the prompt or the planner's input changed after the recording, when the manifest has no entry for it, or when its provider or model differs from its entry. Replay also fails when there are recordings but no manifest, when an entry has no recording, and when the manifest mixes providers or models.
 
 ## Running
 

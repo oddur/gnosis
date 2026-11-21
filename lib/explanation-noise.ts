@@ -15,10 +15,8 @@ import type { TopicPlan } from './types';
  *
  * Two layers, both fail closed (a hunk is cut only when all of it is noise; any doubt keeps it):
  * - Rules, no model: a hunk whose every change block is whitespace, formatting or comments (lib/semantic-noise.ts),
- *   unless a tool reads the comment (a doctest, a fenced example, a JSDoc type); or whose every changed line lies alone
- *   in an import node of the file's syntax tree (lib/import-nodes.ts). Side-effect imports, re-exports, a name bound
- *   to something else, and a package's entry file are never import-only, and a file with no grammar never is. An import
- *   of a package the file didn't import before is a new dependency: kept at Conservative, cut at Aggressive.
+ *   unless a tool reads the comment (a doctest, a fenced example, any Rust doc comment, a cgo preamble, a JSDoc type);
+ *   or a hunk that only widens imports the file already has (importOnlyHunk). Nothing else about imports is cut.
  * - The planner, in the same call that plans the topics: it lists the hunks it judges noise in `noise`. Only listed
  *   hunks whose whole source was in its evidence are cut. A hunk it neither assigns nor lists still goes to "Other
  *   changes". A hunk it both assigns and lists stays in its topic.
@@ -84,174 +82,6 @@ export function normalizePlannerNoise(value: unknown, hunkIds: ReadonlySet<strin
 
 // ── Rules: imports ──────────────────────────────────────────────
 
-/** An import statement: its lines (1-based, inclusive) and the package it names, or null for a local or built-in module. */
-interface ImportStatement {
-  start: number;
-  end: number;
-  pkg: string | null;
-}
-type ImportFamily = 'script' | 'python' | 'go' | 'rust' | 'c' | 'csharp' | 'java' | 'swift' | 'ruby' | 'css' | 'php';
-const FAMILIES: Record<string, ImportFamily> = {
-  ts: 'script', tsx: 'script', mts: 'script', cts: 'script', js: 'script', jsx: 'script', mjs: 'script', cjs: 'script',
-  mdx: 'script', md: 'script', vue: 'script', svelte: 'script', astro: 'script',
-  py: 'python', pyi: 'python',
-  go: 'go',
-  rs: 'rust',
-  c: 'c', h: 'c', cc: 'c', cpp: 'c', cxx: 'c', hpp: 'c', hh: 'c', m: 'c', mm: 'c',
-  cs: 'csharp',
-  java: 'java', kt: 'java', kts: 'java', scala: 'java',
-  swift: 'swift',
-  rb: 'ruby',
-  css: 'css', scss: 'css', sass: 'css', less: 'css',
-  php: 'php',
-};
-function importFamily(path: string): ImportFamily | undefined {
-  const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
-  const dot = name.lastIndexOf('.');
-  return dot > 0 ? FAMILIES[name.slice(dot + 1)] : undefined;
-}
-
-const scriptPackage = (spec: string) => {
-  if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:') || spec.startsWith('bun:')) return null;
-  // Path aliases (`@/lib/x`, `~/x`, `#internal`) are the project's own files.
-  if (spec.startsWith('@/') || spec.startsWith('~') || spec.startsWith('#')) return null;
-  const parts = spec.split('/');
-  return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
-};
-const RUST_LOCAL = new Set(['crate', 'self', 'super', 'std', 'core', 'alloc']);
-const PATTERNS: Record<ImportFamily, { pattern: RegExp; pkg: (m: RegExpExecArray) => (string | null)[] }[]> = {
-  script: [
-    {
-      // import x from 'y'; import { a,\n b } from 'y'; import type T from 'y'; import 'y'; import x = require('y')
-      pattern: /^[ \t]*import\s+(?:type\s+)?(?:[\w*{}\s,$]+?\s+from\s*|[\w$]+\s*=\s*require\s*\(\s*)?(['"])([^'"\n]+)\1\s*\)?[ \t]*;?[ \t]*$/gm,
-      pkg: (m) => [scriptPackage(m[2])],
-    },
-    {
-      pattern: /^[ \t]*(?:const|let|var)\s+[\w${}\s,:]+=\s*require\s*\(\s*(['"])([^'"\n]+)\1\s*\)[ \t]*;?[ \t]*$/gm,
-      pkg: (m) => [scriptPackage(m[2])],
-    },
-  ],
-  python: [
-    {
-      pattern: /^[ \t]*from\s+([\w.]+)\s+import\s+(?:\([^)]*\)|[^\n]+)$/gm,
-      pkg: (m) => [m[1].startsWith('.') ? null : m[1].split('.')[0]],
-    },
-    {
-      pattern: /^[ \t]*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)[ \t]*$/gm,
-      pkg: (m) => m[1].split(',').map((part) => part.trim().split(/[\s.]/)[0]),
-    },
-  ],
-  go: [
-    {
-      pattern: /^import\s+(?:[\w.]+\s+)?"([^"\n]+)"[ \t]*$/gm,
-      pkg: (m) => [goPackage(m[1])],
-    },
-    {
-      pattern: /^import\s*\(([^)]*)\)[ \t]*$/gm,
-      pkg: (m) => [...m[1].matchAll(/"([^"\n]+)"/g)].map((p) => goPackage(p[1])),
-    },
-  ],
-  rust: [
-    {
-      // `pub use` re-exports public API, so it is never import-only.
-      pattern: /^[ \t]*(?:#\[[^\]\n]*\][ \t]*\n[ \t]*)?use\s+(?:::)?([\w]+)[^;]*;[ \t]*$/gm,
-      pkg: (m) => [RUST_LOCAL.has(m[1]) ? null : m[1]],
-    },
-    { pattern: /^[ \t]*extern\s+crate\s+(\w+)[^;\n]*;[ \t]*$/gm, pkg: (m) => [m[1]] },
-  ],
-  c: [
-    {
-      pattern: /^[ \t]*#[ \t]*(?:include|import)[ \t]*([<"])([^>"\n]+)[>"][ \t]*$/gm,
-      pkg: (m) => [m[1] === '<' ? m[2].split('/')[0] : null],
-    },
-  ],
-  csharp: [
-    {
-      pattern: /^[ \t]*(?:global\s+)?using\s+(?:static\s+)?(?:\w+\s*=\s*)?([\w.]+)\s*;[ \t]*$/gm,
-      pkg: (m) => [m[1].startsWith('System') ? null : m[1].split('.').slice(0, 2).join('.')],
-    },
-  ],
-  java: [
-    {
-      pattern: /^[ \t]*import\s+(?:static\s+)?([\w.]+?)(?:\.\*)?\s*;?[ \t]*$/gm,
-      pkg: (m) => [/^(java|javax|kotlin)\./.test(m[1]) ? null : m[1].split('.').slice(0, 2).join('.')],
-    },
-  ],
-  swift: [{ pattern: /^[ \t]*(?:@testable\s+)?import\s+(?:\w+\s+)?([\w.]+)[ \t]*$/gm, pkg: (m) => [m[1].split('.')[0]] }],
-  ruby: [
-    {
-      pattern: /^[ \t]*(require|require_relative)\s*\(?\s*(['"])([^'"\n]+)\2\s*\)?[ \t]*$/gm,
-      pkg: (m) => [m[1] === 'require_relative' || m[3].startsWith('.') ? null : m[3].split('/')[0]],
-    },
-  ],
-  css: [
-    {
-      // Bare forms only: `@use 'x' with (…)` and `@import … layer(…)`/media configure what they load.
-      pattern: /^[ \t]*@(?:import\s+url\(\s*(['"]?)([^'")\s;]+)\1\s*\)|use\s+(['"])([^'"\s;]+)\3)\s*;[ \t]*$/gm,
-      pkg: (m) => [scriptPackage((m[2] as string | undefined) ?? m[4])],
-    },
-  ],
-  php: [
-    {
-      // Top level only: an indented `use` in a class body adds a trait.
-      pattern: /^use\s+(?:function\s+|const\s+)?\\?([\w\\]+)(?:\s+as\s+\w+)?\s*;[ \t]*$/gm,
-      pkg: (m) => [m[1].split('\\').slice(0, 2).join('\\')],
-    },
-  ],
-};
-function goPackage(path: string): string | null {
-  // Standard library paths have no dot in their first element.
-  return path.split('/')[0].includes('.') ? path : null;
-}
-
-/** The import statements of a file, by line. */
-export function importStatements(path: string, text: string): ImportStatement[] {
-  const family = importFamily(path);
-  if (!family || !text) return [];
-  const lineStarts = [0];
-  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) lineStarts.push(i + 1);
-  const lineOf = (offset: number) => {
-    let low = 0,
-      high = lineStarts.length - 1;
-    while (low < high) {
-      const mid = (low + high + 1) >>> 1;
-      if (lineStarts[mid] <= offset) low = mid;
-      else high = mid - 1;
-    }
-    return low + 1;
-  };
-  // Docs: imports in an MDX header pull in components, not dependencies; lines in fenced code are examples.
-  const docs = /\.mdx?$/i.test(path);
-  const fenced = new Set<number>();
-  if (docs) {
-    let open = false;
-    text.split('\n').forEach((line, i) => {
-      const fence = /^[ \t]*(```|~~~)/.test(line);
-      if (open || fence) fenced.add(i + 1);
-      if (fence) open = !open;
-    });
-  }
-  const statements: ImportStatement[] = [];
-  for (const { pattern, pkg } of PATTERNS[family]) {
-    pattern.lastIndex = 0;
-    for (let m = pattern.exec(text); m; m = pattern.exec(text)) {
-      if (!m[0]) {
-        pattern.lastIndex++;
-        continue;
-      }
-      // A match starts at its line's start (the patterns are anchored with ^ and m): skip a leading newline it may include.
-      const offset = m.index + (m[0].startsWith('\n') ? 1 : 0);
-      const start = lineOf(offset),
-        end = lineOf(m.index + m[0].length - 1);
-      if (docs && fenced.has(start)) continue;
-      const packages = docs ? [null] : pkg(m);
-      // One statement per package, on the same lines: a Go import block names several.
-      for (const p of packages.length ? packages : [null]) statements.push({ start, end, pkg: p });
-    }
-  }
-  return statements;
-}
-
 type Row =
   | { type: '+'; text: string; newLine: number }
   | { type: '-'; text: string; oldLine: number }
@@ -272,56 +102,44 @@ export function hunkLines(hunk: Pick<Hunk, 'hunkHeader' | 'content'>): Row[] {
   return rows;
 }
 
-/** The pre-filter: whether every changed line of `hunk` matches an import pattern. The syntax tree decides. */
-export function importCandidate(
-  hunk: Hunk,
-  before: string | undefined,
-  after: string | undefined
-): boolean {
-  if (hunk.fileStatus === 'deleted' || !importFamily(hunk.filePath)) return false;
-  const added = hunk.fileStatus === 'added';
-  if (after === undefined || (!added && before === undefined)) return false;
-  const oldStatements = added ? [] : importStatements(hunk.filePath, before ?? '');
-  const newStatements = importStatements(hunk.filePath, after);
-  const holding = (statements: ImportStatement[], line: number) => statements.filter((s) => s.start <= line && line <= s.end);
-  const rows = hunkLines(hunk);
-  let changed = 0;
-  for (const row of rows) {
-    if (row.type === ' ') continue;
-    if (!row.text.trim()) continue;
-    changed++;
-    const statements = row.type === '+' ? holding(newStatements, row.newLine) : holding(oldStatements, row.oldLine);
-    if (!statements.length) return false;
-  }
-  return changed > 0;
-}
+/**
+ * The languages whose widening the rule can prove: TS/JS named specifiers, a Go package spec, a Rust `use`, a Java
+ * single-type import. Python never (`from … import` runs the module), nor C# `using`, nor any other language.
+ */
+const WIDENING: ReadonlySet<SyntaxLanguage> = new Set(['typescript', 'tsx', 'javascript', 'go', 'rust', 'java']);
 
+/** The cheap check before the syntax tree is read: a language the rule covers, and a hunk that only adds lines. */
+export function importCandidate(hunk: Hunk): boolean {
+  const language = syntaxLanguage(hunk.filePath);
+  if (!language || !WIDENING.has(language) || hunk.fileStatus !== 'modified') return false;
+  const rows = hunkLines(hunk);
+  return !rows.some((row) => row.type === '-') && rows.some((row) => row.type === '+' && !!row.text.trim());
+}
 
 /** A package's public entry file: its imports are its API. */
 export const isPackageEntry = (path: string) =>
   /(^|\/)(__init__\.py|index\.(?:[cm]?[jt]sx?)|mod\.rs|lib\.rs)$/i.test(path);
 
-/** The package an import names, or null for a local or built-in module. */
-function packageOf(language: SyntaxLanguage, module: string | null): string | null {
-  if (!module) return null;
-  switch (language) {
-    case 'typescript':
-    case 'tsx':
-    case 'javascript':
-      return scriptPackage(module);
-    case 'python':
-      return module.startsWith('.') ? null : module.split('.')[0];
-    case 'go':
-      return goPackage(module);
-    case 'rust':
-      return RUST_LOCAL.has(module) ? null : module;
-    case 'java':
-      return /^(java|javax|kotlin)\./.test(module) ? null : module.split('.').slice(0, 2).join('.');
-    case 'csharp':
-      return module.startsWith('System') ? null : module.split('.').slice(0, 2).join('.');
-    default:
-      return null;
-  }
+/** Names a language defines without an import: binding one by import shadows it. */
+const BUILTINS: Partial<Record<SyntaxLanguage, ReadonlySet<string>>> = {
+  go: new Set(
+    'append cap clear close complex copy delete imag len make max min new panic print println real recover any bool byte comparable complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr true false iota nil'.split(' ')
+  ),
+  rust: new Set(
+    'Option Some None Result Ok Err Vec String Box ToString ToOwned Into From TryFrom TryInto Iterator IntoIterator Extend Default Clone Copy Send Sync Sized Unpin Drop Fn FnMut FnOnce Eq PartialEq Ord PartialOrd AsRef AsMut DoubleEndedIterator ExactSizeIterator FromIterator Debug Hash'.split(' ')
+  ),
+  java: new Set(
+    'Object String Integer Long Short Byte Double Float Boolean Character Number Math System Thread Runnable Exception RuntimeException Error Throwable Iterable Comparable CharSequence StringBuilder Class Enum Record Void Override Deprecated FunctionalInterface SuppressWarnings'.split(' ')
+  ),
+};
+const isBuiltin = (language: SyntaxLanguage, name: string) =>
+  language === 'typescript' || language === 'tsx' || language === 'javascript'
+    ? name in globalThis || /^(Promise|Map|Set|WeakMap|WeakSet|Symbol|Proxy|Reflect|JSON|Intl|Record|Partial|Required|Readonly|Pick|Omit|Exclude|Extract|ReturnType|Parameters|Awaited|NonNullable|InstanceType|window|document|navigator|process|Buffer|require|module|exports|global|globalThis|console|fetch|Response|Request|Headers|URL|Event|Element|Node|HTMLElement)$/.test(name)
+    : (BUILTINS[language]?.has(name) ?? false);
+
+/** Go's standard library has no dot in its path's first element; any other path is a module. */
+function goPackage(path: string): string | null {
+  return path.split('/')[0].includes('.') ? path : null;
 }
 
 /** A file's import nodes on both sides (lib/import-nodes.ts), rows counted from 0. */
@@ -330,57 +148,68 @@ export interface FileImports {
   after: ImportNode[];
 }
 
+/** The path a Rust or Java binding sits in: everything before its last segment. */
+const parentOf = (source: string, separator: string) => source.slice(0, Math.max(0, source.lastIndexOf(separator)));
+
 /**
- * Whether every changed line of `hunk` lies alone in an import node of its side's syntax tree (blank lines aside), and
- * which packages its added imports name that the old file did not import. Undefined when it is not import-only, and
- * whenever in doubt: no syntax tree, a side-effect import, a re-export, a name bound to something else, a package's
- * entry file.
+ * Whether `hunk` only widens imports the file already has, the one import change the rule can prove harmless: every
+ * changed line is an addition lying alone in an import node, and each added binding is a plain name, new to the file
+ * (no shadowing of an import, a global, a builtin or a local), from a module the file already imports. False
+ * otherwise: removals, swaps, reorders, aliases, type-only imports, side effects, re-exports, entry files, Python, C#,
+ * a file with no syntax tree.
  */
-export function importOnlyHunk(hunk: Hunk, imports: FileImports | undefined): { newPackages: string[] } | undefined {
+export function importOnlyHunk(
+  hunk: Hunk,
+  imports: FileImports | undefined,
+  beforeText: string | undefined
+): boolean {
   const language = syntaxLanguage(hunk.filePath);
-  if (!imports || !language || hunk.fileStatus === 'added' || hunk.fileStatus === 'deleted') return undefined;
-  if (isPackageEntry(hunk.filePath)) return undefined;
-  const touched = { before: new Set<ImportNode>(), after: new Set<ImportNode>() };
-  let changed = 0;
+  if (!imports || !language || beforeText === undefined || !importCandidate(hunk) || isPackageEntry(hunk.filePath))
+    return false;
+  const script = language === 'typescript' || language === 'tsx' || language === 'javascript';
+  const touched = new Set<ImportNode>();
   for (const row of hunkLines(hunk)) {
-    if (row.type === ' ' || !row.text.trim()) continue;
-    changed++;
-    const side = row.type === '+' ? 'after' : 'before';
-    const index = (row.type === '+' ? row.newLine : row.oldLine) - 1;
-    const covering = imports[side].filter((node) => node.startRow <= index && index <= node.endRow);
-    if (!covering.length || covering.some((node) => !node.alone || node.blocked)) return undefined;
-    // The innermost node names the import: a Go spec rather than its declaration.
-    touched[side].add(covering.reduce((a, b) => (b.endRow - b.startRow < a.endRow - a.startRow ? b : a)));
+    if (row.type !== '+' || !row.text.trim()) continue;
+    const covering = imports.after.filter((node) => node.startRow <= row.newLine - 1 && row.newLine - 1 <= node.endRow);
+    if (!covering.length || covering.some((node) => !node.alone || node.blocked)) return false;
+    touched.add(covering.reduce((a, b) => (b.endRow - b.startRow < a.endRow - a.startRow ? b : a)));
   }
-  if (!changed) return undefined;
-  const bindings = (nodes: Iterable<ImportNode>) => [...nodes].map((node) => importBindings(language, node.text));
-  const oldBindings = bindings(touched.before),
-    newBindings = bindings(touched.after);
-  // A local name bound to something else, or the same import under another name, changes what the code refers to.
-  const index = (list: ReturnType<typeof bindings>, key: 0 | 1) => {
-    const map = new Map<string, Set<string>>();
-    for (const { pairs } of list)
-      for (const pair of pairs) map.set(pair[key], (map.get(pair[key]) ?? new Set()).add(pair[1 - key]));
-    return map;
-  };
-  const same = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((v) => b.has(v));
-  for (const key of [0, 1] as const) {
-    const before = index(oldBindings, key),
-      after = index(newBindings, key);
-    for (const [name, values] of before) {
-      const now = after.get(name);
-      if (now && !same(values, now)) return undefined;
+  if (!touched.size) return false;
+  const oldBindings = imports.before.map((node) => importBindings(language, node.text));
+  const oldModules = new Set(oldBindings.map((b) => b.module).filter((m): m is string => !!m));
+  const oldPairs = new Set(oldBindings.flatMap((b) => b.pairs.map(([local, source]) => `${local}\n${source}`)));
+  const oldParents = new Set(
+    oldBindings.flatMap((b) => b.pairs.map(([, source]) => parentOf(source, language === 'rust' ? '::' : '.')))
+  );
+  const words = new Set(beforeText.match(/[\p{L}_$][\p{L}\p{N}_$]*/gu) ?? []);
+  let added = 0;
+  for (const node of touched) {
+    const { module, pairs } = importBindings(language, node.text);
+    if (/\bas\b/.test(node.text) || (script && /\btype\b/.test(node.text))) return false;
+    if (language === 'go') {
+      // A plain package spec added to an existing block, from the standard library: never a new dependency.
+      if (!module || !/^\s*"/.test(node.text) || goPackage(module) !== null) return false;
+      const block = imports.after.find((decl) => decl !== node && decl.startRow <= node.startRow && node.endRow <= decl.endRow);
+      if (!block || !/^import\s*\(/.test(block.text) || !imports.before.some((old) => /^import\s*\(/.test(old.text)))
+        return false;
+    } else if (script) {
+      if (!module || !oldModules.has(module)) return false;
+      if (pairs.some(([, source]) => /#(default|\*)$/.test(source))) return false;
+    } else if (language === 'java') {
+      if (/\bstatic\b|\*/.test(node.text)) return false;
+    }
+    for (const [local, source] of pairs) {
+      if (oldPairs.has(`${local}\n${source}`)) continue;
+      added++;
+      if (words.has(local) || isBuiltin(language, local)) return false;
+      if (language === 'rust' || language === 'java') {
+        const parent = parentOf(source, language === 'rust' ? '::' : '.');
+        if (!parent || !oldParents.has(parent)) return false;
+        if (source.slice(parent.length).replace(/^(::|\.)/, '') !== local) return false;
+      } else if (script && source !== `${module}#${local}`) return false;
     }
   }
-  const known = new Set(
-    imports.before.map((node) => packageOf(language, importBindings(language, node.text).module)).filter(Boolean)
-  );
-  const newPackages = [
-    ...new Set(
-      newBindings.map((b) => packageOf(language, b.module)).filter((p): p is string => !!p && !known.has(p))
-    ),
-  ];
-  return { newPackages };
+  return added > 0;
 }
 
 // ── Rules: comments a tool reads ────────────────────────────────
@@ -391,8 +220,9 @@ const JSDOC_TYPES =
 
 /**
  * Whether the comment or docstring holding `line` (from 1) is read by a tool, so changing it is not comment-only: a
- * Python docstring with a doctest (`>>>`), a doc comment with a fenced code example (Rust and others run them), or a
- * JSDoc type annotation in a JavaScript file.
+ * Python docstring with a doctest (`>>>`), a doc comment with a fenced code example, any Rust doc comment (rustdoc runs
+ * its examples, indented ones too), a Go cgo preamble (the comment right above `import "C"`), or a JSDoc type in a
+ * JavaScript file.
  */
 export function toolReadComment(path: string, text: string | undefined, line: number): boolean {
   if (text === undefined) return true;
@@ -414,9 +244,15 @@ export function toolReadComment(path: string, text: string | undefined, line: nu
     end = at;
   while (start > 0 && COMMENT_LINE.test(lines[start - 1])) start--;
   while (end < lines.length - 1 && COMMENT_LINE.test(lines[end + 1])) end++;
-  const block = lines.slice(start, end + 1).join('\n');
-  if (block.includes('```')) return true;
-  return /\.(c|m)?jsx?$/i.test(path) && JSDOC_TYPES.test(block);
+  const block = lines.slice(start, end + 1);
+  if (block.some((l) => l.includes('```'))) return true;
+  if (/\.rs$/i.test(path) && block.some((l) => /^\s*(\/\/[/!]|\/\*[*!])/.test(l))) return true;
+  if (/\.go$/i.test(path)) {
+    let next = end + 1;
+    while (next < lines.length && !lines[next].trim()) next++;
+    if (/^\s*import\s+"C"\s*$/.test(lines[next] ?? '')) return true;
+  }
+  return /\.(c|m)?jsx?$/i.test(path) && JSDOC_TYPES.test(block.join('\n'));
 }
 
 // ── Rules: whitespace, formatting and comments (lib/semantic-noise.ts) ──
@@ -458,7 +294,7 @@ export function noiseRequests(
     if (!language || newText === undefined || newText.length > NOISE_MAX_CHARACTERS || !enabled(language)) continue;
     const parsed = list.flatMap((hunk) => patchHunks(`${hunk.hunkHeader}\n${hunk.content}`)?.slice(0, 1) ?? []);
     if (parsed.length !== list.length) continue;
-    const imports = list.some((hunk) => importCandidate(hunk, text(before, path), newText));
+    const imports = list.some((hunk) => importCandidate(hunk));
     requests.push({ path, language, after: newText, hunks: parsed, ids: list.map((h) => h.id), imports });
   }
   return requests;
@@ -504,10 +340,9 @@ export function ruleNoise(
   if (level === 'off') return cuts;
   const text = (files: Record<string, string>, path: string) => (Object.hasOwn(files, path) ? files[path] : undefined);
   for (const hunk of hunks) {
-    const imports = importOnlyHunk(hunk, classified.imports.get(hunk.filePath));
-    if (imports) {
-      if (imports.newPackages.length && level === 'conservative') continue;
-      cuts.set(hunk.id, imports.newPackages.length ? `import only (new dependency: ${imports.newPackages.join(', ')})` : 'import only');
+    // A widening names no new module, so it is never a new dependency: both levels cut it.
+    if (importOnlyHunk(hunk, classified.imports.get(hunk.filePath), text(before, hunk.filePath))) {
+      cuts.set(hunk.id, 'import only');
       continue;
     }
     const quiet = quietReason(classified.kinds.get(hunk.id));

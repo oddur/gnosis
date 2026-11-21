@@ -12,11 +12,7 @@ import {
   promptHash,
   replay,
   ruleCutsFor,
-  writeRecorded,
-  readManifest,
-  writeManifest,
-  type FixtureRecord,
-  type Manifest,
+  commitRecording,
 } from './explanation-noise-eval-lib';
 
 /**
@@ -49,27 +45,22 @@ async function live() {
     console.log('Nothing was called. Add --yes to run it.');
     return;
   }
-  // Each fixture's entry is replaced only when it is recorded again; --only leaves the others as they were.
-  const manifest: Manifest = readManifest() ?? { fixtures: {} };
+  // Each level's recording and manifest entry are written together; --only leaves other fixtures' entries alone.
   for (const fixture of fixtures) {
     const prepared = prepareFixture(fixture);
-    const record: FixtureRecord = {
+    const record = {
       recordedAt: new Date().toISOString(),
       provider,
       model,
       ...(effort ? { effort } : {}),
       fixtureHash: fixtureHash(fixture),
-      levels: {},
     };
     for (const level of LEVELS) {
       const input = plannerInput(prepared, await ruleCutsFor(engine, prepared, level), level);
       console.log(`[live] ${fixture.id} at ${level}`);
       const plan = await planReview(input.hunkIndex, input.context, provider, model, undefined, false, undefined, { effort }, level);
-      writeRecorded(level, fixture.id, plan);
-      record.levels[level] = { promptHash: promptHash(level), evidenceHash: input.evidenceHash, options: input.options };
+      commitRecording(level, fixture.id, plan, record, { promptHash: promptHash(level), evidenceHash: input.evidenceHash, options: input.options });
     }
-    manifest.fixtures[fixture.id] = record;
-    writeManifest(manifest);
   }
   console.log(`Recorded ${fixtures.length * LEVELS.length} planner answers. Replay scores them:`);
 }

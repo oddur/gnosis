@@ -266,7 +266,9 @@ export function buildPlannerContext(
   hunkIndex: string,
   excludedFilesSummary?: string,
   claudeContext?: ProjectClaudeContext | null,
-  planningHunks?: IndexedHunk[]
+  planningHunks?: IndexedHunk[],
+  /** Reduce noise: hunks the rules left out, so the planner knows the index is not incomplete. */
+  leftOut: readonly { filePath: string; startLine: number; endLine: number; side: 'after' | 'before'; reason: string }[] = []
 ): string {
   const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
   const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
@@ -283,6 +285,13 @@ Files changed: ${changedFiles.length} | Lines added: ${totalAdditions} | Lines d
   if (claudeSection) ctx += '\n\n' + claudeSection;
   if (excludedFilesSummary) ctx += '\n\n' + excludedFilesSummary;
   ctx += '\n\n' + hunkIndex;
+  if (leftOut.length)
+    ctx +=
+      `\n\n<left_out_hunks count="${leftOut.length}">\nLeft out as noise, not shown: these hunks are not in the hunk index and need no topic. The index is complete without them.\n` +
+      leftOut
+        .map((h) => `- ${h.filePath}:${h.startLine}${h.endLine > h.startLine ? `-${h.endLine}` : ''}${h.side === 'before' ? ' (old lines)' : ''} (${h.reason})`)
+        .join('\n') +
+      '\n</left_out_hunks>';
   if (planningHunks) ctx += '\n\n' + buildPlannerEvidence(planningHunks);
 
   return ctx;

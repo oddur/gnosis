@@ -2782,8 +2782,18 @@ async function runBackgroundGeneration(
       reportReviewPhase({ reviewId, phase: 'Finding noise' });
       const off = disabledLanguages(codeIntelligenceSettings(loadPreferences()));
       const requests = noiseRequests(indexedHunks, fileContents, headFileContents, (language) => !off.includes(language));
-      // The conflict checks' worker has the grammars (src/conflict-checks.ts). Fail closed: no answer, no rule cuts.
-      const answers = await conflictChecks.noise(requests);
+      // Its own instance of the conflict checks' worker (src/conflict-checks.ts), so it never waits behind a conflict
+      // check: 10 s for each file. Cancelling the explanation stops it. Fail closed: no answer, no rule cuts.
+      const noiseWorker = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), treeSitterAssets, 5_000, 10_000);
+      const stop = () => noiseWorker.dispose();
+      signal.addEventListener('abort', stop, { once: true });
+      let answers: Awaited<ReturnType<typeof noiseWorker.noise>>;
+      try {
+        answers = await noiseWorker.noise(requests, signal);
+      } finally {
+        signal.removeEventListener('abort', stop);
+        noiseWorker.dispose();
+      }
       signal.throwIfAborted();
       ruleCuts = ruleNoise(indexedHunks, fileContents, headFileContents, classifiedNoise(requests, answers), noiseLevel);
       // When every hunk is noise, the noise is the change: explain it.
@@ -2851,7 +2861,7 @@ async function runBackgroundGeneration(
       // ── Two-phase: planner → parallel writers ──
       reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
-      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, planningHunks) + `\n\n<explanation_instructions>\n${instructions}\n</explanation_instructions>`;
+      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, planningHunks, noise.leftOut) + `\n\n<explanation_instructions>\n${instructions}\n</explanation_instructions>`;
       checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
         version: 9, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
@@ -4145,11 +4155,12 @@ async function conflictPermissions(client: ReturnType<typeof discussionClient>, 
 }
 // The conflict checks parse with the runtime and grammars the renderer ships: from the source tree in development, and
 // from the renderer build in a package, where vite.renderer.config.ts keeps their names (#445).
-const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), () => {
+function treeSitterAssets() {
   const grammars = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'src/assets/tree-sitter') : path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/assets/tree-sitter`);
   const runtime = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'node_modules/web-tree-sitter/web-tree-sitter.wasm') : path.join(grammars, 'web-tree-sitter.wasm');
   return { grammars, runtime };
-});
+}
+const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), treeSitterAssets);
 app.on('will-quit', () => conflictChecks.dispose());
 const conflicts = createConflictResolutionService({
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.

@@ -124,8 +124,11 @@ export async function ruleCutsFor(engine: Engine, prepared: PreparedFixture, lev
 }
 
 /** What generation sends the planner for a fixture at a level, from the same builders as src/main.ts. */
-export function plannerInput(prepared: PreparedFixture, ruleCuts: ReadonlyMap<string, string>, level: EvalLevel) {
+export function plannerInput(prepared: PreparedFixture, rawCuts: ReadonlyMap<string, string>, level: EvalLevel) {
+  // As src/main.ts: when the rules would cut every hunk, they cut none.
+  const ruleCuts = rawCuts.size === prepared.hunks.length ? new Map<string, string>() : rawCuts;
   const planning = prepared.hunks.filter((hunk) => !ruleCuts.has(hunk.id));
+  const leftOut = applyNoise([], prepared.hunks, ruleCuts, undefined, level).leftOut;
   const hunkIndex = formatHunkIndexForPrompt(planning);
   const evidence = plannerEvidence(planning).complete;
   const prData = {
@@ -142,7 +145,7 @@ export function plannerInput(prepared: PreparedFixture, ruleCuts: ReadonlyMap<st
   }));
   const options = { ...DEFAULT_EXPLANATION_PREFERENCES, reduceNoise: level };
   const context =
-    buildPlannerContext(prData, changedFiles as never, hunkIndex, '', null, planning) +
+    buildPlannerContext(prData, changedFiles as never, hunkIndex, '', null, planning, leftOut) +
     `\n\n<explanation_instructions>\n${explanationInstructions(options)}\n</explanation_instructions>`;
   const evidenceHash = createHash('sha256')
     .update(context)
@@ -178,14 +181,51 @@ export interface Manifest {
   fixtures: Record<string, FixtureRecord>;
 }
 const recordedPath = (level: EvalLevel, id: string, root = FIXTURES) => path.join(root, 'recorded', level, `${id}.json`);
-export function readRecorded(level: EvalLevel, id: string, root = FIXTURES): PlannerOutput | undefined {
-  const file = recordedPath(level, id, root);
-  return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as { plan: PlannerOutput }).plan : undefined;
+/** A recorded planner answer, with the provider and model that gave it (older recordings have neither). */
+export interface Recording {
+  plan: PlannerOutput;
+  provider?: string;
+  model?: string;
 }
+export function readRecording(level: EvalLevel, id: string, root = FIXTURES): Recording | undefined {
+  const file = recordedPath(level, id, root);
+  return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as Recording) : undefined;
+}
+export const readRecorded = (level: EvalLevel, id: string, root = FIXTURES) => readRecording(level, id, root)?.plan;
 export function writeRecorded(level: EvalLevel, id: string, plan: PlannerOutput, root = FIXTURES) {
   const file = recordedPath(level, id, root);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ plan }, null, 2) + '\n');
+}
+/** Writes a file through a temporary one, so a reader never sees half of it. */
+function writeWhole(file: string, text: string) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, text);
+  return () => fs.renameSync(temporary, file);
+}
+/**
+ * One level's recording and its manifest entry, together: both are written in full first, then both are moved into
+ * place, so a stopped run never leaves a recording without its entry or an entry without its recording.
+ */
+export function commitRecording(
+  level: EvalLevel,
+  id: string,
+  plan: PlannerOutput,
+  record: Omit<FixtureRecord, 'levels'>,
+  entry: NonNullable<FixtureRecord['levels'][EvalLevel]>,
+  root = FIXTURES
+) {
+  const manifest = readManifest(root) ?? { fixtures: {} };
+  const previous = manifest.fixtures[id] as FixtureRecord | undefined;
+  // An entry from another fixture version or model is replaced, not merged.
+  const same = previous && previous.fixtureHash === record.fixtureHash && previous.provider === record.provider && previous.model === record.model;
+  manifest.fixtures[id] = { ...record, levels: { ...(same ? previous.levels : {}), [level]: entry } };
+  const moves = [
+    writeWhole(recordedPath(level, id, root), JSON.stringify({ plan, provider: record.provider, model: record.model }, null, 2) + '\n'),
+    writeWhole(manifestPath(root), JSON.stringify(manifest, null, 2) + '\n'),
+  ];
+  for (const move of moves) move();
 }
 export const manifestPath = (root = FIXTURES) => path.join(root, 'recorded', 'manifest.json');
 export function readManifest(root = FIXTURES): Manifest | undefined {
@@ -299,18 +339,20 @@ export async function replay(fixtures = loadFixtures(), root = FIXTURES): Promis
       const ruleCuts = await ruleCutsFor(engine, item, level);
       const input = plannerInput(item, ruleCuts, level);
       rules.push({ prepared: item, cut: applyNoise([], item.hunks, ruleCuts, undefined, level).cut });
-      const plan = readRecorded(level, item.fixture.id, root);
-      if (!plan) {
+      const recording = readRecording(level, item.fixture.id, root);
+      const id = `${level}/${item.fixture.id}`;
+      if (!recording) {
         missing.push(item.fixture.id);
+        if (manifest?.fixtures[item.fixture.id]?.levels[level]) stale.push(`${id}: the manifest has an entry but no recording`);
         continue;
       }
+      const plan = recording.plan;
       planned.push({
         prepared: item,
         cut: applyNoise(plan.topics, item.hunks, ruleCuts, plan.noise, level, input.evidence).cut,
       });
       const record = manifest?.fixtures[item.fixture.id];
       const recorded = record?.levels[level];
-      const id = `${level}/${item.fixture.id}`;
       if (!manifest) stale.push(`${id}: recorded, but there is no manifest`);
       else if (!record || !recorded) stale.push(`${id}: recorded, but the manifest has no entry for it`);
       else {
@@ -319,12 +361,17 @@ export async function replay(fixtures = loadFixtures(), root = FIXTURES): Promis
           stale.push(`${id}: recorded with prompt ${recorded.promptHash}, the prompt is now ${promptHash(level)}`);
         if (recorded.evidenceHash !== input.evidenceHash)
           stale.push(`${id}: the planner's input changed since it was recorded (context, evidence or rule cuts)`);
+        if ((recording.provider ?? record.provider) !== record.provider || (recording.model ?? record.model) !== record.model)
+          stale.push(`${id}: recorded with ${recording.provider}/${recording.model}, the manifest says ${record.provider}/${record.model}`);
       }
     }
     scores.push(score(level, 'rules', rules));
     if (planned.length) scores.push(score(level, 'rules+planner', planned));
     if (missing.length) unrecorded.push({ level, missing });
   }
+  // One provider and model for the whole set: scores from a mix compare nothing.
+  const models = new Set(Object.values(manifest?.fixtures ?? {}).map((r) => `${r.provider}/${r.model}`));
+  if (models.size > 1) stale.push(`the manifest mixes providers or models: ${[...models].join(', ')}`);
   return { scores, unrecorded, stale, failed: stale.length > 0 || scores.some((s) => s.wrong.some((w) => w.failure)) };
 }
 
