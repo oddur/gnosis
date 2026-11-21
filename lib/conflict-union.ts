@@ -5,9 +5,8 @@ import { syntaxLanguage, type RangeUnit, type RangeUnits, type SyntaxLanguage } 
 /**
  * Both sides added different definitions at the same place (#445, tier 3). Mergiraf leaves such a conflict open when
  * it can't tell the parent is unordered. When each side only inserted lines, at the same place, and changed none of
- * the ancestor's lines, the proposal is both insertions, the PR's first, each exactly as written. The checks
- * (lib/conflict-verify.ts) read the inserted lines with tree-sitter: the proposal is Merged only when they are whole
- * units of a kind whose order cannot matter in that language (MERGE_IN_ANY_ORDER), with no name both sides added.
+ * the ancestor's lines, the proposal is both insertions, the PR's first, each exactly as written. It is never Merged:
+ * the checks (lib/conflict-verify.ts) put it in Check, with a note from the syntax nodes each side added (unionNote).
  */
 
 const lines = (text: string) => text.split(/(?<=\n)/).filter(Boolean);
@@ -189,35 +188,12 @@ const LISTS = new Set([
 const NEUTRAL = new Set(['comment', 'line_comment', 'block_comment', 'attribute_item']);
 /** Overloads are told apart by their parameter types. */
 const OVERLOADS = new Set<SyntaxLanguage>(['java', 'csharp']);
-
 /**
- * The allowlist for Merged: per language, the kinds whose order cannot change what the program does, or the unit types
- * within a kind where only some can. Everything else (enum members, whose values or ordinals may follow their order;
- * cases, where a catch-all or a fall-through makes order matter; items in a list; JavaScript, TypeScript and Python
- * imports, which run module code in order; Python definitions, which run in order) stays in Check.
+ * Kinds whose order can change what the program does: enum members (values and ordinals follow their order), cases (a
+ * catch-all or a fall-through), list items, and imports in languages that run module code as they import.
  */
-const MERGE_IN_ANY_ORDER: Record<SyntaxLanguage, Partial<Record<AddedKind, readonly string[] | true>>> = {
-  // Function declarations are hoisted; methods without decorators; interface and type-literal fields.
-  typescript: {
-    definition: ['function_declaration', 'interface_declaration', 'type_alias_declaration', 'method_definition'],
-    field: true,
-    key: ['pair'],
-  },
-  tsx: {
-    definition: ['function_declaration', 'interface_declaration', 'type_alias_declaration', 'method_definition'],
-    field: true,
-    key: ['pair'],
-  },
-  javascript: { definition: ['function_declaration', 'method_definition'], key: ['pair'] },
-  // Functions only: a class body runs when it is defined. Class attributes are not told from other statements.
-  python: { definition: ['function_definition'], key: ['pair'] },
-  go: { import: true, definition: true, field: true },
-  rust: { import: true, definition: true, field: true },
-  java: { import: true, definition: ['method_declaration', 'constructor_declaration'], field: true },
-  csharp: { import: true, definition: ['method_declaration', 'constructor_declaration'], field: true },
-  json: { key: true },
-  yaml: { key: true },
-};
+const ORDERED = new Set<AddedKind>(['member', 'arm', 'item']);
+const RUNS_ON_IMPORT = new Set<SyntaxLanguage>(['typescript', 'tsx', 'javascript', 'python']);
 
 const kindOf = (language: SyntaxLanguage, parent: string, unit: RangeUnit): AddedKind | 'neutral' | undefined => {
   if (NEUTRAL.has(unit.type)) return 'neutral';
@@ -226,56 +202,33 @@ const kindOf = (language: SyntaxLanguage, parent: string, unit: RangeUnit): Adde
   return UNIT_KINDS[language][unit.inner ?? unit.type];
 };
 
-export interface UnionReading {
-  /** Merged is allowed: every unit is of a kind whose order cannot matter here, and no name is added twice. */
-  merge: boolean;
-  /** Why the union is Merged or stays in Check, in one sentence or two. */
-  note: string;
-}
 /**
- * Reads a union proposal from the whole nodes each side's inserted lines hold, in the result. Undefined units (a node
- * reaches past the inserted lines, or the result didn't parse) leave it in Check.
+ * Why to check a union, from the whole nodes each side's inserted lines hold in the result. A union is never Merged:
+ * names, attributes and comments that belong to one side's item can't be proved apart from the other side's, so it is a
+ * ready proposal in Check. Undefined units (a node reaches past the inserted lines, or the result didn't parse) get the
+ * plainest note.
  */
-export function readUnion(
-  language: SyntaxLanguage,
-  ours: RangeUnits | undefined,
-  theirs: RangeUnits | undefined,
-  /** How many definitions of each name the whole result has. */
-  defined?: ReadonlyMap<string, number>
-): UnionReading {
+export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined, theirs: RangeUnits | undefined) {
   const kept = 'Gnosis kept both, the PR’s lines first.';
-  const unknown = { merge: false, note: `Both sides added lines here. ${kept} Check that both belong, in this order.` };
+  const unknown = `Both sides added lines here. ${kept} Check that both belong, in this order.`;
   if (!ours || !theirs) return unknown;
   const read = (side: RangeUnits) => side.units.map((unit) => ({ unit, kind: kindOf(language, side.parent, unit) }));
-  const all = [...read(ours), ...read(theirs)];
-  const real = all.filter((x) => x.kind !== 'neutral');
+  const real = [...read(ours), ...read(theirs)].filter((x) => x.kind !== 'neutral');
   if (!real.length || real.some((x) => !x.kind)) return unknown;
   const kinds = new Set(real.map((x) => x.kind as AddedKind));
   const what = kinds.size === 1 ? KIND_WORDS[[...kinds][0]] : 'definitions';
-  const shown = (name: string) => (name.length > 40 ? `${name.slice(0, 39)}…` : name);
   const key = (u: RangeUnit) =>
     OVERLOADS.has(language) && u.parameters !== undefined ? `${u.name}(${u.parameters})` : u.name;
   const names = (side: RangeUnits) => new Set(side.units.filter((u) => !NEUTRAL.has(u.type)).map(key));
   const mine = names(ours);
   const same = [...names(theirs)].find((name) => mine.has(name));
-  if (same) return { merge: false, note: `Both sides added ${shown(same)} here. Keep one, or check that both belong.` };
-  // A definition the other side added elsewhere in the file, outside this conflict.
-  const twice = OVERLOADS.has(language)
-    ? undefined
-    : real.find(({ unit, kind }) => kind === 'definition' && (defined?.get(unit.name) ?? 0) > 1);
-  if (twice)
-    return { merge: false, note: `${shown(twice.unit.name)} is defined twice in the result. Check which to keep.` };
-  const allowed = MERGE_IN_ANY_ORDER[language];
-  const ordered = real.find(({ unit, kind }) => {
-    const rule = allowed[kind as AddedKind];
-    return !(rule === true || rule?.includes(unit.inner ?? unit.type));
-  });
-  // A decorator runs in order and may register something.
-  const decorated = real.some(({ unit }) => unit.decorated || unit.type === 'decorator');
-  if (ordered || decorated)
-    return {
-      merge: false,
-      note: `Both sides added different ${what} here. ${kept} Check the order: it can matter here.`,
-    };
-  return { merge: true, note: `Both sides added different ${what} here. ${kept} Their order doesn’t matter.` };
+  if (same)
+    return `Both sides added ${same.length > 40 ? `${same.slice(0, 39)}…` : same} here. Keep one, or check that both belong.`;
+  const ordered =
+    [...kinds].some((kind) => ORDERED.has(kind)) ||
+    (kinds.has('import') && RUNS_ON_IMPORT.has(language)) ||
+    real.some(({ unit }) => unit.decorated || unit.type === 'decorator');
+  return ordered
+    ? `Both sides added different ${what} here. ${kept} Check the order: it can matter here.`
+    : `Both sides added different ${what} here. ${kept} Their order shouldn’t matter; check that both belong.`;
 }

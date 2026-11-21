@@ -5,8 +5,8 @@ import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { withProposals } from '../lib/conflict-carry';
-import { readUnion, unionOf, withUnions } from '../lib/conflict-union';
-import { blockBuckets, verifyProposals, type Analyse } from '../lib/conflict-verify';
+import { unionNote, unionOf, withUnions } from '../lib/conflict-union';
+import { blockBuckets, proposalKey, verifyProposals, type Analyse } from '../lib/conflict-verify';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 
 /** Both sides added different definitions at the same place (#445 item 16), and per-conflict check results (item 18). */
@@ -88,13 +88,17 @@ void test('preparation adds unions only where structural merge left a conflict o
 
 const fn = (name: string, body = '1') => `export function ${name}() {\n  return ${body};\n}\n\n`;
 
-void test('two new functions in TypeScript are Merged; imports, which run module code in order, stay in Check', async () => {
+const doesnt = 'Their order shouldn’t matter; check that both belong.';
+const order = 'Check the order: it can matter here.';
+
+void test('a union is never Merged: it is a ready proposal in Check, with a note on what each side added', async () => {
   const functions = await check(conflict('src/math.ts', [fn('alpha'), [fn('beta'), '', fn('gamma')], fn('omega')]));
-  assert.deepEqual(functions.buckets, ['merged']);
+  assert.deepEqual(functions.buckets, ['check']);
   assert.equal(
     functions.verdict.note,
-    'Both sides added different definitions here. Gnosis kept both, the PR’s lines first. Their order doesn’t matter. The file parses.'
+    `Both sides added different definitions here. Gnosis kept both, the PR’s lines first. ${doesnt}`
   );
+  // Imports in TypeScript run module code in order.
   const imports = await check(
     conflict('src/math.ts', [
       "import { a } from './a';\n",
@@ -103,13 +107,7 @@ void test('two new functions in TypeScript are Merged; imports, which run module
     ])
   );
   assert.deepEqual(imports.buckets, ['check']);
-  assert.match(
-    imports.verdict.note,
-    /^Both sides added different imports here\..*Check the order: it can matter here\.$/
-  );
-});
-
-void test('Go, Rust, Java and C# imports, and Go and Rust struct fields, are Merged in any order', async () => {
+  assert.match(imports.verdict.note, new RegExp(`^Both sides added different imports here\\..*${order}$`));
   const go = await check(
     conflict('main.go', [
       'package main\n\nimport (\n\t"fmt"\n',
@@ -117,7 +115,8 @@ void test('Go, Rust, Java and C# imports, and Go and Rust struct fields, are Mer
       ')\n\nfunc main() { fmt.Println(os.Args, strings.ToUpper("x")) }\n',
     ])
   );
-  assert.deepEqual(go.buckets, ['merged'], go.verdict.note);
+  assert.deepEqual(go.buckets, ['check']);
+  assert.match(go.verdict.note, new RegExp(`imports here.*${doesnt}`));
   const rust = await check(
     conflict('src/lib.rs', [
       'pub struct Options {\n    pub width: u32,\n',
@@ -125,72 +124,56 @@ void test('Go, Rust, Java and C# imports, and Go and Rust struct fields, are Mer
       '}\n',
     ])
   );
-  assert.deepEqual(rust.buckets, ['merged'], rust.verdict.note);
-  const java = await check(
-    conflict('src/Main.java', [
-      'package lab;\n\nimport java.util.List;\n',
-      ['import java.util.Map;\n', '', 'import java.util.Set;\n'],
-      '\nclass Main {}\n',
-    ])
-  );
-  assert.deepEqual(java.buckets, ['merged'], java.verdict.note);
+  assert.deepEqual(rust.buckets, ['check']);
+  assert.match(rust.verdict.note, /different fields here/);
 });
 
-void test('traps: a catch-all arm, a name both sides added, a same-signature overload and an ordered list stay in Check', async () => {
-  const arms = await check(
+void test('traps stay in Check: a catch-all arm, names both sides added, attributes, ordered lists, duplicate keys', async () => {
+  const traps = [
     conflict('src/status.rs', [
       'pub fn status(s: &str) -> u16 {\n    match s {\n        "ok" => 200,\n',
       ['        "denied" => 403,\n', '', '        _ => 500,\n'],
       '    }\n}\n',
-    ])
-  );
-  assert.deepEqual(arms.buckets, ['check']);
-  assert.match(arms.verdict.note, /different cases here.*Check the order/);
-  const twice = await check(
-    conflict('src/math.ts', [fn('alpha'), [fn('clamp', '0'), '', fn('clamp', '1')], fn('omega')])
-  );
-  assert.deepEqual(twice.buckets, ['check']);
-  assert.equal(twice.verdict.note, 'Both sides added clamp here. Keep one, or check that both belong.');
-  const cls = (members: [string, string, string]) =>
-    conflict('src/Log.java', ['package lab;\n\npublic class Log {\n    void write(String m) {}\n\n', members, '}\n']);
-  // Overloads differ by parameter types: names alone don't make them different.
-  const same = await check(cls(['    void write(int code) {}\n', '', '    void write(int value) {}\n']));
-  assert.deepEqual(same.buckets, ['check']);
-  assert.equal(same.verdict.note, 'Both sides added write(int) here. Keep one, or check that both belong.');
-  const differ = await check(cls(['    void write(long n) {}\n', '', '    void write(double d) {}\n']));
-  assert.deepEqual(differ.buckets, ['merged'], differ.verdict.note);
-  const list = await check(
-    conflict('app/settings.py', ['MIDDLEWARE = [\n    "security",\n', ['    "auth",\n', '', '    "csrf",\n'], ']\n'])
-  );
-  assert.deepEqual(list.buckets, ['check']);
-  assert.match(list.verdict.note, /different items here.*Check the order/);
-  const keys = await check(
+    ]),
+    conflict('src/math.ts', [fn('alpha'), [fn('clamp', '0'), '', fn('clamp', '1')], fn('omega')]),
+    conflict('src/Log.java', [
+      'package lab;\n\npublic class Log {\n    void write(String m) {}\n\n',
+      ['    void write(int code) {}\n', '', '    void write(int value) {}\n'],
+      '}\n',
+    ]),
+    // An attribute on the PR's item would land on main's in the other order.
+    conflict('src/lib.rs', ['mod a;\n', ['#[cfg(test)]\nmod tests;\n', '', 'mod b;\n'], 'mod c;\n']),
+    conflict('src/lib.rs', ['use std::fmt;\n', ['use std::io;\n', '', 'use std::io;\n'], '\nfn main() {}\n']),
+    conflict('src/a.ts', [
+      'const x = 1;\n',
+      ['export default function a() {}\n', '', 'export default function b() {}\n'],
+      '',
+    ]),
+    conflict('app/settings.py', ['MIDDLEWARE = [\n    "security",\n', ['    "auth",\n', '', '    "csrf",\n'], ']\n']),
     conflict('ci.yml', [
       'jobs:\n  build:\n    runs-on: ubuntu-latest\n',
       ['    timeout-minutes: 10\n', '', '    timeout-minutes: 30\n'],
       '    steps:\n      - run: make\n',
-    ])
-  );
-  assert.deepEqual(keys.buckets, ['check']);
+    ]),
+    conflict('src/run.ts', ['export function run() {\n  start();\n', ['  log();\n', '', '  audit();\n'], '}\n']),
+  ];
+  for (const f of traps) assert.deepEqual((await check(f)).buckets, ['check'], f.path);
+  const [arms, twice, overload, , , , list, keys, statements] = await Promise.all(traps.map((f) => check(f)));
+  assert.match(arms.verdict.note, new RegExp(`different cases here.*${order}`));
+  assert.equal(twice.verdict.note, 'Both sides added clamp here. Keep one, or check that both belong.');
+  // Overloads differ by parameter types: names alone don't make them different.
+  assert.equal(overload.verdict.note, 'Both sides added write(int) here. Keep one, or check that both belong.');
+  assert.match(list.verdict.note, new RegExp(`different items here.*${order}`));
   assert.equal(keys.verdict.note, 'Both sides added timeout-minutes here. Keep one, or check that both belong.');
   // Statements in a function body are no definitions: order and meaning are for you.
-  const statements = await check(
-    conflict('src/run.ts', ['export function run() {\n  start();\n', ['  log();\n', '', '  audit();\n'], '}\n'])
-  );
-  assert.deepEqual(statements.buckets, ['check']);
   assert.match(statements.verdict.note, /^Both sides added lines here\./);
-  // A definition the other side added elsewhere in the file, outside the conflict.
-  const units = (name: string) => ({ parent: 'program', units: [{ type: 'function_declaration', name }] });
-  assert.deepEqual(readUnion('typescript', units('beta'), units('gamma'), new Map([['beta', 2]])), {
-    merge: false,
-    note: 'beta is defined twice in the result. Check which to keep.',
-  });
-  assert.equal(readUnion('typescript', units('beta'), units('gamma'), new Map([['beta', 1]])).merge, true);
-  // Units the parser couldn't read whole stay in Check.
-  assert.equal(readUnion('typescript', undefined, units('gamma')).merge, false);
+  // Units the parser couldn't read whole get the plainest note.
+  assert.match(unionNote('typescript', undefined, undefined), /^Both sides added lines here\./);
 });
 
-void test('each failure stays with its conflict: a union is Merged beside a structural merge that lost a line', async () => {
+const mergiraf = (text: string): ConflictProposal => ({ source: 'mergiraf', text });
+
+void test('each failure stays with its conflict: a proposal that keeps every line stays Merged beside one that lost a line', async () => {
   const f = conflict(
     'src/math.ts',
     [
@@ -200,22 +183,23 @@ void test('each failure stays with its conflict: a union is Merged beside a stru
       [fn('beta'), '', fn('gamma')],
       fn('omega'),
     ],
-    [{ source: 'mergiraf', text: "import { b } from './b';\n" }, null]
+    [mergiraf("import { b } from './b';\n"), mergiraf(fn('beta') + fn('gamma'))]
   );
   const { verdict, buckets } = await check(f);
   assert.deepEqual(buckets, ['check', 'merged']);
   const [imports, functions] = verdict.blocks ?? [];
   assert.equal(imports?.note, "import { c } from './c'; from main is missing from the result.");
-  assert.match(String(functions?.note), /^Both sides added different definitions here\./);
+  assert.equal(functions?.note, 'The file parses. Every line of both sides is accounted for.');
 });
 
 void test('a failure the checks can’t trace to a conflict keeps every proposal in the file in Check', async () => {
-  const f = conflict('src/math.ts', [
+  const parts: (string | [string, string, string])[] = [
     fn('alpha'),
     [fn('beta'), '', fn('gamma')],
     fn('delta'),
     [fn('eps'), '', fn('zeta')],
-  ]);
+  ];
+  const f = conflict('src/math.ts', parts, [mergiraf(fn('beta') + fn('gamma')), mergiraf(fn('eps') + fn('zeta'))]);
   assert.deepEqual((await check(f)).buckets, ['merged', 'merged']);
   // A parse error with no position.
   const blind: Analyse = async (language, text, ranges) => {
@@ -225,24 +209,50 @@ void test('a failure the checks can’t trace to a conflict keeps every proposal
   const verdict = await verifyProposals(f, blind);
   assert.deepEqual(verdict, { merged: false, note: 'The result doesn’t parse.' });
   assert.deepEqual(blockBuckets(f, f.result, verdict), ['check', 'check']);
-  // A parse error in one union: that one goes to Check, the other stays Merged once the file parses without it.
-  const broken = conflict('src/math.ts', [
+  // A parse error in one proposal: that one goes to Check, the other stays Merged once the file parses without it.
+  const unclosed = mergiraf(`${fn('eps')}export function zeta() {\n  return 1;\n\n`);
+  const traced = await check(conflict('src/math.ts', parts, [mergiraf(fn('beta') + fn('gamma')), unclosed]));
+  assert.deepEqual(traced.buckets, ['merged', 'check']);
+  assert.equal(traced.verdict.blocks?.[1]?.note, 'This result doesn’t parse.');
+  // With a conflict still undecided, a parse error is the whole file's, as before.
+  const open = await check(
+    conflict(
+      'src/math.ts',
+      [...parts, fn('omega'), [fn('x'), 'x\n', fn('y')]],
+      [mergiraf(fn('beta') + fn('gamma')), unclosed, null]
+    )
+  );
+  assert.deepEqual(open.buckets, ['check', 'check', 'decide']);
+  assert.equal(open.verdict.note, 'The result doesn’t parse.');
+  // A duplicate whose copies are all in lines no proposal wrote.
+  const outside = conflict(
+    'src/math.ts',
+    [fn('alpha'), fn('alpha'), [fn('beta'), '', fn('gamma')], fn('omega')],
+    [mergiraf(fn('beta') + fn('gamma'))]
+  );
+  const once = fn('alpha') + fn('omega');
+  const dup = await verifyProposals({ ...outside, base: once, ours: once, theirs: once }, analyse);
+  assert.deepEqual(dup, { merged: false, note: 'alpha is defined twice in the result.' });
+});
+
+void test('the checks follow the draft: a conflict you decided is checked as your text, and the check runs again', async () => {
+  const parts: (string | [string, string, string])[] = [
     fn('alpha'),
     [fn('beta'), '', fn('gamma')],
     fn('delta'),
     [fn('eps'), '', fn('zeta')],
-  ]);
-  broken.proposals = [
-    broken.proposals?.[0] ?? null,
-    { source: 'mergiraf', text: `${fn('eps')}export function zeta() {\n  return 1;\n\n` },
   ];
-  broken.result = withProposals(broken.original, broken.proposals);
-  const traced = await check(broken);
-  assert.deepEqual(traced.buckets, ['merged', 'check']);
-  assert.equal(traced.verdict.blocks?.[1]?.note, 'This result doesn’t parse.');
-  // A duplicate whose copies are all in lines no proposal wrote.
-  const outside = conflict('src/math.ts', [fn('alpha'), fn('alpha'), [fn('beta'), '', fn('gamma')], fn('omega')]);
-  const once = fn('alpha') + fn('omega');
-  const dup = await verifyProposals({ ...outside, base: once, ours: once, theirs: once }, analyse);
-  assert.deepEqual(dup, { merged: false, note: 'alpha is defined twice in the result.' });
+  const f = conflict('src/math.ts', parts, [mergiraf(fn('beta') + fn('gamma')), mergiraf(fn('eps') + fn('zeta'))]);
+  // You keep main's side of the first conflict: the second proposal is checked beside that text, not its proposal.
+  const chosen = { ...f, result: f.result.replace(fn('beta') + fn('gamma'), fn('gamma')) };
+  assert.notEqual(proposalKey(chosen), proposalKey(f), 'A new draft is checked again');
+  const read: string[] = [];
+  const spy: Analyse = (language, text, ranges) => {
+    read.push(text);
+    return analyse(language, text, ranges);
+  };
+  const verdict = await verifyProposals(chosen, spy);
+  assert.ok(read.includes(chosen.result), 'The checks parse the draft as you left it');
+  assert.ok(!read.includes(f.result));
+  assert.deepEqual(blockBuckets(chosen, chosen.result, verdict), ['decided', 'merged']);
 });

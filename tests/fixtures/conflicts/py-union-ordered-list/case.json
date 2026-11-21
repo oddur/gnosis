@@ -3,6 +3,6 @@
   "language": "python",
   "category": "semantic/order",
   "expected": {
-    "app/settings.py": "any-but-merged"
+    "app/settings.py": "check"
   }
 }

@@ -3,6 +3,6 @@
   "language": "yaml",
   "category": "semantic/same-constant",
   "expected": {
-    ".github/workflows/build.yml": "any-but-merged"
+    ".github/workflows/build.yml": "check"
   }
 }

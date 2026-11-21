@@ -688,7 +688,8 @@ export function createConflictResolutionService(deps: Deps) {
           file.source = 'mergiraf';
         }
       } else if (whole) file.wholeFile = { source: 'mergiraf', text: output };
-      if (!merged && !whole) file.structuralNote = 'Structural merge couldn’t combine this file.';
+      // Only a file with no proposal at all gets the note: "Try structural merge again" never replaces unions.
+      else file.structuralNote = 'Structural merge couldn’t combine this file.';
       file.structuralRan = true;
       return true;
     };

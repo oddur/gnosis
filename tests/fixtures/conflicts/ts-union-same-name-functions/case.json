@@ -3,6 +3,6 @@
   "language": "typescript",
   "category": "semantic/duplicate",
   "expected": {
-    "src/math.ts": "any-but-merged"
+    "src/math.ts": "check"
   }
 }

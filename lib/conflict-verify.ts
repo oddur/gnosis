@@ -14,7 +14,7 @@ import {
   type ConflictFileStage,
   type ConflictProposal,
 } from './conflict-resolution';
-import { readUnion, unionOf } from './conflict-union';
+import { unionNote, unionOf } from './conflict-union';
 import {
   definitionChain,
   syntaxLanguage,
@@ -125,16 +125,19 @@ function reaching(regions: ReadonlyMap<number, [number, number]>, lines: readonl
  * Checks one file's proposals, cheapest first: no conflict markers and one line-ending style; the result parses where
  * both sides parsed (an undecided conflict may take either side's lines); no definition is duplicated. Structural merge
  * and unions (lib/conflict-union.ts) are also held to the line accounting of each block (`accountLines`), and to no
- * renamed name coming back, no member declared twice and no stray line. Your own earlier resolutions stay Merged in
- * files Gnosis has no grammar for; nothing else does.
+ * renamed name coming back, no member declared twice and no stray line. A union of both sides' additions is never
+ * Merged: it is in Check with a note on what each side added. Your own earlier resolutions stay Merged in files Gnosis
+ * has no grammar for; nothing else does.
  *
  * Each failure belongs to the conflicts it can be traced to: the line checks are per block, a duplicated definition
- * belongs to the proposals that hold a copy, and a parse error to the proposals its lines reach, once the file parses
- * with them taken out. Only those conflicts go to Check, each with its own reason. A failure that can't be traced keeps
- * every proposal in the file in Check.
+ * belongs to the proposals that hold a copy, and, when no conflict is left undecided, a parse error belongs to the
+ * proposals its lines reach once the file parses with them taken out. Only those conflicts go to Check, each with its
+ * own reason. A failure that can't be traced keeps every proposal in the file in Check.
  */
 export async function verifyProposals(
-  file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals'>,
+  file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals'> &
+    /** The draft: a conflict you decided in it is checked as the text you chose, not as its proposal. */
+    Partial<Pick<ConflictFile, 'result'>>,
   analyse: Analyse,
   /** The whole file is one conflict, its three versions, and the first proposal is the whole result. */
   whole = false,
@@ -142,6 +145,10 @@ export async function verifyProposals(
   equivalent?: Equivalent
 ): Promise<Verdict> {
   const proposals = file.proposals ?? [];
+  const parsedConflicts = whole ? [] : parseConflicts(file.original);
+  // A conflict whose text in the draft is not its proposal is yours: it is fixed text around the others, so each
+  // proposal is checked beside what you chose.
+  const chosen = file.result === undefined ? undefined : blockResolutions(parsedConflicts, file.result);
   const segments: ConflictSegment[] = whole
     ? [
         {
@@ -150,7 +157,13 @@ export async function verifyProposals(
           block: { base: file.base, ours: file.ours, theirs: file.theirs, raw: '', line: 1 },
         },
       ]
-    : parseConflicts(file.original);
+    : parsedConflicts.map((s): ConflictSegment => {
+        if (s.kind !== 'conflict') return s;
+        const text = chosen?.[s.index];
+        return text === undefined || text === proposals[s.index]?.text || hasConflictMarkers(text)
+          ? s
+          : { kind: 'text', text };
+      });
   const conflicts = segments.filter((s): s is Conflict => s.kind === 'conflict');
   const open = conflicts.filter((s) => !proposals[s.index]);
   const proposed = conflicts.filter((s) => proposals[s.index]);
@@ -163,13 +176,15 @@ export async function verifyProposals(
   const failed = new Map<number, string>();
   const fail = (index: number, note: string) => void (failed.has(index) || failed.set(index, note));
   const verdict = (passed: (index: number) => string): Verdict => {
-    const blocks = conflicts.map((s) => {
-      if (!proposals[s.index]) return undefined;
+    const blocks: (BlockVerdict | undefined)[] = [];
+    for (const s of proposed) {
       const note = failed.get(s.index);
-      return note === undefined ? { merged: true, note: passed(s.index) } : { merged: false, note };
-    });
+      blocks[s.index] = note === undefined ? { merged: true, note: passed(s.index) } : { merged: false, note };
+    }
     const first = blocks.find((v) => v && !v.merged) ?? blocks.find(Boolean);
-    const shared = blocks.every((v) => !v || (v.merged === first?.merged && v.note === first.note));
+    const shared = proposed.every(
+      ({ index }) => blocks[index]?.merged === first?.merged && blocks[index]?.note === first?.note
+    );
     return { merged: !failed.size, note: first?.note ?? '', ...(shared ? {} : { blocks }) };
   };
   const language = syntaxLanguage(file.path);
@@ -203,7 +218,9 @@ export async function verifyProposals(
     ]);
     const [, ours, theirs, result] = parsed;
     // The probe fills undecided conflicts with the PR's lines; with main's lines it may parse. Only a result that fails
-    // both ways is the proposals' fault: the ones its errors reach, when the file parses with those taken out.
+    // both ways is the proposals' fault. With every conflict proposed, it is the fault of the ones its errors reach, when
+    // the file parses with those taken out. With one undecided, the whole file's: a proposal can't be cleared against one
+    // filling of the open conflicts.
     if (
       result.errors &&
       !ours.errors &&
@@ -212,7 +229,8 @@ export async function verifyProposals(
     ) {
       const suspects = result.errorLines?.length ? reaching(probe.regions, result.errorLines) : undefined;
       let without: { probe: typeof probe; parsed: ParsedText } | undefined;
-      for (const side of suspects && suspects.size < proposed.length ? (['ours', 'theirs'] as const) : []) {
+      const traceable = suspects && !open.length && suspects.size < proposed.length;
+      for (const side of traceable ? (['ours', 'theirs'] as const) : []) {
         const next = fill(segments, proposals, side, suspects);
         const read = await analyse(language, next.text, unionRanges(next.regions));
         if (!read.errors) {
@@ -246,7 +264,6 @@ export async function verifyProposals(
   // Your own earlier resolutions may drop a side on purpose: only structural merge and unions are held to the line
   // accounting.
   const reformats = new Map<number, string>();
-  const unionNotes = new Map<number, string>();
   if (proposals.some((p) => p && p.source !== 'rerere')) {
     const indented = language === 'python' || language === 'yaml';
     for (const s of proposed) {
@@ -268,19 +285,14 @@ export async function verifyProposals(
       }
       if (note) fail(s.index, note);
     }
-    // A union is Merged only where both insertions are whole units whose order cannot matter (lib/conflict-union.ts).
-    // Read first, so its reason, from the syntax tree, is the one shown.
-    if (unions.length) {
-      const defined = new Map<string, number>();
-      for (const d of result.definitions) defined.set(d.name, (defined.get(d.name) ?? 0) + 1);
-      unions.forEach(({ index }, k) => {
-        // A union set aside for a parse error was not in the text these units came from.
-        const units = probe.regions.has(index) ? result.units : undefined;
-        const reading = readUnion(language, units?.[2 * k], units?.[2 * k + 1], defined);
-        if (reading.merge) unionNotes.set(index, reading.note);
-        else fail(index, reading.note);
-      });
-    }
+    // A union is never Merged: its note, from the syntax nodes each side added, is read first so it is the one shown.
+    unions.forEach(({ index }, k) => {
+      // A union set aside for a parse error was not in the text these units came from.
+      const units = probe.regions.has(index) ? result.units : undefined;
+      fail(index, unionNote(language, units?.[2 * k], units?.[2 * k + 1]));
+    });
+    for (const s of proposed)
+      if (proposals[s.index]?.source === 'union') fail(s.index, unionNote(language, undefined, undefined));
     for (const [index, note] of [
       ...danglingNames(file, segments),
       ...duplicateMembers(segments, proposals),
@@ -289,7 +301,7 @@ export async function verifyProposals(
       fail(index, note);
   }
   return verdict((index) => {
-    const own = reformats.get(index) ?? unionNotes.get(index);
+    const own = reformats.get(index);
     return own ? `${own} The file parses.` : 'The file parses. Every line of both sides is accounted for.';
   });
 }
@@ -638,14 +650,20 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
 
 const proposalKeys = new WeakMap<object, string>();
 /**
- * A cheap fingerprint of a file's conflict and proposals (FNV-1a and length), remembered per file object. A check
- * result counts only for the proposals it checked.
+ * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A
+ * check result counts only for the proposals it checked, beside the choices it checked them with.
  */
-export function proposalKey(file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'>) {
+export function proposalKey(
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'> & Partial<Pick<ConflictFile, 'result'>>
+) {
   let key = proposalKeys.get(file);
   if (key === undefined) {
     const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
-    const text = [file.original, ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : ''))].join('\u0000');
+    const text = [
+      file.original,
+      ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
+      `\u0002${file.result ?? ''}`,
+    ].join('\u0000');
     let hash = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
     key = `${(hash >>> 0).toString(36)}:${text.length}`;

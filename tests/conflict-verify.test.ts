@@ -65,7 +65,7 @@ const file = (proposals: (ConflictProposal | null)[], overrides: Partial<Conflic
   ours,
   theirs,
   original,
-  result: withProposals(original, proposals),
+  result: withProposals(overrides.original ?? original, proposals),
   resolved: false,
   source: 'mergiraf',
   proposals,

@@ -3,6 +3,6 @@
   "language": "rust",
   "category": "semantic/order",
   "expected": {
-    "src/status.rs": "any-but-merged"
+    "src/status.rs": "check"
   }
 }

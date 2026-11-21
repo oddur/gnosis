@@ -3,6 +3,6 @@
   "language": "csharp",
   "category": "semantic/overloads",
   "expected": {
-    "src/Log.cs": "any-but-merged"
+    "src/Log.cs": "check"
   }
 }

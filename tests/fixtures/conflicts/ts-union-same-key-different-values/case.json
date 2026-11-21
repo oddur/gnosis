@@ -3,6 +3,6 @@
   "language": "typescript",
   "category": "semantic/same-constant",
   "expected": {
-    "src/config.ts": "any-but-merged"
+    "src/config.ts": "check"
   }
 }
