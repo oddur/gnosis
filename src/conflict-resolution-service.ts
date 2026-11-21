@@ -614,8 +614,8 @@ export function createConflictResolutionService(deps: Deps) {
         delete file.verdict;
         continue;
       }
-      // A fresh object: proposalKey remembers its answer per object, and these files change in place.
-      const key = proposalKey({ original: file.original, proposals: file.proposals, wholeFile: file.wholeFile });
+      // A copy: proposalKey remembers its answer per object, and these files change in place.
+      const key = proposalKey({ ...file });
       if (file.verdict?.key !== key) due.push({ file, key });
     }
     if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
