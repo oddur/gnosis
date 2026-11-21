@@ -27,7 +27,7 @@ import { workflowGrouping, type WorkflowGraphInput, type WorkflowRunInfo } from 
 import { createCheckDetailsPreloader } from './check-details-preloader';
 import { createPrOpenPreloader, needsRefresh, queuePriority, intentPriority, predictedPriority } from './pr-open-preloader';
 import { parseOpenTargets, type OpenTarget, type OpenTier } from '../lib/pr-open-targets';
-import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
+import { normalizeRepositorySettings, normalizeBriefingLimit, repositoryKey } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
 import { openReviewCheckpoint, reviewFingerprint, collectReviewTopics } from './review-checkpoint';
 import { createExplanationBuilds } from './explanation-builds';
@@ -172,6 +172,8 @@ import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import { disabledLanguages } from '../lib/conflict-verdict-key';
 import { createConflictCheckWorker } from './conflict-checks';
+import { createConflictPrecompute } from './conflict-precompute';
+import { mergeConflictState } from '../lib/merge-conflicts';
 import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
@@ -1765,7 +1767,12 @@ function readPreferencesFile(): Preferences {
   }
 }
 
+/** Told after preferences are saved, such as the PR header's conflict lines (src/conflict-precompute.ts). */
+const preferencesSaved: (() => void)[] = [];
 function savePreferences(prefs: Preferences): void {
+  try { savePreferencesFile(prefs); } finally { for (const listener of preferencesSaved) listener(); }
+}
+function savePreferencesFile(prefs: Preferences): void {
   const file = getPreferencesPath(), temporary = file + '.tmp';
   try {
   fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), menubarSettings: menubarSettings(prefs), codeIntelligence: codeIntelligenceSettings(prefs), updateChannel: normalizeUpdateChannel(prefs.updateChannel), ...normalizePreloadPreferences(prefs) }, null, 2));
@@ -3865,13 +3872,28 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
 
 const getGitHubProfile = createGitHubProfileService();
 const signalRevisions = new WeakMap<ReturnType<typeof getGitHubClient>, Map<string, string>>();
-const getQueueSignals = createQueueSignalsService(Date.now, (client, url, headSha) => {
+const readQueueSignals = createQueueSignalsService(Date.now, (client, url, headSha) => {
   let revisions = signalRevisions.get(client);
   if (!revisions) { revisions = new Map(); signalRevisions.set(client, revisions); }
   revisions.set(url, headSha);
   // The signals read saw a new head. The sync read that asked for them reads the PR next.
   if (client === getGitHubClient(cachedToken)) noteHeadSha(url, headSha, { source: 'signals' });
 });
+/** Every status read also tells background conflict preparation which PRs conflict now (src/conflict-precompute.ts). */
+const getQueueSignals: typeof readQueueSignals = async (client, requests, options) => {
+  const values = await readQueueSignals(client, requests, options);
+  if (client === getGitHubClient(cachedToken)) observeConflicts(values);
+  return values;
+};
+function observeConflicts(values: readonly QueueSignals[]) {
+  // The PRs you wrote or starred, read once per batch and only when one conflicts.
+  let wanted: ReadonlySet<string> | undefined;
+  for (const value of values) {
+    const state = mergeConflictState(value);
+    if (state === 'conflicts') wanted ??= workbench.ownedOrStarredUrls();
+    conflictPrecompute.observe(value.url, value.headSha, state, !!wanted?.has(value.url));
+  }
+}
 ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[], options?: QueueSignalOptions) => {
   const token = getResolvedToken();
   if (!token) return [];
@@ -4132,6 +4154,39 @@ const conflicts = createConflictResolutionService({
     return { contents: value.contents, explanation: value.explanation };
   },
 });
+// Background conflict preparation: one PR at a time, never on battery (src/conflict-precompute.ts).
+const conflictPrecompute = createConflictPrecompute({
+  prepare: (url, signal, files) => withGitHubPriority('background', () => conflicts.prepareInBackground(url, signal, files), { automatic: true }),
+  draft: (url, headSha) => conflicts.draft(url, headSha),
+  forget: url => conflicts.forgetBackground(url),
+  trim: () => conflicts.trimBackground(),
+  account: () => cachedLogin ?? '',
+  showMerged: repo => loadPreferences().repositorySettings?.[repositoryKey(repo)]?.showMergedConflicts !== false,
+  // Only the settings a header line reads: the languages off and each repository's "Show me every merged conflict".
+  settingsKey: () => {
+    const preferences = loadPreferences();
+    const shown = Object.entries(preferences.repositorySettings ?? {}).map(([repo, value]) => [repo, value?.showMergedConflicts]);
+    return JSON.stringify([disabledLanguages(codeIntelligenceSettings(preferences)), shown]);
+  },
+  disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
+  onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
+  changed: url => broadcastToAllWindows('conflict-header-changed', url),
+});
+void app.whenReady().then(() => {
+  powerMonitor.on('on-battery', () => conflictPrecompute.power());
+  powerMonitor.on('on-ac', () => conflictPrecompute.power());
+});
+app.on('will-quit', () => conflictPrecompute.dispose());
+preferencesSaved.push(() => conflictPrecompute.settingsChanged());
+// The PR header's conflict line. Asking for it means you opened the PR, so its conflicts are prepared too.
+ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
+  if (typeof url !== 'string' || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) return null;
+  if (typeof headSha !== 'string' || !/^[a-f0-9]{40,64}$/.test(headSha)) return null;
+  if (!getResolvedToken() || !cachedLogin) return null;
+  // The renderer's head may lag: only status reads report head moves (observe).
+  conflictPrecompute.opened(url, headSha);
+  return conflictPrecompute.header(url, headSha) ?? null;
+});
 handleInteractive('conflict-resolution', async (_event, request: ConflictRequest) => {
   validateConflictRequest(request);
   const token = getResolvedToken();
@@ -4142,7 +4197,12 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
   const tracked = !['save', 'discard', 'restack-save'].includes(request.kind);
   if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'restack-publish' ? 'Publishing dependent PR updates' : ['restack-prepare', 'restack-continue'].includes(request.kind) ? 'Preparing dependent PR updates' : request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, ['publish', 'restack-publish'].includes(request.kind) ? {} : { cancel: () => controller.abort() });
   try {
+    // A background preparation of this PR finishes first, so opening reuses it.
+    if (request.kind === 'open') await conflictPrecompute.settle(request.url, controller.signal);
     const result = await conflicts.run(request, controller.signal, detail => { if (tracked) activities.update(id, detail); });
+    // Discarded: not prepared again in the background for this head.
+    if (request.kind === 'discard') conflictPrecompute.dismiss(result.session.url, result.session.headSha);
+    else conflictPrecompute.refresh(result.session.url);
     if ((request.kind === 'publish' && result.session.status === 'published') || request.kind === 'restack-publish') {
       const urls = request.kind === 'restack-publish' ? result.session.restack?.branches.map(branch => branch.url) ?? [] : [result.session.url];
       void githubWrites.after('push', urls);
@@ -4498,6 +4558,7 @@ function publishGitHubUpdatesNow(updates: GitHubSyncUpdate[]) {
       noteSinceChecks(update.url, previous, update.value);
       syncSignals.delete(update.url);
       syncSignals.set(update.url, update.value);
+      observeConflicts([update.value]);
       while (syncSignals.size > 500) syncSignals.delete(syncSignals.keys().next().value as string);
       if (previous && JSON.stringify(previous.activity) !== JSON.stringify(update.value.activity)) {
         // Keep the last known threads for the queue's counts until the discussion is read again.

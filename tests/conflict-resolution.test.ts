@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
-import { createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
+import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
 import { restackWorktreePath } from '../src/conflict-restack';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
@@ -1025,6 +1025,108 @@ const movingSample = (a: number, b: number, c: number, filler = 'filler') =>
     `export const c = ${c};`,
     '',
   ].join('\n');
+void test('a background draft is reused when you open the PR, becomes yours, and never replaces your own (#445)', async (t) => {
+  const f = await fixture(t);
+  const signal = new AbortController().signal;
+  Object.assign(f.deps.storage, { names: () => [`conflict-draft:tester:${f.session.id}`] });
+  await f.run({ kind: 'discard', id: f.session.id, version: f.session.version });
+  const counts: number[] = [];
+  const prepared = await f.service.prepareInBackground(f.state.url, signal, (n) => counts.push(n));
+  assert.ok(prepared?.background, 'Saved as a background draft');
+  assert.deepEqual(counts, [1], 'The number of conflicted files is reported once Git has merged');
+  assert.equal(f.service.draft(f.state.url, f.state.headSha)?.background, prepared.background);
+  assert.equal(f.service.draft(f.state.url, '0'.repeat(40)), undefined, 'Only for the head it was prepared on');
+  // Prepared again for the same head: nothing changes.
+  assert.equal((await f.service.prepareInBackground(f.state.url, signal))?.version, prepared.version);
+  // Opening reuses it, and it becomes yours.
+  const opened = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(opened.version, prepared.version, 'Opening did not prepare again');
+  assert.deepEqual(opened.files, prepared.files);
+  assert.equal(opened.background, undefined);
+  assert.equal(f.service.draft(f.state.url, f.state.headSha)?.background, undefined);
+  // Your draft: background preparation and its clean-up leave it alone.
+  const saved = (
+    await f.run({ kind: 'save', id: opened.id, version: opened.version, path: 'sample.ts', contents: 'x\n', resolved: false })
+  ).session;
+  assert.equal((await f.service.prepareInBackground(f.state.url, signal))?.version, saved.version);
+  await f.service.forgetBackground(f.state.url);
+  await f.service.trimBackground(0);
+  assert.equal(f.service.draft(f.state.url, f.state.headSha)?.files[0].result, 'x\n');
+  // A background draft beyond the cap leaves with its cache.
+  await f.run({ kind: 'discard', id: saved.id, version: saved.version });
+  await f.service.prepareInBackground(f.state.url, signal);
+  const cache = await conflictSessionDirectory(f.deps.directory(), 'tester', saved.id);
+  assert.ok(await fs.stat(cache).catch(() => undefined), 'The background draft has a cache');
+  await f.service.trimBackground(0);
+  assert.equal(f.service.draft(f.state.url, f.state.headSha), undefined);
+  assert.equal(await fs.stat(cache).catch(() => undefined), undefined, 'Its cache is removed');
+});
+
+void test('your requests never fail on background work: it stops, or finishes its drop, and yours goes ahead (#445)', async (t) => {
+  const f = await fixture(t);
+  const signal = new AbortController().signal;
+  Object.assign(f.deps.storage, { names: () => [`conflict-draft:tester:${f.session.id}`] });
+  await f.run({ kind: 'discard', id: f.session.id, version: f.session.version });
+  // A background preparation in flight: your open stops it and prepares the PR itself.
+  const background = f.service.prepareInBackground(f.state.url, signal).then(
+    () => 'finished',
+    (error: unknown) => (error instanceof Error ? error.message : String(error))
+  );
+  const opened = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(await background, BACKGROUND_YIELDED);
+  assert.equal(opened.background, undefined);
+  // Your draft: a background preparation does nothing, before any work, and your save goes ahead.
+  assert.equal((await f.service.prepareInBackground(f.state.url, signal))?.version, opened.version);
+  const saved = await f.run({
+    kind: 'save',
+    id: opened.id,
+    version: opened.version,
+    path: 'sample.ts',
+    contents: 'x\n',
+    resolved: false,
+  });
+  assert.equal(saved.session.files[0].result, 'x\n');
+  // A background drop in flight: your open waits for it, then prepares afresh.
+  await f.run({ kind: 'discard', id: saved.session.id, version: saved.session.version });
+  await f.service.prepareInBackground(f.state.url, signal);
+  const dropping = f.service.trimBackground(0);
+  const reopened = (await f.run({ kind: 'open', url: f.state.url })).session;
+  await dropping;
+  assert.ok(reopened.files.length);
+  assert.equal(reopened.background, undefined);
+});
+
+void test('evicting a background draft drops it under its own account, never another account’s draft (#445)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-evict-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const id = 'a'.repeat(64);
+  const data = new Map<string, unknown>([
+    [`conflict-draft:ann:${id}`, { id, account: 'ann', status: 'editing', files: [], background: 1 }],
+    [`conflict-draft:bob:${id}`, { id, account: 'bob', status: 'editing', files: [] }],
+  ]);
+  const service = createConflictResolutionService({
+    storage: {
+      read: (key: string) => structuredClone(data.get(key)),
+      write: (key: string, value: unknown) => void data.set(key, structuredClone(value)),
+      flush: async () => {},
+      names: () => [...data.keys()],
+    },
+    directory: () => dir,
+    // Bob is signed in; Ann's old background draft is evicted.
+    context: () => ({ account: 'bob', token: 'not-a-real-token' }),
+    read: () => Promise.reject(new Error('Not used')),
+    mergiraf: () => 'missing',
+    suggest: () => Promise.reject(new Error('Not used')),
+  });
+  const [ann, bob] = await Promise.all(['ann', 'bob'].map((account) => conflictSessionDirectory(dir, account, id)));
+  await Promise.all([ann, bob].map((d) => fs.mkdir(d, { recursive: true })));
+  await service.trimBackground(0);
+  assert.equal(data.get(`conflict-draft:ann:${id}`), null);
+  assert.equal(await fs.stat(ann).catch(() => undefined), undefined, 'Ann’s cache is removed');
+  assert.deepEqual(data.get(`conflict-draft:bob:${id}`), { id, account: 'bob', status: 'editing', files: [] });
+  assert.ok(await fs.stat(bob), 'Bob’s cache stays');
+});
+
 void test('the service checks proposals itself and saves the verdict with the draft (#445)', async (t) => {
   if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
     t.skip('Needs the Mergiraf binary: npm run prepare:mergiraf.');
