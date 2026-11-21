@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,8 +41,21 @@ void app.whenReady().then(async () => {
   const entry = (id: string) => `document.querySelector('.feedback-entry[data-feedback-id="${id}"]')`;
   /** Scroll the virtualized timeline until the item is mounted, put it at the top, and make it the cursor. */
   const show = async (id: string) => {
-    await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');let e=${entry(id)};if(!e){t.scrollTop=0;for(let i=0;i<120&&!(e=${entry(id)});i++){t.scrollTop+=300;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))}}
-      e?.scrollIntoView({block:'start'});e?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))})()`);
+    const scroller = "document.querySelector('[data-feedback-scroller]')";
+    // Each step waits for the timeline to settle: rows that just mounted still sit at their estimated heights, and
+    // measuring them moves the rows below, so an item found or scrolled to before then can move out of view again.
+    await waitSettled(win.webContents, 'feedback-timeline');
+    if (!(await js(`!!${entry(id)}`))) {
+      await js(`${scroller}.scrollTop=0`);
+      for (let i = 0; i < 120; i++) {
+        await waitSettled(win.webContents, 'feedback-timeline');
+        if (await js(`!!${entry(id)}`)) break;
+        await js(`${scroller}.scrollTop+=300`);
+      }
+    }
+    await js(`${entry(id)}.scrollIntoView({block:'start'})`);
+    await waitSettled(win.webContents, 'feedback-timeline');
+    await js(`${entry(id)}.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
     await wait(`${entry(id)}?.getAttribute('aria-current')==='true'`);
   };
   const filter = (name: string) =>
