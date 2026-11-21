@@ -418,6 +418,10 @@ function validatePlannerOutput(obj: unknown): obj is PlannerOutput {
   );
 }
 
+/** The note added to the planner's one retry after it returned invalid JSON. */
+const plannerJsonRetry = (msg: string) =>
+  `\n\nYour previous response was not valid JSON (${msg.slice('Planner JSON parse failed: '.length, 300)}). Inside every string value, escape double quotes as \\" and line breaks as \\n. This matters most for code excerpts, such as ["node", "--version"].\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. No markdown fences around the JSON.`;
+
 export async function planReview(
   hunkIndex: string,
   prMetadata: string,
@@ -437,22 +441,33 @@ export async function planReview(
   const provider = getProvider(providerName);
   const userMessage = prMetadata + (prMetadata.includes(hunkIndex) ? '' : '\n' + hunkIndex) + PLANNER_USER_SUFFIX;
 
-  console.log(`[planner] Calling ${providerName} (${model}) with ${userMessage.length} chars...`);
-  const fullText = await provider.generate({
-    content: userMessage,
-    systemPrompt: PLANNER_SYSTEM,
-    model,
-    thinking,
-    effort: toolOpts?.effort,
-    onChunk,
-    cwd: toolOpts?.cwd,
-    mcpConfigPath: toolOpts?.mcpConfigPath,
-    allowedTools: toolOpts?.allowedTools,
-    nonStrictMcp: toolOpts?.nonStrictMcp,
-    signal,
-  });
+  const generate = (content: string) => {
+    console.log(`[planner] Calling ${providerName} (${model}) with ${content.length} chars...`);
+    return provider.generate({
+      content,
+      systemPrompt: PLANNER_SYSTEM,
+      model,
+      thinking,
+      effort: toolOpts?.effort,
+      onChunk,
+      cwd: toolOpts?.cwd,
+      mcpConfigPath: toolOpts?.mcpConfigPath,
+      allowedTools: toolOpts?.allowedTools,
+      nonStrictMcp: toolOpts?.nonStrictMcp,
+      signal,
+    });
+  };
 
-  const parsed = parseResponse('planner', fullText);
+  let parsed: unknown;
+  try {
+    parsed = parseResponse('planner', await generate(userMessage));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.startsWith('Planner JSON parse failed') || signal?.aborted) throw err;
+    // Invalid JSON is usually one unescaped quote in a long plan, so the planner gets one retry with the reason.
+    console.warn(`[planner] ${msg}; retrying once`);
+    parsed = parseResponse('planner', await generate(userMessage + plannerJsonRetry(msg)));
+  }
 
   if (!validatePlannerOutput(parsed)) {
     throw new Error('Planner response missing required fields (summary, riskLevel, topics)');
