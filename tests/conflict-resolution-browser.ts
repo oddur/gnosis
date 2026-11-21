@@ -210,38 +210,25 @@ void app.whenReady().then(async () => {
       `(async()=>{const {toast}=await import('/components/ui/toast.tsx');toast.add({title:'Conflict notification regression',description:'A background result is ready.',timeout:0});})()`
     );
     await wait('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\')');
-    assert.ok(await js("document.querySelector('.conflict-workspace').contains(document.querySelector('.app-toast'))"));
-    // In the modal host too, a toast is a grouped notification, never a second dialog.
+    // The Conflicts view is a PR tab (#445 item 8), not a modal: notifications use the app's own viewport.
+    assert.equal(await js("document.querySelector('.conflict-workspace').contains(document.querySelector('.app-toast'))"), false);
     assert.equal(await js("document.querySelector('.app-toast').getAttribute('role')"), 'group');
-    assert.ok(
-      await js(
-        "document.querySelector('.app-toast').getBoundingClientRect().bottom < document.querySelector('.conflict-footer').getBoundingClientRect().top"
-      ),
-      'Notification has reserved space above the controls'
-    );
     await capture('notification');
     await js(
       "(document.querySelector('.activity-trigger')?.click() ?? window.dispatchEvent(new KeyboardEvent('keydown',{key:'a',shiftKey:true,metaKey:window.electronAPI.platform==='darwin',ctrlKey:window.electronAPI.platform!=='darwin'})))"
     );
     await wait("document.querySelector('.activity-drawer')");
-    assert.equal(await js("getComputedStyle(document.querySelector('.app-toasts')).top"), '0px');
-    assert.equal(await js("getComputedStyle(document.querySelector('.app-toasts')).maxHeight"), '120px');
     await capture('notification-activity');
     await js('document.querySelector(\'[aria-label="Close activity"]\').click()');
 
     await resize(760, 800);
     await capture('notification-narrow');
-    assert.ok(
-      await js(
-        "document.querySelector('.app-toast').getBoundingClientRect().bottom <= document.querySelector('.conflict-body').getBoundingClientRect().top"
-      )
-    );
     assert.ok(await footerFits(), 'The footer stays visible with a notification');
     await resize(1280, 900);
     await js('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\').focus()');
     assert.ok(
       await js("document.activeElement?.getAttribute('aria-label')==='Dismiss notification'"),
-      'The modal permits keyboard focus on notifications'
+      'The view permits keyboard focus on notifications'
     );
     const toastPoint = await js<{ x: number; y: number }>(
       `(()=>{const r=document.querySelector('.app-toast [aria-label="Dismiss notification"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`

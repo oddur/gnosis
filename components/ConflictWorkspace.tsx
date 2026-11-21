@@ -1,5 +1,4 @@
 import { LoadingIndicator } from './LoadingState';
-import { PrStateIcon } from './PrStateIcon';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { CodeView, EditProvider, File } from '@pierre/diffs/react';
 import {
@@ -21,9 +20,7 @@ import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
-import { ToastHost } from './ui/toast';
-import { BranchBadge, CommitBadge, PrBadge, RepositoryBadge } from './EntityBadge';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
+import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import {
   ConflictView,
   DiffColumns,
@@ -426,7 +423,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [shown, setShown] = useState<Record<string, string>>({});
   const view = useRef<ConflictViewHandle>(null);
   const primary = useRef<HTMLButtonElement>(null);
-  const dialog = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLElement>(null);
   const done = useRef<HTMLButtonElement>(null);
   const focusIntent = useRef(true);
   const author = useMemo(() => (session ? findAuthor(session.url) : undefined), [session?.url]);
@@ -674,7 +671,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       setBusy(false);
     }
   }
+  // The view stays mounted while another PR tab shows (Activity re-runs its effects): it opens the session once.
+  const opened = useRef(false);
   useEffect(() => {
+    root.current?.focus({ preventScroll: true });
+    if (opened.current) return;
+    opened.current = true;
     void load();
   }, []);
 
@@ -859,6 +861,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   useEffect(() => {
     committed.current = { session, busy, error, dirty, saveState, verdictOf };
   });
+  // Leaving the view, for another tab or another PR, saves the open draft: there is no Close step to wait for.
+  useEffect(
+    () => () => {
+      if (committed.current.dirty && !pending.current) void persist().catch(() => {});
+    },
+    []
+  );
   useEffect(
     () =>
       registerSettled('conflict-workspace', () => {
@@ -874,7 +883,15 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     []
   );
 
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+  function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+    // Escape leaves the view, as it closed the dialog. Drafts save first; nothing is pushed.
+    if (event.key === 'Escape' && !event.defaultPrevented) {
+      const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
+      if (origin.closest('[role=menu],[role=dialog],.conflict-suggest-menu')) return;
+      event.preventDefault();
+      void close();
+      return;
+    }
     if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
     if (
@@ -1041,45 +1058,29 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         : '');
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) void close();
-      }}
+    // The Conflicts view (#445 item 8): a tab of the PR, so its header, chat and other tabs stay reachable.
+    <section
+      ref={root}
+      className="conflict-workspace"
+      data-conflict-url={url}
+      data-conflict-id={session?.id}
+      tabIndex={-1}
+      aria-labelledby="conflict-workspace-title"
+      onKeyDown={onKeyDown}
     >
-      <DialogContent
-        ref={dialog}
-        className="conflict-workspace"
-        data-conflict-url={url}
-        data-conflict-id={session?.id}
-        showCloseButton={false}
-        tabIndex={-1}
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          dialog.current?.focus();
-        }}
-        onKeyDown={onKeyDown}
-      >
         <div className="conflict-heading">
           <div>
-            <DialogTitle>{title}</DialogTitle>
-            <DialogDescription>
-              {session ? (
-                <>
-                  <RepositoryBadge repo={session.baseRepo} /> <PrBadge url={session.url} title={session.title} />{' '}
-                  <PrStateIcon pr={{ url: session.url }} size={14} className="conflict-heading-state" />
-                  <span className="conflict-heading-title">{session.title}</span>
-                </>
-              ) : (
-                'Gnosis prepares the merge privately. Your checkout stays unchanged.'
-              )}
-            </DialogDescription>
+            <h2 id="conflict-workspace-title">{title}</h2>
+            {!session && (
+              <p className="conflict-heading-description">
+                Gnosis prepares the merge privately. Your checkout stays unchanged.
+              </p>
+            )}
           </div>
           <Button variant="outline" size="sm" onClick={() => void close()}>
             {busy && !session ? 'Close · keeps preparing' : busy ? 'Continue in background' : 'Close'}
           </Button>
         </div>
-        <ToastHost />
         {editing && summary.conflicts > 0 && (
           <div className="conflict-summary">
             <p role="status" data-conflict-summary="">
@@ -1623,8 +1624,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             </footer>
           </>
         )}
-      </DialogContent>
-    </Dialog>
+    </section>
   );
 }
 

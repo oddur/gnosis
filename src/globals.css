@@ -3998,13 +3998,13 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-workspace { --field-border:color-mix(in srgb,var(--muted-foreground) 80%,var(--background)); }
 .dark .conflict-workspace,.dark .conflict-suggest-menu { --field-border:color-mix(in srgb,var(--muted-foreground) 65%,var(--background)); }
 .conflict-suggest-menu { --field-border:color-mix(in srgb,var(--muted-foreground) 80%,var(--background)); }
-.conflict-workspace[data-slot=dialog-content] { top:4vh;width:96vw;max-width:1600px;height:92vh;max-height:92vh;padding:0;gap:0;display:flex;flex-direction:column;overflow:hidden; }
+/* The Conflicts view (#445 item 8) fills its PR tab, under the PR header and tabs. */
+.conflict-workspace { flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
 .conflict-workspace > * { flex-shrink:0; }
 .conflict-workspace:focus-visible { outline:none; }
-.conflict-heading { display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:16px 24px 14px;border-bottom:1px solid var(--border); }
-.conflict-heading h2 { font-size:var(--type-panel-title);text-wrap:balance; }
-.conflict-heading [data-slot=dialog-description] { display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:var(--type-control); }
-.conflict-heading-title { color:var(--muted-foreground);min-width:0; }
+.conflict-heading { display:flex;align-items:center;justify-content:space-between;gap:24px;padding:10px 16px;border-bottom:1px solid var(--border); }
+.conflict-heading h2 { font-size:var(--type-section-title);font-weight:600;line-height:1.35;text-wrap:balance; }
+.conflict-heading-description { margin-top:4px;color:var(--muted-foreground);font-size:var(--type-control); }
 .conflict-body { flex:1 1 auto;min-height:0;display:grid;grid-template-columns:240px minmax(0,1fr); }
 .conflict-files { overflow:auto;border-right:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:2px; }
 .conflict-files button { display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;padding:9px 10px;text-align:left;font-size:var(--type-control);border-radius:var(--radius-sm); }
@@ -4169,7 +4169,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 @media (max-width:850px) {
   .conflict-body { grid-template-columns:184px minmax(0,1fr); }
-  .conflict-heading { padding:14px 16px 12px;gap:12px; }
+  .conflict-heading { padding:8px 12px;gap:12px; }
 }
 @media (max-width:700px) {
   .conflict-body { display:flex;flex-direction:column; }

@@ -1,7 +1,6 @@
 import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { RepositorySettingsProvider } from '../components/RepositorySettingsProvider';
 import { RecentlyViewedContext } from '../components/RecentlyViewed';
-import { ConflictWorkspaceHost } from '../components/ConflictWorkspaceHost';
 import { ActivityDrawer, ACTIVITY_SHORTCUT } from '../components/ActivityDrawer';
 import type { GitHubSyncStatusProps } from '../components/GitHubSyncStatus';
 import { WorkspaceErrorBoundary } from '../components/WorkspaceErrorBoundary';
@@ -41,7 +40,7 @@ import { SnoozePickerHost } from '../components/SnoozePicker';
 import { isOverviewTab, workspaceTabTitle } from '../lib/workspace-listings';
 import { dedupeRestoredOverviews, defaultHomeTab } from '../lib/home-tab';
 import { linkErrorNotice, linkSupport, prLinkBlock, prMetadataItem, queueItemFor, routeDeepLink, type LinkAction, type LinkNotice } from '../lib/deep-link-routing';
-import { formatDeepLink, githubUrl, parseDeepLinkError, parseDeepLinkTarget, prUrl, targetFromLocation, type DeepLinkTarget } from '../lib/deep-link';
+import { formatDeepLink, githubUrl, parseDeepLinkError, parseDeepLinkTarget, prRef, prUrl, targetFromLocation, type DeepLinkTarget } from '../lib/deep-link';
 import type { DeepLinkDelivery } from './deep-link-service';
 import type { QueueItem } from '../lib/workbench';
 import { startInteractionMonitor } from '../lib/interaction-latency';
@@ -377,10 +376,11 @@ export function App() {
     }
     const next = support.target;
     let subject: QueueItem | undefined;
-    if (next.kind === 'pr') {
+    // A conflicts target (the menu bar, a notification) opens its PR as a PR link would, on the Conflicts view.
+    if (next.kind === 'pr' || next.kind === 'conflicts') {
       const queue = workbenchStore.getQueue();
       const signedIn = !!currentAccount.current && currentAccount.current !== 'local';
-      const block = prLinkBlock(next, { signedIn, mutedUrls: new Set((queue.mutedPrs ?? []).map((muted) => muted.member.url.toLowerCase())) });
+      const block = prLinkBlock({ kind: 'pr', pr: next.pr }, { signedIn, mutedUrls: new Set((queue.mutedPrs ?? []).map((muted) => muted.member.url.toLowerCase())) });
       if (block) {
         if (!signedIn) heldLink.current = { item: { id: item.id, source: item.source, target: next }, at: Date.now() };
         notice('error', block);
@@ -404,6 +404,24 @@ export function App() {
     await openTarget(next, subject);
     if (support.note) notice('info', support.note);
   }, [openTarget, notice]);
+  // Every Resolve conflicts… action (lib/open-conflict-workspace.ts) opens the PR's Conflicts view (#445 item 8): in the
+  // tab showing the PR, else a new tab. A PR outside the queue is read first, as a link to it is.
+  useEffect(() => {
+    const resolve = (event: Event) => {
+      const url = (event as CustomEvent<unknown>).detail;
+      const pr = typeof url === 'string' ? prRef(url) : undefined;
+      if (!pr || typeof url !== 'string') return;
+      void (async () => {
+        let subject: QueueItem | undefined;
+        if (!queueItemFor(url, workbenchStore.getQueue())) subject = prMetadataItem(pr, await window.electronAPI.getPrMetadata(url));
+        await openTarget({ kind: 'conflicts', pr }, subject);
+      })().catch((error: unknown) =>
+        toast.add({ type: 'error', title: 'Could not open Resolve conflicts', description: error instanceof Error ? error.message : String(error) })
+      );
+    };
+    window.addEventListener('gnosis-resolve-conflicts', resolve);
+    return () => window.removeEventListener('gnosis-resolve-conflicts', resolve);
+  }, [openTarget]);
   useEffect(() => {
     if (!account) return;
     const api = window.electronAPI;
@@ -571,7 +589,6 @@ export function App() {
               onOpen={openActivity}
               capsuleTarget={titlebarTrailing}
             />
-            <ConflictWorkspaceHost />
             <SnoozePickerHost />
             <Toaster />
           </CommandCenter>

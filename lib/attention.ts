@@ -12,7 +12,7 @@ import { changeRequests, type QueueSignals } from './queue-signals';
 import type { QueueItem, ReviewMember } from './workbench';
 import { mergeReadiness } from './merge-readiness';
 import { mergeConflictState } from './merge-conflicts';
-import { prTarget, type DeepLinkTarget, type PrTab } from './deep-link';
+import { prRef, prTarget, type DeepLinkTarget, type PrTab } from './deep-link';
 import { mergedParent, mergedParentText, type MergedParent } from './stack-conflict-plan';
 
 export type AttentionKind =
@@ -118,6 +118,8 @@ export function memberAttention(
 /** Where a click on each kind lands. `explanation` is used for a review request only when an explanation is saved. */
 export function attentionTarget(kind: AttentionKind, url: string, options: { explanation?: boolean; reviewId?: string } = {}): AttentionTarget | undefined {
   if (kind === 'explanation-ready' && options.reviewId) return { kind: 'review', reviewId: options.reviewId };
+  // A conflicted PR opens its Conflicts view (#445 item 8), as Resolve conflicts… does.
+  if (kind === 'conflicts') { const pr = prRef(url); if (pr) return { kind: 'conflicts', pr }; }
   const tab: PrTab =
     kind === 'review-requested'
       ? options.explanation ? 'explanation' : 'summary'
