@@ -12,6 +12,7 @@
 //   POST /rpc?id=…        one conflict request (lib/conflict-resolution.ts) through the service; returns the reply
 //   POST /close?id=…      removes the entry's repository
 import process from 'node:process';
+import { Buffer } from 'node:buffer';
 import console from 'node:console';
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -45,8 +46,14 @@ function prepare(entry) {
   if (!value) {
     value = (async () => {
       const lab = await labRepo(entry.c);
-      const { url } = await lab.step(entry.step);
-      return { lab, url };
+      try {
+        const { url } = await lab.step(entry.step);
+        return { lab, url };
+      } catch (error) {
+        // A step that fails removes its repository; there is nothing left to close.
+        await lab.cleanup();
+        throw error;
+      }
     })();
     // A failure is reported when the entry is opened, not as an unhandled rejection while it waits.
     value.catch(() => {});
@@ -87,8 +94,9 @@ const server = http.createServer(async (req, res) => {
     const index = entries.findIndex((e) => e.id === url.searchParams.get('id'));
     if (index < 0) return reply(404, { error: `No gallery entry ${url.searchParams.get('id')}` });
     const entry = entries[index];
-    let body = '';
-    for await (const chunk of req) body += chunk;
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = Buffer.concat(chunks).toString('utf8');
     if (url.pathname === '/open') {
       const { url: prUrl } = await prepare(entry);
       // The next entry builds while the browser shows this one.
@@ -96,7 +104,10 @@ const server = http.createServer(async (req, res) => {
       return reply(200, { url: prUrl });
     }
     if (url.pathname === '/rpc') {
-      const { lab } = await prepare(entry);
+      // Only an entry the browser opened and has not closed; a closed lab is never rebuilt.
+      const value = prepared.get(entry.id);
+      if (!value) return reply(404, { error: `Gallery entry ${entry.id} is not open` });
+      const { lab } = await value;
       return reply(200, await lab.run(JSON.parse(body)));
     }
     if (url.pathname === '/close') {

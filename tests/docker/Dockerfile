@@ -3,10 +3,14 @@
 # "Full browser suite (Linux)" CI step. Run it with `npm run test:browser:docker`.
 
 # Conflict preparation runs `git merge-tree --merge-base`, which needs Git 2.40 or newer. Bookworm has 2.39; CI's
-# runners have a newer Git. Built once (the layer is cached) into /opt/git, ahead of the system Git on PATH.
+# runners have a newer Git. Built once (the layer is cached) into /opt/git, ahead of the base image's Git on PATH
+# (and npm's). The checksum is kernel.org's sha256sums.asc entry for this tarball.
 FROM node:24-bookworm AS git
 ARG GIT_VERSION=2.47.1
-RUN curl -fsSL https://mirrors.edge.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.xz | tar -xJ -C /tmp \
+ARG GIT_SHA256=f3d8f9bb23ae392374e91cd9d395970dabc5b9c5ee72f39884613cd84a6ed310
+RUN curl -fsSL -o /tmp/git.tar.xz https://mirrors.edge.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.xz \
+  && echo "${GIT_SHA256}  /tmp/git.tar.xz" | sha256sum -c - \
+  && tar -xJf /tmp/git.tar.xz -C /tmp \
   && make -C /tmp/git-${GIT_VERSION} -j"$(nproc)" prefix=/opt/git NO_TCLTK=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 \
     all install >/dev/null
 
@@ -16,7 +20,7 @@ ENV PATH=/opt/git/bin:$PATH
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    xvfb xauth git \
+    xvfb xauth \
     libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libatk-bridge2.0-0 libdrm2 \
     libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libcups2 libsecret-1-0 \
     fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \

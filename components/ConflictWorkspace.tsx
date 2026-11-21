@@ -350,8 +350,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           stage,
           conflicts: f.unsupported ? 0 : conflictCount(text),
           contents: text,
-          buckets:
-            text === f.result ? (savedBuckets.get(f.path) ?? []) : blockBuckets(f, text, verdictOf(f)),
+          buckets: text === f.result ? (savedBuckets.get(f.path) ?? []) : blockBuckets(f, text, verdictOf(f)),
         };
       }) ?? [],
     [session, selected, contents, savedBuckets]
@@ -482,9 +481,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setFailedKind(kind);
-      setRefusedAccess(
-        kind === 'publish' && githubWriteError(e).workflowPermission ? accessNow.current : undefined
-      );
+      setRefusedAccess(kind === 'publish' && githubWriteError(e).workflowPermission ? accessNow.current : undefined);
       return false;
     } finally {
       pending.current = false;
@@ -698,26 +695,33 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const editing = session?.status === 'editing' && session.files.length > 0 && !confirming;
   const shortcutsActive = !!session && editing && !busy && !session.stale;
   // Browser checks wait on this (lib/test-settled.ts): opened or failed, nothing running or saving, every check done.
-  const settled = useRef<true | string>('opening');
+  // A failed save, a failed open and a stale session are settled too: the screen says what went wrong.
+  const committed = useRef({ session, busy, error, dirty, saveState, verdictOf });
   useEffect(() => {
-    settled.current = !session
-      ? error
-        ? true
-        : 'opening'
-      : busy
-        ? 'working'
-        : dirty || saveState === 'saving'
-          ? 'saving'
-          : session.files.some((f) => f.proposals && !verdictOf(f))
-            ? 'checking proposals'
-            : true;
+    committed.current = { session, busy, error, dirty, saveState, verdictOf };
   });
-  useEffect(() => registerSettled('conflict-workspace', () => settled.current), []);
+  useEffect(
+    () =>
+      registerSettled('conflict-workspace', () => {
+        const now = committed.current;
+        if (!now.session) return now.error ? true : 'opening';
+        if (now.busy) return 'working';
+        if (now.session.stale || now.saveState === 'failed') return true;
+        if (now.dirty || now.saveState === 'saving') return 'saving';
+        if (now.session.files.some((f) => f.proposals && !now.verdictOf(f))) return 'checking proposals';
+        return true;
+      }),
+    []
+  );
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
-    if (origin.isContentEditable || origin.closest('input,textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu')) return;
+    if (
+      origin.isContentEditable ||
+      origin.closest('input,textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu')
+    )
+      return;
     const key = event.key;
     const handled = (() => {
       if (key === 'j' || key === 'k') {

@@ -61,6 +61,7 @@ interface Screen {
   state: string | null;
   error: string | null;
   footer: string | null;
+  saveState: string | null;
   primary: string | null;
   spill: string[];
   truncated: string[];
@@ -116,6 +117,7 @@ const READ = `(() => {
     state: text(ws.querySelector('.conflict-state')),
     error: text(ws.querySelector('.conflict-error')) ?? text(ws.querySelector('.conflict-footer-status[data-error]')),
     footer: text(ws.querySelector('.conflict-footer-status')),
+    saveState: text(ws.querySelector('.conflict-save-state')),
     primary: ws.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary ?? null,
     // Spills out of the dialog: a layout bug. Truncated with an ellipsis or clipped: worth a look.
     spill: watched.filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > box.right + 0.5 || r.left < box.left - 0.5); }).map(name),
@@ -205,15 +207,29 @@ void app.whenReady().then(async () => {
     stdio: ['ignore', 'pipe', 'inherit'],
     env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
   });
-  const bridge = await new Promise<string>((resolve, reject) => {
-    let out = '';
-    server.stdout.on('data', (chunk: Buffer) => {
-      out += chunk.toString();
-      const port = /conflict-gallery (\d+)/.exec(out)?.[1];
-      if (port) resolve(`http://127.0.0.1:${port}`);
+  let bridge: string;
+  try {
+    bridge = await new Promise<string>((resolve, reject) => {
+      let out = '';
+      const timer = setTimeout(() => reject(new Error('The gallery server did not listen within 60 s')), 60_000);
+      server.stdout.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        const port = /conflict-gallery (\d+)/.exec(out)?.[1];
+        if (port) {
+          clearTimeout(timer);
+          resolve(`http://127.0.0.1:${port}`);
+        }
+      });
+      server.on('error', (error) => reject(error));
+      server.on('exit', (code) => reject(new Error(`The gallery server exited (${code}) before it listened`)));
     });
-    server.on('exit', (code) => reject(new Error(`The gallery server exited (${code}) before it listened`)));
-  });
+  } catch (error) {
+    // Fail now, not after the runner's timeout.
+    console.error(error);
+    server.kill();
+    app.exit(1);
+    return;
+  }
   const post = async <T>(route: string, id: string) => {
     const response = await fetch(`${bridge}/${route}?id=${encodeURIComponent(id)}`, { method: 'POST' });
     const body = (await response.json()) as T & { error?: string };
@@ -231,11 +247,7 @@ void app.whenReady().then(async () => {
   };
 
   try {
-    // Only this suite's own output goes; the directory may hold other files.
-    fs.mkdirSync(OUT, { recursive: true });
-    for (const file of fs.readdirSync(OUT))
-      if (/\.(png|html|json)$/.test(file) || file === 'interactions')
-        fs.rmSync(path.join(OUT, file), { recursive: true, force: true });
+    removePreviousRun();
 
     await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL ?? '');
     contents.debugger.attach('1.3');
@@ -278,6 +290,10 @@ void app.whenReady().then(async () => {
         const opened = screen;
         result.summary = screen.summary;
         if (screen.error) result.problems.push(`Error shown: ${screen.error}`);
+        // The settled key also settles on a failed save or a stale session; the screen says which.
+        if (screen.saveState?.startsWith('Couldn')) result.problems.push(`Save failed: ${screen.saveState}`);
+        if (/after you started|now targets a different base/.test(screen.footer ?? ''))
+          result.problems.push(`Stale session: ${screen.footer}`);
         if (screen.summary?.includes('Checking'))
           result.problems.push(`Settled, but the summary still says: ${screen.summary}`);
         if (screen.wholeFile) result.notes.push('Shows a whole-file proposal.');
@@ -332,7 +348,7 @@ void app.whenReady().then(async () => {
           )
             result.problems.push(`${file}: shows Merged where any-but-Merged is expected`);
           // The file-list badge counts the blocks on screen.
-          if (!row.limitation) {
+          if (!row.limitation && row.stage !== 'reviewed') {
             for (const bucket of ['decide', 'check', 'merged']) {
               const badge = row.badges.find((b) => b.bucket === bucket);
               const shown = badge ? Number(/^\d+/.exec(badge.text)?.[0]) : 0;
@@ -359,7 +375,12 @@ void app.whenReady().then(async () => {
             files: seen.size,
             merged: count(all, 'merged'),
             total: all.length,
-            needs: count(all, 'decide') + count(all, 'check'),
+            // Check blocks in a file marked reviewed no longer need you (bucketSummary, lib/conflict-verify.ts).
+            needs:
+              count(all, 'decide') +
+              [...seen.values()]
+                .filter((f) => f.row.stage !== 'reviewed')
+                .reduce((n, f) => n + count(f.blocks, 'check'), 0),
           };
           if (!s) result.problems.push('No summary line');
           else {
@@ -547,6 +568,34 @@ void app.whenReady().then(async () => {
     app.exit(1);
   }
 });
+
+/**
+ * Removes the previous run's output: only the files its results.json lists, then that results.json and its contact
+ * sheet. Anything else in the directory stays, and without a results.json of this suite nothing is removed.
+ */
+function removePreviousRun() {
+  fs.mkdirSync(OUT, { recursive: true });
+  const record = path.join(OUT, 'results.json');
+  let previous: { results?: { shots?: unknown[] }[]; interactions?: { steps?: { shot?: unknown }[] }[] };
+  try {
+    previous = JSON.parse(fs.readFileSync(record, 'utf8')) as typeof previous;
+  } catch {
+    return;
+  }
+  if (!Array.isArray(previous.results)) return;
+  const files = [
+    ...previous.results.flatMap((r) => r.shots ?? []),
+    ...(previous.interactions ?? []).flatMap((i) => (i.steps ?? []).map((step) => step.shot)),
+  ];
+  for (const file of files)
+    // Only PNGs this suite names, inside the output directory.
+    if (typeof file === 'string' && /^(interactions\/)?[\w.-]+\.png$/.test(file))
+      fs.rmSync(path.join(OUT, file), { force: true });
+  const interactions = path.join(OUT, 'interactions');
+  if (fs.existsSync(interactions) && !fs.readdirSync(interactions).length) fs.rmdirSync(interactions);
+  fs.rmSync(path.join(OUT, 'index.html'), { force: true });
+  fs.rmSync(record, { force: true });
+}
 
 const escape = (s: string | number | undefined | null) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c);

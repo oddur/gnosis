@@ -160,6 +160,17 @@ const stepResolution = (c, step) =>
  */
 export async function labRepo(c) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-conflict-lab-'));
+  let ready = false;
+  try {
+    const lab = await openLab(c, dir);
+    ready = true;
+    return lab;
+  } finally {
+    // A setup that throws leaves no temporary directory behind.
+    if (!ready) await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+async function openLab(c, dir) {
   const remote = path.join(dir, 'remote');
   const git = bareGit(remote);
   const index = path.join(dir, 'index');
