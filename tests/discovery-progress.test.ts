@@ -12,6 +12,10 @@ import type { Octokit } from '@octokit/rest';
 import { createWorkbenchService, type WorkbenchPreferences } from '../src/workbench-service';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 import { answerPrQuery, queriedPrs } from './fake-pr-graphql';
+import { useFixtureClock } from './fixture-clock';
+
+// The fixtures use fixed dates; see tests/fixture-clock.ts.
+useFixtureClock('2026-11-18T00:00:00Z');
 
 // Discovery reads PR details in waves of 25, one aliased query each: 25, 25, then 10.
 const COUNT = 60;
