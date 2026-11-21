@@ -31,21 +31,28 @@ const parsed = new Map<string, ChatDiffFile[] | undefined>();
 export function parseChatDiff(patch: string): ChatDiffFile[] | undefined {
   // Each render of a message, and each island, asks again: parse a patch once.
   if (parsed.has(patch)) return parsed.get(patch);
-  const files = parse(patch);
+  // Models often get a header's counts wrong: when the counts do not hold, read the hunks up to their boundaries.
+  const files = parse(patch, true) ?? parse(patch, false);
   const oldest = parsed.size >= 200 ? parsed.keys().next() : undefined;
   if (oldest && !oldest.done) parsed.delete(oldest.value);
   parsed.set(patch, files);
   return files;
 }
 
-function parse(patch: string): ChatDiffFile[] | undefined {
+/**
+ * Strict, a hunk ends where its header's counts end. Lenient, it ends at the next hunk or file header, or the end of
+ * the fence, and drops the blank lines that separate it from what follows.
+ */
+function parse(patch: string, strict: boolean): ChatDiffFile[] | undefined {
   const files: ChatDiffFile[] = [];
   let file: ChatDiffFile | undefined;
   // A hunk takes lines until the counts in its header are used up.
   let hunk: { header: string; lines: string[]; old: number; new: number } | undefined;
   const closeHunk = () => {
     if (!hunk) return;
-    const content = hunk.lines.join('\n');
+    // Lenient hunks keep blank lines as '': trailing ones separate, the others are context lines missing their space.
+    while (hunk.lines.at(-1) === '') hunk.lines.pop();
+    const content = hunk.lines.map((line) => line || ' ').join('\n');
     file ??= { path: '', hunks: [] };
     if (!files.includes(file)) files.push(file);
     file.hunks.push({ filePath: file.path, hunkHeader: hunk.header, content, language: '', renderedHtml: '' });
@@ -63,7 +70,17 @@ function parse(patch: string): ChatDiffFile[] | undefined {
         hunk.lines.push(line);
         continue;
       }
-      if (hunk.old > 0 || hunk.new > 0) {
+      if (!strict) {
+        const boundary =
+          HUNK.test(line) ||
+          line.startsWith('diff --git ') ||
+          (line.startsWith('--- ') && lines[i + 1]?.startsWith('+++ '));
+        if (!boundary) {
+          if (line !== '' && !/^[ +-]/.test(line)) return undefined;
+          hunk.lines.push(line);
+          continue;
+        }
+      } else if (hunk.old > 0 || hunk.new > 0) {
         // A model often drops the space of an empty context line.
         const kind = line === '' ? ' ' : line[0];
         if (kind === ' ' && hunk.old > 0 && hunk.new > 0) {
@@ -134,12 +151,14 @@ export function withChatIslands(markdown: string): string {
   const out: string[] = [];
   const counts = { diff: 0, mermaid: 0, d2: 0 };
   for (let i = 0; i < lines.length; i++) {
-    const open = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/.exec(lines[i]);
+    const open = /^( {0,3})(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/.exec(lines[i]);
     if (!open) {
       out.push(lines[i]);
       continue;
     }
-    const [, marker, info] = open;
+    // A fence in a list item is indented: its island keeps the indentation, so the list goes on around it.
+    const [, indent, marker, info] = open;
+    const outdent = (line: string) => line.replace(new RegExp(`^ {0,${indent.length}}`), '');
     const close = new RegExp(`^ {0,3}${marker[0] === '`' ? '`' : '~'}{${marker.length},}\\s*$`);
     let end = i + 1;
     while (end < lines.length && !close.test(lines[end])) end++;
@@ -148,7 +167,10 @@ export function withChatIslands(markdown: string): string {
       out.push(...lines.slice(i));
       break;
     }
-    const body = lines.slice(i + 1, end).join('\n');
+    const body = lines
+      .slice(i + 1, end)
+      .map(outdent)
+      .join('\n');
     const language = info.toLowerCase();
     const kind = LANGUAGES.has(language) ? 'diff' : language === 'mermaid' || language === 'd2' ? language : undefined;
     // Every fence of a kind has its place in the count, so one shown as code never shifts the ids after it.
@@ -159,7 +181,7 @@ export function withChatIslands(markdown: string): string {
         : kind && body.trim()
           ? { id, source: body.trimEnd() }
           : undefined;
-    if (kind && data) out.push('```island-' + kind, JSON.stringify(data), '```');
+    if (kind && data) out.push(`${indent}\`\`\`island-${kind}`, indent + JSON.stringify(data), `${indent}\`\`\``);
     else out.push(...lines.slice(i, end + 1));
     i = end;
   }

@@ -2825,8 +2825,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 /* A closed diff fence, rendered as Changes renders a file (lib/chat-diffs.ts). */
 .chat-markdown .chat-diff { display:flex;flex-direction:column;gap:8px;margin:.85em 0; }
 /* After every block rule, so they win: the first and last blocks of a message add no outer space. */
-.chat-markdown>:first-child, .chat-markdown>:first-child .chat-diff { margin-top:0; }
-.chat-markdown>:last-child, .chat-markdown>:last-child .chat-diff { margin-bottom:0; }
+.chat-markdown>:first-child, .chat-markdown>:first-child :is(.chat-diff,.mermaid-diagram,.d2-diagram) { margin-top:0; }
+.chat-markdown>:last-child, .chat-markdown>:last-child :is(.chat-diff,.mermaid-diagram,.d2-diagram) { margin-bottom:0; }
 .chat-answer-status,.chat-trace,.chat-message-actions { font-size:var(--type-caption);color:var(--muted-foreground); }
 .chat-answer-status { display:flex;align-items:center;gap:8px; }
 /* What an answer was built from: one quiet line of chips, expandable into ordered steps. */

@@ -81,8 +81,32 @@ void test('parseChatDiff ends a hunk where its counts end, so blank separators a
       ['b.ts', ['-p\n+q\n\\ No newline at end of file']],
     ]
   );
-  // A line past the counts that is not a header: not a readable patch.
-  assert.equal(parseChatDiff('@@ -1 +1 @@\n-a\n+b\n+c'), undefined);
+});
+
+void test('parseChatDiff reads a hunk with wrong counts up to the next header', () => {
+  // The header says one line each side, then three more follow, and a blank line separates the next file.
+  const files = parseChatDiff(
+    '--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n+c\n x\n\n@@ -9,9 +9,9 @@\n-y\n+z\n\n--- a/b.ts\n+++ b/b.ts\n@@ -1 +1 @@\n-p\n+q'
+  );
+  assert.deepEqual(
+    files?.map((f) => [f.path, f.hunks.map((h) => h.content)]),
+    [
+      ['a.ts', ['-a\n+b\n+c\n x', '-y\n+z']],
+      ['b.ts', ['-p\n+q']],
+    ]
+  );
+  // Prose inside a hunk is still not a patch, either way.
+  assert.equal(parseChatDiff('@@ -1 +1 @@\n-a\n+b\nthen this'), undefined);
+});
+
+void test('withChatIslands keeps the indentation of a fence in a list item', () => {
+  const markdown = '- Change it:\n\n  ```diff\n  @@ -1 +1 @@\n  -a\n  +b\n  ```\n- Then test it.';
+  const out = withChatIslands(markdown);
+  const island = /^ {2}```island-diff\n {2}(.*)\n {2}```$/m.exec(out);
+  assert.ok(island, out);
+  assert.deepEqual(JSON.parse(island[1]), { id: 'diff-0', patch: '@@ -1 +1 @@\n-a\n+b' });
+  assert.match(out, /^- Change it:\n\n {2}```island-diff/);
+  assert.match(out, /\n- Then test it\.$/);
 });
 
 void test('parseChatDiff strips the timestamps of a unified diff from its paths', () => {

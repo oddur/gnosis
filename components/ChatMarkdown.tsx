@@ -16,6 +16,7 @@ import {
   withChatIslands,
 } from '../lib/chat-diffs';
 import { D2Diagram } from './D2Diagram';
+import type { D2DiagramSpec } from '../lib/types';
 import { MermaidDiagram } from './MermaidDiagram';
 import { countRender } from '../lib/render-count';
 import { startupPreferences } from '../lib/startup-preferences';
@@ -107,6 +108,36 @@ function ChatDiff({ patch, theme }: { patch: string; theme: string }) {
   );
 }
 
+/** One spec per source, so a diagram is not normalised again on every streamed chunk. */
+const d2Specs = new Map<string, D2DiagramSpec>();
+function d2Spec(source: string): D2DiagramSpec {
+  let spec = d2Specs.get(source);
+  if (!spec) {
+    if (d2Specs.size >= 100) d2Specs.clear();
+    d2Specs.set(source, (spec = { source }));
+  }
+  return spec;
+}
+/** The diagrams' own limit on a D2 source (lib/diagram-spec.ts). */
+const D2_MAX_SOURCE = 40000;
+const D2_UNAVAILABLE = 'This diagram could not be drawn. Its D2 source is below.';
+
+/** A D2 diagram in an answer. Whatever stops it from drawing, its source stays readable as code. */
+function ChatD2({ source }: { source: string }) {
+  if (source.length > D2_MAX_SOURCE)
+    return (
+      <div className="d2-diagram" role="group" aria-label="Diagram">
+        <p className="d2-render-state" role="status">
+          This diagram is too large to draw here. Its D2 source is below.
+        </p>
+        <pre className="markdown-code-block">
+          <code>{source}</code>
+        </pre>
+      </div>
+    );
+  return <D2Diagram diagram={d2Spec(source)} unavailable={D2_UNAVAILABLE} showSourceOnError />;
+}
+
 const islandsByTheme = new Map<string, ReactiveIslands>();
 function chatIslands(theme: string): ReactiveIslands {
   let islands = islandsByTheme.get(theme);
@@ -128,7 +159,7 @@ function chatIslands(theme: string): ReactiveIslands {
         },
         [CHAT_D2_ISLAND]: {
           fallback: 'Loading diagram…',
-          render: (data) => (typeof data.source === 'string' ? <D2Diagram diagram={{ source: data.source }} /> : null),
+          render: (data) => (typeof data.source === 'string' ? <ChatD2 source={data.source} /> : null),
         },
       })
     );
