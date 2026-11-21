@@ -394,14 +394,18 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
           if (!changedLine(lines[i])) continue;
           let end = i + 1;
           while (end < lines.length && insertedLine(lines[end])) end++;
-          if (end > i + 1)
-            return { text: [...lines.slice(0, i), ...lines.slice(i + 1, end), lines[i], ...lines.slice(end)].join('') };
+          // The lines from `from` to `to` (exclusive) in a new order, each place keeping its line ending, as swap-order does.
+          const reorder = (from: number, to: number, next: string[]) => ({
+            text: [
+              ...lines.slice(0, from),
+              ...next.map((line, k) => withEnding(line, lines[from + k])),
+              ...lines.slice(to),
+            ].join(''),
+          });
+          if (end > i + 1) return reorder(i, end, [...lines.slice(i + 1, end), lines[i]]);
           let start = i;
           while (start > 0 && insertedLine(lines[start - 1])) start--;
-          if (start < i)
-            return {
-              text: [...lines.slice(0, start), lines[i], ...lines.slice(start, i), ...lines.slice(i + 1)].join(''),
-            };
+          if (start < i) return reorder(start, i + 1, [lines[i], ...lines.slice(start, i)]);
         }
       }
       return { skip: 'no changed line next to the other side’s insertion' };

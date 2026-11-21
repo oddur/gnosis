@@ -96,28 +96,40 @@ void test('a resolver’s output becomes per-conflict proposals only where the t
 });
 
 void test('a result that parses and keeps every definition is Merged', async () => {
-  const verdict = await verifyProposals(file([merged(imports), merged(three + four)]), analyse);
-  assert.deepEqual(verdict, { merged: true, note: 'The file parses. Every line of both sides is accounted for.' });
+  // main didn't add a function: the PR's three() goes where it wrote it, and nothing else was inserted there.
+  const alone = original.replace(`=======\n${four}>>>>>>> main`, '=======\n>>>>>>> main');
+  const verdict = await verifyProposals(
+    file([merged(imports), merged(three)], { theirs: theirs.replace(four, ''), original: alone }),
+    analyse
+  );
+  assert.deepEqual(verdict.blocks?.[1], {
+    merged: true,
+    note: 'The file parses. Every line of both sides is accounted for.',
+  });
+  // Both sides inserted at one place (the imports, the functions): no order is the ancestor's, so they are Check.
+  const both = await verifyProposals(file([merged(imports), merged(three + four)]), analyse);
+  assert.deepEqual(both, { merged: false, note: SAME_LINES });
 });
 
-const passed = { merged: true, note: 'The file parses. Every line of both sides is accounted for.' };
+/** Both sides added imports at one place: Check, whatever the line counts say. */
+const passed = { merged: false, note: SAME_LINES };
 void test('a lost definition, a duplicate, a parse error, markers or mixed line endings keep the proposal in Check', async () => {
   // Each failure belongs to the conflict that caused it: the imports conflict stays Merged, with its own reason.
   const lost = await verifyProposals(file([merged(imports), merged(three)]), analyse);
   const missing = { merged: false, note: 'export function four() { from main is missing from the result.' };
-  assert.deepEqual(lost, { ...missing, blocks: [passed, missing] });
+  assert.deepEqual(lost.blocks, [passed, missing]);
   const twice = await verifyProposals(file([merged(imports), merged(three + three + four)]), analyse);
   const duplicate = { merged: false, note: 'three is defined twice in the result.' };
-  assert.deepEqual(twice, { ...duplicate, blocks: [passed, duplicate] });
+  assert.deepEqual(twice.blocks, [passed, duplicate]);
   const broken = await verifyProposals(
     file([merged(imports), merged(`${three}${four.replace('}\n', '\n')}`)]),
     analyse
   );
   const unparsed = { merged: false, note: 'This result doesn’t parse.' };
-  assert.deepEqual(broken, { ...unparsed, blocks: [passed, unparsed] });
+  assert.deepEqual(broken.blocks, [passed, unparsed]);
   assert.deepEqual(
     blockBuckets(file([merged(imports), merged(three)]), withProposals(original, [merged(imports), merged(three)]), lost),
-    ['merged', 'check']
+    ['check', 'check']
   );
   const markers = await verifyProposals(file([merged('<<<<<<< x\n'), null]), analyse);
   assert.equal(markers.merged, false);
@@ -126,15 +138,16 @@ void test('a lost definition, a duplicate, a parse error, markers or mixed line 
 });
 
 void test('a definition that only main’s side of an undecided conflict holds is not expected yet', async () => {
+  // Not missing: the imports are Check only because both sides inserted them at one place.
   const verdict = await verifyProposals(file([merged(imports), null]), analyse);
-  assert.equal(verdict.merged, true, verdict.note);
+  assert.equal(verdict.note, SAME_LINES);
 });
 
 void test('a side that deleted a definition is respected, and a failed parse never counts as checked', async () => {
   // main removed two(); the PR kept it. Keeping it or dropping it is the conflict, so neither is a lost definition.
   const withoutTwo = theirs.replace(/export function two[\s\S]*$/, '');
   const verdict = await verifyProposals(file([merged(imports), merged(three + four)], { theirs: withoutTwo }), analyse);
-  assert.equal(verdict.merged, true, verdict.note);
+  assert.equal(verdict.note, SAME_LINES, 'Check only because both sides inserted at one place');
   const failing = await verifyProposals(file([merged(imports), null]), () => Promise.reject(Error('off in Settings')));
   assert.equal(failing.merged, false);
 });
@@ -253,7 +266,7 @@ void test('review probe: a lost line that is no definition keeps the proposal in
   // The imports conflict kept only the PR's import: every definition survives, main's import does not.
   const verdict = await verifyProposals(file([merged("import { b } from './b';\n"), merged(three + four)]), analyse);
   const missing = { merged: false, note: "import { c } from './c'; from main is missing from the result." };
-  assert.deepEqual(verdict, { ...missing, blocks: [missing, passed] });
+  assert.deepEqual(verdict, { ...missing, blocks: [missing, { merged: false, note: SAME_LINES }] });
   const config = await verifyProposals(
     {
       path: 'config.json',
@@ -375,19 +388,18 @@ void test('resolver audit: a result that swaps lines either side put in order is
     theirs: 'function gamma() {\n  total = 3;\n  scaled = total * 2;\n}\n',
   };
   const kept = functions.ours + functions.theirs;
-  assert.equal(accountLines(functions, kept, false), undefined);
+  const swapped = kept.replace('  total = 2;\n  scaled = total * 2;\n', '  scaled = total * 2;\n  total = 2;\n');
+  // Both sides inserted at one place: Check in either order. Read as a union (the PR's lines first), the swap shows.
+  assert.equal(accountLines(functions, kept, false), SAME_LINES);
+  assert.equal(accountLines(functions, functions.theirs + functions.ours, false), SAME_LINES);
+  assert.equal(accountLines(functions, swapped, false), SAME_LINES);
+  assert.equal(accountLines(functions, kept, false, true), undefined);
   assert.equal(
-    accountLines(
-      functions,
-      kept.replace('  total = 2;\n  scaled = total * 2;\n', '  scaled = total * 2;\n  total = 2;\n'),
-      false
-    ),
+    accountLines(functions, swapped, false, true),
     'The result changes the order of lines from the PR or main.'
   );
-  // Both sides inserted at one place: either side first is a merge.
-  assert.equal(accountLines(functions, functions.theirs + functions.ours, false), undefined);
   const members = { base: 'RED = 1,\n', ours: 'RED = 1,\nBLUE = 3,\n', theirs: 'RED = 1,\nYELLOW = 4,\n' };
-  assert.equal(accountLines(members, 'RED = 1,\nYELLOW = 4,\nBLUE = 3,\n', false), undefined);
+  assert.equal(accountLines(members, 'RED = 1,\nYELLOW = 4,\nBLUE = 3,\n', false), SAME_LINES);
   assert.equal(
     accountLines(members, 'BLUE = 3,\nRED = 1,\nYELLOW = 4,\n', false),
     'The result changes the order of lines from the PR or main.'
@@ -401,18 +413,13 @@ void test('resolver audit round 2: one side’s line moved inside the other side
     ours: 'start();\nif (ready) {\n    go();\n  }\nfinish();\n',
     theirs: 'start();\nstop();\nfinish();\n',
   };
-  assert.equal(
-    accountLines(inserted, 'start();\nif (ready) {\n    go();\n  }\nstop();\nfinish();\n', false),
-    undefined
-  );
-  assert.equal(
-    accountLines(inserted, 'start();\nstop();\nif (ready) {\n    go();\n  }\nfinish();\n', false),
-    undefined
-  );
-  assert.equal(
-    accountLines(inserted, 'start();\nif (ready) {\n  stop();\n    go();\n  }\nfinish();\n', false),
-    'The result changes the order of lines from the PR or main.'
-  );
+  // Since #476: no order of two insertions at one place passes the line checks.
+  for (const result of [
+    'start();\nif (ready) {\n    go();\n  }\nstop();\nfinish();\n',
+    'start();\nstop();\nif (ready) {\n    go();\n  }\nfinish();\n',
+    'start();\nif (ready) {\n  stop();\n    go();\n  }\nfinish();\n',
+  ])
+    assert.equal(accountLines(inserted, result, false), SAME_LINES, result);
   // Next to a change: the PR wrapped `go();` in an if, main appended `stop();` after it. Counted with indentation, the
   // PR's change is one block of several lines, and main's insertion touches it: whether `stop();` belongs inside the if
   // or after it is not something the ancestor says, so neither layout is Merged.
@@ -555,6 +562,52 @@ void test('an insertion next to the other side’s change of several lines is Ch
   };
   assert.equal(accountLines(block, '    one(1);\n  }\n  if (b) {\n    two();\n    x();\n', false), SAME_LINES);
   assert.equal(accountLines(block, '    one(1);\n    x();\n  }\n  if (b) {\n    two();\n', false), SAME_LINES);
+});
+
+void test('since #476: both sides inserting at one place is never Merged on the line checks', () => {
+  // After run() inside `if (ok)`, the PR adds log() and main adds an else branch. In main-first order, log() lands in
+  // the else; in PR-first order the merge is right. Neither passes the line checks alone.
+  const block = {
+    base: '    run();\n',
+    ours: '    run();\n    log();\n',
+    theirs: '    run();\n  } else {\n    skip();\n',
+  };
+  for (const result of [
+    '    run();\n  } else {\n    skip();\n    log();\n',
+    '    run();\n    log();\n  } else {\n    skip();\n',
+  ])
+    assert.equal(accountLines(block, result, false), SAME_LINES, result);
+});
+
+void test('with one side broken, a result that loses that side’s error fails every proposal that isn’t a side’s lines', async () => {
+  // main leaves a stray `}`; the PR opens a block that closes there. With the PR's lines the file parses, so only main's
+  // filling says what main's error is, and the result no longer has it.
+  const sides = {
+    path: 'src/run.ts',
+    base: 'export function run() {\n  a();\n  b();\n  d();\n  c();\n}\n',
+    ours: 'export function run() {\n  {\n  a(1);\n  b();\n  }\n  d();\n  c(1);\n}\n',
+    theirs: 'export function run() {\n  a(2);\n  b();\n  }\n  d();\n  c(2);\n}\n',
+    original:
+      'export function run() {\n<<<<<<< feature\n  {\n  a(1);\n||||||| ancestor\n  a();\n=======\n  a(2);\n>>>>>>> main\n  b();\n  }\n  d();\n<<<<<<< feature\n  c(1);\n||||||| ancestor\n  c();\n=======\n  c(2);\n>>>>>>> main\n}\n',
+  };
+  const verdict = await verifyProposals(
+    {
+      ...sides,
+      proposals: [
+        { source: 'rerere', text: '  {\n  a(1);\n' },
+        { source: 'rerere', text: '  c(1, 2);\n' },
+      ],
+    },
+    analyse
+  );
+  const [first, second] = verdict.blocks ?? [];
+  assert.ok(first);
+  assert.equal(first.merged, true, 'The PR’s lines exactly');
+  assert.notEqual(first.note, 'Main doesn’t parse; the result adds no parse errors of its own.');
+  assert.deepEqual(second, {
+    merged: false,
+    note: 'Main doesn’t parse here, and the result parses differently. Check it.',
+  });
 });
 
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {

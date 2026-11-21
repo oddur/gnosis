@@ -1,0 +1,17 @@
+{
+  "description": "Follow-up to #476: main leaves a stray `}` in run(). The PR opens a block that closes there, so with the PR's lines the file parses, and the resolution remembered from the first PR takes them for the first conflict. Its second conflict is neither side's lines; main's own error is gone from the result, so how the file parses can't be trusted, and it must not be Merged when it comes back. The first conflict takes the PR's lines exactly, which the checks let through.",
+  "language": "typescript",
+  "category": "rerere",
+  "rerere": true,
+  "steps": {
+    "first": {
+      "src/run.ts": "any-but-merged"
+    },
+    "second": {
+      "src/run.ts": [
+        "any",
+        "any-but-merged"
+      ]
+    }
+  }
+}
