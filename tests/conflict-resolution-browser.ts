@@ -96,6 +96,11 @@ void app.whenReady().then(async () => {
     })()`);
   const stage = () => js<string>("document.querySelector('.conflict-file-title [data-stage]')?.dataset.stage");
   const primary = () => js<string>("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary");
+  /** Every proposal's checks have finished: no block or summary still says it is checking. */
+  const checksDone = () =>
+    wait(
+      "!!document.querySelector('.conflict-workspace') && !/Checking the result|Checking \\d+ results?…/.test(document.querySelector('.conflict-workspace')?.textContent ?? '')"
+    );
   const block = (index: number) => `document.querySelector('.conflict-block[data-conflict-index="${index}"]')`;
   const activeBlock = () =>
     js<string | null>("document.activeElement?.closest('.conflict-block')?.dataset.conflictIndex ?? null");
@@ -1021,6 +1026,7 @@ void app.whenReady().then(async () => {
       await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
       ['1 to decide1 to check', '1 merged', '1 merged']
     );
+    await checksDone();
     assert.equal(await js(`${block(0)}.dataset.state`), 'open');
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-header').textContent`), /Decide/);
     assert.equal(await js(`${block(1)}.dataset.bucket`), 'check');
@@ -1119,6 +1125,7 @@ void app.whenReady().then(async () => {
     );
     assert.match((await badges('.conflict-file-title'))[0][1], /circle-question-mark|circle-help/, 'The Check icon');
     assert.equal(await js("!!document.querySelector('.conflict-file-title [data-status=resolved]')"), false);
+    await checksDone();
     assert.equal(await js(`${block(0)}.dataset.bucket`), 'check');
     assert.match(
       await js<string>(`${block(0)}.querySelector('.conflict-block-header').textContent`),
@@ -1305,6 +1312,7 @@ void app.whenReady().then(async () => {
     })()`);
     await open();
     await wait(`${block(1)}?.dataset.bucket==='check'`);
+    await checksDone();
     // A neutral Check label: why to check it is the note beside it.
     assert.match(
       await js<string>(`${block(1)}.querySelector('.conflict-block-header').textContent`),
@@ -1445,7 +1453,8 @@ void app.whenReady().then(async () => {
     const showMergedBox = "[...document.querySelectorAll('.conflict-summary label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
     await js(`${showMergedBox}.click()`);
     await wait(`!${showMergedBox}.checked`);
-    await new Promise((r) => setTimeout(r, 400));
+    await checksDone();
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
     assert.equal(await js("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved)"), false, 'Not reviewed for you');
     assert.equal(await js("document.querySelector('[data-conflict-summary]').textContent"), reviewSentence);
     await js(`${showMergedBox}.click()`);
