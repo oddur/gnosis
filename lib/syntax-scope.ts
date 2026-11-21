@@ -731,15 +731,24 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
     parses++;
     return parser?.parse(text, previous) ?? null;
   };
-  const init = () =>
-    (ready ??= files
-      .runtime()
-      .then((wasmBinary) =>
-        ts.Parser.init({ wasmBinary: wasmBinary as unknown as ArrayBuffer, locateFile: (name: string) => name })
-      )
-      .then(() => {
-        parser = new ts.Parser();
-      }));
+  const init = () => {
+    if (!ready) {
+      const starting = files
+        .runtime()
+        .then((wasmBinary) =>
+          ts.Parser.init({ wasmBinary: wasmBinary as unknown as ArrayBuffer, locateFile: (name: string) => name })
+        )
+        .then(() => {
+          parser = new ts.Parser();
+        });
+      // A runtime that failed to start is tried again on the next call, as a grammar that failed to load is.
+      starting.catch(() => {
+        if (ready === starting) ready = undefined;
+      });
+      ready = starting;
+    }
+    return ready;
+  };
   const load = (id: SyntaxLanguage) => {
     let pending = languages.get(id);
     if (!pending) {
