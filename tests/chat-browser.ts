@@ -320,7 +320,10 @@ void app.whenReady().then(async () => {
     await mouse('mouseMoved', 5, 5, { button: 'none' });
     await wait("!document.querySelector('.inline-citation-card')?.checkVisibility()");
     // Selecting code in an answer's diff and asking about it puts the selection, with its file and line, in the prompt.
-    await selectDiffRow(`${body}.querySelector('.chat-diff')`, '[data-code] [data-line][data-line-type=change-addition]');
+    await selectDiffRow(
+      `${body}.querySelector('.chat-diff')`,
+      '[data-code] [data-line][data-line-type=change-addition]'
+    );
     await wait("document.querySelector('.review-selection-actions')?.style.visibility==='visible'");
     await js("document.querySelector('.review-selection-ask').click()");
     await wait(
@@ -690,6 +693,108 @@ void app.whenReady().then(async () => {
       "window.askOrigin.focus();window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
     );
     await wait("document.activeElement?.id==='changes-question'");
+    if (printShots) {
+      // Review shots of the chat UI beside Changes, light and dark, at 1440 and 1024: the resized dock, the model
+      // selector, the trace live and folded, citations with a card, and a selection chip.
+      const stream = `(()=>{const api=window.electronAPI;window.shotChat={progress:new Set(),trace:new Set()};
+        api.onFileChatProgress=(cb)=>{shotChat.progress.add(cb);return()=>shotChat.progress.delete(cb)};
+        api.onChatTrace=(cb)=>{shotChat.trace.add(cb);return()=>shotChat.trace.delete(cb)};
+        api.askPrFile=(req)=>new Promise((yes)=>{shotChat.id=req.requestId;shotChat.finish=yes});return true})()`;
+      const both = async (name: string) => {
+        for (const theme of ['light', 'dark']) {
+          await js(`document.documentElement.classList.toggle('dark',${theme === 'dark'})`);
+          await fullCapture(`${name}-${theme}`);
+        }
+      };
+      for (const [w, h] of [
+        [1440, 900],
+        [1024, 768],
+      ]) {
+        await viewport(w, h);
+        await js(`${handle}.focus()`);
+        for (let i = 0; i < (w === 1440 ? 8 : 3); i++) await press(handle, 'ArrowLeft');
+        await wait(`${dockWidth}===${w === 1440 ? 528 : 448}`);
+        await both(`chat-panel-resized-${w}`);
+        await pointerClick("document.querySelector('.changes-chat .model-selector-trigger')");
+        await wait("document.querySelectorAll('[role=menuitemradio]').length===8");
+        await both(`chat-model-selector-open-${w}`);
+        await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+        await wait("!document.querySelector('[role=menuitemradio]')");
+        await js(stream);
+        await js("document.querySelector('#changes-question').focus()");
+        await fill('What should I check first in this file?');
+        await click('Send question');
+        await wait('!!window.shotChat.finish');
+        await js(`[...shotChat.trace].forEach(cb=>cb({requestId:shotChat.id,steps:[
+          {id:'context:file',source:'context',kind:'file',label:'new.ts',detail:'src/new.ts · after only',path:'src/new.ts'},
+          {id:'context:pr',source:'context',kind:'pr',label:'PR description',detail:'PR title and description'},
+          {id:'agent:t1',source:'agent',kind:'search',label:'“value0”',detail:'Searched for “value0”',input:'pattern: value0\\npath: src',status:'running'},
+          {id:'agent:t2',source:'agent',kind:'read',label:'worker.ts',detail:'Read src/worker.ts',path:'src/worker.ts',input:'file_path: src/worker.ts',status:'running'}]}))`);
+        await js(
+          `[...shotChat.trace].forEach(cb=>cb({requestId:shotChat.id,steps:[{id:'agent:t1',output:'src/new.ts:1:const value0 = 0;',status:'done'}]}))`
+        );
+        await wait("!!document.querySelector('.changes-chat .chat-trace[data-streaming][data-expanded]')");
+        await js("document.querySelector('.changes-chat [data-step=\\'agent:t1\\'] .chat-trace-step-toggle')?.click()");
+        await both(`chat-trace-live-${w}`);
+        const cited =
+          'Start with the constants: each one is exported on its own line [src/new.ts:1-3], so a rename touches every importer. The worker reads them at startup [src/worker.ts:1]. The old module [src/legacy.ts:4] is gone.';
+        await js(
+          `[...shotChat.progress].forEach(cb=>cb({requestId:shotChat.id,chunk:${JSON.stringify(cited.slice(0, 60))}}))`
+        );
+        await js(`shotChat.finish(${JSON.stringify(cited)})`);
+        await wait("!document.querySelector('.changes-chat .chat-trace[data-streaming]')");
+        await wait(
+          '!!document.querySelector(\'.changes-chat .inline-citation-trigger[data-citation-path="src/new.ts"]\')'
+        );
+        await wait(
+          "[...document.querySelectorAll('.changes-chat .chat-trace')].at(-1).getBoundingClientRect().height<30"
+        );
+        await both(`chat-trace-collapsed-${w}`);
+        const lastCite =
+          '[...document.querySelectorAll(\'.changes-chat .inline-citation-trigger[data-citation-path="src/new.ts"]\')].at(-1)';
+        await js(`${lastCite}.scrollIntoView({block:'center',behavior:'instant'})`);
+        // Each theme opens the card afresh from keyboard focus (the card also opens on hover; --chat checks that above).
+        for (const theme of ['light', 'dark']) {
+          await js(`document.documentElement.classList.toggle('dark',${theme === 'dark'})`);
+          await js("document.querySelector('#changes-question').focus()");
+          await wait("!document.querySelector('.inline-citation-card')?.checkVisibility()");
+          await js(`${lastCite}.scrollIntoView({block:'center',behavior:'instant'})`);
+          await js(`${lastCite}.focus({focusVisible:true})`);
+          await wait("!!document.querySelector('.inline-citation-card')?.checkVisibility()");
+          await js(
+            "Promise.all(document.querySelector('.inline-citation-card').getAnimations().map(a=>a.finished)).then(()=>true)"
+          );
+          await fullCapture(`chat-citation-hover-${w}-${theme}`);
+        }
+        await js("document.querySelector('#changes-question').focus()");
+        await wait("!document.querySelector('.inline-citation-card')?.checkVisibility()");
+        await selectDiffRow(
+          "document.querySelector('.commit-stream-row[data-ask-test]')",
+          '[data-code] [data-line][data-line-type=change-addition]'
+        );
+        await wait("document.querySelector('.review-selection-actions')?.style.visibility==='visible'");
+        await both(`chat-selection-ask-${w}`);
+        await js("document.querySelector('.review-selection-ask').click()");
+        await wait("!!document.querySelector('.changes-chat .chat-selection-chip')");
+        await both(`chat-selection-chip-${w}`);
+        await js('document.querySelector(\'.changes-chat [aria-label="Remove selected code"]\').click()');
+        await wait("!document.querySelector('.changes-chat .chat-selection-chip')");
+        await click('Close chat');
+        await js("window.askOrigin.closest('.commit-stream-row').scrollIntoView({block:'start'})");
+        await wait("!!document.querySelector('.commit-stream-row[data-active=true]')?.contains(window.askOrigin)");
+        await js(
+          "window.askOrigin.focus();window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+        );
+        await wait("document.activeElement?.id==='changes-question'");
+        // The dock slides in; press its edge where it settles.
+        await js(`Promise.all(${dock}.getAnimations().map(a=>a.finished)).then(()=>true)`);
+        await pointerClick(handle);
+        await pointerClick(handle);
+        await wait(`${dockWidth}===400`);
+      }
+      await js("document.documentElement.classList.add('dark')");
+      await viewport(1280, 720);
+    }
     await viewport(600, 720);
     await fullCapture('integrated-file-small-dark');
     await assertDock();
