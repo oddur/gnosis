@@ -27,6 +27,7 @@ export const claudeProvider: LLMProvider = {
     onChunk,
     onToolUse,
     onToolCall,
+    onToolResult,
     mcpConfigPath,
     allowedTools,
     cwd,
@@ -36,7 +37,7 @@ export const claudeProvider: LLMProvider = {
     images,
   }) {
     const claudePath = resolveClaudePath();
-    const events = createClaudeEventHandler({ onChunk, onToolUse, onToolCall });
+    const events = createClaudeEventHandler({ onChunk, onToolUse, onToolCall, onToolResult });
     const processLine = (line: string) => events.processLine(line);
 
     const toolArgs: string[] = [];

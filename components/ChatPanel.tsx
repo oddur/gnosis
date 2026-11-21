@@ -1,14 +1,29 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { Button } from './ui/button';
+import { PanelResizeHandle } from './PanelResizeHandle';
+import {
+  CHAT_PANEL_DEFAULT_WIDTH,
+  CHAT_PANEL_MAX_WIDTH,
+  CHAT_PANEL_MIN_WIDTH,
+  CHAT_PANEL_STEP,
+  rememberChatPanelWidth,
+  rememberedChatPanelWidth,
+  type ChatSurface,
+} from '../lib/chat-preferences';
+import { startupPreferences } from '../lib/startup-preferences';
 
-/** Shared shell for topic and file conversations, docked to the workspace's right edge. */
+/**
+ * Shared shell for topic and file conversations, docked to the workspace's right edge. Its left edge resizes it; each
+ * surface remembers its own width (lib/chat-preferences.ts).
+ */
 export function ChatPanel({
   children,
   context,
   contextTitle,
   label,
   onClose,
+  surface,
   className = '',
   contained = false,
 }: {
@@ -17,14 +32,31 @@ export function ChatPanel({
   contextTitle: string;
   label: string;
   onClose: () => void;
+  surface: ChatSurface;
   className?: string;
   contained?: boolean;
 }) {
+  const [width, setWidth] = useState(() => rememberedChatPanelWidth(startupPreferences(), surface));
+  // Arrow keys repeat: keep the width 300 ms after the last press. A drag keeps it when it ends; closing flushes.
+  const pending = useRef<{ timer: ReturnType<typeof setTimeout>; value: number } | undefined>(undefined);
+  const keep = (value: number | undefined) => void rememberChatPanelWidth(surface, value).catch(() => {});
+  const flush = () => {
+    const waiting = pending.current;
+    if (!waiting) return;
+    clearTimeout(waiting.timer);
+    pending.current = undefined;
+    keep(waiting.value);
+  };
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  useEffect(() => () => flushRef.current(), []);
   return (
     <aside
       className={`chat-panel ${contained ? 'chat-panel-contained' : 'chat-panel-dock'} ${className}`}
       aria-label={label}
       data-open="true"
+      data-chat-surface={surface}
+      style={contained ? undefined : ({ '--chat-panel-width': `${width}px` } as CSSProperties)}
       onKeyDown={(event) => {
         if (
           event.key !== 'Escape' ||
@@ -44,6 +76,34 @@ export function ChatPanel({
         onClose();
       }}
     >
+      {!contained && (
+        <PanelResizeHandle
+          className="chat-panel-resize"
+          edge="start"
+          label="Resize chat"
+          width={width}
+          min={CHAT_PANEL_MIN_WIDTH}
+          max={CHAT_PANEL_MAX_WIDTH}
+          step={CHAT_PANEL_STEP}
+          onChange={setWidth}
+          onCommit={(value, via) => {
+            if (via === 'pointer') {
+              if (pending.current) clearTimeout(pending.current.timer);
+              pending.current = undefined;
+              keep(value);
+              return;
+            }
+            if (pending.current) clearTimeout(pending.current.timer);
+            pending.current = { value, timer: setTimeout(flush, 300) };
+          }}
+          onReset={() => {
+            if (pending.current) clearTimeout(pending.current.timer);
+            pending.current = undefined;
+            setWidth(CHAT_PANEL_DEFAULT_WIDTH);
+            keep(undefined);
+          }}
+        />
+      )}
       <header className="chat-panel-header">
         <strong>Chat</strong>
         <Button

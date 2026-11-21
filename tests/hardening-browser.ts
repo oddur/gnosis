@@ -128,6 +128,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     await wait('!document.querySelector("[role=dialog]")');
     // Composition Enter confirms a CJK character; it must not send the question.
+    await wait("!!document.querySelector('.chat-sheet textarea')");
     await fill('.chat-sheet textarea', '日本語の質問 🧪');
     await js(
       "document.querySelector('.chat-sheet textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}))"

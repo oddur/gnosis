@@ -188,6 +188,8 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.commit-stream-row[data-active=true] button')].find(b=>b.getAttribute('aria-label')==='Ask about this').click()"
     );
+    // The composer loads with the chat (components/chat-lazy.tsx).
+    await wait("!!document.querySelector('.changes-chat textarea')");
     await input('.changes-chat textarea', 'What is preserved here?');
     await js("document.querySelector('.changes-chat form').requestSubmit()");
     await wait("document.querySelector('.changes-chat .chat-conversation')?.textContent.includes('exact comparison')");

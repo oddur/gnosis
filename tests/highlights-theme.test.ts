@@ -68,11 +68,12 @@ void test('Pierre preserves unsupported languages as plain text with Highlights'
   const highlighter = await getSharedHighlighter({
     preferredHighlighter: 'highlights',
     themes: ['gnosis-fallback-test'],
-    langs: ['cobol'],
+    // Highlights 0.5 reads COBOL, which this test used before; APL it still has no lexer for.
+    langs: ['apl'],
   });
   try {
-    const source = '       IDENTIFICATION DIVISION.\n       PROGRAM-ID. HELLO.';
-    const result = highlighter.codeToTokens(source, { lang: 'cobol', theme: 'gnosis-fallback-test' });
+    const source = '⍝ Sum of the first ten integers\nX ← +/⍳10';
+    const result = highlighter.codeToTokens(source, { lang: 'apl', theme: 'gnosis-fallback-test' });
     assert.equal(result.tokens.map((line) => line.map((token) => token.content).join('')).join('\n'), source);
     assert.equal(new Set(result.tokens.flat().map((token) => token.color)).size, 1);
   } finally {

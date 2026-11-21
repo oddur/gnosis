@@ -18,6 +18,8 @@ export function D2Diagram({
   onExpandedChange,
   canShowCode,
   onShowCode,
+  unavailable = 'Diagram unavailable. You can still read the explanation and code.',
+  showSourceOnError = false,
 }: {
   diagram: D2DiagramSpec;
   title?: string;
@@ -25,6 +27,10 @@ export function D2Diagram({
   onExpandedChange?: (open: boolean) => void;
   canShowCode?: (source: { filePath: string; startLine: number }) => boolean;
   onShowCode?: (source: { filePath: string; startLine: number }) => void;
+  /** What the diagram says when it cannot render; chat has no explanation to fall back on. */
+  unavailable?: string;
+  /** Open the source when the diagram cannot render, so the reader sees it as code at once. */
+  showSourceOnError?: boolean;
 }) {
   const safe = useMemo(() => normalizeD2Diagram(diagram), [diagram]);
   const source = safe?.source ?? '';
@@ -235,7 +241,7 @@ export function D2Diagram({
         <div className="d2-render-state" role="status">
           {current?.error ? (
             <>
-              <span>Diagram unavailable. You can still read the explanation and code.</span>
+              <span>{unavailable}</span>
               <Button variant="outline" size="sm" onClick={() => setRetry((value) => value + 1)}>
                 Retry diagram
               </Button>
@@ -245,7 +251,7 @@ export function D2Diagram({
           )}
         </div>
       )}
-      <details className="mermaid-source d2-source">
+      <details className="mermaid-source d2-source" open={showSourceOnError && !!current?.error ? true : undefined}>
         <summary>D2 source{current?.error ? ' · render error' : ''}</summary>
         {current?.error && <p role="alert">{current.error}</p>}
         <pre>
