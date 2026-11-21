@@ -1,0 +1,16 @@
+{
+  "description": "One side swaps two functions; the other edits one of them. The case a user hit in Resolve conflicts (oddur/gnosis-conflict-lab #100): Mergiraf’s result also moves lines outside Git’s conflict, so it is a whole-file proposal in Check, never Merged.",
+  "language": "go",
+  "category": "matrix/auto (generated sample, regression)",
+  "pattern": "reorder-vs-edit",
+  "axes": {
+    "position": "middle",
+    "indent": "tab",
+    "eol": "lf",
+    "nesting": "top",
+    "size": "small"
+  },
+  "expected": {
+    "lab/reorder-vs-edit.go": "check"
+  }
+}

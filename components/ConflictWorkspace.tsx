@@ -59,8 +59,10 @@ import {
   blockBuckets,
   bucketSummary,
   proposalKey,
+  proposalReady,
   summarySentence,
   verifyProposals,
+  verifyWholeFile,
   type Verdict,
 } from '../lib/conflict-verify';
 import { withProposals } from '../lib/conflict-carry';
@@ -91,7 +93,23 @@ const fileStageLabels = {
   reviewed: 'Reviewed',
 } as const;
 const fileStageIcons = { conflicted: CircleAlert, resolved: CircleDashed, reviewed: CheckCheck };
-function FileStageBadge({ stage, conflicts }: { stage: ConflictFileStage; conflicts?: number }) {
+function FileStageBadge({
+  stage,
+  conflicts,
+  proposal,
+}: {
+  stage: ConflictFileStage;
+  conflicts?: number;
+  /** A whole-file proposal waits to be checked. */
+  proposal?: boolean;
+}) {
+  if (proposal)
+    return (
+      <span className="conflict-file-status" data-stage="proposal">
+        <CircleHelp size={13} aria-hidden="true" />
+        Proposal ready
+      </span>
+    );
   const Icon = fileStageIcons[stage];
   return (
     <span className="conflict-file-status" data-stage={stage}>
@@ -310,16 +328,16 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [verdicts, setVerdicts] = useState<Record<string, { key: string; verdict: Verdict }>>({});
   const checking = useRef(new Map<string, string>());
   const verdictOf = (f: ConflictFile) => {
-    const entry = f.proposals ? verdicts[f.path] : undefined;
+    const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
     return entry?.key === proposalKey(f) ? entry.verdict : undefined;
   };
   useEffect(() => {
     for (const f of session?.files ?? []) {
-      if (!f.proposals) continue;
+      if (!f.proposals && !f.wholeFile) continue;
       const key = proposalKey(f);
       if (checking.current.get(f.path) === key) continue;
       checking.current.set(f.path, key);
-      void verifyProposals(f, checkSyntax)
+      void (f.wholeFile ? verifyWholeFile(f, f.wholeFile, checkSyntax) : verifyProposals(f, checkSyntax))
         .catch(() => ({ merged: false, note: 'Gnosis couldn’t check this result.' }))
         // A slower check of earlier proposals never replaces the result for the current ones.
         .then((verdict) => {
@@ -356,7 +374,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     [session, selected, contents, savedBuckets]
   );
   const summary = bucketSummary(
-    fileStates.map((s) => ({ buckets: s.buckets, verdict: verdictOf(s.file), reviewed: s.stage === 'reviewed' }))
+    fileStates.map((s) => ({
+      buckets: s.buckets,
+      verdict: verdictOf(s.file),
+      reviewed: s.stage === 'reviewed',
+      whole: !!s.file.wholeFile,
+    }))
   );
   const reviewedCount = fileStates.filter((s) => s.stage === 'reviewed').length;
   const fileStage = fileStates.find(({ file: f }) => f.path === selected)?.stage;
@@ -370,6 +393,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     return ordered.find((s) => s.stage !== 'reviewed' && !s.file.unsupported)?.file;
   };
   const markersRemain = hasConflictMarkers(contents);
+  const ready = !!file && proposalReady(file, contents, fileStates.find((s) => s.file.path === selected)?.buckets ?? []);
+  // The conflicts behind a whole-file proposal, once you ask for them, until the view changes.
+  const [blocksShown, setBlocksShown] = useState('');
+  const viewKey = `${selected}:${epoch}`;
+  /** The file's one stop is the whole-file proposal. */
+  const proposalOnly = ready && mode === 'conflicts' && blocksShown !== viewKey;
   const resultShown = !!file && shown[file.path] === contents;
   const action = conflictFileAction({
     stage: fileStage,
@@ -773,6 +802,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const primaryButton = (() => {
     if (!session || !file || session.stale) return null;
     const common = { ref: primary, size: 'sm' as const, 'data-conflict-primary': action };
+    if (proposalOnly)
+      return (
+        <Button {...common} data-conflict-primary="use-proposal" disabled={!canEdit} onClick={() => suggest('mergiraf', 'file')}>
+          Use this result
+        </Button>
+      );
     switch (action) {
       case 'next-conflict':
         return (
@@ -842,7 +877,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       outcome ||
       baseNote ||
       (session
-        ? markersRemain && fileStates.find((s) => s.file.path === selected)?.conflicts
+        ? proposalOnly
+          ? `1 proposal to check · ${reviewedCount} of ${session.files.length} files reviewed`
+          : markersRemain && fileStates.find((s) => s.file.path === selected)?.conflicts
           ? `${fileStates.find((s) => s.file.path === selected)?.conflicts} ${
               fileStates.find((s) => s.file.path === selected)?.conflicts === 1 ? 'conflict' : 'conflicts'
             } left in this file · ${reviewedCount} of ${session.files.length} files reviewed`
@@ -1222,7 +1259,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           <>
             <div className="conflict-body">
               <nav aria-label="Files" className="conflict-files">
-                {fileStates.map(({ file: f, stage, conflicts, buckets }) => (
+                {fileStates.map(({ file: f, stage, conflicts, buckets, contents: draft }) => (
                   <button
                     key={f.path}
                     disabled={busy}
@@ -1233,6 +1270,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                     <small>
                       {f.unsupported ? (
                         <span className="conflict-file-limitation">Needs a local merge tool</span>
+                      ) : proposalReady(f, draft, buckets) ? (
+                        <FileStageBadge stage={stage} proposal />
                       ) : stage !== 'reviewed' && buckets.some((bucket) => bucket !== 'decided') ? (
                         <span className="conflict-file-buckets" data-stage={stage}>
                           <FileBuckets buckets={buckets} />
@@ -1250,7 +1289,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                     <header className="conflict-file-header">
                       <div className="conflict-file-title">
                         <strong>{file.path}</strong>
-                        {fileStage && !file.unsupported && <FileStageBadge stage={fileStage} />}
+                        {fileStage && !file.unsupported && (
+                          <FileStageBadge stage={fileStage} proposal={ready} />
+                        )}
                       </div>
                       {!file.unsupported && (
                         <div className="conflict-file-tools">
@@ -1373,6 +1414,19 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                                 onAllResolved={() => primary.current?.focus()}
                                 proposals={file.proposals}
                                 verdict={verdictOf(file)}
+                                note={file.structuralNote}
+                                wholeFile={
+                                  file.wholeFile && contents === file.original
+                                    ? {
+                                        proposal: file.wholeFile,
+                                        ours: file.ours,
+                                        // The same step as Suggest a resolution → structural merge.
+                                        onUse: () => suggest('mergiraf', 'file'),
+                                        shown: blocksShown === viewKey,
+                                        onShow: () => setBlocksShown(viewKey),
+                                      }
+                                    : undefined
+                                }
                               />
                             ) : (
                               <File file={{ name: selected, contents }} options={options} />

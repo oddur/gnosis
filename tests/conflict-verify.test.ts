@@ -9,11 +9,14 @@ import { inferChoices, parseConflicts } from '../lib/conflict-blocks';
 import { assertPerf, perfBudget } from './perf-budget';
 import {
   accountLines,
+  accountWholeFile,
   blockBuckets,
   bucketSummary,
   proposalKey,
+  proposalReady,
   summarySentence,
   verifyProposals,
+  verifyWholeFile,
   type Analyse,
 } from '../lib/conflict-verify';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
@@ -152,7 +155,16 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
     { buckets: blockBuckets(b, b.result, ok), verdict: ok, reviewed: false },
     { buckets: blockBuckets(c, c.result, check), verdict: check, reviewed: false },
   ]);
-  assert.deepEqual(summary, { files: 3, conflicts: 6, merged: 3, needs: 3, checking: 0 });
+  assert.deepEqual(summary, {
+    files: 3,
+    conflicts: 6,
+    merged: 3,
+    needs: 3,
+    checking: 0,
+    decide: 1,
+    wholeConflicts: 0,
+    wholeFiles: 0,
+  });
   assert.equal(summarySentence(summary), '3 files conflict. 3 of 6 conflicts are merged and checked. 3 need you.');
   const reviewed = bucketSummary([{ buckets: blockBuckets(c, c.result, check), verdict: check, reviewed: true }]);
   assert.equal(summarySentence(reviewed), '1 file conflicts. Nothing needs you.');
@@ -161,8 +173,32 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
   ]);
   assert.equal(summarySentence(checking), '1 file conflicts. Checking 2 results…');
   assert.equal(
-    summarySentence({ files: 3, conflicts: 9, merged: 7, needs: 2, checking: 0 }),
+    summarySentence({
+      files: 3,
+      conflicts: 9,
+      merged: 7,
+      needs: 2,
+      checking: 0,
+      decide: 2,
+      wholeConflicts: 0,
+      wholeFiles: 0,
+    }),
     '3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you.'
+  );
+  // Whole-file proposals are named as proposals to check.
+  const passed = { merged: false, passed: true, note: '' };
+  const whole = { buckets: ['check'] as const, verdict: passed, reviewed: false, whole: true };
+  assert.equal(summarySentence(bucketSummary([whole])), '1 file conflicts. 1 proposal to check.');
+  assert.equal(
+    summarySentence(bucketSummary([whole, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
+    '2 files conflict. 2 need you: 1 proposal to check, 1 to decide.'
+  );
+  // One proposal that covers two conflicts says so, and the totals stay per conflict.
+  const covering = { ...whole, buckets: ['check', 'check'] as const };
+  assert.equal(summarySentence(bucketSummary([covering])), '1 file conflicts. 1 proposal to check for 2 conflicts.');
+  assert.equal(
+    summarySentence(bucketSummary([covering, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
+    '2 files conflict. 3 need you: 1 proposal to check for 2 conflicts, 1 to decide.'
   );
 });
 
@@ -291,4 +327,85 @@ void test('second review probe: splitting a long output with a lone newline betw
   const started = performance.now();
   assert.equal(blockProposals(blocks, output, 'mergiraf'), undefined);
   assertPerf('conflict split of a 10,000-line output', performance.now() - started, perfBudget(500));
+});
+
+void test('a whole-file proposal is checked as a whole, accepts a move, and is never Merged', async () => {
+  const fn = (name: string, total = 'value + 1') =>
+    `function ${name}(value) {\n  const total = ${total};\n  return total * 2;\n}\n`;
+  const sides = {
+    path: 'src/order.js',
+    base: [fn('alpha'), fn('beta')].join('\n'),
+    ours: [fn('beta'), fn('alpha')].join('\n'),
+    theirs: [fn('alpha', 'value + 10'), fn('beta')].join('\n'),
+  };
+  const right = await verifyWholeFile(sides, merged([fn('beta'), fn('alpha', 'value + 10')].join('\n')), analyse);
+  assert.equal(right.merged, false);
+  assert.deepEqual(right, {
+    merged: false,
+    passed: true,
+    note: 'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.',
+  });
+  // The move without main's edit drops the line main added.
+  assert.equal(
+    accountWholeFile(sides, sides.ours, false),
+    'const total = value + 10; from main is missing from the result.'
+  );
+  assert.equal(
+    accountWholeFile(sides, [fn('beta'), fn('alpha', 'value + 10'), 'let x;\n'].join('\n'), false),
+    'let x; is in neither side.'
+  );
+  // Every line is there, but main's edit landed in beta, which took alpha's place.
+  assert.deepEqual(await verifyWholeFile(sides, merged([fn('beta', 'value + 10'), fn('alpha')].join('\n')), analyse), {
+    merged: false,
+    note: 'alpha in the result doesn’t match main’s change to it. Read it before you use it, or resolve conflict by conflict.',
+  });
+  // Moved and also kept in place: alpha is there twice.
+  const doubled = await verifyWholeFile(sides, merged([fn('alpha', 'value + 10'), sides.ours].join('\n')), analyse);
+  assert.match(doubled.note, /^alpha is defined twice in the result\./);
+  assert.equal(doubled.passed, undefined);
+  // One Check item while the draft is the original conflict; your own choices count as usual.
+  const whole = file([], { proposals: undefined, wholeFile: merged('x\n') });
+  assert.deepEqual(blockBuckets(whole, original, { merged: false, passed: true, note: '' }), ['check', 'check']);
+  assert.deepEqual(blockBuckets(whole, original, undefined), ['check', 'check'], 'Check while its checks run');
+  // One that failed its checks leaves the conflicts to decide.
+  assert.deepEqual(blockBuckets(whole, original, { merged: false, note: 'x' }), ['decide', 'decide']);
+  assert.notEqual(proposalKey(whole), proposalKey(file([], { proposals: undefined })));
+  const chosen = parseConflicts(original)
+    .map((s) => (s.kind === 'text' ? s.text : s.block.ours))
+    .join('');
+  assert.deepEqual(blockBuckets(whole, chosen, undefined), ['decided', 'decided']);
+});
+
+void test('a definition both sides changed is never called verified, and lines both sides added count twice', async () => {
+  const fn = (name: string, total = 'value + 1', back = 'total * 2') =>
+    `function ${name}(value) {\n  const total = ${total};\n  return ${back};\n}\n`;
+  // Review probe: the PR moves alpha and edits its return; main edits its first line. The edits can be swapped
+  // between alpha and beta and every line is still there.
+  const sides = {
+    path: 'src/order.js',
+    base: [fn('alpha'), fn('beta')].join('\n'),
+    ours: [fn('beta'), fn('alpha', 'value + 1', 'total * 20')].join('\n'),
+    theirs: [fn('alpha', 'value + 10'), fn('beta')].join('\n'),
+  };
+  const swapped = [fn('beta', 'value + 10'), fn('alpha', 'value + 1', 'total * 20')].join('\n');
+  const verdict = await verifyWholeFile(sides, merged(swapped), analyse);
+  assert.deepEqual(verdict, {
+    merged: false,
+    note: 'Both sides changed alpha. Check it yourself. Read it before you use it, or resolve conflict by conflict.',
+  });
+  const whole = file([], { proposals: undefined, wholeFile: merged(swapped) });
+  assert.deepEqual(blockBuckets(whole, original, verdict), ['decide', 'decide'], 'The conflicts stay in view');
+  assert.equal(proposalReady(whole, original, blockBuckets(whole, original, verdict)), false, 'No Proposal ready');
+  const passed = { merged: false, passed: true, note: '' };
+  assert.equal(proposalReady(whole, original, blockBuckets(whole, original, passed)), true);
+  // Review probe: each side adds a function after a move. Its closing brace is new on both sides, so it is there twice.
+  const added = {
+    path: 'src/order.js',
+    base: [fn('alpha'), fn('beta')].join('\n'),
+    ours: [fn('beta'), fn('alpha'), fn('gamma')].join('\n'),
+    theirs: [fn('alpha', 'value + 10'), fn('beta'), fn('delta')].join('\n'),
+  };
+  const right = [fn('beta'), fn('alpha', 'value + 10'), fn('gamma'), fn('delta')].join('\n');
+  assert.equal(accountWholeFile(added, right, false), undefined);
+  assert.equal((await verifyWholeFile(added, merged(right), analyse)).passed, true);
 });
