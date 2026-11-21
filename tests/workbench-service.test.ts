@@ -14,6 +14,7 @@ import type { WorkbenchPreferences } from '../src/workbench-service';
 import { createActivityService } from '../src/activity-service';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 import type { getProvider } from '../lib/provider';
+import './fixture-clock';
 
 /** With `saved`, user stores and the queue are saved there, and a new service reads them as after a restart. */
 function setup(generate: () => Promise<string>, auto = true, saved?: Map<string, string>) {

@@ -14,6 +14,7 @@ import type { ReviewHistoryEntry } from '../lib/types';
 import { localCommandSearch } from './fixtures/search-backend';
 import { DEFAULT_QUEUE_FILTERS } from '../lib/queue-filters';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
+import './fixture-clock';
 
 function member(number: number): ReviewMember {
   return {
