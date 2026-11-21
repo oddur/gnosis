@@ -2931,6 +2931,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .model-selector-trigger svg { width:12px;height:12px;flex-shrink:0;opacity:.8; }
 .model-selector-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .model-selector-menu.model-selector-menu { min-width:184px;font-size:var(--type-control); }
+.model-selector-menu [role=menuitemradio] { font-size:var(--type-control);min-height:28px; }
+.model-selector-menu [data-slot=dropdown-menu-label] { font-size:11px;font-weight:600;letter-spacing:.01em; }
 .chat-model { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 8px;font-size:var(--type-caption);color:var(--muted-foreground); }
 .chat-key-hint { flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--type-caption);color:var(--muted-foreground); }
 @container chat-panel (max-width:380px) { .chat-key-hint { display:none; } }

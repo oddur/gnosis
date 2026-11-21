@@ -59,10 +59,14 @@ function SelectionChip({ quote, path, onRemove }: { quote: string; path?: string
             onClick={() => setOpen((value) => !value)}
           >
             <AttachmentTitle>{label}</AttachmentTitle>
-            <AttachmentDescription>
-              {selection.side === 'before' ? 'Old code · ' : ''}
-              {lines} {lines === 1 ? 'line' : 'lines'}
-            </AttachmentDescription>
+            {/* A located chip's range already counts its lines; it only says when the code is the old version. */}
+            {selection.startLine ? (
+              selection.side === 'before' && <AttachmentDescription>old code</AttachmentDescription>
+            ) : (
+              <AttachmentDescription>
+                {lines} {lines === 1 ? 'line' : 'lines'}
+              </AttachmentDescription>
+            )}
           </button>
         </AttachmentContent>
         {onRemove && (
