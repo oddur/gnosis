@@ -1,0 +1,9 @@
+{
+  "description": "Follow-up to #473: the PR changes `check(1);` to `check(2);`, main inserts `audit();` after it, and the resolver puts `audit();` first. The insertion belongs after the changed line.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/run.ts": "any-but-merged"
+  }
+}

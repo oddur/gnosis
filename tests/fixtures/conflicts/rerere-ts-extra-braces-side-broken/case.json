@@ -1,0 +1,14 @@
+{
+  "description": "Follow-up to #473: main leaves an unclosed `if (debug) {`, and the resolution remembered from the first PR adds two closing braces. The file's error moves outside the conflict; it must not be Merged when it comes back.",
+  "language": "typescript",
+  "category": "rerere",
+  "rerere": true,
+  "steps": {
+    "first": {
+      "src/run.ts": "any-but-merged"
+    },
+    "second": {
+      "src/run.ts": "any-but-merged"
+    }
+  }
+}

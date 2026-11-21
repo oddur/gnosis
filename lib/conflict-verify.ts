@@ -98,17 +98,21 @@ function fill(
   let text = '';
   let line = 1;
   const regions = new Map<number, [number, number]>();
+  /** Where every conflict landed, as `regions` holds the proposals'. */
+  const spans = new Map<number, [number, number]>();
   for (const s of segments) {
     const proposal = s.kind === 'conflict' && !except.has(s.index) ? proposals[s.index] : undefined;
     const part = s.kind === 'text' ? s.text : proposal ? proposal.text : s.block[side];
-    if (s.kind === 'conflict' && proposal) {
+    if (s.kind === 'conflict') {
       const lines = newlines(part) + (part && !part.endsWith('\n') ? 1 : 0);
-      regions.set(s.index, lines ? [line, line + lines - 1] : [line - 1, line]);
+      const span: [number, number] = lines ? [line, line + lines - 1] : [line - 1, line];
+      spans.set(s.index, span);
+      if (proposal) regions.set(s.index, span);
     }
     text += part;
     line += newlines(part);
   }
-  return { text, regions };
+  return { text, regions, spans };
 }
 /** The proposals whose lines reach any of `lines`; undefined when one of the ranges reaches none of them. */
 function reaching(regions: ReadonlyMap<number, [number, number]>, lines: readonly (readonly [number, number])[]) {
@@ -257,10 +261,55 @@ export async function verifyProposals(
     } else if (result.errors && (ours.errors || theirs.errors)) {
       // A side that doesn't parse can't clear the result. An error that reaches a proposal is the proposal's when the
       // proposal wrote lines neither side had, or when the file has fewer errors with either side's lines in its place;
-      // otherwise the error is the side's own. Your own earlier
-      // resolutions are not held to the line accounting, so this is the only check that sees them break the file.
+      // otherwise the error is the side's own. Your own earlier resolutions are not held to the line accounting, so this
+      // is the only check that sees them break the file. Errors the sides' own lines don't give, that no proposal
+      // accounts for, fail every proposal in the file.
       const ranges = result.errorLines;
       if (!ranges?.length) return { merged: false, note: 'The result doesn’t parse.' };
+      /** Error ranges in a parse; errors the parser can't place count as too many. */
+      const errorCount = (read: ParsedText) => (read.errors ? read.errorLines?.length || Infinity : 0);
+      /**
+       * The file's errors as the text around the conflicts they cover, one entry per error range, so two fillings of the
+       * conflicts compare. Undefined when the parser can't say where they are.
+       */
+      const errorSet = async (filled: ReturnType<typeof fill>) => {
+        const read = await analyse(language, filled.text);
+        if (!read.errors) return [];
+        if (!read.errorLines?.length) return undefined;
+        const lines = filled.text.split('\n');
+        const inConflict = (line: number) => [...filled.spans.values()].some(([a, z]) => a <= line && line <= z);
+        return read.errorLines
+          .map(([start, end]) =>
+            lines
+              .slice(start - 1, end)
+              .filter((_, i) => !inConflict(start + i))
+              .map((line) => line.trim())
+              .join('\n')
+          )
+          .sort();
+      };
+      /**
+       * The errors left with `blamed` replaced by a side's lines are ones that side's own lines give, around the
+       * conflicts, with every proposal replaced. Checked against either side.
+       */
+      const explained = async (blamed: ReadonlySet<number>) => {
+        const all = new Set(proposed.map((c) => c.index));
+        for (const side of ['ours', 'theirs'] as const) {
+          const [left, own] = await Promise.all([
+            errorSet(fill(segments, proposals, side, blamed)),
+            errorSet(fill(segments, proposals, side, all)),
+          ]);
+          if (!left || !own) continue;
+          const pool = [...own];
+          const found = (entry: string) => {
+            const at = pool.indexOf(entry);
+            if (at >= 0) pool.splice(at, 1);
+            return at >= 0;
+          };
+          if (left.every(found)) return true;
+        }
+        return false;
+      };
       const suspects = [...probe.regions]
         .filter(([, [a, z]]) => ranges.some(([start, end]) => a <= end && z >= start))
         .map(([index]) => index);
@@ -281,15 +330,17 @@ export async function verifyProposals(
           continue;
         }
         for (const side of ['ours', 'theirs'] as const) {
-          const read = await analyse(language, fill(segments, proposals, side, new Set([index])).text);
+          const count = errorCount(await analyse(language, fill(segments, proposals, side, new Set([index])).text));
           // Errors the parser can't place can't be compared: the proposal is blamed.
-          const count = read.errors ? read.errorLines?.length || Infinity : 0;
           if (count < ranges.length || count === Infinity) {
             fail(index, 'This result doesn’t parse.');
             break;
           }
         }
       }
+      // An error no proposal accounts for, that the sides' own lines don't give: every proposal in the file is suspect.
+      if (!(await explained(new Set(suspects.filter((index) => failed.has(index))))))
+        return { merged: false, note: 'The result doesn’t parse.' };
     }
   } catch {
     return { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' };
@@ -606,52 +657,38 @@ export function accountLines(
   return report(missing, extra, { base, ours, theirs }) ?? outOfOrder(base, merged, mine, other);
 }
 /**
- * The result keeps the ancestor's order: the lines both sides kept, and each side's changes in place between them.
- * Line counts alone miss two statements swapped. Where one side inserted lines at the point where the other side's
- * change starts or ends, or both inserted at one point, either side's lines may come first, but each side's stay
- * together and in order: a line moved inside the other side's lines can change what they do. Changes both sides made
- * alike count once.
+ * The result keeps the ancestor's order, anchor by anchor. Each change sits at one place in the ancestor: lines inserted
+ * in the gap before an ancestor line, or lines that replace a run of them. Walking the ancestor, the result must hold,
+ * in turn, what was inserted in each gap and then the line itself, as kept or as replaced. Only where both sides
+ * inserted lines in the same gap may either side's lines come first, and there each side's lines stay together. Line
+ * counts alone miss two statements swapped, or a line moved past the other side's change. Changes both sides made alike
+ * count once.
  */
 function outOfOrder(base: readonly string[], merged: readonly string[], mine: LineChange[], other: LineChange[]) {
-  const changes = [
-    ...mine.map((change) => ({ change, side: 0 })),
-    ...other.filter((c) => !mine.some((m) => sameChange(m, c))).map((change) => ({ change, side: 1 })),
-  ].sort((x, y) => x.change.start - y.change.start || x.change.end - y.change.end);
-  const removed = new Set<number>();
-  for (const { change } of changes) for (let i = change.start; i < change.end; i++) removed.add(i);
-  /** A line both sides kept, or a run of changes whose lines may interleave. */
-  type Unit = string | { sides: [string[], string[]]; end: number; point: boolean };
-  const units: Unit[] = [];
-  let next = 0;
-  for (let at = 0; at <= base.length; at++) {
-    for (; next < changes.length && changes[next].change.start === at; next++) {
-      const { change, side } = changes[next];
-      const point = change.start === change.end;
-      const last = units.at(-1);
-      // It touches the run before it through an insertion: no line both kept stands between them.
-      if (typeof last === 'object' && last.end === change.start && (point || last.point)) {
-        last.sides[side].push(...change.added);
-        last.end = change.end;
-        last.point = point;
-      } else {
-        const sides: [string[], string[]] = [[], []];
-        sides[side].push(...change.added);
-        units.push({ sides, end: change.end, point });
-      }
-    }
-    if (at < base.length && !removed.has(at)) units.push(base[at]);
-  }
+  const others = other.filter((c) => !mine.some((m) => sameChange(m, c)));
+  const insertedAt = (changes: LineChange[], gap: number) =>
+    changes.find((c) => c.start === gap && c.end === gap)?.added ?? [];
+  const replacing = (changes: LineChange[], line: number) => changes.find((c) => c.start === line && c.end > line);
+  const covered = new Set<number>();
+  for (const c of [...mine, ...others]) for (let i = c.start; i < c.end; i++) covered.add(i);
   let r = 0;
-  for (const unit of units) {
-    if (typeof unit === 'string') {
-      if (merged[r++] !== unit) return ORDER;
-      continue;
+  /** The next lines of the result are exactly `lines`. */
+  const take = (lines: readonly string[]) => {
+    for (const line of lines) if (merged[r++] !== line) return false;
+    return true;
+  };
+  for (let at = 0; at <= base.length; at++) {
+    const [a, b] = [insertedAt(mine, at), insertedAt(others, at)];
+    const start = r;
+    if (!take([...a, ...b])) {
+      r = start;
+      if (!take([...b, ...a])) return ORDER;
     }
-    // Each side's lines stay together and in order: the PR's then main's, or main's then the PR's.
-    const [a, b] = unit.sides;
-    const part = merged.slice(r, r + a.length + b.length).join('\n');
-    r += a.length + b.length;
-    if (part !== [...a, ...b].join('\n') && part !== [...b, ...a].join('\n')) return ORDER;
+    if (at === base.length) break;
+    const change = replacing(mine, at) ?? replacing(others, at);
+    if (change) {
+      if (!take(change.added)) return ORDER;
+    } else if (!covered.has(at) && !take([base[at]])) return ORDER;
   }
   if (r !== merged.length) return ORDER;
 }
@@ -774,7 +811,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 3;
+export const CHECKS_VERSION = 4;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A

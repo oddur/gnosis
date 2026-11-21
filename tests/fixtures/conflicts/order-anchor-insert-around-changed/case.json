@@ -1,0 +1,8 @@
+{
+  "description": "Follow-up to #473: the PR logs before and after `go(1);`, and main changes it to `go(2);`. The merge keeps each insertion on its own side of the changed line, so it is Merged.",
+  "language": "typescript",
+  "category": "order",
+  "expected": {
+    "src/run.ts": "merged"
+  }
+}

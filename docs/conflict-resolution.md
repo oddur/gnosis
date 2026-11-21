@@ -104,6 +104,7 @@ The resolver audit checks the checks. Each resolver and rule runs over the lab's
 | `drop-pr-line`, `drop-main-line` | One line from the PR or from main is removed, a line that side added first. |
 | `swap-order` | Two lines of one function body, both from one side, change places. |
 | `interleave-sides` | A line only one side added moves inside the other side's added lines, or past them. |
+| `cross-anchor` | A line one side changed moves past lines the other side inserted next to it, before or after it in the ancestor. |
 | `change-number`, `change-string` | A number or a string in the result changes. |
 | `touch-outside` | A number or a name that is not a keyword changes on a line next to the conflict, outside it, in the resolver's whole output. The output is then mapped onto Git's conflicts again. |
 

@@ -465,6 +465,53 @@ void test('resolver audit round 2: an error that is the side’s own does not de
   }
 });
 
+void test('order per ancestor place: insertions stay on their side of a changed line', () => {
+  const ORDER = 'The result changes the order of lines from the PR or main.';
+  // The PR logs before and after go(1); main changes it to go(2).
+  const around = { base: '  go(1);\n', ours: "  log('before');\n  go(1);\n  log('after');\n", theirs: '  go(2);\n' };
+  assert.equal(accountLines(around, "  log('before');\n  go(2);\n  log('after');\n", false), undefined);
+  assert.equal(accountLines(around, "  log('before');\n  log('after');\n  go(2);\n", false), ORDER);
+  assert.equal(accountLines(around, "  go(2);\n  log('before');\n  log('after');\n", false), ORDER);
+  // The mirror: main adds around the line the PR changed.
+  const mirror = { base: around.base, ours: around.theirs, theirs: around.ours };
+  assert.equal(accountLines(mirror, "  log('before');\n  go(2);\n  log('after');\n", false), undefined);
+  // X changed on one side, Y inserted after X on the other: Y comes after X′, never before it.
+  const after = { base: 'x();\nz();\n', ours: 'x2();\nz();\n', theirs: 'x();\ny();\nz();\n' };
+  assert.equal(accountLines(after, 'x2();\ny();\nz();\n', false), undefined);
+  assert.equal(accountLines(after, 'y();\nx2();\nz();\n', false), ORDER);
+});
+
+void test('with a side that does not parse, an error no proposal accounts for fails the file', async () => {
+  const block = (cond: string, n: number) => `  if (${cond}) {\n    go(${n});\n  }\n`;
+  const wrap = (head: string, body: string) => `${head}export function run(a: boolean) {\n${body}}\n`;
+  // main has `const z = ;`; the remembered resolution drops `if (...) {` and keeps its brace.
+  const dropped = {
+    path: 'src/run.ts',
+    base: wrap('const z = 1;\n', block('a', 1)),
+    ours: wrap('const z = 1;\n', block('a || b', 2)),
+    theirs: wrap('const z = ;\n', block('a && b', 3)),
+    original: wrap(
+      'const z = ;\n',
+      `<<<<<<< feature\n${block('a || b', 2)}||||||| ancestor\n${block('a', 1)}=======\n${block('a && b', 3)}>>>>>>> main\n`
+    ),
+  };
+  const remember = (file: typeof dropped, text: string) =>
+    verifyProposals({ ...file, proposals: [{ source: 'rerere', text }] }, analyse);
+  assert.equal((await remember(dropped, block('a || b', 2))).merged, true);
+  assert.deepEqual(await remember(dropped, '    go(2);\n  }\n'), { merged: false, note: 'The result doesn’t parse.' });
+  // main left `if (debug) {` unclosed; two extra closing braces move the error outside the conflict.
+  const debug = {
+    path: 'src/run.ts',
+    base: 'export function run() {\n  const limit = 30;\n  return limit;\n}\n',
+    ours: 'export function run() {\n  const limit = 60;\n  return limit;\n}\n',
+    theirs: 'export function run() {\n  if (debug) {\n  const limit = 45;\n  return limit;\n}\n',
+    original:
+      'export function run() {\n  if (debug) {\n<<<<<<< feature\n  const limit = 60;\n||||||| ancestor\n  const limit = 30;\n=======\n  const limit = 45;\n>>>>>>> main\n  return limit;\n}\n',
+  };
+  assert.equal((await remember(debug, '  const limit = 60;\n')).merged, true);
+  assert.equal((await remember(debug, '  const limit = 60;\n}\n}\n')).merged, false);
+});
+
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
   const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
   const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');

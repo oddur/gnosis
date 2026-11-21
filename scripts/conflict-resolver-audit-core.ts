@@ -7,6 +7,7 @@
  * and tests/conflict-resolver-audit.test.ts runs it with `npm test`.
  */
 import fs from 'node:fs/promises';
+import { diffArrays } from 'diff';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -33,6 +34,7 @@ export type MutationKind =
   | 'drop-main-line'
   | 'swap-order'
   | 'interleave-sides'
+  | 'cross-anchor'
   | 'change-number'
   | 'change-string'
   | 'touch-outside';
@@ -44,6 +46,7 @@ export const MUTATIONS: MutationKind[] = [
   'drop-main-line',
   'swap-order',
   'interleave-sides',
+  'cross-anchor',
   'change-number',
   'change-string',
   'touch-outside',
@@ -59,6 +62,7 @@ export const REMEMBERED_OWN: ReadonlySet<MutationKind> = new Set([
   'drop-main-line',
   'swap-order',
   'interleave-sides',
+  'cross-anchor',
   'change-number',
   'change-string',
 ]);
@@ -364,6 +368,47 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
           return { text: replaceLines(lines, i, 2, [withEnding(b, a), withEnding(a, b)]) };
       }
       return { skip: 'no two statements of one function body in the result' };
+    }
+    case 'cross-anchor': {
+      // A line one side changed moved past lines the other side inserted next to it. They sit at different places in the
+      // ancestor (an insertion before or after the changed line), so their order is fixed.
+      const base = splitLines(target.sides.base).filter(hasWord).map(norm);
+      const kinds = (text: string) => {
+        const changed = new Set<string>();
+        const inserted = new Set<string>();
+        let removed = false;
+        for (const part of diffArrays(base, splitLines(text).filter(hasWord).map(norm))) {
+          if (!part.added && !part.removed) removed = false;
+          else if (part.removed) removed = true;
+          else for (const line of part.value) (removed ? changed : inserted).add(line);
+        }
+        return { changed, inserted, all: sideLines(text) };
+      };
+      const [ours, theirs] = [kinds(target.sides.ours), kinds(target.sides.theirs)];
+      const inBase = new Set(base);
+      for (const [x, y] of [
+        [ours, theirs],
+        [theirs, ours],
+      ]) {
+        const changedLine = (line: string) =>
+          hasWord(line) && x.changed.has(norm(line)) && !y.all.has(norm(line)) && !inBase.has(norm(line));
+        const insertedLine = (line: string) =>
+          hasWord(line) && y.inserted.has(norm(line)) && !x.all.has(norm(line)) && !inBase.has(norm(line));
+        for (let i = 0; i < lines.length; i++) {
+          if (!changedLine(lines[i])) continue;
+          let end = i + 1;
+          while (end < lines.length && insertedLine(lines[end])) end++;
+          if (end > i + 1)
+            return { text: [...lines.slice(0, i), ...lines.slice(i + 1, end), lines[i], ...lines.slice(end)].join('') };
+          let start = i;
+          while (start > 0 && insertedLine(lines[start - 1])) start--;
+          if (start < i)
+            return {
+              text: [...lines.slice(0, start), lines[i], ...lines.slice(start, i), ...lines.slice(i + 1)].join(''),
+            };
+        }
+      }
+      return { skip: 'no changed line next to the other side’s insertion' };
     }
     case 'interleave-sides': {
       // One side's line moved inside the other side's lines, or past them: every line is still there, and each side's
