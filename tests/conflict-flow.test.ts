@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { conflictFileAction, describeConflictError, localMergeCommands, shellQuote } from '../lib/conflict-flow';
+import {
+  canRetryStructural,
+  conflictFileAction,
+  describeConflictError,
+  localMergeCommands,
+  shellQuote,
+  STRUCTURAL_UNAVAILABLE,
+} from '../lib/conflict-flow';
 
 void test('each file state has one next action; Mark reviewed waits for the result to be shown', () => {
   const base = { otherFilesPending: true };
@@ -67,4 +74,19 @@ void test('local merge commands quote every name, and refuse names a shell could
     assert.equal(localMergeCommands({ ...same, headBranch }), undefined, headBranch);
   assert.equal(localMergeCommands({ ...same, baseRepo: 'klang/engine;id' }), undefined);
   assert.equal(shellQuote("it's"), "'it'\\''s'");
+});
+
+void test('Try structural merge again shows only on the prepared draft, where it can help', () => {
+  const timedOut = { structuralNote: 'Structural merge timed out.', source: 'manual' as const };
+  assert.equal(canRetryStructural(timedOut, true), true);
+  assert.equal(canRetryStructural(timedOut, false), false, 'Never over your choices or edits');
+  assert.equal(canRetryStructural({ ...timedOut, structuralNote: STRUCTURAL_UNAVAILABLE }, true), false);
+  assert.equal(canRetryStructural({ source: 'rerere' }, true), true);
+  assert.equal(canRetryStructural({ source: 'manual', proposals: [{ source: 'rerere', text: 'a' }] }, true), true);
+  assert.equal(canRetryStructural({ source: 'mergiraf', proposals: [{ source: 'mergiraf', text: 'a' }] }, true), false);
+  assert.equal(
+    canRetryStructural({ ...timedOut, wholeFile: { source: 'mergiraf', text: 'a' } }, true),
+    false,
+    'A whole-file proposal already holds the result'
+  );
 });

@@ -37,6 +37,7 @@ import {
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import { conflictLabels, type BlockPicks } from '../lib/conflict-blocks';
 import {
+  canRetryStructural,
   conflictFileAction,
   localMergeCommands,
   describeBaseMove,
@@ -660,7 +661,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       setPreview(undefined);
       setConfirming(false);
       setShown({});
-      setPicks({});
+      // Load latest changes keeps your resolutions, and so your choices where a file's conflict is unchanged (picksOf
+      // ignores the rest). Start over drops them.
+      if (!keep) setPicks({});
       apply(reply, selectedRef.current);
       setResetPrompt(false);
       setOutcome('');
@@ -1441,22 +1444,17 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                             model={model}
                             onAsk={(instructions) => suggest('agent', instructions)}
                           />
-                          {/* Structural merge ran during preparation; run it again, with the full budget, where it timed
-                              out or could not combine the sides, or where an earlier resolution stands in for it. */}
-                          {!file.wholeFile &&
-                            (file.structuralNote ||
-                              file.source === 'rerere' ||
-                              file.proposals?.some((p) => p?.source === 'rerere')) && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                disabled={!canEdit}
-                                data-conflict-structural=""
-                                onClick={() => suggest('mergiraf')}
-                              >
-                                Try structural merge again
-                              </Button>
-                            )}
+                          {canRetryStructural(file, contents === resetTarget(file)) && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={!canEdit}
+                              data-conflict-structural=""
+                              onClick={() => suggest('mergiraf')}
+                            >
+                              Try structural merge again
+                            </Button>
+                          )}
                           {/* Reset returns to what preparation proposed; Git's conflict is a separate step back. */}
                           {file.proposals && contents !== file.original && (
                             <Button

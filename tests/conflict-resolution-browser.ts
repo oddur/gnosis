@@ -1262,6 +1262,13 @@ void app.whenReady().then(async () => {
     // The other file says why structural merge proposed nothing.
     await wait(`${block(0)}?.querySelector('.conflict-block-note')?.textContent==='Structural merge timed out.'`);
     await captureAll('structural-note');
+    // Only on the draft as prepared: a choice of yours hides it, so it can never replace your choices.
+    await js(`${block(0)}.focus()`);
+    await key('1');
+    await wait(`${block(0)}?.dataset.state==='kept'`);
+    assert.equal(await exists('Try structural merge again'), false);
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Try structural merge again');
     await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='mergiraf'&&r.path==='src/limits.ts')");
     assert.equal(await publishes(), 0);

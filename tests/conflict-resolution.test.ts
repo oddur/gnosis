@@ -1539,6 +1539,34 @@ void test('a result that arrives after the budget is Mergiraf’s fallback, not 
   assert.deepEqual(JSON.parse(file.result), { left: 1, right: 2 });
 });
 
+void test('trying structural merge again keeps the draft when it runs out of time again', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const f = await fixture(t, false, jsonSample);
+  // Always past the budget, then Git's line-merge fallback: no markers, and not Mergiraf's merge.
+  const stub = await stubMergiraf(t, `sleep 0.4\nprintf 'not the merge\\n'\n`);
+  f.deps.mergiraf = () => stub.binary;
+  Object.assign(f.deps, { structuralTimeouts: [100, 300, 300] });
+  const session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(session.files[0].structuralNote, 'Structural merge timed out.');
+  const before = session.files[0];
+  const file = (
+    await f.run({
+      kind: 'resolve',
+      id: session.id,
+      version: session.version,
+      engine: 'mergiraf',
+      path: before.path,
+    })
+  ).session.files[0];
+  assert.equal(file.result, before.result, 'The draft stays as it was');
+  assert.equal(file.source, before.source);
+  assert.equal(file.structuralNote, 'Structural merge timed out again.');
+  assert.ok((await stub.budgets()).includes('300'), 'The full budget');
+});
+
 void test('a file structural merge proposed nothing for says why, and a base move that changes it runs it again', async (t) => {
   // Both sides changed the same line: Mergiraf leaves the conflict.
   const tail = Array.from({ length: 8 }, (_, i) => `export const keep${i} = ${i};\n`).join('');
