@@ -138,12 +138,19 @@ void app.whenReady().then(async () => {
    * Timing entry under 16 ms, so a fast input is measured here instead: from each trusted input event's timestamp to
    * the next frame after its handlers ran (requestAnimationFrame, then a task). An input that leaves neither is sent
    * once more; if it still reaches nothing, the measure fails rather than report a time it never took.
+   *
+   * A step counts only what starts after it began, on the page's own clock: the record's `at` and the step's start
+   * are both `performance.timeOrigin` plus a page timestamp. Node's `Date.now()` is a different clock; in Docker the
+   * page's ran about two minutes ahead of it, so every step took in the slowest entry of the two minutes before it,
+   * such as the queue filter's Backspaces.
    */
-  const inputRecorder = `(()=>{if(window.__inputs)return;window.__inputs=[];
+  const inputRecorder = `(()=>{window.__stepAt=performance.timeOrigin+performance.now();
+    if(window.__inputs)return window.__stepAt;window.__inputs=[];
     for(const type of ['pointerdown','pointerup','click','keydown','keyup','input'])
       window.addEventListener(type,(e)=>{if(!e.isTrusted)return;const handled=performance.now();
         requestAnimationFrame(()=>setTimeout(()=>window.__inputs.push({type:e.type,at:performance.timeOrigin+e.timeStamp,
-          inputDelay:Math.max(0,handled-e.timeStamp),duration:performance.now()-e.timeStamp})))},true)})()`;
+          inputDelay:Math.max(0,handled-e.timeStamp),duration:performance.now()-e.timeStamp})))},true);
+    return window.__stepAt})()`;
   // GNOSIS_INTERACTION_PROFILE=1 samples the main thread during each measured input and prints where it went.
   const profiling = !!process.env.GNOSIS_INTERACTION_PROFILE;
   const profiles = new Map<string, Map<string, number>>();
@@ -171,16 +178,15 @@ void app.whenReady().then(async () => {
         const k=window.__perf.describeTarget(m.target.nodeType===1?m.target:m.target.parentElement)+' '+(m.type==='attributes'?'@'+m.attributeName:m.type);
         window.__mutations.set(k,(window.__mutations.get(k)??0)+1)}});
         window.__mutationObserver.observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true})})()`);
-    // Node's clock, not a round trip to the page: a script call would wait for, and so hide, work already running.
-    const since = Date.now() - 5;
-    await js(inputRecorder);
+    // The step's start on the page's clock, taken before the input is sent. Inputs and records are filtered by it.
+    const since = await js<number>(inputRecorder);
     await act();
     await wait(done);
     await js(frames);
     // Event entries arrive after the frame that painted them; the monitor then waits for frame attribution.
     await sleep(160);
     if (slow)
-      await wait(`window.__perf.slowInteractions().some(e=>e.at>=${Math.floor(since) - 1}&&e.duration>=100)`, 75).catch(() => {});
+      await wait(`window.__perf.slowInteractions().some(e=>e.at>=${Math.floor(since)}&&e.duration>=100)`, 75).catch(() => {});
     if (profiling) {
       const { profile } = (await debug.sendCommand('Profiler.stop')) as {
         profile: { nodes: { id: number; callFrame: { functionName: string; url: string; lineNumber: number } }[]; samples: number[]; timeDeltas: number[] };
@@ -203,11 +209,11 @@ void app.whenReady().then(async () => {
       mutations.set(name, [...(mutations.get(name) ?? []), ...changed].slice(0, 12));
     }
     const entries = await js<Interaction[]>(
-      `window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since) - 1})`
+      `window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since)})`
     );
     const fast = async () =>
       js<{ type: string; at: number; inputDelay: number; duration: number }[]>(
-        `window.__inputs.filter(e=>e.at>=${Math.floor(since) - 1})`
+        `window.__inputs.filter(e=>e.at>=${Math.floor(since)})`
       );
     let inputs = entries.length ? [] : await fast();
     if (!entries.length && !inputs.length) {
@@ -217,10 +223,10 @@ void app.whenReady().then(async () => {
       await js(frames);
       await sleep(160);
       inputs = await fast();
-      if (!inputs.length && !(await js<number>(`window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since) - 1}).length`)))
+      if (!inputs.length && !(await js<number>(`window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since)}).length`)))
         throw new Error(`${name}: no input reached the page, so there is nothing to measure`);
     }
-    const again = entries.length ? entries : await js<Interaction[]>(`window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since) - 1})`);
+    const again = entries.length ? entries : await js<Interaction[]>(`window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since)})`);
     const quick = inputs.sort((a, b) => b.duration - a.duration)[0];
     const slowest: Interaction = again.sort((a, b) => b.duration - a.duration)[0] ?? {
       type: `${quick.type} (measured here, under the 16 ms Event Timing floor)`,
