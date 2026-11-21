@@ -142,3 +142,18 @@ void test('blocked publishing names Load latest changes, the button that recover
   assert.equal(moving.recovery, undefined, 'Never resend a push on the user’s behalf');
   for (const copy of [head, retarget, moving]) assert.doesNotMatch(copy.body, /Load the latest|Start over/);
 });
+
+void test('carry keeps your Keep choice on each block it reuses, and drops it only on blocks that changed', () => {
+  const one = block('a\n', 'o\n', 'b\n');
+  const two = block('c\n', 'p\n', 'd\n');
+  const original = `x\n${one}y\n${two}z\n`;
+  // You kept the PR's side on both blocks.
+  const old = { ...file(original, 'x\na\ny\nc\nz\n'), picks: ['ours' as const, 'ours' as const] };
+  // Main moved: block 1 is the same conflict, block 2 changed on main's side.
+  const next = file(`x\n${block('a\n', 'o\n', 'b\n', 'f'.repeat(40))}y\n${block('c\n', 'p\n', 'e\n', 'f'.repeat(40))}z\n`);
+  const carried = carryFile(old, next, false);
+  assert.equal(carried.reused, 1);
+  assert.deepEqual(carried.file.picks, ['ours', null]);
+  // Nothing reused: no choices at all.
+  assert.equal(carryFile({ ...old, picks: [null, null] }, next, false).file.picks, undefined);
+});

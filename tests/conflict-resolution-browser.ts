@@ -1370,6 +1370,24 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open'`);
     await pick(0, 'both');
     await wait(`${block(0)}?.dataset.state==='kept'`);
+    // Both Keeps equal their proposals. Saved with the draft, they still read as yours after Close and a reopen, never
+    // as Merged; and a new Keep after the reopen keeps the earlier one.
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await open();
+    const keepFile = `[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span[title]')?.getAttribute('title')===${JSON.stringify(keep.path)})`;
+    await wait(`!!(${keepFile})`);
+    await js(`(${keepFile}).click()`);
+    await wait(`${block(0)}?.dataset.state==='kept' && ${block(1)}?.dataset.state==='kept'`);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /^Kept both changes/);
+    assert.match(await js<string>(`${block(1)}.querySelector('.conflict-kept').textContent`), /^Kept PR change/);
+    await js(`[...${block(1)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(1)}?.dataset.state!=='kept'`);
+    await pick(1, 'ours');
+    await wait(`${block(1)}?.dataset.state==='kept'`);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'kept', 'A new Keep never erases the saved one');
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /^Kept both changes/);
     // A file whose every conflict is Merged: Mark reviewed is the next step, and it has focus.
     await js("[...document.querySelectorAll('.conflict-files button')][1].click()");
     await wait(`${block(0)}?.dataset.bucket==='merged'`);

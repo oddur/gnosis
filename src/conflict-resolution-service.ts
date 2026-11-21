@@ -1585,8 +1585,6 @@ export function createConflictResolutionService(deps: Deps) {
           if (!files.length) throw new Error('Select an unresolved text file.');
           for (const file of files) {
             report(`Proposing a resolution for ${file.path}.`);
-            // A suggestion replaces the draft: your Keep choices were for the one before it.
-            file.picks = undefined;
             if (request.engine === 'agent') {
               if (file.base.length + file.ours.length + file.theirs.length > 220_000)
                 throw new Error('This file is too large for agent context. Use the manual editor.');
@@ -1594,6 +1592,8 @@ export function createConflictResolutionService(deps: Deps) {
               if (result.contents !== undefined) {
                 if (typeof result.contents !== 'string' || Buffer.byteLength(result.contents) > CONFLICT_FILE_LIMIT)
                   throw new Error('The agent returned an invalid file.');
+                // Your Keep choices were for the draft this replaces.
+                if (result.contents !== file.result) file.picks = undefined;
                 file.result = result.contents;
               }
               file.explanation = result.explanation;
@@ -1624,6 +1624,7 @@ export function createConflictResolutionService(deps: Deps) {
                   continue;
                 }
               }
+              if (output !== file.result) file.picks = undefined;
               file.result = output;
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'
