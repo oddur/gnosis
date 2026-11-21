@@ -211,6 +211,9 @@ declare global {
         callback: (event: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }) => void
       ) => () => void;
       conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest) => Promise<import('../lib/conflict-resolution').ConflictReply>;
+      /** The PR header's conflict line (lib/conflict-header.ts); asking also prepares the PR's conflicts in the background. */
+      conflictHeader: (url: string, headSha: string) => Promise<import('../lib/conflict-header').ConflictHeader | null>;
+      onConflictHeaderChanged: (callback: (url: string) => void) => () => void;
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
       /** Who may change the PR's reviewers, assignees, labels and milestone. */
       getPrPeopleAccess: (url: string) => Promise<import('../lib/pr-people').PrPeopleAccess>;

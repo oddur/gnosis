@@ -1,0 +1,244 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createConflictPrecompute, type ConflictPrecomputeDeps } from '../src/conflict-precompute';
+import { NO_PERMISSION } from '../src/conflict-resolution-service';
+import { conflictHeader, conflictHeaderLine, NO_PUSH_LINE } from '../lib/conflict-header';
+import { proposalKey } from '../lib/conflict-verify';
+import type { ConflictFile, ConflictSession } from '../lib/conflict-resolution';
+
+const A = 'https://github.com/o/r/pull/1';
+const B = 'https://github.com/o/r/pull/2';
+const C = 'https://github.com/o/r/pull/3';
+const sha = (n: number) => String(n).repeat(40);
+
+/** A conflict with a proposal, Merged when `merged`, else in Check. */
+function proposed(path: string, merged: boolean): ConflictFile {
+  const original = `a\n<<<<<<< pr\nb\n||||||| base\nx\n=======\nc\n>>>>>>> main\nd\n`;
+  const file: ConflictFile = {
+    path,
+    mode: '100644',
+    base: 'a\nx\nd\n',
+    ours: 'a\nb\nd\n',
+    theirs: 'a\nc\nd\n',
+    original,
+    result: 'a\nbc\nd\n',
+    resolved: false,
+    source: 'mergiraf',
+    proposals: [{ source: 'mergiraf', text: 'bc\n' }],
+  };
+  file.verdict = { key: proposalKey({ ...file }), verdict: { merged, note: merged ? 'Checked.' : 'Check it.' } };
+  return file;
+}
+/** A conflict structural merge left: Decide. */
+function open(path: string): ConflictFile {
+  const original = `<<<<<<< pr\nb\n||||||| base\nx\n=======\nc\n>>>>>>> main\n`;
+  return {
+    path,
+    mode: '100644',
+    base: 'x\n',
+    ours: 'b\n',
+    theirs: 'c\n',
+    original,
+    result: original,
+    resolved: false,
+    source: 'manual',
+  };
+}
+
+void test('the header line reads a prepared draft with the conflict dialog’s own status and summary (#445)', () => {
+  const mixed = conflictHeader([proposed('a.ts', true), proposed('b.ts', true), open('c.ts')]);
+  assert.deepEqual(mixed, {
+    state: 'ready',
+    sentence: '3 files have conflicts. 2 of 3 conflicts are merged and checked. 1 to decide.',
+    merged: false,
+  });
+  // Every conflict Merged: the action reads Review and push….
+  const merged = conflictHeader([proposed('a.ts', true), proposed('b.ts', true)]);
+  assert.equal(merged.state === 'ready' && merged.merged, true);
+  assert.equal(
+    conflictHeaderLine(merged),
+    '2 files have conflicts. 2 of 2 conflicts are merged and checked. Nothing needs you.'
+  );
+  // A proposal in Check needs you; a verdict for other proposals does not count.
+  const stale = proposed('a.ts', true);
+  stale.proposals = [{ source: 'mergiraf', text: 'cb\n' }];
+  stale.result = 'a\ncb\nd\n';
+  assert.deepEqual(conflictHeader([stale]), {
+    state: 'ready',
+    sentence: '1 file has conflicts. Checking 1 result…',
+    merged: false,
+  });
+  assert.equal(conflictHeaderLine({ state: 'checking', files: 3 }), 'Checking 3 files…');
+  assert.equal(conflictHeaderLine({ state: 'checking', files: 1 }), 'Checking 1 file…');
+  assert.equal(conflictHeaderLine({ state: 'checking' }), 'Checking conflicts…');
+  assert.equal(conflictHeaderLine({ state: 'no-permission' }), NO_PUSH_LINE);
+});
+
+/** Fake service: each preparation waits until the test settles it. */
+function harness(options: Partial<ConflictPrecomputeDeps> = {}) {
+  const drafts = new Map<string, ConflictSession>();
+  const pending = new Map<
+    string,
+    { resolve: () => void; reject: (error: Error) => void; files: (n: number) => void }
+  >();
+  const started: string[] = [];
+  const aborted: string[] = [];
+  const forgotten: string[] = [];
+  const changed: string[] = [];
+  let battery = false;
+  let trims = 0;
+  const wanted = new Set([A, B, C]);
+  const deps: ConflictPrecomputeDeps = {
+    prepare: (url, signal, files) =>
+      new Promise<ConflictSession | undefined>((resolve, reject) => {
+        started.push(url);
+        signal.addEventListener('abort', () => {
+          aborted.push(url);
+          reject(signal.reason as Error);
+        });
+        pending.set(url, {
+          files,
+          reject,
+          resolve: () => {
+            const session = {
+              url,
+              headSha: heads.get(url),
+              files: [proposed('a.ts', true)],
+              background: 1,
+            } as ConflictSession;
+            drafts.set(url, session);
+            resolve(session);
+          },
+        });
+      }),
+    draft: (url, headSha) => (drafts.get(url)?.headSha === headSha ? drafts.get(url) : undefined),
+    forget: (url) => {
+      forgotten.push(url);
+      if (drafts.get(url)?.background) drafts.delete(url);
+      return Promise.resolve();
+    },
+    trim: () => {
+      trims++;
+      return Promise.resolve();
+    },
+    wanted: (url) => wanted.has(url),
+    onBattery: () => battery,
+    changed: (url) => changed.push(url),
+    ...options,
+  };
+  const heads = new Map<string, string>();
+  const precompute = createConflictPrecompute(deps);
+  const observe = (url: string, head: string, state: Parameters<typeof precompute.observe>[2], opened = false) => {
+    heads.set(url, head);
+    precompute.observe(url, head, state, opened);
+  };
+  /** Lets the run's promise chain finish. */
+  const settle = async (url: string) => {
+    pending.get(url)?.resolve();
+    await precompute.settle(url);
+  };
+  return {
+    precompute,
+    observe,
+    settle,
+    pending,
+    started,
+    aborted,
+    forgotten,
+    changed,
+    wanted,
+    drafts,
+    trims: () => trims,
+    setBattery: (value: boolean) => {
+      battery = value;
+      precompute.power();
+    },
+  };
+}
+
+void test('background preparation runs one PR at a time for PRs you wrote or starred, and opening reuses it', async () => {
+  const h = harness();
+  h.wanted.delete(C);
+  h.observe(A, sha(1), 'conflicts');
+  h.observe(B, sha(2), 'conflicts');
+  h.observe(C, sha(3), 'conflicts');
+  h.observe(A, sha(1), 'computing');
+  assert.deepEqual(h.started, [A], 'One at a time; a PR you did not write or star waits for you to open it');
+  assert.deepEqual(h.precompute.header(A, sha(1)), { state: 'checking', files: undefined });
+  h.pending.get(A)?.files(3);
+  assert.deepEqual(h.precompute.header(A, sha(1)), { state: 'checking', files: 3 });
+  assert.deepEqual(
+    h.precompute.header(B, sha(2)),
+    { state: 'checking', files: undefined },
+    'Queued counts as checking'
+  );
+  await h.settle(A);
+  assert.deepEqual(h.started, [A, B], 'The next starts when one finishes');
+  assert.equal(h.trims(), 1, 'Stored drafts are capped after each one');
+  assert.equal(h.precompute.header(A, sha(1))?.state, 'ready');
+  // The same head again: nothing runs twice.
+  h.observe(A, sha(1), 'conflicts');
+  assert.deepEqual(h.started, [A, B]);
+  // Looking at C's header counts as opening it.
+  h.observe(C, sha(3), 'conflicts', true);
+  await h.settle(B);
+  assert.deepEqual(h.started, [A, B, C]);
+  await h.settle(C);
+  assert.ok(h.changed.includes(C), 'Windows hear when a line changes');
+});
+
+void test('a new head or a clean merge cancels the run and removes its background draft', async () => {
+  const h = harness();
+  h.observe(A, sha(1), 'conflicts');
+  h.observe(A, sha(4), 'conflicts');
+  assert.deepEqual(h.aborted, [A]);
+  assert.deepEqual(h.forgotten, [A]);
+  // The cap holds until the stopped run has finished.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(h.started, [A, A], 'The new head is prepared');
+  await h.settle(A);
+  assert.equal(h.precompute.header(A, sha(4))?.state, 'ready');
+  assert.equal(h.precompute.header(A, sha(1)), undefined, 'Nothing for the old head');
+  h.observe(A, sha(4), 'clear');
+  assert.deepEqual(h.forgotten, [A, A]);
+  assert.equal(h.drafts.has(A), false);
+  assert.equal(h.precompute.header(A, sha(4)), undefined);
+});
+
+void test('on battery nothing starts, a running preparation stops, and it starts again on power', async () => {
+  const h = harness();
+  h.setBattery(true);
+  h.observe(A, sha(1), 'conflicts');
+  assert.deepEqual(h.started, []);
+  assert.equal(h.precompute.header(A, sha(1)), undefined, 'A paused run shows no line');
+  h.setBattery(false);
+  assert.deepEqual(h.started, [A]);
+  h.setBattery(true);
+  assert.deepEqual(h.aborted, [A]);
+  // The stopped run settles back into the queue.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  h.setBattery(false);
+  assert.deepEqual(h.started, [A, A]);
+  await h.settle(A);
+  assert.equal(h.precompute.header(A, sha(1))?.state, 'ready');
+});
+
+void test('a PR you cannot push to says so, and opening the conflicts drops a queued run', async () => {
+  const h = harness({ prepare: () => Promise.reject(new Error(NO_PERMISSION)) });
+  h.observe(A, sha(1), 'conflicts');
+  await h.precompute.settle(A);
+  assert.deepEqual(h.precompute.header(A, sha(1)), { state: 'no-permission' });
+  const queued = harness();
+  queued.observe(A, sha(1), 'conflicts');
+  queued.observe(B, sha(2), 'conflicts');
+  await queued.precompute.settle(B);
+  await queued.settle(A);
+  assert.deepEqual(queued.started, [A], 'Your own open prepares B; the background run is dropped');
+  // A draft you discarded is not prepared again in the background for the same head.
+  const dismissed = harness();
+  dismissed.precompute.dismiss(A, sha(1));
+  dismissed.observe(A, sha(1), 'conflicts', true);
+  assert.deepEqual(dismissed.started, []);
+  dismissed.observe(A, sha(2), 'conflicts', true);
+  assert.deepEqual(dismissed.started, [A], 'A new head is');
+});

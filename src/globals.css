@@ -3121,6 +3121,8 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .pr-actions-stack { margin:0; padding:0 24px 12px; }
 .pr-action-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .pr-action-note { display:flex; align-items:center; gap:8px; color:var(--muted-foreground); font-size:13px; line-height:1.5; margin-top:8px; max-width:75ch; }
+/* The conflict line from background preparation (#445): what Resolve conflicts will show, so it reads as text, not a hint. */
+.pr-conflict-line { color:var(--foreground); }
 .pr-action-error { color:var(--destructive); font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
 .pr-action-error button,.pr-action-error a { text-decoration:underline; text-underline-offset:3px; margin-inline-end:12px; }
 .pr-update-menu { z-index:60; width:min(340px,calc(100vw - 24px)); padding:4px; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:5px; }

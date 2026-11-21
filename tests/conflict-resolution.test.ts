@@ -1001,6 +1001,43 @@ const movingSample = (a: number, b: number, c: number, filler = 'filler') =>
     `export const c = ${c};`,
     '',
   ].join('\n');
+void test('a background draft is reused when you open the PR, becomes yours, and never replaces your own (#445)', async (t) => {
+  const f = await fixture(t);
+  const signal = new AbortController().signal;
+  Object.assign(f.deps.storage, { names: () => [`conflict-draft:tester:${f.session.id}`] });
+  await f.run({ kind: 'discard', id: f.session.id, version: f.session.version });
+  const counts: number[] = [];
+  const prepared = await f.service.prepareInBackground(f.state.url, signal, (n) => counts.push(n));
+  assert.ok(prepared?.background, 'Saved as a background draft');
+  assert.deepEqual(counts, [1], 'The number of conflicted files is reported once Git has merged');
+  assert.equal(f.service.draft(f.state.url, f.state.headSha)?.background, prepared.background);
+  assert.equal(f.service.draft(f.state.url, '0'.repeat(40)), undefined, 'Only for the head it was prepared on');
+  // Prepared again for the same head: nothing changes.
+  assert.equal((await f.service.prepareInBackground(f.state.url, signal))?.version, prepared.version);
+  // Opening reuses it, and it becomes yours.
+  const opened = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(opened.version, prepared.version, 'Opening did not prepare again');
+  assert.deepEqual(opened.files, prepared.files);
+  assert.equal(opened.background, undefined);
+  assert.equal(f.service.draft(f.state.url, f.state.headSha)?.background, undefined);
+  // Your draft: background preparation and its clean-up leave it alone.
+  const saved = (
+    await f.run({ kind: 'save', id: opened.id, version: opened.version, path: 'sample.ts', contents: 'x\n', resolved: false })
+  ).session;
+  assert.equal((await f.service.prepareInBackground(f.state.url, signal))?.version, saved.version);
+  await f.service.forgetBackground(f.state.url);
+  await f.service.trimBackground(0);
+  assert.equal(f.service.draft(f.state.url, f.state.headSha)?.files[0].result, 'x\n');
+  // A background draft beyond the cap leaves with its cache.
+  await f.run({ kind: 'discard', id: saved.id, version: saved.version });
+  await f.service.prepareInBackground(f.state.url, signal);
+  const cache = await conflictSessionDirectory(f.deps.directory(), 'tester', saved.id);
+  assert.ok(await fs.stat(cache).catch(() => undefined), 'The background draft has a cache');
+  await f.service.trimBackground(0);
+  assert.equal(f.service.draft(f.state.url, f.state.headSha), undefined);
+  assert.equal(await fs.stat(cache).catch(() => undefined), undefined, 'Its cache is removed');
+});
+
 void test('the service checks proposals itself and saves the verdict with the draft (#445)', async (t) => {
   if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
     t.skip('Needs the Mergiraf binary: npm run prepare:mergiraf.');

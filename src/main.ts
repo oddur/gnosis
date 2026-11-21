@@ -172,6 +172,8 @@ import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
 import { codeIntelligenceSettings, languageEnabled } from '../lib/code-intelligence';
 import { SYNTAX_LANGUAGES } from '../lib/syntax-scope';
 import { createConflictCheckWorker } from './conflict-checks';
+import { createConflictPrecompute } from './conflict-precompute';
+import { mergeConflictState } from '../lib/merge-conflicts';
 import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
@@ -3865,13 +3867,22 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
 
 const getGitHubProfile = createGitHubProfileService();
 const signalRevisions = new WeakMap<ReturnType<typeof getGitHubClient>, Map<string, string>>();
-const getQueueSignals = createQueueSignalsService(Date.now, (client, url, headSha) => {
+const readQueueSignals = createQueueSignalsService(Date.now, (client, url, headSha) => {
   let revisions = signalRevisions.get(client);
   if (!revisions) { revisions = new Map(); signalRevisions.set(client, revisions); }
   revisions.set(url, headSha);
   // The signals read saw a new head. The sync read that asked for them reads the PR next.
   if (client === getGitHubClient(cachedToken)) noteHeadSha(url, headSha, { source: 'signals' });
 });
+/** Every status read also tells background conflict preparation which PRs conflict now (src/conflict-precompute.ts). */
+const getQueueSignals: typeof readQueueSignals = async (client, requests, options) => {
+  const values = await readQueueSignals(client, requests, options);
+  if (client === getGitHubClient(cachedToken)) observeConflicts(values);
+  return values;
+};
+function observeConflicts(values: readonly QueueSignals[]) {
+  for (const value of values) conflictPrecompute.observe(value.url, value.headSha, mergeConflictState(value));
+}
 ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[], options?: QueueSignalOptions) => {
   const token = getResolvedToken();
   if (!token) return [];
@@ -4134,6 +4145,29 @@ const conflicts = createConflictResolutionService({
     return { contents: value.contents, explanation: value.explanation };
   },
 });
+// Background conflict preparation: one PR at a time, never on battery (src/conflict-precompute.ts).
+const conflictPrecompute = createConflictPrecompute({
+  prepare: (url, signal, files) => withGitHubPriority('background', () => conflicts.prepareInBackground(url, signal, files), { automatic: true }),
+  draft: (url, headSha) => conflicts.draft(url, headSha),
+  forget: url => conflicts.forgetBackground(url),
+  trim: () => conflicts.trimBackground(),
+  wanted: url => workbench.ownsOrStarred(url),
+  onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
+  changed: url => broadcastToAllWindows('conflict-header-changed', url),
+});
+void app.whenReady().then(() => {
+  powerMonitor.on('on-battery', () => conflictPrecompute.power());
+  powerMonitor.on('on-ac', () => conflictPrecompute.power());
+});
+app.on('will-quit', () => conflictPrecompute.dispose());
+// The PR header's conflict line. Asking for it means you opened the PR, so its conflicts are prepared too.
+ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
+  if (typeof url !== 'string' || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) return null;
+  if (typeof headSha !== 'string' || !/^[a-f0-9]{40,64}$/.test(headSha)) return null;
+  if (!getResolvedToken() || !cachedLogin) return null;
+  conflictPrecompute.observe(url, headSha, 'conflicts', true);
+  return conflictPrecompute.header(url, headSha) ?? null;
+});
 handleInteractive('conflict-resolution', async (_event, request: ConflictRequest) => {
   validateConflictRequest(request);
   const token = getResolvedToken();
@@ -4144,7 +4178,12 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
   const tracked = !['save', 'discard', 'restack-save'].includes(request.kind);
   if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'restack-publish' ? 'Publishing dependent PR updates' : ['restack-prepare', 'restack-continue'].includes(request.kind) ? 'Preparing dependent PR updates' : request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, ['publish', 'restack-publish'].includes(request.kind) ? {} : { cancel: () => controller.abort() });
   try {
+    // A background preparation of this PR finishes first, so opening reuses it.
+    if (request.kind === 'open') await conflictPrecompute.settle(request.url);
     const result = await conflicts.run(request, controller.signal, detail => { if (tracked) activities.update(id, detail); });
+    // Discarded: not prepared again in the background for this head.
+    if (request.kind === 'discard') conflictPrecompute.dismiss(result.session.url, result.session.headSha);
+    else conflictPrecompute.refresh(result.session.url);
     if ((request.kind === 'publish' && result.session.status === 'published') || request.kind === 'restack-publish') {
       const urls = request.kind === 'restack-publish' ? result.session.restack?.branches.map(branch => branch.url) ?? [] : [result.session.url];
       void githubWrites.after('push', urls);
@@ -4500,6 +4539,7 @@ function publishGitHubUpdatesNow(updates: GitHubSyncUpdate[]) {
       noteSinceChecks(update.url, previous, update.value);
       syncSignals.delete(update.url);
       syncSignals.set(update.url, update.value);
+      observeConflicts([update.value]);
       while (syncSignals.size > 500) syncSignals.delete(syncSignals.keys().next().value as string);
       if (previous && JSON.stringify(previous.activity) !== JSON.stringify(update.value.activity)) {
         // Keep the last known threads for the queue's counts until the discussion is read again.
