@@ -16,6 +16,8 @@ export interface Verdict {
   merged: boolean;
   /** What passed, or the first check that failed, in one plain sentence. */
   note: string;
+  /** A whole-file proposal passed its checks. It is still never Merged. */
+  passed?: boolean;
 }
 export interface ParsedText {
   definitions: SyntaxDefinition[];
@@ -125,10 +127,13 @@ export async function verifyWholeFile(
   analyse: Analyse
 ): Promise<Verdict> {
   const verdict = await verifyProposals({ ...file, original: '', proposals: [proposal] }, analyse, true);
-  return {
-    merged: false,
-    note: verdict.merged ? `${verdict.note} It changes the whole file, so read it before you use it.` : verdict.note,
-  };
+  return verdict.merged
+    ? {
+        merged: false,
+        passed: true,
+        note: 'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.',
+      }
+    : { merged: false, note: `${verdict.note} Read it before you use it, or resolve conflict by conflict.` };
 }
 
 /**
@@ -398,8 +403,9 @@ export function blockBuckets(
   verdict: Verdict | undefined
 ): ConflictBucket[] {
   if (file.unsupported) return ['decide'];
-  // A whole-file proposal is one thing to check, until you use it or start choosing conflicts yourself.
-  if (file.wholeFile && contents === file.original) return ['check'];
+  // A whole-file proposal is one thing to check, until you use it or start choosing conflicts yourself. One that failed
+  // its checks leaves the conflicts to decide.
+  if (file.wholeFile && contents === file.original && (!verdict || verdict.passed)) return ['check'];
   const segments = parseConflicts(file.original);
   const choices = inferChoices(segments, contents, file.proposals);
   const blocks = segments.filter((s) => s.kind === 'conflict');
@@ -432,23 +438,39 @@ export interface BucketSummary {
   needs: number;
   /** Proposals whose checks are still running. */
   checking: number;
+  /** Of `needs`: Decide blocks, and whole-file proposals to check. */
+  decide: number;
+  wholeFiles: number;
 }
 export function bucketSummary(
-  files: { buckets: readonly ConflictBucket[]; verdict: Verdict | undefined; reviewed: boolean }[]
+  files: { buckets: readonly ConflictBucket[]; verdict: Verdict | undefined; reviewed: boolean; whole?: boolean }[]
 ): BucketSummary {
-  const summary: BucketSummary = { files: files.length, conflicts: 0, merged: 0, needs: 0, checking: 0 };
-  for (const { buckets, verdict, reviewed } of files) {
+  const summary: BucketSummary = {
+    files: files.length,
+    conflicts: 0,
+    merged: 0,
+    needs: 0,
+    checking: 0,
+    decide: 0,
+    wholeFiles: 0,
+  };
+  for (const { buckets, verdict, reviewed, whole } of files) {
     for (const bucket of buckets) {
       summary.conflicts++;
       if (bucket === 'merged') summary.merged++;
       else if (bucket === 'decide' || (bucket === 'check' && !reviewed)) summary.needs++;
+      if (bucket === 'decide') summary.decide++;
+      if (bucket === 'check' && whole && !reviewed) summary.wholeFiles++;
       // Only a proposal is in Check: with no verdict yet, its checks are running.
       if (bucket === 'check' && !verdict) summary.checking++;
     }
   }
   return summary;
 }
-/** "3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you." */
+/**
+ * "3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you." Whole-file proposals are named:
+ * "1 proposal to check.", or "2 need you: 1 proposal to check, 1 to decide."
+ */
 export function summarySentence(s: BucketSummary) {
   const files = s.files === 1 ? '1 file conflicts.' : `${s.files} files conflict.`;
   const merged = s.merged
@@ -456,8 +478,21 @@ export function summarySentence(s: BucketSummary) {
     : '';
   const needs = s.checking
     ? ` Checking ${s.checking} ${s.checking === 1 ? 'result' : 'results'}…`
-    : s.needs
-      ? ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you.`
-      : ' Nothing needs you.';
+    : s.wholeFiles
+      ? wholeFileNeeds(s)
+      : s.needs
+        ? ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you.`
+        : ' Nothing needs you.';
   return files + merged + needs;
+}
+function wholeFileNeeds(s: BucketSummary) {
+  const check = s.needs - s.decide - s.wholeFiles;
+  const parts = [
+    `${s.wholeFiles} ${s.wholeFiles === 1 ? 'proposal' : 'proposals'} to check`,
+    ...(check ? [`${check} to check`] : []),
+    ...(s.decide ? [`${s.decide} to decide`] : []),
+  ];
+  return parts.length === 1
+    ? ` ${parts[0]}.`
+    : ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you: ${parts.join(', ')}.`;
 }

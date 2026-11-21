@@ -1148,7 +1148,7 @@ void test('a structural merge that also moves lines outside the conflicts is a w
   assert.equal(file.result, file.original, 'The draft stays as Git wrote it until you use the proposal');
   assert.equal(file.resolved, false);
   assert.deepEqual(
-    blockBuckets(file, file.result, { merged: true, note: 'passed' }),
+    blockBuckets(file, file.result, { merged: false, passed: true, note: 'passed' }),
     ['check'],
     'One thing to check, even when its checks pass'
   );

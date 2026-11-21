@@ -1087,26 +1087,41 @@ void app.whenReady().then(async () => {
       window.conflictCalls=[];
     })()`);
     await open();
-    await wait("document.querySelector('[data-conflict-summary]')?.textContent==='2 files conflict. 2 need you.'");
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='2 files conflict. 2 need you: 1 proposal to check, 1 to decide.'"
+    );
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-file-title [data-stage]')].map(b=>[b.dataset.stage,b.textContent])"),
+      [['proposal', 'Proposal ready']]
+    );
     assert.deepEqual(
       await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
       ['1 to check', '1 to decide']
     );
     const whole = "document.querySelector('.conflict-whole-file')";
     assert.equal(await js(`${whole}.dataset.bucket`), 'check');
-    await wait(`${whole}.textContent.includes('Every line of both sides is accounted for')`);
-    assert.match(
+    await wait(`${whole}.querySelector('p').textContent.startsWith('Mergiraf moved')`);
+    assert.equal(
       await js<string>(`${whole}.querySelector('p').textContent`),
-      /^Mergiraf’s result also changes lines outside the conflicts, so read the whole file\. It stays in Check even when its checks pass\. The file parses\. Every line of both sides is accounted for\. It changes the whole file, so read it before you use it\.$/
+      'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.'
     );
+    assert.equal(await js(`!!${block(0)}`), false, 'The conflicts wait behind the proposal');
     assert.equal(await js("!!document.querySelector('[data-bucket=merged]')"), false, 'Never Merged');
-    // J and K count the whole-file proposal as one stop, before the conflict it covers.
+    // While the conflicts are hidden, the proposal is the file's one stop for J and K.
     await wait("document.activeElement?.closest('.conflict-block')?.dataset.conflictIndex==='-1'");
+    await key('j');
+    assert.equal(await activeBlock(), '-1');
+    await captureAll('whole-file-check');
+    // The link shows the conflicts below the proposal; J and K then visit both.
+    await click('Resolve conflict by conflict instead (1)');
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    assert.equal(await js(`!!${whole}`), true);
+    await js(`${whole}.focus()`);
     await key('j');
     assert.equal(await activeBlock(), '0');
     await key('k');
     assert.equal(await activeBlock(), '-1');
-    await captureAll('whole-file-check');
+    await captureAll('whole-file-conflicts-shown');
     await click('Use this result');
     await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='mergiraf'&&r.path==='lab/reorder.go')");
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");

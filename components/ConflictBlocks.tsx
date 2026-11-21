@@ -362,6 +362,9 @@ export function ConflictView({
   const root = useRef<HTMLDivElement>(null);
   const model = useMemo(() => conflictModel(original, contents, proposals), [original, contents, proposals]);
   const total = model.segments.filter((s) => s.kind === 'conflict').length;
+  // A whole-file proposal that passed, or is still being checked, stands in for the conflicts until you ask for them.
+  const [showBlocks, setShowBlocks] = useState(false);
+  const hideBlocks = !!wholeFile && !showBlocks && (!verdict || !!verdict.passed);
   const pendingFocus = useRef<{ after?: number; at?: number }>(undefined);
   // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
   const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
@@ -423,32 +426,38 @@ export function ConflictView({
   return (
     <div ref={root} className="conflict-view" data-undoable={model.undoable || undefined}>
       {wholeFile && <WholeFile name={name} {...wholeFile} verdict={verdict} labels={labels} disabled={disabled} />}
-      {model.segments.map((segment, i) =>
-        segment.kind === 'text' ? (
-          <ContextText
-            key={`text-${i}`}
-            name={name}
-            text={segment.text}
-            before={model.segments[i - 1]?.kind === 'conflict'}
-            after={model.segments[i + 1]?.kind === 'conflict'}
-          />
-        ) : (
-          <Block
-            key={`block-${segment.index}`}
-            name={name}
-            block={segment.block}
-            index={segment.index}
-            total={total}
-            choice={model.choices[segment.index]}
-            labels={labels}
-            shortcuts={shortcuts}
-            disabled={disabled}
-            onChoose={(choice) => choose(segment.index, choice)}
-            proposal={proposals?.[segment.index]}
-            verdict={verdict}
-            note={note}
-            onUndo={model.undoable ? () => choose(segment.index, undefined) : undefined}
-          />
+      {hideBlocks ? (
+        <button type="button" className="conflict-context-toggle" onClick={() => setShowBlocks(true)}>
+          Resolve conflict by conflict instead ({total})
+        </button>
+      ) : (
+        model.segments.map((segment, i) =>
+          segment.kind === 'text' ? (
+            <ContextText
+              key={`text-${i}`}
+              name={name}
+              text={segment.text}
+              before={model.segments[i - 1]?.kind === 'conflict'}
+              after={model.segments[i + 1]?.kind === 'conflict'}
+            />
+          ) : (
+            <Block
+              key={`block-${segment.index}`}
+              name={name}
+              block={segment.block}
+              index={segment.index}
+              total={total}
+              choice={model.choices[segment.index]}
+              labels={labels}
+              shortcuts={shortcuts}
+              disabled={disabled}
+              onChoose={(choice) => choose(segment.index, choice)}
+              proposal={proposals?.[segment.index]}
+              verdict={verdict}
+              note={note}
+              onUndo={model.undoable ? () => choose(segment.index, undefined) : undefined}
+            />
+          )
         )
       )}
     </div>
@@ -493,10 +502,7 @@ function WholeFile({
           Check · Combined both sides’ changes
         </span>
       </header>
-      <p>
-        Mergiraf’s result also changes lines outside the conflicts, so read the whole file. It stays in Check even when
-        its checks pass. {note}
-      </p>
+      <p>{note}</p>
       <ResultDiff
         name={name}
         before={ours}

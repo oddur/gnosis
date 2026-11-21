@@ -154,7 +154,7 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
     { buckets: blockBuckets(b, b.result, ok), verdict: ok, reviewed: false },
     { buckets: blockBuckets(c, c.result, check), verdict: check, reviewed: false },
   ]);
-  assert.deepEqual(summary, { files: 3, conflicts: 6, merged: 3, needs: 3, checking: 0 });
+  assert.deepEqual(summary, { files: 3, conflicts: 6, merged: 3, needs: 3, checking: 0, decide: 1, wholeFiles: 0 });
   assert.equal(summarySentence(summary), '3 files conflict. 3 of 6 conflicts are merged and checked. 3 need you.');
   const reviewed = bucketSummary([{ buckets: blockBuckets(c, c.result, check), verdict: check, reviewed: true }]);
   assert.equal(summarySentence(reviewed), '1 file conflicts. Nothing needs you.');
@@ -163,8 +163,16 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
   ]);
   assert.equal(summarySentence(checking), '1 file conflicts. Checking 2 results…');
   assert.equal(
-    summarySentence({ files: 3, conflicts: 9, merged: 7, needs: 2, checking: 0 }),
+    summarySentence({ files: 3, conflicts: 9, merged: 7, needs: 2, checking: 0, decide: 2, wholeFiles: 0 }),
     '3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you.'
+  );
+  // Whole-file proposals are named as proposals to check.
+  const passed = { merged: false, passed: true, note: '' };
+  const whole = { buckets: ['check'] as const, verdict: passed, reviewed: false, whole: true };
+  assert.equal(summarySentence(bucketSummary([whole])), '1 file conflicts. 1 proposal to check.');
+  assert.equal(
+    summarySentence(bucketSummary([whole, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
+    '2 files conflict. 2 need you: 1 proposal to check, 1 to decide.'
   );
 });
 
@@ -306,7 +314,11 @@ void test('a whole-file proposal is checked as a whole, accepts a move, and is n
   };
   const right = await verifyWholeFile(sides, merged([fn('beta'), fn('alpha', 'value + 10')].join('\n')), analyse);
   assert.equal(right.merged, false);
-  assert.match(right.note, /^The file parses\. Every line of both sides is accounted for\. It changes the whole file/);
+  assert.deepEqual(right, {
+    merged: false,
+    passed: true,
+    note: 'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.',
+  });
   // The move without main's edit drops the line main added.
   assert.equal(
     accountWholeFile(sides, sides.ours, false),
@@ -319,14 +331,18 @@ void test('a whole-file proposal is checked as a whole, accepts a move, and is n
   // Every line is there, but main's edit landed in beta, which took alpha's place.
   assert.deepEqual(await verifyWholeFile(sides, merged([fn('beta', 'value + 10'), fn('alpha')].join('\n')), analyse), {
     merged: false,
-    note: 'alpha in the result doesn’t match main’s change to it.',
+    note: 'alpha in the result doesn’t match main’s change to it. Read it before you use it, or resolve conflict by conflict.',
   });
   // Moved and also kept in place: alpha is there twice.
   const doubled = await verifyWholeFile(sides, merged([fn('alpha', 'value + 10'), sides.ours].join('\n')), analyse);
-  assert.deepEqual(doubled, { merged: false, note: 'alpha is defined twice in the result.' });
+  assert.match(doubled.note, /^alpha is defined twice in the result\./);
+  assert.equal(doubled.passed, undefined);
   // One Check item while the draft is the original conflict; your own choices count as usual.
   const whole = file([], { proposals: undefined, wholeFile: merged('x\n') });
-  assert.deepEqual(blockBuckets(whole, original, { merged: true, note: '' }), ['check']);
+  assert.deepEqual(blockBuckets(whole, original, { merged: false, passed: true, note: '' }), ['check']);
+  assert.deepEqual(blockBuckets(whole, original, undefined), ['check'], 'One stop while its checks run');
+  // One that failed its checks leaves the conflicts to decide.
+  assert.deepEqual(blockBuckets(whole, original, { merged: false, note: 'x' }), ['decide', 'decide']);
   assert.notEqual(proposalKey(whole), proposalKey(file([], { proposals: undefined })));
   const chosen = parseConflicts(original)
     .map((s) => (s.kind === 'text' ? s.text : s.block.ours))

@@ -4033,7 +4033,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 .conflict-file-status { display:inline-flex;align-items:center;gap:5px;width:fit-content;padding:1px 6px;border-radius:var(--radius-sm);font-size:var(--type-caption);font-weight:600;line-height:1.5;white-space:nowrap; }
 .conflict-file-status[data-stage=conflicted] { color:var(--color-danger);background:var(--status-danger-bg,color-mix(in srgb,var(--color-danger) 10%,var(--background))); }
-.conflict-file-status[data-stage=resolved] { color:var(--color-warning);background:var(--status-warning-bg,color-mix(in srgb,var(--color-warning) 12%,var(--background))); }
+.conflict-file-status:is([data-stage=resolved],[data-stage=proposal]) { color:var(--color-warning);background:var(--status-warning-bg,color-mix(in srgb,var(--color-warning) 12%,var(--background))); }
 .conflict-file-status[data-stage=reviewed] { color:var(--color-success);background:var(--status-success-bg,color-mix(in srgb,var(--color-success) 10%,var(--background))); }
 
 /* Conflict buckets: Merged (checked), Check (a proposal to read), Decide (no safe proposal). Each has a label and an icon. */

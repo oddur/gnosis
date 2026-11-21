@@ -92,7 +92,23 @@ const fileStageLabels = {
   reviewed: 'Reviewed',
 } as const;
 const fileStageIcons = { conflicted: CircleAlert, resolved: CircleDashed, reviewed: CheckCheck };
-function FileStageBadge({ stage, conflicts }: { stage: ConflictFileStage; conflicts?: number }) {
+function FileStageBadge({
+  stage,
+  conflicts,
+  proposal,
+}: {
+  stage: ConflictFileStage;
+  conflicts?: number;
+  /** A whole-file proposal waits to be checked. */
+  proposal?: boolean;
+}) {
+  if (proposal)
+    return (
+      <span className="conflict-file-status" data-stage="proposal">
+        <CircleHelp size={13} aria-hidden="true" />
+        Proposal ready
+      </span>
+    );
   const Icon = fileStageIcons[stage];
   return (
     <span className="conflict-file-status" data-stage={stage}>
@@ -357,7 +373,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     [session, selected, contents, savedBuckets]
   );
   const summary = bucketSummary(
-    fileStates.map((s) => ({ buckets: s.buckets, verdict: verdictOf(s.file), reviewed: s.stage === 'reviewed' }))
+    fileStates.map((s) => ({
+      buckets: s.buckets,
+      verdict: verdictOf(s.file),
+      reviewed: s.stage === 'reviewed',
+      whole: !!s.file.wholeFile,
+    }))
   );
   const reviewedCount = fileStates.filter((s) => s.stage === 'reviewed').length;
   const fileStage = fileStates.find(({ file: f }) => f.path === selected)?.stage;
@@ -1251,7 +1272,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                     <header className="conflict-file-header">
                       <div className="conflict-file-title">
                         <strong>{file.path}</strong>
-                        {fileStage && !file.unsupported && <FileStageBadge stage={fileStage} />}
+                        {fileStage && !file.unsupported && (
+                          <FileStageBadge stage={fileStage} proposal={!!file.wholeFile && markersRemain} />
+                        )}
                       </div>
                       {!file.unsupported && (
                         <div className="conflict-file-tools">
