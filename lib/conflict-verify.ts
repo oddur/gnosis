@@ -182,10 +182,21 @@ export async function verifyProposals(
       blocks[s.index] = note === undefined ? { merged: true, note: passed(s.index) } : { merged: false, note };
     }
     const first = blocks.find((v) => v && !v.merged) ?? blocks.find(Boolean);
-    const shared = proposed.every(
-      ({ index }) => blocks[index]?.merged === first?.merged && blocks[index]?.note === first?.note
+    // A proposal your draft decided wasn't checked as itself: if you pick it again before the draft is saved, it
+    // stays in Check rather than borrowing the file's verdict.
+    const unchecked = proposals.flatMap((p, index) =>
+      p && !proposed.some((s) => s.index === index) ? [index] : []
     );
-    return { merged: !failed.size, note: first?.note ?? '', ...(shared ? {} : { blocks }) };
+    for (const index of unchecked)
+      blocks[index] = { merged: false, note: 'You changed this conflict. Gnosis checks it again when you save.' };
+    const shared =
+      !unchecked.length &&
+      proposed.every(({ index }) => blocks[index]?.merged === first?.merged && blocks[index]?.note === first?.note);
+    return {
+      merged: !failed.size && proposed.length > 0,
+      note: first?.note ?? '',
+      ...(shared ? {} : { blocks }),
+    };
   };
   const language = syntaxLanguage(file.path);
   if (!language) {
@@ -285,7 +296,7 @@ export async function verifyProposals(
       }
       if (note) fail(s.index, note);
     }
-    // A union is never Merged: its note, from the syntax nodes each side added, is read first so it is the one shown.
+    // A union is never Merged. Its note comes from the syntax nodes each side added; an earlier failure on the block wins.
     unions.forEach(({ index }, k) => {
       // A union set aside for a parse error was not in the text these units came from.
       const units = probe.regions.has(index) ? result.units : undefined;
@@ -662,7 +673,8 @@ export function proposalKey(
     const text = [
       file.original,
       ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
-      `\u0002${file.result ?? ''}`,
+      // The draft matters only to per-conflict checks; a whole-file check ignores it.
+      `\u0002${file.wholeFile ? '' : (file.result ?? '')}`,
     ].join('\u0000');
     let hash = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);

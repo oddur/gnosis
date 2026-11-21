@@ -256,3 +256,12 @@ void test('the checks follow the draft: a conflict you decided is checked as you
   assert.ok(!read.includes(f.result));
   assert.deepEqual(blockBuckets(chosen, chosen.result, verdict), ['decided', 'merged']);
 });
+
+void test('a proposal your saved draft decided stays in Check if you pick it again before saving', async () => {
+  const f = conflict('src/math.ts', [fn('alpha'), [fn('beta'), '', fn('gamma')]], [mergiraf(fn('beta') + fn('gamma'))]);
+  const saved = { ...f, result: f.result.replace(fn('beta') + fn('gamma'), fn('gamma')) };
+  const verdict = await verifyProposals(saved, analyse);
+  assert.equal(verdict.merged, false, 'No proposal was checked, so the file is not Merged');
+  // Undo puts the proposal back on screen; the verdict still belongs to the saved draft.
+  assert.deepEqual(blockBuckets(saved, withProposals(f.original, f.proposals ?? []), verdict), ['check']);
+});
