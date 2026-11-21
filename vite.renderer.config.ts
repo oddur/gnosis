@@ -26,6 +26,12 @@ export default defineConfig({
       '@pierre/words/react',
       '@pierre/words/highlights',
       '@pierre/highlights/themes/loader',
+      // The chat's prompt input, trace and citations (components/chat-lazy.tsx) load lazily too.
+      '@base-ui/react/menu',
+      '@base-ui/react/preview-card',
+      '@base-ui/react/collapsible',
+      '@base-ui/react/merge-props',
+      '@base-ui/react/use-render',
       'shiki',
       'shiki/langs',
       'shiki/themes',

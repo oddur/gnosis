@@ -34,6 +34,8 @@ export function PanelResizeHandle({
 }) {
   const drag = useRef<{ id: number; element: HTMLDivElement; x: number; from: number } | undefined>(undefined);
   const current = useRef({ width, onCommit });
+  // A second press at the same place within the double-click time resets: pointer capture can swallow dblclick.
+  const lastPress = useRef({ time: -Infinity, x: 0 });
   current.current = { width, onCommit };
   const clamp = (value: number) => Math.round(Math.max(min, Math.min(max, value)));
   function finish() {
@@ -92,14 +94,16 @@ export function PanelResizeHandle({
         onChange(value);
         onCommit(value);
       }}
-      onDoubleClick={(event) => {
-        if (!onReset) return;
-        event.preventDefault();
-        onReset();
-      }}
       onPointerDown={(event) => {
         if (!event.isPrimary || event.button !== 0 || drag.current) return;
         event.preventDefault();
+        const previous = lastPress.current;
+        lastPress.current = { time: event.timeStamp, x: event.clientX };
+        if (onReset && event.timeStamp - previous.time < 500 && Math.abs(event.clientX - previous.x) < 4) {
+          lastPress.current = { time: -Infinity, x: 0 };
+          onReset();
+          return;
+        }
         drag.current = { id: event.pointerId, element: event.currentTarget, x: event.clientX, from: width };
         event.currentTarget.setPointerCapture(event.pointerId);
         // Text in the panels beside the handle must not select while the pointer crosses it.

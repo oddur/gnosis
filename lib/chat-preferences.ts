@@ -111,10 +111,9 @@ export function createChatPreferenceWriter(store: () => PreferencesStore | undef
   return {
     width: (surface: ChatSurface, width: number | undefined) =>
       write((current) => {
-        const widths = normalizeChatPanelWidths(current.chatPanelWidths);
-        if (width === undefined) delete widths[surface];
-        else widths[surface] = clampChatPanelWidth(width);
-        return { chatPanelWidths: widths };
+        const widths = Object.entries(normalizeChatPanelWidths(current.chatPanelWidths)).filter(([s]) => s !== surface);
+        if (width !== undefined) widths.push([surface, clampChatPanelWidth(width)]);
+        return { chatPanelWidths: Object.fromEntries(widths) as ChatPanelWidths };
       }),
     model: (surface: ChatSurface, choice: ChatModelChoice) =>
       write((current) => ({
@@ -136,8 +135,8 @@ export function rememberedChatPanelWidth(preferences: Preferences | undefined, s
   return remembered.widths[surface] ?? chatPanelWidth(preferences, surface);
 }
 export function rememberChatPanelWidth(surface: ChatSurface, width: number | undefined) {
-  if (width === undefined) delete remembered.widths[surface];
-  else remembered.widths[surface] = clampChatPanelWidth(width);
+  // A reset is remembered as the default, so the stale saved width is not read back before the write lands.
+  remembered.widths = { ...remembered.widths, [surface]: clampChatPanelWidth(width ?? CHAT_PANEL_DEFAULT_WIDTH) };
   return writer.width(surface, width);
 }
 export function rememberedChatModel(

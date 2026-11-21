@@ -21,10 +21,11 @@ function memoryStore(initial: Partial<Preferences>) {
   const writes: Preferences[] = [];
   return {
     api: {
-      loadPreferences: async () => structuredClone(saved),
-      savePreferences: async (next: Preferences) => {
+      loadPreferences: () => Promise.resolve(structuredClone(saved)),
+      savePreferences: (next: Preferences) => {
         saved = structuredClone(next);
         writes.push(saved);
+        return Promise.resolve();
       },
     },
     saved: () => saved,

@@ -45,8 +45,10 @@ import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
-import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId, Slide } from '../../lib/types';
-import { DEFAULT_FAST_CLAUDE_MODEL, PROVIDERS } from '../../lib/models';
+import type { ReviewGuide, FreshnessResult, Preferences, Slide } from '../../lib/types';
+import { rememberChatModel, rememberedChatModel, type ChatModelChoice } from '../../lib/chat-preferences';
+import { hunkNewLines } from '../../lib/chat-citations';
+import type { ChatCitationSource } from '../../components/ChatCitation';
 import { markHere } from '../../lib/diff-here';
 
 export interface ChangesFileTarget {
@@ -192,8 +194,8 @@ function ReviewPageContent({
     setChatFocusRequest((request) => request + 1);
   }, [setChatOpen]);
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
-  const [chatProvider, setChatProvider] = useState<Provider>(initialPreferences?.provider ?? 'claude');
-  const [chatModel, setChatModel] = useState<ModelId>(initialPreferences?.model ?? DEFAULT_FAST_CLAUDE_MODEL);
+  // The topic chat's model: its own choice from the prompt input, else the chat model preference.
+  const [chatModel, setChatModel] = useState<ChatModelChoice>(() => rememberedChatModel(initialPreferences, 'topic'));
   const [savedDiffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(
     initialPreferences?.diffLayout ?? 'unified'
   );
@@ -318,12 +320,51 @@ function ReviewPageContent({
       setShowSubmitDialog(false);
     }
   }, [showSubmitDialog, submitUrl]);
-  const slideChat = useSlideChat(review, chatProvider, chatModel, prefs?.effort);
+  const slideChat = useSlideChat(review, chatModel.provider, chatModel.model, prefs?.effort);
   const gitFileUrlBase = useMemo(
     () => (review.snapshot?.subject.kind === 'stack' ? undefined : buildFileUrlBase(review.prUrl, review.headSha)),
     [review.prUrl, review.headSha]
   );
   const excludedFilesSet = useMemo(() => new Set(review.excludedFiles ?? []), [review.excludedFiles]);
+  // The topic chat's citations resolve to the PR's files, preview the explanation's hunks, and open in Changes.
+  const chatCitations = useMemo<ChatCitationSource>(() => {
+    const files = new Set<string>(review.changedFiles?.map((file) => file.filename) ?? []);
+    for (const slide of review.slides) for (const hunk of slide.diffHunks) files.add(hunk.filePath);
+    let lines: Map<string, Map<number, string>> | undefined;
+    return {
+      files: [...files],
+      preview: (path, startLine, endLine) => {
+        if (!lines) {
+          lines = new Map();
+          for (const slide of review.slides)
+            for (const hunk of slide.diffHunks) {
+              const file = lines.get(hunk.filePath) ?? new Map<number, string>();
+              for (const [n, text] of hunkNewLines(hunk.hunkHeader, hunk.content)) file.set(n, text);
+              lines.set(hunk.filePath, file);
+            }
+        }
+        const file = lines.get(path);
+        const shown: string[] = [];
+        for (let n = startLine; n <= endLine; n++) {
+          const text = file?.get(n);
+          if (text === undefined) return shown.length ? shown.join('\n') : undefined;
+          shown.push(text);
+        }
+        return shown.join('\n');
+      },
+      open: onOpenChangesFile
+        ? (target) =>
+            onOpenChangesFile({
+              url: review.prUrl,
+              headSha: review.headSha,
+              path: target.path,
+              line: target.startLine,
+              endLine: target.endLine,
+              side: 'after',
+            })
+        : undefined,
+    };
+  }, [review.changedFiles, review.slides, review.prUrl, review.headSha, onOpenChangesFile]);
 
   // Build a filename → FileMetadata lookup for diff file headers.
   // Only populated for reviews generated after the metadata feature
@@ -339,8 +380,7 @@ function ReviewPageContent({
   useEffect(() => {
     if (!initialPreferences) return;
     setPrefs(initialPreferences);
-    setChatProvider(initialPreferences.provider);
-    setChatModel(initialPreferences.model);
+    setChatModel(rememberedChatModel(initialPreferences, 'topic'));
     setDiffLayout(initialPreferences.diffLayout);
   }, [initialPreferences]);
   useEffect(() => {
@@ -353,8 +393,7 @@ function ReviewPageContent({
         // in a previous review. Do not let this refresh overwrite a newer edit.
         if (cancelled || writesAtLoad !== preferenceWrites.current) return;
         setPrefs(p);
-        setChatProvider(p.provider);
-        setChatModel(p.model);
+        setChatModel(rememberedChatModel(p, 'topic'));
         setDiffLayout(p.diffLayout);
       })
       .catch(() => {
@@ -1105,9 +1144,15 @@ function ReviewPageContent({
                   side: step.side,
                 }))
             }
-            modelLabel={PROVIDERS[chatProvider].models.find((model) => model.id === chatModel)?.label ?? chatModel}
+            citations={chatCitations}
+            model={chatModel}
+            onModelChange={(choice) => {
+              setChatModel(choice);
+              void rememberChatModel('topic', choice).catch(() => {});
+            }}
             quotedCode={chatQuotedCode}
             onQuotedCodeConsumed={() => setChatQuotedCode(null)}
+            onQuoteSelection={setChatQuotedCode}
           />
         )}
       </div>
