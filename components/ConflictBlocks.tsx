@@ -409,6 +409,7 @@ export function ConflictView({
         // 1, 2 and 3 choose in a conflict, never in the whole-file proposal.
         const blocks = openBlocks().filter((block) => indexOf(block) >= 0);
         const active = document.activeElement?.closest<HTMLElement>(pendingSelector);
+        if (active && indexOf(active) < 0) return false;
         const target = active && blocks.includes(active) ? active : blocks.at(0);
         if (!target) return false;
         choose(indexOf(target), choice);
@@ -514,7 +515,6 @@ function WholeFile({
         <Button size="sm" variant="outline" disabled={disabled} data-choice="whole-file" onClick={onUse}>
           Use this result
         </Button>
-        <span>Or choose each conflict below yourself.</span>
       </div>
     </section>
   );

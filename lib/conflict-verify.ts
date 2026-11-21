@@ -27,15 +27,17 @@ export interface ParsedText {
 export type Analyse = (language: SyntaxLanguage, text: string) => Promise<ParsedText>;
 
 const lineEnding = (text: string) => (/\r\n/.test(text) ? (/(^|[^\r])\n/.test(text) ? 'mixed' : 'crlf') : 'lf');
-/** Each definition by its scope path and kind, such as `class RetryPolicy.method nextDelay`, with its count. */
+/** A definition by its kind and scope path, such as `class RetryPolicy.method nextDelay`. */
+const symbolKey = (definitions: readonly SyntaxDefinition[], d: SyntaxDefinition) =>
+  `${d.kind} ${definitionChain(definitions, d)
+    .map((x) => x.name)
+    .join('.')}`;
+/** The name at the end of a symbol key. */
+const symbolName = (key: string) => key.slice(key.lastIndexOf('.') + 1).replace(/^\S+ /, '');
+/** Each definition by its symbol key, with its count. */
 function symbols(definitions: readonly SyntaxDefinition[]) {
   const counts = new Map<string, number>();
-  for (const d of definitions) {
-    const key = `${d.kind} ${definitionChain(definitions, d)
-      .map((x) => x.name)
-      .join('.')}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
+  for (const key of definitions.map((d) => symbolKey(definitions, d))) counts.set(key, (counts.get(key) ?? 0) + 1);
   return counts;
 }
 
@@ -93,8 +95,7 @@ export async function verifyProposals(
   for (const key of new Set([...o.keys(), ...t.keys(), ...r.keys()])) {
     const [inBase, inOurs, inTheirs, inResult] = [b, o, t, r].map((m) => m.get(key) ?? 0);
     if (inResult > Math.max(inOurs, inTheirs, inOurs + inTheirs - inBase)) {
-      const name = key.slice(key.lastIndexOf('.') + 1).replace(/^\S+ /, '');
-      return { merged: false, note: `${name} is defined twice in the result.` };
+      return { merged: false, note: `${symbolName(key)} is defined twice in the result.` };
     }
   }
   const moved = whole ? lostEdit([file.base, file.ours, file.theirs, probe], parsed) : undefined;
@@ -145,9 +146,7 @@ function lostEdit(texts: string[], parsed: ParsedText[]) {
     const lines = texts[i].split(/\r?\n/);
     const bodies = new Map<string, string[]>();
     for (const d of definitions) {
-      const key = `${d.kind} ${definitionChain(definitions, d)
-        .map((x) => x.name)
-        .join('.')}`;
+      const key = symbolKey(definitions, d);
       const body = lines
         .slice(d.start - 1, d.end)
         .map((line) => line.trim())
@@ -160,7 +159,7 @@ function lostEdit(texts: string[], parsed: ParsedText[]) {
   for (const [key, [base, ...more]] of b) {
     const [ours, theirs, result] = [o, t, r].map((m) => m.get(key));
     if (more.length || ours?.length !== 1 || theirs?.length !== 1 || result?.length !== 1) continue;
-    const name = key.slice(key.lastIndexOf('.') + 1).replace(/^\S+ /, '');
+    const name = symbolName(key);
     if (base === ours[0] && base !== theirs[0] && result[0] !== theirs[0])
       return `${name} in the result doesn’t match main’s change to it.`;
     if (base === theirs[0] && base !== ours[0] && result[0] !== ours[0])
@@ -179,22 +178,13 @@ export function accountWholeFile(
   result: string,
   indented: boolean
 ): string | undefined {
-  const spelled = new Map<string, string>();
+  const { lines, report } = lineAccount(indented);
   const count = (text: string) => {
     const counts = new Map<string, number>();
-    for (const raw of text.split(/\r?\n/)) {
-      const line = (indented ? raw.replace(/\s+$/, '') : raw.replace(/\s+/g, '')).replace(/,$/, '');
-      if (!line.trim()) continue;
-      if (!spelled.has(line)) spelled.set(line, raw.trim());
-      counts.set(line, (counts.get(line) ?? 0) + 1);
-    }
+    for (const line of lines(text)) counts.set(line, (counts.get(line) ?? 0) + 1);
     return counts;
   };
   const [base, ours, theirs, merged] = [file.base, file.ours, file.theirs, result].map(count);
-  const shown = (line: string) => {
-    const text = spelled.get(line) ?? line;
-    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
-  };
   const missing: string[] = [];
   let extra: string | undefined;
   for (const line of new Set([...base.keys(), ...ours.keys(), ...theirs.keys(), ...merged.keys()])) {
@@ -203,16 +193,45 @@ export function accountWholeFile(
     if (r < expected) missing.push(line);
     else if (r > expected) extra ??= line;
   }
-  // Name the most telling missing line: one with a word in it, not a lone brace.
-  const line = missing.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? missing.at(0);
-  if (line !== undefined) {
-    const from = ours.has(line) ? (theirs.has(line) ? 'both sides' : 'the PR') : 'main';
-    return `${shown(line)} from ${from} is missing from the result.`;
-  }
-  if (extra !== undefined)
-    return base.has(extra)
-      ? `${shown(extra)} was removed on one side but is still in the result.`
-      : `${shown(extra)} is in neither side.`;
+  return report(missing, extra, { base, ours, theirs });
+}
+
+/**
+ * Lines as the line accounting compares them: blank lines, trailing commas and whitespace are ignored; in Python and
+ * YAML, indentation counts. `report` names the first problem: the most telling missing line, else a line too many.
+ */
+function lineAccount(indented: boolean) {
+  const spelled = new Map<string, string>();
+  const lines = (text: string) =>
+    text.split(/\r?\n/).flatMap((raw) => {
+      const line = (indented ? raw.replace(/\s+$/, '') : raw.replace(/\s+/g, '')).replace(/,$/, '');
+      if (!line.trim()) return [];
+      if (!spelled.has(line)) spelled.set(line, raw.trim());
+      return [line];
+    });
+  const shown = (line: string) => {
+    const text = spelled.get(line) ?? line;
+    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+  };
+  type Side = { includes(line: string): boolean } | { has(line: string): boolean };
+  const holds = (side: Side, line: string) => ('has' in side ? side.has(line) : side.includes(line));
+  const report = (
+    missing: string[],
+    extra: string | undefined,
+    sides: { base: Side; ours: Side; theirs: Side }
+  ): string | undefined => {
+    // Name the most telling missing line: one with a word in it, not a lone brace.
+    const line = missing.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? missing.at(0);
+    if (line !== undefined) {
+      const from = holds(sides.ours, line) ? (holds(sides.theirs, line) ? 'both sides' : 'the PR') : 'main';
+      return `${shown(line)} from ${from} is missing from the result.`;
+    }
+    if (extra !== undefined)
+      return holds(sides.base, extra)
+        ? `${shown(extra)} was removed on one side but is still in the result.`
+        : `${shown(extra)} is in neither side.`;
+  };
+  return { lines, report };
 }
 
 /**
@@ -227,14 +246,7 @@ export function accountLines(
   indented: boolean
 ): string | undefined {
   if (block.base === undefined) return 'Gnosis couldn’t see the lines before both changes.';
-  const spelled = new Map<string, string>();
-  const lines = (text: string) =>
-    text.split(/\r?\n/).flatMap((raw) => {
-      const line = (indented ? raw.replace(/\s+$/, '') : raw.replace(/\s+/g, '')).replace(/,$/, '');
-      if (!line.trim()) return [];
-      if (!spelled.has(line)) spelled.set(line, raw.trim());
-      return [line];
-    });
+  const { lines, report } = lineAccount(indented);
   const [base, ours, theirs, merged] = [block.base, block.ours, block.theirs, result].map(lines);
   const [mine, other] = [changesOf(base, ours), changesOf(base, theirs)];
   const same = (a: LineChange, b: LineChange) =>
@@ -256,22 +268,9 @@ export function accountLines(
   for (const c of other) if (!mine.some((m) => same(m, c))) c.added.forEach(add);
   const found = new Map<string, number>();
   for (const line of merged) found.set(line, (found.get(line) ?? 0) + 1);
-  const shown = (line: string) => {
-    const text = spelled.get(line) ?? line;
-    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
-  };
-  // Name the most telling missing line: one with a word in it, not a lone brace.
   const missing = [...expected].filter(([line, n]) => (found.get(line) ?? 0) < n).map(([line]) => line);
-  const line = missing.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? missing.at(0);
-  if (line !== undefined) {
-    const from = ours.includes(line) ? (theirs.includes(line) ? 'both sides' : 'the PR') : 'main';
-    return `${shown(line)} from ${from} is missing from the result.`;
-  }
-  for (const [line, n] of found)
-    if (n > (expected.get(line) ?? 0))
-      return base.includes(line)
-        ? `${shown(line)} was removed on one side but is still in the result.`
-        : `${shown(line)} is in neither side.`;
+  const extra = [...found].find(([line, n]) => n > (expected.get(line) ?? 0))?.[0];
+  return report(missing, extra, { base, ours, theirs });
 }
 /** A side's edits against the ancestor: each replaces ancestor lines [start, end) with `added`. */
 interface LineChange {
@@ -403,9 +402,10 @@ export function blockBuckets(
   verdict: Verdict | undefined
 ): ConflictBucket[] {
   if (file.unsupported) return ['decide'];
-  // A whole-file proposal is one thing to check, until you use it or start choosing conflicts yourself. One that failed
-  // its checks leaves the conflicts to decide.
-  if (file.wholeFile && contents === file.original && (!verdict || verdict.passed)) return ['check'];
+  // A whole-file proposal puts every conflict in Check, until you use it or start choosing conflicts yourself. One that
+  // failed its checks leaves them to decide.
+  if (file.wholeFile && contents === file.original && (!verdict || verdict.passed))
+    return parseConflicts(file.original).flatMap((s) => (s.kind === 'conflict' ? ['check' as const] : []));
   const segments = parseConflicts(file.original);
   const choices = inferChoices(segments, contents, file.proposals);
   const blocks = segments.filter((s) => s.kind === 'conflict');
@@ -438,8 +438,10 @@ export interface BucketSummary {
   needs: number;
   /** Proposals whose checks are still running. */
   checking: number;
-  /** Of `needs`: Decide blocks, and whole-file proposals to check. */
+  /** Of `needs`: Decide blocks, and the conflicts that whole-file proposals cover. */
   decide: number;
+  wholeConflicts: number;
+  /** Whole-file proposals to check, one per file. */
   wholeFiles: number;
 }
 export function bucketSummary(
@@ -452,15 +454,17 @@ export function bucketSummary(
     needs: 0,
     checking: 0,
     decide: 0,
+    wholeConflicts: 0,
     wholeFiles: 0,
   };
   for (const { buckets, verdict, reviewed, whole } of files) {
+    if (whole && !reviewed && buckets.includes('check')) summary.wholeFiles++;
     for (const bucket of buckets) {
       summary.conflicts++;
       if (bucket === 'merged') summary.merged++;
       else if (bucket === 'decide' || (bucket === 'check' && !reviewed)) summary.needs++;
       if (bucket === 'decide') summary.decide++;
-      if (bucket === 'check' && whole && !reviewed) summary.wholeFiles++;
+      if (bucket === 'check' && whole && !reviewed) summary.wholeConflicts++;
       // Only a proposal is in Check: with no verdict yet, its checks are running.
       if (bucket === 'check' && !verdict) summary.checking++;
     }
@@ -468,8 +472,9 @@ export function bucketSummary(
   return summary;
 }
 /**
- * "3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you." Whole-file proposals are named:
- * "1 proposal to check.", or "2 need you: 1 proposal to check, 1 to decide."
+ * "3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you." Whole-file proposals are named, with the
+ * conflicts they cover: "1 proposal to check for 2 conflicts.", or "3 need you: 1 proposal to check for 2 conflicts,
+ * 1 to decide."
  */
 export function summarySentence(s: BucketSummary) {
   const files = s.files === 1 ? '1 file conflicts.' : `${s.files} files conflict.`;
@@ -486,9 +491,10 @@ export function summarySentence(s: BucketSummary) {
   return files + merged + needs;
 }
 function wholeFileNeeds(s: BucketSummary) {
-  const check = s.needs - s.decide - s.wholeFiles;
+  const check = s.needs - s.decide - s.wholeConflicts;
+  const covers = s.wholeConflicts > s.wholeFiles ? ` for ${s.wholeConflicts} conflicts` : '';
   const parts = [
-    `${s.wholeFiles} ${s.wholeFiles === 1 ? 'proposal' : 'proposals'} to check`,
+    `${s.wholeFiles} ${s.wholeFiles === 1 ? 'proposal' : 'proposals'} to check${covers}`,
     ...(check ? [`${check} to check`] : []),
     ...(s.decide ? [`${s.decide} to decide`] : []),
   ];

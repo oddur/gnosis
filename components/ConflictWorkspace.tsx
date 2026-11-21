@@ -1244,7 +1244,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           <>
             <div className="conflict-body">
               <nav aria-label="Files" className="conflict-files">
-                {fileStates.map(({ file: f, stage, conflicts, buckets }) => (
+                {fileStates.map(({ file: f, stage, conflicts, buckets, contents: draft }) => (
                   <button
                     key={f.path}
                     disabled={busy}
@@ -1255,6 +1255,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                     <small>
                       {f.unsupported ? (
                         <span className="conflict-file-limitation">Needs a local merge tool</span>
+                      ) : f.wholeFile && draft === f.original && buckets.every((bucket) => bucket === 'check') ? (
+                        <FileStageBadge stage={stage} proposal />
                       ) : stage !== 'reviewed' && buckets.some((bucket) => bucket !== 'decided') ? (
                         <span className="conflict-file-buckets" data-stage={stage}>
                           <FileBuckets buckets={buckets} />
@@ -1273,7 +1275,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                       <div className="conflict-file-title">
                         <strong>{file.path}</strong>
                         {fileStage && !file.unsupported && (
-                          <FileStageBadge stage={fileStage} proposal={!!file.wholeFile && markersRemain} />
+                          <FileStageBadge stage={fileStage} proposal={!!file.wholeFile && contents === file.original} />
                         )}
                       </div>
                       {!file.unsupported && (
@@ -1399,7 +1401,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                                 verdict={verdictOf(file)}
                                 note={file.structuralNote}
                                 wholeFile={
-                                  file.wholeFile && markersRemain
+                                  file.wholeFile && contents === file.original
                                     ? {
                                         proposal: file.wholeFile,
                                         ours: file.ours,

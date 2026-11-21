@@ -154,7 +154,16 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
     { buckets: blockBuckets(b, b.result, ok), verdict: ok, reviewed: false },
     { buckets: blockBuckets(c, c.result, check), verdict: check, reviewed: false },
   ]);
-  assert.deepEqual(summary, { files: 3, conflicts: 6, merged: 3, needs: 3, checking: 0, decide: 1, wholeFiles: 0 });
+  assert.deepEqual(summary, {
+    files: 3,
+    conflicts: 6,
+    merged: 3,
+    needs: 3,
+    checking: 0,
+    decide: 1,
+    wholeConflicts: 0,
+    wholeFiles: 0,
+  });
   assert.equal(summarySentence(summary), '3 files conflict. 3 of 6 conflicts are merged and checked. 3 need you.');
   const reviewed = bucketSummary([{ buckets: blockBuckets(c, c.result, check), verdict: check, reviewed: true }]);
   assert.equal(summarySentence(reviewed), '1 file conflicts. Nothing needs you.');
@@ -163,7 +172,16 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
   ]);
   assert.equal(summarySentence(checking), '1 file conflicts. Checking 2 results…');
   assert.equal(
-    summarySentence({ files: 3, conflicts: 9, merged: 7, needs: 2, checking: 0, decide: 2, wholeFiles: 0 }),
+    summarySentence({
+      files: 3,
+      conflicts: 9,
+      merged: 7,
+      needs: 2,
+      checking: 0,
+      decide: 2,
+      wholeConflicts: 0,
+      wholeFiles: 0,
+    }),
     '3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you.'
   );
   // Whole-file proposals are named as proposals to check.
@@ -173,6 +191,13 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
   assert.equal(
     summarySentence(bucketSummary([whole, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
     '2 files conflict. 2 need you: 1 proposal to check, 1 to decide.'
+  );
+  // One proposal that covers two conflicts says so, and the totals stay per conflict.
+  const covering = { ...whole, buckets: ['check', 'check'] as const };
+  assert.equal(summarySentence(bucketSummary([covering])), '1 file conflicts. 1 proposal to check for 2 conflicts.');
+  assert.equal(
+    summarySentence(bucketSummary([covering, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
+    '2 files conflict. 3 need you: 1 proposal to check for 2 conflicts, 1 to decide.'
   );
 });
 
@@ -339,8 +364,8 @@ void test('a whole-file proposal is checked as a whole, accepts a move, and is n
   assert.equal(doubled.passed, undefined);
   // One Check item while the draft is the original conflict; your own choices count as usual.
   const whole = file([], { proposals: undefined, wholeFile: merged('x\n') });
-  assert.deepEqual(blockBuckets(whole, original, { merged: false, passed: true, note: '' }), ['check']);
-  assert.deepEqual(blockBuckets(whole, original, undefined), ['check'], 'One stop while its checks run');
+  assert.deepEqual(blockBuckets(whole, original, { merged: false, passed: true, note: '' }), ['check', 'check']);
+  assert.deepEqual(blockBuckets(whole, original, undefined), ['check', 'check'], 'Check while its checks run');
   // One that failed its checks leaves the conflicts to decide.
   assert.deepEqual(blockBuckets(whole, original, { merged: false, note: 'x' }), ['decide', 'decide']);
   assert.notEqual(proposalKey(whole), proposalKey(file([], { proposals: undefined })));

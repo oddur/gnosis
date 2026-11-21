@@ -1096,7 +1096,7 @@ void app.whenReady().then(async () => {
     );
     assert.deepEqual(
       await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
-      ['1 to check', '1 to decide']
+      ['Proposal ready', '1 to decide']
     );
     const whole = "document.querySelector('.conflict-whole-file')";
     assert.equal(await js(`${whole}.dataset.bucket`), 'check');
@@ -1122,6 +1122,16 @@ void app.whenReady().then(async () => {
     await key('k');
     assert.equal(await activeBlock(), '-1');
     await captureAll('whole-file-conflicts-shown');
+    // 1, 2 and 3 never choose for a conflict while the proposal has focus.
+    await key('1');
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    // Once you choose a conflict yourself, the proposal steps aside; Reset file brings it back.
+    await key('j');
+    await key('1');
+    await wait(`${block(0)}?.dataset.state==='kept'`);
+    assert.equal(await js(`!!${whole}`), false, 'Use this result would replace your choice');
+    await click('Reset file');
+    await wait(`!!${whole}`);
     await click('Use this result');
     await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='mergiraf'&&r.path==='lab/reorder.go')");
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");

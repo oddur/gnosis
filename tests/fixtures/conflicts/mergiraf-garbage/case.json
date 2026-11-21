@@ -1,9 +1,9 @@
 {
-  "description": "Mergiraf exits 0 but prints unrelated text. It is kept as a whole-file proposal, so it stays in Check with the check that failed, never Merged.",
+  "description": "Mergiraf exits 0 but prints unrelated text. It is kept as a whole-file proposal that fails its checks, so the conflict stays in Decide with the reason, never Merged.",
   "language": "typescript",
   "category": "failure/mergiraf",
   "mergiraf": "garbage",
   "expected": {
-    "src/math.ts": "check"
+    "src/math.ts": "decide"
   }
 }

@@ -522,7 +522,7 @@ export function fixtureReport(results) {
   const whole = rows.filter((r) => r.tier === 'whole-file');
   out.push(
     '',
-    `## Whole-file proposals in Check: ${whole.length}, ${whole.filter((r) => r.wholeFile === 'correct').length} equal the known-correct resolution`,
+    `## Conflicts with a whole-file proposal: ${whole.length}, ${whole.filter((r) => r.wholeFile === 'correct').length} equal the known-correct resolution`,
     '',
     ...whole.map((r) => `- ${r.case} (${r.path}): ${r.wholeFile ?? 'no known-correct resolution'}. ${r.note ?? ''}`)
   );

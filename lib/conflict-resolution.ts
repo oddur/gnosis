@@ -51,6 +51,8 @@ export interface ConflictSession {
   staleReason?: 'head-moved' | 'retargeted';
   dependents?: string[];
   restack?: RestackPlan;
+  /** Preparation ran structural merge and kept whole-file results. Older drafts get the pass once on reopen. */
+  structuralPass?: boolean;
 }
 export interface RestackPlan {
   token: string;
