@@ -7,12 +7,13 @@
 //   GNOSIS_DOCKER_PLATFORM=linux/amd64 npm run test:browser:docker  # CI's architecture
 //   GNOSIS_DOCKER_IMAGE=gnosis-browser-tests-mine npm run test:browser:docker  # a worktree's own image
 //   CI=true npm run test:browser:docker -- --diff-gaps    # timing report-only, as on CI
+//   GNOSIS_GALLERY_ONLY=add-import npm run test:browser:docker -- --conflict-gallery  # writes /tmp/conflict-gallery
 //
 // The Linux Mergiraf for the image is cached in ${XDG_CACHE_HOME:-~/.cache}/gnosis/mergiraf/<version>-linux-<arch>;
 // set GNOSIS_MERGIRAF_CACHE to use another directory instead of …/gnosis/mergiraf.
 import { spawnSync } from 'node:child_process';
 import console from 'node:console';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -84,6 +85,11 @@ run('docker', [
   path.join(root, 'tests/docker/Dockerfile'),
   root,
 ]);
+// The conflict gallery (tests/conflict-gallery-browser.ts) writes its screenshots and contact sheet to the host.
+const gallery = process.env.GNOSIS_GALLERY_DIR || '/tmp/conflict-gallery';
+const mounts = script.includes('conflict-gallery')
+  ? (mkdirSync(gallery, { recursive: true }), ['-v', `${path.resolve(gallery)}:/tmp/conflict-gallery`])
+  : [];
 // Chromium needs a larger /dev/shm than Docker's 64 MB default, and its sandbox needs
 // namespace syscalls that Docker's default seccomp profile blocks.
 run('docker', [
@@ -92,10 +98,11 @@ run('docker', [
   '--init',
   ...platform,
   '--shm-size=2g',
+  ...mounts,
   // Review screenshot modes print PNGs to the log (tests/syntax-scope-browser.ts); pass them through when set.
   // So do the perf settings (tests/perf-budget.ts): the container does not set CI, so timing is enforced there unless
   // CI or GNOSIS_PERF=0 is passed in. `npm run test:perf` passes GNOSIS_PERF=1.
-  ...['GNOSIS_FILE_HEADER_SHOTS', 'GNOSIS_HUNK_HEADER_SHOTS', 'GNOSIS_SYNTAX_SCOPE_SHOT', 'GNOSIS_PARITY_SHOTS', 'GNOSIS_NAV_SHOTS', 'GNOSIS_NOISE_SHOTS', 'GNOSIS_STRUCTURE_BENCH', 'GNOSIS_STRUCTURE_WORKERS', 'GNOSIS_FEEDBACK_INLINE_SHOTS', 'GNOSIS_PR_PEOPLE_SHOTS', 'CI', 'GNOSIS_PERF', 'GNOSIS_PERF_STRICT', 'GNOSIS_PERF_BUDGET_SCALE', 'GNOSIS_INTERACTION_CPU_SLOWDOWN', 'GNOSIS_TYPING_CPU_SLOWDOWN', 'GNOSIS_LONG_TASK_BUDGET', 'GNOSIS_INTERACTION_ONLY', 'GNOSIS_INTERACTION_PROFILE', 'GNOSIS_MOVES_SHOTS'].flatMap((name) =>
+  ...['GNOSIS_FILE_HEADER_SHOTS', 'GNOSIS_HUNK_HEADER_SHOTS', 'GNOSIS_SYNTAX_SCOPE_SHOT', 'GNOSIS_PARITY_SHOTS', 'GNOSIS_NAV_SHOTS', 'GNOSIS_NOISE_SHOTS', 'GNOSIS_STRUCTURE_BENCH', 'GNOSIS_STRUCTURE_WORKERS', 'GNOSIS_FEEDBACK_INLINE_SHOTS', 'GNOSIS_PR_PEOPLE_SHOTS', 'CI', 'GNOSIS_PERF', 'GNOSIS_PERF_STRICT', 'GNOSIS_PERF_BUDGET_SCALE', 'GNOSIS_INTERACTION_CPU_SLOWDOWN', 'GNOSIS_TYPING_CPU_SLOWDOWN', 'GNOSIS_LONG_TASK_BUDGET', 'GNOSIS_INTERACTION_ONLY', 'GNOSIS_INTERACTION_PROFILE', 'GNOSIS_MOVES_SHOTS', 'GNOSIS_GALLERY_ONLY', 'GNOSIS_GALLERY_INTERACT'].flatMap((name) =>
     process.env[name] ? ['-e', `${name}=${process.env[name]}`] : []
   ),
   '--security-opt',

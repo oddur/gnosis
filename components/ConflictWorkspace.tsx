@@ -68,6 +68,7 @@ import { checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
 import { GitHubScopeActions, GitHubScopePrompt } from './GitHubScopePrompt';
+import { registerSettled } from '../lib/test-settled';
 
 const GUIDE_KEY = 'gnosis-conflict-guide';
 const guideDismissed = () => {
@@ -696,6 +697,22 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const canEdit = !!session && !!file && !file.unsupported && !busy && !session.stale && session.status === 'editing';
   const editing = session?.status === 'editing' && session.files.length > 0 && !confirming;
   const shortcutsActive = !!session && editing && !busy && !session.stale;
+  // Browser checks wait on this (lib/test-settled.ts): opened or failed, nothing running or saving, every check done.
+  const settled = useRef<true | string>('opening');
+  useEffect(() => {
+    settled.current = !session
+      ? error
+        ? true
+        : 'opening'
+      : busy
+        ? 'working'
+        : dirty || saveState === 'saving'
+          ? 'saving'
+          : session.files.some((f) => f.proposals && !verdictOf(f))
+            ? 'checking proposals'
+            : true;
+  });
+  useEffect(() => registerSettled('conflict-workspace', () => settled.current), []);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;

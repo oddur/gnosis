@@ -62,6 +62,39 @@ the resolution; the human also edited elsewhere), `reordered`, `cosmetic` (same 
 The "with fixes" column runs the extra checks proposed for #444 (`scripts/conflict-lab-fixes.mjs`) on top of #444's
 own, to show what they would catch and what they would cost.
 
+## See the cases in the conflict workspace
+
+The conflict gallery opens every case in the real conflict workspace, in Electron, and takes screenshots. Use it to
+check a change to the resolver or the workspace, visually and functionally.
+
+```
+npm run test:browser:docker -- --conflict-gallery
+GNOSIS_GALLERY_ONLY=add-import,real-py npm run test:browser:docker -- --conflict-gallery
+```
+
+It covers every case here (each step of a stack, base move or rerere case is its own entry) and a sample of the
+generated matrix: each pattern in 3 languages. `GNOSIS_GALLERY_ONLY` keeps the entries whose name contains one of the
+comma-separated texts. `GNOSIS_GALLERY_INTERACT` names the cases that also go through the interactions.
+
+The workspace sends its requests to `scripts/conflict-gallery-server.mjs`, which runs them through the real conflict
+service on a private bare repository per case (`labRepo` in `scripts/conflict-lab.mjs`). The checks run in the
+renderer, as in the app. Nothing touches the network, and nothing is pushed.
+
+For each case, `tests/conflict-gallery-browser.ts` waits until preparation and the checks settle. Then it checks that
+the buckets match the case's expectations, and that the buckets, the summary line, the file-list badge and the file's
+header badge agree. A Merged block or badge where the case expects `any-but-merged` fails the case. A few cases also go
+through J and K, Keep PR, main and both, Undo, Review result and Mark reviewed, up to the push confirmation.
+
+It writes to `/tmp/conflict-gallery` (set `GNOSIS_GALLERY_DIR` to change it):
+
+- `index.html`: the contact sheet. Each case with its expected and actual buckets, a pass or fail mark, the problems
+  found and the screenshots.
+- `<case>.png` in light, and `<case>-dark.png` for every fourth case and the interaction cases.
+- `interactions/<case>-NN-<step>.png`, and `results.json`.
+
+It takes several minutes, so it is not in a CI shard (`LOCAL_SCRIPTS` in `scripts/run-browser-suites.mjs`). Run it
+before and after a change to the resolver or the workspace, and compare the contact sheets.
+
 ## Seed the scratch repository
 
 `scripts/seed-conflict-lab.mjs` builds the cases into a GitHub repository as real conflicting PRs. All case files live

@@ -28,14 +28,16 @@ const argument = (name) => {
 
 /** The npm scripts whose suites CI runs, in shards. */
 export const CI_SCRIPTS = ['test:explainer', 'test:workbench', 'test:diagrams'];
+/** Long suites that only run on a developer's machine, never in a CI shard (tests/fixtures/conflicts/README.md). */
+export const LOCAL_SCRIPTS = ['test:conflict-gallery'];
 /** A `scripts/test-workbench.mjs --flag` suite flag. */
 export const SUITE_FLAG = /--[a-z0-9-]+/;
 const workbenchCommand = new RegExp(`scripts/test-workbench\\.mjs(?:\\s+(${SUITE_FLAG.source}))?\\s*$`);
 
-/** Every browser suite CI runs as `{ key, command }`, in package.json order. */
-export function browserSuites(scripts) {
+/** Every browser suite CI runs (or the `list` scripts run) as `{ key, command }`, in package.json order. */
+export function browserSuites(scripts, list = CI_SCRIPTS) {
   const suites = [];
-  for (const script of CI_SCRIPTS) {
+  for (const script of list) {
     for (const part of String(scripts[script] ?? '').split('&&')) {
       const command = part.trim();
       if (!command) continue;

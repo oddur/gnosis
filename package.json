@@ -27,6 +27,7 @@
     "diagrams": "node scripts/diagram-gallery.mjs",
     "eval:diagrams": "tsx scripts/evaluate-diagrams.ts",
     "test:perf": "node scripts/test-perf.mjs",
+    "test:conflict-gallery": "node scripts/test-workbench.mjs --conflict-gallery",
     "test:perf:browser": "node scripts/run-browser-suites.mjs --perf",
     "test:diagrams": "tsx --test tests/d2.test.ts && node scripts/test-workbench.mjs --d2",
     "diagrams:mechanisms": "node scripts/diagram-gallery.mjs --mechanisms",
