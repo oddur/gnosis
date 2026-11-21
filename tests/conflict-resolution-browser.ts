@@ -127,7 +127,7 @@ void app.whenReady().then(async () => {
         window.conflictCalls.push(req);const s=window.conflictFixture;
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
-        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;}
+        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;}
         if(req.kind==='resolve'&&s.files.find(f=>f.path===req.path)?.wholeFile){const f=s.files.find(f=>f.path===req.path);f.result=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source='mergiraf';}
         else if(req.kind==='resolve'){s.files[0].result='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
@@ -217,6 +217,10 @@ void app.whenReady().then(async () => {
     // The Conflicts view is a PR tab (#445 item 8), not a modal: notifications use the app's own viewport.
     assert.equal(await js("document.querySelector('.conflict-workspace').contains(document.querySelector('.app-toast'))"), false);
     assert.equal(await js("document.querySelector('.app-toast').getAttribute('role')"), 'group');
+    // Notifications sit above the view's footer, never over its controls.
+    const toastClearsFooter =
+      "document.querySelector('.app-toasts').getBoundingClientRect().bottom <= document.querySelector('.conflict-footer').getBoundingClientRect().top + 0.5";
+    await wait(toastClearsFooter);
     await capture('notification');
     await js(
       "(document.querySelector('.activity-trigger')?.click() ?? window.dispatchEvent(new KeyboardEvent('keydown',{key:'a',shiftKey:true,metaKey:window.electronAPI.platform==='darwin',ctrlKey:window.electronAPI.platform!=='darwin'})))"
@@ -226,6 +230,7 @@ void app.whenReady().then(async () => {
     await js('document.querySelector(\'[aria-label="Close activity"]\').click()');
 
     await resize(760, 800);
+    await wait(toastClearsFooter);
     await capture('notification-narrow');
     assert.ok(await footerFits(), 'The footer stays visible with a notification');
     await resize(1280, 900);
@@ -259,6 +264,18 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.app-toast-host .app-toast')"), false);
     await js('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\').click()');
     await wait("!document.querySelector('.app-toast')");
+
+    // The Conflicts tab never carries to another PR: moving to the next PR opens it on Summary, and prepares nothing.
+    await open();
+    await wait("document.querySelector('.conflict-workspace') && document.querySelector('.pr-overview-tabs [role=tab][data-state=active]')?.textContent==='Conflicts'");
+    const opens = await calls('open');
+    const step = await js<string>("document.querySelector('[aria-label=\"Next change\"]:not(:disabled)') ? 'Next change' : 'Previous change'");
+    await js(`document.querySelector('[aria-label="${step}"]').click()`);
+    await wait(
+      "!document.querySelector('.conflict-workspace') && document.querySelector('.pr-overview-tabs [role=tab][data-state=active]')?.textContent==='Summary'"
+    );
+    assert.equal(await calls('open'), opens, 'No conflict session is prepared for the other PR');
+    assert.equal(await js("[...document.querySelectorAll('.pr-overview-tabs [role=tab]')].some(t=>t.textContent==='Conflicts')"), false);
 
     // Opening focuses the first conflict that needs you.
     await open();

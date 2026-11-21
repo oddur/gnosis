@@ -731,7 +731,8 @@ export function targetFromLocation(location: AppLocation): DeepLinkTarget | unde
   if (item) {
     const ref = prRef(item.subject.members[0]?.url ?? '');
     if (!ref) return undefined;
-    if (home.tab === 'conflicts') return { kind: 'conflicts', pr: ref };
+    // Copy link on the Conflicts view names the PR: a link never opens conflict resolution (#445 item 8).
+    if (home.tab === 'conflicts') return { kind: 'pr', pr: ref };
     const tab = linkTab(home.tab);
     return { kind: 'pr', pr: ref, ...(item.subject.kind === 'stack' ? { scope: 'stack' as const } : {}), ...(tab !== 'summary' ? { tab } : {}) };
   }

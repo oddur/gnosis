@@ -2296,7 +2296,7 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .queue-meta>span { overflow-wrap:anywhere; }
 
 /* Notifications stay above Activity and never take keyboard focus on arrival. */
-.app-toasts { max-height:calc(100dvh - var(--app-titlebar-height) - 24px); overflow-y:auto; overscroll-behavior:contain; position:fixed; right:12px; bottom:12px; z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
+.app-toasts { max-height:calc(100dvh - var(--app-titlebar-height) - 12px - var(--conflict-footer-reserve, 12px)); overflow-y:auto; overscroll-behavior:contain; position:fixed; right:12px; bottom:var(--conflict-footer-reserve, 12px); z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
 .app-toast { flex-shrink:0; pointer-events:auto; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; transition:opacity 180ms ease-out,transform 180ms ease-out; }
 .app-toast[data-starting-style],.app-toast[data-ending-style] { opacity:0; transform:translateY(8px); }
 .app-toast[data-limited] { display:none; }

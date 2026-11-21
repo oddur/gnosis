@@ -513,6 +513,8 @@ function PrSummaryContent({
     if (!shortcutsEnabled) return;
     const keydown = (event: KeyboardEvent) => {
       if (tab === 'explanation' && event.key !== 'Escape') return;
+      // The Conflicts view owns J, K and Escape, wherever focus is.
+      if (tab === 'conflicts') return;
       if (event.composedPath().some((node) => node instanceof Element && node.matches('.pr-changes, .pr-checks-workspace, .conflict-workspace'))) return;
       if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -902,8 +904,15 @@ function StackMergeActions({ subject, signals, checks, onChanged }: {
  * would share its scope, and a pending timer would then keep the whole page alive, the queue's DOM included, for a
  * minute after its workspace tab closed (found from a heap snapshot, #345).
  */
-function scheduleEviction(setVisited: (value: Set<WorkspaceTab>) => void, tab: { current: WorkspaceTab }) {
-  return setTimeout(() => setVisited(new Set([tab.current])), 60_000);
+function scheduleEviction(
+  setVisited: (update: (previous: ReadonlySet<WorkspaceTab>) => ReadonlySet<WorkspaceTab>) => void,
+  tab: { current: WorkspaceTab }
+) {
+  // An open Conflicts view is never dropped: it holds your choices until you close it.
+  return setTimeout(
+    () => setVisited((previous) => new Set([tab.current, ...(previous.has('conflicts') ? ['conflicts' as const] : [])])),
+    60_000
+  );
 }
 
 export function PrSummary(props: ComponentProps<typeof PrSummaryContent>) {
