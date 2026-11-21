@@ -1,6 +1,7 @@
 import type { ConflictSession } from '../lib/conflict-resolution';
 import { conflictHeader, type ConflictHeader } from '../lib/conflict-header';
 import type { MergeConflictState } from '../lib/merge-conflicts';
+import type { SyntaxLanguage } from '../lib/syntax-scope';
 import { NO_PERMISSION } from './conflict-resolution-service';
 
 /**
@@ -27,6 +28,8 @@ export interface ConflictPrecomputeDeps {
   onBattery: () => boolean;
   /** The PR's header line changed. */
   changed: (url: string) => void;
+  /** The languages off in Settings: a saved verdict counts only for the same ones (lib/conflict-verdict-key.ts). */
+  disabledLanguages?: () => SyntaxLanguage[];
   /** Preparations at once: 1 or 2. */
   concurrency?: number;
 }
@@ -66,7 +69,7 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
     const known = lines.get(url);
     if (known?.headSha === headSha) return known.header;
     const draft = deps.draft(url, headSha);
-    const header = draft ? conflictHeader(draft.files) : undefined;
+    const header = draft ? conflictHeader(draft.files, deps.disabledLanguages?.() ?? []) : undefined;
     lines.delete(url);
     lines.set(url, { headSha, header });
     bounded(lines);

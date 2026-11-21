@@ -539,6 +539,84 @@ function crumbLabel(kind: DefinitionKind, name: string, language: SyntaxLanguage
   }
 }
 
+/** One syntax node a range of lines holds whole: its type, the declaration inside an `export` or decorator, a name. */
+export interface RangeUnit {
+  type: string;
+  inner?: string;
+  /** What tells two units apart: the name, else the node's text. */
+  name: string;
+  /** A method's parameter types, for overloads. */
+  parameters?: string;
+  /** A decorator runs with it. */
+  decorated?: boolean;
+}
+/** The whole nodes in some lines and the node that holds them. Undefined when a node reaches past the lines. */
+export interface RangeUnits {
+  parent: string;
+  units: RangeUnit[];
+}
+/** Lines [start, end] (1-based, inclusive) as whole nodes of one parent (lib/conflict-union.ts). */
+export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): RangeUnits | undefined {
+  const inside = (n: Node) => line(n.startPosition.row) >= start && lastLine(n) <= end;
+  const overlaps = (n: Node) => line(n.startPosition.row) <= end && lastLine(n) >= start;
+  let node = tree.rootNode;
+  for (;;) {
+    const hit = node.children.filter(overlaps);
+    if (hit.length === 1 && !inside(hit[0])) {
+      node = hit[0];
+      continue;
+    }
+    if (!hit.length || hit.some((c) => !inside(c))) return undefined;
+    const units: RangeUnit[] = [];
+    for (const c of hit) {
+      if (!c.isNamed) {
+        if (c.type !== ',' && c.type !== ';') return undefined;
+        continue;
+      }
+      const inner =
+        c.type === 'export_statement' || c.type === 'decorated_definition'
+          ? (c.childForFieldName('declaration') ?? c.childForFieldName('definition') ?? undefined)
+          : undefined;
+      const target = inner ?? c;
+      const named = target.childForFieldName('name') ?? target.childForFieldName('key');
+      const parameters = target.childForFieldName('parameters');
+      const decorated =
+        c.type === 'decorated_definition' || [c, target].some((n) => n.children.some((x) => x.type === 'decorator'));
+      units.push({
+        type: c.type,
+        ...(inner ? { inner: inner.type } : {}),
+        name: named ? named.text : squash(c.text),
+        ...(parameters
+          ? {
+              parameters: parameters.namedChildren
+                .map((p) => squash(p.childForFieldName('type')?.text ?? p.text))
+                .join(', '),
+            }
+          : {}),
+        ...(decorated ? { decorated } : {}),
+      });
+    }
+    return { parent: node.type, units };
+  }
+}
+/**
+ * Lines (1-based, inclusive) of a tree's ERROR nodes, outermost only, and of the node each MISSING token is missing
+ * from: a `}` missing at the end of the file belongs to the block it would close.
+ */
+export function errorLines(tree: TreeSitter.Tree): [number, number][] {
+  const found: [number, number][] = [];
+  const walk = (n: Node) => {
+    if (n.isError || n.isMissing) {
+      const at = n.isMissing ? (n.parent ?? n) : n;
+      found.push([line(at.startPosition.row), Math.max(line(at.startPosition.row), lastLine(at))]);
+      return;
+    }
+    for (const c of n.children) if (c.hasError || c.isMissing) walk(c);
+  };
+  if (tree.rootNode.hasError) walk(tree.rootNode);
+  return found;
+}
+
 /** The query for a language: the definition patterns of its tag queries, then Gnosis's own. */
 export function definitionQuery(language: SyntaxLanguage, tags: (name: string) => string): string {
   return [...TAG_QUERIES[language].map((name) => definitionPatterns(tags(name))), EXTRA_QUERIES[language]].join('\n\n');
@@ -613,6 +691,9 @@ export function definitionReveal(definition: SyntaxDefinition, cap = WHOLE_DEFIN
 
 // ── Engine ──────────────────────────────────────────────────────────────────
 
+/** Files larger than this are not parsed: their scopes are not worth a worker's time and memory. */
+export const SYNTAX_MAX_CHARACTERS = 1_000_000;
+
 export interface SyntaxEngineFiles {
   /** The runtime's own `web-tree-sitter.wasm`. */
   runtime: () => Promise<Uint8Array>;
@@ -624,11 +705,18 @@ export interface DefinitionsResult {
   definitions: SyntaxDefinition[];
   /** The tree holds an ERROR or MISSING node: the text does not parse cleanly. */
   errors: boolean;
+  /** Where: the lines of each outermost ERROR or MISSING node. */
+  errorLines?: [number, number][];
+  /** The whole nodes in each range asked for (`definitions`' `ranges`). */
+  units?: (RangeUnits | undefined)[];
   /** Milliseconds parsing and querying; `load` is grammar loading, when this call loaded it. */
   parse: number;
   query: number;
   load?: number;
 }
+
+/** What the conflict checks read from one text (lib/conflict-verify.ts). */
+export type SyntaxCheck = Pick<DefinitionsResult, 'definitions' | 'errors' | 'errorLines' | 'units'>;
 
 /**
  * Loads grammars on demand and finds a file's definitions. Each language's grammar and query load once; trees are
@@ -674,7 +762,12 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
   const api = {
     /** Loads a grammar and its query ahead of the first parse that needs it. */
     warm: (id: SyntaxLanguage) => load(id).then(() => undefined),
-    async definitions(id: SyntaxLanguage, text: string): Promise<DefinitionsResult> {
+    async definitions(
+      id: SyntaxLanguage,
+      text: string,
+      /** Line ranges (1-based, inclusive) to read as whole nodes (rangeUnits). */
+      ranges?: readonly (readonly [number, number])[]
+    ): Promise<DefinitionsResult> {
       const loading = !languages.has(id);
       const t0 = performance.now();
       const { language, query } = await load(id);
@@ -689,6 +782,8 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
         return {
           definitions,
           errors: tree.rootNode.hasError,
+          ...(tree.rootNode.hasError ? { errorLines: errorLines(tree) } : {}),
+          ...(ranges ? { units: ranges.map(([start, end]) => rangeUnits(tree, start, end)) } : {}),
           parse: t2 - t1,
           query: performance.now() - t2,
           ...(loading ? { load: t1 - t0 } : {}),

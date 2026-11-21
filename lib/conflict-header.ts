@@ -1,5 +1,7 @@
 import { conflictFileStage, type ConflictFile } from './conflict-resolution';
-import { allMerged, blockBuckets, bucketSummary, fileStatus, proposalKey, summarySentence } from './conflict-verify';
+import { allMerged, blockBuckets, bucketSummary, fileStatus, summarySentence } from './conflict-verify';
+import { verdictKey } from './conflict-verdict-key';
+import type { SyntaxLanguage } from './syntax-scope';
 
 /**
  * The conflict line in the PR header (#445 item 5), before you open Resolve conflicts. It reads the draft that
@@ -14,9 +16,13 @@ export type ConflictHeader =
   | { state: 'no-permission' };
 
 /** A prepared draft's line: its files as saved, each with the verdict the main process saved for its proposals. */
-export function conflictHeader(files: readonly ConflictFile[]): ConflictHeader {
+export function conflictHeader(
+  files: readonly ConflictFile[],
+  disabled: readonly SyntaxLanguage[] = []
+): ConflictHeader {
   const states = files.map((f) => {
-    const verdict = f.verdict && f.verdict.key === proposalKey(f) ? f.verdict.verdict : undefined;
+    // The same comparison as the conflict dialog's: the checks' version, the languages off, the proposals and draft.
+    const verdict = f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined;
     const stage = conflictFileStage(f);
     const buckets = blockBuckets(f, f.result, verdict);
     const status = fileStatus(f, f.result, stage, buckets);

@@ -3,14 +3,8 @@ import path from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
+import { TAGS } from '../lib/syntax-tags';
 import { conflictChecker, type CheckRequest, type CheckResponse, type TreeSitterFiles } from './conflict-checks';
-import javascriptTags from './assets/tree-sitter/javascript-tags.scm?raw';
-import typescriptTags from './assets/tree-sitter/typescript-tags.scm?raw';
-import rustTags from './assets/tree-sitter/rust-tags.scm?raw';
-import goTags from './assets/tree-sitter/go-tags.scm?raw';
-import pythonTags from './assets/tree-sitter/python-tags.scm?raw';
-import javaTags from './assets/tree-sitter/java-tags.scm?raw';
-import csharpTags from './assets/tree-sitter/csharp-tags.scm?raw';
 
 /**
  * The conflict checks' worker thread (src/conflict-checks.ts). It reads the runtime and grammars the renderer ships
@@ -19,15 +13,6 @@ import csharpTags from './assets/tree-sitter/csharp-tags.scm?raw';
 const port = parentPort;
 if (!port) throw new Error('The conflict checks must run in a worker.');
 const files = workerData as TreeSitterFiles;
-const TAGS: Record<string, string> = {
-  javascript: javascriptTags,
-  typescript: typescriptTags,
-  rust: rustTags,
-  go: goTags,
-  python: pythonTags,
-  java: javaTags,
-  csharp: csharpTags,
-};
 const engine = createSyntaxEngine(TreeSitter, {
   runtime: async () => new Uint8Array(await fs.readFile(files.runtime)),
   grammar: async (language) => new Uint8Array(await fs.readFile(path.join(files.grammars, `${language}.wasm`))),

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createConflictPrecompute, type ConflictPrecomputeDeps } from '../src/conflict-precompute';
 import { NO_PERMISSION } from '../src/conflict-resolution-service';
 import { conflictHeader, conflictHeaderLine, NO_PUSH_LINE } from '../lib/conflict-header';
-import { proposalKey } from '../lib/conflict-verify';
+import { verdictKey } from '../lib/conflict-verdict-key';
 import type { ConflictFile, ConflictSession } from '../lib/conflict-resolution';
 
 const A = 'https://github.com/o/r/pull/1';
@@ -26,7 +26,7 @@ function proposed(path: string, merged: boolean): ConflictFile {
     source: 'mergiraf',
     proposals: [{ source: 'mergiraf', text: 'bc\n' }],
   };
-  file.verdict = { key: proposalKey({ ...file }), verdict: { merged, note: merged ? 'Checked.' : 'Check it.' } };
+  file.verdict = { key: verdictKey({ ...file }, []), verdict: { merged, note: merged ? 'Checked.' : 'Check it.' } };
   return file;
 }
 /** A conflict structural merge left: Decide. */

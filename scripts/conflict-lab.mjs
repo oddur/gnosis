@@ -19,12 +19,13 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import * as TreeSitter from 'web-tree-sitter';
 import { createConflictResolutionService } from '../src/conflict-resolution-service.ts';
-import { blockBuckets, proposalKey } from '../lib/conflict-verify.ts';
+import { blockBuckets, blockVerdict } from '../lib/conflict-verify.ts';
+import { verdictKey } from '../lib/conflict-verdict-key.ts';
+import { conflictChecker } from '../src/conflict-checks.ts';
 import { blockProposals } from '../lib/conflict-carry.ts';
 import { hasConflictMarkers } from '../lib/conflict-resolution.ts';
 import { parseConflicts } from '../lib/conflict-blocks.ts';
 import { createSyntaxEngine } from '../lib/syntax-scope.ts';
-import { conflictChecker } from '../src/conflict-checks.ts';
 import { runConflictProcess } from '../src/conflict-process.ts';
 import { proposedChecks } from './conflict-lab-fixes.mjs';
 import { bare, bareGit, casePlan, commitFiles, loadCases, root, sortedLines, squash } from './conflict-lab-lib.mjs';
@@ -127,87 +128,193 @@ function expectedFor(spec, count) {
   return list;
 }
 
-/** One case through the service, step by step (one PR, a stack of PRs, a base move, or a remembered resolution). */
-export async function runCase(c, { keep = false } = {}) {
+/** The steps a case runs: one PR, each PR of a stack, before and after a base move, or first and second PR. */
+export function caseSteps(c) {
+  if (c.meta.stack) return casePlan(c).map((pr) => pr.step);
+  if (c.trees.theirs2) return ['before-move', 'after-move'];
+  if (c.meta.rerere) return ['first', 'second'];
+  return ['pr'];
+}
+/** What a step expects, per conflicted file. */
+export const stepExpectations = (c, step) =>
+  step === 'pr' ? c.meta.expected : (c.meta.steps?.[step] ?? c.meta.expected);
+/** The known-correct resolution of a step, by path. */
+const stepResolution = (c, step) =>
+  c.meta.stack ? c.trees.resolvedSteps?.[step] : step === 'after-move' ? c.trees.resolved2 : c.trees.resolved;
+
+/**
+ * A case's private bare repository with the real conflict service on top of it. `step(name)` brings the repository
+ * to that step, resolving and publishing the steps before it as a person would, and returns the PR URL to open. A
+ * step that ends in a preview (the base move) also returns that reply. The conflict gallery serves this service to
+ * the conflict workspace (scripts/conflict-gallery-server.mjs).
+ */
+export async function labRepo(c) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-conflict-lab-'));
+  let ready = false;
+  try {
+    const lab = await openLab(c, dir);
+    ready = true;
+    return lab;
+  } finally {
+    // A setup that throws leaves no temporary directory behind.
+    if (!ready) await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+async function openLab(c, dir) {
   const remote = path.join(dir, 'remote');
   const git = bareGit(remote);
   const index = path.join(dir, 'index');
-  const steps = [];
-  try {
-    await fs.mkdir(remote);
-    await git(['init', '--bare', '-q', '-b', 'main', '.']);
-    await git(['config', 'uploadpack.allowFilter', 'true']);
-    await git(['config', 'uploadpack.allowAnySHA1InWant', 'true']);
-    const { trees, meta } = c;
-    const base = await commitFiles(git, { files: trees.base, message: 'base', index });
-    const main = await commitFiles(git, {
-      parent: base,
-      files: trees.theirs,
-      replace: true,
-      message: 'main change',
-      index,
-    });
-    await git(['update-ref', 'refs/heads/main', main]);
-    const plan = casePlan(c);
-    let parent = base;
-    for (const pr of plan) {
-      parent = await commitFiles(git, { parent, files: pr.tree, replace: true, message: `${pr.step} change`, index });
-      await git(['update-ref', `refs/heads/${pr.head}`, parent]);
-    }
-    const repo = `lab/${c.name.replace(/[^\w.-]/g, '-').slice(0, 80)}`;
-    const prs = new Map(); // url -> { head, base }
-    const urlFor = (n) => `https://github.com/${repo}/pull/${n}`;
-    plan.forEach((pr, i) => prs.set(urlFor(i + 1), pr));
-    const sha = async (ref) => (await git(['rev-parse', `refs/heads/${ref}`])).stdout;
-    const data = new Map();
-    const context = { account: 'lab', token: 'offline' };
-    const service = createConflictResolutionService({
-      storage: {
-        read: (key) => structuredClone(data.get(key)),
-        write: (key, value) => void data.set(key, structuredClone(value)),
-        flush: async () => {},
-      },
-      directory: () => path.join(dir, 'cache'),
-      context: () => context,
-      read: async (url) => {
-        const pr = prs.get(url);
-        return {
-          account: 'lab',
-          url,
-          repository: repo,
-          headRepo: repo,
-          title: c.name,
-          headSha: await sha(pr.head),
-          baseSha: await sha(pr.base),
-          headBranch: pr.head,
-          baseBranch: pr.base,
-          state: 'OPEN',
-          archived: false,
-          canUpdateBranch: true,
-        };
-      },
-      remote: () => remote,
-      mergeBase: async (_repo, b, h) => (await git(['merge-base', b, h])).stdout,
-      mergiraf: () => binary,
-      suggest: () => Promise.reject(new Error('No AI in the conflict lab.')),
-      // The service checks proposals as the app's main process does (src/conflict-checks.ts), with the case's settings.
-      verify: conflictChecker(engine, meta.languagesOff ?? []),
-    });
-    const binary = await mergirafFor(meta.mergiraf, dir, c.dir);
-    const run = (request) => service.run(request, new AbortController().signal);
+  await fs.mkdir(remote);
+  await git(['init', '--bare', '-q', '-b', 'main', '.']);
+  await git(['config', 'uploadpack.allowFilter', 'true']);
+  await git(['config', 'uploadpack.allowAnySHA1InWant', 'true']);
+  const { trees, meta } = c;
+  const base = await commitFiles(git, { files: trees.base, message: 'base', index });
+  const main = await commitFiles(git, {
+    parent: base,
+    files: trees.theirs,
+    replace: true,
+    message: 'main change',
+    index,
+  });
+  await git(['update-ref', 'refs/heads/main', main]);
+  const plan = casePlan(c);
+  let parent = base;
+  for (const pr of plan) {
+    parent = await commitFiles(git, { parent, files: pr.tree, replace: true, message: `${pr.step} change`, index });
+    await git(['update-ref', `refs/heads/${pr.head}`, parent]);
+  }
+  const repo = `lab/${c.name.replace(/[^\w.-]/g, '-').slice(0, 80)}`;
+  const prs = new Map(); // url -> { head, base }
+  const urlFor = (n) => `https://github.com/${repo}/pull/${n}`;
+  plan.forEach((pr, i) => prs.set(urlFor(i + 1), pr));
+  const sha = async (ref) => (await git(['rev-parse', `refs/heads/${ref}`])).stdout;
+  const data = new Map();
+  const context = { account: 'lab', token: 'offline' };
+  const binary = await mergirafFor(meta.mergiraf, dir, c.dir);
+  const service = createConflictResolutionService({
+    storage: {
+      read: (key) => structuredClone(data.get(key)),
+      write: (key, value) => void data.set(key, structuredClone(value)),
+      flush: async () => {},
+    },
+    directory: () => path.join(dir, 'cache'),
+    context: () => context,
+    read: async (url) => {
+      const pr = prs.get(url);
+      if (!pr) throw new Error(`No lab PR at ${url}`);
+      return {
+        account: 'lab',
+        url,
+        repository: repo,
+        headRepo: repo,
+        title: c.name,
+        headSha: await sha(pr.head),
+        baseSha: await sha(pr.base),
+        headBranch: pr.head,
+        baseBranch: pr.base,
+        state: 'OPEN',
+        archived: false,
+        canUpdateBranch: true,
+      };
+    },
+    remote: () => remote,
+    mergeBase: async (_repo, b, h) => (await git(['merge-base', b, h])).stdout,
+    mergiraf: () => binary,
+    suggest: () => Promise.reject(new Error('No AI in the conflict lab.')),
+    // The service checks proposals as the app's main process does (src/conflict-checks.ts), with the case's settings.
+    verify: (file, disabled) => conflictChecker(engine, disabled)(file),
+    disabledLanguages: () => meta.languagesOff ?? [],
+  });
+  const run = (request, signal = new AbortController().signal) => service.run(request, signal);
 
+  async function resolveAndPublish(session, resolvedTree) {
+    let s = session;
+    for (const f of s.files) {
+      if (f.unsupported) throw new Error(`${f.path} needs a local merge tool, so the lab cannot publish this step.`);
+      const contents =
+        resolvedTree?.get(f.path)?.toString('utf8') ?? (hasConflictMarkers(f.result) ? undefined : f.result);
+      if (contents === undefined) throw new Error(`No resolution for ${f.path}.`);
+      s = (await run({ kind: 'save', id: s.id, version: s.version, path: f.path, contents, resolved: true })).session;
+    }
+    return s;
+  }
+  async function publish(session) {
+    const reply = await run({ kind: 'preview', id: session.id, version: session.version });
+    if (!reply.preview) return reply;
+    return run({
+      kind: 'publish',
+      id: session.id,
+      version: session.version,
+      previewToken: reply.preview.token,
+      message: 'Resolve conflicts',
+    });
+  }
+  async function step(name) {
+    if (meta.stack) {
+      const i = plan.findIndex((pr) => pr.step === name);
+      for (let k = 0; k < i; k++) {
+        const { session } = await run({ kind: 'open', url: urlFor(k + 1) });
+        if (session.files.length) await publish(await resolveAndPublish(session, trees.resolvedSteps?.[plan[k].step]));
+      }
+      return { url: urlFor(i + 1) };
+    }
+    if (name === 'after-move') {
+      const { session } = await run({ kind: 'open', url: urlFor(1) });
+      const reviewed = await resolveAndPublish(session, trees.resolved);
+      const moved = await commitFiles(git, {
+        parent: main,
+        files: trees.theirs2,
+        replace: true,
+        message: 'main moves again',
+        index,
+      });
+      await git(['update-ref', 'refs/heads/main', moved]);
+      const reply = await run({ kind: 'preview', id: reviewed.id, version: reviewed.version });
+      return { url: urlFor(1), reply };
+    }
+    if (name === 'second') {
+      const { session } = await run({ kind: 'open', url: urlFor(1) });
+      await publish(await resolveAndPublish(session, trees.resolved));
+      const again = await commitFiles(git, {
+        parent: base,
+        files: trees.ours,
+        replace: true,
+        message: 'the same change again',
+        index,
+      });
+      await git(['update-ref', 'refs/heads/again', again]);
+      prs.set(urlFor(2), { head: 'again', base: 'main' });
+      return { url: urlFor(2) };
+    }
+    return { url: urlFor(1) };
+  }
+  return { dir, git, run, step, cleanup: () => fs.rm(dir, { recursive: true, force: true }) };
+}
+
+/**
+ * One case through the service, step by step (one PR, a stack of PRs, a base move, or a remembered resolution). Each
+ * step after the first gets its own repository, where the steps before it are resolved and published again.
+ */
+export async function runCase(c, { keep = false } = {}) {
+  const steps = [];
+  const labs = [];
+  const { meta } = c;
+  try {
+    let active;
     async function score(stepName, session, resolvedTree, expectedSpec) {
+      const { dir } = active;
       const files = [];
       const expectedFiles = new Map(Object.entries(expectedSpec ?? {}));
       for (const f of session.files) {
-        // The verdict the service saved with the draft, for these proposals: as the conflict dialog reads it.
-        if ((f.proposals || f.wholeFile) && f.verdict?.key !== proposalKey(f))
+        // The verdict the service saved with the draft, for these proposals: as the conflict dialog reads it. A check
+        // that failed saves nothing, and fails the case.
+        if ((f.proposals || f.wholeFile) && f.verdict?.key !== verdictKey(f, meta.languagesOff ?? []))
           throw new Error(`${f.path} has proposals the service did not check.`);
         const verdict = f.verdict?.verdict;
         const buckets = blockBuckets(f, f.result, verdict);
         // The checks proposed for #444, measured on the side: what the buckets would be with them.
-        const fixNote = verdict?.merged ? proposedChecks(f) : undefined;
+        const fixNote = buckets.includes('merged') ? proposedChecks(f) : undefined;
         const bucketsWithFixes = fixNote ? blockBuckets(f, f.result, { merged: false, note: fixNote }) : buckets;
         const expected = expectedFor(expectedFiles.get(f.path), buckets.length);
         expectedFiles.delete(f.path);
@@ -218,6 +325,11 @@ export async function runCase(c, { keep = false } = {}) {
           fixNote,
           expected,
           note: verdict?.note ?? f.structuralNote,
+          // Each conflict's own reason (#445 item 18), and which proposals are unions of both sides' additions.
+          notes: buckets.map(
+            (_, i) => (f.proposals?.[i] ? blockVerdict(verdict, i)?.note : undefined) ?? f.structuralNote
+          ),
+          sources: buckets.map((_, i) => f.proposals?.[i]?.source),
           unsupported: f.unsupported,
           source: f.source,
         };
@@ -274,10 +386,10 @@ export async function runCase(c, { keep = false } = {}) {
         ];
         // What Git merged on its own, against the known-correct resolution.
         if (accepted.length && session.headSha && session.baseSha) {
-          const merge = await git(['merge-tree', '--write-tree', session.headSha, session.baseSha], {
+          const merge = await active.git(['merge-tree', '--write-tree', session.headSha, session.baseSha], {
             allowed: [0, 1],
           });
-          const text = await git(['cat-file', 'blob', `${merge.stdout.split('\n')[0]}:${p}`], {
+          const text = await active.git(['cat-file', 'blob', `${merge.stdout.split('\n')[0]}:${p}`], {
             allowed: [0, 128],
             encoding: 'buffer',
           });
@@ -288,69 +400,14 @@ export async function runCase(c, { keep = false } = {}) {
       }
       steps.push({ step: stepName, preparation: session.preparation, files });
     }
-    async function resolveAndPublish(session, resolvedTree) {
-      let s = session;
-      for (const f of s.files) {
-        if (f.unsupported) throw new Error(`${f.path} needs a local merge tool, so the lab cannot publish this step.`);
-        const contents =
-          resolvedTree?.get(f.path)?.toString('utf8') ?? (hasConflictMarkers(f.result) ? undefined : f.result);
-        if (contents === undefined) throw new Error(`No resolution for ${f.path}.`);
-        s = (await run({ kind: 'save', id: s.id, version: s.version, path: f.path, contents, resolved: true })).session;
-      }
-      return s;
-    }
-    async function publish(session) {
-      const reply = await run({ kind: 'preview', id: session.id, version: session.version });
-      if (!reply.preview) return reply;
-      return run({
-        kind: 'publish',
-        id: session.id,
-        version: session.version,
-        previewToken: reply.preview.token,
-        message: 'Resolve conflicts',
-      });
-    }
 
-    if (meta.stack) {
-      for (const [i, pr] of plan.entries()) {
-        const { session } = await run({ kind: 'open', url: urlFor(i + 1) });
-        const resolved = trees.resolvedSteps?.[pr.step];
-        await score(pr.step, session, resolved, meta.steps?.[pr.step]);
-        if (i < plan.length - 1 && session.files.length) await publish(await resolveAndPublish(session, resolved));
-      }
-    } else if (trees.theirs2) {
-      const { session } = await run({ kind: 'open', url: urlFor(1) });
-      await score('before-move', session, trees.resolved, meta.steps?.['before-move'] ?? meta.expected);
-      const reviewed = await resolveAndPublish(session, trees.resolved);
-      const moved = await commitFiles(git, {
-        parent: main,
-        files: trees.theirs2,
-        replace: true,
-        message: 'main moves again',
-        index,
-      });
-      await git(['update-ref', 'refs/heads/main', moved]);
-      const reply = await run({ kind: 'preview', id: reviewed.id, version: reviewed.version });
-      await score('after-move', reply.session, trees.resolved2, meta.steps?.['after-move']);
-      steps.at(-1).baseMoved = reply.baseMoved;
-    } else if (meta.rerere) {
-      const { session } = await run({ kind: 'open', url: urlFor(1) });
-      await score('first', session, trees.resolved, meta.steps?.first);
-      await publish(await resolveAndPublish(session, trees.resolved));
-      const again = await commitFiles(git, {
-        parent: base,
-        files: trees.ours,
-        replace: true,
-        message: 'the same change again',
-        index,
-      });
-      await git(['update-ref', 'refs/heads/again', again]);
-      prs.set(urlFor(2), { head: 'again', base: 'main' });
-      const second = await run({ kind: 'open', url: urlFor(2) });
-      await score('second', second.session, trees.resolved, meta.steps?.second);
-    } else {
-      const { session } = await run({ kind: 'open', url: urlFor(1) });
-      await score('pr', session, trees.resolved, meta.expected);
+    for (const name of caseSteps(c)) {
+      active = await labRepo(c);
+      labs.push(active);
+      const { url, reply } = await active.step(name);
+      const session = reply?.session ?? (await active.run({ kind: 'open', url })).session;
+      await score(name, session, stepResolution(c, name), stepExpectations(c, name));
+      if (reply) steps.at(-1).baseMoved = reply.baseMoved;
     }
     return {
       name: c.name,
@@ -367,17 +424,17 @@ export async function runCase(c, { keep = false } = {}) {
     return {
       name: c.name,
       meta: {
-        description: c.meta.description,
-        language: c.meta.language,
-        category: c.meta.category,
-        pattern: c.meta.pattern,
-        axes: c.meta.axes,
+        description: meta.description,
+        language: meta.language,
+        category: meta.category,
+        pattern: meta.pattern,
+        axes: meta.axes,
       },
       steps,
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    if (!keep) await fs.rm(dir, { recursive: true, force: true });
+    if (!keep) await Promise.all(labs.map((lab) => lab.cleanup()));
   }
 }
 
@@ -430,7 +487,8 @@ export function blocks(results) {
             wrongWithFixes: wrongness(expected, withFixes, f.comparison),
             tier: f.tier,
             detail: f.detail,
-            note: f.note,
+            note: f.notes?.[i] ?? f.note,
+            source: f.sources?.[i],
             fixNote: f.fixNote,
             comparison: f.comparison,
             wholeFile: f.wholeFileProposal,

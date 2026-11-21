@@ -14,7 +14,14 @@ import {
   type ConflictFileStage,
   type ConflictProposal,
 } from './conflict-resolution';
-import { definitionChain, syntaxLanguage, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
+import { unionNote, unionOf } from './conflict-union';
+import {
+  definitionChain,
+  syntaxLanguage,
+  type RangeUnits,
+  type SyntaxDefinition,
+  type SyntaxLanguage,
+} from './syntax-scope';
 
 /**
  * Conflict buckets (phase 1 of the conflict redesign). Each conflict block is Merged (resolved during preparation and
@@ -23,20 +30,40 @@ import { definitionChain, syntaxLanguage, type SyntaxDefinition, type SyntaxLang
  */
 export type ConflictBucket = 'merged' | 'check' | 'decide' | 'decided';
 
-/** The outcome of the checks for one file's proposals. `merged` false means they all stay in Check. */
-export interface Verdict {
+/** The outcome of the checks for one conflict's proposal. `merged` false means it stays in Check. */
+export interface BlockVerdict {
   merged: boolean;
   /** What passed, or the first check that failed, in one plain sentence. */
   note: string;
+}
+/**
+ * The outcome of the checks for one file's proposals. `merged` is true when every proposal passed; `note` is the first
+ * failure, or what passed. A failure the checks can trace to some conflicts is theirs alone (`blocks`); one they can't
+ * trace keeps every proposal in the file in Check.
+ */
+export interface Verdict extends BlockVerdict {
   /** A whole-file proposal passed its checks. It is still never Merged. */
   passed?: boolean;
+  /** Each conflict's own outcome, by block index. Absent: every proposal shares the file's. */
+  blocks?: (BlockVerdict | undefined)[];
 }
+/** A conflict's own outcome: its entry in `blocks`, else the file's. Undefined while the checks run. */
+export const blockVerdict = (verdict: Verdict | undefined, index: number): BlockVerdict | undefined =>
+  verdict && (verdict.blocks?.[index] ?? verdict);
 export interface ParsedText {
   definitions: SyntaxDefinition[];
   /** The tree holds an ERROR or MISSING node. */
   errors: boolean;
+  /** The lines (1-based, inclusive) of each outermost ERROR or MISSING node, when the parser said where. */
+  errorLines?: [number, number][];
+  /** The whole nodes in each of `ranges`, as asked (lib/syntax-scope.ts `rangeUnits`). */
+  units?: (RangeUnits | undefined)[];
 }
-export type Analyse = (language: SyntaxLanguage, text: string) => Promise<ParsedText>;
+export type Analyse = (
+  language: SyntaxLanguage,
+  text: string,
+  ranges?: readonly (readonly [number, number])[]
+) => Promise<ParsedText>;
 /** Whether `after` is `before` with formatting changes only (lib/semantic-noise.ts). Rejects when it can't tell. */
 export type Equivalent = (language: SyntaxLanguage, before: string, after: string) => Promise<boolean>;
 
@@ -54,16 +81,63 @@ function symbols(definitions: readonly SyntaxDefinition[]) {
   for (const key of definitions.map((d) => symbolKey(definitions, d))) counts.set(key, (counts.get(key) ?? 0) + 1);
   return counts;
 }
+const newlines = (text: string) => text.split('\n').length - 1;
+
+type Conflict = Extract<ConflictSegment, { kind: 'conflict' }>;
+/**
+ * The file with each proposal in place and each other conflict filled with one side's lines, and where each proposal
+ * landed: lines [start, end], 1-based. An empty proposal reaches the lines on both sides of where it was. `except`
+ * conflicts are filled with the side's lines too.
+ */
+function fill(
+  segments: ConflictSegment[],
+  proposals: readonly (ConflictProposal | null)[],
+  side: 'ours' | 'theirs',
+  except: ReadonlySet<number> = new Set()
+) {
+  let text = '';
+  let line = 1;
+  const regions = new Map<number, [number, number]>();
+  for (const s of segments) {
+    const proposal = s.kind === 'conflict' && !except.has(s.index) ? proposals[s.index] : undefined;
+    const part = s.kind === 'text' ? s.text : proposal ? proposal.text : s.block[side];
+    if (s.kind === 'conflict' && proposal) {
+      const lines = newlines(part) + (part && !part.endsWith('\n') ? 1 : 0);
+      regions.set(s.index, lines ? [line, line + lines - 1] : [line - 1, line]);
+    }
+    text += part;
+    line += newlines(part);
+  }
+  return { text, regions };
+}
+/** The proposals whose lines reach any of `lines`; undefined when one of the ranges reaches none of them. */
+function reaching(regions: ReadonlyMap<number, [number, number]>, lines: readonly (readonly [number, number])[]) {
+  const found = new Set<number>();
+  for (const [start, end] of lines) {
+    const hit = [...regions].filter(([, [a, z]]) => a <= end && z >= start).map(([index]) => index);
+    if (!hit.length) return undefined;
+    for (const index of hit) found.add(index);
+  }
+  return found;
+}
 
 /**
- * Checks one file's proposals together, cheapest first: no conflict markers and one line-ending style; the result
- * parses where both sides parsed (an undecided conflict may take either side's lines); no definition is duplicated.
- * Structural merge is also held to the line accounting of each block (`accountLines`), and to no renamed name coming
- * back, no member declared twice and no stray line. Your own earlier resolutions stay Merged in files Gnosis has no
- * grammar for; structural merge does not.
+ * Checks one file's proposals, cheapest first: no conflict markers and one line-ending style; the result parses where
+ * both sides parsed (an undecided conflict may take either side's lines); no definition is duplicated. Structural merge
+ * and unions (lib/conflict-union.ts) are also held to the line accounting of each block (`accountLines`), and to no
+ * renamed name coming back, no member declared twice and no stray line. A union of both sides' additions is never
+ * Merged: it is in Check with a note on what each side added. Your own earlier resolutions stay Merged in files Gnosis
+ * has no grammar for; nothing else does.
+ *
+ * Each failure belongs to the conflicts it can be traced to: the line checks are per block, a duplicated definition
+ * belongs to the proposals that hold a copy, and, when no conflict is left undecided, a parse error belongs to the
+ * proposals its lines reach once the file parses with them taken out. Only those conflicts go to Check, each with its
+ * own reason. A failure that can't be traced keeps every proposal in the file in Check.
  */
 export async function verifyProposals(
-  file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals'>,
+  file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals'> &
+    /** The draft: a conflict you decided in it is checked as the text you chose, not as its proposal. */
+    Partial<Pick<ConflictFile, 'result'>>,
   analyse: Analyse,
   /** The whole file is one conflict, its three versions, and the first proposal is the whole result. */
   whole = false,
@@ -71,6 +145,10 @@ export async function verifyProposals(
   equivalent?: Equivalent
 ): Promise<Verdict> {
   const proposals = file.proposals ?? [];
+  const parsedConflicts = whole ? [] : parseConflicts(file.original);
+  // A conflict whose text in the draft is not its proposal is yours: it is fixed text around the others, so each
+  // proposal is checked beside what you chose.
+  const chosen = file.result === undefined ? undefined : blockResolutions(parsedConflicts, file.result);
   const segments: ConflictSegment[] = whole
     ? [
         {
@@ -79,50 +157,129 @@ export async function verifyProposals(
           block: { base: file.base, ours: file.ours, theirs: file.theirs, raw: '', line: 1 },
         },
       ]
-    : parseConflicts(file.original);
-  const open = segments.filter(
-    (s): s is Extract<ConflictSegment, { kind: 'conflict' }> => s.kind === 'conflict' && !proposals[s.index]
-  );
-  const probe = segments.map((s) => (s.kind === 'text' ? s.text : (proposals[s.index]?.text ?? s.block.ours))).join('');
-  if (hasConflictMarkers(probe)) return { merged: false, note: 'The result still has conflict markers.' };
+    : parsedConflicts.map((s): ConflictSegment => {
+        if (s.kind !== 'conflict') return s;
+        const text = chosen?.[s.index];
+        return text === undefined || text === proposals[s.index]?.text || hasConflictMarkers(text)
+          ? s
+          : { kind: 'text', text };
+      });
+  const conflicts = segments.filter((s): s is Conflict => s.kind === 'conflict');
+  const open = conflicts.filter((s) => !proposals[s.index]);
+  const proposed = conflicts.filter((s) => proposals[s.index]);
+  let probe = fill(segments, proposals, 'ours');
+  if (hasConflictMarkers(probe.text)) return { merged: false, note: 'The result still has conflict markers.' };
   const ending = lineEnding(file.ours);
-  if (lineEnding(probe) !== ending && ending !== 'mixed')
+  if (lineEnding(probe.text) !== ending && ending !== 'mixed')
     return { merged: false, note: 'The result mixes line endings.' };
+  /** The first failure of each conflict. */
+  const failed = new Map<number, string>();
+  const fail = (index: number, note: string) => void (failed.has(index) || failed.set(index, note));
+  const verdict = (passed: (index: number) => string): Verdict => {
+    const blocks: (BlockVerdict | undefined)[] = [];
+    for (const s of proposed) {
+      const note = failed.get(s.index);
+      blocks[s.index] = note === undefined ? { merged: true, note: passed(s.index) } : { merged: false, note };
+    }
+    const first = blocks.find((v) => v && !v.merged) ?? blocks.find(Boolean);
+    // A proposal your draft decided wasn't checked as itself: if you pick it again before the draft is saved, it
+    // stays in Check rather than borrowing the file's verdict.
+    const unchecked = proposals.flatMap((p, index) =>
+      p && !proposed.some((s) => s.index === index) ? [index] : []
+    );
+    for (const index of unchecked)
+      blocks[index] = { merged: false, note: 'You changed this conflict. Gnosis checks it again when you save.' };
+    const shared =
+      !unchecked.length &&
+      proposed.every(({ index }) => blocks[index]?.merged === first?.merged && blocks[index]?.note === first?.note);
+    return {
+      merged: !failed.size && proposed.length > 0,
+      note: first?.note ?? '',
+      ...(shared ? {} : { blocks }),
+    };
+  };
   const language = syntaxLanguage(file.path);
-  if (!language)
-    return proposals.every((p) => !p || p.source === 'rerere')
-      ? { merged: true, note: 'Same as you resolved before. Gnosis can’t parse this file type.' }
-      : { merged: false, note: 'Gnosis can’t parse this file type, so it couldn’t check the result.' };
+  if (!language) {
+    // Your own earlier resolutions stay Merged; nothing else can be checked.
+    for (const s of proposed)
+      if (proposals[s.index]?.source !== 'rerere')
+        fail(s.index, 'Gnosis can’t parse this file type, so it couldn’t check the result.');
+    return verdict(() => 'Same as you resolved before. Gnosis can’t parse this file type.');
+  }
+  // Each union's two insertions, as lines of the probe, to read as whole syntax nodes.
+  const unions = proposed.flatMap((s) => {
+    const union = proposals[s.index]?.source === 'union' ? unionOf(s.block) : undefined;
+    return union ? [{ index: s.index, union }] : [];
+  });
+  const unionRanges = (regions: ReadonlyMap<number, [number, number]>) =>
+    unions.length
+      ? unions.flatMap(({ index, union }) => {
+          const start = (regions.get(index)?.[0] ?? 0) + union.before;
+          return [
+            [start, start + union.ours - 1],
+            [start + union.ours, start + union.ours + union.theirs - 1],
+          ] as [number, number][];
+        })
+      : undefined;
   let parsed: ParsedText[];
   try {
-    parsed = await Promise.all([file.base, file.ours, file.theirs, probe].map((text) => analyse(language, text)));
+    parsed = await Promise.all([
+      ...[file.base, file.ours, file.theirs].map((text) => analyse(language, text)),
+      analyse(language, probe.text, unionRanges(probe.regions)),
+    ]);
+    const [, ours, theirs, result] = parsed;
+    // The probe fills undecided conflicts with the PR's lines; with main's lines it may parse. Only a result that fails
+    // both ways is the proposals' fault. With every conflict proposed, it is the fault of the ones its errors reach, when
+    // the file parses with those taken out. With one undecided, the whole file's: a proposal can't be cleared against one
+    // filling of the open conflicts.
+    if (
+      result.errors &&
+      !ours.errors &&
+      !theirs.errors &&
+      (!open.length || (await analyse(language, fill(segments, proposals, 'theirs').text)).errors)
+    ) {
+      const suspects = result.errorLines?.length ? reaching(probe.regions, result.errorLines) : undefined;
+      let without: { probe: typeof probe; parsed: ParsedText } | undefined;
+      const traceable = suspects && !open.length && suspects.size < proposed.length;
+      for (const side of traceable ? (['ours', 'theirs'] as const) : []) {
+        const next = fill(segments, proposals, side, suspects);
+        const read = await analyse(language, next.text, unionRanges(next.regions));
+        if (!read.errors) {
+          without = { probe: next, parsed: read };
+          break;
+        }
+      }
+      if (!suspects || !without) return { merged: false, note: 'The result doesn’t parse.' };
+      for (const index of suspects) fail(index, 'This result doesn’t parse.');
+      probe = without.probe;
+      parsed[3] = without.parsed;
+    }
   } catch {
     return { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' };
   }
-  const [, ours, theirs, result] = parsed;
-  // The probe fills undecided conflicts with the PR's lines; with main's lines it may parse. Only a result that fails
-  // both ways is the proposals' fault.
-  if (result.errors && !ours.errors && !theirs.errors) {
-    const withMain = segments.map((s) => (s.kind === 'text' ? s.text : (proposals[s.index]?.text ?? s.block.theirs)));
-    if (!open.length || (await analyse(language, withMain.join(''))).errors)
-      return { merged: false, note: 'The result doesn’t parse.' };
-  }
+  const result = parsed[3];
   const [b, o, t, r] = parsed.map((p) => symbols(p.definitions));
   for (const key of new Set([...o.keys(), ...t.keys(), ...r.keys()])) {
     const [inBase, inOurs, inTheirs, inResult] = [b, o, t, r].map((m) => m.get(key) ?? 0);
     if (inResult > Math.max(inOurs, inTheirs, inOurs + inTheirs - inBase)) {
-      return { merged: false, note: `${symbolName(key)} is defined twice in the result.` };
+      const note = `${symbolName(key)} is defined twice in the result.`;
+      // The proposals in place that hold a copy. With none, the copies come from lines the proposals didn't write.
+      const copies = result.definitions.filter((d) => symbolKey(result.definitions, d) === key);
+      const holders = [...probe.regions].filter(([, [a, z]]) => copies.some((d) => a <= d.end && z >= d.start));
+      if (!holders.length) return { merged: false, note };
+      for (const [index] of holders) fail(index, note);
     }
   }
-  const moved = whole ? lostEdit([file.base, file.ours, file.theirs, probe], parsed) : undefined;
+  const moved = whole ? lostEdit([file.base, file.ours, file.theirs, probe.text], parsed) : undefined;
   if (moved) return { merged: false, note: moved };
-  // Your own earlier resolutions may drop a side on purpose: only structural merge is held to the line accounting.
-  let reformat: string | undefined;
-  if (proposals.some((p) => p?.source === 'mergiraf')) {
+  // Your own earlier resolutions may drop a side on purpose: only structural merge and unions are held to the line
+  // accounting.
+  const reformats = new Map<number, string>();
+  if (proposals.some((p) => p && p.source !== 'rerere')) {
     const indented = language === 'python' || language === 'yaml';
-    for (const s of segments) {
-      const proposal = s.kind === 'conflict' ? proposals[s.index] : undefined;
-      if (s.kind !== 'conflict' || !proposal) continue;
+    for (const s of proposed) {
+      const proposal = proposals[s.index];
+      if (!proposal) continue;
       // Spacing inside a line is ignored by the count, so a side whose only change was spacing looks unchanged. Counted
       // again with spacing, such a block is two changes to the same lines: the formatting check below decides it.
       let note = whole
@@ -132,21 +289,32 @@ export async function verifyProposals(
       if (note === SAME_LINES && !whole) {
         const formatted = await reformatted(segments, s.index, proposal.text, language, equivalent);
         if (formatted?.merged) {
-          reformat ??= formatted.note;
+          reformats.set(s.index, formatted.note);
           continue;
         }
         note = formatted?.note ?? note;
       }
-      if (note) return { merged: false, note };
+      if (note) fail(s.index, note);
     }
-    const named =
-      danglingName(file, segments) ?? duplicateMember(segments, proposals) ?? strayLine(segments, proposals);
-    if (named) return { merged: false, note: named };
+    // A union is never Merged. Its note comes from the syntax nodes each side added; an earlier failure on the block wins.
+    unions.forEach(({ index }, k) => {
+      // A union set aside for a parse error was not in the text these units came from.
+      const units = probe.regions.has(index) ? result.units : undefined;
+      fail(index, unionNote(language, units?.[2 * k], units?.[2 * k + 1]));
+    });
+    for (const s of proposed)
+      if (proposals[s.index]?.source === 'union') fail(s.index, unionNote(language, undefined, undefined));
+    for (const [index, note] of [
+      ...danglingNames(file, segments),
+      ...duplicateMembers(segments, proposals),
+      ...strayLines(segments, proposals),
+    ])
+      fail(index, note);
   }
-  return {
-    merged: true,
-    note: reformat ? `${reformat} The file parses.` : 'The file parses. Every line of both sides is accounted for.',
-  };
+  return verdict((index) => {
+    const own = reformats.get(index);
+    return own ? `${own} The file parses.` : 'The file parses. Every line of both sides is accounted for.';
+  });
 }
 
 /** The line check's note when both sides changed the same lines: the proposal combines them, so read it. */
@@ -420,8 +588,12 @@ const words = (text: string) => new Set(text.match(/[A-Za-z_$][\w$]*/g) ?? []);
  * argument, and the other side's new lines in the same conflict still use it. A name counts as removed when the side
  * dropped it from the whole file, or from that conflict's lines while the ancestor had it there.
  */
-function danglingName(file: Pick<ConflictFile, 'base' | 'ours' | 'theirs' | 'proposals'>, segments: ConflictSegment[]) {
+function danglingNames(
+  file: Pick<ConflictFile, 'base' | 'ours' | 'theirs' | 'proposals'>,
+  segments: ConflictSegment[]
+) {
   const whole = { base: words(file.base), ours: words(file.ours), theirs: words(file.theirs) };
+  const found: [number, string][] = [];
   for (const s of segments) {
     const proposal = s.kind === 'conflict' ? file.proposals?.[s.index] : undefined;
     if (s.kind !== 'conflict' || !proposal) continue;
@@ -431,12 +603,14 @@ function danglingName(file: Pick<ConflictFile, 'base' | 'ours' | 'theirs' | 'pro
       ((whole.base.has(word) && !whole[side].has(word)) || (block.base.has(word) && !block[side].has(word)));
     for (const word of words(proposal.text)) {
       if (word.length < 2 || KEYWORDS.has(word)) continue;
-      if (removed(word, 'ours', 'theirs'))
-        return `${word} was renamed or removed on the PR, but the result still uses it.`;
-      if (removed(word, 'theirs', 'ours'))
-        return `${word} was renamed or removed on main, but the result still uses it.`;
+      const side = removed(word, 'ours', 'theirs') ? 'the PR' : removed(word, 'theirs', 'ours') ? 'main' : undefined;
+      if (side) {
+        found.push([s.index, `${word} was renamed or removed on ${side}, but the result still uses it.`]);
+        break;
+      }
     }
   }
+  return found;
 }
 /**
  * The name each line at a block's first indentation declares or keys: the last word before the first `(`, `=`, `:`,
@@ -461,37 +635,52 @@ function declared(text: string) {
   return counts;
 }
 /** A proposal declares one name twice where neither side's lines did: two enum members, fields or keys. */
-function duplicateMember(segments: ConflictSegment[], proposals: readonly (ConflictProposal | null)[]) {
+function duplicateMembers(segments: ConflictSegment[], proposals: readonly (ConflictProposal | null)[]) {
+  const found: [number, string][] = [];
   for (const s of segments) {
     const proposal = s.kind === 'conflict' ? proposals[s.index] : undefined;
     if (s.kind !== 'conflict' || !proposal) continue;
     const [result, ours, theirs] = [proposal.text, s.block.ours, s.block.theirs].map(declared);
-    for (const [name, n] of result)
-      if (n > Math.max(ours.get(name) ?? 0, theirs.get(name) ?? 0, 1))
-        return `${name} is declared twice in the result.`;
+    const twice = [...result].find(([name, n]) => n > Math.max(ours.get(name) ?? 0, theirs.get(name) ?? 0, 1));
+    if (twice) found.push([s.index, `${twice[0]} is declared twice in the result.`]);
   }
+  return found;
 }
 /** Structural merge sometimes writes a line holding only `;` (JavaScript class fields with CRLF). */
-function strayLine(segments: ConflictSegment[], proposals: readonly (ConflictProposal | null)[]) {
+function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictProposal | null)[]) {
   const semicolons = (text: string) => text.split(/\r?\n/).filter((l) => l.trim() === ';').length;
+  const found: [number, string][] = [];
   for (const s of segments)
     if (s.kind === 'conflict' && proposals[s.index]) {
       const text = proposals[s.index]?.text ?? '';
       if (semicolons(text) > Math.max(semicolons(s.block.ours), semicolons(s.block.theirs)))
-        return 'The result adds a line that holds only a semicolon.';
+        found.push([s.index, 'The result adds a line that holds only a semicolon.']);
     }
+  return found;
 }
 
+/**
+ * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
+ * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
+ */
+export const CHECKS_VERSION = 1;
 const proposalKeys = new WeakMap<object, string>();
 /**
- * A cheap fingerprint of a file's conflict and proposals (FNV-1a and length), remembered per file object. A check
- * result counts only for the proposals it checked.
+ * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A
+ * check result counts only for the proposals it checked, beside the choices it checked them with.
  */
-export function proposalKey(file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'>) {
+export function proposalKey(
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'> & Partial<Pick<ConflictFile, 'result'>>
+) {
   let key = proposalKeys.get(file);
   if (key === undefined) {
     const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
-    const text = [file.original, ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : ''))].join('\u0000');
+    const text = [
+      file.original,
+      ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
+      // The draft matters only to per-conflict checks; a whole-file check ignores it.
+      `\u0002${file.wholeFile ? '' : (file.result ?? '')}`,
+    ].join('\u0000');
     let hash = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
     key = `${(hash >>> 0).toString(36)}:${text.length}`;
@@ -529,7 +718,7 @@ export function blockBuckets(
     return blocks.map((s) => {
       const proposal = file.proposals?.[s.index];
       const text = texts?.[s.index];
-      if (proposal && text === proposal.text) return verdict?.merged ? 'merged' : 'check';
+      if (proposal && text === proposal.text) return blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
       if (proposal && text === undefined) return 'check';
       if (texts) return text === undefined ? 'decide' : 'decided';
       return open-- > 0 ? 'decide' : 'decided';
@@ -537,7 +726,7 @@ export function blockBuckets(
   }
   return blocks.map((s) => {
     const pick = choices[s.index];
-    if (pick === 'proposal') return verdict?.merged ? 'merged' : 'check';
+    if (pick === 'proposal') return blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
     return pick ? 'decided' : 'decide';
   });
 }

@@ -78,11 +78,14 @@ import {
   type ConflictBucket,
   type Verdict,
 } from '../lib/conflict-verify';
+import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
+import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { withProposals } from '../lib/conflict-carry';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
 import { GitHubScopeActions, GitHubScopePrompt } from './GitHubScopePrompt';
+import { registerSettled } from '../lib/test-settled';
 
 const statusIcons = {
   decide: CircleAlert,
@@ -434,7 +437,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   // The main process checks proposals and saves the result with the draft (src/conflict-checks.ts). The worker checks
   // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
   const verdictOf = (f: ConflictFile) => {
-    if (f.verdict && f.verdict.key === proposalKey(f)) return f.verdict.verdict;
+    if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence()))) return f.verdict.verdict;
     const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
     return entry?.key === proposalKey(f) ? entry.verdict : undefined;
   };
@@ -442,7 +445,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     for (const f of session?.files ?? []) {
       if (!f.proposals && !f.wholeFile) continue;
       const key = proposalKey(f);
-      if (f.verdict?.key === key || checking.current.get(f.path) === key) continue;
+      if (verdictOf(f) || checking.current.get(f.path) === key) continue;
       checking.current.set(f.path, key);
       void (
         f.wholeFile
@@ -858,6 +861,26 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const canEdit = !!session && !!file && !file.unsupported && !busy && !session.stale && session.status === 'editing';
   const editing = session?.status === 'editing' && session.files.length > 0 && !confirming;
   const shortcutsActive = !!session && editing && !busy && !session.stale;
+  // Browser checks wait on this (lib/test-settled.ts): opened or failed, nothing running or saving, every check done.
+  // A failed save, a failed open and a stale session are settled too: the screen says what went wrong.
+  const committed = useRef({ session, busy, error, dirty, saveState, verdictOf });
+  useEffect(() => {
+    committed.current = { session, busy, error, dirty, saveState, verdictOf };
+  });
+  useEffect(
+    () =>
+      registerSettled('conflict-workspace', () => {
+        const now = committed.current;
+        if (!now.session) return now.error ? true : 'opening';
+        if (now.busy) return 'working';
+        if (now.session.stale || now.saveState === 'failed') return true;
+        if (now.dirty || now.saveState === 'saving') return 'saving';
+        if (now.session.files.some((f) => (f.proposals || f.wholeFile) && !now.verdictOf(f)))
+          return 'checking proposals';
+        return true;
+      }),
+    []
+  );
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
