@@ -1,0 +1,106 @@
+{
+  "id": "drive-by-edits",
+  "title": "Cap the export batch size",
+  "description": "Exports write at most 500 rows per batch.",
+  "source": "gnosis #411 and backtrack #12: a local renamed, a stray console.log removed and a README typo fixed in files the PR is not about.",
+  "files": [
+    {
+      "path": "src/export/batch.ts",
+      "before": [
+        "export const BATCH_ROWS = 2000;",
+        "",
+        "export function batches<T>(rows: T[]): T[][] {",
+        "  const result: T[][] = [];",
+        "  for (let i = 0; i < rows.length; i += BATCH_ROWS) result.push(rows.slice(i, i + BATCH_ROWS));",
+        "  return result;",
+        "}"
+      ],
+      "after": [
+        "export const BATCH_ROWS = 500;",
+        "",
+        "export function batches<T>(rows: T[]): T[][] {",
+        "  const result: T[][] = [];",
+        "  for (let i = 0; i < rows.length; i += BATCH_ROWS) result.push(rows.slice(i, i + BATCH_ROWS));",
+        "  return result;",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "The batch size: a config value.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "src/ui/avatar.ts",
+      "before": [
+        "export function initials(name: string): string {",
+        "  const parts = name.trim().split(/\\s+/);",
+        "  const firstLetters = parts.map((part) => part[0]?.toUpperCase() ?? '');",
+        "  return firstLetters.slice(0, 2).join('');",
+        "}"
+      ],
+      "after": [
+        "export function initials(name: string): string {",
+        "  const parts = name.trim().split(/\\s+/);",
+        "  const letters = parts.map((part) => part[0]?.toUpperCase() ?? '');",
+        "  return letters.slice(0, 2).join('');",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Unrelated local rename."
+        }
+      ]
+    },
+    {
+      "path": "src/ui/menu.ts",
+      "before": [
+        "export function openMenu(items: string[], selected: number): string[] {",
+        "  console.log('openMenu', items, selected);",
+        "  return items.map((item, i) => (i === selected ? `> ${item}` : `  ${item}`));",
+        "}"
+      ],
+      "after": [
+        "export function openMenu(items: string[], selected: number): string[] {",
+        "  return items.map((item, i) => (i === selected ? `> ${item}` : `  ${item}`));",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Stray debug line removed."
+        }
+      ]
+    },
+    {
+      "path": "README.md",
+      "before": [
+        "# Exporter",
+        "",
+        "Exports rows to CSV.",
+        "",
+        "## Usage",
+        "",
+        "Run `exporter --out rows.csv` to wirte every row."
+      ],
+      "after": [
+        "# Exporter",
+        "",
+        "Exports rows to CSV.",
+        "",
+        "## Usage",
+        "",
+        "Run `exporter --out rows.csv` to write every row."
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Typo fix in an unrelated file."
+        }
+      ]
+    }
+  ]
+}

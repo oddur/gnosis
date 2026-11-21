@@ -20,6 +20,8 @@ import {
 } from '../lib/explanation-options';
 
 import { explanationFiles as setupFiles, explanationRepository, loadExplanationSetup, type SourceIdentity } from './explanation-setup';
+import { applyNoise, classifiedNoise, contextOnlyHunks, noiseRequests, normalizeNoiseReduction, ruleNoise, type NoiseReduction } from '../lib/explanation-noise';
+import { plannerEvidence } from '../lib/review-planning';
 import { prepareReviewSource } from './review-start-source';
 import { createWorkflowGraphPreloader, warmWorkflowGraph } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
@@ -2048,6 +2050,9 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   if (workbench.isMutedReview(review)) throw new Error('This review contains a muted PR. Restore it from Muted PRs first.');
   review.reviewId = id;
   includeImageChanges(review);
+  const noiseReduction = normalizeNoiseReduction(review.noiseReduction);
+  if (noiseReduction) review.noiseReduction = noiseReduction;
+  else delete review.noiseReduction;
   for (const slide of review.slides) {
     slide.fileSummaries = normalizeFileSummaries(slide.fileSummaries, slide.diffHunks);
     slide.inlineExplanations = normalizeInlineExplanations(slide.inlineExplanations, slide.diffHunks, review.changedFiles);
@@ -2600,9 +2605,12 @@ function explanationSetupOptions(request: GenerateReviewRequest, source: SourceI
         entry.prUrl === request.prUrl &&
         (!entry.snapshot || entry.snapshot.subject.id === reviewSnapshot?.subject.id),
     );
-  return previous && previous.explanationOptions
-    ? { options: normalizeExplanationOptions(previous.explanationOptions), restored: true }
-    : { options: explanationDefaults(source), restored: false };
+  if (!previous || !previous.explanationOptions) return { options: explanationDefaults(source), restored: false };
+  const options = normalizeExplanationOptions(previous.explanationOptions);
+  // Reduce noise follows the repository's level when the explanation did, so Regenerate after a level change uses it.
+  if (!('reduceNoise' in previous.explanationOptions) || (previous.noiseDefault && options.reduceNoise === previous.noiseDefault))
+    options.reduceNoise = explanationDefaults(source).reduceNoise;
+  return { options, restored: true };
 }
 /** Access and freshness checks for a review scope: one fresh read per PR that also serves as its metadata. */
 const reviewSourceDeps = (token: string | null) => ({
@@ -2765,7 +2773,41 @@ async function runBackgroundGeneration(
 
     // Parse diff into indexed hunks — always needed
     const indexedHunks = buildIndexedHunks(filteredDiff, fileContents, headFileContents);
-    const hunkIndex = formatHunkIndexForPrompt(indexedHunks);
+    // Reduce noise, rules first (lib/explanation-noise.ts): these hunks never reach the planner or a topic.
+    const noiseLevel = options.reduceNoise;
+    // The repository's level now: if it changes later, an explanation that followed it is out of date.
+    const noiseDefault = explanationDefaults(source).reduceNoise;
+    let ruleCuts = new Map<string, string>();
+    if (noiseLevel !== 'off') {
+      reportReviewPhase({ reviewId, phase: 'Finding noise' });
+      const off = disabledLanguages(codeIntelligenceSettings(loadPreferences()));
+      const requests = noiseRequests(indexedHunks, fileContents, headFileContents, (language) => !off.includes(language));
+      // Its own instance of the conflict checks' worker (src/conflict-checks.ts), so it never waits behind a conflict
+      // check: 10 s for each file. Cancelling the explanation stops it. Fail closed: no answer, no rule cuts.
+      const noiseWorker = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), treeSitterAssets, 5_000, 10_000);
+      const stop = () => noiseWorker.dispose();
+      signal.addEventListener('abort', stop, { once: true });
+      let answers: Awaited<ReturnType<typeof noiseWorker.noise>>;
+      try {
+        answers = await noiseWorker.noise(requests, signal);
+      } finally {
+        signal.removeEventListener('abort', stop);
+        noiseWorker.dispose();
+      }
+      signal.throwIfAborted();
+      ruleCuts = ruleNoise(indexedHunks, fileContents, headFileContents, classifiedNoise(requests, answers), noiseLevel);
+      // When every hunk is noise, the noise is the change: explain it.
+      if (ruleCuts.size === indexedHunks.length) ruleCuts = new Map();
+    }
+    const planningHunks = indexedHunks.filter((hunk) => !ruleCuts.has(hunk.id));
+    const hunkIndex = formatHunkIndexForPrompt(planningHunks);
+    let noise = applyNoise([], indexedHunks, ruleCuts, undefined, noiseLevel);
+    const noiseReduction = (): NoiseReduction => ({
+      level: noiseLevel,
+      leftOut: noise.leftOut,
+      defaultLevel: noiseDefault,
+      repository: explanationRepository(source),
+    });
 
     // Full context package only needed for single-shot mode
     let contextPackage = '';
@@ -2797,7 +2839,8 @@ async function runBackgroundGeneration(
     let plan: Awaited<ReturnType<typeof planReview>> | null = null;
 
     const hunkMap = new Map(indexedHunks.map((h) => [h.id, h]));
-    const assignedIds = new Set<string>();
+    // Hunks left out as noise are never placed, in a topic or in "Other changes".
+    const assignedIds = new Set<string>(noise.cut.keys());
 
     // Local-tool mode: when the reviewer opted in on a local review, run the
     // CLI with cwd = repo, stop writing the GitHub-specific MCP config, and
@@ -2818,11 +2861,11 @@ async function runBackgroundGeneration(
       // ── Two-phase: planner → parallel writers ──
       reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
-      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, indexedHunks) + `\n\n<explanation_instructions>\n${instructions}\n</explanation_instructions>`;
+      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, planningHunks, noise.leftOut) + `\n\n<explanation_instructions>\n${instructions}\n</explanation_instructions>`;
       checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
         version: 9, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
-        localToolsOn, plannerContext, hunkIndex,
+        localToolsOn, plannerContext, hunkIndex, reduceNoise: noiseLevel,
       });
       plan = checkpoint.plan ?? await planReview(
         hunkIndex,
@@ -2833,13 +2876,21 @@ async function runBackgroundGeneration(
         thinking ?? false,
         signal,
         { cwd: toolCwd, allowedTools: toolLocalAllowed, nonStrictMcp: toolNonStrictMcp, effort },
+        noiseLevel,
       );
 
       await checkpoint.setPlan(plan);
       console.log(`[main] Planner produced ${plan.topics.length} topics`);
 
+      // The planner's noise list, fail closed: a hunk it neither assigns nor lists still goes to "Other changes".
+      // Only hunks whose whole source the planner saw can be cut from its list.
+      noise = applyNoise(plan.topics, indexedHunks, ruleCuts, plan.noise, noiseLevel, plannerEvidence(planningHunks).complete);
+      assignedIds.clear();
+      for (const id of noise.cut.keys()) assignedIds.add(id);
+      if (noise.cut.size) console.log(`[main] Reduce noise (${noiseLevel}) left out ${noise.cut.size} hunks`);
+
       // Sort topics by planner's order
-      const sortedTopics = [...plan.topics].sort((a, b) => a.order - b.order);
+      const sortedTopics = [...noise.topics].sort((a, b) => a.order - b.order);
       const storyArc = plan.storyArc;
       let completedSections = 0;
       explanationBuilds.event(reviewId, { type: 'plan', topics: sortedTopics.map((topic, idx) => ({ id: `slide-${idx + 1}`, title: topic.title })) });
@@ -2857,6 +2908,7 @@ async function runBackgroundGeneration(
         neighborFileCount: Object.keys(neighborFiles).length,
         excludedFiles: [...excludedPaths],
         explanationOptions: options,
+        noiseReduction: noiseReduction(),
         headSha: prData.headSha,
         baseSha: prData.baseSha,
         headRepo: prData.headRepo,
@@ -2874,7 +2926,7 @@ async function runBackgroundGeneration(
             const topicCtx = buildTopicContext(
               topic, hunkMap, fileContents, headFileContents, neighborFiles,
               prData.title, prData.description, storyArc, sortedTopics,
-              projectClaudeContext,
+              projectClaudeContext, contextOnlyHunks(topic.hunkIds, indexedHunks, noise.cut),
             );
 
             const topicKey = reviewFingerprint({ topicCtx, topic, version: 8 });
@@ -3131,6 +3183,7 @@ async function runBackgroundGeneration(
       neighborFileCount: Object.keys(neighborFiles).length,
       excludedFiles: [...excludedPaths],
       explanationOptions: options,
+      noiseReduction: noiseReduction(),
       generationDurationMs,
       slides: resolvedSlides,
       headSha: prData.headSha,
@@ -3771,7 +3824,7 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
     prData.headSha
   );
 
-  updateHistoryEntry(reviewId, {snapshot:reviewSnapshot, explanationOptions:options});
+  updateHistoryEntry(reviewId, {snapshot:reviewSnapshot, explanationOptions:options, noiseDefault:explanationDefaults(source).reduceNoise});
 
   // Cancel any in-flight generation for this PR
   cancelExistingGenerationForPr(request.prUrl);
@@ -4102,11 +4155,12 @@ async function conflictPermissions(client: ReturnType<typeof discussionClient>, 
 }
 // The conflict checks parse with the runtime and grammars the renderer ships: from the source tree in development, and
 // from the renderer build in a package, where vite.renderer.config.ts keeps their names (#445).
-const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), () => {
+function treeSitterAssets() {
   const grammars = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'src/assets/tree-sitter') : path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/assets/tree-sitter`);
   const runtime = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'node_modules/web-tree-sitter/web-tree-sitter.wasm') : path.join(grammars, 'web-tree-sitter.wasm');
   return { grammars, runtime };
-});
+}
+const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), treeSitterAssets);
 app.on('will-quit', () => conflictChecks.dispose());
 const conflicts = createConflictResolutionService({
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.

@@ -44,6 +44,19 @@ void app.whenReady().then(async () => {
     await count(3);
     assert.equal(await js("sessionStorage.getItem('attempts')"), null, 'Opening setup must not start a model');
     assert.equal(await js("!!document.querySelector('.explanation-file-tree')"), false);
+    // Reduce noise: a segmented control beside the file rules, Conservative by default.
+    const noise = "[...document.querySelectorAll('.explanation-noise-switch [role=radio]')]";
+    assert.deepEqual(await js(`${noise}.map(b=>b.textContent)`), ['Off', 'Conservative', 'Aggressive']);
+    assert.equal(await js(`${noise}.find(b=>b.getAttribute('aria-checked')==='true').textContent`), 'Conservative');
+    assert.equal(await js("document.querySelector('.explanation-noise-switch').getAttribute('role')"), 'radiogroup');
+    await js(`${noise}.find(b=>b.textContent==='Aggressive').click()`);
+    await wait(`${noise}.find(b=>b.getAttribute('aria-checked')==='true')?.textContent==='Aggressive'`);
+    assert.match(await js<string>("document.querySelector('.explanation-noise-description').textContent"), /small related edits/);
+    // Arrow keys move the choice, as in any radio group.
+    await js(`${noise}.find(b=>b.textContent==='Aggressive').focus()`);
+    await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))`);
+    await wait(`${noise}.find(b=>b.getAttribute('aria-checked')==='true')?.textContent==='Off'&&document.activeElement.textContent==='Off'`);
+    await js(`${noise}.find(b=>b.textContent==='Aggressive').click()`);
     await capture('compact');
     await js(
       "[...document.querySelectorAll('.explanation-file-rules label')].find(e=>e.textContent.includes('Test files')).querySelector('input').click()"
@@ -99,6 +112,7 @@ void app.whenReady().then(async () => {
     assert.equal(attempts.length, 1);
     assert.equal(attempts[0].rememberExplanationOptions, true);
     assert.equal(attempts[0].explanationOptions.style, 'custom');
+    assert.equal(attempts[0].explanationOptions.reduceNoise, 'aggressive', 'The level is part of the options');
     assert.deepEqual(attempts[0].explanationOptions.hiddenExtensions, ['.md']);
     win.setSize(1280, 850);
     await open('?restore');
@@ -189,8 +203,30 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.setupRequest.previousReviewId'), 'local-saved');
     assert.equal(await js('window.setupRequest.prUrl'), 'local:/tmp/project#main');
     await click('Cancel');
+    // A level change in the repository's settings marks an explanation that followed the old level out of date.
+    await win.loadURL(process.env.GNOSIS_WORKBENCH_URL + '?pr-summary&noise-outdated');
+    await wait("!!document.querySelector('.queue-row-main')");
+    await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()");
+    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Open AI explanation')");
+    await click('Open AI explanation');
+    await wait("!!document.querySelector('.explanation-noise-outdated')");
+    assert.equal(
+      await js("document.querySelector('.explanation-noise-outdated span').textContent"),
+      'Reduce noise is now Aggressive for this repository. This explanation used Conservative.'
+    );
+    await capture('noise-outdated');
+    await js(`(()=>{const setup=window.electronAPI.getExplanationSetup;window.electronAPI.getExplanationSetup=async r=>{window.setupRequest=r;return setup(r)}})()`);
+    await click('Regenerate');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    assert.equal(await js('window.setupRequest.previousReviewId'), 'workbench-review');
+    assert.equal(
+      await js("document.querySelector('.explanation-noise-switch [aria-checked=true]').textContent"),
+      'Aggressive',
+      'Regenerate offers the repository’s new level'
+    );
+    await click('Cancel');
     console.log(
-      'Explanation setup passed: scope, styles, overrides, restore, saved answer and push update, cancel, errors, bulk retry, responsive layout.'
+      'Explanation setup passed: scope, styles, Reduce noise, overrides, restore, saved answer and push update, cancel, errors, bulk retry, responsive layout.'
     );
   } catch (e) {
     console.error(e);
@@ -203,5 +239,5 @@ void app.whenReady().then(async () => {
 });
 interface GenerateRequest {
   rememberExplanationOptions: boolean;
-  explanationOptions: { style: string; hiddenExtensions: string[] };
+  explanationOptions: { style: string; hiddenExtensions: string[]; reduceNoise: string };
 }

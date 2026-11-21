@@ -1,0 +1,64 @@
+{
+  "id": "doc-comment-reword",
+  "title": "Rename \"rebasing\" to \"moving\" in stack status",
+  "description": "Stack members that need a rebase now say they need to move.",
+  "source": "gnosis #466: JSDoc reworded to match a renamed concept; the code beside it unchanged.",
+  "files": [
+    {
+      "path": "src/stack/status.ts",
+      "before": [
+        "/**",
+        " * Whether a member needs rebasing: its base moved since it was last pushed.",
+        " * Rebasing is shown in the stack header.",
+        " */",
+        "export function needsRebase(member: { baseSha: string; parentHead: string }): boolean {",
+        "  return member.baseSha !== member.parentHead;",
+        "}",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export function statusLabel(member: { baseSha: string; parentHead: string }): string {",
+        "  return needsRebase(member) ? 'needs rebasing' : 'up to date';",
+        "}"
+      ],
+      "after": [
+        "/**",
+        " * Whether a member needs to move: its base moved since it was last pushed.",
+        " * Moving is shown in the stack header.",
+        " */",
+        "export function needsRebase(member: { baseSha: string; parentHead: string }): boolean {",
+        "  return member.baseSha !== member.parentHead;",
+        "}",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export function statusLabel(member: { baseSha: string; parentHead: string }): string {",
+        "  return needsRebase(member) ? 'needs to move' : 'up to date';",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Doc comment reworded only."
+        },
+        {
+          "label": "essential",
+          "note": "The visible label changes.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

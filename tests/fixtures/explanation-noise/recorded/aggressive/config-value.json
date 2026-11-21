@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "This PR raises the upload retry limit from 3 to 5 attempts in `config/upload.yaml`.\n\n- Changes `retry.max_attempts` from 3 to 5.\n- `backoff_ms` stays at 200.\n- A comment-only hunk in the same file is left out.",
+    "riskLevel": "low",
+    "riskRationale": "One config value changes. Failed uploads can now retry more often. This adds load and delay only in failure cases.",
+    "storyArc": "One config value change. It gives uploads two more retry attempts.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Raise upload retry limit to five attempts",
+        "slideType": "config",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does the new `retry.max_attempts` value change for uploads? Check that `backoff_ms: 200` is unchanged and that the file's other settings (team, tier) are not touched. Verify whether the code reads this key as the total attempts or as the retries after the first try.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

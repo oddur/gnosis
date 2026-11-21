@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "The cache size can now be set with the `CACHE_MB` environment variable. `cacheConfig` reads and parses it. It uses the value only when it is a finite number greater than zero. Otherwise it falls back to `DEFAULT_MEGABYTES`.",
+    "riskLevel": "low",
+    "riskRationale": "Small, local change to config parsing with a safe fallback. Invalid input cannot change behavior from the default.",
+    "storyArc": "One change: `cacheConfig` now takes the cache size from `CACHE_MB` and keeps the old default for missing or invalid values.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Read cache size from CACHE_MB with a safe default",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `cacheConfig` choose the cache size, and what happens for missing or invalid `CACHE_MB`? Verify in the source that `DEFAULT_MEGABYTES` is the fallback and that no other caller depends on the old fixed value.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

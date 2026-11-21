@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "Changes the status label for stack members that need a rebase. The label text changes from 'needs rebasing' to 'needs to move'. The check `needsRebase(member)` and the 'up to date' label are unchanged.",
+    "riskLevel": "low",
+    "riskRationale": "One string literal changes in a label function. Other code may compare against the old text, which the writer should check.",
+    "storyArc": "One user-visible label is renamed in statusLabel. The review checks that the new text is used correctly and that no consumer depends on the old text.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Rename the rebase status label to 'needs to move'",
+        "slideType": "refactor",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What text does statusLabel return now when a member needs a rebase? Show that the condition is unchanged and only the string differs. Verify that no other code or test compares against 'needs rebasing'.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

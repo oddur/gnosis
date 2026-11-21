@@ -1,0 +1,31 @@
+{
+  "plan": {
+    "summary": "This change makes `joinPath` trim each path segment before it drops empty segments and joins them with `/`. A segment that has only whitespace is now removed.\n\n- `src/paths.ts`: adds `part.trim()` before `filter(Boolean)`.\n- `tests/paths.test.ts`: tests that `[' a ', 'b', '  ']` gives `'a/b'`.\n- `package.json`: adds the new test file to the `test` script.",
+    "riskLevel": "low",
+    "riskRationale": "The change is small and local. It affects one pure helper and has a direct test. Callers that rely on whitespace in segments would see a different result.",
+    "storyArc": "The fix trims names in `joinPath`. A new test shows the behavior, including the removal of whitespace-only segments. The test script change makes the test run with the other tests.",
+    "noise": [
+      {
+        "hunkId": "hunk-2",
+        "reason": "It only registers the new test file in the test script."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Trim path segments before joining",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `joinPath` handle whitespace in segments after this change? Connect the `map(trim)` before `filter(Boolean)` to the test case that has padded and whitespace-only segments.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

@@ -1,0 +1,73 @@
+{
+  "id": "tests-pin-behavior",
+  "title": "Trim names before joining paths",
+  "description": "Path segments are trimmed, so \" a \" and \"a\" join the same.",
+  "source": "gnosis #469, #466: a test that pins the new behavior, and one file appended to the giant package.json \"test\" line.",
+  "files": [
+    {
+      "path": "src/paths.ts",
+      "before": [
+        "export function joinPath(parts: string[]): string {",
+        "  return parts.filter(Boolean).join('/');",
+        "}"
+      ],
+      "after": [
+        "export function joinPath(parts: string[]): string {",
+        "  return parts.map((part) => part.trim()).filter(Boolean).join('/');",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "The behavior change.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "tests/paths.test.ts",
+      "before": null,
+      "after": [
+        "import assert from 'node:assert/strict';",
+        "import test from 'node:test';",
+        "import { joinPath } from '../src/paths';",
+        "",
+        "test('segments are trimmed before joining', () => {",
+        "  assert.equal(joinPath([' a ', 'b', '  ']), 'a/b');",
+        "});"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Pins the new behavior; does not change product behavior.",
+          "behavior": false
+        }
+      ]
+    },
+    {
+      "path": "package.json",
+      "before": [
+        "{",
+        "  \"name\": \"paths\",",
+        "  \"scripts\": {",
+        "    \"test\": \"tsx --test tests/strings.test.ts tests/numbers.test.ts tests/dates.test.ts\"",
+        "  }",
+        "}"
+      ],
+      "after": [
+        "{",
+        "  \"name\": \"paths\",",
+        "  \"scripts\": {",
+        "    \"test\": \"tsx --test tests/strings.test.ts tests/numbers.test.ts tests/dates.test.ts tests/paths.test.ts\"",
+        "  }",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Test file registered in the runner list."
+        }
+      ]
+    }
+  ]
+}

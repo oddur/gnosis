@@ -1,0 +1,46 @@
+{
+  "plan": {
+    "summary": "The PR lowers the export batch size from 2000 to 500 rows. It also includes small cleanups: a variable rename, removal of a debug log, and a README typo fix.",
+    "riskLevel": "low",
+    "riskRationale": "One constant changes the batch size. This is a small runtime change with a simple effect. The other edits are cleanups with no meaningful runtime effect, except a removed console.log.",
+    "storyArc": "The main change caps export batches at 500 rows. The other hunks are unrelated cleanups and do not need explanation.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Local variable rename only. Output is unchanged."
+      },
+      {
+        "hunkId": "hunk-3",
+        "reason": "README typo fix. No runtime effect."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Export batches hold at most 500 rows",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does BATCH_ROWS change for export batching? Verify that batches() uses BATCH_ROWS to size its chunks.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Remove debug logging from openMenu",
+        "slideType": "refactor",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-2"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "The console.log call in openMenu is removed. The returned menu items stay the same.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

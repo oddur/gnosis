@@ -1,0 +1,28 @@
+{
+  "plan": {
+    "summary": "New `Record` IDs now use UUIDv7, which sort by creation time, instead of random UUIDv4.\n\n- `Cargo.toml` swaps the `uuid` feature `v4` for `v7`.\n- `Record::new` calls `Uuid::now_v7()` instead of `Uuid::new_v4()`.\n- `Cargo.lock` adds the dependencies the `v7` feature needs.\n\nExisting records keep their old IDs.",
+    "riskLevel": "low",
+    "riskRationale": "Small change to ID generation. Only new records are affected. IDs stay valid UUIDs. Code that assumes random v4 IDs could be affected.",
+    "storyArc": "The PR changes how new record IDs are made. The dependency feature is enabled first. Then `Record::new` uses it. The lockfile only follows the feature change.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Generate record IDs with UUIDv7",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1",
+          "hunk-2",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How do new records now get their IDs, and which dependency changes allow it? Connect the `v7` feature switch, the lockfile additions (`js-sys`, `rand`), and the `Uuid::now_v7()` call. Verify the lockfile hunks belong to the `uuid` package.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

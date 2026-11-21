@@ -1,0 +1,27 @@
+{
+  "plan": {
+    "summary": "Changes the default model from `model-6-1` to `model-6-2`.\n\n- `DEFAULT_MODEL` in `src/models.ts` now points to `model-6-2`.\n- Two tests update their hard-coded model name to match.",
+    "riskLevel": "low",
+    "riskRationale": "One constant changes. Two tests change only their expected strings. The tests pass an explicit model, so they do not read DEFAULT_MODEL.",
+    "storyArc": "The default model constant is bumped. The two tests then use the new model name in their inputs and expectations.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Default model changes to model-6-2",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1",
+          "hunk-2"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What is the new default model, and how do the tests follow? Verify whether the tests read DEFAULT_MODEL or pass the model name explicitly. The excerpts show explicit values.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

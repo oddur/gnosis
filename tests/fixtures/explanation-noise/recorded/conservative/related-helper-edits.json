@@ -1,0 +1,41 @@
+{
+  "plan": {
+    "summary": "Ctrl+C now asks for confirmation before the app quits.\n\n- `App` gets a `quit_requested` flag, set to false at start.\n- The first Ctrl+C sets the flag. A second Ctrl+C sets `running` to false.\n- The footer shows \"Press Ctrl+C again to quit\" while the flag is set.",
+    "riskLevel": "low",
+    "riskRationale": "Small, local UI behavior change. No auth, data, or API impact. The hunks show no tests.",
+    "storyArc": "The PR adds a confirmation state to the app. The key handler then uses it for a two-step quit. The footer then shows the prompt to the user.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Two-step Ctrl+C quit with a confirmation state",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1",
+          "hunk-2"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does Ctrl+C now need two presses to quit? Connect the new `quit_requested` field, its default, and the two match arms in `on_key`. Verify that no other key resets the flag.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Footer prompt while quit is pending",
+        "slideType": "feature",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-3"
+        ],
+        "dependsOn": [
+          "Two-step Ctrl+C quit with a confirmation state"
+        ],
+        "order": 2,
+        "narrativeBrief": "How does the user see that a second Ctrl+C is needed? The footer reads `quit_requested` and returns the prompt text before the normal selection text.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

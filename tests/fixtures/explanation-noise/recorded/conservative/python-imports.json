@@ -1,0 +1,39 @@
+{
+  "plan": {
+    "summary": "Health checks now give up after two seconds. `probe` sends an HTTP GET with a 2-second timeout and returns the status code. `run_checks` also runs a new cache check.\n\n- `probe()` in `service/probe.py` uses `httpx.get(url, timeout=2.0)` and adds `status` to its JSON result.\n- `run_checks()` in `service/health.py` adds `check_cache()` to the list.",
+    "riskLevel": "low",
+    "riskRationale": "The change is small. It adds a timeout to one probe and one more check. A timeout error from httpx is not handled in the shown code, so failure behavior needs a check.",
+    "storyArc": "The probe now makes a real HTTP call with a bounded wait. The health runner then gets a third check. The two changes are separate.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Probe makes a timed HTTP request",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-2",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `probe` now behave, and what happens when the URL is slow? Verify that no code catches `httpx` timeout errors, and check the callers of `probe`.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Health runner adds cache check",
+        "slideType": "feature",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "Which checks does `run_checks` now run? Verify that `check_cache` exists in `service.checks`. The list order is db, queue, cache.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

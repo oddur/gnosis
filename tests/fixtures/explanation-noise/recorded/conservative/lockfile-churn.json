@@ -1,0 +1,35 @@
+{
+  "plan": {
+    "summary": "New `Record` IDs now use UUIDv7, which sorts by creation time, instead of random UUIDv4.\n\n- `Cargo.toml` swaps the `uuid` feature `v4` for `v7`.\n- `Record::new` calls `Uuid::now_v7()`.\n- `Cargo.lock` adds the transitive dependencies that follow from the feature change.\n\nExisting records keep their old IDs. Only new records get time-ordered IDs.",
+    "riskLevel": "low",
+    "riskRationale": "Small change: one feature flag and one constructor call. The `v4` feature is removed, so any other `Uuid::new_v4()` call in the crate would fail to compile. Existing stored IDs are unchanged.",
+    "storyArc": "The PR enables the `v7` feature of the `uuid` crate. It then uses `Uuid::now_v7()` when a `Record` is created. The lockfile changes follow from the manifest change.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Lockfile churn that follows the `uuid` feature change in Cargo.toml (adds `js-sys` to a dependency list)."
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Lockfile churn that follows the `uuid` feature change in Cargo.toml (adds `rand` to a dependency list)."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Record IDs use time-ordered UUIDv7",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How do new records get their IDs, and what must change in the manifest to allow it? Connect the `v4` to `v7` feature swap in `Cargo.toml` to the `Uuid::now_v7()` call in `Record::new`. Verify that no other code in the crate still calls `new_v4`.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

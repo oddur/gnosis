@@ -8,12 +8,30 @@ export const EXPLANATION_STYLES = [
   { value: 'custom', label: 'Custom', description: 'Guide the explanation with your own instructions.' },
 ] as const;
 export type ExplanationStyle = (typeof EXPLANATION_STYLES)[number]['value'];
+/** Reduce noise: which hunks the explanation leaves out because a reviewer doesn't need them explained. */
+export const NOISE_LEVELS = [
+  { value: 'off', label: 'Off', description: 'Explain every hunk.' },
+  {
+    value: 'conservative',
+    label: 'Conservative',
+    description: 'Leave out imports, formatting, comments and other clear noise.',
+  },
+  {
+    value: 'aggressive',
+    label: 'Aggressive',
+    description: 'Also leave out small related edits that aren’t part of the main change.',
+  },
+] as const;
+export type NoiseLevel = (typeof NOISE_LEVELS)[number]['value'];
+export const DEFAULT_NOISE_LEVEL: NoiseLevel = 'conservative';
 export interface ExplanationPreferences {
   style: ExplanationStyle;
   customInstructions: string;
   excludeGenerated: boolean;
   excludeTests: boolean;
   hiddenExtensions: string[];
+  /** Reduce noise (lib/explanation-noise.ts). Part of the options, so a change makes a new explanation. */
+  reduceNoise: NoiseLevel;
 }
 export interface ExplanationOptions extends ExplanationPreferences {
   /** Source paths (namespaced by PR in a stack). Explicit choices override filter rules. */
@@ -48,6 +66,7 @@ export const DEFAULT_EXPLANATION_PREFERENCES: ExplanationPreferences = {
   excludeGenerated: true,
   excludeTests: false,
   hiddenExtensions: [],
+  reduceNoise: DEFAULT_NOISE_LEVEL,
 };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 export function normalizeExplanationPreferences(value: unknown): ExplanationPreferences {
@@ -64,7 +83,11 @@ export function normalizeExplanationPreferences(value: unknown): ExplanationPref
           .map((e) => e.toLowerCase())
       ),
     ].slice(0, 1000),
+    reduceNoise: normalizeNoiseLevel(v.reduceNoise),
   };
+}
+export function normalizeNoiseLevel(value: unknown): NoiseLevel {
+  return NOISE_LEVELS.some((level) => level.value === value) ? (value as NoiseLevel) : DEFAULT_NOISE_LEVEL;
 }
 export function normalizeExplanationOptions(value: unknown): ExplanationOptions {
   const v = object(value) ? value : {};

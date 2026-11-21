@@ -1,0 +1,37 @@
+{
+  "plan": {
+    "summary": "Fixes a race in `count`. It no longer checks `dir.exists()` before reading. A missing directory is now handled by treating `NotFound` from `fs::read_dir` as an empty count. The PR also removes the explicit `drop(guard)` and its flush comment from `main`.\n\n- `count.rs`: remove the exists check; map `NotFound` to `Ok((0, 0))`.\n- `main.rs`: remove the explicit telemetry guard drop before `process::exit`.",
+    "riskLevel": "medium",
+    "riskRationale": "The count change is small and removes a check-then-use race. The `main.rs` change removes the explicit flush. `std::process::exit` does not run destructors, so telemetry may no longer flush. That could lose data. Nothing in the PR description mentions it.",
+    "storyArc": "The stated goal is to remove a race in file counting by letting the read report a missing directory. The `main.rs` change is a separate edit with a possible shutdown side effect. It needs its own review.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Handle a missing directory in the read, not by a prior check",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `count` now handle a missing directory without a race? Show that the exists check is gone and `NotFound` from `read_dir` returns `Ok((0, 0))`. Verify that other errors still propagate.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Telemetry guard is no longer dropped before exit",
+        "slideType": "bugfix",
+        "importance": "critical",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What happens to telemetry flushing at exit now? The explicit `drop(guard)` and its comment are removed, but `std::process::exit` skips destructors. Verify whether the guard still flushes and whether the change matches the PR purpose.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

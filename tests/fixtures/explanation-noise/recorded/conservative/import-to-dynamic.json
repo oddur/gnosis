@@ -1,0 +1,26 @@
+{
+  "plan": {
+    "summary": "Startup no longer loads the zip library. `zip-lib` is now imported dynamically inside `exportAll`, only when the `zip` flag is true.\n\n- The top-level `import Zip from 'zip-lib'` is removed.\n- `exportAll` loads the library with `await import('zip-lib')` before it calls `Zip.archive`.\n- The non-zip path is unchanged.",
+    "riskLevel": "low",
+    "riskRationale": "Small change in one file. It moves an import to a lazy load. The risk is the new async load in the zip path and a possible default-export shape mismatch.",
+    "storyArc": "The PR removes a startup cost. It deletes the eager import, then adds a lazy import at the one place that needs the library. Both hunks form one change.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Lazy-load zip-lib in exportAll",
+        "slideType": "refactor",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does the zip library move from startup to export time? Connect the removed top-level import to the dynamic import in the zip branch. Verify that `default` is the right export from `zip-lib` and that no other code uses `Zip`.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

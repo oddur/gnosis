@@ -1,0 +1,37 @@
+{
+  "plan": {
+    "summary": "The PR changes snapshot identity from a bare UUID to a project-scoped `SnapshotKey`. It also changes the flush decision.\n\n- `stale` returns `SnapshotKey` values and now treats entries that expire exactly at `now` as stale.\n- `shouldFlush` now returns true when `force` is set, even with no pending items.",
+    "riskLevel": "medium",
+    "riskRationale": "Changes to a return type and an expiry boundary affect data lifecycle in snapshots. The flush change is small. No tests appear in the diff.",
+    "storyArc": "Two independent changes. First, snapshots are keyed by project and expire at the boundary. Second, flushing can now be forced.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Snapshot keys and expiry boundary in stale()",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does stale() return now, and when is an entry stale? Verify that callers accept SnapshotKey, and that `<=` is intended, so entries expiring at `now` are included.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Forced flush in shouldFlush",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "How does `force` change the flush decision? Verify that the old code ignored `force`, and check callers that pass it.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

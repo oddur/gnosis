@@ -1,5 +1,6 @@
 import type * as TreeSitter from 'web-tree-sitter';
 import { classifyNoise, comparisonTexts, comparisonTrees, formattingEquivalent, type NoiseBlock } from './semantic-noise';
+import { importNodes, type ImportNode } from './import-nodes';
 import {
   MIN_LINES,
   MOVE_GROUPS,
@@ -797,6 +798,19 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
           query: performance.now() - t2,
           ...(loading ? { load: t1 - t0 } : {}),
         };
+      } finally {
+        tree.delete();
+      }
+    },
+    /** The import statements of a text, for Reduce noise (lib/import-nodes.ts); undefined when it does not parse. */
+    async imports(id: SyntaxLanguage, text: string): Promise<ImportNode[] | undefined> {
+      const { language } = await load(id);
+      if (!parser) throw Error('The parser did not start');
+      parser.setLanguage(language);
+      const tree = parse(text);
+      if (!tree) return undefined;
+      try {
+        return importNodes(tree, id, text);
       } finally {
         tree.delete();
       }
