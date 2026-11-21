@@ -1696,12 +1696,14 @@ export function createWorkbenchService(deps: Deps) {
       return s.subjects.flatMap(subject => subject.members).find(member => member.url === url)
         ?? stars.load(s.account).find(entry => entry.member.url === url)?.member;
     },
-    /** You wrote or starred the PR: its conflicts are prepared in the background (src/conflict-precompute.ts). */
-    ownsOrStarred(url: string) {
-      if (!deps.auth().token || !deps.auth().login) return false;
+    /** The PRs you wrote or starred: their conflicts are prepared in the background (src/conflict-precompute.ts). */
+    ownedOrStarredUrls(): ReadonlySet<string> {
+      if (!deps.auth().token || !deps.auth().login) return new Set();
       const s = load();
-      return stars.load(s.account).some(entry => entry.member.url === url)
-        || s.subjects.some(subject => subject.members.some(member => member.url === url && member.role === 'author'));
+      return new Set([
+        ...stars.load(s.account).map(entry => entry.member.url),
+        ...s.subjects.flatMap(subject => subject.members.filter(member => member.role === 'author').map(member => member.url)),
+      ]);
     },
     cached: () => view(true),
     snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view()

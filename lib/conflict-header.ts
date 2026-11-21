@@ -1,5 +1,15 @@
 import { conflictFileStage, type ConflictFile } from './conflict-resolution';
-import { allMerged, blockBuckets, bucketSummary, fileStatus, summarySentence } from './conflict-verify';
+import {
+  allMerged,
+  blockBuckets,
+  bucketSummary,
+  fileStatus,
+  summarySentence,
+  waitsForReview,
+  type ConflictBucket,
+  type FileStatus,
+  type Verdict,
+} from './conflict-verify';
 import { verdictKey } from './conflict-verdict-key';
 import type { SyntaxLanguage } from './syntax-scope';
 
@@ -15,24 +25,47 @@ export type ConflictHeader =
   /** You can't push to the PR branch, so nothing was prepared. */
   | { state: 'no-permission' };
 
+/**
+ * One file's entry in `bucketSummary`, from its status and buckets: the same for the conflict dialog and the PR header,
+ * so both say the same thing.
+ */
+export function summaryEntry(
+  file: Pick<ConflictFile, 'wholeFile'>,
+  status: FileStatus,
+  buckets: readonly ConflictBucket[],
+  verdict: Verdict | undefined,
+  showMerged: boolean
+) {
+  return {
+    buckets,
+    verdict,
+    reviewed: status.kind === 'reviewed',
+    whole: !!file.wholeFile,
+    marker: status.kind === 'marker',
+    unsupported: status.kind === 'unsupported',
+    review: waitsForReview(status, buckets, showMerged),
+  };
+}
+
+/**
+ * Stands in for a verdict the header has none for: nothing runs checks for a header, so such a proposal is to check,
+ * never "Checking…". A whole-file proposal stays one proposal to check.
+ */
+const NOT_CHECKED: Verdict = { merged: false, passed: true, note: 'Not checked yet.' };
+
 /** A prepared draft's line: its files as saved, each with the verdict the main process saved for its proposals. */
 export function conflictHeader(
   files: readonly ConflictFile[],
-  disabled: readonly SyntaxLanguage[] = []
+  disabled: readonly SyntaxLanguage[] = [],
+  showMerged = true
 ): ConflictHeader {
   const states = files.map((f) => {
-    // The same comparison as the conflict dialog's: the checks' version, the languages off, the proposals and draft.
-    const verdict = f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined;
-    const stage = conflictFileStage(f);
+    // The same comparison as the conflict dialog's: the checks' version, the file's language, the proposals and draft.
+    const saved = f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined;
+    const verdict = saved ?? (f.proposals || f.wholeFile ? NOT_CHECKED : undefined);
     const buckets = blockBuckets(f, f.result, verdict);
-    const status = fileStatus(f, f.result, stage, buckets);
-    return {
-      buckets,
-      verdict,
-      reviewed: status.kind === 'reviewed',
-      whole: !!f.wholeFile,
-      marker: status.kind === 'marker',
-    };
+    const status = fileStatus(f, f.result, conflictFileStage(f), buckets);
+    return summaryEntry(f, status, buckets, verdict, showMerged);
   });
   return {
     state: 'ready',

@@ -23,13 +23,15 @@ export interface ConflictPrecomputeDeps {
   forget: (url: string) => Promise<void>;
   /** Keeps the newest background drafts and removes the rest. */
   trim: () => Promise<void>;
-  /** You wrote or starred the PR. */
-  wanted: (url: string) => boolean;
+  /** The signed-in account: runs and header lines belong to it. */
+  account: () => string;
   onBattery: () => boolean;
   /** The PR's header line changed. */
   changed: (url: string) => void;
   /** The languages off in Settings: a saved verdict counts only for the same ones (lib/conflict-verdict-key.ts). */
   disabledLanguages?: () => SyntaxLanguage[];
+  /** "Show me every merged conflict" for a repository: unset is on. */
+  showMerged?: (repo: string) => boolean;
   /** Preparations at once: 1 or 2. */
   concurrency?: number;
 }
@@ -51,6 +53,16 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
   const lines = new Map<string, { headSha: string; header: ConflictHeader | undefined }>();
   const limit = Math.min(2, Math.max(1, deps.concurrency ?? 1));
   let running = 0;
+  let account = '';
+  /** Another account signed in: the runs and lines of the last one no longer apply. */
+  function forAccount() {
+    const current = deps.account();
+    if (current === account) return;
+    account = current;
+    for (const run of runs.values()) run.controller?.abort();
+    runs.clear();
+    lines.clear();
+  }
   const bounded = <T>(map: Map<string, T>, keep: (value: T) => boolean = () => false) => {
     for (const [key, value] of map) {
       if (map.size <= REMEMBERED) break;
@@ -69,7 +81,9 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
     const known = lines.get(url);
     if (known?.headSha === headSha) return known.header;
     const draft = deps.draft(url, headSha);
-    const header = draft ? conflictHeader(draft.files, deps.disabledLanguages?.() ?? []) : undefined;
+    const header = draft
+      ? conflictHeader(draft.files, deps.disabledLanguages?.() ?? [], deps.showMerged?.(draft.baseRepo) ?? true)
+      : undefined;
     lines.delete(url);
     lines.set(url, { headSha, header });
     bounded(lines);
@@ -113,12 +127,21 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
     })();
   }
 
+  function queue(url: string, headSha: string) {
+    if (runs.has(url) || fromDraft(url, headSha)) return;
+    runs.set(url, { url, headSha, state: 'queued' });
+    bounded(runs, (value) => value.state === 'queued' || value.state === 'running');
+    note(url);
+    pump();
+  }
+
   return {
     /**
-     * GitHub's merge state for a PR head, from any status read. `opened`: you are looking at the PR, so it counts as
-     * wanted. A new head, or a clean merge, cancels the run and removes its background draft.
+     * GitHub's merge state for a PR head, from a status read or sync. `wanted`: you wrote or starred the PR. A new
+     * head, or a clean merge, cancels the run and removes its background draft. Only this path reports heads.
      */
-    observe(url: string, headSha: string, state: MergeConflictState, opened = false) {
+    observe(url: string, headSha: string, state: MergeConflictState, wanted = false) {
+      forAccount();
       const run = runs.get(url);
       if (run && (run.headSha !== headSha || state === 'clear')) {
         run.controller?.abort();
@@ -126,16 +149,19 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
         note(url);
         void deps.forget(url).catch((error: unknown) => console.warn('[conflicts] Could not remove a draft.', error));
       }
-      if (state !== 'conflicts' || runs.has(url)) return;
-      if (!opened && !deps.wanted(url)) return;
-      if (fromDraft(url, headSha)) return;
-      runs.set(url, { url, headSha, state: 'queued' });
-      bounded(runs, (value) => value.state === 'queued' || value.state === 'running');
-      note(url);
-      pump();
+      if (state === 'conflicts' && wanted) queue(url, headSha);
+    },
+    /**
+     * You are looking at the PR's header, so it counts as wanted. The renderer's head may lag behind: it never cancels a
+     * run, and a run for another head is left to the status reads.
+     */
+    opened(url: string, headSha: string) {
+      forAccount();
+      queue(url, headSha);
     },
     /** The header line for this head, or undefined: nothing prepared and nothing running. */
     header(url: string, headSha: string): ConflictHeader | undefined {
+      forAccount();
       const run = runs.get(url);
       if (run?.headSha === headSha) {
         if (run.state === 'no-permission') return { state: 'no-permission' };
@@ -146,8 +172,15 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
     },
     /** The PR's draft changed (you edited or pushed it): its line is read again. */
     refresh: note,
+    /** Settings changed (Code intelligence, "Show me every merged conflict"): every line is read again. */
+    settingsChanged() {
+      const urls = [...lines.keys()];
+      lines.clear();
+      for (const url of urls) note(url);
+    },
     /** You discarded the PR's draft: this head is not prepared again in the background. */
     dismiss(url: string, headSha: string) {
+      forAccount();
       runs.get(url)?.controller?.abort();
       runs.set(url, { url, headSha, state: 'done' });
       note(url);
@@ -156,10 +189,16 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
      * You open the PR's conflicts: a running preparation finishes first, so the open reuses its draft. A queued one
      * is dropped, since your open prepares the PR itself.
      */
-    async settle(url: string) {
+    async settle(url: string, signal?: AbortSignal) {
       const run = runs.get(url);
       if (run?.state === 'queued') runs.delete(url);
-      await run?.finished;
+      if (!run?.finished) return;
+      // Cancel still works while you wait.
+      await Promise.race([
+        run.finished,
+        new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true })),
+      ]);
+      signal?.throwIfAborted();
     },
     /** On battery, running preparations stop and wait; on power, they start again. */
     power() {

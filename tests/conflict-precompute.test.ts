@@ -57,15 +57,16 @@ void test('the header line reads a prepared draft with the conflict dialog’s o
   assert.equal(merged.state === 'ready' && merged.merged, true);
   assert.equal(
     conflictHeaderLine(merged),
-    '2 files have conflicts. 2 of 2 conflicts are merged and checked. Nothing needs you.'
+    '2 files have conflicts. 2 of 2 conflicts are merged and checked. 2 files are ready for review.'
   );
-  // A proposal in Check needs you; a verdict for other proposals does not count.
+  // A verdict for other proposals does not count. Nothing runs checks for a header, so the proposal is to check,
+  // never "Checking…".
   const stale = proposed('a.ts', true);
   stale.proposals = [{ source: 'mergiraf', text: 'cb\n' }];
   stale.result = 'a\ncb\nd\n';
   assert.deepEqual(conflictHeader([stale]), {
     state: 'ready',
-    sentence: '1 file has conflicts. Checking 1 result…',
+    sentence: '1 file has conflicts. 1 to check.',
     merged: false,
   });
   assert.equal(conflictHeaderLine({ state: 'checking', files: 3 }), 'Checking 3 files…');
@@ -88,6 +89,7 @@ function harness(options: Partial<ConflictPrecomputeDeps> = {}) {
   let battery = false;
   let trims = 0;
   const wanted = new Set([A, B, C]);
+  let account = 'oddur';
   const deps: ConflictPrecomputeDeps = {
     prepare: (url, signal, files) =>
       new Promise<ConflictSession | undefined>((resolve, reject) => {
@@ -121,16 +123,21 @@ function harness(options: Partial<ConflictPrecomputeDeps> = {}) {
       trims++;
       return Promise.resolve();
     },
-    wanted: (url) => wanted.has(url),
+    account: () => account,
     onBattery: () => battery,
     changed: (url) => changed.push(url),
     ...options,
   };
   const heads = new Map<string, string>();
   const precompute = createConflictPrecompute(deps);
-  const observe = (url: string, head: string, state: Parameters<typeof precompute.observe>[2], opened = false) => {
+  const observe = (url: string, head: string, state: Parameters<typeof precompute.observe>[2]) => {
     heads.set(url, head);
-    precompute.observe(url, head, state, opened);
+    precompute.observe(url, head, state, wanted.has(url));
+  };
+  /** You look at the PR's header. */
+  const open = (url: string, head: string) => {
+    heads.set(url, head);
+    precompute.opened(url, head);
   };
   /** Lets the run's promise chain finish. */
   const settle = async (url: string) => {
@@ -140,7 +147,11 @@ function harness(options: Partial<ConflictPrecomputeDeps> = {}) {
   return {
     precompute,
     observe,
+    open,
     settle,
+    signIn: (login: string) => {
+      account = login;
+    },
     pending,
     started,
     aborted,
@@ -180,7 +191,7 @@ void test('background preparation runs one PR at a time for PRs you wrote or sta
   h.observe(A, sha(1), 'conflicts');
   assert.deepEqual(h.started, [A, B]);
   // Looking at C's header counts as opening it.
-  h.observe(C, sha(3), 'conflicts', true);
+  h.open(C, sha(3));
   await h.settle(B);
   assert.deepEqual(h.started, [A, B, C]);
   await h.settle(C);
@@ -237,8 +248,36 @@ void test('a PR you cannot push to says so, and opening the conflicts drops a qu
   // A draft you discarded is not prepared again in the background for the same head.
   const dismissed = harness();
   dismissed.precompute.dismiss(A, sha(1));
-  dismissed.observe(A, sha(1), 'conflicts', true);
+  dismissed.observe(A, sha(1), 'conflicts');
   assert.deepEqual(dismissed.started, []);
-  dismissed.observe(A, sha(2), 'conflicts', true);
+  dismissed.observe(A, sha(2), 'conflicts');
   assert.deepEqual(dismissed.started, [A], 'A new head is');
+});
+
+void test('the header never moves a run to its head, another account starts afresh, and cancel works while you wait', async () => {
+  const h = harness();
+  h.observe(A, sha(1), 'conflicts');
+  // The header's head lags behind the status reads: it neither cancels the run nor prepares its own head.
+  h.open(A, sha(9));
+  assert.deepEqual(h.aborted, []);
+  assert.deepEqual(h.started, [A]);
+  // Waiting for a run to finish stops when you cancel the open.
+  const controller = new AbortController();
+  const waiting = h.precompute.settle(A, controller.signal);
+  controller.abort();
+  await assert.rejects(waiting);
+  assert.deepEqual(h.aborted, [], 'The background run goes on');
+  // No permission is the signed-in account's: another account's header starts afresh.
+  await h.settle(A);
+  const denied = harness({ prepare: () => Promise.reject(new Error(NO_PERMISSION)) });
+  denied.observe(A, sha(1), 'conflicts');
+  await denied.precompute.settle(A);
+  assert.deepEqual(denied.precompute.header(A, sha(1)), { state: 'no-permission' });
+  denied.signIn('someone-else');
+  assert.equal(denied.precompute.header(A, sha(1)), undefined);
+  // Settings changes read every line again.
+  h.changed.length = 0;
+  h.precompute.header(A, sha(1));
+  h.precompute.settingsChanged();
+  assert.deepEqual(h.changed, [A]);
 });

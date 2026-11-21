@@ -27,7 +27,7 @@ import { workflowGrouping, type WorkflowGraphInput, type WorkflowRunInfo } from 
 import { createCheckDetailsPreloader } from './check-details-preloader';
 import { createPrOpenPreloader, needsRefresh, queuePriority, intentPriority, predictedPriority } from './pr-open-preloader';
 import { parseOpenTargets, type OpenTarget, type OpenTier } from '../lib/pr-open-targets';
-import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
+import { normalizeRepositorySettings, normalizeBriefingLimit, repositoryKey } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
 import { openReviewCheckpoint, reviewFingerprint, collectReviewTopics } from './review-checkpoint';
 import { createExplanationBuilds } from './explanation-builds';
@@ -1767,7 +1767,12 @@ function readPreferencesFile(): Preferences {
   }
 }
 
+/** Told after preferences are saved, such as the PR header's conflict lines (src/conflict-precompute.ts). */
+const preferencesSaved: (() => void)[] = [];
 function savePreferences(prefs: Preferences): void {
+  try { savePreferencesFile(prefs); } finally { for (const listener of preferencesSaved) listener(); }
+}
+function savePreferencesFile(prefs: Preferences): void {
   const file = getPreferencesPath(), temporary = file + '.tmp';
   try {
   fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays), notificationSettings: normalizeNotificationPreferences(prefs), menubarSettings: menubarSettings(prefs), codeIntelligence: codeIntelligenceSettings(prefs), updateChannel: normalizeUpdateChannel(prefs.updateChannel), ...normalizePreloadPreferences(prefs) }, null, 2));
@@ -3881,7 +3886,13 @@ const getQueueSignals: typeof readQueueSignals = async (client, requests, option
   return values;
 };
 function observeConflicts(values: readonly QueueSignals[]) {
-  for (const value of values) conflictPrecompute.observe(value.url, value.headSha, mergeConflictState(value));
+  // The PRs you wrote or starred, read once per batch and only when one conflicts.
+  let wanted: ReadonlySet<string> | undefined;
+  for (const value of values) {
+    const state = mergeConflictState(value);
+    if (state === 'conflicts') wanted ??= workbench.ownedOrStarredUrls();
+    conflictPrecompute.observe(value.url, value.headSha, state, !!wanted?.has(value.url));
+  }
 }
 ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[], options?: QueueSignalOptions) => {
   const token = getResolvedToken();
@@ -4149,7 +4160,8 @@ const conflictPrecompute = createConflictPrecompute({
   draft: (url, headSha) => conflicts.draft(url, headSha),
   forget: url => conflicts.forgetBackground(url),
   trim: () => conflicts.trimBackground(),
-  wanted: url => workbench.ownsOrStarred(url),
+  account: () => cachedLogin ?? '',
+  showMerged: repo => loadPreferences().repositorySettings?.[repositoryKey(repo)]?.showMergedConflicts !== false,
   disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
   onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
   changed: url => broadcastToAllWindows('conflict-header-changed', url),
@@ -4159,12 +4171,14 @@ void app.whenReady().then(() => {
   powerMonitor.on('on-ac', () => conflictPrecompute.power());
 });
 app.on('will-quit', () => conflictPrecompute.dispose());
+preferencesSaved.push(() => conflictPrecompute.settingsChanged());
 // The PR header's conflict line. Asking for it means you opened the PR, so its conflicts are prepared too.
 ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
   if (typeof url !== 'string' || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) return null;
   if (typeof headSha !== 'string' || !/^[a-f0-9]{40,64}$/.test(headSha)) return null;
   if (!getResolvedToken() || !cachedLogin) return null;
-  conflictPrecompute.observe(url, headSha, 'conflicts', true);
+  // The renderer's head may lag: only status reads report head moves (observe).
+  conflictPrecompute.opened(url, headSha);
   return conflictPrecompute.header(url, headSha) ?? null;
 });
 handleInteractive('conflict-resolution', async (_event, request: ConflictRequest) => {
@@ -4178,7 +4192,7 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
   if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'restack-publish' ? 'Publishing dependent PR updates' : ['restack-prepare', 'restack-continue'].includes(request.kind) ? 'Preparing dependent PR updates' : request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, ['publish', 'restack-publish'].includes(request.kind) ? {} : { cancel: () => controller.abort() });
   try {
     // A background preparation of this PR finishes first, so opening reuses it.
-    if (request.kind === 'open') await conflictPrecompute.settle(request.url);
+    if (request.kind === 'open') await conflictPrecompute.settle(request.url, controller.signal);
     const result = await conflicts.run(request, controller.signal, detail => { if (tracked) activities.update(id, detail); });
     // Discarded: not prepared again in the background for this head.
     if (request.kind === 'discard') conflictPrecompute.dismiss(result.session.url, result.session.headSha);

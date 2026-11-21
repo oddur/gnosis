@@ -1261,22 +1261,17 @@ export function createConflictResolutionService(deps: Deps) {
    * without refs is removed whole. Full-history caches of drafts and published PRs go too: drafts rebuild their merge
    * from the shared store when they publish, and restacks fetch history again. Paused or prepared restacks keep theirs.
    */
-  /**
-   * Background drafts beyond the newest `keep`, or older than a week, leave storage. Returns their session ids; the
-   * startup clean-up then removes their caches with every other directory no saved session needs.
-   */
-  async function evictBackground(keep: number) {
-    const drafts: { name: string; id: string; at: number }[] = [];
+  /** Background drafts beyond the newest `keep`, or older than a week, of every account: each with its account. */
+  function staleBackground(keep: number) {
+    const drafts: { name: string; account: string; id: string; at: number }[] = [];
     for (const name of deps.storage.names?.() ?? []) {
       const match = /^conflict-draft:(.*):([a-f0-9]{64})$/.exec(name);
       const saved = match ? (deps.storage.read(name) as ConflictSession | null | undefined) : undefined;
-      if (match && saved?.background && !busy.has(name)) drafts.push({ name, id: match[2], at: saved.background });
+      if (match && saved?.background && !busy.has(name))
+        drafts.push({ name, account: match[1], id: match[2], at: saved.background });
     }
     drafts.sort((a, b) => b.at - a.at);
-    const evicted = drafts.filter((draft, i) => i >= keep || Date.now() - draft.at > BACKGROUND_AGE);
-    for (const { name } of evicted) deps.storage.write(name, null);
-    if (evicted.length) await deps.storage.flush();
-    return evicted.map((draft) => draft.id);
+    return drafts.filter((draft, i) => i >= keep || Date.now() - draft.at > BACKGROUND_AGE);
   }
   /** Removes a draft and its cache, as Discard does. */
   async function drop(account: string, id: string) {
@@ -1286,10 +1281,24 @@ export function createConflictResolutionService(deps: Deps) {
     await dropStoreRefs(account, id, dir);
     await fs.rm(dir, { recursive: true, force: true });
   }
+  /** Drops a background draft under the PR's lock, so no run or open interleaves. Skipped while the PR is busy. */
+  async function dropBackground(account: string, id: string) {
+    const key = storageKey(account, id);
+    if (busy.has(key) || !(deps.storage.read(key) as ConflictSession | undefined)?.background) return;
+    busy.add(key);
+    try {
+      await drop(account, id);
+    } finally {
+      busy.delete(key);
+    }
+  }
   async function cleanUp(): Promise<{ removed: string[] }> {
     const removed: string[] = [];
     if (!deps.storage.names) return { removed };
-    await evictBackground(deps.backgroundDrafts ?? BACKGROUND_DRAFTS);
+    // Their caches go below, with every other directory no saved session needs.
+    const stale = staleBackground(deps.backgroundDrafts ?? BACKGROUND_DRAFTS);
+    for (const { name } of stale) deps.storage.write(name, null);
+    if (stale.length) await deps.storage.flush();
     const root = deps.directory();
     if (!(await exists(root))) return { removed };
     const keep = new Set<string>();
@@ -1366,9 +1375,7 @@ export function createConflictResolutionService(deps: Deps) {
       const ctx = deps.context();
       if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
       const key = storageKey(ctx.account, hash(url));
-      // Your draft, or a push still to restack: nothing to prepare, and no lock that would hold up your next request.
-      const saved = deps.storage.read(key) as ConflictSession | undefined;
-      if (saved && !saved.background && (saved.status === 'editing' || saved.restack)) return saved;
+      // open() decides whether a background run may replace the saved session; the PR's lock is all that is checked here.
       if (busy.has(key)) return undefined;
       busy.add(key);
       try {
@@ -1387,17 +1394,12 @@ export function createConflictResolutionService(deps: Deps) {
     },
     /** Removes a background draft (the PR moved or merges cleanly now). Your own draft is never removed. */
     async forgetBackground(url: string) {
-      const ctx = deps.context();
-      const id = hash(url);
-      const key = storageKey(ctx.account, id);
-      const saved = ctx.account ? (deps.storage.read(key) as ConflictSession | undefined) : undefined;
-      if (!saved?.background || busy.has(key)) return;
-      await drop(ctx.account, id);
-    },
-    /** Keeps the newest background drafts, and removes the caches of the others. */
-    async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
       const account = deps.context().account;
-      for (const id of await evictBackground(keep)) if (account) await drop(account, id);
+      if (account) await dropBackground(account, hash(url));
+    },
+    /** Keeps the newest background drafts, of every account, and removes the others with their caches. */
+    async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
+      for (const { account, id } of staleBackground(keep)) await dropBackground(account, id);
     },
     /** Run once after saved data loads. Conflict requests wait for it. */
     maintain() {

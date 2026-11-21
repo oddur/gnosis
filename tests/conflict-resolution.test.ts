@@ -1062,6 +1062,37 @@ void test('a background draft is reused when you open the PR, becomes yours, and
   assert.equal(await fs.stat(cache).catch(() => undefined), undefined, 'Its cache is removed');
 });
 
+void test('evicting a background draft drops it under its own account, never another account’s draft (#445)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-evict-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const id = 'a'.repeat(64);
+  const data = new Map<string, unknown>([
+    [`conflict-draft:ann:${id}`, { id, account: 'ann', status: 'editing', files: [], background: 1 }],
+    [`conflict-draft:bob:${id}`, { id, account: 'bob', status: 'editing', files: [] }],
+  ]);
+  const service = createConflictResolutionService({
+    storage: {
+      read: (key: string) => structuredClone(data.get(key)),
+      write: (key: string, value: unknown) => void data.set(key, structuredClone(value)),
+      flush: async () => {},
+      names: () => [...data.keys()],
+    },
+    directory: () => dir,
+    // Bob is signed in; Ann's old background draft is evicted.
+    context: () => ({ account: 'bob', token: 'not-a-real-token' }),
+    read: () => Promise.reject(new Error('Not used')),
+    mergiraf: () => 'missing',
+    suggest: () => Promise.reject(new Error('Not used')),
+  });
+  const [ann, bob] = await Promise.all(['ann', 'bob'].map((account) => conflictSessionDirectory(dir, account, id)));
+  await Promise.all([ann, bob].map((d) => fs.mkdir(d, { recursive: true })));
+  await service.trimBackground(0);
+  assert.equal(data.get(`conflict-draft:ann:${id}`), null);
+  assert.equal(await fs.stat(ann).catch(() => undefined), undefined, 'Ann’s cache is removed');
+  assert.deepEqual(data.get(`conflict-draft:bob:${id}`), { id, account: 'bob', status: 'editing', files: [] });
+  assert.ok(await fs.stat(bob), 'Bob’s cache stays');
+});
+
 void test('the service checks proposals itself and saves the verdict with the draft (#445)', async (t) => {
   if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
     t.skip('Needs the Mergiraf binary: npm run prepare:mergiraf.');

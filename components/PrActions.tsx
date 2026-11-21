@@ -398,7 +398,6 @@ export function PrActions({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={conflictLine?.state === 'no-permission'}
                 onClick={() => openConflictWorkspace(member.url)}
               >
                 <ConflictIcon size={14} aria-hidden="true" />

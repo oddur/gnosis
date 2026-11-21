@@ -141,7 +141,8 @@ void app.whenReady().then(async () => {
     await header({ state: 'ready', sentence: '2 files have conflicts. 4 of 4 conflicts are merged and checked. Nothing needs you.', merged: true });
     await wait(`!!${resolveButton('Review and push…')}`);
     await header({ state: 'no-permission' });
-    await wait(`${line}?.startsWith('You can’t push to this branch')&&${resolveButton('Resolve conflicts…')}?.disabled===true`);
+    // The line says so, and the button stays usable: a permission granted later works.
+    await wait(`${line}?.startsWith('You can’t push to this branch')&&${resolveButton('Resolve conflicts…')}?.disabled===false`);
     await header(null);
     await wait(`!document.querySelector('.pr-conflict-line')&&${resolveButton('Resolve conflicts…')}?.disabled===false`);
     await js('window.conflicts=false');
