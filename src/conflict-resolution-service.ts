@@ -911,9 +911,27 @@ export function createConflictResolutionService(deps: Deps) {
     // New base commits alone leave the draft usable: preview and publish merge them again.
     if (saved?.status === 'editing' && !restart && saved.files.length > 0) {
       const change = revisionChange(saved, state);
-      return change === 'head-moved' || change === 'retargeted'
-        ? { ...saved, stale: true, staleReason: change }
-        : { ...saved, stale: false };
+      if (change === 'head-moved' || change === 'retargeted') return { ...saved, stale: true, staleReason: change };
+      // A draft saved before structural merge ran during preparation, or before it kept whole-file results: files you
+      // have not touched get the pass now. A file you edited keeps your draft.
+      const untried = saved.files.filter(
+        (f) =>
+          !f.unsupported &&
+          !f.resolved &&
+          f.source !== 'rerere' &&
+          f.result === f.original &&
+          !f.proposals &&
+          !f.wholeFile &&
+          !f.structuralNote
+      );
+      if (untried.length) {
+        await mergeStructurally(ctx, id, { head: saved.headBranch, base: saved.baseBranch }, untried, signal, report);
+        signal.throwIfAborted();
+        assertAccount(ctx);
+        saved.version++;
+        await persist(saved);
+      }
+      return { ...saved, stale: false };
     }
     const prepared = await prepare(
       ctx,

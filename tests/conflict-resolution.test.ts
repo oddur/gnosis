@@ -1210,6 +1210,51 @@ void test('a structural merge that also moves lines outside the conflicts is a w
   );
 });
 
+void test('reopening a draft saved before the whole-file proposal runs structural merge on untouched files only', async (t) => {
+  if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const expected = goFile([goFunction('beta'), goFunction('alpha', 'value + 10')]);
+  const f = await fixture(
+    t,
+    false,
+    {
+      name: 'reorder.go',
+      base: goFile([goFunction('alpha'), goFunction('beta')]),
+      ours: goFile([goFunction('beta'), goFunction('alpha')]),
+      theirs: goFile([goFunction('alpha', 'value + 10'), goFunction('beta')]),
+    },
+    [{ name: 'edited.ts', base: 'export const a = 0;\n', ours: 'export const a = 1;\n', theirs: 'export const a = 2;\n' }]
+  );
+  // The draft as an older build saved it: no whole-file proposal, no note, and one file the user already edited.
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const old = structuredClone(f.session);
+  for (const file of old.files) {
+    delete file.wholeFile;
+    delete file.structuralNote;
+  }
+  const edited = old.files.find((x) => x.path === 'edited.ts') as ConflictFile;
+  edited.result = edited.result.replace(/<{7}[\s\S]*?>{7}[^\n]*\n/, 'export const a = 3;\n');
+  f.deps.storage.write(key, old);
+  const { session } = await f.run({ kind: 'open', url: f.state.url });
+  const reorder = session.files.find((x) => x.path === 'reorder.go') as ConflictFile;
+  assert.equal(reorder.wholeFile?.text, expected, 'The untouched file gets the whole-file proposal');
+  assert.equal(reorder.result, reorder.original);
+  const after = session.files.find((x) => x.path === 'edited.ts') as ConflictFile;
+  assert.equal(after.result, edited.result, 'Your own draft is kept');
+  assert.equal(after.structuralNote, undefined);
+  assert.equal(session.version, old.version + 1);
+  // The pass is recorded, so the next reopen does not run it again.
+  let structural = 0;
+  f.deps.mergiraf = () => {
+    structural++;
+    return nativeMergiraf;
+  };
+  await f.run({ kind: 'open', url: f.state.url });
+  assert.equal(structural, 0);
+});
+
 void test('a structural merge that times out is retried once with the Suggest budget, then noted on the file', async (t) => {
   if (process.platform === 'win32' || !(await fs.stat(nativeMergiraf).catch(() => undefined))) {
     t.skip('Needs a POSIX shell and npm run prepare:mergiraf.');
