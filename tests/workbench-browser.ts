@@ -188,6 +188,8 @@ void app.whenReady().then(async () => {
     await js(
       `void (window.electronAPI.sendSlideChat = async () => ${JSON.stringify('### Keep cleanup tied to completion\n\nAwaiting the worker keeps the queue slot occupied until the operation completes. Returning the promise directly would run cleanup too early.\n\n```ts\ntry {\n  return await worker.run(command);\n} finally {\n  slot.release();\n}\n```')})`
     );
+    // The composer loads lazily when the chat opens; wait for it before typing.
+    await wait("!!document.querySelector('.chat-sheet textarea')");
     await js(`(() => {
       const field = document.querySelector('.chat-sheet textarea');
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, ${JSON.stringify('Why must cleanup wait?\n\n```\nreturn worker.run(command);\n```')});
