@@ -1,0 +1,37 @@
+{
+  "plan": {
+    "summary": "Fix a race in `count` and change process shutdown.\n\n- `count` no longer calls `dir.exists()` first. It now treats a `NotFound` error from `fs::read_dir` as an empty result `(0, 0)`. This removes the gap between the check and the read.\n- `main` no longer calls `drop(guard)` before `std::process::exit(code)`. The removed comment said the telemetry client must flush before exit. `process::exit` does not run destructors, so the flush may no longer happen.",
+    "riskLevel": "medium",
+    "riskRationale": "The `count` change is small and keeps the same result for a missing directory. The `main` change removes an explicit telemetry flush, which could lose telemetry data at exit. The PR description does not mention it.",
+    "storyArc": "The PR removes a check-then-read race in `count` by handling `NotFound` at the read. A second change in `main` removes the explicit telemetry guard drop before exit. This is unrelated to the race and needs a separate check.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Handle a missing directory in the read, not by a prior check",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `count` now treat a missing directory, and why does this remove the race? Verify that the result is the same `(0, 0)` and that other errors still propagate.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Telemetry guard no longer dropped before process exit",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What happens to the telemetry flush now that `drop(guard)` is gone before `std::process::exit`? Verify whether `process::exit` skips the guard's destructor, and whether anything else flushes telemetry. This change is not covered by the PR description.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

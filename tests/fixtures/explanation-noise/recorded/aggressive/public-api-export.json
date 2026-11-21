@@ -1,0 +1,26 @@
+{
+  "plan": {
+    "summary": "Export `RetryPolicy` from the public entry points of the TypeScript package and the Rust core crate, so library users can build their own retry policy.\n\n- `src/index.ts` re-exports `RetryPolicy` and the `RetryOptions` type from `./retry`.\n- `crates/core/src/lib.rs` re-exports `retry::RetryPolicy` at the crate root.\n- Both changes only add exports. The retry code itself is not changed in this diff.",
+    "riskLevel": "low",
+    "riskRationale": "Two one-line additions to the public API. No logic changes. The risk is that the exported names become part of the public API contract.",
+    "storyArc": "One goal: make the retry policy reachable from the public API in both languages. One topic covers both re-exports.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Export RetryPolicy from the public API",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What new public names can library users import? Compare the TypeScript re-export, which also exports the RetryOptions type, with the Rust re-export, which exports only RetryPolicy. Check whether RetryOptions has a Rust equivalent that is left out.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

@@ -455,6 +455,31 @@ void app.whenReady().then(async () => {
     assert.ok(merged.changes.length > 0);
     assert.equal(new Set(merged.changes).size, merged.changes.length, 'Every changed line shows once');
     await capture('explanation-reading-order', `(()=>{const r=document.querySelector('[data-explanation-section="2"] .explanation-section-code').getBoundingClientRect();return {x:Math.round(r.left),y:Math.max(0,Math.round(r.top)),width:Math.round(r.width),height:Math.round(Math.min(800,r.height))}})()`);
+
+    // ── Reduce noise: the overview lists the hunk left out as noise, and its entry opens Changes at its lines ──
+    await js(`window.selectOption('[aria-label="Explanation section"]', '0')`);
+    await wait("!!document.querySelector('.explanation-introduction .explanation-left-out summary')");
+    assert.equal(await js("document.querySelector('.explanation-left-out summary').textContent.trim()"), '1 change left out as noise');
+    await js("document.querySelector('.explanation-left-out summary').click()");
+    await wait("!!document.querySelector('.explanation-left-out li button')");
+    const leftOut = await js<{ location: string; reason: string }>(
+      "(()=>{const b=document.querySelector('.explanation-left-out li button');return {location:b.querySelector('.explanation-left-out-location').textContent,reason:b.querySelector('.explanation-left-out-reason').textContent}})()"
+    );
+    const range = /src\/scope\.ts:(\d+)(?:-(\d+))?$/.exec(leftOut.location);
+    assert.ok(range, `The entry names the file and its lines: ${leftOut.location}`);
+    assert.equal(leftOut.reason, 'import only');
+    const first = Number(range[1]);
+    const last = range[2] ? Number(range[2]) : first;
+    await js("document.querySelector('.explanation-left-out li button').click()");
+    // Changes opens the PR's file (a stack member's, here) and scrolls its left-out lines into view.
+    const leftOutRow = '.commit-stream-row:is([data-file="src/scope.ts"],[data-file$="/src/scope.ts"])';
+    await wait(
+      `(()=>{const s=document.querySelector('.commit-diff-stream')?.getBoundingClientRect();const row=document.querySelector(${JSON.stringify(leftOutRow)});
+        return !!s&&!!row&&window.deepAll('[data-line]',row).some(e=>{const n=Number(e.dataset.line);const r=e.getBoundingClientRect();
+          return n>=${first}&&n<=${last}&&e.dataset.lineType!=='change-deletion'&&r.height>0&&r.top>=s.top&&r.bottom<=s.bottom})})()`,
+      500
+    );
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent"), 'Changes');
     assert.deepEqual(errors, []);
     if (shots) await sideBySide();
     console.log('Explanation parity checks passed');

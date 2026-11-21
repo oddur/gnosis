@@ -1,0 +1,26 @@
+{
+  "plan": {
+    "summary": "Startup no longer loads `zip-lib`. The library now loads with a dynamic import inside `exportAll`, only when `zip` is true.\n\n- The top-level `import Zip from 'zip-lib'` is removed.\n- `exportAll` runs `await import('zip-lib')` at the start of the zip branch.\n- The non-zip path does not load the library.",
+    "riskLevel": "low",
+    "riskRationale": "A small change in one file. The zip path keeps the same call. The import now happens at run time. A missing or failing `zip-lib` now shows up as an error during export, not at startup.",
+    "storyArc": "One idea: move the `zip-lib` load from module start to the moment a zip export needs it. The removed static import and the added dynamic import are two halves of the same change.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Load zip-lib lazily inside exportAll",
+        "slideType": "refactor",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `src/export.ts` change so that `zip-lib` loads only for zip exports? Connect the removed top-level import to the new dynamic import in the `zip` branch. Verify that no other code in the file uses `Zip` outside that branch.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

@@ -1,0 +1,32 @@
+{
+  "plan": {
+    "summary": "Links now store their folder in a new `folder_id` column, so the folder view needs no join.\n\n- A migration adds `links.folder_id` and an index on it.\n- `move_link` writes `folder_id` together with `dirty`.\n- The `Link` proto message exposes `folder_id`; empty means the root.",
+    "riskLevel": "medium",
+    "riskRationale": "This adds a schema column and changes a write path and a public proto message. The column is nullable and the change is small. Existing rows have no `folder_id` until moved, which the excerpts do not show how to backfill.",
+    "storyArc": "The column is added first. The write path then fills it on move. The proto then exposes it to clients.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Comment-only edit to an older migration. It has no runtime effect."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Store the folder on each link",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-2",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does a link's folder get stored and exposed? Connect the new column and index, the `move_link` update, and the `folder_id` field on the `Link` proto. Verify how existing rows and the root folder (empty or NULL) are handled.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

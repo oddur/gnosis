@@ -1,0 +1,26 @@
+{
+  "plan": {
+    "summary": "Upgrades the `undici` HTTP client dependency from 6.19.2 to 7.2.0 to get the keep-alive fix. The manifest range changes, and the lockfile records the new version. The new version needs Node 20.18.1 or later.",
+    "riskLevel": "medium",
+    "riskRationale": "A major version bump of an HTTP client can change runtime behavior. It also raises the minimum Node engine from 18.17 to 20.18.1, which could break older runtimes. No code or tests changed.",
+    "storyArc": "One dependency upgrade. The manifest sets the new range. The lockfile only pins the resolved version, so it is noise, but it shows the new Node engine requirement.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Upgrade undici to 7 and raise the Node engine floor",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does the undici 6 to 7 bump change for the project? Connect the manifest range to the locked version, and note that the lockfile engines entry now needs Node >=20.18.1. Verify that the project's own Node target meets this.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

@@ -1,0 +1,37 @@
+{
+  "plan": {
+    "summary": "Fixes a race in file counting. `count` no longer checks `dir.exists()` before reading. It treats a `NotFound` error from `fs::read_dir` as an empty result.\n\n- `src/count.rs`: removes the check-then-read gap and maps `NotFound` to `Ok((0, 0))`.\n- `src/main.rs`: removes the explicit `drop(guard)` and its comment, which flushed telemetry before `std::process::exit`. This change is not mentioned in the PR description.",
+    "riskLevel": "medium",
+    "riskRationale": "The count change is small and correct for the race. The `main.rs` change may stop the telemetry flush, because `std::process::exit` does not run destructors. The PR description does not explain it.",
+    "storyArc": "First, the count fix removes the existence check and handles a missing directory in the read itself. Then the `main.rs` change is reviewed on its own. It is unrelated to the race and may change telemetry behavior at exit.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Handle a missing directory in the read, not in a prior check",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `count` now treat a missing directory without the race? Connect the removed `exists()` check to the new `NotFound` arm on `fs::read_dir`. Verify that other errors still propagate.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Telemetry guard no longer dropped before exit",
+        "slideType": "refactor",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What happens to telemetry flushing when the explicit `drop(guard)` is removed? Check whether `std::process::exit` skips the guard's destructor, and note that the PR description does not mention this change.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

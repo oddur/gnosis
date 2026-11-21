@@ -1,0 +1,38 @@
+{
+  "plan": {
+    "summary": "Lowers the export batch size from 2000 to 500 rows. Other hunks are small cleanups: a variable rename, a removed debug log, and a README typo fix.",
+    "riskLevel": "low",
+    "riskRationale": "One constant change in export batching. It makes batches smaller and changes memory and write behavior, but it is a small change. The other hunks do not change behavior.",
+    "storyArc": "The one meaningful change is the BATCH_ROWS cap in the export code. The remaining hunks are cleanup noise and get no topic.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Local variable rename only. Behavior is the same."
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Removes a stray debug console.log. Return value is the same."
+      },
+      {
+        "hunkId": "hunk-3",
+        "reason": "Typo fix in README text."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Export batches hold at most 500 rows",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does lowering BATCH_ROWS from 2000 to 500 change for the batches() function? Verify how batches() uses the constant and whether other code depends on the old size.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

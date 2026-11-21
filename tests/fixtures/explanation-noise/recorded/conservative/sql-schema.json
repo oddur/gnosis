@@ -1,0 +1,32 @@
+{
+  "plan": {
+    "summary": "Links now store their folder ID, so the folder view needs no join.\n\n- A new migration adds a nullable `folder_id` column and an index on it.\n- `move_link` writes `folder_id` together with `dirty`.\n- The `Link` proto message gets a `folder_id` field.\n- One comment in an older migration changes. It is noise.",
+    "riskLevel": "medium",
+    "riskRationale": "This adds a schema column and index and changes a write path. The new column is nullable. Existing rows have no folder until they are moved. The proto field is additive.",
+    "storyArc": "The change adds a cached folder column to links. The migration creates the storage. The write path and the proto contract then fill and expose it.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Comment-only edit in an old migration. SQL is unchanged."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Store folder ID on links",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-2",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does a link get and expose its cached folder? Connect the new column and index, the move_link write, and the proto field. Verify whether existing rows are backfilled and whether any code reads folder_id.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

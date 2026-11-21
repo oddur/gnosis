@@ -1083,6 +1083,7 @@ function ReviewPageContent({
               if (!chatOpen && !exploreOpen) setCurrentSlide(index || 1);
             }}
             onOpenChanges={onOpenChanges}
+            onOpenChangesFile={onOpenChangesFile}
             onReview={isLocal ? undefined : () => setShowSubmitDialog(true)}
             renderSection={(slide, index) =>
               slide.draftStatus ? (

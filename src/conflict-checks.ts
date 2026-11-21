@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import { NOISE_MAX_CHARACTERS } from '../lib/semantic-noise';
+import { comparisonTexts, NOISE_MAX_CHARACTERS, patchHunks } from '../lib/semantic-noise';
 import {
   blockVerdict,
   verifyProposals,
@@ -12,13 +12,13 @@ import { parseConflicts } from '../lib/conflict-blocks';
 import { blockResolutions, withProposals } from '../lib/conflict-carry';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 import { movedProposal } from '../lib/conflict-moved';
-import { patchHunks } from '../lib/semantic-noise';
 import {
   SYNTAX_MAX_CHARACTERS,
   syntaxLanguage,
   type createSyntaxEngine,
   type SyntaxLanguage,
 } from '../lib/syntax-scope';
+import type { NoiseAnswer, NoiseRequest } from '../lib/explanation-noise';
 import { createPatch } from 'diff';
 
 /**
@@ -152,28 +152,53 @@ export interface TreeSitterFiles {
   runtime: string;
   grammars: string;
 }
-export interface CheckRequest {
-  id: number;
-  file: CheckedFile;
-  disabled: SyntaxLanguage[];
-  /** `moved`: find the move rule's proposal (moveProposer) instead of checking. */
-  task?: 'check' | 'moved';
-}
+/**
+ * The worker's jobs: a conflict check, the move rule's proposal for a file (moveProposer), or Reduce noise's syntax
+ * comparison for an explanation's files (lib/explanation-noise.ts), which needs the same grammars.
+ */
+export type CheckRequest =
+  | { id: number; kind?: 'check' | 'moved'; file: CheckedFile; disabled: SyntaxLanguage[] }
+  | { id: number; kind: 'noise'; files: NoiseFile[] };
+/** One file for the noise comparison: its new text, its hunks, and whether to read its import nodes. */
+export type NoiseFile = Pick<NoiseRequest, 'language' | 'after' | 'hunks' | 'imports'>;
 export type CheckResponse =
   | { id: number; verdict?: Verdict }
   | { id: number; proposal?: ConflictProposal }
+  | { id: number; noise: (NoiseAnswer | null)[] }
   | { id: number; error: string };
 
 interface Job {
   request: CheckRequest;
   /** The worker's answer, or undefined when it failed, ran out of time or stopped. */
-  resolve: (answer: CheckResponse | undefined) => void;
+  resolve: (response: CheckResponse | undefined) => void;
   timer?: ReturnType<typeof setTimeout>;
+}
+const jobLabel = (request: CheckRequest) =>
+  request.kind === 'noise' ? `${request.files.length} files' noise comparison` : request.file.path;
+
+/** Reduce noise's comparison of one file in the worker: change block kinds, and import nodes when asked. */
+export async function noiseAnswer(
+  engine: Pick<ReturnType<typeof createSyntaxEngine>, 'noise' | 'imports'>,
+  file: NoiseFile
+): Promise<NoiseAnswer | null> {
+  try {
+    const { blocks } = await engine.noise(file.language, file.after, file.hunks);
+    const answer: NoiseAnswer = { kinds: blocks.map((block) => block.kind) };
+    if (file.imports) {
+      const texts = comparisonTexts(file.after, file.hunks);
+      const before = texts && (await engine.imports(file.language, texts.before));
+      const after = texts && (await engine.imports(file.language, texts.after));
+      answer.imports = before && after ? { before, after } : null;
+    }
+    return answer;
+  } catch {
+    return null;
+  }
 }
 /**
  * The worker that runs the checks, started on the first check and stopped after a minute without one, so its grammars
- * leave memory. One file at a time. A file that runs over 30 seconds, counted from when it starts, answers undefined;
- * the worker restarts for the files after it.
+ * leave memory. One job at a time. A job that runs over 30 seconds, counted from when it starts, answers undefined;
+ * the worker restarts for the jobs after it.
  */
 export function createConflictCheckWorker(
   script: string,
@@ -194,11 +219,11 @@ export function createConflictCheckWorker(
     void previous?.terminate();
   };
   /** Answers the running job, then starts the next. `restart`: the worker is stuck or gone, so a new one takes over. */
-  const finish = (job: Job, answer: CheckResponse | undefined, restart = false) => {
+  const finish = (job: Job, response: CheckResponse | undefined, restart = false) => {
     if (current !== job) return;
     clearTimeout(job.timer);
     current = undefined;
-    job.resolve(answer);
+    job.resolve(response);
     if (restart) terminate();
     pump();
   };
@@ -235,7 +260,7 @@ export function createConflictCheckWorker(
     clearTimeout(idle);
     current = job;
     job.timer = setTimeout(() => {
-      console.warn(`[conflicts] The checks ran out of time on ${job.request.file.path}.`);
+      console.warn(`[conflicts] The checks ran out of time on ${jobLabel(job.request)}.`);
       finish(job, undefined, true);
     }, timeoutMs);
     try {
@@ -245,31 +270,46 @@ export function createConflictCheckWorker(
       finish(job, undefined, true);
     }
   }
-  const ask = (file: CheckedFile, disabled: SyntaxLanguage[], task: 'check' | 'moved') => {
+  const run = (request: CheckRequest) =>
+    new Promise<CheckResponse | undefined>((resolve) => {
+      queue.push({ request, resolve });
+      pump();
+    });
+  /** A conflict file's job: its check, or the move rule's proposal. */
+  const ask = (file: CheckedFile, disabled: SyntaxLanguage[], kind: 'check' | 'moved') => {
     if (disposed) return Promise.resolve(undefined);
     const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
-    return new Promise<CheckResponse | undefined>((resolve) => {
-      queue.push({
-        request: {
-          id: ++serial,
-          file: { path, base, ours, theirs, original, proposals, wholeFile, result },
-          disabled,
-          ...(task === 'moved' ? { task } : {}),
-        },
-        resolve,
-      });
-      pump();
+    return run({
+      id: ++serial,
+      ...(kind === 'moved' ? { kind } : {}),
+      file: { path, base, ours, theirs, original, proposals, wholeFile, result },
+      disabled,
     });
   };
   return {
     async check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
-      const answer = await ask(file, disabled, 'check');
-      return answer && 'verdict' in answer ? answer.verdict : undefined;
+      const response = await ask(file, disabled, 'check');
+      return response && 'verdict' in response ? response.verdict : undefined;
     },
     /** The move rule's proposal for a file (moveProposer), in the same worker, one job at a time with the checks. */
     async moved(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<ConflictProposal | undefined> {
-      const answer = await ask(file, disabled, 'moved');
-      return answer && 'proposal' in answer ? answer.proposal : undefined;
+      const response = await ask(file, disabled, 'moved');
+      return response && 'proposal' in response ? response.proposal : undefined;
+    },
+    /**
+     * Reduce noise's comparison of an explanation's files, one job per file so each has its own time limit. Fail
+     * closed: a file that fails answers null; after a timeout, an error, a stopped worker or `signal`, the files not
+     * yet classified answer null too, so no hunk of theirs is cut by the rules that need a syntax tree.
+     */
+    async noise(files: readonly NoiseFile[], signal?: AbortSignal): Promise<(NoiseAnswer | null)[]> {
+      const answers: (NoiseAnswer | null)[] = files.map(() => null);
+      for (const [index, { language, after, hunks, imports }] of files.entries()) {
+        if (disposed || signal?.aborted) break;
+        const response = await run({ id: ++serial, kind: 'noise', files: [{ language, after, hunks, imports }] });
+        if (!response || !('noise' in response) || response.noise.length !== 1) break;
+        answers[index] = response.noise[0];
+      }
+      return answers;
     },
     dispose() {
       disposed = true;

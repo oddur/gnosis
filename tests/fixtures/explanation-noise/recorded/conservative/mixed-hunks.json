@@ -1,0 +1,37 @@
+{
+  "plan": {
+    "summary": "The PR keys snapshots by project instead of a bare UUID. It also changes snapshot expiry and flush behavior.\n\n- `stale` returns `SnapshotKey` values instead of `Uuid`.\n- `stale` now treats entries with `expires <= now` as stale. Before, only `expires < now` counted.\n- `shouldFlush` now returns true when `force` is set, even with nothing pending.",
+    "riskLevel": "medium",
+    "riskRationale": "The expiry boundary change can remove snapshots that were kept before. The return type change affects callers. The flush change is small. No tests appear in the diff.",
+    "storyArc": "The main change gives snapshots a project-scoped key and fixes how expiry is judged. A separate small fix makes `shouldFlush` honor its `force` argument.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Project-scoped snapshot keys and expiry boundary",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does `stale` return now, and which entries count as stale? Verify the `SnapshotKey` type and the `<` to `<=` change. Check that callers still work with the new return type.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Honor force in shouldFlush",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "When does `shouldFlush` return true now? It now returns true if `force` is set, even with no pending items. Verify that callers expect this.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

@@ -1,0 +1,69 @@
+{
+  "id": "docs-header-imports",
+  "title": "Document the retry option",
+  "description": "The guide explains the new `retries` option, shown per language in tabs.",
+  "source": "Docs pages that add MDX component imports at the top before using them (user request: \"adding imports at the top of docs\").",
+  "files": [
+    {
+      "path": "docs/guide/requests.mdx",
+      "before": [
+        "---",
+        "title: Requests",
+        "---",
+        "",
+        "# Requests",
+        "",
+        "Every request goes through the client.",
+        "",
+        "## Timeouts",
+        "",
+        "Requests time out after 30 seconds.",
+        "Pass `timeout` to change it.",
+        "",
+        "## Errors",
+        "",
+        "Errors are thrown as `RequestError`."
+      ],
+      "after": [
+        "---",
+        "title: Requests",
+        "---",
+        "import Tabs from '@theme/Tabs';",
+        "import TabItem from '@theme/TabItem';",
+        "",
+        "# Requests",
+        "",
+        "Every request goes through the client.",
+        "",
+        "## Timeouts",
+        "",
+        "Requests time out after 30 seconds.",
+        "Pass `timeout` to change it.",
+        "",
+        "## Errors",
+        "",
+        "Errors are thrown as `RequestError`.",
+        "",
+        "## Retries",
+        "",
+        "Pass `retries` to retry a failed request.",
+        "",
+        "<Tabs>",
+        "<TabItem value=\"ts\">`client.get(url, { retries: 3 })`</TabItem>",
+        "<TabItem value=\"py\">`client.get(url, retries=3)`</TabItem>",
+        "</Tabs>"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Component imports in the MDX header."
+        },
+        {
+          "label": "essential",
+          "note": "The new documentation the PR is about.",
+          "behavior": false
+        }
+      ]
+    }
+  ]
+}

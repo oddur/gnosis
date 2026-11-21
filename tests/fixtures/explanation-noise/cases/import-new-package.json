@@ -1,0 +1,87 @@
+{
+  "id": "import-new-package",
+  "title": "Limit concurrent uploads",
+  "description": "Uploads run at most four at a time, using p-limit.",
+  "source": "backtrack #8, #22 and gnosis #403: a new dependency in the manifest, its import, and its use.",
+  "files": [
+    {
+      "path": "package.json",
+      "before": [
+        "{",
+        "  \"name\": \"uploader\",",
+        "  \"version\": \"1.4.0\",",
+        "  \"dependencies\": {",
+        "    \"mime\": \"^4.0.1\",",
+        "    \"zod\": \"^3.23.8\"",
+        "  }",
+        "}"
+      ],
+      "after": [
+        "{",
+        "  \"name\": \"uploader\",",
+        "  \"version\": \"1.4.0\",",
+        "  \"dependencies\": {",
+        "    \"mime\": \"^4.0.1\",",
+        "    \"p-limit\": \"^6.1.0\",",
+        "    \"zod\": \"^3.23.8\"",
+        "  }",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "New runtime dependency.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "src/upload.ts",
+      "before": [
+        "import mime from 'mime';",
+        "import { z } from 'zod';",
+        "import { putObject } from './storage';",
+        "",
+        "const File = z.object({ path: z.string(), bytes: z.instanceof(Uint8Array) });",
+        "type File = z.infer<typeof File>;",
+        "",
+        "function contentType(path: string): string {",
+        "  return mime.getType(path) ?? 'application/octet-stream';",
+        "}",
+        "",
+        "export async function uploadAll(files: File[]): Promise<void> {",
+        "  await Promise.all(files.map((file) => putObject(file.path, file.bytes, contentType(file.path))));",
+        "}"
+      ],
+      "after": [
+        "import mime from 'mime';",
+        "import pLimit from 'p-limit';",
+        "import { z } from 'zod';",
+        "import { putObject } from './storage';",
+        "",
+        "const File = z.object({ path: z.string(), bytes: z.instanceof(Uint8Array) });",
+        "type File = z.infer<typeof File>;",
+        "",
+        "function contentType(path: string): string {",
+        "  return mime.getType(path) ?? 'application/octet-stream';",
+        "}",
+        "",
+        "export async function uploadAll(files: File[]): Promise<void> {",
+        "  const limit = pLimit(4);",
+        "  await Promise.all(files.map((file) => limit(() => putObject(file.path, file.bytes, contentType(file.path)))));",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "aggressive-only",
+          "note": "Import of a package the file did not import before: a new dependency. Kept at Conservative."
+        },
+        {
+          "label": "essential",
+          "note": "Concurrency limit: the behavior change.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

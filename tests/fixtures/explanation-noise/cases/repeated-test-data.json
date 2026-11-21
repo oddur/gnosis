@@ -1,0 +1,66 @@
+{
+  "id": "repeated-test-data",
+  "title": "Rename the default model",
+  "description": "The default model is now model-6-2.",
+  "source": "gnosis #411: the same literal updated in many unrelated test files after a rename.",
+  "files": [
+    {
+      "path": "src/models.ts",
+      "before": [
+        "export const DEFAULT_MODEL = 'model-6-1';"
+      ],
+      "after": [
+        "export const DEFAULT_MODEL = 'model-6-2';"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Default model: a config value.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "tests/chat.test.ts",
+      "before": [
+        "import { chat } from '../src/chat';",
+        "test('chat uses the model', () => {",
+        "  assert.equal(chat({ model: 'model-6-1' }).model, 'model-6-1');",
+        "});"
+      ],
+      "after": [
+        "import { chat } from '../src/chat';",
+        "test('chat uses the model', () => {",
+        "  assert.equal(chat({ model: 'model-6-2' }).model, 'model-6-2');",
+        "});"
+      ],
+      "hunks": [
+        {
+          "label": "aggressive-only",
+          "note": "Test data follows the rename."
+        }
+      ]
+    },
+    {
+      "path": "tests/summary.test.ts",
+      "before": [
+        "import { summarize } from '../src/summary';",
+        "test('summary names the model', () => {",
+        "  assert.match(summarize({ model: 'model-6-1' }), /model-6-1/);",
+        "});"
+      ],
+      "after": [
+        "import { summarize } from '../src/summary';",
+        "test('summary names the model', () => {",
+        "  assert.match(summarize({ model: 'model-6-2' }), /model-6-2/);",
+        "});"
+      ],
+      "hunks": [
+        {
+          "label": "aggressive-only",
+          "note": "Test data follows the rename."
+        }
+      ]
+    }
+  ]
+}

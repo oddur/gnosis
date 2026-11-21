@@ -1,0 +1,70 @@
+{
+  "id": "import-existing-module",
+  "title": "Add jitter to retry backoff",
+  "description": "Retries now add random jitter so clients that failed together do not retry together.",
+  "source": "gnosis #472, #439, #411: `import { a } from \"./x\"` widened to `{ a, b }`, b used further down.",
+  "files": [
+    {
+      "path": "src/queue/retry.ts",
+      "before": [
+        "import { delay } from './timing';",
+        "import type { Job } from './types';",
+        "",
+        "const BASE_MS = 200;",
+        "const MAX_MS = 30_000;",
+        "",
+        "/** How long to wait before attempt `n` (from 1). */",
+        "export function backoff(n: number): number {",
+        "  const exponential = BASE_MS * 2 ** (n - 1);",
+        "  return Math.min(exponential, MAX_MS);",
+        "}",
+        "",
+        "export async function retry(job: Job, attempts: number): Promise<void> {",
+        "  for (let n = 1; n <= attempts; n++) {",
+        "    try {",
+        "      return await job.run();",
+        "    } catch (error) {",
+        "      if (n === attempts) throw error;",
+        "      await delay(backoff(n));",
+        "    }",
+        "  }",
+        "}"
+      ],
+      "after": [
+        "import { delay, jitter } from './timing';",
+        "import type { Job } from './types';",
+        "",
+        "const BASE_MS = 200;",
+        "const MAX_MS = 30_000;",
+        "",
+        "/** How long to wait before attempt `n` (from 1). */",
+        "export function backoff(n: number): number {",
+        "  const exponential = BASE_MS * 2 ** (n - 1);",
+        "  return Math.min(exponential + jitter(exponential / 2), MAX_MS);",
+        "}",
+        "",
+        "export async function retry(job: Job, attempts: number): Promise<void> {",
+        "  for (let n = 1; n <= attempts; n++) {",
+        "    try {",
+        "      return await job.run();",
+        "    } catch (error) {",
+        "      if (n === attempts) throw error;",
+        "      await delay(backoff(n));",
+        "    }",
+        "  }",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Import widened for jitter, which the next hunk uses."
+        },
+        {
+          "label": "essential",
+          "note": "Backoff adds jitter: the behavior change.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

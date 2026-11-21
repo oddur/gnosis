@@ -1,0 +1,26 @@
+{
+  "plan": {
+    "summary": "Retries now add random jitter to the exponential backoff delay, so clients that failed together do not retry at the same time.\n\n- `backoff(n)` adds `jitter(exponential / 2)` to the exponential delay.\n- The sum is still capped at `MAX_MS`.\n- `jitter` is imported from `./timing`.",
+    "riskLevel": "low",
+    "riskRationale": "Small change to one retry delay calculation. The cap at MAX_MS still applies. No tests appear in the diff, and the `jitter` implementation is not shown.",
+    "storyArc": "The change has one purpose: spread out retries. The import makes `jitter` available. The backoff formula then uses it. Both hunks are read together as one behavior.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Randomize retry backoff with jitter",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1",
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `backoff(n)` now compute the delay, and does the cap still hold? Connect the new `jitter` import to the changed return line. Verify what `jitter` in `./timing` returns, such as its range and whether it can be negative.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

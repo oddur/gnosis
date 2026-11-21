@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "Opening the store now removes a lock file left by a crashed process. `clear_stale_lock` was a no-op. It now deletes the lock file and ignores a missing file. Other I/O errors are returned to the caller.",
+    "riskLevel": "low",
+    "riskRationale": "Small change in one function. It deletes a file, so the lock path and the caller's use need a check. Evidence shows no tests. The code does not check whether the lock is stale.",
+    "storyArc": "One change: `clear_stale_lock` goes from a stub to a real cleanup of the lock file, with clear error handling.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Clear stale lock file when opening the store",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does `clear_stale_lock` do now, and which errors does it return? Verify that `lock_path` gives the right file. Verify the caller runs this before the store opens. Check that the code cannot delete a lock held by a live process.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

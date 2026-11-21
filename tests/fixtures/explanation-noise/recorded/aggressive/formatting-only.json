@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "The sync no longer visits archived projects.\n\n- `syncAll` in `src/sync/run.ts` skips any project where `project.archived` is true.\n- Skipped projects are not passed to `syncProject` and are not counted in the returned `synced` total.",
+    "riskLevel": "low",
+    "riskRationale": "One small guard clause in a loop. The behavior change is narrow. The formatting-only edit in report.ts has no runtime effect.",
+    "storyArc": "One change: the sync loop now filters out archived projects before work starts. The count returned by the function follows from this filter.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Skip archived projects in syncAll",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does syncAll do with archived projects now? Show that the guard runs before syncProject and before the synced counter increments. Verify that Project has an archived field and that no other caller depends on the old count.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

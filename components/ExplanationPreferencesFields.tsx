@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import {
   EXPLANATION_STYLES,
+  NOISE_LEVELS,
   normalizeExplanationPreferences,
   type ExplanationPreferences,
 } from '../lib/explanation-options';
@@ -71,6 +72,40 @@ export function ExplanationPreferencesFields({
           Test files
         </label>
       </fieldset>
+      <div className="explanation-noise-setting">
+        <span id={`${id}-noise`} className="explanation-noise-label">
+          Reduce noise
+        </span>
+        <div className="explanation-noise-switch" role="radiogroup" aria-labelledby={`${id}-noise`}>
+          {NOISE_LEVELS.map((level) => (
+            <button
+              type="button"
+              role="radio"
+              key={level.value}
+              aria-checked={value.reduceNoise === level.value}
+              tabIndex={value.reduceNoise === level.value ? 0 : -1}
+              data-level={level.value}
+              onClick={() => onChange({ ...value, reduceNoise: level.value })}
+              onKeyDown={(event) => {
+                const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+                if (!step) return;
+                event.preventDefault();
+                const index = NOISE_LEVELS.findIndex((l) => l.value === value.reduceNoise);
+                const next = NOISE_LEVELS[(index + step + NOISE_LEVELS.length) % NOISE_LEVELS.length];
+                onChange({ ...value, reduceNoise: next.value });
+                const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=radio]');
+                buttons?.[NOISE_LEVELS.indexOf(next)]?.focus();
+              }}
+            >
+              {level.label}
+            </button>
+          ))}
+        </div>
+        <small className="explanation-noise-description">
+          {NOISE_LEVELS.find((level) => level.value === value.reduceNoise)?.description} Left-out changes stay in
+          Changes.
+        </small>
+      </div>
       {extensions && (
         <label className="explanation-custom-label" htmlFor={`${id}-extensions`}>
           Hidden extensions
