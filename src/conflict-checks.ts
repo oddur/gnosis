@@ -12,10 +12,12 @@ import { SYNTAX_MAX_CHARACTERS, type createSyntaxEngine, type SyntaxLanguage } f
  * A check that could not run (an error, a timeout, a stopped worker) answers undefined, never a verdict: the service
  * saves nothing for it, so the dialog checks the file itself and the next open checks it again.
  */
+/** The draft (`result`) too: a conflict you decided in it is checked as the text you chose. */
 export type CheckedFile = Pick<
   ConflictFile,
   'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals' | 'wholeFile'
->;
+> &
+  Partial<Pick<ConflictFile, 'result'>>;
 type Engine = Pick<ReturnType<typeof createSyntaxEngine>, 'definitions' | 'equivalent'>;
 
 /**
@@ -142,10 +144,14 @@ export function createConflictCheckWorker(
   return {
     check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
       if (disposed) return Promise.resolve(undefined);
-      const { path, base, ours, theirs, original, proposals, wholeFile } = file;
+      const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
       return new Promise((resolve) => {
         queue.push({
-          request: { id: ++serial, file: { path, base, ours, theirs, original, proposals, wholeFile }, disabled },
+          request: {
+            id: ++serial,
+            file: { path, base, ours, theirs, original, proposals, wholeFile, result },
+            disabled,
+          },
           resolve,
         });
         pump();

@@ -26,6 +26,7 @@ import {
   withResult,
 } from '../lib/conflict-carry';
 import { conflictCount } from '../lib/conflict-blocks';
+import { withUnions } from '../lib/conflict-union';
 import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import type { SyntaxLanguage } from '../lib/syntax-scope';
@@ -244,7 +245,7 @@ export function createConflictResolutionService(deps: Deps) {
   function parseMerge(merge: { code: number; stdout: Buffer }) {
     const parts = merge.stdout.toString('utf8').split('\0');
     const tree = (parts.shift() ?? '').trim();
-    if (!oid(tree)) throw new Error('Git 2.38 or newer is required to prepare conflicts.');
+    if (!oid(tree)) throw new Error('Resolve conflicts needs Git 2.40 or newer. Install a newer Git, then try again.');
     return { merge, tree, parts };
   }
   /** Starts a session from an empty directory. A legacy-path directory moves to the current layout. */
@@ -484,6 +485,26 @@ export function createConflictResolutionService(deps: Deps) {
     );
     return { ...prepared, mergeBase };
   }
+  /**
+   * Both preparation paths run `git merge-tree --merge-base`, which needs Git 2.40. Older Git stops with a usage dump,
+   * so say what to do before starting. A failed check runs again next time, after the user updates Git.
+   */
+  let gitVersion: Promise<void> | undefined;
+  function checkGitVersion() {
+    gitVersion ??= runGit(deps.directory(), ['--version'], new AbortController().signal)
+      .then(({ stdout }) => {
+        const match = /(\d+)\.(\d+)(?:\.\d+)?/.exec(stdout.toString('utf8'));
+        if (match && (Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 40)))
+          throw new Error(
+            `Resolve conflicts needs Git 2.40 or newer; you have ${match[0]}. Install a newer Git, then try again.`
+          );
+      })
+      .catch((error: unknown) => {
+        gitVersion = undefined;
+        throw error;
+      });
+    return gitVersion;
+  }
   async function prepare(
     ctx: Context,
     id: string,
@@ -492,6 +513,7 @@ export function createConflictResolutionService(deps: Deps) {
     report: (text: string) => void
   ): Promise<Prepared> {
     await fs.mkdir(deps.directory(), { recursive: true, mode: 0o700 });
+    await checkGitVersion();
     for (const branch of [spec.headBranch, spec.baseBranch])
       await runGit(deps.directory(), ['check-ref-format', `refs/heads/${branch}`], signal);
     try {
@@ -716,14 +738,18 @@ export function createConflictResolutionService(deps: Deps) {
       }
       // Out of time, Mergiraf falls back to Git's line merge and says nothing: whatever it printed is not its merge.
       if (Date.now() - started >= budget) return false;
-      const proposals = blockProposals(file.original, output, 'mergiraf');
+      const merged = blockProposals(file.original, output, 'mergiraf');
+      const whole = !merged && !hasConflictMarkers(output);
+      // Where it left a conflict open and both sides only added lines there, both additions (lib/conflict-union.ts).
+      const proposals = whole ? undefined : withUnions(file.path, file.original, merged);
       if (proposals) {
         file.proposals = proposals;
         if (!keepDraft) {
           file.result = withProposals(file.original, proposals);
           file.source = 'mergiraf';
         }
-      } else if (!hasConflictMarkers(output)) file.wholeFile = { source: 'mergiraf', text: output };
+      } else if (whole) file.wholeFile = { source: 'mergiraf', text: output };
+      // Only a file with no proposal at all gets the note: "Try structural merge again" never replaces unions.
       else file.structuralNote = 'Structural merge couldn’t combine this file.';
       file.structuralRan = true;
       return true;
@@ -1571,8 +1597,9 @@ export function createConflictResolutionService(deps: Deps) {
           session.commitSha = sha;
         }
         if (session.status !== 'published') {
-          // Only Suggest changes proposals here: it drops them, so its verdict goes too. A save never changes them.
-          if (request.kind === 'resolve')
+          // Only the file a request changed: Suggest drops its proposals, and a save changes the draft the per-conflict
+          // checks read (proposalKey includes it). Checks of an unchanged key are skipped.
+          if (request.kind === 'resolve' || request.kind === 'save')
             await check(
               session.files.filter((f) => !request.path || f.path === request.path),
               signal,

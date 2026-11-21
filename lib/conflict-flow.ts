@@ -34,6 +34,8 @@ export function canRetryStructural(
   unchanged: boolean
 ) {
   if (!unchanged || file.unsupported || file.wholeFile || file.structuralNote === STRUCTURAL_UNAVAILABLE) return false;
+  // Structural merge already ran and left these conflicts open: running it again would throw the unions away.
+  if (file.proposals?.some((p) => p?.source === 'union')) return false;
   return !!file.structuralNote || file.source === 'rerere' || !!file.proposals?.some((p) => p?.source === 'rerere');
 }
 

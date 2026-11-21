@@ -9,7 +9,7 @@ import javaWasm from '../src/assets/tree-sitter/java.wasm?url';
 import csharpWasm from '../src/assets/tree-sitter/csharp.wasm?url';
 import jsonWasm from '../src/assets/tree-sitter/json.wasm?url';
 import yamlWasm from '../src/assets/tree-sitter/yaml.wasm?url';
-import { SYNTAX_MAX_CHARACTERS, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
+import { SYNTAX_MAX_CHARACTERS, type SyntaxCheck, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
 import { blocksSignature, changeBlocks, NOISE_MAX_CHARACTERS, type NoiseBlock } from './semantic-noise';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
@@ -112,7 +112,7 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
         } else if ('equivalent' in response) {
           (entry.resolve as (value: boolean) => void)(response.equivalent);
         } else if ('check' in response) {
-          (entry.resolve as (value: { definitions: SyntaxDefinition[]; errors: boolean }) => void)(response.check);
+          (entry.resolve as (value: SyntaxCheck) => void)(response.check);
         } else {
           (entry.resolve as (value: SyntaxDefinition[]) => void)(response.definitions);
           timings.get(response.id)?.(response.timing);
@@ -625,10 +625,15 @@ export function readMoves(files: MoveFile[]): Promise<MovesResult> {
 }
 
 /**
- * Parses a text in the worker for the conflict checks (lib/conflict-verify.ts): its definitions, and whether it has
- * a parse error. Rejects for a language that is off in Settings, a text over the parse limit, or no worker.
+ * Parses a text in the worker for the conflict checks (lib/conflict-verify.ts): its definitions, whether it has a parse
+ * error and where, and the whole nodes in each of `ranges`. Rejects for a language that is off in Settings, a text over
+ * the parse limit, or no worker.
  */
-export function checkSyntax(language: SyntaxLanguage, text: string): Promise<{ definitions: SyntaxDefinition[]; errors: boolean }> {
+export function checkSyntax(
+  language: SyntaxLanguage,
+  text: string,
+  ranges?: readonly (readonly [number, number])[]
+): Promise<SyntaxCheck> {
   if (!languageAllowed(language)) return Promise.reject(Error('This language is off in Settings'));
   if (text.length > SYNTAX_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to parse'));
   return start('front').then(
@@ -645,6 +650,7 @@ export function checkSyntax(language: SyntaxLanguage, text: string): Promise<{ d
           id,
           language,
           text,
+          ...(ranges ? { ranges: ranges.map(([start, end]): [number, number] => [start, end]) } : {}),
           runtimeUrl: absolute(runtimeWasm),
           grammarUrl: absolute(GRAMMARS[language]),
         } satisfies SyntaxRequest);

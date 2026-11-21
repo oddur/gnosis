@@ -1,5 +1,5 @@
 import * as TreeSitter from 'web-tree-sitter';
-import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage, type SymbolsInput } from './syntax-scope';
+import { createSyntaxEngine, type SyntaxCheck, type SyntaxDefinition, type SyntaxLanguage, type SymbolsInput } from './syntax-scope';
 import type { NoiseBlock } from './semantic-noise';
 import { matchMoves, type FilePrints, type MoveFile, type MovesResult } from './moved-symbols';
 import { createFollowers, createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
@@ -65,9 +65,18 @@ export type SyntaxRequest =
     }
   /**
    * A conflict result and its sides, checked before Gnosis calls a conflict merged (lib/conflict-verify.ts): the
-   * definitions and whether the text parses. Not cached, and not queued: the conflict dialog covers every diff.
+   * definitions, whether the text parses and where not, and the whole nodes in `ranges`. Not cached, and not queued:
+   * the conflict dialog covers every diff.
    */
-  | { type: 'check'; id: number; language: SyntaxLanguage; text: string; runtimeUrl: string; grammarUrl: string }
+  | {
+      type: 'check';
+      id: number;
+      language: SyntaxLanguage;
+      text: string;
+      ranges?: [number, number][];
+      runtimeUrl: string;
+      grammarUrl: string;
+    }
   /** Whether `after` is `before` with formatting changes only (lib/semantic-noise.ts), for the conflict checks. */
   | { type: 'equivalent'; id: number; language: SyntaxLanguage; before: string; after: string; runtimeUrl: string; grammarUrl: string }
   /** A PR's moves, from its files' fingerprints: matched in the queue, below every parse. */
@@ -113,7 +122,7 @@ export type SyntaxResponse =
       timing: { ms: number; load?: number; cached: boolean; wait?: number; priority?: SyntaxPriority; parses?: number };
     }
   | { id: number; moves: MovesResult }
-  | { id: number; check: { definitions: SyntaxDefinition[]; errors: boolean } }
+  | { id: number; check: SyntaxCheck }
   | { id: number; equivalent: boolean }
   | { id: number; error: string }
   | { id: number; taken: boolean };
@@ -302,8 +311,9 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
   if (message.type === 'check') {
     runtimeUrl ||= message.runtimeUrl;
     grammarUrls.set(message.language, message.grammarUrl);
-    engine.definitions(message.language, message.text).then(
-      ({ definitions, errors }) => self.postMessage({ id: message.id, check: { definitions, errors } } satisfies SyntaxResponse),
+    engine.definitions(message.language, message.text, message.ranges).then(
+      ({ definitions, errors, errorLines, units }) =>
+        self.postMessage({ id: message.id, check: { definitions, errors, errorLines, units } } satisfies SyntaxResponse),
       (error: unknown) => self.postMessage({ id: message.id, ...failed(error) } satisfies SyntaxResponse)
     );
     return;

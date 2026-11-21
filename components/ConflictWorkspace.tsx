@@ -85,6 +85,7 @@ import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
 import { GitHubScopeActions, GitHubScopePrompt } from './GitHubScopePrompt';
+import { registerSettled } from '../lib/test-settled';
 
 const statusIcons = {
   decide: CircleAlert,
@@ -860,6 +861,26 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const canEdit = !!session && !!file && !file.unsupported && !busy && !session.stale && session.status === 'editing';
   const editing = session?.status === 'editing' && session.files.length > 0 && !confirming;
   const shortcutsActive = !!session && editing && !busy && !session.stale;
+  // Browser checks wait on this (lib/test-settled.ts): opened or failed, nothing running or saving, every check done.
+  // A failed save, a failed open and a stale session are settled too: the screen says what went wrong.
+  const committed = useRef({ session, busy, error, dirty, saveState, verdictOf });
+  useEffect(() => {
+    committed.current = { session, busy, error, dirty, saveState, verdictOf };
+  });
+  useEffect(
+    () =>
+      registerSettled('conflict-workspace', () => {
+        const now = committed.current;
+        if (!now.session) return now.error ? true : 'opening';
+        if (now.busy) return 'working';
+        if (now.session.stale || now.saveState === 'failed') return true;
+        if (now.dirty || now.saveState === 'saving') return 'saving';
+        if (now.session.files.some((f) => (f.proposals || f.wholeFile) && !now.verdictOf(f)))
+          return 'checking proposals';
+        return true;
+      }),
+    []
+  );
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;

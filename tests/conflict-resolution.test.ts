@@ -938,6 +938,29 @@ void test('preparation runs structural merge on every conflicted file and keeps 
   assert.deepEqual(blockBuckets(after, after.result, undefined), ['check', 'decided']);
 });
 
+void test('where structural merge leaves both sides’ new functions open, preparation proposes both, the PR’s first', async (t) => {
+  const binary = path.resolve('resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf');
+  if (!(await fs.stat(binary).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const fn = (name: string, body: string) => `export function ${name}(a: number, b: number) {\n  return ${body};\n}\n\n`;
+  const before = (added: string) => `${fn('add', 'a + b')}${added}${fn('subtract', 'a - b')}`;
+  const f = await fixture(t, false, {
+    name: 'math.ts',
+    base: before(''),
+    ours: before(fn('multiply', 'a * b')),
+    theirs: before(fn('divide', 'a / b')),
+  });
+  const [file] = f.session.files;
+  assert.deepEqual(
+    file.proposals?.map((p) => p && p.source),
+    ['union']
+  );
+  assert.equal(file.result, before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
+  assert.ok(!file.resolved, 'A union is never reviewed for you');
+});
+
 void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {
   const file: ConflictFile = {
     path: 'a.ts',

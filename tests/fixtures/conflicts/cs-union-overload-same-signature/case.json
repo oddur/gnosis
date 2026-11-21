@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a `Write(int)` overload; the parameter names differ but the signature is the same, so the union does not compile.",
+  "language": "csharp",
+  "category": "semantic/overloads",
+  "expected": {
+    "src/Log.cs": "check"
+  }
+}

@@ -23,10 +23,14 @@ import {
   type ConflictLabels,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
-import type { Verdict } from '../lib/conflict-verify';
+import { blockVerdict, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
 const proposalWhat = (proposal: ConflictProposal) =>
-  proposal.source === 'rerere' ? 'Same as you resolved before' : 'Combined both sides’ changes';
+  proposal.source === 'rerere'
+    ? 'Same as you resolved before'
+    : proposal.source === 'union'
+      ? 'Kept both sides’ additions'
+      : 'Combined both sides’ changes';
 /** A Check label says where the proposal came from only when that is a fact; why to check it is the note beside it. */
 const checkLabel = (proposal: ConflictProposal) =>
   proposal.source === 'rerere' ? `Check · ${proposalWhat(proposal)}` : 'Check';
@@ -141,8 +145,8 @@ function Block({
   onChoose: (choice: BlockPick) => void;
   onUndo?: () => void;
   proposal?: ConflictProposal | null;
-  /** The file's checks; undefined while they run. */
-  verdict?: Verdict;
+  /** This conflict's checks; undefined while they run. */
+  verdict?: BlockVerdict;
   /** Why structural merge proposed nothing for this file, shown on its Decide conflicts. */
   note?: string;
 }) {
@@ -477,7 +481,7 @@ export function ConflictView({
               disabled={disabled}
               onChoose={(choice) => choose(segment.index, choice)}
               proposal={proposals?.[segment.index]}
-              verdict={verdict}
+              verdict={blockVerdict(verdict, segment.index)}
               note={note}
               onUndo={model.undoable ? () => choose(segment.index, undefined) : undefined}
             />
