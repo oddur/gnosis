@@ -208,7 +208,12 @@ declare global {
       onChatProgress: (callback: (chunk: string) => void) => void;
       offChatProgress: () => void;
       onChatTrace: (
-        callback: (event: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }) => void
+        callback: (event: {
+          requestId?: string;
+          steps: import('../lib/chat-trace').ChatTraceStep[];
+          /** New-side lines the PR-wide context sent, by path: the only lines citations may point at. */
+          citable?: Record<string, [number, number][]>;
+        }) => void
       ) => () => void;
       conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest) => Promise<import('../lib/conflict-resolution').ConflictReply>;
       /** The PR header's conflict line (lib/conflict-header.ts); asking also prepares the PR's conflicts in the background. */

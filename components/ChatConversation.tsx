@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy, Loader2, RotateCcw } from 'lucide-react';
 import { lazyMarkdownComponent } from './LazyMarkdown';
 import { Button } from './ui/button';
@@ -56,6 +56,27 @@ function AnswerCopy({ content }: { content: string }) {
       {error && <span role="alert">Could not copy. Select the answer to copy it.</span>}
     </>
   );
+}
+
+/**
+ * An answer's citations resolve against what its question actually sent: the PR-wide context's lines, when the main
+ * process reported them. Anything else is plain text. Without such a report (a local topic, an older answer), the
+ * chat's own bounds apply.
+ */
+function AnswerCitations({
+  citations,
+  citable,
+  children,
+}: {
+  citations?: ChatCitationSource;
+  citable?: Record<string, [number, number][]>;
+  children: ReactNode;
+}) {
+  const value = useMemo<ChatCitationSource | undefined>(
+    () => (citations && citable ? { ...citations, bounds: (path) => ({ ranges: citable[path] ?? [] }) } : citations),
+    [citations, citable]
+  );
+  return <ChatCitationContext.Provider value={value}>{children}</ChatCitationContext.Provider>;
 }
 
 /** The code a question was about: its file and lines, the code on request. */
@@ -140,9 +161,11 @@ export function ChatConversation({
                         ) : null}
                         {message.selection && <SentSelection selection={message.selection} />}
                         {message.content && (
-                          <ChatMarkdown className="reading-prose chat-message-body" streaming={message.isStreaming}>
-                            {message.content}
-                          </ChatMarkdown>
+                          <AnswerCitations citations={citations} citable={message.citable}>
+                            <ChatMarkdown className="reading-prose chat-message-body" streaming={message.isStreaming}>
+                              {message.content}
+                            </ChatMarkdown>
+                          </AnswerCitations>
                         )}
                         {message.isStreaming && (
                           <div className="chat-answer-status">

@@ -574,7 +574,7 @@ void app.whenReady().then(async () => {
     );
     context = await sent();
     assert.deepEqual(context.leftOut, ['vendor/big.ts'], 'What does not fit is listed');
-    assert.match(context.text, /<not_included reason="context budget">[\s\S]*vendor\/big\.ts/);
+    assert.match(context.text, /<not_included-\w+ reason="context budget">[\s\S]*vendor\/big\.ts/);
     await wait(`!!${lastTrace}?.querySelector('[data-step="context:omitted"]')`);
     assert.equal(
       await js(`${lastTrace}.querySelector('[data-step="context:omitted"] .chat-trace-title').textContent`),

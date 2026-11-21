@@ -106,6 +106,17 @@ export function chatContextBudget(preferences: Partial<Pick<Preferences, 'chatCo
   return normalizeChatContextBudget(preferences?.chatContextTokens);
 }
 
+/** A full preferences save keeps the chat fields `current` holds: save-chat-preferences is their only writer. */
+export function keepChatPreferences<T extends Partial<Preferences>>(incoming: T, current: Partial<Preferences>): T {
+  const keys = ['chatPanelWidths', 'chatModels', 'chatContextTokens'];
+  const rest = Object.entries(incoming).filter(([key]) => !keys.includes(key));
+  const chat = keys.flatMap((key) => {
+    const value = current[key as keyof Preferences];
+    return value === undefined ? [] : [[key, value] as const];
+  });
+  return Object.fromEntries([...rest, ...chat]) as T;
+}
+
 interface PreferencesStore {
   loadPreferences: () => Promise<Preferences>;
   savePreferences?: (preferences: Preferences) => Promise<unknown>;

@@ -10,6 +10,18 @@ interface Session {
   error: string;
 }
 const sessions = new Map<string, Session>();
+/** Saved citable lines, kept only when they are well-formed ranges. */
+function parseCitable(value: unknown): Record<string, [number, number][]> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const ok = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0;
+  const result: Record<string, [number, number][]> = {};
+  for (const [path, ranges] of Object.entries(value))
+    if (Array.isArray(ranges))
+      result[path] = ranges.filter(
+        (r): r is [number, number] => Array.isArray(r) && ok(r[0]) && ok(r[1]) && r[0] <= r[1]
+      );
+  return result;
+}
 const runs = new Map<string, { requestId: string; stopped: boolean }>();
 const listeners = new Set<() => void>();
 const storage = (key: string) => `gnosis-file-chat:v1:${key}`;
@@ -39,6 +51,7 @@ function get(key: string): Session {
               error: 'error' in entry && typeof entry.error === 'string' ? entry.error : undefined,
               trace: 'trace' in entry ? parseChatTrace(entry.trace) : undefined,
               timing: 'timing' in entry ? parseChatTiming(entry.timing) : undefined,
+              citable: 'citable' in entry ? parseCitable(entry.citable) : undefined,
               stopped:
                 ('isStreaming' in entry && entry.isStreaming === true) ||
                 ('stopped' in entry && entry.stopped === true),
@@ -130,7 +143,14 @@ async function send(key: string, request: Omit<FileChatRequest, 'history'>, retr
       if (event.requestId !== run.requestId || run.stopped) return;
       const current = get(key).messages.find((m) => m.id === assistant.id);
       const elapsed = current?.timing ? Date.now() - current.timing.sentAt : undefined;
-      patch({ trace: appendTraceSteps(current?.trace, event.steps, elapsed) }, true, false);
+      patch(
+        {
+          trace: appendTraceSteps(current?.trace, event.steps, elapsed),
+          ...(event.citable ? { citable: event.citable } : {}),
+        },
+        true,
+        false
+      );
     });
     const history = before.messages
       .filter(

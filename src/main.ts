@@ -158,9 +158,9 @@ import { setBinaryOverride, detectBinaryPath, checkCliInstalled } from '../lib/p
 import { getProvider } from '../lib/provider';
 import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
 import { CHAT_CITATION_INSTRUCTION } from '../lib/chat-citations';
-import { normalizeChatModels, normalizeChatPanelWidths, type ChatPreferencesPatch } from '../lib/chat-preferences';
-import { buildChatPrContext, normalizeChatContextBudget, type ChatContextResult } from '../lib/chat-pr-context';
-import { createChatDefinitions } from './chat-context-definitions';
+import { keepChatPreferences, normalizeChatModels, normalizeChatPanelWidths, type ChatPreferencesPatch } from '../lib/chat-preferences';
+import { normalizeChatContextBudget, type ChatContextInput, type ChatContextResult } from '../lib/chat-pr-context';
+import { buildChatContext, createChatContextWorker } from './chat-context-definitions';
 import { chatContextTrace, toolCallStep, toolResultStep, type ChatTraceStep } from '../lib/chat-trace';
 import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHunks } from '../lib/diff-parse';
 import { filterDiff } from '../lib/file-filter';
@@ -2017,7 +2017,8 @@ ipcMain.handle('save-chat-preferences', (_event, patch: ChatPreferencesPatch) =>
 ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   await githubClients.setCacheSizeMB(prefs.githubCacheSizeMB);
   void maintainStorage();
-  savePreferences(prefs);
+  // A window's copy may predate a chat save in another window: the chat fields on disk win.
+  savePreferences(keepChatPreferences(prefs, loadPreferences()));
   const saved = loadPreferences();
   notifications.settingsChanged();
   // Settings › Preloading applies at once: the budget share, queue preparation and the amount.
@@ -3861,7 +3862,13 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
     let context: ChatContextResult | undefined;
     if (req.prUrl && getResolvedToken())
       try {
-        const snapshot = await prChanges.manifest(changesClient(), req.prUrl, false, {}, run.controller.signal);
+        // The revision the explanation was written at, when its changes are still readable; else the current one.
+        const revision =
+          req.revision?.baseSha && req.revision.headSha
+            ? { baseSha: req.revision.baseSha, headSha: req.revision.headSha }
+            : undefined;
+        const snapshot = await prChanges.manifest(changesClient(), req.prUrl, false, revision ? { revision } : {}, run.controller.signal);
+        const moved = !!revision && snapshot.metadata.headSha !== revision.headSha;
         context = await chatPrContext({
           key: `${snapshot.url}:${snapshot.comparisonBase}:${snapshot.metadata.headSha}`,
           title: snapshot.metadata.title,
@@ -3869,15 +3876,20 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
           files: snapshot.files,
           anchor: req.anchorFiles ?? req.affectedFiles,
           anchorName: 'the topic',
+          anchorHunks: req.anchorHunks,
           question: req.question,
           history: req.history,
+          note: moved
+            ? `The explanation was written at ${revision.headSha.slice(0, 7)}, which could not be read now. This context is from the PR's current head, ${snapshot.metadata.headSha.slice(0, 7)}; the topic's code may differ from it.`
+            : `This context is from ${snapshot.metadata.headSha.slice(0, 7)}, the revision the explanation was written at.`,
           budgetTokens: normalizeChatContextBudget(req.contextTokens ?? loadPreferences().chatContextTokens),
         });
         if (!run.controller.signal.aborted && !_event.sender.isDestroyed())
           _event.sender.send('chat-trace', {
             requestId: req.requestId,
-            // The renderer traced the topic's hunks, the PR description and the selection itself.
-            steps: chatContextTrace(context, 0, ['pr', 'selection', 'anchor']).steps,
+            // Everything sent, anchor included; steps the renderer already traced keep their ids and are not repeated.
+            steps: chatContextTrace(context, 0).steps,
+            citable: context.citable,
           });
       } catch (error) {
         run.controller.signal.throwIfAborted();
@@ -4157,17 +4169,16 @@ const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-
 });
 app.on('will-quit', () => conflictChecks.dispose());
 // Tree-sitter definitions for chat's PR-wide context, in their own worker, cached per PR revision.
-const chatDefinitions = createChatDefinitions(path.join(__dirname, 'chat-context-worker.js'), () => {
+const chatContextWorker = createChatContextWorker(path.join(__dirname, 'chat-context-worker.js'), () => {
   const grammars = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'src/assets/tree-sitter') : path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/assets/tree-sitter`);
   const runtime = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'node_modules/web-tree-sitter/web-tree-sitter.wasm') : path.join(grammars, 'web-tree-sitter.wasm');
   return { grammars, runtime };
 });
-app.on('will-quit', () => chatDefinitions.dispose());
-/** Builds a chat's PR-wide context; definitions come from the worker, so the main thread only ranks and slices. */
-async function chatPrContext(input: Omit<Parameters<typeof buildChatPrContext>[0], 'definitions'> & { key: string }) {
+app.on('will-quit', () => chatContextWorker.dispose());
+/** Builds a chat's PR-wide context in the context worker: parsing, ranking and slicing all happen off this thread. */
+async function chatPrContext({ key, ...input }: Omit<ChatContextInput, 'definitions'> & { key: string }) {
   const started = performance.now();
-  const definitions = await chatDefinitions.definitions(input.key, input.files, input.sources);
-  const context = buildChatPrContext({ ...input, definitions });
+  const context = await buildChatContext(chatContextWorker, key, input);
   console.log(`[chat] PR context: ${context.items.length} items, ${context.tokens} of ${context.budget} tokens, ${context.leftOut.length} left out, ${Math.round(performance.now() - started)} ms`);
   return context;
 }
@@ -5405,9 +5416,9 @@ handleInteractive('ask-pr-file', async (_event, request: FileChatRequest) => {
     const contents = await waitForChatContext(() => source.content(client, request), controller.signal);
     controller.signal.throwIfAborted();
     // The trace reports exactly what this handler puts in the prompt below.
-    const sendTrace = (steps: ChatTraceStep[]) => {
+    const sendTrace = (steps: ChatTraceStep[], citable?: Record<string, [number, number][]>) => {
       if (request.requestId && !controller.signal.aborted && !_event.sender.isDestroyed())
-        _event.sender.send('chat-trace', { requestId: request.requestId, steps });
+        _event.sender.send('chat-trace', { requestId: request.requestId, steps, ...(citable ? { citable } : {}) });
     };
     // The whole PR as context, most relevant first, up to the chat context size (lib/chat-pr-context.ts).
     const context = await chatPrContext({
@@ -5424,7 +5435,7 @@ handleInteractive('ask-pr-file', async (_event, request: FileChatRequest) => {
       budgetTokens: normalizeChatContextBudget(request.contextTokens ?? loadPreferences().chatContextTokens),
     });
     controller.signal.throwIfAborted();
-    sendTrace(chatContextTrace(context, Math.min(request.history.length, 20)).steps);
+    sendTrace(chatContextTrace(context, Math.min(request.history.length, 20)).steps, context.citable);
     let toolCalls = 0;
     workbench.interrupt();
     activeForegroundChats++;
@@ -5458,18 +5469,11 @@ handleInteractive('ask-pr-file', async (_event, request: FileChatRequest) => {
               head: snapshot.metadata.headSha,
             }
           : { scope: 'Current PR diff' },
-        pr: {
-          url: snapshot.url,
-          title: snapshot.metadata.title,
-          description: snapshot.metadata.description.slice(0, 20000),
-          base: snapshot.comparisonBase,
-          head: snapshot.metadata.headSha,
-        },
-        file,
-        // The PR as a whole, filled by relevance to this file up to the budget; each item says why it is there.
+        pr: { url: snapshot.url, base: snapshot.comparisonBase, head: snapshot.metadata.headSha },
+        // The PR as a whole, filled by relevance to this file up to the budget; each item says why it is there. It
+        // holds the title, description, file, selection and diffs: nothing about the PR is sent outside it.
         context: context.text,
         contextLimit: `PR context is limited to about ${Math.round(context.budget / 1000)}k tokens. Files listed as not included exist in the PR; do not guess their content.`,
-        selection: request.selection?.slice(0, 20000),
         history: request.history.slice(-20).map((m) => ({ role: m.role, content: m.content.slice(0, 20000) })),
         question: request.question,
       }),

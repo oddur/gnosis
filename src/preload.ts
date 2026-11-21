@@ -426,11 +426,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('chat-progress');
   },
   onChatTrace: (
-    callback: (event: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }) => void
+    callback: (event: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[]; citable?: Record<string, [number, number][]> }) => void
   ): (() => void) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      value: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }
+      value: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[]; citable?: Record<string, [number, number][]> }
     ) => callback(value);
     ipcRenderer.on('chat-trace', listener);
     return () => {

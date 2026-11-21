@@ -24,7 +24,9 @@ const claudeEvents = createClaudeEventHandler({
       toolResultStep(result),
     ]),
 });
-const traceListeners = new Set<(event: { requestId?: string; steps: ChatTraceStep[] }) => void>();
+const traceListeners = new Set<
+  (event: { requestId?: string; steps: ChatTraceStep[]; citable?: Record<string, [number, number][]> }) => void
+>();
 const fileListeners = new Set<(event: { requestId: string; chunk: string }) => void>();
 let progress: ((chunk: string) => void) | undefined;
 let finish: ((content: string) => void) | undefined;
@@ -118,7 +120,11 @@ const api: Partial<Window['electronAPI']> = {
       (request as typeof request & { context?: unknown }).context = context;
       queueMicrotask(() => {
         for (const listener of traceListeners)
-          listener({ requestId, steps: chatContextTrace(context, request.history.length).steps });
+          listener({
+            requestId,
+            steps: chatContextTrace(context, request.history.length).steps,
+            citable: context.citable,
+          });
       });
     }
     return new Promise((yes, no) => {

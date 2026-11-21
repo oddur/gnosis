@@ -489,6 +489,10 @@ export interface SendSlideChatRequest {
   prUrl?: string;
   /** The topic's files: the anchor of its PR-wide context. */
   anchorFiles?: string[];
+  /** The topic's own hunks, by path and new start line: they go first when a file does not fit whole. */
+  anchorHunks?: Record<string, number[]>;
+  /** The revision the explanation was written at: the context is read there when it still can be. */
+  revision?: { baseSha?: string; headSha?: string };
   /** Tokens of PR context to send. */
   contextTokens?: number;
 }

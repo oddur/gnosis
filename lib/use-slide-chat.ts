@@ -1,6 +1,7 @@
 import { chatQuestion } from './chat-context';
 import {
   appendTraceSteps,
+  hunkLineRange,
   settleTrace,
   slideChatTrace,
   type ChatTiming,
@@ -19,6 +20,8 @@ export interface ChatMessage {
   trace?: ChatTrace;
   /** When the question was sent, the first words arrived and the answer ended: the trace's timing. */
   timing?: ChatTiming;
+  /** New-side lines the PR-wide context sent, by path: the lines this answer's citations may point at. */
+  citable?: Record<string, [number, number][]>;
   error?: string;
   stopped?: boolean;
   selection?: string;
@@ -35,7 +38,13 @@ const anyStreaming = () =>
 type Action =
   | { type: 'SEND'; slideIndex: number; userMessage: ChatMessage; assistantMessage: ChatMessage; retryId?: string }
   | { type: 'APPEND_CHUNK'; slideIndex: number; assistantId: string; chunk: string }
-  | { type: 'TRACE'; slideIndex: number; assistantId: string; steps: Partial<ChatTraceStep>[] }
+  | {
+      type: 'TRACE';
+      slideIndex: number;
+      assistantId: string;
+      steps: Partial<ChatTraceStep>[];
+      citable?: Record<string, [number, number][]>;
+    }
   | { type: 'FINALIZE'; slideIndex: number; assistantId: string; content: string }
   | { type: 'ERROR'; slideIndex: number; assistantId: string; error: string }
   | { type: 'STOP'; slideIndex: number; assistantId: string }
@@ -91,6 +100,7 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
           m.id === action.assistantId
             ? {
                 ...m,
+                ...(action.citable ? { citable: action.citable } : {}),
                 trace: appendTraceSteps(m.trace, action.steps, m.timing ? Date.now() - m.timing.sentAt : undefined),
               }
             : m
@@ -225,6 +235,12 @@ export function useSlideChat(
           ? {
               prUrl: review.prUrl,
               anchorFiles: [...new Set([...slide.diffHunks.map((h) => h.filePath), ...slide.affectedFiles])],
+              anchorHunks: slide.diffHunks.reduce<Record<string, number[]>>((all, h) => {
+                const start = hunkLineRange(h.hunkHeader);
+                if (start?.side === 'after') (all[h.filePath] ??= []).push(start.startLine);
+                return all;
+              }, {}),
+              revision: { baseSha: review.baseSha, headSha: review.headSha },
               contextTokens,
             }
           : {}),
@@ -253,7 +269,13 @@ export function useSlideChat(
         // Older browser fixtures predate traces; production preload always supplies this.
         offTrace = (window.electronAPI as Partial<Window['electronAPI']>).onChatTrace?.((event) => {
           if (event.requestId === run.requestId && !run.stopped)
-            dispatch({ type: 'TRACE', slideIndex, assistantId: assistantMsg.id, steps: event.steps });
+            dispatch({
+              type: 'TRACE',
+              slideIndex,
+              assistantId: assistantMsg.id,
+              steps: event.steps,
+              citable: event.citable,
+            });
         });
 
         const content = await window.electronAPI.sendSlideChat(req);
