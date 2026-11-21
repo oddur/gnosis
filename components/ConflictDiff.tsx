@@ -5,7 +5,8 @@ import { diffThemeName } from '../lib/diff-worker-pool';
 import { applyCodePalette } from '../lib/diff-code-palette';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { useDiffLayout } from '../lib/use-diff-layout';
-import { diffContextLines, noiseFilterOf } from '../lib/review-diff';
+import { diffContextLines } from '../lib/review-diff';
+import { NO_NOISE_FILTER } from '../lib/semantic-noise';
 import { quietHeader } from '../lib/quiet-changes-header';
 import { afterLines, hunksFromDiff, withPins, type GapHunk } from '../lib/diff-gaps';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
@@ -22,11 +23,6 @@ import { Block, DiffColumns, WholeFile, useConflictChoices, type ConflictViewHan
 
 /** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
 let mounts = 0;
-/**
- * Quiet changes never apply here (#445 item 8): a whitespace or formatting difference between the sides, or in a
- * proposal, is part of the decision and always shows.
- */
-const NO_QUIET = noiseFilterOf({ hideWhitespace: false, hideFormatting: false, hideComments: false });
 /** Whether a hunk shows a new line. */
 const showsLine = (hunks: readonly GapHunk[], line: number) =>
   hunks.some(
@@ -35,8 +31,8 @@ const showsLine = (hunks: readonly GapHunk[], line: number) =>
 
 /**
  * One file of the Conflicts view as Changes shows a file (#445 item 8): DiffFileHeader over ChangesDiff, through
- * useDiffFileModel, so breadcrumbs, show scope, Quiet changes and the code palette are the same. `before` is the PR's
- * version; `pins` keep lines in view that do not change, so a card can sit under them.
+ * useDiffFileModel, so breadcrumbs, show scope and the code palette are the same. Quiet changes never apply.
+ * `before` is the PR's version; `pins` keep lines in view that do not change, so a card can sit under them.
  */
 export function ConflictFileDiff<A>({
   name,
@@ -95,12 +91,14 @@ export function ConflictFileDiff<A>({
     [before, after]
   );
   // Parsed definitions are cached by revision: each draft this mount shows is one, numbered as it changes.
+  const lineCount = useMemo(() => afterLines(after).length, [after]);
   const [mount] = useState(() => ++mounts);
   const [revision, setRevision] = useState({ before, after, n: 0 });
   if (revision.before !== before || revision.after !== after) setRevision({ before, after, n: revision.n + 1 });
   const model = useDiffFileModel({
     fileKey: `${fileKey}:${mount}.${revision.n}`,
-    revealKey: fileKey,
+    // Revealed lines and pins are line numbers: a choice that changes the draft's length drops them, never misplaces them.
+    revealKey: `${fileKey}:${lineCount}`,
     path: name,
     hunks,
     contents,
@@ -110,7 +108,8 @@ export function ConflictFileDiff<A>({
     codeSettings,
     sectionRef,
     status: 'modified',
-    noiseFilter: NO_QUIET,
+    // Quiet changes never apply here: a whitespace or formatting difference between the sides is part of the decision.
+    noiseFilter: NO_NOISE_FILTER,
   });
   const theme = diffThemeName(preferences?.codeTheme);
   // The file header is code-tier: its colours come from the diff's theme (lib/code-palette.ts).
