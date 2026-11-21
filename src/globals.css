@@ -4808,7 +4808,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* Feedback is a reading workspace: one conversation, with its source always visible. */
 .feedback-workspace { height:100%; min-height:0; display:flex; flex-direction:column; color:var(--foreground); container-type:inline-size; }
 .feedback-filters { display:flex; align-items:center; gap:2px; }
-.feedback-filters button span { font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
+.feedback-filters button span { font-size:var(--type-caption); font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
 .feedback-pr-filter { margin-left:auto; min-width:120px; width:180px; max-width:260px; }
 .feedback-actions-filter { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-control); white-space:nowrap; cursor:pointer; }
 .feedback-actions-filter input { accent-color:var(--primary); }
@@ -5718,7 +5718,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* Reviewers, assignees, labels and the milestone: a heading with a small edit button, as in GitHub's sidebar. The
    picker is the shared selection popup (components/PrPeopleEditor.tsx). */
 .pr-people-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:24px; }
-.pr-people-edit.workbench-icon { width:24px; height:24px; margin-right:-4px; }
+.pr-people-edit.workbench-icon { width:24px; height:24px; }
 .pr-people-edit[data-popup-open] { background:var(--accent); color:var(--accent-foreground); }
 .pr-people-edit[aria-disabled=true] { opacity:.5; cursor:not-allowed; }
 .pr-people-edit[aria-disabled=true]:hover { background:transparent; color:var(--muted-foreground); }
@@ -5865,12 +5865,8 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* Summary type tiers: the type follows the page's information architecture (DESIGN.md › Address Feedback › Type).
    Reading (16px prose): the description and every comment or review body. Heading (15px, 650): day markers, sidebar
    section titles, the merge verdict, and the actor of each entry heading, whose sentence is 15px. Detail (13px):
-   commit subjects, reasons and values. Controls (13px) sit below the content they act on. Meta (12px, muted): times,
+   commit subjects, reasons and values. Controls (13px, the Button sm size) sit below the content they act on. Meta (12px, muted): times,
    SHAs, counts. */
 .feedback-timeline .github-comment-body { font-size:var(--type-prose); }
-.timeline-title .entity-badge, .conversation-description-header .entity-badge { font-size:inherit; font-weight:650; }
-.feedback-timeline-workspace :is(.band-readiness, .conversation-grid) [data-slot=button]:not([data-size=xs], .changes-file-header *) { font-size:var(--type-control); }
-.feedback-filters [data-slot=button] > span { color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+.timeline-title .entity-badge.github-author, .conversation-description-header .entity-badge.github-author { font-size:inherit; font-weight:650; }
 .band-readiness .merge-readiness-badge { font-size:var(--type-body); font-weight:650; }
-/* The pencil's optical -4px would scroll the pinned details column sideways; inside it the pencil sits flush. */
-.conversation-side .pr-people-edit.workbench-icon { margin-right:0; }

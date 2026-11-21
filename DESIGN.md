@@ -187,7 +187,7 @@ The Activity panel uses the drawer radius; its title bar capsule is fully rounde
 ### Buttons
 
 Compact and restrained. [Button](components/ui/button.tsx) owns primary, outline, secondary, ghost, destructive, and link variants.
-Default buttons are 36px high; small buttons are 32px. Icon presence reduces horizontal padding.
+Default buttons are 36px high; small buttons are 32px with 13px (`--type-control`) labels, the compact-control size. Icon presence reduces horizontal padding.
 Primary and secondary fills soften on hover. Outline and ghost actions use accent hover surfaces.
 Dark outline buttons use translucent input surfaces; destructive buttons also adjust their fill in Dark.
 Keep the visible focus outline and library focus ring. Disabled buttons use half opacity.

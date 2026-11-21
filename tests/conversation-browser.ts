@@ -104,8 +104,12 @@ void app.whenReady().then(async () => {
           console.log(`SUMTYPE\n${await js<string>(audit)}`);
         }
         for (const dark of [false, true]) {
+          // Wait for the page to re-theme: the toolbar's computed background changes when the theme does.
+          const surface = "getComputedStyle(document.querySelector('.feedback-toolbar')).backgroundColor";
+          const before = await js<string>(surface);
+          const switching = await js<boolean>(`document.documentElement.classList.contains('dark')!==${dark}`);
           await js(`document.documentElement.classList.toggle('dark',${dark})`);
-          await wait(`document.documentElement.classList.contains('dark')===${dark}`);
+          if (switching) await wait(`${surface}!==${JSON.stringify(before)}`);
           for (const [part, to] of [['top', '0'], ['timeline', timelineTop]] as const) {
             await pageScroll(to);
             await waitSettled(win.webContents, 'feedback-timeline');
@@ -144,6 +148,8 @@ void app.whenReady().then(async () => {
     // The type follows the page's structure (DESIGN.md › Address Feedback › Type): comments read at the description's
     // size; an entry's heading sits above its commit lines; the bar's controls sit below the entries; sidebar titles
     // sit above their values; the merge verdict above its reasons.
+    const tierParts = ['.conversation-description .pr-markdown p', '.feedback-timeline .github-comment-body', '.feedback-entry[data-entry-type=commits] .timeline-title', '.feedback-commits li', '.feedback-filters [data-slot=button]', '.conversation-sidebar h2', '.conversation-sidebar dd', '.band-readiness .merge-readiness-badge', '.band-readiness .pr-merge-detail ul'];
+    await wait(`${JSON.stringify(tierParts)}.every(s=>document.querySelector(s))`);
     const type = await js<Record<string, number | null>>(`(()=>{const px=s=>{const e=document.querySelector(s);return e?parseFloat(getComputedStyle(e).fontSize):null};
       return {description:px('.conversation-description .pr-markdown p'),comment:px('.feedback-timeline .github-comment-body'),heading:px('.feedback-entry[data-entry-type=commits] .timeline-title'),
         commit:px('.feedback-commits li'),control:px('.feedback-filters [data-slot=button]'),sideTitle:px('.conversation-sidebar h2'),sideValue:px('.conversation-sidebar dd'),
