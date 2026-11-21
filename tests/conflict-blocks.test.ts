@@ -97,3 +97,50 @@ void test('labels name the PR and the base branch, never commit IDs', () => {
   assert.equal(shortBranch('abcdefghij', 5), 'ab…ij');
   for (const value of [merge, restack]) assert.doesNotMatch(JSON.stringify(value), /[0-9a-f]{12}/);
 });
+
+void test('the Conflicts view diff shows a decided conflict as its result and an open one as its two sides', async () => {
+  const { conflictDiffText } = await import('../lib/conflict-diff');
+  const original = 'a\n<<<<<<< pr\nours\n=======\ntheirs\n>>>>>>> main\nb\n<<<<<<< pr\nx\n=======\n>>>>>>> main\nc\n';
+  const open = conflictDiffText(conflictModel(original, original));
+  // Open: the base branch's lines stand in, so the diff against the PR's file shows both sides. Never markers.
+  assert.equal(open.after, 'a\ntheirs\nb\nc\n');
+  assert.deepEqual(
+    open.blocks.map(({ index, start, end, anchor }) => [index, start, end, anchor]),
+    [
+      [0, 2, 2, 2],
+      // No lines on main's side: the card sits under the line before.
+      [1, 4, 3, 3],
+    ]
+  );
+  const kept = applyChoices(parseConflicts(original), ['ours', 'ours']);
+  const decided = conflictDiffText(conflictModel(original, kept));
+  assert.equal(decided.after, 'a\nours\nb\nx\nc\n');
+  assert.deepEqual(decided.blocks.map((b) => [b.start, b.end, b.anchor]), [[2, 2, 2], [4, 4, 4]]);
+  // A proposal shows its text.
+  const proposals = [{ text: 'merged\n' }, null];
+  const draft = applyChoices(parseConflicts(original), ['proposal', undefined], proposals);
+  const proposed = conflictDiffText(conflictModel(original, draft, proposals), proposals);
+  assert.match(proposed.after, /^a\nmerged\nb\n/);
+});
+
+void test('a card sits under the lines it decides: under the PR lines removed when its side shows none, at the top too', async () => {
+  const { cardAnchors, conflictDiffText } = await import('../lib/conflict-diff');
+  const { hunksFromDiff } = await import('../lib/diff-gaps');
+  const { parseDiffFromFile } = await import('@pierre/diffs');
+  const anchors = (original: string, ours: string) => {
+    const shown = conflictDiffText(conflictModel(original, original));
+    const hunks = hunksFromDiff(
+      parseDiffFromFile({ name: 'a.ts', contents: ours }, { name: 'a.ts', contents: shown.after }, { context: 3 }, true)
+    );
+    return cardAnchors(shown.blocks, hunks).map(({ index, side, line }) => [index, side, line]);
+  };
+  // Block 1 removes the PR's `x` (old line 4) and main has no lines: its card sits under `x`, not under `b`.
+  const original = 'a\n<<<<<<< pr\nours\n=======\ntheirs\n>>>>>>> main\nb\n<<<<<<< pr\nx\n=======\n>>>>>>> main\nc\n';
+  assert.deepEqual(anchors(original, 'a\nours\nb\nx\nc\n'), [
+    [0, 'additions', 2],
+    [1, 'deletions', 4],
+  ]);
+  // At the top of the file: under the last PR line removed, never under a later line.
+  const top = '<<<<<<< pr\nx\ny\n=======\n>>>>>>> main\nrest\n';
+  assert.deepEqual(anchors(top, 'x\ny\nrest\n'), [[0, 'deletions', 2]]);
+});

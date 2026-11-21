@@ -15,7 +15,11 @@ void app.whenReady().then(async () => {
   win.webContents.on('console-message', (event) => {
     if (event.message.includes('Error')) console.error(event.message);
   });
-  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  // A failed script names itself, so a failure says which step it was.
+  const js = <T = unknown>(code: string) =>
+    (win.webContents.executeJavaScript(code) as Promise<T>).catch((error: unknown) => {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n${code.slice(0, 400)}`);
+    });
   const wait = async (code: string) => {
     for (let n = 0; n < 400; n++) {
       if (await js(code)) return;
@@ -1046,8 +1050,9 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span').textContent==='src/imports.ts').click()");
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /Merged · Combined both sides’ changes/);
-    assert.equal(await js(`${block(0)}.querySelector('details').open`), false, 'Merged starts collapsed');
-    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /The file parses\. Every line of both sides is accounted for\./);
+    // The Conflicts view's diff shows the result (#445 item 8): a Merged card is its two lines, with no code of its own.
+    assert.equal(await js(`!!${block(0)}.querySelector('details, .conflict-snippet')`), false, 'Merged stays one line');
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`), /The file parses\. Every line of both sides is accounted for\./);
     assert.equal(await stage(), 'resolved', 'With the switch on, a Merged file still waits for your review');
     await captureAll('buckets-merged');
     // Off: files whose every conflict is Merged are marked reviewed for you. Nothing is pushed.
@@ -1145,10 +1150,9 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await badges('.conflict-file-title'), await listBadge(1), 'The header and the file list agree');
     assert.equal((await badges('.conflict-file-title'))[0][2], '1 merged');
     assert.match(
-      await js<string>(`${block(0)}.querySelector('summary').textContent`),
+      await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`),
       /^The PR only reformatted these lines and main changed them; the result keeps main’s change in the PR’s formatting\./
     );
-    await js(`${block(0)}.querySelector('details').open=true`);
     await captureAll('reformat-merged');
     await click('Close');
 
@@ -1356,7 +1360,7 @@ void app.whenReady().then(async () => {
     await shot('p1-keep-ours');
     // Each conflict has its own check result: the imports stay Merged beside the conflict that lost four().
     assert.equal(await js(`${block(0)}.dataset.bucket`), 'merged');
-    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /Every line of both sides is accounted for\./);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`), /Every line of both sides is accounted for\./);
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
     // Keep both on one whose proposal is both sides: Kept both, never back to the proposal.
