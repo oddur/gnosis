@@ -3164,6 +3164,8 @@ button.chat-trace-chip:hover { border-color:var(--input);background:var(--second
 .pr-actions-stack { margin:0; padding:0 24px 12px; }
 .pr-action-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .pr-action-note { display:flex; align-items:center; gap:8px; color:var(--muted-foreground); font-size:13px; line-height:1.5; margin-top:8px; max-width:75ch; }
+/* The conflict line from background preparation (#445): what Resolve conflicts will show, so it reads as text, not a hint. */
+.pr-conflict-line { color:var(--foreground); }
 .pr-action-error { color:var(--destructive); font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
 .pr-action-error button,.pr-action-error a { text-decoration:underline; text-underline-offset:3px; margin-inline-end:12px; }
 .pr-update-menu { z-index:60; width:min(340px,calc(100vw - 24px)); padding:4px; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:5px; }
@@ -4362,6 +4364,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-member-resolution button:disabled { opacity:.5;cursor:default; }
 .stack-member-resolution :is(button,a):focus-visible,.stack-plan-prs :is(button,a):focus-visible { outline:2px solid var(--ring);outline-offset:3px;border-radius:var(--radius-sm); }
 @media(max-width:760px) { .stack-merge-plan { padding:12px; } }
+/* The stack's next fix: one sentence and one action, above the merge steps. */
+.stack-conflict-plan { display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:12px 16px;margin-bottom:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm); }
+.stack-conflict-plan > svg { color:var(--color-danger);flex-shrink:0; }
+.stack-conflict-plan[data-tone=warning] > svg { color:var(--color-warning); }
+.stack-conflict-plan > p { flex:1 1 240px;margin:0;font-size:var(--type-control);font-weight:500; }
 
 .bulk-check-rerun-list { max-height: 40vh; overflow-y: auto; padding-inline-start: 1.25rem; font-size: var(--type-control); overflow-wrap: anywhere; }
 .bulk-check-rerun-list li + li { margin-top: 0.75rem; }
@@ -4846,9 +4853,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* Feedback is a reading workspace: one conversation, with its source always visible. */
 .feedback-workspace { height:100%; min-height:0; display:flex; flex-direction:column; color:var(--foreground); container-type:inline-size; }
 .feedback-filters { display:flex; align-items:center; gap:2px; }
-.feedback-filters button span { font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
+.feedback-filters button span { font-size:var(--type-caption); font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
 .feedback-pr-filter { margin-left:auto; min-width:120px; width:180px; max-width:260px; }
-.feedback-actions-filter { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); white-space:nowrap; cursor:pointer; }
+.feedback-actions-filter { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-control); white-space:nowrap; cursor:pointer; }
 .feedback-actions-filter input { accent-color:var(--primary); }
 .feedback-sync { font-size:var(--type-caption); color:var(--muted-foreground); }
 .feedback-row:focus-visible { outline:2px solid var(--ring); outline-offset:-3px; }
@@ -5596,7 +5603,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-message .feedback-reply-actions, .feedback-message > [role=status], .feedback-reply-form { padding:0 14px 12px; }
 .feedback-reply-form label { display:block; margin-bottom:6px; font-weight:600; font-size:var(--type-control); }
 .feedback-message[data-quiet] { background:transparent; border-style:dashed; }
-.feedback-message[data-quiet] .github-comment-body { font-size:var(--type-control); color:var(--muted-foreground); }
+.feedback-message[data-quiet] .github-comment-body { font-size:var(--type-body); color:var(--muted-foreground); }
 .feedback-bot-tag { padding:0 5px; border:1px solid var(--border); border-radius:4px; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); }
 .feedback-bots { display:flex; flex-direction:column; gap:8px; }
 .feedback-bots-summary { display:flex; align-items:center; gap:8px; width:100%; min-height:36px; padding:6px 12px; border:1px dashed var(--border); border-radius:8px; background:transparent; color:var(--muted-foreground); font-size:var(--type-control); text-align:left; cursor:pointer; }
@@ -5674,7 +5681,8 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .timeline-title { min-width:0; font-size:var(--type-body); font-weight:450; line-height:1.4; color:var(--foreground); text-wrap:pretty; }
 .timeline-title .timeline-actor, .timeline-actor-name { font-weight:650; color:var(--foreground); }
 .timeline-title code, .timeline-object { padding:1px 5px; border-radius:4px; background:var(--muted); font-family:var(--font-mono); font-size:var(--type-code); font-weight:400; }
-.timeline-header[data-quiet] .timeline-title { font-size:var(--type-control); color:var(--muted-foreground); }
+/* Quiet rows (pushes, events, bots) keep the entry-heading size and recede by colour: the verb is muted, the actor is not. */
+.timeline-header[data-quiet] .timeline-title { color:var(--muted-foreground); }
 .timeline-badges { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px; }
 .timeline-meta { display:inline-flex; align-items:center; gap:8px; color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .timeline-meta .feedback-source { font-size:var(--type-caption); }
@@ -5694,11 +5702,11 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .timeline-badges .feedback-verdict { height:20px; padding:0 7px; border:1px solid currentColor; border-radius:999px; font-size:var(--type-caption); font-weight:550; }
 /* Days part the rail with more space above; a long pause says how long. */
 .feedback-entry[data-entry-type=day] { padding-top:4px; padding-bottom:8px; }
-.feedback-entry[data-entry-type=day] .timeline-title { font-size:var(--type-control); font-weight:650; color:var(--foreground); }
+.feedback-entry[data-entry-type=day] .timeline-title { font-weight:650; color:var(--foreground); }
 .feedback-entry[data-entry-type=day] .timeline-indicator { top:8px; }
 .feedback-gap-label { padding:0 7px; border:1px dashed var(--border); border-radius:999px; color:var(--muted-foreground); font-size:var(--type-caption); }
 .feedback-entry[data-entry-type=divider] { padding-bottom:16px; }
-.feedback-entry[data-entry-type=divider] .timeline-title { color:var(--ring); font-size:var(--type-control); font-weight:650; }
+.feedback-entry[data-entry-type=divider] .timeline-title { color:var(--ring); font-weight:650; }
 /* Pushes are a compact list, not a card. */
 .feedback-commits { display:flex; flex-direction:column; margin:0; padding:0; list-style:none; max-width:min(100%, 960px); }
 .feedback-commits li { display:flex; align-items:center; gap:10px; min-height:28px; font-size:var(--type-control); }
@@ -5738,7 +5746,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .conversation-sidebar { display:flex; flex-direction:column; gap:20px; font-size:var(--type-control); color:var(--foreground); }
 .conversation-sidebar > section { display:flex; flex-direction:column; gap:8px; padding-top:12px; border-top:1px solid var(--border); }
 .conversation-sidebar > section:first-child { border-top:0; padding-top:0; }
-.conversation-sidebar h2 { font-size:var(--type-control); font-weight:650; color:var(--foreground); }
+.conversation-sidebar h2 { font-size:var(--type-body); font-weight:650; line-height:1.4; color:var(--foreground); }
 .conversation-sidebar p { color:var(--muted-foreground); line-height:1.5; }
 .conversation-sidebar > section > button { align-self:flex-start; padding-inline:0; }
 .conversation-sidebar dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; align-items:baseline; }
@@ -5755,7 +5763,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* Reviewers, assignees, labels and the milestone: a heading with a small edit button, as in GitHub's sidebar. The
    picker is the shared selection popup (components/PrPeopleEditor.tsx). */
 .pr-people-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:24px; }
-.pr-people-edit.workbench-icon { width:24px; height:24px; margin-right:-4px; }
+.pr-people-edit.workbench-icon { width:24px; height:24px; }
 .pr-people-edit[data-popup-open] { background:var(--accent); color:var(--accent-foreground); }
 .pr-people-edit[aria-disabled=true] { opacity:.5; cursor:not-allowed; }
 .pr-people-edit[aria-disabled=true]:hover { background:transparent; color:var(--muted-foreground); }
@@ -5898,3 +5906,12 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-message-footer button { color:var(--muted-foreground); }
 .feedback-message-footer button:hover { color:var(--foreground); }
 .feedback-message .feedback-review-index + .feedback-message-footer { padding-top:4px; }
+
+/* Summary type tiers: the type follows the page's information architecture (DESIGN.md › Address Feedback › Type).
+   Reading (16px prose): the description and every comment or review body. Heading (15px, 650): day markers, sidebar
+   section titles, the merge verdict, and the actor of each entry heading, whose sentence is 15px. Detail (13px):
+   commit subjects, reasons and values. Controls (13px, the Button sm size) sit below the content they act on. Meta (12px, muted): times,
+   SHAs, counts. */
+.feedback-timeline .github-comment-body { font-size:var(--type-prose); }
+.timeline-title .entity-badge.github-author, .conversation-description-header .entity-badge.github-author { font-size:inherit; font-weight:650; }
+.band-readiness .merge-readiness-badge { font-size:var(--type-body); font-weight:650; }

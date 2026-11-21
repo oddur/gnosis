@@ -70,7 +70,6 @@ import {
   fileStatusLine,
   fileStatusParts,
   allMerged,
-  waitsForReview,
   summarySentence,
   type FileStatus,
   verifyProposals,
@@ -79,6 +78,7 @@ import {
   type Verdict,
 } from '../lib/conflict-verify';
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
+import { summaryEntry } from '../lib/conflict-header';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { withProposals } from '../lib/conflict-carry';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
@@ -501,15 +501,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     [session, selected, contents, savedBuckets]
   );
   const summary = bucketSummary(
-    fileStates.map((s) => ({
-      buckets: s.buckets,
-      verdict: verdictOf(s.file),
-      reviewed: s.status.kind === 'reviewed',
-      whole: !!s.file.wholeFile,
-      marker: s.status.kind === 'marker',
-      unsupported: s.status.kind === 'unsupported',
-      review: waitsForReview(s.status, s.buckets, showMerged),
-    }))
+    fileStates.map((s) => summaryEntry(s.file, s.status, s.buckets, verdictOf(s.file), showMerged))
   );
   const reviewedCount = fileStates.filter((s) => s.stage === 'reviewed').length;
   const selectedState = fileStates.find(({ file: f }) => f.path === selected);

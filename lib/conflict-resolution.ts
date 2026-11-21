@@ -32,11 +32,11 @@ export interface ConflictFile {
   verdict?: { key: string; verdict: import('./conflict-verify').Verdict };
 }
 /**
- * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or as both sides'
- * additions where structural merge left it (lib/conflict-union.ts).
+ * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
+ * merge left it, as both sides' additions or as the PR's version of a change both sides made (lib/conflict-union.ts).
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same';
   text: string;
 }
 export interface ConflictSession {
@@ -60,6 +60,11 @@ export interface ConflictSession {
   /** Why a draft is stale: someone pushed to the PR, or the PR targets another base branch. */
   staleReason?: 'head-moved' | 'retargeted';
   dependents?: string[];
+  /**
+   * Prepared in the background (src/conflict-precompute.ts) at this time (epoch ms), and not opened since. Such a draft
+   * is replaced when the PR moves, and evicted by count and age. Opening it makes it yours.
+   */
+  background?: number;
   restack?: RestackPlan;
   /**
    * Reopened after a push from an earlier session, and GitHub reports no conflicts now. The workspace says there is

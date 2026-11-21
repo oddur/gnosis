@@ -1,0 +1,8 @@
+{
+  "description": "Trap (#467 review): the PR writes x = a then ++b, main x = a++ then b. The same tokens in another layout, but automatic semicolons make them different code: the conflict stays open.",
+  "language": "typescript",
+  "category": "structure/same-change",
+  "expected": {
+    "src/count.ts": "decide"
+  }
+}

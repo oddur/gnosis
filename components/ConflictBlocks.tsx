@@ -23,14 +23,17 @@ import {
   type ConflictLabels,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
-import { blockVerdict, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
+import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
-const proposalWhat = (proposal: ConflictProposal) =>
+/** What the proposal is. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
+const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict) =>
   proposal.source === 'rerere'
     ? 'Same as you resolved before'
     : proposal.source === 'union'
       ? 'Kept both sides’ additions'
-      : 'Combined both sides’ changes';
+      : proposal.source === 'same' || (verdict?.merged && verdict.note.startsWith(SAME_CHANGE))
+        ? 'Kept the PR’s version'
+        : 'Combined both sides’ changes';
 /** A Check label says where the proposal came from only when that is a fact; why to check it is the note beside it. */
 const checkLabel = (proposal: ConflictProposal) =>
   proposal.source === 'rerere' ? `Check · ${proposalWhat(proposal)}` : 'Check';
@@ -200,7 +203,7 @@ function Block({
   if (choice === 'proposal' && proposal) {
     const merged = !!verdict?.merged;
     const note = verdict?.note ?? 'Checking the result…';
-    const what = proposalWhat(proposal);
+    const what = proposalWhat(proposal, verdict);
     // Merged: one line, collapsed. Check: the proposal and both sides, with the Keep actions to override it.
     return merged ? (
       <section

@@ -1,0 +1,5 @@
+Release notes
+
+Retries: two times.
+
+End of notes
