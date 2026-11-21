@@ -236,7 +236,10 @@ export async function verifyProposals(
           ] as [number, number][],
         },
       ];
-    // Structural merge may add or drop blank lines between the two sides' insertions; nothing else may differ.
+    // The result is the ancestor's lines before, one side's lines, the other's, the ancestor's lines after, each exactly
+    // as written, blank lines inside them included. Only where two of those parts meet may blank lines differ: there they
+    // stand between whole nodes. And only the last line of the side placed first may gain a trailing comma, as a JSON
+    // object or an enum needs before the other side's lines; not in Python or YAML, where a comma can mean something.
     const lines = union.text.split(/(?<=\n)/);
     const [lead, mine, theirs, rest] = [
       lines.slice(0, before),
@@ -244,39 +247,39 @@ export async function verifyProposals(
       lines.slice(before + o, before + o + t),
       lines.slice(before + o + t),
     ];
-    const filled = (text: string) => text.trim() !== '';
-    const written = proposal.text.split(/(?<=\n)/);
-    const at = written.flatMap((line, i) => (filled(line) ? [i] : []));
-    // The result's non-blank lines are the parts' own, exactly. Only the last line of the side placed first may gain a
-    // trailing comma, as a JSON object or an enum needs before the other side's lines; not in Python or YAML, where a
-    // comma can mean something.
-    const commas = language !== 'python' && language !== 'yaml';
-    const matches = (parts: string[][]) => {
-      const expected = parts.flat().filter(filled);
-      const slack = commas ? parts[0].filter(filled).length + parts[1].filter(filled).length - 1 : -1;
-      return (
-        at.length === expected.length &&
-        at.every((i, k) => {
-          const [have, want] = [written[i], expected[k]];
-          return have === want || (k === slack && have === want.replace(/(\s*)$/, (end) => `,${end}`));
-        })
-      );
+    const blank = (line: string) => line.trim() === '';
+    const trim = (part: string[]) => {
+      let [from, to] = [0, part.length];
+      while (from < to && blank(part[from])) from++;
+      while (to > from && blank(part[to - 1])) to--;
+      return part.slice(from, to);
     };
-    const first = matches([lead, mine, theirs, rest])
-      ? ('ours' as const)
-      : matches([lead, theirs, mine, rest])
-        ? ('theirs' as const)
-        : undefined;
-    if (!first) return [];
-    // Where each side's lines landed in the proposal, by their non-blank lines.
-    const count = (part: string[]) => part.filter(filled).length;
-    const [n0, n1, n2] = [
-      count(lead),
-      count(first === 'ours' ? mine : theirs),
-      count(first === 'ours' ? theirs : mine),
-    ];
-    const one: [number, number] = [at[n0], at[n0 + n1 - 1]];
-    const two: [number, number] = [at[n0 + n1], at[n0 + n1 + n2 - 1]];
+    const written = proposal.text.split(/(?<=\n)/);
+    const commas = language !== 'python' && language !== 'yaml';
+    /** Where each of the two sides' parts landed, or undefined when the result is not these parts. */
+    const place = (one: string[], two: string[]) => {
+      const parts = [trim(lead), trim(one), trim(two), trim(rest)];
+      const spans: [number, number][] = [];
+      let at = 0;
+      for (const [k, part] of parts.entries()) {
+        if (k > 0) while (at < written.length && blank(written[at])) at++;
+        const start = at;
+        for (const [i, want] of part.entries()) {
+          const have = written[at++] as string | undefined;
+          const slack = commas && k === 1 && i === part.length - 1;
+          if (have !== want && !(slack && have === want.replace(/(\s*)$/, (end) => `,${end}`))) return undefined;
+        }
+        if (k === 1 || k === 2) spans.push([start, at - 1]);
+      }
+      while (at < written.length && blank(written[at])) at++;
+      return at === written.length && spans.every(([a, z]) => z >= a) ? spans : undefined;
+    };
+    const asOurs = place(mine, theirs);
+    const asTheirs = asOurs ? undefined : place(theirs, mine);
+    const first = asOurs ? ('ours' as const) : asTheirs ? ('theirs' as const) : undefined;
+    const spans = asOurs ?? asTheirs;
+    if (!first || spans?.length !== 2) return [];
+    const [one, two] = spans;
     return [{ index: s.index, own: false, first, spans: first === 'ours' ? [one, two] : [two, one] }];
   });
   /** Each entry's insertions as lines of the probe: the PR's, then main's, wherever each landed. */
@@ -498,7 +501,7 @@ export async function verifyProposals(
         const counted =
           accountLines(block, proposal.text, indented, true) ??
           (indented ? undefined : accountLines(block, proposal.text, true, true));
-        if (orderFree(language, mine, theirs) && counted === undefined) {
+        if (orderFree(language, mine, theirs, { path: file.path, text: probe.text }) && counted === undefined) {
           const imports = [...(mine?.units ?? []), ...(theirs?.units ?? [])].every((u) =>
             /import|use_|using|comment/.test(u.type)
           );
@@ -978,7 +981,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 8;
+export const CHECKS_VERSION = 9;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A

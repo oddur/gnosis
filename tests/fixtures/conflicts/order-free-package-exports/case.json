@@ -1,0 +1,8 @@
+{
+  "description": "Follow-up to #476: both sides add a subpath to package.json `exports`. Node matches `exports` keys in order, so the order is not free.",
+  "language": "json",
+  "category": "review-probe",
+  "expected": {
+    "package.json": "any-but-merged"
+  }
+}

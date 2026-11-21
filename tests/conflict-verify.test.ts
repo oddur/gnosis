@@ -672,17 +672,77 @@ void test('#476: both sides adding order-free members or imports at one place ca
   );
   assert.equal(go.merged, true, go.note);
   assert.match(go.note, /different imports here/);
-  // Struct fields with no initializer: Merged. The same field name with another type: Check.
+  // Fields of any kind: Check. Layout, derived ordering, serialization and positional literals follow their order.
   const struct = (ours: string, theirs: string) =>
     samePlace('options.go', 'package lab\n\ntype Options struct {\n\tWidth int\n', '}\n', ours, theirs, ours + theirs);
-  const fields = await struct('\tDepth int\n', '\tWeight int\n');
-  assert.equal(fields.merged, true, fields.note);
-  assert.equal((await struct('\tDepth int\n', '\tDepth float64\n')).merged, false);
+  assert.equal((await struct('\tDepth int\n', '\tWeight int\n')).merged, false);
+  const rust = await samePlace(
+    'options.rs',
+    '#[derive(PartialOrd)]\nstruct Options {\n    width: u32,\n',
+    '}\n',
+    '    depth: u32,\n',
+    '    weight: u32,\n',
+    '    depth: u32,\n    weight: u32,\n'
+  );
+  assert.equal(rust.merged, false);
   const java = (ours: string, theirs: string) =>
     samePlace('Options.java', 'class Options {\n  int width;\n', '}\n', ours, theirs, ours + theirs);
-  assert.equal((await java('  int depth;\n', '  int weight;\n')).merged, true);
-  assert.equal((await java('  int depth;\n', '  long depth;\n')).merged, false);
-  assert.equal((await java('  int depth = 1;\n', '  int weight;\n')).merged, false, 'An initializer runs in order');
+  assert.equal((await java('  int depth;\n', '  int weight;\n')).merged, false);
+  const method = (name: string) => `  void ${name}() {\n  }\n`;
+  assert.equal((await java(method('grow'), method('shrink'))).merged, true);
+  assert.equal((await java(method('grow'), `  @Override\n${method('shrink')}`)).merged, false, 'Annotated');
+  // TypeScript interface members are types only: Merged.
+  const shape = await samePlace(
+    'src/options.ts',
+    'export interface Options {\n  width: number;\n',
+    '}\n',
+    '  depth: number;\n',
+    '  weight: number;\n',
+    '  depth: number;\n  weight: number;\n'
+  );
+  assert.equal(shape.merged, true, shape.note);
+  // A method named by a string, a number or a computed key, or a getter: Check. `'add'() {}` and `add() {}` are one name.
+  for (const spelled of [
+    "  'remove'(id: number) {\n    return id;\n  }\n",
+    '  [Symbol.iterator]() {\n    return [][Symbol.iterator]();\n  }\n',
+    '  get size() {\n    return 0;\n  }\n',
+  ])
+    assert.equal((await cart(add, spelled, add + spelled)).merged, false, spelled);
+  assert.equal(
+    (
+      await cart(
+        add,
+        "  'add'(id: number) {\n    return id;\n  }\n",
+        add + "  'add'(id: number) {\n    return id;\n  }\n"
+      )
+    ).merged,
+    false
+  );
+  // Python: default values and annotations run when `def` runs, in order; postponed annotations don't.
+  const py = (ours: string, theirs: string, head = '') =>
+    samePlace(
+      'lab/cart.py',
+      `${head}class Cart:\n    def total(self):\n        return 0\n`,
+      '',
+      ours,
+      theirs,
+      ours + theirs
+    );
+  const plain = '\n    def add(self, item):\n        return item\n';
+  const other = '\n    def remove(self, id):\n        return id\n';
+  assert.equal((await py(plain, other)).merged, true);
+  assert.equal((await py(plain, '\n    def remove(self, id=log("x")):\n        return id\n')).merged, false);
+  const typed = '\n    def remove(self, id: Id) -> Id:\n        return id\n';
+  assert.equal((await py(plain, typed)).merged, false);
+  assert.equal((await py(plain, typed, 'from __future__ import annotations\n\n')).merged, true);
+  // A blank line inside a docstring is the docstring's text: the result must keep it.
+  const doc = '\n    def add(self, item):\n        """Add.\n\n        More."""\n        return item\n';
+  const docResult = (doc + other).replace('Add.\n\n', 'Add.\n');
+  assert.equal(
+    (await samePlace('lab/cart.py', 'class Cart:\n    def total(self):\n        return 0\n', '', doc, other, docResult))
+      .merged,
+    false
+  );
   // The if (ok) / else case: statements, so still Check.
   const ok = await samePlace(
     'src/run.ts',
@@ -698,7 +758,7 @@ void test('#476: both sides adding order-free members or imports at one place ca
 void test('#476: JSON keys and enums with explicit values are order-free, with no key, name or value twice', async () => {
   // JSON: two keys in the middle of an object, either side first.
   const json = (ours: string, theirs: string, text: string, head = '{\n  "a": 1,\n', tail = '  "z": 26\n}\n') =>
-    samePlace('package.json', head, tail, ours, theirs, text);
+    samePlace('config.json', head, tail, ours, theirs, text);
   const b = '  "b": 2,\n';
   const c = '  "c": 3,\n';
   for (const text of [b + c, c + b]) {
@@ -711,7 +771,7 @@ void test('#476: JSON keys and enums with explicit values are order-free, with n
   // Appended at the end: both sides add the comma to the last key, the same change.
   const end = await verifyProposals(
     {
-      path: 'package.json',
+      path: 'config.json',
       base: '{\n  "a": 1\n}\n',
       ours: '{\n  "a": 1,\n  "b": 2\n}\n',
       theirs: '{\n  "a": 1,\n  "c": 3\n}\n',
@@ -722,6 +782,27 @@ void test('#476: JSON keys and enums with explicit values are order-free, with n
     analyse
   );
   assert.equal(end.merged, true, end.note);
+  // package.json: keys are order-free only in the dependency lists and scripts. `exports` is read in order.
+  const pkg = (owner: string) =>
+    samePlace(
+      'package.json',
+      `{\n  "${owner}": {\n    "a": "1",\n`,
+      '    "z": "26"\n  }\n}\n',
+      '    "b": "2",\n',
+      '    "c": "3",\n',
+      '    "b": "2",\n    "c": "3",\n'
+    );
+  assert.equal((await pkg('dependencies')).merged, true);
+  assert.equal((await pkg('exports')).merged, false);
+  const nested = await samePlace(
+    'package.json',
+    '{\n  "publishConfig": {\n    "dependencies": {\n      "a": "1",\n',
+    '      "z": "26"\n    }\n  }\n}\n',
+    '      "b": "2",\n',
+    '      "c": "3",\n',
+    '      "b": "2",\n      "c": "3",\n'
+  );
+  assert.equal(nested.merged, false, 'Only top-level lists');
   // YAML keys: Check.
   const yaml = await samePlace('ci.yml', 'jobs:\n  a: 1\n', '  z: 26\n', '  b: 2\n', '  c: 3\n', '  b: 2\n  c: 3\n');
   assert.equal(yaml.merged, false);
@@ -756,6 +837,16 @@ void test('#476: JSON keys and enums with explicit values are order-free, with n
     '    Green = 2,\n    Blue = 3,\n'
   );
   assert.equal(cs.merged, true, cs.note);
+  // C# char values: Check.
+  const chars = await samePlace(
+    'Color.cs',
+    "enum Color\n{\n    Red = 'r',\n",
+    '}\n',
+    "    Green = 'g',\n",
+    "    Blue = 'b',\n",
+    "    Green = 'g',\n    Blue = 'b',\n"
+  );
+  assert.equal(chars.merged, false);
   const rs = await samePlace(
     'color.rs',
     'enum Color {\n    Red = 1,\n',

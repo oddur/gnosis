@@ -323,87 +323,91 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
 }
 
 /**
- * Where order doesn't matter, per language: the parent node that holds the units (and, where the parent type is
- * ambiguous, the node that holds it), the unit types, and the field types allowed when they have no initializer.
- * Members of a class, struct, impl or interface body, and imports in Go, Rust, Java and C#. Not fields or properties
- * with initializers (they run in order), not Python class attributes, not enum members,
- * cases, list items or statements, not JavaScript, TypeScript or Python imports (they run module code in order), and not
- * top-level functions where module code runs in order. When unsure, a kind is left out.
+ * Where order doesn't matter (#476), as an allowlist: per language, the parent node that holds the units (and, where
+ * the parent type is ambiguous, the node that holds it) and the unit types. Methods of a class, impl, trait or interface
+ * body; TypeScript interface and type-literal members, which are types only; imports in Go, Rust, Java and C#; Go and
+ * Rust top-level functions. No fields of any kind (layout, derived ordering, serialization and initializers follow their
+ * order), no enum members here (explicitEnum), no cases, list items or statements, no JavaScript, TypeScript or Python
+ * imports (they run module code in order). When unsure, a kind is left out.
  */
-const ORDER_FREE: Partial<
-  Record<SyntaxLanguage, { parents: string[]; containers?: string[]; types: string[]; fields?: string[] }[]>
-> = {
-  typescript: [
-    { parents: ['class_body'], types: ['method_definition'], fields: ['public_field_definition'] },
-    { parents: ['interface_body', 'object_type'], types: ['method_signature', 'property_signature'] },
-  ],
-  tsx: [
-    { parents: ['class_body'], types: ['method_definition'], fields: ['public_field_definition'] },
-    { parents: ['interface_body', 'object_type'], types: ['method_signature', 'property_signature'] },
-  ],
-  javascript: [{ parents: ['class_body'], types: ['method_definition'], fields: ['field_definition'] }],
+const SCRIPT_ORDER_FREE = [
+  { parents: ['class_body'], types: ['method_definition'] },
+  { parents: ['interface_body', 'object_type'], types: ['method_signature', 'property_signature'] },
+];
+const ORDER_FREE: Partial<Record<SyntaxLanguage, { parents: string[]; containers?: string[]; types: string[] }[]>> = {
+  typescript: SCRIPT_ORDER_FREE,
+  tsx: SCRIPT_ORDER_FREE,
+  javascript: [{ parents: ['class_body'], types: ['method_definition'] }],
   python: [{ parents: ['block'], containers: ['class_definition'], types: ['function_definition'] }],
   java: [
-    {
-      parents: ['class_body', 'interface_body'],
-      types: ['method_declaration', 'constructor_declaration'],
-      fields: ['field_declaration'],
-    },
+    { parents: ['class_body', 'interface_body'], types: ['method_declaration', 'constructor_declaration'] },
     { parents: ['program'], types: ['import_declaration'] },
   ],
   csharp: [
-    {
-      parents: ['declaration_list'],
-      types: ['method_declaration', 'constructor_declaration'],
-      fields: ['field_declaration', 'property_declaration'],
-    },
+    { parents: ['declaration_list'], types: ['method_declaration', 'constructor_declaration'] },
     { parents: ['compilation_unit', 'declaration_list'], types: ['using_directive'] },
   ],
   go: [
     { parents: ['source_file'], types: ['function_declaration', 'method_declaration', 'import_declaration'] },
     { parents: ['import_spec_list'], types: ['import_spec'] },
-    { parents: ['field_declaration_list'], types: [], fields: ['field_declaration'] },
   ],
   rust: [
     { parents: ['declaration_list'], containers: ['impl_item', 'trait_item', 'mod_item'], types: ['function_item'] },
     { parents: ['source_file'], types: ['function_item', 'use_declaration'] },
     { parents: ['declaration_list'], containers: ['mod_item'], types: ['use_declaration'] },
-    { parents: ['field_declaration_list'], types: [], fields: ['field_declaration'] },
   ],
 };
+const IMPORTS = new Set(['import_declaration', 'import_spec', 'use_declaration', 'using_directive']);
+/** A name that is only a name: no computed `[key]`, string or number key, no private `#name`. */
+const PLAIN_NAMES = new Set(['identifier', 'property_identifier', 'field_identifier']);
 const COMMENTS = new Set(['comment', 'line_comment', 'block_comment']);
+/** The units that aren't comments: comments ride along with the side that wrote them. */
+const real = (units: readonly RangeUnit[]) => units.filter((u) => !COMMENTS.has(u.type));
+
+/** What orderFree needs to know of the file: its path and the result's text. */
+export interface OrderContext {
+  path: string;
+  text: string;
+}
 /**
  * Both sides inserted these whole nodes at one place, and their order can't change what the program does (#476): each
- * side's nodes are order-free members or imports of one parent (ORDER_FREE), none decorated or annotated, each side
- * adds at least one, and no name (with its parameter types, for overloads) is added by both. Comments ride along with
- * the side that wrote them. Anything else, or any doubt, is false.
+ * side's nodes are allowed kinds of one parent (ORDER_FREE, jsonKeys, explicitEnum), none decorated or annotated, each
+ * side adds at least one, and no name (with its parameter types, for overloads) is added by both. Anything else, or any
+ * doubt, is false.
  */
-export function orderFree(language: SyntaxLanguage, ours: RangeUnits | undefined, theirs: RangeUnits | undefined) {
+export function orderFree(
+  language: SyntaxLanguage,
+  ours: RangeUnits | undefined,
+  theirs: RangeUnits | undefined,
+  context: OrderContext
+) {
   if (!ours || !theirs || ours.parent !== theirs.parent || ours.container !== theirs.container) return false;
-  if (language === 'json') return jsonKeys(ours, theirs);
+  const [a, b] = [real(ours.units), real(theirs.units)];
+  if (!a.length || !b.length) return false;
+  if (language === 'json') return jsonKeys(ours, theirs, context.path);
   const members = ENUMS[language];
-  if (members && ours.parent === members.parent) return explicitEnum(members.member, ours, theirs);
-  const kinds = ORDER_FREE[language];
-  if (!kinds) return false;
-  const allowed = kinds.filter(
+  if (members && ours.parent === members.parent) return explicitEnum(members, ours);
+  const allowed = (ORDER_FREE[language] ?? []).filter(
     (k) =>
       k.parents.includes(ours.parent) && (!k.containers || (ours.container && k.containers.includes(ours.container)))
   );
-  const real = (side: RangeUnits) => side.units.filter((u) => !COMMENTS.has(u.type));
-  // A field only without an initializer: initializers run in the order they are written.
+  // Python evaluates default values and annotations when it runs `def`, in order, unless annotations are postponed.
+  const postponed = language === 'python' && /^from __future__ import annotations\b/m.test(context.text);
+  const evaluated = (u: RangeUnit) =>
+    language === 'python' &&
+    (/=/.test(u.signature ?? '') || (!postponed && (/:/.test(u.signature ?? '') || !!u.returns)));
   const fits = (u: RangeUnit) =>
     !u.decorated &&
     !u.annotated &&
     !u.inner &&
+    !u.accessor &&
+    !evaluated(u) &&
     !(language === 'go' && u.name === 'init') &&
-    allowed.some((k) => k.types.includes(u.type) || (!u.assigns && !!k.fields?.includes(u.type)));
-  const [a, b] = [real(ours), real(theirs)];
-  if (!a.length || !b.length || ![...a, ...b].every(fits)) return false;
-  // A field with no name node is named by its text: its last word, as in `int depth;`.
-  const name = (u: RangeUnit) =>
-    /\s/.test(u.name) ? (/([\p{L}_$][\p{L}\p{N}_$]*)\W*$/u.exec(u.name)?.[1] ?? u.name) : u.name;
+    (IMPORTS.has(u.type) || PLAIN_NAMES.has(u.nameKind ?? '')) &&
+    allowed.some((k) => k.types.includes(u.type));
+  if (![...a, ...b].every(fits)) return false;
   const key = (u: RangeUnit) =>
-    OVERLOADS.has(language) && u.parameters !== undefined ? `${name(u)}(${u.parameters})` : name(u);
+    OVERLOADS.has(language) && u.parameters !== undefined ? `${u.name}(${u.parameters})` : u.name;
   const mine = new Set(a.map(key));
   return !b.some((u) => mine.has(key(u)));
 }
@@ -427,33 +431,55 @@ function literal(text: string | undefined) {
 }
 const unique = (values: readonly string[]) => new Set(values).size === values.length;
 
+/** The package.json objects whose keys are names only: dependency lists and scripts, at the top of the file. */
+const PACKAGE_MAPS = new Set([
+  'dependencies',
+  'devDependencies',
+  'peerDependencies',
+  'optionalDependencies',
+  'scripts',
+]);
 /**
  * JSON object keys (#476): both sides added whole pairs to one object, and every key in that object, old and new, is
- * different. Key order doesn't change what a JSON object means.
+ * different. In a package.json, only in its dependency lists and scripts: elsewhere (`exports`, `imports`,
+ * `typesVersions`, `browser`, ...) tools read keys in order.
  */
-function jsonKeys(ours: RangeUnits, theirs: RangeUnits) {
-  if (ours.parent !== 'object' || !ours.units.length || !theirs.units.length) return false;
-  if (![...ours.units, ...theirs.units, ...ours.all].every((u) => u.type === 'pair')) return false;
-  const keys = ours.all.flatMap((u) => literal(u.name) ?? []);
-  return keys.length === ours.all.length && unique(keys);
+function jsonKeys(ours: RangeUnits, theirs: RangeUnits, path: string) {
+  const all = ours.all;
+  if (ours.parent !== 'object' || !all) return false;
+  if (![...ours.units, ...theirs.units, ...all].every((u) => u.type === 'pair')) return false;
+  if (/(^|[\\/])package\.json$/.test(path)) {
+    const owner = ours.path?.map((key) => literal(key));
+    if (owner?.length !== 1 || !PACKAGE_MAPS.has(owner[0]?.slice(2) ?? '') || !owner[0]?.startsWith('s:')) return false;
+  }
+  const keys = all.flatMap((u) => literal(u.name) ?? []);
+  return keys.length === all.length && unique(keys);
 }
 
-/** Enums whose members each carry their value: the parent node and the member node type, per language. */
-const ENUMS: Partial<Record<SyntaxLanguage, { parent: string; member: string }>> = {
-  typescript: { parent: 'enum_body', member: 'enum_assignment' },
-  tsx: { parent: 'enum_body', member: 'enum_assignment' },
-  csharp: { parent: 'enum_member_declaration_list', member: 'enum_member_declaration' },
-  rust: { parent: 'enum_variant_list', member: 'enum_variant' },
+/**
+ * Enums whose members each carry their value: the parent node, the member node type, and the value node types allowed,
+ * per language. C# and Rust: integer literals only (no chars, strings or expressions); TypeScript: numbers and strings.
+ */
+const ENUMS: Partial<Record<SyntaxLanguage, { parent: string; member: string; values: string[] }>> = {
+  typescript: { parent: 'enum_body', member: 'enum_assignment', values: ['number', 'string'] },
+  tsx: { parent: 'enum_body', member: 'enum_assignment', values: ['number', 'string'] },
+  csharp: { parent: 'enum_member_declaration_list', member: 'enum_member_declaration', values: ['integer_literal'] },
+  rust: { parent: 'enum_variant_list', member: 'enum_variant', values: ['integer_literal'] },
 };
 /**
- * Enum members (#476): every member of the enum, old and new, has an explicit literal value and no fields or
- * attributes, and no name or value is there twice. Then the members' order can't change any value. An enum with one
- * implicit value is not order-free: the values after it follow their place.
+ * Enum members (#476): every member of the enum, old and new, has an explicit literal value of an allowed kind and no
+ * fields or attributes, and no name or value is there twice. Then the members' order can't change any value. An enum
+ * with one implicit value is not order-free: the values after it follow their place.
  */
-function explicitEnum(member: string, ours: RangeUnits, theirs: RangeUnits) {
-  const real = (side: readonly RangeUnit[]) => side.filter((u) => !COMMENTS.has(u.type));
-  if (!real(ours.units).length || !real(theirs.units).length) return false;
-  const all = real(ours.all);
-  if (!all.every((u) => u.type === member && !u.annotated && !u.decorated && !u.body && literal(u.value))) return false;
+function explicitEnum(spec: { member: string; values: string[] }, ours: RangeUnits) {
+  const all = real(ours.all ?? []);
+  const fits = (u: RangeUnit) =>
+    u.type === spec.member &&
+    !u.annotated &&
+    !u.decorated &&
+    !u.body &&
+    spec.values.includes(u.valueKind ?? '') &&
+    literal(u.value) !== undefined;
+  if (!all.length || !all.every(fits)) return false;
   return unique(all.map((u) => u.name)) && unique(all.map((u) => literal(u.value) ?? ''));
 }
