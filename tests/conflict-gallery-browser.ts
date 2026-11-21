@@ -7,6 +7,7 @@
 //
 //   npm run test:browser:docker -- --conflict-gallery
 //   GNOSIS_GALLERY_ONLY=add-import,real- npm run test:browser:docker -- --conflict-gallery
+//   GNOSIS_GALLERY_ONLY=go-move-vs-edit GNOSIS_GALLERY_COMPARE=go-move-vs-edit npm run test:browser:docker -- --conflict-gallery
 //
 // Writes /tmp/conflict-gallery/<case>.png (light), <case>-dark.png for a subset, interactions/<case>-NN-<step>.png,
 // results.json and index.html, the contact sheet. Local only: it takes several minutes (see LOCAL_SCRIPTS).
@@ -23,6 +24,8 @@ const INTERACT = (
   process.env.GNOSIS_GALLERY_INTERACT ??
   'cs-add-usings-and-methods,real-ts-typeorm-column-decorator,real-py-werkzeug-plain-int,real-cs-polly-cache-tryget,go-move-vs-edit'
 ).split(',');
+/** Cases shot in each Compare with mode, light and dark, under compare/ (GNOSIS_GALLERY_COMPARE, comma-separated). */
+const COMPARE = (process.env.GNOSIS_GALLERY_COMPARE ?? '').split(',').filter(Boolean);
 
 /** merged, check, decide or decided; clean for a file Git merged on its own. */
 type Bucket = string;
@@ -303,6 +306,7 @@ void app.whenReady().then(async () => {
         if (screen.wholeFile) result.notes.push('Shows a whole-file proposal.');
         result.shots.push(await shoot(`${entry.id}.png`));
         if (n % 4 === 0 || INTERACT.includes(entry.id)) result.shots.push(await shoot(`${entry.id}-dark.png`, true));
+        if (COMPARE.includes(entry.id)) await compareShots(entry.id, result);
 
         // Each file: select it, wait, and read its blocks, header and file-list badge.
         const seen = new Map<string, { blocks: Bucket[]; row: FileRow; header: Screen['header'] }>();
@@ -439,6 +443,45 @@ void app.whenReady().then(async () => {
         );
         writeSheet();
       }
+    }
+
+    /**
+     * Compare with: PR · main · both (#445 item 9) on the opened file, light and dark. In every mode each Check and
+     * Decide card is on screen, Decide says nothing is chosen, and no mode loses a conflict. Ends on PR.
+     */
+    async function compareShots(id: string, result: Result) {
+      if (!(await js<boolean>("!!document.querySelector('.conflict-compare')"))) {
+        result.notes.push('No Compare with switch on the opened file (a whole-file proposal or no conflicts).');
+        return;
+      }
+      const total = await js<number>(
+        "document.querySelectorAll('.conflict-view .conflict-block:not([data-conflict-index=\"-1\"])').length"
+      );
+      for (const mode of ['pr', 'main', 'both'] as const) {
+        await js(`document.querySelector('.conflict-compare [data-compare=${mode}]').click()`);
+        await until(
+          `document.querySelector('.conflict-compare [data-compare=${mode}]')?.getAttribute('aria-pressed')==='true'` +
+            ` && document.querySelectorAll('.conflict-view .conflict-block:not([data-conflict-index="-1"])').length===${total}` +
+            ` && [...document.querySelectorAll('.conflict-view diffs-container')].every((h) => h.shadowRoot?.querySelector('[data-line]'))` +
+            (mode === 'both' ? " && !!document.querySelector('.conflict-compare-group')" : ''),
+          `Compare with ${mode}`
+        );
+        await settle();
+        const problems = await js<string[]>(`(() => {
+          const out = [];
+          for (const b of document.querySelectorAll('.conflict-view .conflict-block:is([data-state=open],[data-bucket=check])')) {
+            if (!b.checkVisibility()) out.push('conflict ' + b.dataset.conflictIndex + ' is not shown');
+            if (b.dataset.state === 'open' && !/Nothing is chosen yet\\./.test(b.textContent)) out.push('conflict ' + b.dataset.conflictIndex + ' does not say nothing is chosen');
+          }
+          return out;
+        })()`);
+        for (const p of problems) result.problems.push(`Compare with ${mode}: ${p}`);
+        result.shots.push(await shoot(`compare/${id}-${mode}.png`));
+        result.shots.push(await shoot(`compare/${id}-${mode}-dark.png`, true));
+      }
+      await js("document.querySelector('.conflict-compare [data-compare=pr]').click()");
+      await until("document.querySelector('.conflict-compare [data-compare=pr]')?.getAttribute('aria-pressed')==='true'", 'Compare with PR');
+      await settle();
     }
 
     /** Keys, Keep, Undo, the whole-file proposal, review and mark reviewed, up to the push confirmation. */
@@ -634,10 +677,12 @@ function removePreviousRun() {
   ];
   for (const file of files)
     // Only PNGs this suite names, inside the output directory.
-    if (typeof file === 'string' && /^(interactions\/)?[\w.-]+\.png$/.test(file))
+    if (typeof file === 'string' && /^((interactions|compare)\/)?[\w.-]+\.png$/.test(file))
       fs.rmSync(path.join(OUT, file), { force: true });
-  const interactions = path.join(OUT, 'interactions');
-  if (fs.existsSync(interactions) && !fs.readdirSync(interactions).length) fs.rmdirSync(interactions);
+  for (const sub of ['interactions', 'compare']) {
+    const dir = path.join(OUT, sub);
+    if (fs.existsSync(dir) && !fs.readdirSync(dir).length) fs.rmdirSync(dir);
+  }
   fs.rmSync(path.join(OUT, 'index.html'), { force: true });
   fs.rmSync(record, { force: true });
 }
