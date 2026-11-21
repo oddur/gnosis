@@ -84,16 +84,17 @@ void app.whenReady().then(async () => {
       'Sent quote stays collapsed'
     );
     assert.equal(
-      await js("document.querySelector('.chat-message-body').textContent"),
+      await js("document.querySelector('.chat-message-body').textContent.trim()"),
       'How does the queue preserve order?'
     );
     await fill('What happens if a worker stops?');
     const answer =
-      'The queue keeps one command in flight per worker.\n\n- **Before dispatch:** reserve the worker slot.\n- **On acknowledgment:** release the slot, then send the next command.\n- **On failure:** retry the same command before advancing.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```';
+      'The queue keeps one command in flight per worker.\n\n- **Before dispatch:** reserve the worker slot.\n- **On acknowledgment:** release the slot, then send the next command.\n- **On failure:** retry the same command before advancing.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```\n\nSee [the queue notes](https://example.com/queue) for the retry rules. The change:\n\n```diff\n--- a/src/queue.ts\n+++ b/src/queue.ts\n@@ -40,2 +40,3 @@\n   await queue.dispatch(command);\n+  await worker.acknowledge(command.id);\n   return command.result;\n```';
+    const body = "document.querySelectorAll('.chat-message-body')[1]";
     if (printShots) {
       const cut = answer.indexOf('await worker');
       await emit(answer.slice(0, cut));
-      await wait("document.querySelectorAll('.chat-message-body')[1]?.textContent.includes('queue.dispatch(command)')");
+      await wait(`${body}?.textContent.includes('queue.dispatch(command)')`);
       await capture('topic-midstream-light');
       await js("document.documentElement.classList.add('dark')");
       await capture('topic-midstream-dark');
@@ -107,9 +108,33 @@ void app.whenReady().then(async () => {
       ['Selected code', 'queue.tsL40–120', 'worker.tsL10–14', 'PR description']
     );
     await capture('topic-streaming-light');
+    // Words renders the answer as it streams: the message is live, and its code is highlighted while it arrives.
+    await wait(`${body}?.hasAttribute('data-streaming')`);
+    await wait(`!!${body}.querySelector('[data-markdown=code-block][data-language=ts] code span[style*=color]')`);
     await finish(answer);
     await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
     await wait("!document.querySelector('.chat-trace[data-streaming]')");
+    await wait(`!${body}.hasAttribute('data-streaming') && !${body}.querySelector('[data-markdown=caret]')`);
+    assert.deepEqual(
+      await js(`[...${body}.querySelectorAll('[data-markdown=code-block] [data-code-action]')].map(b=>b.getAttribute('aria-label'))`),
+      ['Copy code', 'Download code'],
+      'Code blocks carry Copy and Download'
+    );
+    assert.deepEqual(
+      await js(`(()=>{const a=${body}.querySelector('[data-markdown=a]');return [a.href,a.target,a.rel]})()`),
+      ['https://example.com/queue', '_blank', 'noopener noreferrer'],
+      'Links open in the browser'
+    );
+    // A closed diff fence shows as a diff, with Changes' file header and diff (ReviewDiff), not as code.
+    await wait(`!!${body}.querySelector('.chat-diff .changes-file-header h2[title="src/queue.ts"]')`);
+    await wait(
+      `window.deepAll?.('[data-line-type=change-addition]',${body}.querySelector('.chat-diff')).length===1 || [...${body}.querySelectorAll('.chat-diff diffs-container')].some(h=>h.shadowRoot?.querySelector('[data-line-type=change-addition]'))`
+    );
+    assert.equal(
+      await js(`${body}.querySelectorAll('[data-markdown=code-block][data-language=diff]').length`),
+      0,
+      'The diff is not also shown as code'
+    );
     const toggle = "document.querySelector('.chat-trace-toggle')";
     assert.equal(await js(`${toggle}.getAttribute('aria-expanded')`), 'false', 'Completed traces collapse');
     assert.equal(await js(`${toggle}.getAttribute('aria-label')`), 'Context used, 4 sources');

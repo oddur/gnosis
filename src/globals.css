@@ -1,3 +1,6 @@
+/* Words' defaults for chat Markdown (components/ChatMarkdown.tsx): its fades, caret and code controls. Its layer comes
+   first, so every rule of the app's own, Tailwind's preflight too, takes precedence. */
+@import '@pierre/words/styles.css' layer(words);
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './fonts.css';
@@ -2784,6 +2787,36 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .chat-message-body>:first-child { margin-top:0; }
 .chat-message-body>:last-child { margin-bottom:0; }
 .chat-message-body pre { max-width:100%;overflow:auto; }
+/* Chat Markdown (components/ChatMarkdown.tsx): Words' elements in the reading styles of the app's other Markdown. */
+.chat-markdown [data-markdown=p] { margin:0 0 .75rem; }
+.chat-markdown :is([data-markdown=ul],[data-markdown=ol]) { margin:0 0 .75rem;padding-left:1.25rem; }
+.chat-markdown [data-markdown=ul] { list-style:disc; }
+.chat-markdown [data-markdown=ol] { list-style:decimal; }
+.chat-markdown [data-markdown=li]+[data-markdown=li] { margin-top:.375rem; }
+.chat-markdown [data-markdown=li]::marker { color:var(--muted-foreground); }
+.chat-markdown [data-markdown=li]>:is(ul,ol,p) { margin-block:.375rem 0; }
+.chat-markdown [data-markdown=blockquote] { margin:.75rem 0;padding-left:1rem;border-left:1px solid var(--border);color:var(--foreground); }
+.chat-markdown [data-markdown=a] { color:var(--foreground);text-decoration:underline dotted var(--ring);text-underline-offset:3px;transition:text-decoration-style .15s; }
+.chat-markdown [data-markdown=a]:hover { text-decoration-style:solid; }
+.chat-markdown :not(pre)>[data-markdown=code] { font-family:var(--font-mono);font-size:.9em;font-weight:500;color:var(--foreground);background:color-mix(in oklab,var(--muted) 50%,transparent);border:1px solid color-mix(in oklab,var(--border) 60%,transparent);border-radius:3px;padding:.05em .35em; }
+.chat-markdown [data-markdown=table] { display:block;overflow-x:auto;margin:.75rem 0;border-collapse:collapse; }
+.chat-markdown :is([data-markdown=th],[data-markdown=td]) { border:1px solid var(--border);padding:4px 8px;text-align:left; }
+.chat-markdown [data-markdown=th] { font-weight:500;background:color-mix(in oklab,var(--muted) 30%,transparent); }
+.chat-markdown [data-markdown=hr] { border:0;border-top:1px solid var(--border);margin:1rem 0; }
+.chat-markdown [data-markdown=img] { max-width:100%;height:auto; }
+.chat-markdown [data-markdown=caret] { color:var(--ring); }
+/* Code is code-tier, as in the diffs: the reader's code theme's surface (lib/code-palette.ts), dark in both app themes. */
+.chat-markdown [data-markdown=code-block] { margin:1em 0;overflow:hidden;border-radius:5px;background:var(--diff-code-bg, #22272e);color:var(--diff-code-fg, #c5ccd6);border:1px solid var(--diff-code-line, color-mix(in oklab, var(--diff-code-bg, #22272e) 80%, black)); }
+.chat-markdown [data-markdown=code-header] { display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 4px 2px 12px;font-family:var(--font-mono);font-size:var(--type-caption);line-height:1.6;color:var(--diff-code-muted, #9da5b4);background:var(--diff-code-header, color-mix(in oklab, var(--diff-code-bg, #22272e) 88%, white));border-bottom:1px solid var(--diff-code-line, color-mix(in oklab, var(--diff-code-bg, #22272e) 80%, black)); }
+.chat-markdown [data-markdown=code-header] button { padding:2px 6px;border-radius:var(--radius-sm);color:inherit;font:inherit;cursor:pointer; }
+.chat-markdown [data-markdown=code-header] button:hover:not(:disabled) { color:var(--diff-code-fg, #c5ccd6);background:color-mix(in oklab, var(--diff-code-fg, #c5ccd6) 12%, transparent); }
+.chat-markdown [data-markdown=code-header] button:focus-visible { outline:2px solid var(--code-ring, #9bb8ff);outline-offset:-2px; }
+.chat-markdown [data-markdown=code-block] pre { display:flex;gap:12px;margin:0;padding:10px 12px;max-height:28rem;overflow:auto;font-family:var(--font-mono);font-size:var(--type-code);line-height:var(--leading-code);tab-size:2; }
+.chat-markdown [data-markdown=code-block] pre code { font:inherit;color:inherit;background:none;border:0;padding:0; }
+.chat-markdown [data-markdown=line-numbers] { color:var(--diff-code-muted, #9da5b4);opacity:.6; }
+/* A closed diff fence, rendered as Changes renders a file (lib/chat-diffs.ts). */
+.chat-markdown .chat-diff { margin:1em 0;overflow:clip;border-radius:5px;border:1px solid var(--border); }
+.chat-markdown .chat-diff>.review-file-group+.review-file-group { border-top:1px solid var(--border); }
 .chat-answer-status,.chat-trace,.chat-message-actions { font-size:var(--type-caption);color:var(--muted-foreground); }
 .chat-answer-status { display:flex;align-items:center;gap:8px; }
 /* What an answer was built from: one quiet line of chips, expandable into ordered steps. */

@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const forbidden = ['@pierre/diffs', 'shiki', 'react-markdown', '@xyflow'];
+const forbidden = ['@pierre/diffs', '@pierre/words', 'shiki', 'react-markdown', '@xyflow'];
 // Libraries that must load after the named lazy screen, with the part of it that uses them.
 const lazyForbidden = { ReviewPage: ['@xyflow'] };
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-startup-bundle-'));

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Check, Copy, Loader2, RotateCcw } from 'lucide-react';
-import { Markdown } from './Markdown';
+import { ChatMarkdown } from './ChatMarkdown';
 import { Button } from './ui/button';
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { Message, MessageContent, MessageHeader, MessageFooter } from './ui/message';
@@ -105,7 +105,9 @@ export function ChatConversation({
                         </details>
                       )}
                       {message.content && (
-                        <Markdown className="reading-prose chat-message-body">{message.content}</Markdown>
+                        <ChatMarkdown className="reading-prose chat-message-body" streaming={message.isStreaming}>
+                          {message.content}
+                        </ChatMarkdown>
                       )}
                       {message.isStreaming && (
                         <div className="chat-answer-status">
