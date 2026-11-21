@@ -117,7 +117,7 @@ export function StackOverview({
   );
   return (
     <section className="stack-overview" aria-label="Stack overview">
-      <StackConflictPlan subject={subject} signals={signals} />
+      <StackConflictPlan subject={subject} signals={signals} account={account} />
       <StackMergePlan key={subject.id} plan={plan} onOpen={onOpen} account={account} onChanged={onRefresh} refreshing={checking || refreshBusy} />
       <div className="stack-overview-heading">
         <div>

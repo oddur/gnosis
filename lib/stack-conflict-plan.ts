@@ -3,65 +3,74 @@
  * parent's base, and conflicting PRs are resolved lowest first (#445, items 20 and 23). Pure; no Node or Electron.
  */
 import { mergeConflictState } from './merge-conflicts';
+import { isOpenPr } from './pr-lifecycle';
 import type { QueueSignals } from './queue-signals';
 import { stackDependencyOrder } from './stack-overview';
 import type { ReviewMember, ReviewSubject } from './workbench';
 
-type Signals = (member: ReviewMember) => QueueSignals | undefined;
-const isOpen = (member: Pick<ReviewMember, 'state' | 'merged'>) => member.state === 'open' && !member.merged;
 /** Signals only for the member's current head. */
 const current = (member: ReviewMember, signals: QueueSignals | undefined) =>
-  signals && signals.url === member.url && signals.headSha === member.headSha ? signals : undefined;
+  signals?.headSha === member.headSha ? signals : undefined;
+/** Branches that outlive any PR. A merged release PR from one of them is not a stack parent. */
+const LONG_LIVED = /^(main|master|develop|dev|trunk|staging|production|release\/.*)$/;
 
 export interface MergedParent {
   parent: ReviewMember;
   /** The branch the parent merged into, which the PR moves onto. */
   onto: string;
-  /** The PR still targets the merged parent's branch. */
-  targetsParent: boolean;
-  conflicts: boolean;
 }
 
 /**
- * The merged parent of an open PR that still has to move: it targets the merged branch, or it conflicts with the
- * branch GitHub moved it to. A PR already moved and clear is not listed, so the row clears once the work is done.
+ * The merged parent of an open PR that still targets the parent's head branch, so it has to move onto the branch the
+ * parent merged into. Once the base changes the row clears. A PR GitHub already moved after a squash merge is not
+ * detected. Ignored: a long-lived parent branch, and a parent that merged before the PR was opened.
  */
 export function mergedParent(
   subject: Pick<ReviewSubject, 'members' | 'edges'>,
   member: ReviewMember,
   signals?: QueueSignals
 ): MergedParent | undefined {
-  if (!isOpen(member)) return undefined;
+  if (!isOpenPr(member)) return undefined;
   const parent = subject.edges
     .filter((edge) => edge.child === member.url)
     .map((edge) => subject.members.find((candidate) => candidate.url === edge.parent))
     .find((candidate) => candidate?.merged);
-  if (!parent) return undefined;
-  const fresh = current(member, signals);
-  const base = fresh?.readiness?.baseBranch || member.baseBranch;
+  if (!parent || LONG_LIVED.test(parent.headBranch) || Date.parse(parent.updatedAt) < Date.parse(member.createdAt)) return undefined;
+  const base = current(member, signals)?.readiness?.baseBranch || member.baseBranch;
   const targetsParent = base === parent.headBranch && (!parent.headRepo || !member.baseRepo || parent.headRepo === member.baseRepo);
-  const conflicts = mergeConflictState(fresh) === 'conflicts';
-  if (!targetsParent && !conflicts) return undefined;
-  return { parent, onto: parent.baseBranch, targetsParent, conflicts };
+  return targetsParent ? { parent, onto: parent.baseBranch } : undefined;
 }
 
-/** "#101 merged. #102 needs to move onto main." */
-export const mergedParentText = (member: Pick<ReviewMember, 'number'>, merged: MergedParent) =>
-  `#${merged.parent.number} merged. #${member.number} needs to move onto ${merged.onto}.`;
+/**
+ * The one wording for a PR whose parent merged:
+ * - `sentence`, the stack plan: "#101 merged. #102 needs to move onto main."
+ * - `reason`, Next up and the Overview: "needs to move onto main after #101 merged"
+ * - `short`, the menu bar: "Parent #101 merged"
+ */
+export function mergedParentText(member: Pick<ReviewMember, 'number'>, merged: MergedParent, form: 'sentence' | 'reason' | 'short' = 'sentence') {
+  const parent = `#${merged.parent.number}`;
+  if (form === 'short') return `Parent ${parent} merged`;
+  if (form === 'reason') return `needs to move onto ${merged.onto} after ${parent} merged`;
+  return `${parent} merged. #${member.number} needs to move onto ${merged.onto}.`;
+}
 
 export type StackPlanStep =
   | { kind: 'move'; member: ReviewMember; merged: MergedParent; text: string }
   | { kind: 'conflicts'; member: ReviewMember; text: string };
 
 /**
- * The stack's next fix, lowest PR first: a move after a merged parent, or a conflict. Once the lowest is resolved and
- * pushed, its fresh status clears it and the plan names the next PR. `undefined` when nothing conflicts or moves.
+ * The stack's next fix, lowest PR first: a move after a merged parent, or a conflict. A PR that has to move moves
+ * first, even when it conflicts: it is resolved on its new base. Once the lowest is resolved and pushed, its fresh
+ * status clears it and the plan names the next PR. `undefined` when nothing conflicts or moves.
  */
-export function stackConflictPlan(subject: ReviewSubject, signals: Signals): { step: StackPlanStep; conflicting: ReviewMember[] } | undefined {
-  const order = stackDependencyOrder(subject).members.filter(isOpen);
-  const conflicting = order.filter((member) => mergeConflictState(current(member, signals(member))) === 'conflicts');
-  for (const member of order) {
-    const merged = mergedParent(subject, member, signals(member));
+export function stackConflictPlan(
+  subject: ReviewSubject,
+  signals: (member: ReviewMember) => QueueSignals | undefined
+): { step: StackPlanStep; conflicting: ReviewMember[] } | undefined {
+  const order = stackDependencyOrder(subject).members.filter(isOpenPr).map((member) => ({ member, fresh: current(member, signals(member)) }));
+  const conflicting = order.filter(({ fresh }) => mergeConflictState(fresh) === 'conflicts').map(({ member }) => member);
+  for (const { member, fresh } of order) {
+    const merged = mergedParent(subject, member, fresh);
     if (merged) return { conflicting, step: { kind: 'move', member, merged, text: mergedParentText(member, merged) } };
     if (conflicting.includes(member)) {
       const count = conflicting.length;

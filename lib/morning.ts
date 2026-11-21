@@ -85,6 +85,7 @@ import { checkView, type CheckView } from './check-summary';
 import { prTarget, type DeepLinkTarget } from './deep-link';
 import { repoName, waitingLabel, type OverviewEntry, type OverviewModel, type OverviewReason, type OverviewRow, type OverviewSinceSource } from './overview';
 import { prCommentTotal, type QueueSignals } from './queue-signals';
+import { mergedParent, mergedParentText } from './stack-conflict-plan';
 import type { ReviewMember, ReviewSubject } from './workbench';
 import type { StarredSection } from './overview-starred';
 
@@ -316,16 +317,16 @@ export function quote(text: string): string {
 const entryMembers = (row: OverviewRow) => row.entries.map((entry) => entry.member);
 /** "3 PRs · " before a stack row's reason, so the row says how many PRs it stands for. */
 const stackPrefix = (row: OverviewRow) => (row.entries.length > 1 ? `${row.entries.length} PRs · ` : '');
-const FIX_WORDS: Readonly<Record<FixReason, string>> = { failing: 'failing checks', conflicts: 'conflicts', restack: 'needs rebasing' };
-/** Failing checks, Conflicts, Needs rebasing: the reason a PR is under You. */
-export const FIX_LABEL: Readonly<Record<FixReason, string>> = { failing: 'Failing checks', conflicts: 'Conflicts', restack: 'Needs rebasing' };
+const FIX_WORDS: Readonly<Record<FixReason, string>> = { failing: 'failing checks', conflicts: 'conflicts', restack: 'needs to move' };
+/** Failing checks, Conflicts, Needs to move: the reason a PR is under You. */
+export const FIX_LABEL: Readonly<Record<FixReason, string>> = { failing: 'Failing checks', conflicts: 'Conflicts', restack: 'Needs to move' };
 /**
- * "needs rebasing after #35390 merged": a PR whose parent merged has to be rebased onto its base branch. The plain
- * words for a restack, the same in Next up, under You and in a stack's step.
+ * "needs to move onto main after #35390 merged": a PR whose parent merged (`mergedParentText`). The same words in
+ * Next up, under You and in a stack's step.
  */
-export function rebaseWords(subject: Pick<ReviewSubject, 'members' | 'edges'>, member: Pick<ReviewMember, 'url'>): string {
-  const parent = subject.edges.filter((edge) => edge.child === member.url).map((edge) => subject.members.find((candidate) => candidate.url === edge.parent)).find((candidate) => candidate?.merged);
-  return parent ? `needs rebasing after #${parent.number} merged` : 'needs rebasing';
+export function rebaseWords(subject: Pick<ReviewSubject, 'members' | 'edges'>, member: ReviewMember): string {
+  const merged = mergedParent(subject, member);
+  return merged ? mergedParentText(member, merged, 'reason') : FIX_WORDS.restack;
 }
 const fixReason = (reasons: readonly string[]): FixReason => (reasons.includes('checks-failed') ? 'failing' : reasons.includes('conflicts') ? 'conflicts' : 'restack');
 
@@ -988,7 +989,7 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
     else if (group.kind === 'you') {
       // Each PR under its first reason, so the counts add up to the PRs.
       const count = (reason: FixReason) => group.lines.filter((line) => line.reason === reason).length;
-      const words: [FixReason, string, string][] = [['failing', 'failing check', 'failing checks'], ['conflicts', 'conflict', 'conflicts'], ['restack', 'needs rebasing', 'need rebasing']];
+      const words: [FixReason, string, string][] = [['failing', 'failing check', 'failing checks'], ['conflicts', 'conflict', 'conflicts'], ['restack', 'needs to move', 'need to move']];
       group.detail = words.filter(([reason]) => count(reason)).map(([reason, one, many]) => plural(count(reason), one, many)).join(', ');
       // Failing first, then conflicts, then rebasing; oldest first within each.
       const rank = (line: GroupLine) => words.findIndex(([reason]) => reason === line.reason);
@@ -1245,7 +1246,7 @@ export function morningBriefing(input: Pick<MorningInput, 'model' | 'hidden'>, p
   const fixWords: [FixReason, BriefingKey, string, string][] = [
     ['failing', 'failing', 'has failing checks', 'have failing checks'],
     ['conflicts', 'conflicts', 'has conflicts', 'have conflicts'],
-    ['restack', 'rebase', 'needs rebasing', 'need rebasing'],
+    ['restack', 'rebase', 'needs to move', 'need to move'],
   ];
   for (const [reason, key, one, many] of fixWords) {
     // The first number of the sentence names its unit: "13 PRs have failing checks"; later ones are bare: "4 have conflicts".

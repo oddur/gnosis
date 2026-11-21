@@ -21,20 +21,22 @@ void app.whenReady().then(async () => {
     for (const dark of [false, true]) {
       await js(`document.documentElement.classList.toggle('dark', ${dark});document.activeElement?.blur()`);
       await js('document.fonts.ready.then(() => undefined)');
-      await new Promise(r => setTimeout(r, 300));
+      // The theme change has finished when no transition is still running.
+      await wait('document.getAnimations().length===0');
       console.log(`STACKPLANSHOT ${name}-${dark ? 'dark' : 'light'} ${(await win.webContents.capturePage()).toPNG().toString('base64')}`);
     }
     await js("document.documentElement.classList.remove('dark')");
   };
   const plan = "document.querySelector('.stack-conflict-plan')";
-  /** Opens the fixture's stack as #120 ← #121 ← #122, with `merged` PRs merged and `conflicting` PRs conflicting. */
-  const open = async (merged: number[]) => {
+  /** Opens the fixture's stack as #120 ← #121 ← #122, with `merged` PRs merged, authored by you unless `own` is false. */
+  const open = async (merged: number[], own = true) => {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks`);
     await waitForWorkbenchQueue(win.webContents);
     await js(`(async()=>{
       const item=(await window.electronAPI.workbenchQueue()).items.find(i=>i.subject.kind==='stack');
       const members=[120,121,122].map(n=>item.subject.members.find(m=>m.number===n));
-      members.forEach((m,i)=>{Object.assign(m,{headBranch:'stack-'+m.number,baseBranch:i?'stack-'+members[i-1].number:'main',merged:${JSON.stringify(merged)}.includes(m.number),state:${JSON.stringify(merged)}.includes(m.number)?'closed':'open'});});
+      window.stackMembers=members;
+      members.forEach((m,i)=>{Object.assign(m,{author:${own}?'oddur':'lena',headBranch:'stack-'+m.number,baseBranch:i?'stack-'+members[i-1].number:'main',merged:${JSON.stringify(merged)}.includes(m.number),state:${JSON.stringify(merged)}.includes(m.number)?'closed':'open'});});
       item.subject.edges=members.slice(1).map((m,i)=>({parent:members[i].url,child:m.url,evidence:'branch'}));
       window.conflicting=[];
       const read=window.electronAPI.getQueueSignals;
@@ -76,16 +78,27 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>(`${plan}.querySelector('a').textContent`), /Change base of #121 on GitHub/);
     assert.equal(await js(`${plan}.querySelector('a').href`), 'https://github.com/klang/engine/pull/121');
     await shots('parent-merged');
-    // Moved onto main by GitHub, and the squash merge conflicts: the action opens Resolve conflicts.
-    await js("window.conflicting=[121];window.publishStatus()");
+    // It also conflicts: move first, then resolve on the new base.
+    await js('window.conflicting=[121];window.publishStatus()');
+    await wait(`${plan}?.dataset.step==='move' && document.querySelector('.stack-overview-member[data-pr-url$="/121"]')?.textContent.includes('Conflicts')`);
+    assert.match(await js<string>(`${plan}.querySelector('a').textContent`), /Change base of #121 on GitHub/);
+    assert.equal(await js(`${plan}.querySelectorAll('button').length`), 0, 'No Resolve before the move');
+    // The base changed to main: the move is done, and the plan resolves the conflict there.
+    await js("window.stackMembers[1].baseBranch='main';window.publishStatus()");
     await wait(`${plan}?.querySelector('button')?.textContent==='Resolve conflicts in #121'`);
-    assert.ok(await js(`${plan}.textContent.includes('#120 merged. #121 needs to move onto main.')`));
+    assert.equal(await js<string>(`${plan}.querySelector('p').textContent`), '#121 has merge conflicts.');
     await win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', { width: 640, height: 700, deviceScaleFactor: 1, mobile: false });
     await wait('innerWidth===640');
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'), 'No horizontal scroll at 640 px');
-    await shots('parent-merged-conflicts-narrow');
-    console.log('Stack conflict plan passed: bottom-up plan, next PR after a push, parent-merged row and its action.');
+    await shots('moved-conflicts-narrow');
+    // Someone else's stack: the plan says what it needs, with no action.
+    await win.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride');
+    await open([120], false);
+    await js('window.publishStatus()');
+    await wait(`${plan}?.textContent.includes('#120 merged. #121 needs to move onto main.')`);
+    assert.equal(await js(`${plan}.querySelectorAll('button,a').length`), 0, 'No action on PRs you do not own');
+    console.log('Stack conflict plan passed: bottom-up plan, next PR after a push, parent-merged row, move before resolve, no action on PRs you do not own.');
     app.exit(0);
   } catch (error) { console.error(error); console.log(await js('document.body.innerText').catch(() => '')); app.exit(1); }
 });
