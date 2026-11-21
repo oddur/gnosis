@@ -1,3 +1,4 @@
+import { findFences } from './markdown-fences';
 import { prepareReviewHunk } from './review-diff';
 import type { DiffHunk } from './types';
 
@@ -150,25 +151,20 @@ export function withChatIslands(markdown: string): string {
   const lines = markdown.split('\n');
   const out: string[] = [];
   const counts = { diff: 0, mermaid: 0, d2: 0 };
-  for (let i = 0; i < lines.length; i++) {
-    const open = /^( {0,3})(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/.exec(lines[i]);
-    if (!open) {
-      out.push(lines[i]);
-      continue;
+  let next = 0;
+  for (const fence of findFences(lines)) {
+    out.push(...lines.slice(next, fence.start));
+    next = fence.end + 1;
+    // Unclosed: it is still streaming, or the message ends inside it. Words shows it as code.
+    if (!fence.closed) {
+      out.push(...lines.slice(fence.start));
+      return out.join('\n');
     }
     // A fence in a list item is indented: its island keeps the indentation, so the list goes on around it.
-    const [, indent, marker, info] = open;
+    const { indent, info } = fence;
     const outdent = (line: string) => line.replace(new RegExp(`^ {0,${indent.length}}`), '');
-    const close = new RegExp(`^ {0,3}${marker[0] === '`' ? '`' : '~'}{${marker.length},}\\s*$`);
-    let end = i + 1;
-    while (end < lines.length && !close.test(lines[end])) end++;
-    // Unclosed: it is still streaming, or the message ends inside it. Words shows it as code.
-    if (end >= lines.length) {
-      out.push(...lines.slice(i));
-      break;
-    }
     const body = lines
-      .slice(i + 1, end)
+      .slice(fence.start + 1, fence.end)
       .map(outdent)
       .join('\n');
     const language = info.toLowerCase();
@@ -182,8 +178,8 @@ export function withChatIslands(markdown: string): string {
           ? { id, source: body.trimEnd() }
           : undefined;
     if (kind && data) out.push(`${indent}\`\`\`island-${kind}`, indent + JSON.stringify(data), `${indent}\`\`\``);
-    else out.push(...lines.slice(i, end + 1));
-    i = end;
+    else out.push(...lines.slice(fence.start, fence.end + 1));
   }
+  out.push(...lines.slice(next));
   return out.join('\n');
 }

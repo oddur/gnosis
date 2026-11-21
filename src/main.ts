@@ -158,6 +158,7 @@ import { setBinaryOverride, detectBinaryPath, checkCliInstalled } from '../lib/p
 import { getProvider } from '../lib/provider';
 import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
 import { CHAT_CITATION_INSTRUCTION } from '../lib/chat-citations';
+import { normalizeChatModels, normalizeChatPanelWidths } from '../lib/chat-preferences';
 import { fileChatTrace, toolCallStep, toolResultStep, type ChatTraceStep } from '../lib/chat-trace';
 import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHunks } from '../lib/diff-parse';
 import { filterDiff } from '../lib/file-filter';
@@ -1996,6 +1997,18 @@ ipcMain.handle('save-harness-environment', (_event, provider: Provider, variable
 
 ipcMain.handle('load-preferences', () => {
   return loadPreferences();
+});
+
+// Chat's panel widths and model choices (lib/chat-preferences.ts): merged into the saved preferences and written,
+// without the settings side effects of save-preferences (cache size, storage upkeep, notifications, preloading, the
+// preferences-changed broadcast). Other windows read them on their next load.
+ipcMain.handle('save-chat-preferences', (_event, patch: Pick<Preferences, 'chatPanelWidths' | 'chatModels'>) => {
+  const current = loadPreferences();
+  savePreferencesFile({
+    ...current,
+    ...(patch && 'chatPanelWidths' in patch ? { chatPanelWidths: normalizeChatPanelWidths(patch.chatPanelWidths) } : {}),
+    ...(patch && 'chatModels' in patch ? { chatModels: normalizeChatModels(patch.chatModels) } : {}),
+  });
 });
 
 ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {

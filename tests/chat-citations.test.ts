@@ -5,6 +5,8 @@ import {
   citationFromIsland,
   citationLabel,
   hunkNewLines,
+  hunkNewRange,
+  patchBounds,
   parseChatCitation,
   resolveChatCitation,
   withChatCitations,
@@ -51,7 +53,7 @@ void test('citations parse from the bracket text the prompt asks for', () => {
 });
 
 void test('a citation resolves only to a file in the PR', () => {
-  const resolve = (text: string) => resolveChatCitation(parseChatCitation(text), files);
+  const resolve = (text: string) => resolveChatCitation(parseChatCitation(text), files, () => ({ max: 1000 }));
   const pathOf = (c: ReturnType<typeof resolve>) => (c?.kind === 'file' ? c.path : undefined);
   assert.deepEqual(resolve('src/queue.ts:40-52'), {
     kind: 'file',
@@ -61,18 +63,10 @@ void test('a citation resolves only to a file in the PR', () => {
     raw: 'src/queue.ts:40-52',
     label: 'queue.ts:40–52',
   });
-  assert.equal(
-    pathOf(resolve('worker.ts:7')),
-    'src/worker.ts',
-    'A unique file name resolves to its path'
-  );
+  assert.equal(pathOf(resolve('worker.ts:7')), 'src/worker.ts', 'A unique file name resolves to its path');
   assert.equal(resolve('queue.ts:1'), undefined, 'Two PR files end in queue.ts: ambiguous, so plain text');
   assert.equal(resolve('src/missing.ts:3'), undefined, 'A file outside the PR is never cited');
-  assert.equal(
-    pathOf(resolve('b/src/queue.ts:4')),
-    'src/queue.ts',
-    'Diff prefixes are dropped'
-  );
+  assert.equal(pathOf(resolve('b/src/queue.ts:4')), 'src/queue.ts', 'Diff prefixes are dropped');
   assert.equal(resolve('src/queue.ts:52-40'), undefined, 'Lines out of order');
   assert.equal(resolve('src/queue.ts:0'), undefined, 'Lines start at 1');
   assert.equal(resolve('src/queue.ts:1-9000'), undefined, 'A range that is a whole file is not a line citation');
@@ -162,4 +156,90 @@ void test('chat prompts ask for the citation format the renderer reads', () => {
   assert.ok(buildSlideChatSystemPrompt().includes(CHAT_CITATION_INSTRUCTION));
   assert.match(CHAT_CITATION_INSTRUCTION, /\[path:start-end\]/);
   assert.match(CHAT_CITATION_INSTRUCTION, /Cite only files that appear/);
+});
+
+void test('the instruction cites new-file lines only, and removed code without lines', () => {
+  assert.match(CHAT_CITATION_INSTRUCTION, /Line numbers always mean the new version/);
+  assert.match(CHAT_CITATION_INSTRUCTION, /for code the PR removes, cite the file without lines, as \[path\]/);
+  assert.doesNotMatch(CHAT_CITATION_INSTRUCTION, /old version for removed code/);
+});
+
+void test('citations in a fence inside a list item stay code', () => {
+  const markdown =
+    '1. Change the queue:\n\n    ```ts\n    const a = map[src/queue.ts:4];\n    ```\n\n2. See [src/queue.ts:5].';
+  const out = withChatCitations(markdown);
+  assert.match(out, /const a = map\[src\/queue\.ts:4\];/, out);
+  assert.match(out, /See :cite\[queue\.ts:5\]/, out);
+  // A paragraph indented under a list item is prose, and an indented code block runs past its first line.
+  assert.match(withChatCitations('- Item\n\n    See [src/a.ts:1].'), /:cite\[a\.ts:1\]/);
+  assert.equal(
+    withChatCitations('Text\n\n    code();\n    map[src/a.ts:2];'),
+    'Text\n\n    code();\n    map[src/a.ts:2];'
+  );
+});
+
+void test('line 0 is not a line, and never a whole-file citation', () => {
+  const zero = parseChatCitation('src/queue.ts:0');
+  assert.equal(
+    resolveChatCitation(zero, files, () => ({ max: 100 })),
+    undefined
+  );
+  assert.equal(
+    resolveChatCitation(parseChatCitation('src/queue.ts:0-3'), files, () => ({ max: 100 })),
+    undefined
+  );
+  assert.match(
+    withChatCitations('[src/queue.ts:0]'),
+    /start="0" end="0"/,
+    'The island keeps the 0, so it fails to resolve'
+  );
+  assert.deepEqual(citationFromIsland({ id: '1', path: 'src/queue.ts', start: '0', end: '0' }), {
+    kind: 'file',
+    path: 'src/queue.ts',
+    startLine: 0,
+    endLine: 0,
+    raw: '',
+  });
+});
+
+void test('lines must fall within what the PR shows of the file', () => {
+  const cite = (text: string, bounds?: Parameters<typeof resolveChatCitation>[2]) =>
+    resolveChatCitation(parseChatCitation(text), files, bounds);
+  assert.equal(
+    cite('src/queue.ts:9000-9001', () => ({ max: 120 })),
+    undefined,
+    'A made-up 9000-line citation'
+  );
+  assert.equal(cite('src/queue.ts:40-41'), undefined, 'No known length: plain text');
+  assert.ok(cite('src/queue.ts:40-41', () => ({ max: 120 })));
+  assert.ok(
+    cite('src/queue.ts:40-41', () => ({ ranges: [[38, 45]] })),
+    'Within a topic hunk'
+  );
+  assert.equal(
+    cite('src/queue.ts:44-50', () => ({ ranges: [[38, 45]] })),
+    undefined,
+    'Past the hunk'
+  );
+  assert.ok(cite('src/queue.ts'), 'A file without lines needs no bounds');
+  assert.deepEqual(patchBounds({ status: 'added', additions: 90 }), { max: 90 });
+  assert.deepEqual(
+    patchBounds({ status: 'modified', additions: 1, patch: '@@ -1,3 +1,4 @@\n a\n+b\n@@ -40,2 +41,3 @@ fn\n x' }),
+    { max: 43 }
+  );
+  assert.equal(patchBounds({ status: 'deleted', additions: 0 }), undefined);
+  assert.equal(patchBounds({ status: 'modified', additions: 1 }), undefined, 'No patch, no known length');
+  assert.deepEqual(hunkNewRange('@@ -3 +3 @@'), [3, 3]);
+  assert.equal(hunkNewRange('@@ -3,2 +2,0 @@'), undefined);
+});
+
+void test('an exact path wins over a stripped or suffix match', () => {
+  const both = ['x.ts', 'b/x.ts'];
+  const pathOf = (text: string) => {
+    const c = resolveChatCitation(parseChatCitation(text), both);
+    return c?.kind === 'file' ? c.path : undefined;
+  };
+  assert.equal(pathOf('b/x.ts'), 'b/x.ts');
+  assert.equal(pathOf('x.ts'), 'x.ts');
+  assert.equal(pathOf('a/x.ts'), 'x.ts', 'A diff prefix is stripped when nothing matches exactly');
 });

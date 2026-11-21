@@ -130,10 +130,18 @@ function AttachmentActions({ className, ...props }: React.ComponentProps<'div'>)
   );
 }
 
-function AttachmentAction({ className, variant, size = 'icon-xs', ...props }: React.ComponentProps<typeof Button>) {
+function AttachmentAction({
+  className,
+  variant,
+  size = 'icon-xs',
+  type = 'button',
+  ...props
+}: React.ComponentProps<typeof Button>) {
+  // An action inside a form (the prompt input's chips) must not submit it.
   return (
     <Button
       data-slot="attachment-action"
+      type={type}
       variant={variant ?? 'ghost'}
       size={size}
       className={cn(className)}

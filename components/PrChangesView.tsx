@@ -35,6 +35,8 @@ import { ChevronDown, ChevronRight, PanelLeft, RefreshCw } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { inTreeOrder } from '../lib/tree-file-order';
 import { ChangesFileResize } from './ChangesFileResize';
+import { patchBounds } from '../lib/chat-citations';
+import type { ChatCitationSource } from './ChatCitation';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { useChangesComments } from './useChangesComments';
 import { PrFileChat } from './PrFileChat';
@@ -608,6 +610,25 @@ export function PrChangesView({
     refresh: refreshThreads,
     replaceThread: discussion.replace,
   });
+  // Citations in the file conversation resolve to the files of its snapshot, within what their patches show.
+  const chatJumpTo = useRef(jumpToLines);
+  chatJumpTo.current = jumpToLines;
+  const chatSnapshot = chatEntry?.snapshot;
+  const chatCitations = useMemo<ChatCitationSource | undefined>(() => {
+    if (!chatSnapshot) return undefined;
+    const own = entries.filter((e) => e.snapshot === chatSnapshot);
+    return {
+      files: own.map((e) => e.file.path),
+      bounds: (path) => {
+        const entry = own.find((e) => e.file.path === path);
+        return entry && patchBounds(entry.file);
+      },
+      open: (cited) => {
+        const target = own.find((e) => e.file.path === cited.path);
+        if (target) chatJumpTo.current(target, { line: cited.startLine, endLine: cited.endLine, side: 'after' });
+      },
+    };
+  }, [entries, chatSnapshot]);
   const chatRequest = chatEntry
     ? {
         url: chatEntry.snapshot.url,
@@ -977,14 +998,7 @@ export function PrChangesView({
               if (!target || !step.path) return;
               jumpToLines(target, { line: step.startLine, endLine: step.endLine, side: step.side });
             }}
-            citations={chatEntry && {
-              // The files of the snapshot the conversation is about: a citation of any other file stays plain text.
-              files: entries.filter((e) => e.snapshot === chatEntry.snapshot).map((e) => e.file.path),
-              open: (cited) => {
-                const target = entries.find((e) => e.snapshot === chatEntry.snapshot && e.file.path === cited.path);
-                if (target) jumpToLines(target, { line: cited.startLine, endLine: cited.endLine, side: 'after' });
-              },
-            }}
+            citations={chatCitations}
           />
         )}
       </div>

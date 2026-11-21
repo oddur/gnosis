@@ -47,7 +47,7 @@ import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
 import type { ReviewGuide, FreshnessResult, Preferences, Slide } from '../../lib/types';
 import { rememberChatModel, rememberedChatModel, type ChatModelChoice } from '../../lib/chat-preferences';
-import { hunkNewLines } from '../../lib/chat-citations';
+import { hunkNewLines, hunkNewRange } from '../../lib/chat-citations';
 import type { ChatCitationSource } from '../../components/ChatCitation';
 import { markHere } from '../../lib/diff-here';
 
@@ -331,8 +331,19 @@ function ReviewPageContent({
     const files = new Set<string>(review.changedFiles?.map((file) => file.filename) ?? []);
     for (const slide of review.slides) for (const hunk of slide.diffHunks) files.add(hunk.filePath);
     let lines: Map<string, Map<number, string>> | undefined;
+    // A line citation must fit an added file's length, or the new-side ranges of the topics' hunks.
+    const added = new Map(
+      (review.changedFiles ?? []).filter((f) => f.status === 'added').map((f) => [f.filename, f.additions])
+    );
+    const ranges = new Map<string, [number, number][]>();
+    for (const slide of review.slides)
+      for (const hunk of slide.diffHunks) {
+        const range = hunkNewRange(hunk.hunkHeader);
+        if (range) ranges.set(hunk.filePath, [...(ranges.get(hunk.filePath) ?? []), range]);
+      }
     return {
       files: [...files],
+      bounds: (path) => ({ max: added.get(path) || undefined, ranges: ranges.get(path) }),
       preview: (path, startLine, endLine) => {
         if (!lines) {
           lines = new Map();

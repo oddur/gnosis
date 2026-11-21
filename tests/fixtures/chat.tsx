@@ -5,7 +5,7 @@ import { PrFileChat } from '../../components/PrFileChat';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { DEFAULT_CLAUDE_MODEL } from '../../lib/models';
 import { rememberChatModel, rememberedChatModel } from '../../lib/chat-preferences';
-import { hunkNewLines } from '../../lib/chat-citations';
+import { hunkNewLines, hunkNewRange } from '../../lib/chat-citations';
 import type { ChatCitationSource } from '../../components/ChatCitation';
 import type { Preferences, ReviewGuide } from '../../lib/types';
 import '../../src/globals.css';
@@ -36,6 +36,11 @@ let stored = {} as Preferences;
 const api: Partial<Window['electronAPI']> = {
   // Chat's Markdown loads lazily, after this API is installed, and reads the saved preferences: none are saved here.
   loadPreferences: () => Promise.resolve(structuredClone(stored)),
+  // Chat writes only its own fields, through main's narrow write.
+  saveChatPreferences: (patch) => {
+    stored = { ...stored, ...structuredClone(patch) };
+    return Promise.resolve();
+  },
   savePreferences: (next) => {
     stored = structuredClone(next);
     return Promise.resolve();
@@ -141,6 +146,11 @@ for (const hunk of review.slides[0].diffHunks)
   citedLines.set(hunk.filePath, hunkNewLines(hunk.hunkHeader, hunk.content));
 const citations: ChatCitationSource = {
   files: ['src/queue.ts', 'src/worker.ts'],
+  bounds: (path) => {
+    const hunk = review.slides[0].diffHunks.find((h) => h.filePath === path);
+    const range = hunk && hunkNewRange(hunk.hunkHeader);
+    return range ? { ranges: [range] } : undefined;
+  },
   preview: (path, start, end) => {
     const lines = Array.from({ length: end - start + 1 }, (_, i) => citedLines.get(path)?.get(start + i));
     return lines.every((line) => line === undefined) ? undefined : lines.map((line) => line ?? '').join('\n');

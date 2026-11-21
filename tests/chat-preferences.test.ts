@@ -112,8 +112,8 @@ void test('saved choices that no provider offers are dropped, never sent', () =>
       },
       'topic'
     ),
-    { provider: 'claude', model: 'claude-sonnet-5-5' },
-    'A retired surface choice falls back to the general preference'
+    { provider: 'claude', model: 'claude-opus-5-5' },
+    'A retired surface choice moves to its successor'
   );
 });
 
@@ -149,4 +149,36 @@ void test('a failed write does not stop the next', async () => {
   await assert.rejects(writer.width('topic', 500));
   await writer.width('topic', 520);
   assert.deepEqual(store.saved().chatPanelWidths, { topic: 520 });
+});
+
+void test('chat values go through the narrow write when the host has it', async () => {
+  const saved: unknown[] = [];
+  let full = 0;
+  const writer = createChatPreferenceWriter(() => ({
+    loadPreferences: () => Promise.resolve({ chatPanelWidths: { topic: 480 } } as Preferences),
+    savePreferences: () => {
+      full++;
+      return Promise.resolve();
+    },
+    saveChatPreferences: (patch) => {
+      saved.push(patch);
+      return Promise.resolve();
+    },
+  }));
+  await writer.width('file', 512);
+  await writer.model('topic', { provider: 'codex', model: 'gpt-6-luna' });
+  assert.equal(full, 0, 'The full preferences write, with its side effects, is not used');
+  assert.deepEqual(saved, [
+    { chatPanelWidths: { topic: 480, file: 512 } },
+    { chatModels: { topic: { provider: 'codex', model: 'gpt-6-luna' } } },
+  ]);
+});
+
+void test('a retired saved chat model moves to its successor', () => {
+  assert.deepEqual(normalizeChatModels({ topic: { provider: 'claude', model: 'claude-opus-4-6' } }), {
+    topic: { provider: 'claude', model: 'claude-opus-5-5' },
+  });
+  assert.deepEqual(normalizeChatModels({ file: { provider: 'codex', model: 'gpt-6.1-sol' } }), {
+    file: { provider: 'codex', model: 'gpt-6.2-sol' },
+  });
 });

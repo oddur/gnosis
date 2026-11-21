@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { Button } from './ui/button';
 import { PanelResizeHandle } from './PanelResizeHandle';
@@ -37,6 +37,19 @@ export function ChatPanel({
   contained?: boolean;
 }) {
   const [width, setWidth] = useState(() => rememberedChatPanelWidth(startupPreferences(), surface));
+  // Arrow keys repeat: keep the width 300 ms after the last press. A drag keeps it when it ends; closing flushes.
+  const pending = useRef<{ timer: ReturnType<typeof setTimeout>; value: number } | undefined>(undefined);
+  const keep = (value: number | undefined) => void rememberChatPanelWidth(surface, value).catch(() => {});
+  const flush = () => {
+    const waiting = pending.current;
+    if (!waiting) return;
+    clearTimeout(waiting.timer);
+    pending.current = undefined;
+    keep(waiting.value);
+  };
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  useEffect(() => () => flushRef.current(), []);
   return (
     <aside
       className={`chat-panel ${contained ? 'chat-panel-contained' : 'chat-panel-dock'} ${className}`}
@@ -73,10 +86,21 @@ export function ChatPanel({
           max={CHAT_PANEL_MAX_WIDTH}
           step={CHAT_PANEL_STEP}
           onChange={setWidth}
-          onCommit={(value) => void rememberChatPanelWidth(surface, value).catch(() => {})}
+          onCommit={(value, via) => {
+            if (via === 'pointer') {
+              if (pending.current) clearTimeout(pending.current.timer);
+              pending.current = undefined;
+              keep(value);
+              return;
+            }
+            if (pending.current) clearTimeout(pending.current.timer);
+            pending.current = { value, timer: setTimeout(flush, 300) };
+          }}
           onReset={() => {
+            if (pending.current) clearTimeout(pending.current.timer);
+            pending.current = undefined;
             setWidth(CHAT_PANEL_DEFAULT_WIDTH);
-            void rememberChatPanelWidth(surface, undefined).catch(() => {});
+            keep(undefined);
           }}
         />
       )}

@@ -334,6 +334,18 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     await capture('selection-chip-dark');
     await js("document.documentElement.classList.remove('dark')");
+    // Removing the chip only removes it: the form is not submitted, and the typed question stays.
+    const sentBefore = await js<number>('window.chatFixture.requests.length');
+    await pointerClick('document.querySelector(\'[aria-label="Remove selected code"]\')');
+    await wait("!document.querySelector('.chat-selection-chip')");
+    assert.equal(await js('window.chatFixture.requests.length'), sentBefore, 'Removing the chip sends nothing');
+    assert.equal(await js("document.querySelector('textarea').value"), 'What happens if a worker stops?');
+    await selectDiffRow(`${body}.querySelector('.chat-diff')`, '[data-code] [data-line][data-line-type=change-addition]');
+    await wait("document.querySelector('.review-selection-actions')?.style.visibility==='visible'");
+    await js("document.querySelector('.review-selection-ask').click()");
+    await wait(
+      "document.querySelector('.chat-selection-chip [data-slot=attachment-title]')?.textContent==='queue.ts · L41'"
+    );
     assert.equal(await js("document.querySelector('textarea').value"), 'What happens if a worker stops?');
     await click('Copy answer');
     await wait('!!document.querySelector(\'[aria-label="Answer copied"]\')');

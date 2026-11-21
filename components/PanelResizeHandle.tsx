@@ -29,7 +29,8 @@ export function PanelResizeHandle({
   label: string;
   className?: string;
   onChange: (width: number) => void;
-  onCommit: (width: number) => void;
+  /** The width to keep: `pointer` once a drag ends, `key` on every key press (the caller may debounce those). */
+  onCommit: (width: number, via: 'pointer' | 'key') => void;
   onReset?: () => void;
 }) {
   const drag = useRef<{ id: number; element: HTMLDivElement; x: number; from: number } | undefined>(undefined);
@@ -44,7 +45,7 @@ export function PanelResizeHandle({
     drag.current = undefined;
     document.documentElement.removeAttribute('data-panel-resizing');
     if (active.element.hasPointerCapture(active.id)) active.element.releasePointerCapture(active.id);
-    if (current.current.width !== active.from) current.current.onCommit(current.current.width);
+    if (current.current.width !== active.from) current.current.onCommit(current.current.width, 'pointer');
   }
   useEffect(() => {
     window.addEventListener('blur', finish);
@@ -92,7 +93,7 @@ export function PanelResizeHandle({
         const value = clamp(next);
         if (value === width) return;
         onChange(value);
-        onCommit(value);
+        onCommit(value, 'key');
       }}
       onPointerDown={(event) => {
         if (!event.isPrimary || event.button !== 0 || drag.current) return;

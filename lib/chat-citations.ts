@@ -12,14 +12,25 @@
  * model wrote itself goes through the same check. No React imports.
  */
 
+import { findFences } from './markdown-fences';
+
 export const CHAT_CITATION_ISLAND = 'cite';
 
 export const CHAT_CITATION_INSTRUCTION =
-  'When a statement rests on specific code in this PR, cite it right after the statement as [path:start-end], or [path:line] for one line, using the repository-relative path and the line numbers of the new version of the file (the old version for removed code), for example [src/queue.ts:40-52]. Cite only files that appear in the supplied diff or file, and only lines you were given. Cite a web page as [https://example.com/page]. Never put a citation inside a code block.';
+  'When a statement rests on specific code in this PR, cite it right after the statement as [path:start-end], or [path:line] for one line, using the repository-relative path and line numbers in the new version of the file, for example [src/queue.ts:40-52]. Line numbers always mean the new version: for code the PR removes, cite the file without lines, as [path], or describe where it was. Cite only files that appear in the supplied diff or file, and only lines you were given. Cite a web page as [https://example.com/page]. Never put a citation inside a code block.';
 
 export type ChatCitation =
   | { kind: 'file'; path: string; startLine?: number; endLine?: number; raw: string }
   | { kind: 'url'; url: string; raw: string };
+
+/**
+ * What is known of a file's new version: `max`, a line count it certainly reaches (an added file's length, or the end
+ * of its last hunk), and `ranges`, new-side line ranges the chat was shown. A line citation must fit one of them.
+ */
+export interface CitationBounds {
+  max?: number;
+  ranges?: readonly (readonly [number, number])[];
+}
 
 export type ResolvedCitation =
   | { kind: 'file'; path: string; startLine?: number; endLine?: number; raw: string; label: string }
@@ -59,7 +70,7 @@ export function parseChatCitation(text: string): ChatCitation | undefined {
 export function citationLabel(citation: ChatCitation): string {
   if (citation.kind === 'url') return hostOf(citation.url);
   const name = baseName(citation.path);
-  if (!citation.startLine) return name;
+  if (citation.startLine === undefined) return name;
   return citation.endLine && citation.endLine !== citation.startLine
     ? `${name}:${citation.startLine}–${citation.endLine}`
     : `${name}:${citation.startLine}`;
@@ -76,13 +87,15 @@ function hostOf(url: string) {
 const normalizePath = (path: string) => path.replace(/^\.\//, '').replace(/^[ab]\//, '');
 
 /**
- * The citation as the PR knows it, or undefined. A file resolves when its path is a PR file, or ends one PR file's
- * path after a `/` and no other's (the model wrote `queue.ts` for `src/queue.ts`). Lines must be positive, in order,
- * and span at most 2,000 lines.
+ * The citation as the PR knows it, or undefined. A file resolves by its exact path first, then by the path without a
+ * diff's `a/` or `b/` prefix, then as the one PR file whose path ends with it (the model wrote `queue.ts` for
+ * `src/queue.ts`). Lines must be positive, in order, span at most 2,000 lines, and fall within what `bounds` knows of
+ * the file's new version; with no bounds, a line citation does not resolve.
  */
 export function resolveChatCitation(
   citation: ChatCitation | undefined,
-  files: readonly string[]
+  files: readonly string[],
+  bounds?: (path: string) => CitationBounds | undefined
 ): ResolvedCitation | undefined {
   if (!citation) return undefined;
   if (citation.kind === 'url') {
@@ -96,11 +109,18 @@ export function resolveChatCitation(
     if (endLine - startLine > MAX_RANGE) return undefined;
   }
   const wanted = normalizePath(citation.path);
-  let path = files.find((file) => file === wanted || file === citation.path);
+  let path = files.find((file) => file === citation.path) ?? files.find((file) => file === wanted);
   if (!path) {
     const matches = files.filter((file) => file.endsWith(`/${wanted}`));
     if (matches.length !== 1) return undefined;
     path = matches[0];
+  }
+  if (startLine !== undefined && endLine !== undefined) {
+    const known = bounds?.(path);
+    const fits =
+      (known?.max !== undefined && endLine <= known.max) ||
+      !!known?.ranges?.some(([from, to]) => startLine >= from && endLine <= to);
+    if (!fits) return undefined;
   }
   const resolved = { ...citation, path };
   return { ...resolved, label: citationLabel(resolved) };
@@ -117,7 +137,7 @@ function directive(citation: ChatCitation): string {
       ? [`url=${attribute(citation.url)}`]
       : [
           `path=${attribute(citation.path)}`,
-          ...(citation.startLine
+          ...(citation.startLine !== undefined
             ? [`start="${citation.startLine}"`, `end="${citation.endLine ?? citation.startLine}"`]
             : []),
         ];
@@ -148,28 +168,37 @@ function citeLine(line: string): string {
     .join('');
 }
 
-/** Turn citations outside code into citation islands. Fenced and indented code is left alone. */
+/** Turn citations outside code into citation islands. Fenced, indented and inline code is left alone. */
 export function withChatCitations(markdown: string): string {
   if (!markdown.includes('[')) return markdown;
   const lines = markdown.split('\n');
-  let fence: string | undefined;
+  const code = new Set<number>();
+  for (const fence of findFences(lines))
+    for (let i = fence.start; i <= Math.min(fence.end, lines.length - 1); i++) code.add(i);
+  // Indented code: lines of four spaces or a tab that start after a blank line, outside a list item's continuation,
+  // and run until a line that is not indented.
+  let indented = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (fence) {
-      if (marker && marker[0] === fence[0] && marker.length >= fence.length && !line.trim().slice(marker.length).trim())
-        fence = undefined;
-      continue;
-    }
-    if (marker) {
-      fence = marker;
-      continue;
-    }
-    // Indented code: four spaces or a tab, outside a list's continuation (a guess Words also makes from context).
-    if (/^( {4}|\t)/.test(line) && (i === 0 || !lines[i - 1].trim())) continue;
-    if (line.includes('[')) lines[i] = citeLine(line);
+    const deep = /^( {4}|\t)/.test(line);
+    indented = deep && (indented || ((i === 0 || !lines[i - 1].trim()) && !continuesListItem(lines, i)));
+    if (code.has(i) || indented || !line.includes('[')) continue;
+    lines[i] = citeLine(line);
   }
   return lines.join('\n');
+}
+
+/** A line indented under a list item continues that item; it is prose, not indented code. */
+function continuesListItem(lines: readonly string[], index: number): boolean {
+  const indent = /^ */.exec(lines[index])?.[0].length ?? 0;
+  for (let i = index - 1; i >= 0; i--) {
+    if (!lines[i].trim()) continue;
+    const own = /^ */.exec(lines[i])?.[0].length ?? 0;
+    if (own >= indent) continue;
+    const item = /^( *)([-*+]|\d{1,9}[.)]) +/.exec(lines[i]);
+    return !!item && indent < item[0].length + 4;
+  }
+  return false;
 }
 
 /** Rebuild a citation from an island's attributes, as Words passes them (all strings). */
@@ -182,7 +211,27 @@ export function citationFromIsland(data: Readonly<Record<string, unknown>>): Cha
   if (typeof data.path !== 'string') return undefined;
   const start = typeof data.start === 'string' && /^\d+$/.test(data.start) ? Number(data.start) : undefined;
   const end = typeof data.end === 'string' && /^\d+$/.test(data.end) ? Number(data.end) : start;
-  return { kind: 'file', path: data.path, ...(start ? { startLine: start, endLine: end } : {}), raw };
+  return { kind: 'file', path: data.path, ...(start !== undefined ? { startLine: start, endLine: end } : {}), raw };
+}
+
+/** The new-side line range a hunk header covers, or undefined for a hunk that adds nothing. */
+export function hunkNewRange(hunkHeader: string): [number, number] | undefined {
+  const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(hunkHeader.trim());
+  if (!match) return undefined;
+  const start = Number(match[1]);
+  // Optional groups are undefined at runtime; a missing count means one line.
+  const count = Number((match[2] as string | undefined) ?? 1);
+  return count > 0 ? [start, start + count - 1] : undefined;
+}
+
+/** What a file's patch tells about its new version: an added file's length, else the end of its last hunk. */
+export function patchBounds(file: { status: string; additions: number; patch?: string }): CitationBounds | undefined {
+  if (file.status === 'deleted') return undefined;
+  if (file.status === 'added' && file.additions > 0) return { max: file.additions };
+  const ranges = [...(file.patch ?? '').matchAll(/^@@ [^\n]*@@/gm)]
+    .map((m) => hunkNewRange(m[0]))
+    .filter((range): range is [number, number] => !!range);
+  return ranges.length ? { max: Math.max(...ranges.map(([, to]) => to)) } : undefined;
 }
 
 /** New-file lines a diff hunk shows, by line number, for a citation's preview. Removed lines are left out. */

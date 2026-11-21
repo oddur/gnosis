@@ -6,7 +6,14 @@
  * was. Values are validated on every read: preferences are user data, and an unknown model or a width out of range
  * falls back to the default instead of reaching the CLI or the layout. No React imports.
  */
-import { normalizeModelSelection, PROVIDERS, type ModelId, type Provider } from './models';
+import {
+  normalizeModelSelection,
+  PROVIDERS,
+  RETIRED_CLAUDE_MODELS,
+  RETIRED_CODEX_MODELS,
+  type ModelId,
+  type Provider,
+} from './models';
 import type { Preferences } from './types';
 
 export type ChatSurface = 'topic' | 'file';
@@ -44,7 +51,7 @@ export function normalizeChatPanelWidths(value: unknown): ChatPanelWidths {
   return widths;
 }
 
-/** A saved choice only when its provider still offers the model; retired or unknown models are dropped. */
+/** A saved choice its provider still offers; a retired model moves to its successor, an unknown one is dropped. */
 export function normalizeChatModels(value: unknown): ChatModels {
   if (!value || typeof value !== 'object') return {};
   const models: ChatModels = {};
@@ -52,8 +59,12 @@ export function normalizeChatModels(value: unknown): ChatModels {
     if (!isSurface(surface) || !choice || typeof choice !== 'object') continue;
     const { provider, model } = choice as { provider?: unknown; model?: unknown };
     if (provider !== 'claude' && provider !== 'codex') continue;
-    if (!PROVIDERS[provider].models.some((m) => m.id === model)) continue;
-    models[surface] = { provider, model: model as ModelId };
+    const retired: Record<string, unknown> = provider === 'claude' ? RETIRED_CLAUDE_MODELS : RETIRED_CODEX_MODELS;
+    const known =
+      PROVIDERS[provider].models.some((m) => m.id === model) ||
+      (typeof model === 'string' && Object.prototype.hasOwnProperty.call(retired, model));
+    if (!known) continue;
+    models[surface] = normalizeModelSelection(provider, model);
   }
   return models;
 }
@@ -88,23 +99,28 @@ export function chatModelOptions(): { provider: Provider; label: string; models:
 
 interface PreferencesStore {
   loadPreferences: () => Promise<Preferences>;
-  savePreferences: (preferences: Preferences) => Promise<unknown>;
+  savePreferences?: (preferences: Preferences) => Promise<unknown>;
+  /** Main's narrow write for these two fields, without the settings side effects of savePreferences. */
+  saveChatPreferences?: (patch: Pick<Preferences, 'chatPanelWidths' | 'chatModels'>) => Promise<unknown>;
 }
 
 /**
  * Writes one surface's value into the saved preferences, read fresh so a change made elsewhere is kept. Writes run in
- * order, and a failed write does not stop the next.
+ * order, and a failed write does not stop the next. Only the chat fields go through saveChatPreferences; the full
+ * savePreferences is a fallback for hosts without it.
  */
 export function createChatPreferenceWriter(store: () => PreferencesStore | undefined) {
   let writes: Promise<void> = Promise.resolve();
-  const write = (patch: (preferences: Preferences) => Partial<Preferences>) => {
+  const write = (patch: (preferences: Preferences) => Pick<Preferences, 'chatPanelWidths' | 'chatModels'>) => {
     writes = writes
       .catch(() => {})
       .then(async () => {
         const api = store();
-        if (!api?.savePreferences) return;
+        if (!api?.saveChatPreferences && !api?.savePreferences) return;
         const current = await api.loadPreferences();
-        await api.savePreferences({ ...current, ...patch(current) });
+        const change = patch(current);
+        if (api.saveChatPreferences) await api.saveChatPreferences(change);
+        else await api.savePreferences?.({ ...current, ...change });
       });
     return writes;
   };

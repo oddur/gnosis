@@ -4,7 +4,7 @@ import { CommitBadge } from './EntityBadge';
 import { useSessionDraft } from '../lib/session-drafts';
 import { ChatPanel } from './ChatPanel';
 import { ChatComposerFallback, ChatConversationFallback, LazyChatComposer, LazyChatConversation } from './chat-lazy';
-import { rememberChatModel, rememberedChatModel } from '../lib/chat-preferences';
+import { rememberChatModel, rememberedChatModel, type ChatModelChoice } from '../lib/chat-preferences';
 import { useFileChat } from '../lib/use-file-chat';
 import { fileRevisionKey, type PrFileRequest } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
@@ -95,7 +95,9 @@ function FileConversation({
   const [answerQuote, setAnswerQuote] = useState('');
   const quote = answerQuote || (selection !== dismissedSelection ? selection : '');
   // The model chosen in this surface's prompt input, else the chat model preference (lib/chat-preferences.ts).
-  const [model, setModel] = useState(() => rememberedChatModel(preferences, 'file'));
+  // Read on every render: with no choice saved for this surface it follows the chat model preference as it changes.
+  const [picked, setModel] = useState<ChatModelChoice>();
+  const model = picked ?? rememberedChatModel(preferences, 'file');
   const context = { ...request, provider: model.provider, model: model.model, effort: preferences.effort };
   const send = (value = question) => {
     if (!value.trim() || chat.busy) return;
