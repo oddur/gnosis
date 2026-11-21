@@ -364,6 +364,15 @@ function PreviewDiff({
   );
 }
 
+/** A file's saved Keep choices, the same array for the same saved file, so memoized buckets stay valid. */
+const savedPickCache = new WeakMap<ConflictFile, BlockPicks>();
+function savedPicks(f: ConflictFile): BlockPicks | undefined {
+  if (!f.picks) return undefined;
+  let picks = savedPickCache.get(f);
+  if (!picks) savedPickCache.set(f, (picks = f.picks.map((pick) => pick ?? undefined)));
+  return picks;
+}
+
 export function ConflictWorkspace({
   url,
   onClose,
@@ -415,13 +424,14 @@ export function ConflictWorkspace({
   // One line after Gnosis merged new commits from the base branch again.
   const [baseNote, setBaseNote] = useState('');
   const [hint, setHint] = useState('');
-  // Your Keep choices per file, so a choice that equals the proposal reads as yours. Reset and reopening clear them.
+  // Your Keep choices per file, so a choice that equals the proposal reads as yours. They are saved with the draft;
+  // Reset and a suggestion clear them.
   const [picks, setPicks] = useState<Partial<Record<string, { original: string; picks: BlockPicks }>>>({});
   // A file whose conflict changed (main moved, or a fresh merge) starts without your earlier choices.
   // Choices are saved with the draft (ConflictFile.picks): after a reopen they come from there.
   const picksOf = (f: ConflictFile): BlockPicks | undefined => {
     const entry = picks[f.path];
-    return entry?.original === f.original ? entry.picks : f.picks?.map((pick) => pick ?? undefined);
+    return entry?.original === f.original ? entry.picks : savedPicks(f);
   };
   const picksRef = useRef(picksOf);
   picksRef.current = picksOf;
@@ -683,8 +693,8 @@ export function ConflictWorkspace({
       setPreview(undefined);
       setConfirming(false);
       setShown({});
-      // Load latest changes keeps your resolutions, and so your choices where a file's conflict is unchanged (picksOf
-      // ignores the rest). Start over drops them.
+      // Load latest changes keeps your resolutions, and your choices on the conflicts that did not change (the service
+      // carries them with the draft). Start over drops them.
       if (!keep) setPicks({});
       apply(reply, selectedRef.current);
       setResetPrompt(false);
@@ -776,10 +786,11 @@ export function ConflictWorkspace({
     );
   }, [showMerged, busy, error, confirming, session, verdicts]);
   const resetTarget = (f: ConflictFile) => (f.proposals ? withProposals(f.original, f.proposals) : f.original);
+  // A new choice starts from the saved ones, so it never erases a Keep made before a reopen.
   const pickFor = (f: ConflictFile, index: number, choice: BlockPicks[number]) =>
     setPicks((previous) => {
       const entry = previous[f.path];
-      const next = [...(entry?.original === f.original ? entry.picks : [])];
+      const next = [...(entry?.original === f.original ? entry.picks : (savedPicks(f) ?? []))];
       next[index] = choice;
       return { ...previous, [f.path]: { original: f.original, picks: next } };
     });
@@ -838,7 +849,9 @@ export function ConflictWorkspace({
             ? `${who} couldn’t resolve every conflict. Choose the rest yourself.`
             : `${who} suggested a result. Review it before you mark the file reviewed.`
         );
-        dropPicks(path);
+        // A suggestion that left the draft as it was (a timed-out retry) keeps your choices.
+        const before = sessionRef.current?.files.find((f) => f.path === path)?.result;
+        if (current?.result !== before) dropPicks(path);
         apply(reply, path, current && !hasConflictMarkers(current.result) ? 'result' : 'conflicts');
       }
     );
