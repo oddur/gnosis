@@ -1,7 +1,8 @@
 import { LoadingIndicator } from './LoadingState';
-import { PrStateIcon } from './PrStateIcon';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { CodeView, EditProvider, File } from '@pierre/diffs/react';
+import { CodeView, EditProvider } from '@pierre/diffs/react';
+import { ConflictDiff, ConflictResult } from './ConflictDiff';
+import type { Preferences } from '../lib/types';
 import {
   ArrowRight,
   CheckCheck,
@@ -21,13 +22,10 @@ import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
-import { ToastHost } from './ui/toast';
-import { BranchBadge, CommitBadge, PrBadge, RepositoryBadge } from './EntityBadge';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
+import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
+import { toast } from './ui/toast';
 import {
-  ConflictView,
   DiffColumns,
-  ResultDiff,
   ResultEditor,
   createEditor,
   useCodeOptions,
@@ -366,7 +364,25 @@ function PreviewDiff({
   );
 }
 
-export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () => void }) {
+/** A file's saved Keep choices, the same array for the same saved file, so memoized buckets stay valid. */
+const savedPickCache = new WeakMap<ConflictFile, BlockPicks>();
+function savedPicks(f: ConflictFile): BlockPicks | undefined {
+  if (!f.picks) return undefined;
+  let picks = savedPickCache.get(f);
+  if (!picks) savedPickCache.set(f, (picks = f.picks.map((pick) => pick ?? undefined)));
+  return picks;
+}
+
+export function ConflictWorkspace({
+  url,
+  onClose,
+  preferences,
+}: {
+  url: string;
+  onClose: () => void;
+  /** The reader's diff appearance, layout, theme and code intelligence: the diffs are Changes' (#445 item 8). */
+  preferences?: Preferences | null;
+}) {
   const options = useCodeOptions();
   const model = useSuggestionModel();
   const restackDrafts = useRef<Record<string, string>>({});
@@ -408,12 +424,21 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   // One line after Gnosis merged new commits from the base branch again.
   const [baseNote, setBaseNote] = useState('');
   const [hint, setHint] = useState('');
-  // Your Keep choices per file, so a choice that equals the proposal reads as yours. Reset and reopening clear them.
+  // Your Keep choices per file, so a choice that equals the proposal reads as yours. They are saved with the draft;
+  // Reset and a suggestion clear them.
   const [picks, setPicks] = useState<Partial<Record<string, { original: string; picks: BlockPicks }>>>({});
   // A file whose conflict changed (main moved, or a fresh merge) starts without your earlier choices.
-  const picksOf = (f: ConflictFile) => {
+  // Choices are saved with the draft (ConflictFile.picks): after a reopen they come from there.
+  const picksOf = (f: ConflictFile): BlockPicks | undefined => {
     const entry = picks[f.path];
-    return entry?.original === f.original ? entry.picks : undefined;
+    return entry?.original === f.original ? entry.picks : savedPicks(f);
+  };
+  const picksRef = useRef(picksOf);
+  picksRef.current = picksOf;
+  /** The choices to save for a file, when they differ from the saved ones. */
+  const picksToSave = (f: ConflictFile) => {
+    const own = Array.from(picksRef.current(f) ?? [], (pick) => pick ?? null);
+    return JSON.stringify(own.some(Boolean) ? own : []) === JSON.stringify(f.picks ?? []) ? undefined : own;
   };
   // Each saved draft's buckets, per file: a Keep press or a check result recomputes only the file it changed.
   const bucketCache = useRef(
@@ -426,7 +451,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [shown, setShown] = useState<Record<string, string>>({});
   const view = useRef<ConflictViewHandle>(null);
   const primary = useRef<HTMLButtonElement>(null);
-  const dialog = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLElement>(null);
   const done = useRef<HTMLButtonElement>(null);
   const focusIntent = useRef(true);
   const author = useMemo(() => (session ? findAuthor(session.url) : undefined), [session?.url]);
@@ -529,11 +554,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     unsupported: !!file?.unsupported,
     merged: !!selectedState && allMerged(selectedState.buckets),
   });
+  const diffKey = `conflict:${session?.id ?? url}:${selected}`;
   const labels = useMemo(
     () => conflictLabels('merge', { head: session?.headBranch ?? 'PR', base: session?.baseBranch ?? 'base' }),
     [session?.headBranch, session?.baseBranch]
   );
-  const dirty = (!!file && contents !== file.result) || restackDirty;
+  const dirty = (!!file && (contents !== file.result || !!picksToSave(file))) || restackDirty;
 
   function select(path: string, value: ConflictSession, nextMode?: typeof mode) {
     const next: ConflictFile | undefined = value.files.find((f) => f.path === path) ?? value.files.at(0);
@@ -579,7 +605,14 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       const path = selectedRef.current;
       const text = contentsRef.current;
       const current = value.files.find((f) => f.path === path);
-      if (value.status === 'editing' && !value.stale && current && !current.unsupported && text !== current.result) {
+      const own = current && picksToSave(current);
+      if (
+        value.status === 'editing' &&
+        !value.stale &&
+        current &&
+        !current.unsupported &&
+        (text !== current.result || own)
+      ) {
         setSaveState('saving');
         value = (
           await window.electronAPI.conflictResolution({
@@ -588,7 +621,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             version: value.version,
             path,
             contents: text,
-            resolved: false,
+            resolved: text === current.result && current.resolved,
+            ...(own ? { picks: own } : {}),
           })
         ).session;
       }
@@ -659,8 +693,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       setPreview(undefined);
       setConfirming(false);
       setShown({});
-      // Load latest changes keeps your resolutions, and so your choices where a file's conflict is unchanged (picksOf
-      // ignores the rest). Start over drops them.
+      // Load latest changes keeps your resolutions, and your choices on the conflicts that did not change (the service
+      // carries them with the draft). Start over drops them.
       if (!keep) setPicks({});
       apply(reply, selectedRef.current);
       setResetPrompt(false);
@@ -674,7 +708,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       setBusy(false);
     }
   }
+  // The view stays mounted while another PR tab shows (Activity re-runs its effects): it opens the session once.
+  const opened = useRef(false);
   useEffect(() => {
+    // Each time the Conflicts tab shows, the view takes the keys.
+    if (!root.current?.contains(document.activeElement)) root.current?.focus({ preventScroll: true });
+    if (opened.current) return;
+    opened.current = true;
     void load();
   }, []);
 
@@ -717,7 +757,11 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     const path = selected;
     let finished = false;
     void run(
-      (s) => ({ kind: 'save', id: s.id, version: s.version, path, contents, resolved: true }),
+      (s) => {
+        const saved = s.files.find((f) => f.path === path);
+        const own = saved && picksToSave(saved);
+        return { kind: 'save', id: s.id, version: s.version, path, contents, resolved: true, ...(own ? { picks: own } : {}) };
+      },
       (reply) => {
         const states = reply.session.files.map((f) => ({ file: f, stage: conflictFileStage(f) }));
         const next = nextPending(path, states);
@@ -742,15 +786,20 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     );
   }, [showMerged, busy, error, confirming, session, verdicts]);
   const resetTarget = (f: ConflictFile) => (f.proposals ? withProposals(f.original, f.proposals) : f.original);
+  // A new choice starts from the saved ones, so it never erases a Keep made before a reopen.
   const pickFor = (f: ConflictFile, index: number, choice: BlockPicks[number]) =>
     setPicks((previous) => {
       const entry = previous[f.path];
-      const next = [...(entry?.original === f.original ? entry.picks : [])];
+      const next = [...(entry?.original === f.original ? entry.picks : (savedPicks(f) ?? []))];
       next[index] = choice;
       return { ...previous, [f.path]: { original: f.original, picks: next } };
     });
+  // No choices, also over the saved ones: Reset and a suggestion start the file again.
   const dropPicks = (path: string) =>
-    setPicks((previous) => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== path)));
+    setPicks((previous) => {
+      const f = sessionRef.current?.files.find((file) => file.path === path);
+      return f ? { ...previous, [path]: { original: f.original, picks: [] } } : previous;
+    });
   function resetTo(text: string) {
     if (file) dropPicks(file.path);
     // The footer speaks of the draft on screen: a suggestion's note goes with it.
@@ -800,7 +849,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             ? `${who} couldn’t resolve every conflict. Choose the rest yourself.`
             : `${who} suggested a result. Review it before you mark the file reviewed.`
         );
-        dropPicks(path);
+        // A suggestion that left the draft as it was (a timed-out retry) keeps your choices.
+        const before = sessionRef.current?.files.find((f) => f.path === path)?.result;
+        if (current?.result !== before) dropPicks(path);
         apply(reply, path, current && !hasConflictMarkers(current.result) ? 'result' : 'conflicts');
       }
     );
@@ -859,6 +910,37 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   useEffect(() => {
     committed.current = { session, busy, error, dirty, saveState, verdictOf };
   });
+  // Notifications sit above the footer while it shows, so they never cover its controls.
+  const footer = useRef<HTMLElement>(null);
+  const footerShown = !!session && session.status === 'editing' && session.files.length > 0 && !confirming;
+  useEffect(() => {
+    const element = footer.current;
+    if (!element) return;
+    const style = document.documentElement.style;
+    const write = () => style.setProperty('--conflict-footer-reserve', `${Math.ceil(element.getBoundingClientRect().height) + 12}px`);
+    write();
+    const observer = new ResizeObserver(write);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      style.removeProperty('--conflict-footer-reserve');
+    };
+  }, [footerShown]);
+  // Leaving the view, for another tab or another PR, saves the open draft: there is no Close step to wait for.
+  useEffect(
+    () => () => {
+      if (committed.current.dirty && !pending.current)
+        void persist().catch((e: unknown) =>
+          toast.add({
+            type: 'error',
+            title: `Could not save your conflict draft for ${committed.current.session?.title ?? url}`,
+            description: `${e instanceof Error ? e.message : String(e)} Open Resolve conflicts again before you push.`,
+            timeout: 0,
+          })
+        );
+    },
+    []
+  );
   useEffect(
     () =>
       registerSettled('conflict-workspace', () => {
@@ -874,7 +956,15 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     []
   );
 
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+  function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+    // Escape leaves the view, as it closed the dialog. Drafts save first; nothing is pushed.
+    if (event.key === 'Escape' && !event.defaultPrevented) {
+      const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
+      if (origin.closest('[role=menu],[role=dialog],.conflict-suggest-menu')) return;
+      event.preventDefault();
+      void close();
+      return;
+    }
     if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
     if (
@@ -1041,45 +1131,29 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         : '');
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) void close();
-      }}
+    // The Conflicts view (#445 item 8): a tab of the PR, so its header, chat and other tabs stay reachable.
+    <section
+      ref={root}
+      className="conflict-workspace"
+      data-conflict-url={url}
+      data-conflict-id={session?.id}
+      tabIndex={-1}
+      aria-labelledby="conflict-workspace-title"
+      onKeyDown={onKeyDown}
     >
-      <DialogContent
-        ref={dialog}
-        className="conflict-workspace"
-        data-conflict-url={url}
-        data-conflict-id={session?.id}
-        showCloseButton={false}
-        tabIndex={-1}
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          dialog.current?.focus();
-        }}
-        onKeyDown={onKeyDown}
-      >
         <div className="conflict-heading">
           <div>
-            <DialogTitle>{title}</DialogTitle>
-            <DialogDescription>
-              {session ? (
-                <>
-                  <RepositoryBadge repo={session.baseRepo} /> <PrBadge url={session.url} title={session.title} />{' '}
-                  <PrStateIcon pr={{ url: session.url }} size={14} className="conflict-heading-state" />
-                  <span className="conflict-heading-title">{session.title}</span>
-                </>
-              ) : (
-                'Gnosis prepares the merge privately. Your checkout stays unchanged.'
-              )}
-            </DialogDescription>
+            <h2 id="conflict-workspace-title">{title}</h2>
+            {!session && (
+              <p className="conflict-heading-description">
+                Gnosis prepares the merge privately. Your checkout stays unchanged.
+              </p>
+            )}
           </div>
           <Button variant="outline" size="sm" onClick={() => void close()}>
             {busy && !session ? 'Close · keeps preparing' : busy ? 'Continue in background' : 'Close'}
           </Button>
         </div>
-        <ToastHost />
         {editing && summary.conflicts > 0 && (
           <div className="conflict-summary">
             <p role="status" data-conflict-summary="">
@@ -1498,7 +1572,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                         </div>
                       )}
                     </header>
-                    <div className="conflict-scroll selectable" inert={busy || session.stale}>
+                    <div className="conflict-scroll selectable" data-diff-scroller="" inert={busy || session.stale}>
                       {file.unsupported ? (
                         <LocalMerge session={session} reason={file.unsupported} />
                       ) : (
@@ -1518,10 +1592,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                           )}
                           {mode === 'conflicts' ? (
                             hasConflictMarkers(file.original) || markersRemain ? (
-                              <ConflictView
+                              <ConflictDiff
                                 key={`${selected}:${epoch}`}
                                 handle={view}
                                 name={selected}
+                                ours={file.ours}
+                                fileKey={diffKey}
+                                preferences={preferences}
                                 original={file.original}
                                 contents={contents}
                                 labels={labels}
@@ -1548,7 +1625,15 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                                 }
                               />
                             ) : (
-                              <File file={{ name: selected, contents }} options={options} />
+                              <ConflictResult
+                                name={selected}
+                                before={file.ours}
+                                after={contents}
+                                beforeLabel={labels.ours}
+                                afterLabel="Result after the merge"
+                                fileKey={diffKey}
+                                preferences={preferences}
+                              />
                             )
                           ) : mode === 'edit' ? (
                             <EditProvider createEditor={createEditor}>
@@ -1564,12 +1649,14 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                               Resolve the remaining conflicts first. The result appears here when no conflict is left.
                             </p>
                           ) : (
-                            <ResultDiff
+                            <ConflictResult
                               name={selected}
                               before={file.ours}
                               after={contents}
                               beforeLabel={labels.ours}
                               afterLabel="Result after the merge"
+                              fileKey={diffKey}
+                              preferences={preferences}
                             />
                           )}
                         </>
@@ -1579,7 +1666,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 )}
               </section>
             </div>
-            <footer className="conflict-footer">
+            <footer ref={footer} className="conflict-footer">
               {session.stale ? (
                 <>
                   <span className="conflict-footer-status" role="status">
@@ -1623,8 +1710,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             </footer>
           </>
         )}
-      </DialogContent>
-    </Dialog>
+    </section>
   );
 }
 

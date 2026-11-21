@@ -94,8 +94,13 @@ void app.whenReady().then(async () => {
     await js(`window.electronAPI.conflictResolution=async request=>{window.resolutionTarget=request.url;const m=window.testStack.subject.members.find(m=>m.url===request.url);return {session:{...m,id:'a'.repeat(64),account:'oddur',version:1,status:'editing',tree:'b'.repeat(40),files:[],preparation:'up-to-date'}}};[...${row(120)}.querySelectorAll('button')].find(b=>b.textContent==='Resolve conflicts…').click()`);
     await wait('window.resolutionTarget && document.querySelector(".conflict-heading")');
     assert.equal(await js('window.resolutionTarget'), 'https://github.com/klang/engine/pull/120');
+    // The Conflicts view is a tab of #120's own page (#445 item 8). Close it, then go back to the stack.
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [role=tab][data-state=active]')?.textContent"), 'Conflicts');
     await js("[...document.querySelectorAll('.conflict-heading button')].find(b=>b.textContent==='Close').click()");
     await wait("!document.querySelector('.conflict-workspace')");
+    await js(`document.querySelector('[aria-label="Back to stack"]').click()`);
+    await wait(`!!${row(120)} && !!${row(122)}`);
+    await js(`for (const n of [120, 122]) document.querySelector('.stack-overview [data-pr-url$="/'+n+'"]').querySelector('summary').parentElement.open=true`);
     await capture('expanded-light');
     await js("document.documentElement.classList.add('dark')"); await capture('expanded-dark');
     await js("document.querySelectorAll('.stack-member-disclosure[open]').forEach(d=>d.open=false)");

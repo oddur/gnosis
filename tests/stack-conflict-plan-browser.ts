@@ -61,8 +61,12 @@ void app.whenReady().then(async () => {
     await js(`${plan}.querySelector('button').click()`);
     await wait('window.resolutionTarget && document.querySelector(".conflict-heading")');
     assert.equal(await js('window.resolutionTarget'), 'https://github.com/klang/engine/pull/121');
+    // The Conflicts view is a tab of #121's own page (#445 item 8), under the stack.
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [role=tab][data-state=active]')?.textContent"), 'Conflicts');
     await js("[...document.querySelectorAll('.conflict-heading button')].find(b=>b.textContent==='Close').click()");
     await wait("!document.querySelector('.conflict-workspace')");
+    await js(`document.querySelector('[aria-label="Back to stack"]').click()`);
+    await wait("document.querySelectorAll('.stack-overview-member').length===3");
     // #121 is resolved and pushed: the plan moves to #122.
     await js('window.conflicting=[122];window.publishStatus()');
     await wait(`${plan}?.textContent.includes('#122 has merge conflicts.')`);

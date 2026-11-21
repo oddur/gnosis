@@ -722,7 +722,7 @@ export function githubUrl(target: DeepLinkTarget): string | undefined {
   }
 }
 
-const linkTab = (tab: WorkspaceTab): PrTab => (tab === 'brief' ? 'notes' : tab);
+const linkTab = (tab: Exclude<WorkspaceTab, 'conflicts'>): PrTab => (tab === 'brief' ? 'notes' : tab);
 /** The link to a workspace tab's recorded place: a PR on its tab, a saved review, or a queue section or view. */
 export function targetFromLocation(location: AppLocation): DeepLinkTarget | undefined {
   if (location.page === 'review') return { kind: 'review', reviewId: location.reviewId };
@@ -731,6 +731,8 @@ export function targetFromLocation(location: AppLocation): DeepLinkTarget | unde
   if (item) {
     const ref = prRef(item.subject.members[0]?.url ?? '');
     if (!ref) return undefined;
+    // Copy link on the Conflicts view names the PR: a link never opens conflict resolution (#445 item 8).
+    if (home.tab === 'conflicts') return { kind: 'pr', pr: ref };
     const tab = linkTab(home.tab);
     return { kind: 'pr', pr: ref, ...(item.subject.kind === 'stack' ? { scope: 'stack' as const } : {}), ...(tab !== 'summary' ? { tab } : {}) };
   }

@@ -3,7 +3,7 @@ import { feedbackCodeContext, type FeedbackRequest, type ResponseIntent } from '
 import { PrFeedbackView } from './PrFeedbackView';
 import { ConversationSidebar } from './ConversationSidebar';
 import { PrReadiness } from './PrReadiness';
-import { WorkspaceIcon, workspaceTabs } from './WorkspaceIcon';
+import { WorkspaceIcon, conflictsTab, workspaceTabs } from './WorkspaceIcon';
 import { SubjectIcon } from './SubjectIcon';
 import { stackMergePlan } from '../lib/stack-merge-plan';
 import { ReviewEvidence } from './ReviewEvidence';
@@ -23,7 +23,9 @@ import { usePrReadVisit } from '../lib/pr-read-context';
 import { PrActions } from './PrActions';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from './ReviewBreadcrumbs';
-import { Activity, type ComponentProps, type ReactNode, type Ref, type UIEvent } from 'react';
+import { Activity, Suspense, type ComponentProps, type ReactNode, type Ref, type UIEvent } from 'react';
+import { lazyScreen } from '../lib/lazy-screen';
+import { LoadingState } from './LoadingState';
 import { PrEntryActions, PrStarMarker, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrExplanation } from './PrExplanation';
 import type { ExplanationDestination } from '../lib/explanation-workspace';
@@ -171,6 +173,8 @@ function KeptTab({ value, tab, visited, className, children, ref, onScroll, arri
  * switch kept the main thread busy around the next tab's paint, and again when Changes showed (#352).
  */
 const KeptChangesView = memo(PrChangesView);
+/** Resolve conflicts (#445 item 8), loaded with the code editor on first use. */
+const ConflictWorkspace = lazyScreen(() => import('./ConflictWorkspace').then((module) => module.ConflictWorkspace));
 
 export interface PrReviewRequest {
   id: string;
@@ -509,7 +513,9 @@ function PrSummaryContent({
     if (!shortcutsEnabled) return;
     const keydown = (event: KeyboardEvent) => {
       if (tab === 'explanation' && event.key !== 'Escape') return;
-      if (event.composedPath().some((node) => node instanceof Element && node.matches('.pr-changes, .pr-checks-workspace'))) return;
+      // The Conflicts view owns J, K and Escape, wherever focus is.
+      if (tab === 'conflicts') return;
+      if (event.composedPath().some((node) => node instanceof Element && node.matches('.pr-changes, .pr-checks-workspace, .conflict-workspace'))) return;
       if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (
@@ -553,7 +559,17 @@ function PrSummaryContent({
       refreshError={Object.values(statusErrors)[0]}
     />
   );
-  const tabs = workspaceTabs;
+  // The Conflicts view is a tab while it is open: Close leaves it, and its drafts are saved (ConflictWorkspace).
+  const conflictsOpen = !stacked && visited.has('conflicts');
+  const tabs = conflictsOpen ? [...workspaceTabs, conflictsTab] : workspaceTabs;
+  // A whole stack has no Conflicts view: each PR resolves its own.
+  useEffect(() => {
+    if (stacked && tab === 'conflicts') onTabChange('summary');
+  }, [stacked, tab, onTabChange]);
+  const closeConflicts = useCallback(() => {
+    setVisited((previous) => new Set([...previous].filter((value) => value !== 'conflicts')));
+    if (currentTab.current === 'conflicts') onTabChange('summary');
+  }, [onTabChange]);
   // Moved and renamed symbols (#398) are the PR's, for whichever tab shows its diffs: from the first time Changes or
   // Explanation opens, never for Summary alone.
   usePrMoves(item.subject.members, preferences, visited.has('changes') || visited.has('explanation'));
@@ -682,10 +698,18 @@ function PrSummaryContent({
           <Tabs.Trigger value="checks" {...tabIntentHandlers('checks')}><WorkspaceIcon tab="checks" /><PrTabLabel>Checks</PrTabLabel>{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
           <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" /><PrTabLabel>Explanation</PrTabLabel></Tabs.Trigger>
           <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" /><PrTabLabel>Local notes</PrTabLabel>{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
+          {conflictsOpen && <Tabs.Trigger value="conflicts"><WorkspaceIcon tab="conflicts" /><PrTabLabel>Conflicts</PrTabLabel></Tabs.Trigger>}
         </Tabs.List>
         </div>
         {/* The header's Drafts and Review PR open here on every other section; Summary shows them in its body. */}
-        {!stacked && tab !== 'summary' && tab !== 'changes' && <div className="pr-header-review-panel">{summaryReview.panel}</div>}
+        {!stacked && tab !== 'summary' && tab !== 'changes' && tab !== 'conflicts' && <div className="pr-header-review-panel">{summaryReview.panel}</div>}
+        {conflictsOpen && (
+          <KeptTab value="conflicts" tab={tab} visited={visited} className="pr-changes-tab pr-conflicts-tab">
+            <Suspense fallback={<LoadingState title="Opening Resolve conflicts…" />}>
+              <ConflictWorkspace key={first.url} url={first.url} onClose={closeConflicts} preferences={preferences} />
+            </Suspense>
+          </KeptTab>
+        )}
         <KeptTab value="changes" tab={tab} visited={visited} arrival={arrival('changes')} className="pr-changes-tab">
           {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={openFeedback} onOpenPr={changeScope} onOpenBrief={openBrief} /> :
             <KeptChangesView
@@ -880,8 +904,15 @@ function StackMergeActions({ subject, signals, checks, onChanged }: {
  * would share its scope, and a pending timer would then keep the whole page alive, the queue's DOM included, for a
  * minute after its workspace tab closed (found from a heap snapshot, #345).
  */
-function scheduleEviction(setVisited: (value: Set<WorkspaceTab>) => void, tab: { current: WorkspaceTab }) {
-  return setTimeout(() => setVisited(new Set([tab.current])), 60_000);
+function scheduleEviction(
+  setVisited: (update: (previous: ReadonlySet<WorkspaceTab>) => ReadonlySet<WorkspaceTab>) => void,
+  tab: { current: WorkspaceTab }
+) {
+  // An open Conflicts view is never dropped: it holds your choices until you close it.
+  return setTimeout(
+    () => setVisited((previous) => new Set([tab.current, ...(previous.has('conflicts') ? ['conflicts' as const] : [])])),
+    60_000
+  );
 }
 
 export function PrSummary(props: ComponentProps<typeof PrSummaryContent>) {

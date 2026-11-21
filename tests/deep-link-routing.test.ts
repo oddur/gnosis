@@ -70,7 +70,10 @@ void test('trust by source: targets Gnosis built keep the routes the app already
   }
   assert.equal(linkSupport({ kind: 'settings', section: 'notifications' }, 'os').supported, false);
   assert.equal(linkSupport({ kind: 'review', reviewId: 'local-1' }, 'os').supported, false);
-  assert.equal(linkSupport({ kind: 'conflicts', pr }, 'notification').supported, false, 'Conflict links wait for Phase 3 everywhere');
+  // Gnosis's own conflicts rows open the Conflicts view (#445 item 8); a link from outside opens the PR only.
+  assert.equal(linkSupport({ kind: 'conflicts', pr }, 'notification').supported, true);
+  assert.equal(linkSupport({ kind: 'conflicts', pr }, 'menubar').supported, true);
+  assert.equal(linkSupport({ kind: 'conflicts', pr }, 'os').supported, false);
 });
 
 void test('signed out and muted PRs are blocked before any GitHub read; a link never unmutes', () => {
@@ -116,7 +119,7 @@ void test('routing for the other kinds, for when they are enabled', () => {
   assert.deepEqual(routeDeepLink({ kind: 'activity' }, state, { items: [] }), { tab: { kind: 'active' }, destination: { kind: 'activity' } });
   assert.deepEqual(routeDeepLink({ kind: 'queue', view: 'My reviews' }, state, { items: [] }).destination, { kind: 'home', section: 'all', viewId: 'My reviews' });
   assert.deepEqual(routeDeepLink({ kind: 'queue', filters: { repo: 'o/r' } }, state, { items: [] }).destination, { kind: 'home', section: 'all', repo: 'o/r', filters: { repo: 'o/r' } });
-  assert.deepEqual(routeDeepLink({ kind: 'conflicts', pr }, state, { items: [] }, 3).destination, { kind: 'home', url: 'https://github.com/oddur/gnosis/pull/160', open: { tab: undefined, nonce: 3 } });
+  assert.deepEqual(routeDeepLink({ kind: 'conflicts', pr }, state, { items: [] }, 3).destination, { kind: 'home', url: 'https://github.com/oddur/gnosis/pull/160', open: { tab: 'conflicts', nonce: 3 } }, 'A conflicts target opens the Conflicts view');
   assert.deepEqual(
     routeDeepLink({ kind: 'commit', host: 'github.com', owner: 'o', repo: 'r', sha: 'e49f59e' }, state, { items: [] }).destination,
     { kind: 'home', section: 'all', repo: 'o/r', filters: { repo: 'o/r' } },

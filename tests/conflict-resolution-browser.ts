@@ -15,7 +15,11 @@ void app.whenReady().then(async () => {
   win.webContents.on('console-message', (event) => {
     if (event.message.includes('Error')) console.error(event.message);
   });
-  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  // A failed script names itself, so a failure says which step it was.
+  const js = <T = unknown>(code: string) =>
+    (win.webContents.executeJavaScript(code) as Promise<T>).catch((error: unknown) => {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n${code.slice(0, 400)}`);
+    });
   const wait = async (code: string) => {
     for (let n = 0; n < 400; n++) {
       if (await js(code)) return;
@@ -123,7 +127,7 @@ void app.whenReady().then(async () => {
         window.conflictCalls.push(req);const s=window.conflictFixture;
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
-        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;}
+        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;}
         if(req.kind==='resolve'&&s.files.find(f=>f.path===req.path)?.wholeFile){const f=s.files.find(f=>f.path===req.path);f.result=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source='mergiraf';}
         else if(req.kind==='resolve'){s.files[0].result='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
@@ -210,38 +214,30 @@ void app.whenReady().then(async () => {
       `(async()=>{const {toast}=await import('/components/ui/toast.tsx');toast.add({title:'Conflict notification regression',description:'A background result is ready.',timeout:0});})()`
     );
     await wait('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\')');
-    assert.ok(await js("document.querySelector('.conflict-workspace').contains(document.querySelector('.app-toast'))"));
-    // In the modal host too, a toast is a grouped notification, never a second dialog.
+    // The Conflicts view is a PR tab (#445 item 8), not a modal: notifications use the app's own viewport.
+    assert.equal(await js("document.querySelector('.conflict-workspace').contains(document.querySelector('.app-toast'))"), false);
     assert.equal(await js("document.querySelector('.app-toast').getAttribute('role')"), 'group');
-    assert.ok(
-      await js(
-        "document.querySelector('.app-toast').getBoundingClientRect().bottom < document.querySelector('.conflict-footer').getBoundingClientRect().top"
-      ),
-      'Notification has reserved space above the controls'
-    );
+    // Notifications sit above the view's footer, never over its controls.
+    const toastClearsFooter =
+      "document.querySelector('.app-toasts').getBoundingClientRect().bottom <= document.querySelector('.conflict-footer').getBoundingClientRect().top + 0.5";
+    await wait(toastClearsFooter);
     await capture('notification');
     await js(
       "(document.querySelector('.activity-trigger')?.click() ?? window.dispatchEvent(new KeyboardEvent('keydown',{key:'a',shiftKey:true,metaKey:window.electronAPI.platform==='darwin',ctrlKey:window.electronAPI.platform!=='darwin'})))"
     );
     await wait("document.querySelector('.activity-drawer')");
-    assert.equal(await js("getComputedStyle(document.querySelector('.app-toasts')).top"), '0px');
-    assert.equal(await js("getComputedStyle(document.querySelector('.app-toasts')).maxHeight"), '120px');
     await capture('notification-activity');
     await js('document.querySelector(\'[aria-label="Close activity"]\').click()');
 
     await resize(760, 800);
+    await wait(toastClearsFooter);
     await capture('notification-narrow');
-    assert.ok(
-      await js(
-        "document.querySelector('.app-toast').getBoundingClientRect().bottom <= document.querySelector('.conflict-body').getBoundingClientRect().top"
-      )
-    );
     assert.ok(await footerFits(), 'The footer stays visible with a notification');
     await resize(1280, 900);
     await js('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\').focus()');
     assert.ok(
       await js("document.activeElement?.getAttribute('aria-label')==='Dismiss notification'"),
-      'The modal permits keyboard focus on notifications'
+      'The view permits keyboard focus on notifications'
     );
     const toastPoint = await js<{ x: number; y: number }>(
       `(()=>{const r=document.querySelector('.app-toast [aria-label="Dismiss notification"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`
@@ -268,6 +264,18 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.app-toast-host .app-toast')"), false);
     await js('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\').click()');
     await wait("!document.querySelector('.app-toast')");
+
+    // The Conflicts tab never carries to another PR: moving to the next PR opens it on Summary, and prepares nothing.
+    await open();
+    await wait("document.querySelector('.conflict-workspace') && document.querySelector('.pr-overview-tabs [role=tab][data-state=active]')?.textContent==='Conflicts'");
+    const opens = await calls('open');
+    const step = await js<string>("document.querySelector('[aria-label=\"Next change\"]:not(:disabled)') ? 'Next change' : 'Previous change'");
+    await js(`document.querySelector('[aria-label="${step}"]').click()`);
+    await wait(
+      "!document.querySelector('.conflict-workspace') && document.querySelector('.pr-overview-tabs [role=tab][data-state=active]')?.textContent==='Summary'"
+    );
+    assert.equal(await calls('open'), opens, 'No conflict session is prepared for the other PR');
+    assert.equal(await js("[...document.querySelectorAll('.pr-overview-tabs [role=tab]')].some(t=>t.textContent==='Conflicts')"), false);
 
     // Opening focuses the first conflict that needs you.
     await open();
@@ -1042,8 +1050,9 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span').textContent==='src/imports.ts').click()");
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /Merged · Combined both sides’ changes/);
-    assert.equal(await js(`${block(0)}.querySelector('details').open`), false, 'Merged starts collapsed');
-    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /The file parses\. Every line of both sides is accounted for\./);
+    // The Conflicts view's diff shows the result (#445 item 8): a Merged card is its two lines, with no code of its own.
+    assert.equal(await js(`!!${block(0)}.querySelector('details, .conflict-snippet')`), false, 'Merged stays one line');
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`), /The file parses\. Every line of both sides is accounted for\./);
     assert.equal(await stage(), 'resolved', 'With the switch on, a Merged file still waits for your review');
     await captureAll('buckets-merged');
     // Off: files whose every conflict is Merged are marked reviewed for you. Nothing is pushed.
@@ -1141,10 +1150,9 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await badges('.conflict-file-title'), await listBadge(1), 'The header and the file list agree');
     assert.equal((await badges('.conflict-file-title'))[0][2], '1 merged');
     assert.match(
-      await js<string>(`${block(0)}.querySelector('summary').textContent`),
+      await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`),
       /^The PR only reformatted these lines and main changed them; the result keeps main’s change in the PR’s formatting\./
     );
-    await js(`${block(0)}.querySelector('details').open=true`);
     await captureAll('reformat-merged');
     await click('Close');
 
@@ -1352,7 +1360,7 @@ void app.whenReady().then(async () => {
     await shot('p1-keep-ours');
     // Each conflict has its own check result: the imports stay Merged beside the conflict that lost four().
     assert.equal(await js(`${block(0)}.dataset.bucket`), 'merged');
-    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /Every line of both sides is accounted for\./);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`), /Every line of both sides is accounted for\./);
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
     // Keep both on one whose proposal is both sides: Kept both, never back to the proposal.
@@ -1366,6 +1374,24 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open'`);
     await pick(0, 'both');
     await wait(`${block(0)}?.dataset.state==='kept'`);
+    // Both Keeps equal their proposals. Saved with the draft, they still read as yours after Close and a reopen, never
+    // as Merged; and a new Keep after the reopen keeps the earlier one.
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await open();
+    const keepFile = `[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span[title]')?.getAttribute('title')===${JSON.stringify(keep.path)})`;
+    await wait(`!!(${keepFile})`);
+    await js(`(${keepFile}).click()`);
+    await wait(`${block(0)}?.dataset.state==='kept' && ${block(1)}?.dataset.state==='kept'`);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /^Kept both changes/);
+    assert.match(await js<string>(`${block(1)}.querySelector('.conflict-kept').textContent`), /^Kept PR change/);
+    await js(`[...${block(1)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(1)}?.dataset.state!=='kept'`);
+    await pick(1, 'ours');
+    await wait(`${block(1)}?.dataset.state==='kept'`);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'kept', 'A new Keep never erases the saved one');
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /^Kept both changes/);
     // A file whose every conflict is Merged: Mark reviewed is the next step, and it has focus.
     await js("[...document.querySelectorAll('.conflict-files button')][1].click()");
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
