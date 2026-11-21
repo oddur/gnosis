@@ -20,6 +20,7 @@ import {
 } from './ui/attachment';
 import { Tooltip, TooltipProvider, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { chatModelLabel, chatModelOptions, type ChatModelChoice } from '../lib/chat-preferences';
+import { CHAT_CONTEXT_BUDGETS, chatContextBudgetLabel } from '../lib/chat-pr-context';
 import { chatSelectionLabel, chatSelectionLineCount, parseChatSelection } from '../lib/chat-selection';
 import type { ModelId, Provider } from '../lib/models';
 
@@ -28,6 +29,17 @@ const MODEL_GROUPS = chatModelOptions().map((group) => ({
   label: group.label,
   models: group.models,
 }));
+/** "Chat context size": how much of the PR each question carries. */
+const CONTEXT_GROUPS = [
+  {
+    id: 'context',
+    label: 'Chat context size',
+    models: CHAT_CONTEXT_BUDGETS.map((tokens) => ({
+      id: String(tokens),
+      label: `${chatContextBudgetLabel(tokens)} tokens`,
+    })),
+  },
+];
 
 /** The selected code waiting to go with the next question: its file and lines, and the code on request. */
 function SelectionChip({ quote, path, onRemove }: { quote: string; path?: string; onRemove?: () => void }) {
@@ -93,6 +105,8 @@ export function ChatComposer({
   label,
   model,
   onModelChange,
+  contextBudget,
+  onContextBudgetChange,
   quote,
   quotePath,
   onRemoveQuote,
@@ -109,6 +123,9 @@ export function ChatComposer({
   /** The model the next question goes to. Without onModelChange it shows as a label. */
   model?: ChatModelChoice;
   onModelChange?: (choice: ChatModelChoice) => void;
+  /** Tokens of PR context each question carries, chosen beside the model. */
+  contextBudget?: number;
+  onContextBudgetChange?: (tokens: number) => void;
   quote?: string | null;
   /** The file a selection without its own path came from. */
   quotePath?: string;
@@ -161,6 +178,16 @@ export function ChatComposer({
               <span className="chat-model" title={model ? chatModelLabel(model) : undefined}>
                 {model ? chatModelLabel(model) : 'Ask a follow-up'}
               </span>
+            )}
+            {contextBudget !== undefined && onContextBudgetChange && (
+              <ModelSelector
+                label="Context"
+                className="context-budget-trigger"
+                groups={CONTEXT_GROUPS}
+                value={modelSelectorValue('context', String(contextBudget))}
+                onValueChange={(_, tokens) => onContextBudgetChange(Number(tokens))}
+                format={(tokens) => `${chatContextBudgetLabel(Number(tokens))} context`}
+              />
             )}
           </PromptInputTools>
           <span className="chat-key-hint" title="Enter to send · Shift+Enter for a new line">

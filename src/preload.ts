@@ -497,7 +497,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadPreferences: (): Promise<Preferences> => ipcRenderer.invoke('load-preferences'),
   savePreferences: (prefs: Preferences): Promise<void> => ipcRenderer.invoke('save-preferences', prefs),
   /** Chat's panel widths and model choices only, without the settings side effects (lib/chat-preferences.ts). */
-  saveChatPreferences: (patch: Pick<Preferences, 'chatPanelWidths' | 'chatModels'>): Promise<void> =>
+  saveChatPreferences: (patch: Partial<Pick<Preferences, 'chatPanelWidths' | 'chatModels' | 'chatContextTokens'>>): Promise<void> =>
     ipcRenderer.invoke('save-chat-preferences', patch),
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),

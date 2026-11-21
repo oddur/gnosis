@@ -340,7 +340,10 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.chat-selection-chip')");
     assert.equal(await js('window.chatFixture.requests.length'), sentBefore, 'Removing the chip sends nothing');
     assert.equal(await js("document.querySelector('textarea').value"), 'What happens if a worker stops?');
-    await selectDiffRow(`${body}.querySelector('.chat-diff')`, '[data-code] [data-line][data-line-type=change-addition]');
+    await selectDiffRow(
+      `${body}.querySelector('.chat-diff')`,
+      '[data-code] [data-line][data-line-type=change-addition]'
+    );
     await wait("document.querySelector('.review-selection-actions')?.style.visibility==='visible'");
     await js("document.querySelector('.review-selection-ask').click()");
     await wait(
@@ -516,6 +519,74 @@ void app.whenReady().then(async () => {
     await capture('file-answer-narrow-dark');
     await viewport(900, 760);
     await capture('file-answer-desktop-dark');
+    // PR-wide context: the file chat carries the files related to its file and those the question names, labelled,
+    // up to the chat context size; what does not fit is listed and traced as left out.
+    await js('window.chatFixture.usePrContext()');
+    await fill('What do the notes in notes.md say about retries?');
+    await click('Send question');
+    await wait('!!window.chatFixture.requests.at(-1).context');
+    const sent = () =>
+      js<{ items: { kind: string; path?: string; reason: string }[]; leftOut: string[]; budget: number; text: string }>(
+        'window.chatFixture.requests.at(-1).context'
+      );
+    let context = await sent();
+    assert.equal(context.budget, 64000, 'The default chat context size');
+    assert.deepEqual(
+      context.items.filter((i) => i.path).map((i) => [i.kind, i.path, i.reason]),
+      [
+        ['anchor', 'src/queue.ts', 'the file you asked about'],
+        ['related', 'src/retry.ts', 'imported by queue.ts'],
+        ['related', 'src/worker.ts', 'in the same directory as queue.ts'],
+        ['mentioned', 'docs/notes.md', 'named in your question'],
+        ['diff', 'vendor/big.ts', 'another change in this PR'],
+      ],
+      'Most relevant first: the anchor, what it imports, its directory, what the question names, then the rest'
+    );
+    assert.ok(context.text.includes('included="imported by queue.ts"'), 'The import is labelled in the context');
+    assert.ok(context.text.includes('included="named in your question"'), 'So is the mention');
+    assert.deepEqual(context.leftOut, []);
+    const lastTrace = "[...document.querySelectorAll('.chat-trace')].at(-1)";
+    await wait(`!!${lastTrace}?.querySelector('[data-step*="docs/notes.md"]')`);
+    assert.match(
+      await js<string>(`${lastTrace}.querySelector('[data-step*="src/retry.ts"]').getAttribute('title')`),
+      /^src\/retry\.ts: imported by queue\.ts · \d+ tokens$/,
+      'The trace lists the related file with its reason and size'
+    );
+    assert.match(
+      await js<string>(`${lastTrace}.querySelector('[data-step*="docs/notes.md"]').getAttribute('title')`),
+      /^docs\/notes\.md: named in your question · \d+ tokens$/
+    );
+    await finish('They allow three retries.');
+    await wait("!document.querySelector('.chat-trace[data-streaming]')");
+    // The smallest chat context size leaves the large generated file out, and says so.
+    await pointerClick("document.querySelector('.context-budget-trigger')");
+    await wait("document.querySelectorAll('[role=menuitemradio]').length===3");
+    await capture('context-size-open-dark');
+    await pointerClick(
+      "[...document.querySelectorAll('[role=menuitemradio]')].find(i=>i.textContent.trim()==='32k tokens')"
+    );
+    await wait("document.querySelector('.context-budget-trigger').textContent.trim()==='32k context'");
+    await wait('window.chatFixture.preferences().chatContextTokens===32000');
+    await fill('Summarize the whole change.');
+    await click('Send question');
+    await wait(
+      'window.chatFixture.requests.at(-1).contextTokens===32000 && !!window.chatFixture.requests.at(-1).context'
+    );
+    context = await sent();
+    assert.deepEqual(context.leftOut, ['vendor/big.ts'], 'What does not fit is listed');
+    assert.match(context.text, /<not_included reason="context budget">[\s\S]*vendor\/big\.ts/);
+    await wait(`!!${lastTrace}?.querySelector('[data-step="context:omitted"]')`);
+    assert.equal(
+      await js(`${lastTrace}.querySelector('[data-step="context:omitted"] .chat-trace-title').textContent`),
+      'Left out 1 changed file'
+    );
+    assert.match(
+      await js<string>(`${lastTrace}.querySelector('.chat-trace-count').textContent`),
+      /^\d+ sources, 1 left out · /
+    );
+    await capture('context-left-out-dark');
+    await finish('A bounded queue.');
+    await wait("!document.querySelector('.chat-trace[data-streaming]')");
     // Measure the actual review composition, not just a standalone chat panel.
     const fullCapture = async (name: string) => {
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -749,7 +820,7 @@ void app.whenReady().then(async () => {
         await js("document.querySelector('.changes-chat [data-step=\\'agent:t1\\'] .chat-trace-step-toggle')?.click()");
         await both(`chat-trace-live-${w}`);
         const cited =
-          'Start with the constants: each one is exported on its own line [src/new.ts:1-3], so a rename touches every importer. The worker reads them at startup [src/worker.ts:1]. The old module [src/legacy.ts:4] is gone.';
+          'Start with the constants: each one is exported on its own line [src/new.ts:1-2], so a rename touches every importer. The worker reads them at startup [src/worker.ts:1]. The old module [src/legacy.ts:4] is gone.';
         await js(
           `[...shotChat.progress].forEach(cb=>cb({requestId:shotChat.id,chunk:${JSON.stringify(cited.slice(0, 60))}}))`
         );

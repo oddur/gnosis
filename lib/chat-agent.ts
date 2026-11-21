@@ -7,7 +7,8 @@ export function buildSlideChatSystemPrompt(): string {
   return `You are a senior engineer helping a code reviewer understand a specific set of changes in a pull request. Answer follow-up questions about these code changes. Be direct and concrete. Reference the actual code when helpful. Keep answers focused on what the reviewer needs to understand. ${CHAT_CITATION_INSTRUCTION}`;
 }
 
-export function buildSlideChatUserMessage(req: SendSlideChatRequest): string {
+/** `prContext`: the PR-wide context (lib/chat-pr-context.ts); it replaces the topic's own diff, which it holds. */
+export function buildSlideChatUserMessage(req: SendSlideChatRequest, prContext?: string): string {
   const historySlice = req.history.slice(-MAX_HISTORY_MESSAGES);
 
   const parts: string[] = [];
@@ -25,7 +26,11 @@ Review focus: ${req.slideReviewFocus ?? 'N/A'}
 Affected files: ${req.affectedFiles.join(', ')}
 </slide_context>`);
 
-  if (req.diffContent) {
+  if (prContext) {
+    parts.push(`<pr_wide_context>
+${prContext}
+</pr_wide_context>`);
+  } else if (req.diffContent) {
     parts.push(`<diff>
 ${req.diffContent}
 </diff>`);

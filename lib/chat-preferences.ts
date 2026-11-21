@@ -15,6 +15,10 @@ import {
   type Provider,
 } from './models';
 import type { Preferences } from './types';
+import { normalizeChatContextBudget } from './chat-pr-context';
+
+/** What chat writes through main's narrow save-chat-preferences. */
+export type ChatPreferencesPatch = Partial<Pick<Preferences, 'chatPanelWidths' | 'chatModels' | 'chatContextTokens'>>;
 
 export type ChatSurface = 'topic' | 'file';
 export const CHAT_SURFACES: readonly ChatSurface[] = ['topic', 'file'];
@@ -97,11 +101,16 @@ export function chatModelOptions(): { provider: Provider; label: string; models:
   }));
 }
 
+/** The chat context size, kept for both chats: a preset, else the default. */
+export function chatContextBudget(preferences: Partial<Pick<Preferences, 'chatContextTokens'>> | undefined) {
+  return normalizeChatContextBudget(preferences?.chatContextTokens);
+}
+
 interface PreferencesStore {
   loadPreferences: () => Promise<Preferences>;
   savePreferences?: (preferences: Preferences) => Promise<unknown>;
   /** Main's narrow write for these two fields, without the settings side effects of savePreferences. */
-  saveChatPreferences?: (patch: Pick<Preferences, 'chatPanelWidths' | 'chatModels'>) => Promise<unknown>;
+  saveChatPreferences?: (patch: ChatPreferencesPatch) => Promise<unknown>;
 }
 
 /**
@@ -111,7 +120,7 @@ interface PreferencesStore {
  */
 export function createChatPreferenceWriter(store: () => PreferencesStore | undefined) {
   let writes: Promise<void> = Promise.resolve();
-  const write = (patch: (preferences: Preferences) => Pick<Preferences, 'chatPanelWidths' | 'chatModels'>) => {
+  const write = (patch: (preferences: Preferences) => ChatPreferencesPatch) => {
     writes = writes
       .catch(() => {})
       .then(async () => {
@@ -131,6 +140,7 @@ export function createChatPreferenceWriter(store: () => PreferencesStore | undef
         if (width !== undefined) widths.push([surface, clampChatPanelWidth(width)]);
         return { chatPanelWidths: Object.fromEntries(widths) as ChatPanelWidths };
       }),
+    contextTokens: (tokens: number) => write(() => ({ chatContextTokens: normalizeChatContextBudget(tokens) })),
     model: (surface: ChatSurface, choice: ChatModelChoice) =>
       write((current) => ({
         chatModels: { ...normalizeChatModels(current.chatModels), ...normalizeChatModels({ [surface]: choice }) },
@@ -142,7 +152,7 @@ export function createChatPreferenceWriter(store: () => PreferencesStore | undef
  * The renderer's values, seeded from the startup preferences and kept here once changed, so a panel that closes and
  * opens again, or a second tab, sees the latest choice before its write is read back.
  */
-const remembered: { widths: ChatPanelWidths; models: ChatModels } = { widths: {}, models: {} };
+const remembered: { widths: ChatPanelWidths; models: ChatModels; contextTokens?: number } = { widths: {}, models: {} };
 const writer = createChatPreferenceWriter(
   () => (globalThis as { window?: { electronAPI?: PreferencesStore } }).window?.electronAPI
 );
@@ -160,6 +170,13 @@ export function rememberedChatModel(
   surface: ChatSurface
 ): ChatModelChoice {
   return remembered.models[surface] ?? chatModelChoice(preferences, surface);
+}
+export function rememberedChatContextBudget(preferences: Partial<Pick<Preferences, 'chatContextTokens'>> | undefined) {
+  return normalizeChatContextBudget(remembered.contextTokens ?? preferences?.chatContextTokens);
+}
+export function rememberChatContextBudget(tokens: number) {
+  remembered.contextTokens = normalizeChatContextBudget(tokens);
+  return writer.contextTokens(tokens);
 }
 export function rememberChatModel(surface: ChatSurface, choice: ChatModelChoice) {
   remembered.models[surface] = choice;

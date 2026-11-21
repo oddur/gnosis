@@ -897,7 +897,7 @@ const mocks = {
   },
   storageSizes: () => Promise.resolve({ savedWorkBytes: 68 * 1024 * 1024, githubCacheBytes: 580 * 1024 * 1024 }),
   // Main's narrow write for chat's panel widths and model choices: no settings side effects.
-  saveChatPreferences: (patch: Pick<Preferences, 'chatPanelWidths' | 'chatModels'>) => {
+  saveChatPreferences: (patch: Partial<Pick<Preferences, 'chatPanelWidths' | 'chatModels' | 'chatContextTokens'>>) => {
     prefs = { ...prefs, ...structuredClone(patch) };
     return Promise.resolve();
   },

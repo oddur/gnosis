@@ -140,7 +140,9 @@ export function useSlideChat(
   review: ReviewGuide,
   provider: Provider,
   model: ModelId,
-  effort?: import('./effort').Effort
+  effort?: import('./effort').Effort,
+  /** Tokens of PR-wide context (lib/chat-pr-context.ts), built in the main process for a GitHub PR. */
+  contextTokens?: number
 ) {
   const key = `${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`;
   const [sessionBusy, setSessionBusy] = useState(anyStreaming);
@@ -219,6 +221,13 @@ export function useSlideChat(
         provider,
         model,
         effort,
+        ...(/^https:\/\/github\.com\//.test(review.prUrl)
+          ? {
+              prUrl: review.prUrl,
+              anchorFiles: [...new Set([...slide.diffHunks.map((h) => h.filePath), ...slide.affectedFiles])],
+              contextTokens,
+            }
+          : {}),
       };
 
       const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: question, selection };
@@ -262,7 +271,7 @@ export function useSlideChat(
         isStreamingRef.current = false;
       }
     },
-    [review, provider, model, effort, dispatch, key]
+    [review, provider, model, effort, contextTokens, dispatch, key]
   );
 
   const retry = useCallback(

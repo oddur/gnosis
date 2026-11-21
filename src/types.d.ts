@@ -241,7 +241,9 @@ declare global {
       loadPreferences: () => Promise<Preferences>;
       savePreferences: (prefs: Preferences) => Promise<void>;
       /** Chat's panel widths and model choices only, without the settings side effects (lib/chat-preferences.ts). */
-      saveChatPreferences: (patch: Pick<Preferences, 'chatPanelWidths' | 'chatModels'>) => Promise<void>;
+      saveChatPreferences: (
+        patch: Partial<Pick<Preferences, 'chatPanelWidths' | 'chatModels' | 'chatContextTokens'>>
+      ) => Promise<void>;
       searchPullRequests: () => Promise<PrSearchResult[]>;
       searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;

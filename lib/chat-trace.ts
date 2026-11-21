@@ -15,6 +15,7 @@
  */
 import type { DiffHunk, SendSlideChatRequest } from './types';
 import { parseChatSelection } from './chat-selection';
+import { chatContextItemDetail, type ChatContextKind, type ChatContextResult } from './chat-pr-context';
 
 export type ChatTraceKind =
   | 'diff'
@@ -27,7 +28,9 @@ export type ChatTraceKind =
   | 'command'
   | 'edit'
   | 'web'
-  | 'tool';
+  | 'tool'
+  /** Changed files the context budget left out. */
+  | 'omitted';
 
 export interface ChatTraceStep {
   /** Stable within a trace: context steps derive it from their content, agent steps from the tool call id. */
@@ -167,6 +170,47 @@ export function slideChatTrace(
       detail: 'PR title, summary and description',
     });
   const history = historyStep(req.history.length);
+  if (history) steps.push(history);
+  return { steps };
+}
+
+/**
+ * The PR-wide context a chat sent (lib/chat-pr-context.ts), as trace steps: each included item with its reason and
+ * size, and one step listing the changed files the budget left out. `skip` leaves out kinds the renderer already
+ * traced (a topic chat traces its own hunks and selection).
+ */
+export function chatContextTrace(
+  context: Pick<ChatContextResult, 'items' | 'leftOut' | 'budget'>,
+  historyCount: number,
+  skip: readonly ChatContextKind[] = []
+): ChatTrace {
+  const steps: ChatTraceStep[] = [];
+  for (const [index, item] of context.items.entries()) {
+    if (skip.includes(item.kind)) continue;
+    const detail = clip(chatContextItemDetail(item));
+    if (item.kind === 'pr')
+      steps.push({ id: 'context:pr', source: 'context', kind: 'pr', label: 'PR description', detail });
+    else if (item.kind === 'selection')
+      steps.push({ id: 'context:selection', source: 'context', kind: 'selection', label: 'Selected code', detail });
+    else if (item.path)
+      steps.push({
+        id: `context:${item.kind}:${index}:${item.path}`,
+        source: 'context',
+        kind: item.kind === 'source' ? 'file' : 'diff',
+        label: baseName(item.path),
+        detail: `${item.path}: ${detail}`,
+        path: item.path,
+      });
+  }
+  if (context.leftOut.length)
+    steps.push({
+      id: 'context:omitted',
+      source: 'context',
+      kind: 'omitted',
+      label: `${context.leftOut.length} changed ${context.leftOut.length === 1 ? 'file' : 'files'}`,
+      detail: clip(`Over the ${Math.round(context.budget / 1000)}k-token context: ${context.leftOut.join(', ')}`),
+    });
+  const history = historyStep(historyCount);
   if (history) steps.push(history);
   return { steps };
 }
@@ -423,10 +467,13 @@ export function traceLabel(trace: ChatTrace): string {
 /** One-line count, in the spirit of "4 tool calls, 2 messages". */
 export function traceCountText(trace: ChatTrace): string {
   const agent = trace.steps.filter((s) => s.source === 'agent').length;
-  const context = trace.steps.length - agent;
+  const omitted = trace.steps.find((s) => s.kind === 'omitted');
+  const context = trace.steps.length - agent - (omitted ? 1 : 0);
+  const left = omitted ? Number(/^\d+/.exec(omitted.label)?.[0] ?? 0) : 0;
   return [
     agent && `${agent} tool ${agent === 1 ? 'call' : 'calls'}`,
     context && `${context} ${context === 1 ? 'source' : 'sources'}`,
+    left && `${left} left out`,
   ]
     .filter(Boolean)
     .join(', ');
@@ -444,6 +491,7 @@ const KINDS = new Set<ChatTraceKind>([
   'edit',
   'web',
   'tool',
+  'omitted',
 ]);
 const line = (value: unknown) =>
   typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;

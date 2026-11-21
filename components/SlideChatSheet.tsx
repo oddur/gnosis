@@ -32,6 +32,9 @@ interface Props {
   /** The model the next question goes to, chosen in the prompt input. */
   model?: ChatModelChoice;
   onModelChange?: (choice: ChatModelChoice) => void;
+  /** Tokens of PR context each question carries. */
+  contextBudget?: number;
+  onContextBudgetChange?: (tokens: number) => void;
   // When the user selects code in the diff and clicks "Ask about
   // this", the selected code is passed here as a fenced code block.
   // The chat sheet renders it as a quoted block above the input and
@@ -95,6 +98,8 @@ export function SlideChatSheet({
   onOpenTraceStep,
   model,
   onModelChange,
+  contextBudget,
+  onContextBudgetChange,
   citations,
   quotedCode,
   onQuotedCodeConsumed,
@@ -245,6 +250,8 @@ export function SlideChatSheet({
           onStop={messages.some((message) => message.isStreaming) ? onStop : undefined}
           model={model}
           onModelChange={onModelChange}
+          contextBudget={contextBudget}
+          onContextBudgetChange={onContextBudgetChange}
           label="Question about this topic"
           quote={quotedCode}
           onRemoveQuote={onQuotedCodeConsumed}

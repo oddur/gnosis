@@ -6,11 +6,12 @@ import { useSlideChat } from '../../lib/use-slide-chat';
 import { DEFAULT_CLAUDE_MODEL } from '../../lib/models';
 import { rememberChatModel, rememberedChatModel } from '../../lib/chat-preferences';
 import { hunkNewLines, hunkNewRange } from '../../lib/chat-citations';
+import { buildChatPrContext } from '../../lib/chat-pr-context';
 import type { ChatCitationSource } from '../../components/ChatCitation';
 import type { Preferences, ReviewGuide } from '../../lib/types';
 import '../../src/globals.css';
 import { createClaudeEventHandler } from '../../lib/providers/claude-events';
-import { toolCallStep, toolResultStep, type ChatTraceStep } from '../../lib/chat-trace';
+import { chatContextTrace, toolCallStep, toolResultStep, type ChatTraceStep } from '../../lib/chat-trace';
 const opened: ChatTraceStep[] = [];
 let toolCalls = 0;
 const claudeEvents = createClaudeEventHandler({
@@ -31,6 +32,35 @@ let fail: ((error: Error) => void) | undefined;
 let requestId = '';
 let kind = '';
 const requests: unknown[] = [];
+// A five-file PR for the file chat's PR-wide context: queue.ts imports retry.ts, and a question can name worker.ts.
+let prContext = false;
+const added = (lines: string[]) => `@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join('\n')}`;
+const prFiles = [
+  {
+    path: 'src/queue.ts',
+    status: 'modified',
+    additions: 1,
+    deletions: 0,
+    patch:
+      "@@ -1,2 +1,3 @@\n import { retry } from './retry';\n+await worker.acknowledge(command.id);\n return command.result;",
+  },
+  { path: 'src/retry.ts', status: 'modified', additions: 1, deletions: 0, patch: added(['export const retries = 3;']) },
+  {
+    path: 'src/worker.ts',
+    status: 'modified',
+    additions: 1,
+    deletions: 0,
+    patch: added(['export const acked = true;']),
+  },
+  { path: 'docs/notes.md', status: 'added', additions: 1, deletions: 0, patch: added(['Queue notes.']) },
+  {
+    path: 'vendor/big.ts',
+    status: 'added',
+    additions: 1600,
+    deletions: 0,
+    patch: added(Array.from({ length: 1600 }, (_, i) => `export const generated${i} = '${'x'.repeat(80)}';`)),
+  },
+];
 // Preferences the chat writes (model choices, panel widths), kept as the main process would keep them.
 let stored = {} as Preferences;
 const api: Partial<Window['electronAPI']> = {
@@ -72,6 +102,25 @@ const api: Partial<Window['electronAPI']> = {
     kind = 'file';
     requestId = request.requestId ?? '';
     requests.push(request);
+    // With prContext on, build the PR-wide context as the main process does, record it, and trace it.
+    if (prContext) {
+      const context = buildChatPrContext({
+        title: 'Bound the queue',
+        description: 'Keeps queue order across worker restarts.',
+        files: prFiles,
+        anchor: [request.path],
+        anchorName: 'the file',
+        selection: request.selection,
+        question: request.question,
+        history: request.history,
+        budgetTokens: request.contextTokens ?? 64_000,
+      });
+      (request as typeof request & { context?: unknown }).context = context;
+      queueMicrotask(() => {
+        for (const listener of traceListeners)
+          listener({ requestId, steps: chatContextTrace(context, request.history.length).steps });
+      });
+    }
     return new Promise((yes, no) => {
       finish = yes;
       fail = no;
@@ -87,6 +136,9 @@ Object.assign(window, {
   chatFixture: {
     requests,
     preferences: () => stored,
+    usePrContext() {
+      prContext = true;
+    },
     chunk(text: string) {
       if (kind === 'topic') progress?.(text);
       else for (const listener of fileListeners) listener({ requestId, chunk: text });

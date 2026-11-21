@@ -32,6 +32,7 @@ export function ModelSelector({
   onValueChange,
   label = 'Model',
   className,
+  format,
 }: {
   groups: ModelSelectorGroup[];
   /** `group:model`, as modelSelectorValue makes it. */
@@ -39,11 +40,13 @@ export function ModelSelector({
   onValueChange: (group: string, model: string) => void;
   label?: string;
   className?: string;
+  /** The trigger's text for a value id; the item's label by default. */
+  format?: (id: string) => string;
 }) {
   const [groupId, ...rest] = value.split(':');
   const modelId = rest.join(':');
   const group = groups.find((g) => g.id === groupId);
-  const name = group?.models.find((m) => m.id === modelId)?.label ?? modelId;
+  const name = format?.(modelId) ?? group?.models.find((m) => m.id === modelId)?.label ?? modelId;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

@@ -439,6 +439,8 @@ export interface Preferences {
   chatPanelWidths?: import('./chat-preferences').ChatPanelWidths;
   /** The model each chat surface sends its next question to. See lib/chat-preferences.ts. */
   chatModels?: import('./chat-preferences').ChatModels;
+  /** "Chat context size": the tokens of PR context each chat question carries, for both chats. lib/chat-pr-context.ts. */
+  chatContextTokens?: number;
   includeAllFiles: boolean;
   reviewSignature: boolean;
   firstRunSeen: boolean;
@@ -483,6 +485,12 @@ export interface SendSlideChatRequest {
   provider: Provider;
   model: ModelId;
   effort?: import('./effort').Effort;
+  /** The PR, for PR-wide context (lib/chat-pr-context.ts). A local review has none and keeps the topic's diff. */
+  prUrl?: string;
+  /** The topic's files: the anchor of its PR-wide context. */
+  anchorFiles?: string[];
+  /** Tokens of PR context to send. */
+  contextTokens?: number;
 }
 
 export interface GenerateReviewRequest {

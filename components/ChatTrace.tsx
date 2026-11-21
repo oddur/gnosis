@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Brain,
   FileDiff,
+  FileMinus,
   FilePen,
   FileSearch,
   FileText,
@@ -59,6 +60,7 @@ const KIND: Record<ChatTraceKind, { icon: LucideIcon; verb: string }> = {
   edit: { icon: FilePen, verb: 'Edited' },
   web: { icon: Globe, verb: 'Web' },
   tool: { icon: Wrench, verb: 'Used' },
+  omitted: { icon: FileMinus, verb: 'Left out' },
 };
 
 const openLabel = (step: ChatTraceStep) => {

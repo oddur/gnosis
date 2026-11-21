@@ -108,6 +108,8 @@ export interface FileChatRequest extends PrFileRequest {
   provider: Provider;
   model: ModelId;
   effort?: import('./effort').Effort;
+  /** Tokens of PR-wide context to send (lib/chat-pr-context.ts). */
+  contextTokens?: number;
 }
 export const changesRevision = (value: Pick<PrMetadata, 'baseSha' | 'headSha'>) => `${value.baseSha}:${value.headSha}`;
 export const fileRevisionKey = (url: string, path: string, baseSha: string, headSha: string) =>

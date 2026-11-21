@@ -46,7 +46,13 @@ import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-s
 import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
 import type { ReviewGuide, FreshnessResult, Preferences, Slide } from '../../lib/types';
-import { rememberChatModel, rememberedChatModel, type ChatModelChoice } from '../../lib/chat-preferences';
+import {
+  rememberChatContextBudget,
+  rememberChatModel,
+  rememberedChatContextBudget,
+  rememberedChatModel,
+  type ChatModelChoice,
+} from '../../lib/chat-preferences';
 import { hunkNewLines, hunkNewRange } from '../../lib/chat-citations';
 import type { ChatCitationSource } from '../../components/ChatCitation';
 import { markHere } from '../../lib/diff-here';
@@ -196,6 +202,7 @@ function ReviewPageContent({
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
   // The topic chat's model: its own choice from the prompt input, else the chat model preference.
   const [chatModel, setChatModel] = useState<ChatModelChoice>(() => rememberedChatModel(initialPreferences, 'topic'));
+  const [pickedContextTokens, setChatContextTokens] = useState<number>();
   const [savedDiffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(
     initialPreferences?.diffLayout ?? 'unified'
   );
@@ -320,7 +327,8 @@ function ReviewPageContent({
       setShowSubmitDialog(false);
     }
   }, [showSubmitDialog, submitUrl]);
-  const slideChat = useSlideChat(review, chatModel.provider, chatModel.model, prefs?.effort);
+  const chatContextTokens = pickedContextTokens ?? rememberedChatContextBudget(prefs ?? initialPreferences);
+  const slideChat = useSlideChat(review, chatModel.provider, chatModel.model, prefs?.effort, chatContextTokens);
   const gitFileUrlBase = useMemo(
     () => (review.snapshot?.subject.kind === 'stack' ? undefined : buildFileUrlBase(review.prUrl, review.headSha)),
     [review.prUrl, review.headSha]
@@ -1156,6 +1164,11 @@ function ReviewPageContent({
                 }))
             }
             citations={chatCitations}
+            contextBudget={chatContextTokens}
+            onContextBudgetChange={(tokens) => {
+              setChatContextTokens(tokens);
+              void rememberChatContextBudget(tokens).catch(() => {});
+            }}
             model={chatModel}
             onModelChange={(choice) => {
               setChatModel(choice);

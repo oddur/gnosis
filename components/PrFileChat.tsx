@@ -4,7 +4,13 @@ import { CommitBadge } from './EntityBadge';
 import { useSessionDraft } from '../lib/session-drafts';
 import { ChatPanel } from './ChatPanel';
 import { ChatComposerFallback, ChatConversationFallback, LazyChatComposer, LazyChatConversation } from './chat-lazy';
-import { rememberChatModel, rememberedChatModel, type ChatModelChoice } from '../lib/chat-preferences';
+import {
+  rememberChatContextBudget,
+  rememberChatModel,
+  rememberedChatContextBudget,
+  rememberedChatModel,
+  type ChatModelChoice,
+} from '../lib/chat-preferences';
 import { useFileChat } from '../lib/use-file-chat';
 import { fileRevisionKey, type PrFileRequest } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
@@ -98,7 +104,15 @@ function FileConversation({
   // Read on every render: with no choice saved for this surface it follows the chat model preference as it changes.
   const [picked, setModel] = useState<ChatModelChoice>();
   const model = picked ?? rememberedChatModel(preferences, 'file');
-  const context = { ...request, provider: model.provider, model: model.model, effort: preferences.effort };
+  const [budget, setBudget] = useState<number>();
+  const contextTokens = budget ?? rememberedChatContextBudget(preferences);
+  const context = {
+    ...request,
+    provider: model.provider,
+    model: model.model,
+    effort: preferences.effort,
+    contextTokens,
+  };
   const send = (value = question) => {
     if (!value.trim() || chat.busy) return;
     setQuestion('');
@@ -168,6 +182,11 @@ function FileConversation({
           onModelChange={(choice) => {
             setModel(choice);
             void rememberChatModel('file', choice).catch(() => {});
+          }}
+          contextBudget={contextTokens}
+          onContextBudgetChange={(tokens) => {
+            setBudget(tokens);
+            void rememberChatContextBudget(tokens).catch(() => {});
           }}
           onReady={onComposerReady}
         />
