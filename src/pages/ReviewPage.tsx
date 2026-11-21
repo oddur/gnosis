@@ -16,6 +16,7 @@ import { useExplanationComments } from '../../lib/use-explanation-comments';
 import { explanationSubject, rememberExplanation } from '../../lib/explanation-workspace';
 import { rememberCommandDestination } from '../../lib/command-recents';
 import { findReviewLine, openReviewLine } from '../../components/ReviewDiff';
+import { slideFileRunOfLine } from '../../lib/slide-file-groups';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
@@ -478,9 +479,13 @@ function ReviewPageContent({
   useEffect(() => {
     if (!codeTarget || inspectedTarget.current === codeTarget.nonce) return;
     let tries = 0;
+    // A section can show a file in more than one block (lib/slide-file-groups.ts): open the one that holds the line.
+    const run = codeTarget.line
+      ? slideFileRunOfLine(review.slides[codeTarget.section - 1]?.diffHunks ?? [], codeTarget.filePath, codeTarget.line)
+      : 0;
     const timer = setInterval(() => {
       const file = activeWorkspaceRoot().querySelector<HTMLElement>(
-        `[data-explanation-section="${codeTarget.section}"] .review-file-group[data-file-path="${CSS.escape(codeTarget.filePath)}"]`
+        `[data-explanation-section="${codeTarget.section}"] .review-file-group[data-file-path="${CSS.escape(codeTarget.filePath)}"][data-file-run="${run}"]`
       );
       if (file) {
         const collapsed = file.querySelector<HTMLButtonElement>(
@@ -786,13 +791,16 @@ function ReviewPageContent({
       index || review.slides.findIndex((s) => s.diffHunks.some((h) => h.filePath === target.filePath)) + 1;
     reader.current?.showCode(matchedSection || 1);
     const filePath = target.filePath;
+    const run = target.line
+      ? slideFileRunOfLine(review.slides[(matchedSection || 1) - 1]?.diffHunks ?? [], filePath, target.line, target.side)
+      : 0;
     let tries = 0;
     const timer = setInterval(() => {
       const file = [
         ...activeWorkspaceRoot().querySelectorAll<HTMLElement>(
           `[data-explanation-section="${matchedSection || 1}"] .review-file-group[data-file-path]`
         ),
-      ].find((el) => el.dataset.filePath === filePath);
+      ].find((el) => el.dataset.filePath === filePath && Number(el.dataset.fileRun ?? 0) === run);
       if (file) {
         const collapsed = file.querySelector<HTMLButtonElement>(
           '.review-file-context[data-collapsed=true] .review-file-expand'

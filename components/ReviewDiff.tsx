@@ -40,6 +40,8 @@ interface Props {
   appearance?: DiffAppearance;
   pendingComments?: PendingReviewComment[];
   slideIndex: number;
+  /** Which block of the file this is, when a topic shows one file in more than one block: each has its own open comment. */
+  commentScope?: string;
   commentCallbacks?: CommentCallbacks;
   threads?: GitHubReviewThread[];
   inlineExplanations?: InlineExplanation[];
@@ -83,6 +85,7 @@ export function ReviewDiff({
   appearance = DEFAULT_DIFF_APPEARANCE,
   pendingComments = [],
   slideIndex,
+  commentScope,
   commentCallbacks,
   threads = [],
   inlineExplanations = [],
@@ -191,7 +194,7 @@ export function ReviewDiff({
     }
     return map;
   }, [model.parts]);
-  const [active_, setActive] = useSessionDraft<Location | null>(`comment-location:${slideIndex}:${filePath}`, null);
+  const [active_, setActive] = useSessionDraft<Location | null>(`comment-location:${slideIndex}:${commentScope ?? filePath}`, null);
   const single = fileStatus === 'added' || fileStatus === 'deleted';
   const unified = single || diffLayout === 'unified';
   const options: FileDiffOptions<Location, undefined> = {

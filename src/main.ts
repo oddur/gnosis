@@ -2915,7 +2915,8 @@ async function runBackgroundGeneration(
               slideType: topic.slideType,
               narrative: writerOutput.narrative,
               reviewFocus: writerOutput.reviewFocus,
-              diffHunks: sortDiffHunks(diffHunks),
+              // The planner's reading order (lib/review-planning.ts); SlideView groups consecutive hunks of a file.
+              diffHunks,
               contextSnippets: writerOutput.contextSnippets ?? [],
               affectedFiles: [...new Set(diffHunks.map((h) => h.filePath))],
               dependsOn: topic.dependsOn,
@@ -3020,7 +3021,7 @@ async function runBackgroundGeneration(
           slideType: aiSlide.slideType,
           narrative: aiSlide.narrative,
           reviewFocus: aiSlide.reviewFocus,
-          diffHunks: sortDiffHunks(diffHunks),
+          diffHunks,
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
           contextSnippets: aiSlide.contextSnippets ?? [],
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields

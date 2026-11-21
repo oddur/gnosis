@@ -333,6 +333,68 @@ void app.whenReady().then(async () => {
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
     win.webContents.debugger.detach();
     await js('document.activeElement?.blur()');
+
+    // ── Reading order: a topic that goes scope.ts, imports.ts, then back to scope.ts ──
+    // The planner's hunk order is kept; each return to a file gets its own block with the same header.
+    await js(`window.selectOption('[aria-label="Explanation section"]', '2')`);
+    const ordered = '[data-explanation-section="2"] .review-file-group';
+    const block = (n: number) => `document.querySelectorAll(${JSON.stringify(ordered)})[${n}]`;
+    await wait(`(()=>{const g=[...document.querySelectorAll(${JSON.stringify(ordered)})];return g.length===3&&g.every(e=>e.querySelector('.changes-diff'))})()`, 500);
+    await settle();
+    type Block = { path: string; run: string; header: boolean; content: string; controls: string | null; hidden: boolean; viewed: boolean | null; lines: number; gaps: string };
+    const blocks = () =>
+      js<Block[]>(`[...document.querySelectorAll(${JSON.stringify(ordered)})].map(g=>{const content=g.querySelector(':scope > .review-file-content');const box=g.querySelector('.review-file-viewed input');
+        return {path:g.dataset.filePath.replace(/^.*?src\\//,'src/'),run:g.dataset.fileRun,header:!!g.querySelector(':scope > .changes-file-header'),content:content.id,
+          controls:g.querySelector('.review-file-expand')?.getAttribute('aria-controls')??null,hidden:content.hidden,viewed:box?box.checked:null,
+          lines:window.deepAll('[data-line]',content).length,gaps:[...content.querySelectorAll('.diff-gap[data-gap]')].map(e=>e.dataset.gap+': '+e.getAttribute('aria-label')).join('|')}})`);
+    const initial = await blocks();
+    console.log('Reading-order blocks:', JSON.stringify(initial));
+    assert.deepEqual(
+      initial.map((b) => [b.path, b.run]),
+      [
+        ['src/scope.ts', '0'],
+        ['src/imports.ts', '0'],
+        ['src/scope.ts', '1'],
+      ],
+      'The blocks follow the reading order A, B, A'
+    );
+    assert.ok(initial.every((b) => b.header), 'Each block has the code-tier file header');
+    assert.equal(new Set(initial.map((b) => b.content)).size, 3, 'Each block has its own content id');
+    assert.deepEqual(
+      initial.map((b) => b.controls),
+      initial.map((b) => b.content),
+      'Each header controls its own block'
+    );
+    assert.ok(initial.every((b) => !b.hidden && b.lines > 0), 'Every block starts open');
+    // Collapsing one block of scope.ts leaves the other open.
+    await js(`${block(0)}.querySelector('.review-file-expand').click()`);
+    await wait(`${block(0)}.querySelector(':scope > .review-file-content').hidden`);
+    assert.deepEqual((await blocks()).map((b) => b.hidden), [true, false, false], 'Collapse is per block');
+    await js(`${block(0)}.querySelector('.review-file-expand').click()`);
+    await wait(`!${block(0)}.querySelector(':scope > .review-file-content').hidden`);
+    await settle();
+    // Gaps reveal per block: opening a gap in the second scope.ts block does not touch the first.
+    const beforeReveal = await blocks();
+    assert.match(beforeReveal[2].gaps, /0: \d+ lines hidden/, `The second scope.ts block hides lines above its hunks: ${beforeReveal[2].gaps}`);
+    await js(`(()=>{const b=[...${block(2)}.querySelectorAll('.diff-gap[data-gap="0"] button')].find(b=>/^Show/.test(b.getAttribute('aria-label')??b.textContent.trim()));if(!b)throw Error('No reveal in the second block');b.click()})()`);
+    await wait(`window.deepAll('[data-line]',${block(2)}).length>${beforeReveal[2].lines}`, 500);
+    await settle();
+    const afterReveal = await blocks();
+    assert.equal(afterReveal[0].lines, beforeReveal[0].lines, 'The first scope.ts block shows the same lines');
+    assert.equal(afterReveal[0].gaps, beforeReveal[0].gaps, 'The first scope.ts block hides what it hid');
+    assert.ok(afterReveal[2].lines > beforeReveal[2].lines, 'The second block revealed lines');
+    assert.notEqual(afterReveal[2].gaps, beforeReveal[2].gaps, 'The second block’s gap changed');
+    // Viewed is per file: marking scope.ts viewed in its second block closes both of its blocks, not imports.ts.
+    if (initial[2].viewed !== null) {
+      await js(`${block(2)}.querySelector('.review-file-viewed input').click()`);
+      await wait(`${block(0)}.querySelector(':scope > .review-file-content').hidden&&${block(2)}.querySelector(':scope > .review-file-content').hidden`);
+      const viewed = await blocks();
+      assert.deepEqual(viewed.map((b) => [b.viewed, b.hidden]), [[true, true], [false, false], [true, true]], 'Viewed applies to both blocks of the file');
+      await js(`${block(0)}.querySelector('.review-file-viewed input').click()`);
+      await wait(`!${block(0)}.querySelector(':scope > .review-file-content').hidden&&!${block(2)}.querySelector(':scope > .review-file-content').hidden`);
+      assert.deepEqual((await blocks()).map((b) => [b.viewed, b.hidden]), [[false, false], [false, false], [false, false]], 'Unmarking opens both again');
+    } else assert.fail('The explanation offers the Viewed checkbox');
+    await capture('explanation-reading-order', `(()=>{const r=document.querySelector('[data-explanation-section="2"] .explanation-section-code').getBoundingClientRect();return {x:Math.round(r.left),y:Math.max(0,Math.round(r.top)),width:Math.round(r.width),height:Math.round(Math.min(800,r.height))}})()`);
     assert.deepEqual(errors, []);
     if (shots) await sideBySide();
     console.log('Explanation parity checks passed');

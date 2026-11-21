@@ -1,6 +1,7 @@
 import { SLICE_CHROME, estimateSliceHeight, type DiffRow, type GapHunk } from './diff-gaps';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_LIMIT, HUNK_SLICE_SIZE, prepareReviewHunk } from './review-diff';
 import type { DiffHunk, DiffSide, FileMetadata } from './types';
+import { groupSlideHunks } from './slide-file-groups';
 
 /** A line that stays in view: a review check (either side), a thread, a note or a draft comment. */
 export interface ReviewPin {
@@ -210,10 +211,9 @@ export function estimateCodeColumnHeight(
     viewed,
   }: { status?: (filePath: string) => FileMetadata['status'] | undefined; viewed?: (filePath: string) => boolean } = {}
 ) {
-  const files = new Map<string, DiffHunk[]>();
-  for (const hunk of hunks) files.set(hunk.filePath, [...(files.get(hunk.filePath) ?? []), hunk]);
   let height = 80;
-  for (const [filePath, fileHunks] of files)
+  // One block per run of a file, as SlideView renders the reading order.
+  for (const { filePath, hunks: fileHunks } of groupSlideHunks(hunks))
     height += 20 + estimateFileBlockHeight(fileHunks, { status: status?.(filePath), expanded: !viewed?.(filePath) });
   return Math.round(height);
 }

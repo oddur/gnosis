@@ -223,6 +223,27 @@ if (parityScenario) {
     mermaidDiagram: undefined,
     d2Diagram: undefined,
   };
+  // The second topic's reading order goes scope.ts, imports.ts, then back to scope.ts: two blocks of scope.ts.
+  const importsPath = prefix + 'src/imports.ts';
+  const imports = (syntaxScopeFiles.find((file) => file.path === 'src/imports.ts')?.patch ?? '').split(/\n(?=@@)/).map((hunk) => {
+    const [header, ...body] = hunk.split('\n');
+    return { filePath: importsPath, language: 'typescript', renderedHtml: '', hunkHeader: header, content: body.join('\n') };
+  });
+  review.changedFiles.push({ filename: importsPath, status: 'modified', additions: 1, deletions: 1 });
+  review.slides[1] = {
+    ...review.slides[1],
+    title: 'Read the flush, then its import, then the paths',
+    narrative: 'The flush step comes first, then the import it relies on, then the path helpers in the same file.',
+    affectedFiles: [path, importsPath],
+    fileSummaries: [{ filePath: path, summary: 'Doubles one flush step and trims names.' }],
+    inlineExplanations: [],
+    diffHunks: [hunks[2], imports[0], hunks[0], hunks[3]],
+    reviewChecks: [],
+    explainer: undefined,
+    explainerIdea: undefined,
+    mermaidDiagram: undefined,
+    d2Diagram: undefined,
+  };
 }
 // Quiet changes in a slide (#396, tests/noise-filter-browser.ts): the first topic shows every hunk of the noise
 // fixture's src/noise/mixed.ts, which Changes shows with `?noise-filter`.

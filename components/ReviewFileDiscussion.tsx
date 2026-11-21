@@ -21,16 +21,22 @@ import {
   type GitHubReviewThreads,
   type ReviewThreadAction,
 } from '../lib/review-threads';
-import type { ReviewGuide } from '../lib/types';
+import type { DiffHunk, ReviewGuide } from '../lib/types';
 
 type Props = ComponentProps<typeof ReviewDiff> & {
   review?: ReviewGuide;
   enabled?: boolean;
   onAsk?: (text: string) => void;
+  /**
+   * When a topic shows this file in more than one block, all of the file's hunks in the topic. A thread that has no
+   * line in any block is listed below the first block only.
+   */
+  fileHunks?: DiffHunk[];
+  firstBlock?: boolean;
 };
 
 /** Load only PRs represented by the current topic; the main process coalesces file reads. */
-export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }: Props) {
+export function ReviewFileDiscussion({ review, enabled = true, onAsk, fileHunks, firstBlock = true, ...diff }: Props) {
   const [markdownView, changeMarkdownView] = useMarkdownView();
   const [sourceLocation, setSourceLocation] = useState<MarkdownLocation>();
   const [sourcePinnedLine, setSourcePinnedLine] = useState<number>();
@@ -113,7 +119,12 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
         ? threadPlacementReason(thread, data, source, diff.hunks, diff.fileStatus)
         : 'Revision unavailable.',
   }));
-  const unplaced = placed.filter((p) => p.reason);
+  const unplaced = placed.filter(
+    (p) =>
+      p.reason &&
+      firstBlock &&
+      !(fileHunks && data && source && !threadPlacementReason(p.thread, data, source, fileHunks, diff.fileStatus))
+  );
   const unresolved = threads.filter((thread) => !thread.isResolved).length;
   async function act(thread: Thread, action: ReviewThreadAction['action'], body?: string) {
     if (!prUrl) return;
