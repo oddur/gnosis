@@ -901,7 +901,9 @@ function markLines(host: Element, marks: readonly (readonly [attribute: string, 
 /** A move's annotation: the metadata ChangesDiff gives its own rows among the caller's. */
 interface MoveAnnotation {
   gnosisMove: MoveMark;
+  words: MoveWords;
 }
+type MoveWords = ReturnType<typeof moveWords>;
 const isMoveAnnotation = (metadata: unknown): metadata is MoveAnnotation =>
   !!metadata && typeof metadata === 'object' && 'gnosisMove' in metadata;
 
@@ -909,14 +911,14 @@ const isMoveAnnotation = (metadata: unknown): metadata is MoveAnnotation =>
  * Where a moved symbol came from, or went (#398), as one quiet code line under the line above it: "Moved from
  * src/a.ts:12 · renamed from load · 2 lines edited", or "Moved up from line 22" within the file. The place is a link
  * that goes there: in this diff for a move within the file, else through the view's MoveNavigation. Without one, the
- * place is plain text. A note with no row above it in its hunk (`lead`) heads the hunk's code, outside the diff.
+ * place is plain text. A note with no row above it in its hunk (`lead`) heads the hunk's code, outside the diff, in
+ * the code column of its side.
  */
-function MoveNote({ mark, onGo, lead }: { mark: MoveMark; onGo?: () => void; lead?: 'unified' | 'split' }) {
+function MoveNote({ mark, words, onGo, lead }: { mark: MoveMark; words: MoveWords; onGo?: () => void; lead?: 'left' | 'right' }) {
   const { other } = mark;
   const into = mark.side === 'after';
-  const { verb, place } = moveWords(mark);
+  const { verb, place, where } = words;
   const edits = moveEditsLabel(mark);
-  const where = mark.sameFile ? `line ${other.start} of this file${other.side === 'before' ? ', old side' : ''}` : `${other.path}, line ${other.start}`;
   const rename = mark.renamed ? `, renamed ${into ? 'from' : 'to'} ${other.name}` : '';
   const how = mark.exact ? 'the same code' : `${Math.round(mark.similarity * 100)}% similar`;
   return (
@@ -1258,7 +1260,7 @@ export function ChangesDiff<A>({
     const metadata: unknown = annotation.metadata;
     if (isMoveAnnotation(metadata)) {
       const mark = metadata.gnosisMove;
-      return <MoveNote mark={mark} onGo={mark.sameFile || latestOpenMove.current ? () => latestGoToMove.current(mark) : undefined} />;
+      return <MoveNote mark={mark} words={metadata.words} onGo={mark.sameFile || latestOpenMove.current ? () => latestGoToMove.current(mark) : undefined} />;
     }
     return latestRender.current(annotation);
   });
@@ -1361,11 +1363,12 @@ export function ChangesDiff<A>({
         const [from, to] = side === 'deletions' ? slice.oldLines : slice.newLines;
         return lineNumber >= from && lineNumber <= to;
       });
-      const annotation = { side, lineNumber, metadata: { gnosisMove: mark } } as unknown as DiffLineAnnotation<A>;
+      const metadata: MoveAnnotation = { gnosisMove: mark, words: moveWords(mark, parts) };
+      const annotation = { side, lineNumber, metadata } as unknown as DiffLineAnnotation<A>;
       if (owner) result.set(owner.key, [...(result.get(owner.key) ?? []), annotation]);
     }
     return result;
-  }, [noteLines, slices]);
+  }, [noteLines, slices, parts]);
   const sliceAnnotations = useMemo(() => {
     if (!moveBySlice.size) return bySlice;
     const result = new Map(bySlice);
@@ -1905,15 +1908,27 @@ export function ChangesDiff<A>({
       );
       return;
     }
-    for (const mark of leadNotes.get(block.key) ?? [])
-      current.children.push(
+    // A hunk's lead notes share one row: in a split diff, each in its side's column.
+    const leads = leadNotes.get(block.key);
+    if (leads) {
+      const note = (mark: MoveMark) => (
         <MoveNote
           key={`move-${mark.side}${mark.start}`}
           mark={mark}
-          lead={split && mark.side === 'after' ? 'split' : 'unified'}
+          words={moveWords(mark, parts)}
+          lead={split && mark.side === 'after' ? 'right' : 'left'}
           onGo={mark.sameFile || openMove ? () => goToMove(mark) : undefined}
         />
       );
+      const left = leads.find((mark) => !split || mark.side === 'before');
+      const right = split ? leads.find((mark) => mark.side === 'after') : undefined;
+      current.children.push(
+        <div key={`move-lead-${block.key}`} className="diff-move-lead" data-split={split || undefined}>
+          {left ? note(left) : <div aria-hidden="true" />}
+          {right && note(right)}
+        </div>
+      );
+    }
     for (const slice of block.slices) {
       const diff = (
         <SliceDiff

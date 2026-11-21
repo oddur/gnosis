@@ -1965,10 +1965,11 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    inside the diff (ChangesDiff's CSS), so its real edits read first. */
 .diff-gap.diff-move-note { min-height:var(--leading-code); padding:0; border:0; background:transparent; container-type:normal; }
 .diff-move-note .diff-gap-trailing { padding-left:0; color:var(--diff-header-muted); }
-/* A note over a hunk's first row heads the hunk's code, outside the diff: on the code's background, in its column. */
-.diff-gap.diff-move-note[data-move-lead] { background:var(--diff-code-bg, #22272e); }
+/* Notes over a hunk's first row head the hunk's code in one row, outside the diff: on the code's background, each in
+   its side's code column. */
+.diff-move-lead { background:var(--diff-code-bg, #22272e); }
+.diff-move-lead[data-split] { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); }
 .diff-move-note[data-move-lead] .diff-gap-trailing { padding-left:var(--diff-code-inset); }
-.diff-move-note[data-move-lead=split] .diff-gap-trailing { padding-left:calc(50% + var(--diff-code-inset)); }
 .diff-move-note code { font:inherit; color:var(--diff-header-fg); }
 .diff-move-note .diff-gap-text code { color:inherit; }
 .changes-file-noise { display:inline-flex; align-items:center; gap:4px; }

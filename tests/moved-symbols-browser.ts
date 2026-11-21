@@ -194,61 +194,114 @@ void app.whenReady().then(async () => {
       ],
       'The old side says where each symbol went, and the move within the file says both'
     );
+    // The old side dims what a move carried over too: flushQueue's old body, but its edited weight line keeps its red.
+    const oldFlush = `(()=>{const r=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row(MOVE_FILES.store))})).filter(e=>e.dataset.lineType==='change-deletion');const s=r.findIndex(e=>e.textContent.includes('export function flushQueue('));return r.slice(s,s+9).map(e=>({text:e.textContent,moved:e.hasAttribute('data-moved-line'),paint:getComputedStyle(e).backgroundImage}))})()`;
+    await wait(`${oldFlush}.filter(r=>r.moved).length===8`, 300).catch(async (error: unknown) => {
+      console.log('Old flushQueue rows:', JSON.stringify(await js(oldFlush)));
+      throw error;
+    });
+    const oldRows = await js<{ text: string; moved: boolean; paint: string }[]>(oldFlush);
+    const edited = oldRows.find((r) => r.text.includes('job.weight * 2'));
+    console.log('Old flushQueue paint:', JSON.stringify(oldRows.map((r) => [r.moved, r.paint])));
+    assert.equal(edited?.moved, false, 'The old side’s edited line keeps its colour');
+    assert.ok(
+      oldRows.every((r) => r === edited || (r.moved && r.paint !== edited?.paint)),
+      'The old side’s carried-over lines are painted dimmed'
+    );
+    await capture('old-side-dimmed', row(MOVE_FILES.store));
 
     // ── A note sits right above its symbol: after deleted rows, and on a hunk's first row (#111) ──
-    /** How far a note's bottom is above its symbol's first line: 0 when right above it, negative when below. */
-    const gap = (path: string, note: string, line: string) =>
-      js<number>(
-        `(()=>{const s=document.querySelector(${JSON.stringify(row(path))});const n=window.deepAll('[data-move-note]',s).find(n=>n.textContent.includes(${JSON.stringify(note)}));const l=window.deepAll('[data-line]',s).find(e=>e.dataset.lineType==='change-addition'&&e.textContent.includes(${JSON.stringify(line)}));if(!n||!l)return NaN;return Math.round(l.getBoundingClientRect().top-n.getBoundingClientRect().bottom)})()`
-      );
+    /**
+     * A note's box and how far its bottom is above its symbol's first line (0 when right above it, negative when
+     * below), once both are on screen and the layout holds across two reads.
+     */
+    const placed = async (path: string, note: string, type: string, line: string) => {
+      const read = () =>
+        js<string>(
+          `(()=>{const s=document.querySelector(${JSON.stringify(row(path))});const n=window.deepAll('[data-move-note]',s).find(n=>n.textContent.includes(${JSON.stringify(note)}));const l=window.deepAll('[data-line]',s).find(e=>e.dataset.lineType===${JSON.stringify(type)}&&e.textContent.includes(${JSON.stringify(line)}));if(!n||!l)return '';const b=n.getBoundingClientRect(),r=l.getBoundingClientRect();if(!b.height||!r.height)return '';return JSON.stringify({gap:Math.round(r.top-b.bottom),top:Math.round(b.top),left:Math.round(b.left),right:Math.round(b.right),row:Math.round(s.getBoundingClientRect().left+s.getBoundingClientRect().width/2)})})()`
+        );
+      let last = '';
+      for (let i = 0; i < 300; i++) {
+        const now = await read();
+        if (now && now === last)
+          return JSON.parse(now) as { gap: number; top: number; left: number; right: number; row: number };
+        last = now;
+        await sleep(40);
+      }
+      throw Error(`${path}: "${note}" never settled above "${line}"`);
+    };
     const layout = async (key: 'u' | 's') => {
       await js(`document.body.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true}))`);
       await wait(
         `document.querySelector(${JSON.stringify(row(MOVE_FILES.lines))})?.closest('[data-diff-layout]')?.dataset.diffLayout===${JSON.stringify(key === 's' ? 'split' : 'unified')}`,
         200
       );
-      await settle();
     };
-    for (const path of [MOVE_FILES.lines, MOVE_FILES.render]) {
+    for (const [path, count] of [
+      [MOVE_FILES.lines, 4],
+      [MOVE_FILES.render, 2],
+    ] as const) {
       await openFile(path);
       await wait(
-        `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(row(path))})).length>0`,
+        `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(row(path))})).length===${count}`,
         300
       );
     }
-    await settle();
     assert.deepEqual(
       [...(await notes(row(MOVE_FILES.lines)))].sort(),
       [
         'Moved to src/moves/render.ts:1 · renamed to renderLine · body unchanged',
-        'Moved up from line 16 · unchanged',
+        'Moved to src/moves/render.ts:7 · unchanged',
+        'Moved up from line 18 · unchanged',
         'Moved up to line 1 · unchanged',
       ],
       'A move up the file says so'
     );
-    assert.deepEqual(await notes(row(MOVE_FILES.render)), [
-      'Moved from src/moves/lines.ts:22 · renamed from formatLine · body unchanged',
+    assert.deepEqual([...(await notes(row(MOVE_FILES.render)))].sort(), [
+      'Moved from src/moves/lines.ts:1 · unchanged',
+      'Moved from src/moves/lines.ts:24 · renamed from formatLine · body unchanged',
     ]);
     for (const key of ['u', 's'] as const) {
       await layout(key);
-      for (const [name, path] of [
+      const name = key === 's' ? 'Split' : 'Unified';
+      // Right above: under the row before it, or heading the hunk over the diff's top padding.
+      const totalWidth = await placed(
+        MOVE_FILES.lines,
+        'Moved up from line 18',
+        'change-addition',
+        'export function totalWidth('
+      );
+      const normalize = await placed(
+        MOVE_FILES.lines,
+        'render.ts:7',
+        'change-deletion',
+        'export function normalizeLines('
+      );
+      const renderLine = await placed(
+        MOVE_FILES.render,
+        'renamed from formatLine',
+        'change-addition',
+        'export function renderLine('
+      );
+      for (const [label, at] of Object.entries({ totalWidth, normalize, renderLine })) {
+        console.log(`${key} ${label}: note ${at.gap}px above its symbol`);
+        assert.ok(at.gap >= 0 && at.gap <= 10, `${name}, ${label}: the note is right above its symbol (${at.gap}px)`);
+      }
+      // Split: the hunk's two lead notes share one row, each over its own column.
+      if (key === 's') {
+        assert.equal(normalize.top, totalWidth.top, 'Split: both notes heading the hunk are on one row');
+        assert.ok(
+          normalize.right <= normalize.row && totalWidth.left >= totalWidth.row,
+          'Split: each note is in its column'
+        );
+      }
+      for (const [file, path] of [
         ['lines', MOVE_FILES.lines],
         ['render', MOVE_FILES.render],
       ]) {
-        if (shots) await openFile(path);
-        await capture(`first-row-note-${key}-${name}`, row(path));
-      }
-      // Right above: under the row before it, or heading the hunk over the diff's top padding.
-      for (const [path, note, line] of [
-        [MOVE_FILES.lines, 'Moved up from line 16', 'export function totalWidth('],
-        [MOVE_FILES.render, 'renamed from formatLine', 'export function renderLine('],
-      ]) {
-        const above = await gap(path, note, line);
-        console.log(`${key} ${path}: note ${above}px above its symbol`);
-        assert.ok(
-          above >= 0 && above <= 10,
-          `${key === 's' ? 'Split' : 'Unified'}, ${path}: the note is right above its symbol (${above}px)`
-        );
+        if (!shots) continue;
+        await openFile(path);
+        await capture(`first-row-note-${key}-${file}`, row(path));
       }
     }
     await layout('u');

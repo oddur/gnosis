@@ -611,12 +611,13 @@ async function prMoves(files: PrChangeFile[], contents: (path: string) => PrFile
 }
 
 void describe('moved symbols: the browser fixtures', () => {
-  void test('?moved-symbols: five moves, two renames, one C# rename, and the tie shows nothing', async () => {
+  void test('?moved-symbols: six moves, two renames, one C# rename, and the tie shows nothing', async () => {
     const result = await prMoves(movedSymbolsFiles, movedSymbolsContents);
     assert.deepEqual(result.moves.map(spoken).sort(), [
       `${MOVE_FILES.bridge}:7 Drain -> ${MOVE_FILES.pump}:5 DrainAll`,
-      `${MOVE_FILES.lines}:16 totalWidth -> ${MOVE_FILES.lines}:1 totalWidth`,
-      `${MOVE_FILES.lines}:22 formatLine -> ${MOVE_FILES.render}:1 renderLine`,
+      `${MOVE_FILES.lines}:1 normalizeLines -> ${MOVE_FILES.render}:7 normalizeLines`,
+      `${MOVE_FILES.lines}:18 totalWidth -> ${MOVE_FILES.lines}:1 totalWidth`,
+      `${MOVE_FILES.lines}:24 formatLine -> ${MOVE_FILES.render}:1 renderLine`,
       `${MOVE_FILES.store}:3 formatEntry -> ${MOVE_FILES.store}:49 formatEntry`,
       `${MOVE_FILES.store}:35 flushQueue -> ${MOVE_FILES.queue}:16 flushQueue`,
       `${MOVE_FILES.store}:62 parseHeader -> ${MOVE_FILES.headers}:3 readHeader`,
