@@ -27,7 +27,6 @@ import {
 } from '../lib/conflict-verify';
 import {
   conflictFileStage,
-  fileHasConflictMarkers,
   hasConflictMarkers,
   type ConflictFile,
   type ConflictProposal,
@@ -176,6 +175,7 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
     decide: 1,
     wholeConflicts: 0,
     wholeFiles: 0,
+    markers: 0,
   });
   assert.equal(
     summarySentence(summary),
@@ -197,6 +197,7 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
       decide: 2,
       wholeConflicts: 0,
       wholeFiles: 0,
+      markers: 0,
     }),
     '3 files conflict. 7 of 9 conflicts are merged and checked. 2 to decide.'
   );
@@ -624,45 +625,65 @@ void test('the reformatting side’s quotes and spacing must survive: a matching
   );
 });
 
-void test('a stray marker line is named, only a Markdown heading underline is not a marker, and a reviewed file needs nothing', () => {
-  // Every line of `=======` counts as a marker, except a setext heading in Markdown that one side wrote too.
-  assert.equal(hasConflictMarkers('Title\n=======\n\nText\n'), true);
-  const readme = (heading: string) => `${heading}\n=======\n\nIntro.\n`;
+void test('a stray marker line is named, every ======= line is a marker, and a reviewed file needs nothing', () => {
+  // One strict predicate: every line of `=======` is a marker, in every file. A Markdown setext heading's underline
+  // too: the file says "Conflict marker left" instead of "0 conflicts", and nothing is pushed until it changes.
+  const status = (f: ConflictFile, draft: string) =>
+    fileStatusParts(fileStatus(f, draft, conflictFileStage(f, draft), blockBuckets(f, draft, undefined)));
+  const markerLeft = [{ tone: 'conflicted', text: 'Conflict marker left' }];
+  const readme = (heading: string, body: string) => `${heading}\n=======\n\n${body}\n`;
   const md: ConflictFile = {
     ...file([]),
     path: 'README.md',
-    base: readme('Gnosis'),
-    ours: readme('Gnosis'),
-    theirs: `${readme('Gnosis')}More.\n`,
-    original: `${readme('Gnosis')}<<<<<<< feature\nPR line\n||||||| ancestor\n=======\nmain line\n>>>>>>> main\n`,
+    base: readme('Usage', 'Run it.'),
+    ours: readme('Usage', 'Run it with npm.'),
+    theirs: readme('Usage', 'Run it with node.'),
+    // Review probe (#454): the PR's lines end with the heading, so Git's separator sits right under it.
+    original: '<<<<<<< feature\nUsage\n||||||| ancestor\nUsage\n=======\nGuide\n>>>>>>> main\n=======\n\nRun it.\n',
     proposals: undefined,
   };
-  const kept = `${readme('Gnosis')}PR line\nmain line\n`;
-  assert.equal(fileHasConflictMarkers(md, kept), false, 'A setext heading in a README stays clean');
-  assert.equal(conflictFileStage({ ...md, result: kept }, kept), 'resolved');
-  // The conflict's own separator under the PR's line is not a heading either side wrote: it is a marker.
-  assert.equal(fileHasConflictMarkers(md, `${readme('Gnosis')}PR line\n=======\nmain line\n`), true);
-  // A heading underline nobody wrote, a second copy of one, or one under a blank line: markers.
-  assert.equal(fileHasConflictMarkers(md, readme('Other')), true);
-  assert.equal(fileHasConflictMarkers(md, `${readme('Gnosis')}${readme('Gnosis')}`), true);
-  assert.equal(fileHasConflictMarkers(md, `x\n\n=======\n`), true);
-  // The same heading outside Markdown is a marker.
-  assert.equal(fileHasConflictMarkers({ ...md, path: 'notes.txt' }, kept), true);
-  // In a .ts file, a leftover `=======` between both sides blocks Mark reviewed and the push, and is named.
+  const heading = readme('Usage', 'Run it with npm and node.');
+  assert.equal(hasConflictMarkers(heading), true);
+  assert.equal(conflictFileStage({ ...md, result: heading }, heading), 'conflicted');
+  assert.deepEqual(status(md, heading), markerLeft, 'A setext heading shows Conflict marker left');
+  // The reviewer's case: only the opening, ancestor and closing lines removed. Git's separator under the PR's heading
+  // is a marker, so Mark reviewed and the push stay blocked (they use the same predicate).
+  const separator = 'Usage\nUsage\n=======\nGuide\n=======\n\nRun it.\n';
+  assert.equal(hasConflictMarkers(separator), true);
+  assert.equal(conflictFileStage({ ...md, result: separator, resolved: true }, separator), 'conflicted');
+  assert.deepEqual(status(md, separator), markerLeft);
+  // In a .ts file, a leftover `=======` between both sides is the same.
   const ts = file([merged(imports), merged(three + four)]);
   const leftover = `${ts.result}export const a = 1;\n=======\nexport const a = 2;\n`;
-  assert.equal(fileHasConflictMarkers(ts, leftover), true);
-  const left = fileStatus(ts, leftover, conflictFileStage(ts, leftover), blockBuckets(ts, leftover, undefined));
-  assert.deepEqual(fileStatusParts(left), [{ tone: 'conflicted', text: 'Conflict marker left' }]);
+  assert.deepEqual(status(ts, leftover), markerLeft);
+  // A file with a marker left needs you: the summary never says "Nothing needs you." beside it.
+  const markerSummary = bucketSummary([
+    { buckets: blockBuckets(ts, leftover, undefined), verdict: undefined, reviewed: false, marker: true },
+    { buckets: ['merged'], verdict: { merged: true, note: '' }, reviewed: true },
+  ]);
+  assert.equal(markerSummary.needs, 1);
+  assert.equal(
+    summarySentence(markerSummary),
+    '2 files conflict. 1 of 3 conflicts are merged and checked. 1 file with a conflict marker left.'
+  );
+  assert.equal(
+    summarySentence(
+      bucketSummary([
+        { buckets: [], verdict: undefined, reviewed: false, marker: true },
+        { buckets: ['decide'], verdict: undefined, reviewed: false },
+      ])
+    ),
+    '2 files conflict. 2 need you: 1 to decide, 1 file with a conflict marker left.'
+  );
   assert.equal(hasConflictMarkers('a\n>>>>>>> main\n'), true);
   assert.equal(hasConflictMarkers('a\n||||||| ancestor\n'), true);
   // A marker line outside any whole conflict: no "0 conflicts".
   const stray = file([merged(imports), merged(three + four)]);
   const draft = `${stray.result}>>>>>>> main\n`;
-  const status = fileStatus(stray, draft, conflictFileStage(stray, draft), blockBuckets(stray, draft, undefined));
-  assert.deepEqual(status, { kind: 'marker' });
-  assert.deepEqual(fileStatusParts(status), [{ tone: 'conflicted', text: 'Conflict marker left' }]);
-  assert.equal(fileStatusLine(status), 'A conflict marker is left in the file. Check the result');
+  const strayStatus = fileStatus(stray, draft, conflictFileStage(stray, draft), blockBuckets(stray, draft, undefined));
+  assert.deepEqual(strayStatus, { kind: 'marker' });
+  assert.deepEqual(fileStatusParts(strayStatus), [{ tone: 'conflicted', text: 'Conflict marker left' }]);
+  assert.equal(fileStatusLine(strayStatus), 'A conflict marker is left in the file. Check the result');
   // A reviewed file adds nothing to what needs you, even with conflicts to decide or check left in its buckets.
   const summary = bucketSummary([
     { buckets: ['decide', 'check', 'merged'], verdict: undefined, reviewed: true },

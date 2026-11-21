@@ -105,50 +105,18 @@ export interface ConflictReply {
   baseMoved?: BaseMove;
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
+/** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
 const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
+const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
+/** Any conflict marker line left in a text: the file status, Mark reviewed and every guard before a push use it. */
 export function hasConflictMarkers(text: string) {
-  return /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/m.test(text);
-}
-
-const MARKDOWN = /\.(?:md|mdx|markdown)$/i;
-/** Each setext heading in a text (a line of text, then a line of `=` alone), with its count. */
-function setextHeadings(text: string) {
-  const counts = new Map<string, number>();
-  const lines = text.split(/\r?\n/);
-  lines.forEach((line, i) => {
-    const above = i > 0 ? lines[i - 1] : '';
-    if (!/^={7,}\s*$/.test(line) || !above.trim() || MARKER_LINE.test(above)) return;
-    const key = `${above.trimEnd()}\n${line.trimEnd()}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  });
-  return counts;
-}
-/**
- * Conflict markers left in a conflicted file's draft: the status and every guard before a push use it. As
- * hasConflictMarkers, with one exception. In Markdown, a lone `=======` right under a line of text is a setext heading,
- * not Git's separator, when one of the file's sides has that same heading as often: the conflict's own separator is
- * never there. Anything else, a lone `=======` included, is a marker.
- */
-export function fileHasConflictMarkers(file: Pick<ConflictFile, 'path' | 'ours' | 'theirs'>, text: string) {
-  if (!hasConflictMarkers(text)) return false;
-  if (!MARKDOWN.test(file.path)) return true;
-  const sides = [setextHeadings(file.ours), setextHeadings(file.theirs)];
-  const headings = setextHeadings(text);
-  const lines = text.split(/\r?\n/);
-  return lines.some((line, i) => {
-    if (!MARKER_LINE.test(line)) return false;
-    if (!/^={7,}\s*$/.test(line)) return true;
-    const above = i > 0 ? lines[i - 1] : '';
-    if (!above.trim() || MARKER_LINE.test(above)) return true;
-    const key = `${above.trimEnd()}\n${line.trimEnd()}`;
-    return !sides.some((side) => (side.get(key) ?? 0) >= (headings.get(key) ?? 0));
-  });
+  return MARKER_LINES.test(text);
 }
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
 /** Derive the stage from the displayed draft, including edits not saved yet. */
 export function conflictFileStage(file: ConflictFile, contents = file.result): ConflictFileStage {
-  if (file.unsupported || fileHasConflictMarkers(file, contents)) return 'conflicted';
+  if (file.unsupported || hasConflictMarkers(contents)) return 'conflicted';
   return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
 }
 

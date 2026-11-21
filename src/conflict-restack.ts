@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   CONFLICT_FILE_LIMIT,
-  fileHasConflictMarkers,
   hasConflictMarkers,
   type ConflictSession,
   type RestackPlan,
@@ -167,7 +166,7 @@ export async function prepareRestack(
         const files = plan.blocked?.files ?? [];
         if (
           !files.length ||
-          files.some((file) => !file.resolved || file.unsupported || fileHasConflictMarkers(file, file.result))
+          files.some((file) => !file.resolved || file.unsupported || hasConflictMarkers(file.result))
         )
           throw new Error('Resolve and review every paused file before continuing the restack.');
         for (const file of files) {

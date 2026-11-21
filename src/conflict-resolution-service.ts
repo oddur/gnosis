@@ -4,7 +4,6 @@ import { settleInOrder } from '../lib/bounded';
 import fs from 'node:fs/promises';
 import {
   CONFLICT_FILE_LIMIT,
-  fileHasConflictMarkers,
   hasConflictMarkers,
   validateConflictRequest,
   type ConflictFile,
@@ -1108,7 +1107,7 @@ export function createConflictResolutionService(deps: Deps) {
   function assertReviewed(session: ConflictSession) {
     if (session.preparation === 'up-to-date')
       throw new Error('The PR already contains the base branch. No update is needed.');
-    if (session.files.some((f) => !f.resolved || f.unsupported || fileHasConflictMarkers(f, f.result)))
+    if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
       throw new Error('Resolve and mark every file reviewed before publishing.');
   }
   async function resultTree(
@@ -1283,7 +1282,7 @@ export function createConflictResolutionService(deps: Deps) {
               Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT
             )
               throw new Error('This paused file cannot be edited.');
-            if (request.resolved && fileHasConflictMarkers(file, request.contents))
+            if (request.resolved && hasConflictMarkers(request.contents))
               throw new Error('Remove the remaining conflict markers first.');
             file.result = request.contents;
             file.resolved = request.resolved;
@@ -1327,7 +1326,7 @@ export function createConflictResolutionService(deps: Deps) {
             Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT
           )
             throw new Error('This file cannot be saved in the conflict editor.');
-          if (request.resolved && fileHasConflictMarkers(file, request.contents))
+          if (request.resolved && hasConflictMarkers(request.contents))
             throw new Error('Remove the remaining conflict markers first.');
           if (file.result !== request.contents) {
             file.source = 'manual';

@@ -186,18 +186,16 @@ async function reformatted(
   const fill = (text: string) =>
     segments.map((s) => (s.kind === 'text' ? s.text : s.index === index ? text : s.block.ours)).join('');
   try {
-    // One round of comparisons: which side only reformatted, and whether the result is either side's program.
-    const [baseText, result] = [fill(base), fill(proposal)];
-    const [pr, main, likeMain, likePr] = await Promise.all([
+    // Which side only reformatted, first: when both changed the code (the common case), nothing more is parsed.
+    const baseText = fill(base);
+    const [pr, main] = await Promise.all([
       equivalent(language, baseText, fill(ours)),
       equivalent(language, baseText, fill(theirs)),
-      equivalent(language, fill(theirs), result),
-      equivalent(language, fill(ours), result),
     ]);
     if (pr === main) return undefined;
     const [formatter, editor] = pr ? ['the PR', 'main'] : ['main', 'the PR'];
     const lead = `${pr ? 'The PR' : 'Main'} only reformatted these lines and ${editor} changed them`;
-    if (!(pr ? likeMain : likePr))
+    if (!(await equivalent(language, fill(pr ? theirs : ours), fill(proposal))))
       return { merged: false, note: `${lead}. The result doesn’t match ${editor}’s change. Check it.` };
     if (!keepsLayout({ base, edited: pr ? theirs : ours, formatted: pr ? ours : theirs }, proposal))
       return {
@@ -617,7 +615,7 @@ export interface BucketSummary {
   files: number;
   conflicts: number;
   merged: number;
-  /** Decide and Check blocks in files you have not marked reviewed. */
+  /** Decide and Check blocks in files you have not marked reviewed, and files with a marker left. */
   needs: number;
   /** Proposals whose checks are still running. */
   checking: number;
@@ -626,9 +624,18 @@ export interface BucketSummary {
   wholeConflicts: number;
   /** Whole-file proposals to check, one per file. */
   wholeFiles: number;
+  /** Of `needs`: files with a conflict marker left outside any whole conflict (fileStatus `marker`). */
+  markers: number;
 }
 export function bucketSummary(
-  files: { buckets: readonly ConflictBucket[]; verdict: Verdict | undefined; reviewed: boolean; whole?: boolean }[]
+  files: {
+    buckets: readonly ConflictBucket[];
+    verdict: Verdict | undefined;
+    reviewed: boolean;
+    whole?: boolean;
+    /** The file's status is `marker`: it needs you for that alone, whatever its buckets. */
+    marker?: boolean;
+  }[]
 ): BucketSummary {
   const summary: BucketSummary = {
     files: files.length,
@@ -639,14 +646,20 @@ export function bucketSummary(
     decide: 0,
     wholeConflicts: 0,
     wholeFiles: 0,
+    markers: 0,
   };
-  for (const { buckets, verdict, reviewed, whole } of files) {
-    if (whole && !reviewed && buckets.includes('check')) summary.wholeFiles++;
+  for (const { buckets, verdict, reviewed, whole, marker } of files) {
+    if (marker && !reviewed) {
+      summary.markers++;
+      summary.needs++;
+    }
+    if (whole && !reviewed && !marker && buckets.includes('check')) summary.wholeFiles++;
     for (const bucket of buckets) {
       summary.conflicts++;
       if (bucket === 'merged') summary.merged++;
-      // A reviewed file needs nothing more, whatever its buckets: its status is Reviewed everywhere.
-      if (reviewed) continue;
+      // A reviewed file needs nothing more, whatever its buckets: its status is Reviewed everywhere. A file with a
+      // marker left shows that alone, and counts once above.
+      if (reviewed || marker) continue;
       if (bucket === 'decide' || bucket === 'check') summary.needs++;
       if (bucket === 'decide') summary.decide++;
       if (bucket === 'check' && whole) summary.wholeConflicts++;
@@ -675,12 +688,13 @@ export function summarySentence(s: BucketSummary) {
 }
 /** What needs you, in the file list's words: "1 to check.", or "3 need you: 2 to check, 1 to decide." */
 function needsYou(s: BucketSummary) {
-  const check = s.needs - s.decide - s.wholeConflicts;
+  const check = s.needs - s.decide - s.wholeConflicts - s.markers;
   const covers = s.wholeConflicts > s.wholeFiles ? ` for ${s.wholeConflicts} conflicts` : '';
   const parts = [
     ...(s.wholeFiles ? [`${s.wholeFiles} ${s.wholeFiles === 1 ? 'proposal' : 'proposals'} to check${covers}`] : []),
     ...(check ? [`${check} to check`] : []),
     ...(s.decide ? [`${s.decide} to decide`] : []),
+    ...(s.markers ? [`${s.markers} ${s.markers === 1 ? 'file' : 'files'} with a conflict marker left`] : []),
   ];
   return parts.length === 1
     ? ` ${parts[0]}.`
