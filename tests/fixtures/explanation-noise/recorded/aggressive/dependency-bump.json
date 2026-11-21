@@ -1,0 +1,26 @@
+{
+  "plan": {
+    "summary": "Updates the `undici` HTTP client dependency from 6.19.2 to 7.2.0 to get the keep-alive fix.\n\n- `package.json` moves the range from `^6.19.2` to `^7.2.0`.\n- `package-lock.json` pins 7.2.0 with a new integrity hash.\n- The lockfile raises the `undici` Node engine requirement from `>=18.17` to `>=20.18.1`.",
+    "riskLevel": "medium",
+    "riskRationale": "A major version bump of an HTTP client can change runtime behavior. It also drops support for Node versions below 20.18.1, which may break older runtimes.",
+    "storyArc": "The PR bumps undici to a new major version. The manifest states the intent and the lockfile pins the exact version and its raised Node requirement. One topic covers both.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Upgrade undici to 7.x and raise the Node engine floor",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does the undici 6 to 7 bump change for the project? Connect the new range in package.json to the pinned 7.2.0 entry and the new `>=20.18.1` Node engine in the lockfile. Verify that the project's Node version supports the new floor.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

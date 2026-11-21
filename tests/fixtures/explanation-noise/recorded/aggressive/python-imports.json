@@ -1,0 +1,46 @@
+{
+  "plan": {
+    "summary": "Health checks now give up on slow calls. The PR adds a cache check to the health run and adds a 2-second HTTP timeout to the probe.\n\n- `run_checks()` now includes `check_cache()` with the db and queue checks.\n- `probe(url)` now calls `httpx.get(url, timeout=2.0)` and returns the HTTP status with the URL.",
+    "riskLevel": "low",
+    "riskRationale": "Small change in two files. The probe now makes a real network call. The excerpts show no handling for a timeout error, so a slow endpoint may raise an exception. No tests were seen.",
+    "storyArc": "The PR makes health checks stricter. First, the probe waits at most two seconds for a response and reports the status. Second, the health run adds a cache check beside the db and queue checks.",
+    "noise": [
+      {
+        "hunkId": "hunk-0",
+        "reason": "Import of check_cache only. Hunk-1 holds the runtime change that uses it."
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Import of httpx only. Hunk-3 holds the runtime change that uses it."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Probe times out after two seconds and reports status",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does probe(url) do now? It makes an HTTP GET with a 2.0 second timeout and returns the status code in its JSON. Verify how httpx timeout errors reach callers, because the excerpt shows no handling.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Health run includes the cache check",
+        "slideType": "feature",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What does run_checks() cover now? It adds check_cache() to the db and queue checks. Verify that check_cache is imported from service.checks and how callers use the list.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

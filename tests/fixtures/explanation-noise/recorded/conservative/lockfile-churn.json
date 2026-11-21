@@ -1,0 +1,35 @@
+{
+  "plan": {
+    "summary": "New `Record` IDs use UUIDv7 instead of UUIDv4, so IDs sort by creation time.\n\n- `Cargo.toml` swaps the `uuid` feature `v4` for `v7`.\n- `Record::new` calls `Uuid::now_v7()` instead of `Uuid::new_v4()`.\n- Existing records keep their old IDs.\n- `Cargo.lock` changes follow the manifest change.",
+    "riskLevel": "low",
+    "riskRationale": "Small change to ID generation. Old v4 IDs stay valid. Removing the `v4` feature breaks any other code that calls `new_v4`. The diff does not show such code.",
+    "storyArc": "The feature flag in the manifest enables the v7 generator. The `Record::new` constructor then uses it. The lockfile only records the new transitive dependencies.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Lockfile churn (`js-sys` added to a dependency) that follows the manifest feature change."
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Lockfile churn (`rand` added to `uuid` dependencies) that follows the manifest feature change."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Record IDs use time-ordered UUIDv7",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How do new records get their IDs, and what must change in the manifest to allow it? Connect the `uuid` feature switch from `v4` to `v7` with the `Uuid::now_v7()` call in `Record::new`. Verify no other code in the crate still needs `v4`.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

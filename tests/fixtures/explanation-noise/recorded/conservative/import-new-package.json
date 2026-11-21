@@ -1,0 +1,27 @@
+{
+  "plan": {
+    "summary": "Limits concurrent uploads to four at a time.\n\n- `uploadAll` now wraps each `putObject` call in a `p-limit` limiter with a concurrency of 4.\n- `p-limit` is added as a dependency in `package.json`.",
+    "riskLevel": "low",
+    "riskRationale": "Small change in one function. It adds a well-known dependency and changes only upload scheduling. Failure behavior of `Promise.all` is unchanged.",
+    "storyArc": "The PR replaces unbounded parallel uploads with a bounded queue. The dependency is added first, then used in `uploadAll`.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Cap upload concurrency at four with p-limit",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-2",
+          "hunk-1",
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `uploadAll` now limit how many `putObject` calls run at once? Connect the `pLimit(4)` limiter, the import, and the new `p-limit` dependency version in package.json.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

@@ -1,4 +1,5 @@
-import { explanationFile, normalizeExplanationOptions } from '../../lib/explanation-options';
+import { DEFAULT_EXPLANATION_PREFERENCES, explanationFile, normalizeExplanationOptions } from '../../lib/explanation-options';
+import { changedRange } from '../../lib/explanation-noise';
 import type { GenerateReviewRequest } from '../../lib/types';
 import { initializeChecksView } from '../../lib/checks-view';
 import { automaticBriefingBlock } from '../../lib/repository-settings';
@@ -222,6 +223,10 @@ if (parityScenario) {
     explainerIdea: undefined,
     mermaidDiagram: undefined,
     d2Diagram: undefined,
+  };  // Reduce noise (tests/explanation-parity-browser.ts): the third hunk was left out, and the overview opens it in Changes.
+  review.noiseReduction = {
+    level: 'conservative',
+    leftOut: [{ filePath: path, ...changedRange(hunks[2]), reason: 'import only', source: 'rules' }],
   };
   // The second topic's reading order goes scope.ts, imports.ts, then back to scope.ts: two blocks of scope.ts.
   const importsPath = prefix + 'src/imports.ts';
@@ -613,6 +618,12 @@ let prefs: Preferences = {
   // `?team-requests`: team review requests are on, so the Overview lists them under "Your team".
   ...(new URLSearchParams(location.search).has('team-requests') ? { notificationSettings: { events: { 'team-review-requested': true } } } : {}),
 };
+// Reduce noise out of date (tests/explanation-options-browser.ts): the explanation followed the repository's
+// Conservative level, which is now Aggressive.
+if (new URLSearchParams(location.search).has('noise-outdated')) {
+  review.noiseReduction = { level: 'conservative', defaultLevel: 'conservative', repository: members[0].repo, leftOut: [] };
+  prefs.repositorySettings = { [members[0].repo]: { explanation: { ...DEFAULT_EXPLANATION_PREFERENCES, reduceNoise: 'aggressive' } } };
+}
 let activities: ActivityTask[] = [
   {
     id: 'exploration:ready',

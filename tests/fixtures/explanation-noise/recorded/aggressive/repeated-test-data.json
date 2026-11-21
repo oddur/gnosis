@@ -1,0 +1,34 @@
+{
+  "plan": {
+    "summary": "Change the default model from `model-6-1` to `model-6-2`.\n\n- `DEFAULT_MODEL` in `src/models.ts` now has the value `model-6-2`.\n- Two tests change their model string to match.",
+    "riskLevel": "low",
+    "riskRationale": "One constant changes. The two test edits only follow it. Which code reads `DEFAULT_MODEL` is not visible in the supplied hunks.",
+    "storyArc": "One constant sets the new default model. The test edits only keep the old string from appearing in tests.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Test data follows the rename. The test passes its own model string, so it does not depend on the default."
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Test data follows the rename. The test passes its own model string, so it does not depend on the default."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Default model changes to model-6-2",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What value does `DEFAULT_MODEL` now have, and what code reads it? Verify the readers in the full source. Only the constant changes here.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

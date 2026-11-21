@@ -13,6 +13,8 @@ import { normalizeDiagramBrief } from './diagram-spec';
 import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
 import { INLINE_EXPLANATION_DIRECTIVE, numberExplanationDiffs } from './inline-explanations';
 import { getProvider } from './provider';
+import { NOISE_SCHEMA_FIELD, noisePlannerDirective } from './explanation-noise';
+import type { NoiseLevel } from './explanation-options';
 import { jsonErrorExcerpt, parseModelJson } from './json-repair';
 import { EXPLAINER_IDEA_DIRECTIVE } from './explainer';
 import type { AIReviewGuide, ModelId, PlannerOutput, Provider, WriterSlideOutput } from './types';
@@ -356,7 +358,8 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
 
 // ── Two-phase generation: Planner + Writers ──────────────────────
 
-const PLANNER_SYSTEM = `You are a code review architect. Given a pull request's metadata, complete diff hunk index, and available source excerpts, your job is to plan the review structure — grouping related hunks into logical topics and ordering them for optimal understanding.
+/** Exported for the noise eval's prompt hash (scripts/explanation-noise-eval.ts). */
+export const PLANNER_SYSTEM = `You are a code review architect. Given a pull request's metadata, complete diff hunk index, and available source excerpts, your job is to plan the review structure — grouping related hunks into logical topics and ordering them for optimal understanding.
 
 ${CHAPTER_GROUPING_DIRECTIVE}
 
@@ -422,6 +425,15 @@ function validatePlannerOutput(obj: unknown): obj is PlannerOutput {
 const plannerJsonRetry = (msg: string) =>
   `\n\nYour previous response was not valid JSON (${msg.slice('Planner JSON parse failed: '.length, 300)}). Inside every string value, escape double quotes as \\" and line breaks as \\n. This matters most for code excerpts, such as ["node", "--version"].\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. No markdown fences around the JSON.`;
 
+/** The planner's user message suffix: noise instructions and the `noise` schema field are added when the level is on. */
+export function plannerUserSuffix(noiseLevel: NoiseLevel = 'off'): string {
+  if (noiseLevel === 'off') return PLANNER_USER_SUFFIX;
+  return (
+    `\n\n${noisePlannerDirective(noiseLevel)}` +
+    PLANNER_USER_SUFFIX.replace('  "storyArc": string,\n', `  "storyArc": string,\n${NOISE_SCHEMA_FIELD}\n`)
+  );
+}
+
 export async function planReview(
   hunkIndex: string,
   prMetadata: string,
@@ -436,10 +448,12 @@ export async function planReview(
     allowedTools?: string[];
     nonStrictMcp?: boolean;
     effort?: import('./effort').Effort;
-  }
+  },
+  noiseLevel: NoiseLevel = 'off'
 ): Promise<PlannerOutput> {
   const provider = getProvider(providerName);
-  const userMessage = prMetadata + (prMetadata.includes(hunkIndex) ? '' : '\n' + hunkIndex) + PLANNER_USER_SUFFIX;
+  const userMessage =
+    prMetadata + (prMetadata.includes(hunkIndex) ? '' : '\n' + hunkIndex) + plannerUserSuffix(noiseLevel);
 
   const generate = (content: string) => {
     console.log(`[planner] Calling ${providerName} (${model}) with ${content.length} chars...`);
@@ -474,6 +488,8 @@ export async function planReview(
   }
 
   for (const topic of parsed.topics) topic.diagramBrief = normalizeDiagramBrief(topic.diagramBrief);
+  // Off never cuts, whatever the planner returns. Otherwise the list is cleaned where it is applied (applyNoise).
+  if (noiseLevel === 'off') delete parsed.noise;
   return parsed;
 }
 

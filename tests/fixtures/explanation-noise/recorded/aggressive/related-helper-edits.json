@@ -1,0 +1,35 @@
+{
+  "plan": {
+    "summary": "Ctrl+C no longer quits the app at once. The first press sets a `quit_requested` flag and the footer shows a confirmation prompt. A second Ctrl+C quits.\n\n- `App` gets a `quit_requested` field, which starts as `false`.\n- `on_key` quits only when the flag is already set.\n- `footer` shows \"Press Ctrl+C again to quit\" while the flag is set.",
+    "riskLevel": "low",
+    "riskRationale": "Small, local change to key handling and a status string. No auth, data, or API contract is touched. The flag is never cleared in the shown code, so any other key press keeps the prompt.",
+    "storyArc": "The change adds a two-step quit. The state field and its default come first. The key handler uses the field to decide between asking and quitting. The footer shows the pending prompt to the user.",
+    "noise": [
+      {
+        "hunkId": "hunk-0",
+        "reason": "Adds the field declaration only. The field's behavior is explained with the key handler."
+      },
+      {
+        "hunkId": "hunk-1",
+        "reason": "Sets the default value of the new field to false. It has no behavior of its own."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Two-step Ctrl+C quit with footer prompt",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-2",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does Ctrl+C now ask before quitting, and how does the user see the prompt? Connect the guarded match arms in `on_key` with the `footer` early return. Verify that nothing in the shown code resets `quit_requested` on other keys.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

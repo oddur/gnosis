@@ -4,11 +4,12 @@ import { parentPort, workerData } from 'node:worker_threads';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { TAGS } from '../lib/syntax-tags';
-import { conflictChecker, type CheckRequest, type CheckResponse, type TreeSitterFiles } from './conflict-checks';
+import { conflictChecker, noiseAnswer, type CheckRequest, type CheckResponse, type TreeSitterFiles } from './conflict-checks';
 
 /**
- * The conflict checks' worker thread (src/conflict-checks.ts). It reads the runtime and grammars the renderer ships
- * (vite.renderer.config.ts keeps their names), and bundles the tag queries as the renderer's syntax worker does.
+ * The conflict checks' worker thread (src/conflict-checks.ts), which also runs Reduce noise's syntax comparison for
+ * explanations. It reads the runtime and grammars the renderer ships (vite.renderer.config.ts keeps their names), and
+ * bundles the tag queries as the renderer's syntax worker does.
  */
 const port = parentPort;
 if (!port) throw new Error('The conflict checks must run in a worker.');
@@ -19,6 +20,15 @@ const engine = createSyntaxEngine(TreeSitter, {
   tags: (name) => Promise.resolve(TAGS[name] ?? ''),
 });
 port.on('message', (message: CheckRequest) => {
+  if (message.kind === 'noise') {
+    // Reduce noise for an explanation (lib/explanation-noise.ts): one file at a time, each failure its own null.
+    void (async () => {
+      const noise = [];
+      for (const file of message.files) noise.push(await noiseAnswer(engine, file));
+      port.postMessage({ id: message.id, noise } satisfies CheckResponse);
+    })();
+    return;
+  }
   const check = conflictChecker(engine, message.disabled);
   check(message.file).then(
     (verdict) => port.postMessage({ id: message.id, verdict } satisfies CheckResponse),

@@ -266,7 +266,9 @@ export function buildPlannerContext(
   hunkIndex: string,
   excludedFilesSummary?: string,
   claudeContext?: ProjectClaudeContext | null,
-  planningHunks?: IndexedHunk[]
+  planningHunks?: IndexedHunk[],
+  /** Reduce noise: hunks the rules left out, so the planner knows the index is not incomplete. */
+  leftOut: readonly { filePath: string; startLine: number; endLine: number; side: 'after' | 'before'; reason: string }[] = []
 ): string {
   const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
   const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
@@ -283,6 +285,13 @@ Files changed: ${changedFiles.length} | Lines added: ${totalAdditions} | Lines d
   if (claudeSection) ctx += '\n\n' + claudeSection;
   if (excludedFilesSummary) ctx += '\n\n' + excludedFilesSummary;
   ctx += '\n\n' + hunkIndex;
+  if (leftOut.length)
+    ctx +=
+      `\n\n<left_out_hunks count="${leftOut.length}">\nLeft out as noise, not shown: these hunks are not in the hunk index and need no topic. The index is complete without them.\n` +
+      leftOut
+        .map((h) => `- ${h.filePath}:${h.startLine}${h.endLine > h.startLine ? `-${h.endLine}` : ''}${h.side === 'before' ? ' (old lines)' : ''} (${h.reason})`)
+        .join('\n') +
+      '\n</left_out_hunks>';
   if (planningHunks) ctx += '\n\n' + buildPlannerEvidence(planningHunks);
 
   return ctx;
@@ -302,7 +311,9 @@ export function buildTopicContext(
   prDescription: string,
   storyArc: string,
   allTopics: TopicPlan[],
-  claudeContext?: ProjectClaudeContext | null
+  claudeContext?: ProjectClaudeContext | null,
+  /** Reduce noise: hunks left out of the explanation in this topic's files, shown as context only. */
+  leftOutHunks: IndexedHunk[] = []
 ): string {
   const relevantHunks = topic.hunkIds.map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
@@ -355,6 +366,13 @@ PR Description: ${prDescription || '(none)'}
     ctx += `${hunk.expandedContent}\n\n`;
   }
   ctx += '</diff_hunks>';
+  if (leftOutHunks.length) {
+    ctx += `\n\n<left_out_hunks>
+Left out of the explanation as noise. Use them only as context, for example an import that explains a call. Do not explain or cite them, and do not anchor notes or checks to them.
+`;
+    for (const hunk of leftOutHunks) ctx += `--- ${hunk.filePath} [${hunk.id}]\n${hunk.hunkHeader}\n${hunk.content}\n\n`;
+    ctx += '</left_out_hunks>';
+  }
 
   // Scoped file contents — only for affected files
   let hasBeforeContent = false;

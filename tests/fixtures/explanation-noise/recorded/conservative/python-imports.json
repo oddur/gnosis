@@ -1,0 +1,39 @@
+{
+  "plan": {
+    "summary": "Health checks now cover the cache, and the probe gives up on slow URLs after two seconds.\n\n- `run_checks()` adds `check_cache()` to the existing DB and queue checks.\n- `probe(url)` now makes an `httpx.get` call with `timeout=2.0` and returns the HTTP status with the URL.",
+    "riskLevel": "low",
+    "riskRationale": "Small change in two files. The new timeout and cache check are limited in scope. The diff shows no error handling for a timeout, which a reviewer should check.",
+    "storyArc": "The PR does two things for health checks. First, the probe makes a real HTTP request with a two-second limit. Second, the health run adds a cache check. The probe change comes first because it holds the timeout behavior named in the title.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Probe makes a timed HTTP request",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-2",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does probe(url) do now, and what happens when the request is slow? Connect the httpx import to the get call with timeout=2.0. Verify in the source whether a timeout error is caught or passes to the caller.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Health run includes the cache check",
+        "slideType": "feature",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "Which checks does run_checks() run now? Connect the new check_cache import to its added call in the returned list. Verify that check_cache exists in service.checks and does not use the probe.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

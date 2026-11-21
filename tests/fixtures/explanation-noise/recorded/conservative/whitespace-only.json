@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "The cache size can now be set with the `CACHE_MB` environment variable. If the value is missing, not a number, or not above zero, the code uses `DEFAULT_MEGABYTES`.\n\n- `cacheConfig` parses `env.CACHE_MB` with `Number`.\n- It accepts only finite values above zero.\n- `CACHE_DIR` handling is unchanged.",
+    "riskLevel": "low",
+    "riskRationale": "Small change in one config function with a safe fallback to the default. An invalid or missing value keeps the old behavior. Fractional values are accepted, and no tests are shown.",
+    "storyArc": "One behavior change: the cache size now comes from `CACHE_MB` and falls back to the default when the value is not valid.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Read cache size from CACHE_MB with a safe default",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `cacheConfig` choose the cache size now? Verify that a missing, NaN, infinite, zero, or negative `CACHE_MB` gives `DEFAULT_MEGABYTES`, and that fractional values pass.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

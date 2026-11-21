@@ -1,0 +1,75 @@
+{
+  "id": "dependency-bump",
+  "title": "Update the HTTP client",
+  "description": "Bumps undici to 7 for the keep-alive fix.",
+  "source": "gnosis #403 and backtrack #2, #5: a version bump in a manifest (essential) and the lockfile lines that follow it.",
+  "files": [
+    {
+      "path": "package.json",
+      "before": [
+        "{",
+        "  \"name\": \"fetcher\",",
+        "  \"dependencies\": {",
+        "    \"undici\": \"^6.19.2\"",
+        "  }",
+        "}"
+      ],
+      "after": [
+        "{",
+        "  \"name\": \"fetcher\",",
+        "  \"dependencies\": {",
+        "    \"undici\": \"^7.2.0\"",
+        "  }",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Dependency version bump.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "package-lock.json",
+      "before": [
+        "{",
+        "  \"name\": \"fetcher\",",
+        "  \"lockfileVersion\": 3,",
+        "  \"packages\": {",
+        "    \"node_modules/undici\": {",
+        "      \"version\": \"6.19.2\",",
+        "      \"resolved\": \"https://registry.npmjs.org/undici/-/undici-6.19.2.tgz\",",
+        "      \"integrity\": \"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",",
+        "      \"engines\": {",
+        "        \"node\": \">=18.17\"",
+        "      }",
+        "    }",
+        "  }",
+        "}"
+      ],
+      "after": [
+        "{",
+        "  \"name\": \"fetcher\",",
+        "  \"lockfileVersion\": 3,",
+        "  \"packages\": {",
+        "    \"node_modules/undici\": {",
+        "      \"version\": \"7.2.0\",",
+        "      \"resolved\": \"https://registry.npmjs.org/undici/-/undici-7.2.0.tgz\",",
+        "      \"integrity\": \"sha512-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\",",
+        "      \"engines\": {",
+        "        \"node\": \">=20.18.1\"",
+        "      }",
+        "    }",
+        "  }",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Lockfile churn that follows the manifest bump."
+        }
+      ]
+    }
+  ]
+}

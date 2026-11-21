@@ -1,0 +1,123 @@
+{
+  "id": "go-imports",
+  "title": "Normalize and sign webhook payloads",
+  "description": "Webhook payloads are trimmed and signed with HMAC.",
+  "source": "Import-block additions in Go: a standard-library package (noise) and a module the file never imported (a new dependency).",
+  "files": [
+    {
+      "path": "webhook/payload.go",
+      "before": [
+        "package webhook",
+        "",
+        "import (",
+        "\t\"fmt\"",
+        ")",
+        "",
+        "func Payload(event string, body string) string {",
+        "\treturn fmt.Sprintf(\"%s:%s\", event, body)",
+        "}",
+        "// line 0",
+        "// line 1",
+        "// line 2",
+        "// line 3",
+        "// line 4",
+        "// line 5",
+        "// line 6",
+        "// line 7",
+        "",
+        "func Event(name string) string {",
+        "\treturn name",
+        "}"
+      ],
+      "after": [
+        "package webhook",
+        "",
+        "import (",
+        "\t\"fmt\"",
+        "\t\"strings\"",
+        ")",
+        "",
+        "func Payload(event string, body string) string {",
+        "\treturn fmt.Sprintf(\"%s:%s\", event, body)",
+        "}",
+        "// line 0",
+        "// line 1",
+        "// line 2",
+        "// line 3",
+        "// line 4",
+        "// line 5",
+        "// line 6",
+        "// line 7",
+        "",
+        "func Event(name string) string {",
+        "\treturn strings.TrimSpace(name)",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Standard-library import added."
+        },
+        {
+          "label": "essential",
+          "note": "Trims event names.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "webhook/sign.go",
+      "before": [
+        "package webhook",
+        "",
+        "import (",
+        "\t\"encoding/hex\"",
+        ")",
+        "// note 0",
+        "// note 1",
+        "// note 2",
+        "// note 3",
+        "// note 4",
+        "// note 5",
+        "// note 6",
+        "// note 7",
+        "",
+        "func Sign(secret []byte, body string) string {",
+        "\treturn hex.EncodeToString([]byte(body))",
+        "}"
+      ],
+      "after": [
+        "package webhook",
+        "",
+        "import (",
+        "\t\"encoding/hex\"",
+        "",
+        "\t\"github.com/acme/hmacx\"",
+        ")",
+        "// note 0",
+        "// note 1",
+        "// note 2",
+        "// note 3",
+        "// note 4",
+        "// note 5",
+        "// note 6",
+        "// note 7",
+        "",
+        "func Sign(secret []byte, body string) string {",
+        "\treturn hex.EncodeToString(hmacx.Sum(secret, []byte(body)))",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "aggressive-only",
+          "note": "Import of a module the file did not import: a new dependency."
+        },
+        {
+          "label": "essential",
+          "note": "Signs with HMAC.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

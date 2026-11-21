@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "Change the stack status label for members that need a rebase from 'needs rebasing' to 'needs to move'.\n\n- One string in `statusLabel` in `src/stack/status.ts` changes.\n- The `needsRebase` condition and the 'up to date' label stay the same.\n- Two comment-only edits are left out.",
+    "riskLevel": "low",
+    "riskRationale": "One user-visible label string changes. The logic does not change. Any consumer that compares against the old string, such as a test or a UI check, was not in the evidence and needs a check.",
+    "storyArc": "The PR has one change. The status label shown for a stack member that needs a rebase now reads 'needs to move'.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Stack status label says 'needs to move'",
+        "slideType": "refactor",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What text does `statusLabel` return for a member that needs a rebase? Show the one-string change and that the `needsRebase` condition is unchanged. Verify whether other code or tests match the old 'needs rebasing' string.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

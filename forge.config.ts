@@ -69,7 +69,7 @@ const config: ForgeConfig = {
         { entry: 'src/main.ts', config: 'vite.main.config.ts', target: 'main' },
         { entry: 'src/markdown-review-worker.ts', config: 'vite.markdown-worker.config.ts', target: 'main' },
         { entry: 'src/app-data-worker.ts', config: 'vite.main.config.ts', target: 'main' },
-        // Conflict checks with tree-sitter, off the main thread (src/conflict-checks.ts).
+        // Conflict checks and Reduce noise's comparison with tree-sitter, off the main thread (src/conflict-checks.ts).
         { entry: 'src/conflict-check-worker.ts', config: 'vite.main.config.ts', target: 'main' },
         // Tree-sitter definitions for chat's PR-wide context (src/chat-context-definitions.ts).
         { entry: 'src/chat-context-worker.ts', config: 'vite.main.config.ts', target: 'main' },

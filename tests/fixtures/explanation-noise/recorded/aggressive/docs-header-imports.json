@@ -1,0 +1,26 @@
+{
+  "plan": {
+    "summary": "Documents the new `retries` option in docs/guide/requests.mdx. The change adds Tabs imports and a Retries section with per-language examples (TypeScript and Python) in tabs.",
+    "riskLevel": "low",
+    "riskRationale": "Documentation-only change in one MDX file. It has no runtime code. The imports must resolve in the docs theme.",
+    "storyArc": "One docs page gains a Retries section. The imports enable the tab components, and the section uses them to show the option per language.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Retries section with per-language tabs",
+        "slideType": "docs",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does the guide document `retries`? The Tabs and TabItem imports at the top enable the tabbed examples in the new Retries section. Verify the TabItem elements have only `value` and no `label`, and that the imports are valid for the docs theme.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

@@ -1,0 +1,70 @@
+{
+  "id": "comment-only",
+  "title": "Remove stale lock files before opening the store",
+  "description": "Opening the store removes a lock file left by a crashed process.",
+  "source": "backtrack #6 and #16: safety comments added above unchanged code, beside the real fix.",
+  "files": [
+    {
+      "path": "src/store.rs",
+      "before": [
+        "use std::fs;",
+        "use std::io;",
+        "use std::path::Path;",
+        "",
+        "pub fn open(dir: &Path) -> io::Result<Store> {",
+        "    let path = dir.join(\"data.db\");",
+        "    if path.exists() {",
+        "        return Store::load(&path);",
+        "    }",
+        "    Store::create(&path)",
+        "}",
+        "",
+        "pub fn lock_path(dir: &Path) -> std::path::PathBuf {",
+        "    dir.join(\"data.lock\")",
+        "}",
+        "",
+        "pub fn clear_stale_lock(dir: &Path) -> io::Result<()> {",
+        "    Ok(())",
+        "}"
+      ],
+      "after": [
+        "use std::fs;",
+        "use std::io;",
+        "use std::path::Path;",
+        "",
+        "pub fn open(dir: &Path) -> io::Result<Store> {",
+        "    let path = dir.join(\"data.db\");",
+        "    // A store that exists is loaded as it is: create would truncate it.",
+        "    // The check races with another process creating it, which the lock prevents.",
+        "    if path.exists() {",
+        "        return Store::load(&path);",
+        "    }",
+        "    Store::create(&path)",
+        "}",
+        "",
+        "pub fn lock_path(dir: &Path) -> std::path::PathBuf {",
+        "    dir.join(\"data.lock\")",
+        "}",
+        "",
+        "pub fn clear_stale_lock(dir: &Path) -> io::Result<()> {",
+        "    let lock = lock_path(dir);",
+        "    match fs::remove_file(&lock) {",
+        "        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),",
+        "        _ => Ok(()),",
+        "    }",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Comment-only: explains unchanged code."
+        },
+        {
+          "label": "essential",
+          "note": "Removes the stale lock.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "This PR lets the cache size be set with the `CACHE_MB` environment variable.\n\n- `cacheConfig` parses `env.CACHE_MB` with `Number`.\n- It uses the value only when it is finite and greater than 0.\n- Otherwise it keeps `DEFAULT_MEGABYTES`.",
+    "riskLevel": "low",
+    "riskRationale": "A small change in one function. Bad input falls back to the old default. The cache size changes only when CACHE_MB holds a valid positive number.",
+    "storyArc": "One change: `cacheConfig` reads `CACHE_MB` and falls back to the default when the value is not valid.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Cache size read from CACHE_MB with a safe fallback",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `cacheConfig` choose `megabytes` now? Check that a missing, non-numeric, zero, negative, or infinite `CACHE_MB` falls back to `DEFAULT_MEGABYTES`. Verify that `Number(undefined)` gives NaN, and note that an empty string gives 0; both fall back.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

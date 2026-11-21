@@ -1,0 +1,70 @@
+{
+  "id": "whitespace-only",
+  "title": "Read the cache size from the environment",
+  "description": "The cache size can be set with CACHE_MB.",
+  "source": "gnosis #463 and backtrack #19: blank lines and trailing spaces cleaned up in a file the PR also touches elsewhere.",
+  "files": [
+    {
+      "path": "src/cache/config.ts",
+      "before": [
+        "export interface CacheConfig {",
+        "  megabytes: number;",
+        "  directory: string;",
+        "}",
+        "",
+        "",
+        "export const DEFAULT_MEGABYTES = 256;",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export function cacheConfig(env: Record<string, string | undefined>): CacheConfig {",
+        "  return {",
+        "    megabytes: DEFAULT_MEGABYTES,",
+        "    directory: env.CACHE_DIR ?? '.cache',",
+        "  };",
+        "}"
+      ],
+      "after": [
+        "export interface CacheConfig {",
+        "  megabytes: number;",
+        "  directory: string;",
+        "}",
+        "",
+        "export const DEFAULT_MEGABYTES = 256;",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export function cacheConfig(env: Record<string, string | undefined>): CacheConfig {",
+        "  const megabytes = Number(env.CACHE_MB);",
+        "  return {",
+        "    megabytes: Number.isFinite(megabytes) && megabytes > 0 ? megabytes : DEFAULT_MEGABYTES,",
+        "    directory: env.CACHE_DIR ?? '.cache',",
+        "  };",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "A blank line and trailing spaces removed."
+        },
+        {
+          "label": "essential",
+          "note": "Reads CACHE_MB with a fallback.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

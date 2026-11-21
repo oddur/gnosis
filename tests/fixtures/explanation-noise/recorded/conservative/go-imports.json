@@ -1,0 +1,42 @@
+{
+  "plan": {
+    "summary": "Webhook payloads are now normalized and signed with a real HMAC.\n\n- `Event` trims whitespace from event names.\n- `Sign` returns an HMAC of the body computed with the secret, using `hmacx.Sum`. Before, it hex-encoded the raw body, so the secret was not used.",
+    "riskLevel": "high",
+    "riskRationale": "Signing is security-sensitive. The old code did not use the secret at all, so signatures were forgeable. Receivers that check old signatures will fail. The `Event` trim changes the output for names with surrounding whitespace.",
+    "storyArc": "The PR makes webhook output trustworthy. First the signing is fixed, since it is the security-critical change. Then event names are normalized so that they are consistent.",
+    "noise": [
+      {
+        "hunkId": "hunk-2",
+        "reason": "Only adds the hmacx import. The use of the import is in hunk-3, which stays in a topic."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Sign webhook bodies with HMAC",
+        "slideType": "bugfix",
+        "importance": "critical",
+        "hunkIds": [
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `Sign` change from hex-encoding the body to an HMAC keyed by the secret? Verify the `hmacx.Sum` semantics (hash algorithm and argument order) in the source, and the effect on receivers that verify signatures.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Trim whitespace in event names",
+        "slideType": "feature",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What does `Event` now return for names with leading or trailing whitespace? Check the callers to see whether the trimmed name feeds the signed payload.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}

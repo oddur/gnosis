@@ -1,0 +1,62 @@
+{
+  "id": "import-to-dynamic",
+  "title": "Load the zip library only when exporting",
+  "description": "Startup no longer loads the zip library.",
+  "source": "gnosis #443: a top-level import deleted and the module loaded with await import() inside a branch.",
+  "files": [
+    {
+      "path": "src/export.ts",
+      "before": [
+        "import Zip from 'zip-lib';",
+        "import { writeFile } from 'node:fs/promises';",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export async function exportAll(path: string, files: Record<string, Uint8Array>, zip: boolean): Promise<void> {",
+        "  if (zip) {",
+        "    await writeFile(path, await Zip.archive(files));",
+        "    return;",
+        "  }",
+        "  for (const [name, bytes] of Object.entries(files)) await writeFile(`${path}/${name}`, bytes);",
+        "}"
+      ],
+      "after": [
+        "import { writeFile } from 'node:fs/promises';",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export async function exportAll(path: string, files: Record<string, Uint8Array>, zip: boolean): Promise<void> {",
+        "  if (zip) {",
+        "    const { default: Zip } = await import('zip-lib');",
+        "    await writeFile(path, await Zip.archive(files));",
+        "    return;",
+        "  }",
+        "  for (const [name, bytes] of Object.entries(files)) await writeFile(`${path}/${name}`, bytes);",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Top-level import deleted; the next hunk carries the change."
+        },
+        {
+          "label": "essential",
+          "note": "Lazy load: changes when the module runs.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

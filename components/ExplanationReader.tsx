@@ -18,6 +18,8 @@ import { createColumnLayout, type ColumnLayout } from '../lib/explanation-column
 import { estimateCodeColumnHeight } from '../lib/review-gap-hunks';
 import { scrollToMovingTarget } from '../lib/diff-layout';
 import type { ReviewGuide, Slide } from '../lib/types';
+import { ExplanationLeftOut } from './ExplanationLeftOut';
+import type { ChangesFileTarget } from '../src/pages/ReviewPage';
 
 export interface ExplanationReaderHandle {
   navigate: (section: number) => void;
@@ -36,6 +38,8 @@ interface Props {
   actions?: ReactNode;
   onReadingSection: (index: number) => void;
   onOpenChanges?: () => void;
+  /** Opens a spot in Changes: a hunk the overview lists as left out as noise. */
+  onOpenChangesFile?: (target: ChangesFileTarget) => void;
   onReview?: () => void;
 }
 export function ExplanationReader({
@@ -51,6 +55,7 @@ export function ExplanationReader({
   actions,
   onReadingSection,
   onOpenChanges,
+  onOpenChangesFile,
   onReview,
 }: Props) {
   const id = `${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`;
@@ -232,6 +237,7 @@ export function ExplanationReader({
             <Markdown className="reading-prose">{review.riskRationale}</Markdown>
           </details>
         )}
+        <ExplanationLeftOut review={review} onOpen={onOpenChangesFile} />
       </section>
       {review.slides.map((s, i) => (
         <PairedSection

@@ -1,0 +1,26 @@
+{
+  "plan": {
+    "summary": "Startup no longer loads the zip library. The `zip-lib` import moves from the top of `src/export.ts` into `exportAll`, where it loads with a dynamic `import()` only on the zip path.\n\n- Remove the static `import Zip from 'zip-lib'`.\n- Add `await import('zip-lib')` inside the `if (zip)` branch.\n- Non-zip exports and startup never load the library.",
+    "riskLevel": "low",
+    "riskRationale": "Small, contained change to one module's import timing. The zip path now awaits a dynamic import, which adds a first-use load and a possible load failure at export time instead of at startup.",
+    "storyArc": "The change moves a heavy dependency from eager loading to lazy loading. Removing the static import and adding the dynamic import are two halves of one idea, so one topic covers both.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Lazy-load zip-lib inside exportAll",
+        "slideType": "refactor",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does zip-lib move from a startup import to a load on first zip export? Connect the removed static import to the new dynamic import in the `if (zip)` branch. Verify that no other code in the file uses `Zip`.",
+        "diagramBrief": null
+      }
+    ]
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
+}
