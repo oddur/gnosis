@@ -1,6 +1,7 @@
 import { SearchableSelect } from './SearchableSelect';
 import { SubjectIcon } from './SubjectIcon';
-import { conflictStateFrom, PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
+import { conflictStateFrom } from '../lib/merge-conflicts';
+import { PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrDetails, type PrOverviewContent } from './PrDetails';
 import { memberReadiness } from '../lib/merge-readiness';
 import type { ReviewSubject } from '../lib/workbench';

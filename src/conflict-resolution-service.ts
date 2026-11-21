@@ -846,27 +846,33 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    const published = !restart && saved?.status === 'published' ? saved : undefined;
+    // GitHub reports conflicts again (main moved): prepare afresh, whatever state a restack is in. The push stays history.
+    const conflictsAgain = !!published && hasMergeConflicts(state);
     if (
-      !restart &&
-      saved?.status === 'published' &&
-      saved.restack &&
-      saved.restack.status !== 'published' &&
-      (saved.commitSha !== state.headSha || saved.headBranch !== state.headBranch || saved.headRepo !== state.headRepo)
+      published?.restack &&
+      !conflictsAgain &&
+      published.restack.status !== 'published' &&
+      (published.commitSha !== state.headSha || published.headBranch !== state.headBranch || published.headRepo !== state.headRepo)
     ) {
-      return { ...saved, stale: true };
+      return { ...published, stale: true };
     }
-    // A push finished in an earlier session, with nothing left to restack, is history, not a result to show again.
     const dependents = deps.dependents?.(url) ?? [];
-    const finished =
-      !restart &&
-      saved?.status === 'published' &&
-      saved.commitSha === state.headSha &&
-      (saved.restack ? saved.restack.status === 'published' : !dependents.length);
-    // Clean now: say so, with the last update for reference. Conflicts again (main moved), or GitHub still computing:
-    // prepare afresh below, so Git answers.
-    if (finished && state.mergeable === 'MERGEABLE' && !hasMergeConflicts(state))
-      return { ...saved, dependents, reopened: true };
-    if (!restart && !finished && saved?.commitSha === state.headSha) {
+    // Dependent PRs that a push left to restack: the published screen offers that next.
+    const leftToRestack = (pushed: ConflictSession) =>
+      pushed.restack ? pushed.restack.status !== 'published' : !!dependents.length;
+    const restackPending = !!published && leftToRestack(published);
+    const pushedHead = !!published && !conflictsAgain && published.commitSha === state.headSha;
+    // A push finished in an earlier session is history, not a result to show again: the published record, or the
+    // `lastPush` of a preparation made while GitHub was still computing. Clean now: say so, with the push as history.
+    // Still computing: prepare afresh below so Git answers, keeping the push in `lastPush`.
+    const history: ConflictSession['lastPush'] =
+      pushedHead && !restackPending && published?.commitSha
+        ? { commitSha: published.commitSha, headSha: published.headSha }
+        : !restart && saved?.status === 'editing' && !saved.files.length ? saved.lastPush : undefined;
+    if (saved && history?.commitSha === state.headSha && state.mergeable === 'MERGEABLE' && !hasMergeConflicts(state))
+      return { ...saved, dependents, reopened: true, lastPush: history };
+    if (!restart && !conflictsAgain && (!pushedHead || restackPending) && saved?.commitSha === state.headSha) {
       saved.status = 'published';
       saved.dependents = dependents;
       const restack = saved.restack;
@@ -946,9 +952,15 @@ export function createConflictResolutionService(deps: Deps) {
       files,
       version: (saved?.version ?? 0) + 1,
       status: 'editing',
-      dependents: deps.dependents?.(url) ?? [],
+      dependents,
       preparation: await preparation(ctx, id, prepared, files, state, signal),
     };
+    // The push a fresh preparation replaces, while it is still the PR head: its commit, undo point and restack.
+    const lastPush: ConflictSession['lastPush'] =
+      saved?.status === 'published' && saved.commitSha
+        ? { commitSha: saved.commitSha, headSha: saved.headSha, ...(leftToRestack(saved) ? { restackPending: true } : {}) }
+        : saved?.lastPush;
+    if (lastPush?.commitSha === state.headSha) session.lastPush = lastPush;
     signal.throwIfAborted();
     assertAccount(ctx);
     await persist(session);

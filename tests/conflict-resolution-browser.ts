@@ -492,7 +492,7 @@ void app.whenReady().then(async () => {
     // Reopened later, when the PR merges cleanly: nothing to resolve, and the last update only as history.
     await click('Done');
     await wait("!document.querySelector('.conflict-workspace')");
-    await js('window.conflictFixture.reopened=true');
+    await js("Object.assign(window.conflictFixture,{reopened:true,lastPush:{commitSha:'d'.repeat(40),headSha:'a'.repeat(40)}})");
     await open();
     await wait("document.querySelector('[data-conflict-reopened] h2')?.textContent==='Nothing to resolve'");
     const reopened = await js<string>("document.querySelector('[data-conflict-reopened]').innerText");
@@ -504,7 +504,7 @@ void app.whenReady().then(async () => {
     await captureAll('reopened-clean');
     await click('Done');
     await wait("!document.querySelector('.conflict-workspace')");
-    await js('delete window.conflictFixture.reopened');
+    await js('delete window.conflictFixture.reopened; delete window.conflictFixture.lastPush');
     await open();
     await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
 

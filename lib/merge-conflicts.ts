@@ -1,4 +1,4 @@
-import { queueSignalKey, type QueueSignalRequest, type QueueSignals } from './queue-signals';
+import { QUEUE_SIGNALS_TTL, queueSignalKey, type QueueSignalRequest, type QueueSignals } from './queue-signals';
 
 /**
  * Merge conflict state of one PR revision.
@@ -23,6 +23,17 @@ export function mergeConflictState(signals: QueueSignals | undefined): MergeConf
 
 /** "Resolve conflicts…" is offered unless GitHub says the PR merges cleanly. A PR only behind its base is clean. */
 export const offersConflictResolution = (state: MergeConflictState) => state !== 'clear';
+/**
+ * The merge state of each PR's head from the status values on hand, for deciding what to offer. A value past its
+ * time-to-live (`checkedAt + QUEUE_SIGNALS_TTL`, the store's `expires`) counts as unchecked: main may have moved since,
+ * and a restart, backoff or rate limit can leave an old answer in place.
+ */
+export const conflictStateFrom =
+  (signals: readonly (QueueSignals | undefined)[], now = Date.now()) =>
+  (member: QueueSignalRequest): MergeConflictState => {
+    const value = signals.find((candidate) => candidate && queueSignalKey(candidate) === queueSignalKey(member));
+    return value && value.checkedAt + QUEUE_SIGNALS_TTL > now ? mergeConflictState(value) : 'unchecked';
+  };
 
 export function memberMergeState(member: QueueSignalRequest, states: MergeStates | undefined): MergeConflictState {
   return states?.get(queueSignalKey(member)) ?? 'unchecked';

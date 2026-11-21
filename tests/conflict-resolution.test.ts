@@ -647,7 +647,8 @@ void test('reopen recognizes a successful push when saving the published state f
   assert.equal(reopened.session.status, 'published');
   assert.equal(reopened.session.commitSha, f.state.headSha);
 });
-void test('reopening after an earlier push shows nothing to resolve, or prepares again when main brought new conflicts', async (t) => {
+/** A fixture whose conflict was resolved and pushed: `push` is the history every later reopen must keep. */
+async function pushedFixture(t: TestContext) {
   const f = await fixture(t);
   const saved = (
     await f.run({ kind: 'save', id: f.session.id, version: f.session.version, path: 'sample.ts', contents: 'export const answer = 3;\n', resolved: true })
@@ -657,26 +658,59 @@ void test('reopening after an earlier push shows nothing to resolve, or prepares
   const pushed = (await f.run({ kind: 'publish', id: saved.id, version: saved.version, previewToken: preview.token, message: 'Resolve' })).session;
   assert.equal(pushed.status, 'published');
   assert.equal(pushed.reopened, undefined, 'The push itself shows its result');
-  Object.assign(f.state, { headSha: await f.git('rev-parse', 'feature'), mergeable: 'MERGEABLE', mergeState: 'CLEAN' });
+  f.state.headSha = await f.git('rev-parse', 'feature');
+  const push = { commitSha: f.state.headSha, headSha: pushed.headSha };
+  /** Main moves with a change that conflicts with the pushed resolution. */
+  const conflictAgain = async () => {
+    await fs.writeFile(path.join(f.remote, 'sample.ts'), 'export const answer = 9;\n');
+    await f.git('commit', '-am', 'Main changes the answer again');
+    Object.assign(f.state, { baseSha: await f.git('rev-parse', 'main'), mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  };
+  return { ...f, push, conflictAgain };
+}
+void test('reopening after an earlier push shows nothing to resolve, or prepares again when main brought new conflicts', async (t) => {
+  const f = await pushedFixture(t);
+  Object.assign(f.state, { mergeable: 'MERGEABLE', mergeState: 'CLEAN' });
   const clean = (await f.run({ kind: 'open', url: f.state.url })).session;
   assert.equal(clean.reopened, true);
-  assert.equal(clean.commitSha, f.state.headSha, 'The last update stays reachable as history');
-  assert.equal(clean.headSha, pushed.headSha, 'Undo still names the head before the push');
-  // GitHub has not answered yet: Git decides, and finds main already merged.
-  Object.assign(f.state, { mergeable: 'UNKNOWN', mergeState: 'UNKNOWN' });
-  const computing = (await f.run({ kind: 'open', url: f.state.url })).session;
-  assert.equal(computing.reopened, undefined);
-  assert.equal(computing.preparation, 'up-to-date');
-  // Main moved and conflicts again: a fresh preparation, not the old result.
-  await fs.writeFile(path.join(f.remote, 'sample.ts'), 'export const answer = 9;\n');
-  await f.git('commit', '-am', 'Main changes the answer again');
-  Object.assign(f.state, { baseSha: await f.git('rev-parse', 'main'), mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  assert.deepEqual(clean.lastPush, f.push, 'The merge commit and the undo head stay reachable as history');
+  await f.conflictAgain();
   const again = (await f.run({ kind: 'open', url: f.state.url })).session;
   assert.equal(again.status, 'editing');
   assert.equal(again.reopened, undefined);
   assert.equal(again.headSha, f.state.headSha);
   assert.equal(again.files.length, 1);
   assert.match(again.files[0].original, /<<<<<<< /);
+  assert.deepEqual(again.lastPush, f.push, 'The fresh preparation keeps the push as history');
+});
+void test('reopening while GitHub is still computing keeps the push record', async (t) => {
+  const f = await pushedFixture(t);
+  Object.assign(f.state, { mergeable: 'UNKNOWN', mergeState: 'UNKNOWN' });
+  // Git decides meanwhile, and finds main already merged.
+  const computing = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(computing.reopened, undefined);
+  assert.equal(computing.preparation, 'up-to-date');
+  assert.deepEqual(computing.lastPush, f.push);
+  const again = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.deepEqual(again.lastPush, f.push, 'A second reopen while computing keeps it too');
+  // GitHub answers: nothing to resolve, with the same history.
+  Object.assign(f.state, { mergeable: 'MERGEABLE', mergeState: 'CLEAN' });
+  const clean = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(clean.reopened, true);
+  assert.deepEqual(clean.lastPush, f.push);
+});
+void test('reopening with dependents left to restack prepares again when GitHub reports conflicts', async (t) => {
+  const f = await pushedFixture(t);
+  Object.assign(f.deps, { dependents: () => ['https://github.com/test/repo/pull/2'] });
+  Object.assign(f.state, { mergeable: 'MERGEABLE', mergeState: 'CLEAN' });
+  const pending = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(pending.status, 'published', 'Clean: the published screen offers the restack');
+  assert.equal(pending.reopened, undefined);
+  await f.conflictAgain();
+  const again = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(again.status, 'editing');
+  assert.equal(again.files.length, 1);
+  assert.deepEqual(again.lastPush, { ...f.push, restackPending: true }, 'The restack left undone stays in the history');
 });
 void test('distinguishes a clean local merge from an already incorporated base and refuses an empty update', async (t) => {
   const f = await fixture(t);

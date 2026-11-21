@@ -46,9 +46,14 @@ export interface ConflictSession {
   restack?: RestackPlan;
   /**
    * Reopened after a push from an earlier session, and GitHub reports no conflicts now. The workspace says there is
-   * nothing to resolve and keeps the last update (`commitSha`, undo to `headSha`) as history. Never saved.
+   * nothing to resolve and keeps that push (`lastPush`) as history. Never saved.
    */
   reopened?: boolean;
+  /**
+   * The push from an earlier session that this fresh preparation follows, while it is still the PR head: its merge
+   * commit, the head to reset to for undo, and whether dependent PRs were left to restack.
+   */
+  lastPush?: { commitSha: string; headSha: string; restackPending?: boolean };
 }
 export interface RestackPlan {
   token: string;
