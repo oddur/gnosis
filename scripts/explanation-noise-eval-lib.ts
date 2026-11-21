@@ -7,12 +7,14 @@ import { buildIndexedHunks, formatHunkIndexForPrompt, type IndexedHunk } from '.
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import {
   applyNoise,
-  hunkNoiseKinds,
+  classifiedNoise,
   noiseRequests,
   ruleNoise,
 } from '../lib/explanation-noise';
 import { DEFAULT_EXPLANATION_PREFERENCES, explanationInstructions, type NoiseLevel } from '../lib/explanation-options';
 import { buildPlannerContext } from '../lib/context-builder';
+import { plannerEvidence } from '../lib/review-planning';
+import { noiseAnswer } from '../src/conflict-checks';
 import { PLANNER_SYSTEM, plannerUserSuffix } from '../lib/agent';
 import type { PlannerOutput, PrMetadata } from '../lib/types';
 
@@ -81,7 +83,7 @@ export function loadFixtures(directory = path.join(FIXTURES, 'cases')): Fixture[
 }
 
 /** The fixture's hunks with their labels. Throws when a file's label count does not match its hunks. */
-export function prepareFixture(fixture: Fixture): PreparedFixture {
+export function prepareFixture(fixture: Fixture, labelled = true): PreparedFixture {
   const diff = fixtureDiff(fixture);
   const before: Record<string, string> = {},
     after: Record<string, string> = {};
@@ -93,6 +95,7 @@ export function prepareFixture(fixture: Fixture): PreparedFixture {
   const labels = new Map<string, FixtureHunkLabel>();
   for (const file of fixture.files) {
     const own = hunks.filter((hunk) => hunk.filePath === file.path);
+    if (!labelled) continue;
     if (own.length !== file.hunks.length)
       throw new Error(`${fixture.id}: ${file.path} has ${own.length} hunks but ${file.hunks.length} labels`);
     own.forEach((hunk, i) => labels.set(hunk.id, file.hunks[i]));
@@ -112,24 +115,19 @@ export function noiseEngine() {
 }
 type Engine = ReturnType<typeof noiseEngine>;
 
-/** Layer 1 at a level: the hunks the rules cut, with reasons. */
+/** Layer 1 at a level: the hunks the rules cut, with reasons, through the same comparison as the worker. */
 export async function ruleCutsFor(engine: Engine, prepared: PreparedFixture, level: NoiseLevel) {
-  const requests = noiseRequests(prepared.hunks, prepared.after);
-  const results = [];
-  for (const request of requests) {
-    try {
-      results.push((await engine.noise(request.language, request.after, request.hunks)).blocks.map((b) => b.kind));
-    } catch {
-      results.push(null);
-    }
-  }
-  return ruleNoise(prepared.hunks, prepared.before, prepared.after, hunkNoiseKinds(requests, results), level);
+  const requests = noiseRequests(prepared.hunks, prepared.before, prepared.after);
+  const answers = [];
+  for (const request of requests) answers.push(await noiseAnswer(engine, request));
+  return ruleNoise(prepared.hunks, prepared.before, prepared.after, classifiedNoise(requests, answers), level);
 }
 
 /** What generation sends the planner for a fixture at a level, from the same builders as src/main.ts. */
 export function plannerInput(prepared: PreparedFixture, ruleCuts: ReadonlyMap<string, string>, level: EvalLevel) {
   const planning = prepared.hunks.filter((hunk) => !ruleCuts.has(hunk.id));
   const hunkIndex = formatHunkIndexForPrompt(planning);
+  const evidence = plannerEvidence(planning).complete;
   const prData = {
     title: prepared.fixture.title,
     description: prepared.fixture.description,
@@ -146,7 +144,12 @@ export function plannerInput(prepared: PreparedFixture, ruleCuts: ReadonlyMap<st
   const context =
     buildPlannerContext(prData, changedFiles as never, hunkIndex, '', null, planning) +
     `\n\n<explanation_instructions>\n${explanationInstructions(options)}\n</explanation_instructions>`;
-  return { hunkIndex, context, options, userMessage: context + plannerUserSuffix(level) };
+  const evidenceHash = createHash('sha256')
+    .update(context)
+    .update(JSON.stringify([...ruleCuts].sort()))
+    .digest('hex')
+    .slice(0, 16);
+  return { hunkIndex, context, options, evidence, evidenceHash, userMessage: context + plannerUserSuffix(level) };
 }
 
 /** Changes when the planner's prompt does: recordings made with another prompt are reported as stale. */
@@ -162,14 +165,17 @@ export function promptHash(level: EvalLevel): string {
 export const fixtureHash = (fixture: Fixture) =>
   createHash('sha256').update(JSON.stringify(fixture)).digest('hex').slice(0, 16);
 
-export interface Manifest {
+/** What one fixture's recordings were made with: replay fails when any of it no longer matches. */
+export interface FixtureRecord {
   recordedAt: string;
   provider: string;
   model: string;
   effort?: string;
-  promptHash: Record<EvalLevel, string>;
-  options: Record<EvalLevel, unknown>;
-  fixtures: Record<string, string>;
+  fixtureHash: string;
+  levels: Partial<Record<EvalLevel, { promptHash: string; evidenceHash: string; options: unknown }>>;
+}
+export interface Manifest {
+  fixtures: Record<string, FixtureRecord>;
 }
 const recordedPath = (level: EvalLevel, id: string, root = FIXTURES) => path.join(root, 'recorded', level, `${id}.json`);
 export function readRecorded(level: EvalLevel, id: string, root = FIXTURES): PlannerOutput | undefined {
@@ -181,9 +187,14 @@ export function writeRecorded(level: EvalLevel, id: string, plan: PlannerOutput,
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ plan }, null, 2) + '\n');
 }
+export const manifestPath = (root = FIXTURES) => path.join(root, 'recorded', 'manifest.json');
 export function readManifest(root = FIXTURES): Manifest | undefined {
-  const file = path.join(root, 'recorded', 'manifest.json');
+  const file = manifestPath(root);
   return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as Manifest) : undefined;
+}
+export function writeManifest(manifest: Manifest, root = FIXTURES) {
+  fs.mkdirSync(path.dirname(manifestPath(root)), { recursive: true });
+  fs.writeFileSync(manifestPath(root), JSON.stringify(manifest, null, 2) + '\n');
 }
 
 // ── Scoring ─────────────────────────────────────────────────────
@@ -267,6 +278,7 @@ export interface ReplayResult {
   scores: LevelScore[];
   /** Levels with no recorded planner answers, or only some. */
   unrecorded: { level: EvalLevel; missing: string[] }[];
+  /** Recordings that no longer match their fixture, prompt or input, or have no manifest entry: the run fails. */
   stale: string[];
   failed: boolean;
 }
@@ -274,7 +286,7 @@ export interface ReplayResult {
 /** Replay: the rules always; the planner's recorded answers where they exist. Free and reproducible. */
 export async function replay(fixtures = loadFixtures(), root = FIXTURES): Promise<ReplayResult> {
   const engine = noiseEngine();
-  const prepared = fixtures.map(prepareFixture);
+  const prepared = fixtures.map((fixture) => prepareFixture(fixture));
   const manifest = readManifest(root);
   const scores: LevelScore[] = [];
   const unrecorded: ReplayResult['unrecorded'] = [];
@@ -285,23 +297,35 @@ export async function replay(fixtures = loadFixtures(), root = FIXTURES): Promis
     const missing: string[] = [];
     for (const item of prepared) {
       const ruleCuts = await ruleCutsFor(engine, item, level);
+      const input = plannerInput(item, ruleCuts, level);
       rules.push({ prepared: item, cut: applyNoise([], item.hunks, ruleCuts, undefined, level).cut });
       const plan = readRecorded(level, item.fixture.id, root);
       if (!plan) {
         missing.push(item.fixture.id);
         continue;
       }
-      planned.push({ prepared: item, cut: applyNoise(plan.topics, item.hunks, ruleCuts, plan.noise, level).cut });
-      if (manifest && manifest.fixtures[item.fixture.id] !== fixtureHash(item.fixture))
-        stale.push(`${level}/${item.fixture.id}: the fixture changed since it was recorded`);
+      planned.push({
+        prepared: item,
+        cut: applyNoise(plan.topics, item.hunks, ruleCuts, plan.noise, level, input.evidence).cut,
+      });
+      const record = manifest?.fixtures[item.fixture.id];
+      const recorded = record?.levels[level];
+      const id = `${level}/${item.fixture.id}`;
+      if (!manifest) stale.push(`${id}: recorded, but there is no manifest`);
+      else if (!record || !recorded) stale.push(`${id}: recorded, but the manifest has no entry for it`);
+      else {
+        if (record.fixtureHash !== fixtureHash(item.fixture)) stale.push(`${id}: the fixture changed since it was recorded`);
+        if (recorded.promptHash !== promptHash(level))
+          stale.push(`${id}: recorded with prompt ${recorded.promptHash}, the prompt is now ${promptHash(level)}`);
+        if (recorded.evidenceHash !== input.evidenceHash)
+          stale.push(`${id}: the planner's input changed since it was recorded (context, evidence or rule cuts)`);
+      }
     }
     scores.push(score(level, 'rules', rules));
     if (planned.length) scores.push(score(level, 'rules+planner', planned));
     if (missing.length) unrecorded.push({ level, missing });
-    if (manifest && manifest.promptHash[level] !== promptHash(level))
-      stale.push(`${level}: recorded with prompt ${manifest.promptHash[level]}, the prompt is now ${promptHash(level)}`);
   }
-  return { scores, unrecorded, stale, failed: scores.some((s) => s.wrong.some((w) => w.failure)) };
+  return { scores, unrecorded, stale, failed: stale.length > 0 || scores.some((s) => s.wrong.some((w) => w.failure)) };
 }
 
 export function formatReplay(result: ReplayResult, fixtures: number): string {
@@ -321,7 +345,14 @@ export function formatReplay(result: ReplayResult, fixtures: number): string {
       `${level.padEnd(12)} planner       not recorded${missing.length < fixtures ? ` for ${missing.join(', ')}` : ''}, run --live`
     );
   for (const note of result.stale) lines.push(`stale: ${note}`);
-  lines.push(result.failed ? 'FAILED: an essential hunk was cut.' : 'Passed: no essential hunk was cut.');
+  const cut = result.scores.some((s) => s.wrong.some((w) => w.failure));
+  lines.push(
+    cut
+      ? 'FAILED: an essential hunk was cut.'
+      : result.stale.length
+        ? 'FAILED: stale recordings. Run --live again for them.'
+        : 'Passed: no essential hunk was cut.'
+  );
   return lines.join('\n');
 }
 

@@ -38,6 +38,11 @@ function excerpt(content: string, budget: number) {
 
 /** Pure backend context assembly: uses existing patches and never fetches source. */
 export function buildPlannerEvidence(hunks: IndexedHunk[], budget = PLANNER_EVIDENCE_BUDGET): string {
+  return plannerEvidence(hunks, budget).text;
+}
+
+/** The planner's evidence, and the hunks whose whole source is in it (Reduce noise trusts only those). */
+export function plannerEvidence(hunks: IndexedHunk[], budget = PLANNER_EVIDENCE_BUDGET): { text: string; complete: Set<string> } {
   if (!Number.isInteger(budget) || budget < 2000)
     throw new Error('Planner evidence budget must be at least 2000 characters.');
   const files = new Map<string, IndexedHunk[]>();
@@ -65,19 +70,23 @@ export function buildPlannerEvidence(hunks: IndexedHunk[], budget = PLANNER_EVID
   for (let round = 0; round < Math.max(0, ...quotas); round++)
     for (const group of samples) if (group[round]) selected.push(group[round]);
   const entries: string[] = [];
+  const complete = new Set<string>();
   let used = 0;
   const entryBudget = Math.floor((budget - 1000) / Math.max(1, selected.length));
   for (const hunk of selected) {
     let sourceBudget = Math.min(4000, entryBudget);
     let entry = '';
+    let whole = false;
     while (sourceBudget >= 48) {
+      const sampled = excerpt(hunk.content, sourceBudget);
+      whole = sampled.complete;
       entry = JSON.stringify({
         id: hunk.id,
         file: hunk.filePath,
         status: hunk.fileStatus,
         header: hunk.hunkHeader,
         scopeHint: hunk.scopeName,
-        ...excerpt(hunk.content, sourceBudget),
+        ...sampled,
       });
       if (entry.length <= entryBudget) break;
       entry = '';
@@ -86,11 +95,13 @@ export function buildPlannerEvidence(hunks: IndexedHunk[], budget = PLANNER_EVID
     if (entry && used + entry.length + 2 <= budget - 1000) {
       entries.push(entry);
       used += entry.length + 2;
+      if (whole) complete.add(hunk.id);
     }
   }
-  return `<planning_evidence>
+  const text = `<planning_evidence>
 Source excerpts for grouping only. The full hunk index defines the changed scope. Missing excerpts are NOT unchanged or low-value code. Incomplete excerpts may start or end inside a line; offsets are character positions within a hunk, not source line numbers. Scope hints come from Git hunk headings, not a verified symbol index. Do not infer test results, complete call graphs, or behavior equivalence from these samples. Writers must verify the plan against their full assigned hunks.
 ${JSON.stringify({ totalHunks: hunks.length, sampledHunks: entries.length, omittedHunks: hunks.length - entries.length })}
 [${entries.join(',\n')}]
 </planning_evidence>`;
+  return { text, complete };
 }

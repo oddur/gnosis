@@ -1,9 +1,6 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { planReview } from '../lib/agent';
 import { DEFAULT_CLAUDE_MODEL, type ModelId, type Provider } from '../lib/models';
 import {
-  FIXTURES,
   LEVELS,
   estimate,
   fixtureHash,
@@ -16,6 +13,9 @@ import {
   replay,
   ruleCutsFor,
   writeRecorded,
+  readManifest,
+  writeManifest,
+  type FixtureRecord,
   type Manifest,
 } from './explanation-noise-eval-lib';
 
@@ -49,30 +49,28 @@ async function live() {
     console.log('Nothing was called. Add --yes to run it.');
     return;
   }
-  const manifestFile = path.join(FIXTURES, 'recorded', 'manifest.json');
-  const previous = fs.existsSync(manifestFile) ? (JSON.parse(fs.readFileSync(manifestFile, 'utf8')) as Manifest) : undefined;
-  const manifest: Manifest = {
-    recordedAt: new Date().toISOString(),
-    provider,
-    model,
-    ...(effort ? { effort } : {}),
-    promptHash: { conservative: promptHash('conservative'), aggressive: promptHash('aggressive') },
-    options: { conservative: undefined, aggressive: undefined },
-    fixtures: { ...(only ? previous?.fixtures : {}) },
-  };
+  // Each fixture's entry is replaced only when it is recorded again; --only leaves the others as they were.
+  const manifest: Manifest = readManifest() ?? { fixtures: {} };
   for (const fixture of fixtures) {
     const prepared = prepareFixture(fixture);
+    const record: FixtureRecord = {
+      recordedAt: new Date().toISOString(),
+      provider,
+      model,
+      ...(effort ? { effort } : {}),
+      fixtureHash: fixtureHash(fixture),
+      levels: {},
+    };
     for (const level of LEVELS) {
       const input = plannerInput(prepared, await ruleCutsFor(engine, prepared, level), level);
-      manifest.options[level] = input.options;
       console.log(`[live] ${fixture.id} at ${level}`);
       const plan = await planReview(input.hunkIndex, input.context, provider, model, undefined, false, undefined, { effort }, level);
       writeRecorded(level, fixture.id, plan);
+      record.levels[level] = { promptHash: promptHash(level), evidenceHash: input.evidenceHash, options: input.options };
     }
-    manifest.fixtures[fixture.id] = fixtureHash(fixture);
+    manifest.fixtures[fixture.id] = record;
+    writeManifest(manifest);
   }
-  fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
-  fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + '\n');
   console.log(`Recorded ${fixtures.length * LEVELS.length} planner answers. Replay scores them:`);
 }
 

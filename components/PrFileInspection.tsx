@@ -438,6 +438,7 @@ export function PrFileInspection({
   // The rendered diff hosts (one per slice): a jump that arrives after they rendered (cached contents) reveals in them.
   const renderedDiffs = useRef(new Set<HTMLElement>());
   const revealSource = (node: HTMLElement) => {
+    for (const host of renderedDiffs.current) if (!host.isConnected) renderedDiffs.current.delete(host);
     renderedDiffs.current.add(node);
     const location = sourceJump.current;
     if (!location || showingPreview) return;
@@ -459,6 +460,7 @@ export function PrFileInspection({
       // The stream stops holding the file's top once the line is shown (CommitDiffStream's onFocusCapture).
       node.dataset.jumpTarget = '';
       node.focus({ preventScroll: true });
+      delete node.dataset.jumpTarget;
     });
   };
   const options: FileDiffOptions<(typeof annotations)[number]['metadata'], undefined> = {
@@ -547,7 +549,6 @@ export function PrFileInspection({
         openMarkdownSource({ side: sourceSide, start: sourceLine, end: Math.max(sourceLine, sourceEndLine ?? sourceLine) });
         // A frame later, after the view scrolls to the selected file.
         const rendered = [...renderedDiffs.current].filter((node) => node.isConnected);
-        renderedDiffs.current = new Set(rendered);
         if (rendered.length) requestAnimationFrame(() => rendered.forEach(revealSource));
       }
     }

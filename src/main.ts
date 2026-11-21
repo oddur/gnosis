@@ -20,8 +20,8 @@ import {
 } from '../lib/explanation-options';
 
 import { explanationFiles as setupFiles, explanationRepository, loadExplanationSetup, type SourceIdentity } from './explanation-setup';
-import { applyNoise, contextOnlyHunks, hunkNoiseKinds, noiseRequests, ruleNoise, type NoiseReduction } from '../lib/explanation-noise';
-import { classifyInWorker } from './explanation-noise-client';
+import { applyNoise, classifiedNoise, contextOnlyHunks, noiseRequests, normalizeNoiseReduction, ruleNoise, type NoiseReduction } from '../lib/explanation-noise';
+import { plannerEvidence } from '../lib/review-planning';
 import { prepareReviewSource } from './review-start-source';
 import { createWorkflowGraphPreloader, warmWorkflowGraph } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
@@ -2050,6 +2050,9 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   if (workbench.isMutedReview(review)) throw new Error('This review contains a muted PR. Restore it from Muted PRs first.');
   review.reviewId = id;
   includeImageChanges(review);
+  const noiseReduction = normalizeNoiseReduction(review.noiseReduction);
+  if (noiseReduction) review.noiseReduction = noiseReduction;
+  else delete review.noiseReduction;
   for (const slide of review.slides) {
     slide.fileSummaries = normalizeFileSummaries(slide.fileSummaries, slide.diffHunks);
     slide.inlineExplanations = normalizeInlineExplanations(slide.inlineExplanations, slide.diffHunks, review.changedFiles);
@@ -2778,9 +2781,11 @@ async function runBackgroundGeneration(
     if (noiseLevel !== 'off') {
       reportReviewPhase({ reviewId, phase: 'Finding noise' });
       const off = disabledLanguages(codeIntelligenceSettings(loadPreferences()));
-      const requests = noiseRequests(indexedHunks, headFileContents, (language) => !off.includes(language));
-      const kinds = hunkNoiseKinds(requests, await classifyInWorker(path.join(__dirname, 'explanation-noise-worker.js'), treeSitterAssets(), requests, signal));
-      ruleCuts = ruleNoise(indexedHunks, fileContents, headFileContents, kinds, noiseLevel);
+      const requests = noiseRequests(indexedHunks, fileContents, headFileContents, (language) => !off.includes(language));
+      // The conflict checks' worker has the grammars (src/conflict-checks.ts). Fail closed: no answer, no rule cuts.
+      const answers = await conflictChecks.noise(requests);
+      signal.throwIfAborted();
+      ruleCuts = ruleNoise(indexedHunks, fileContents, headFileContents, classifiedNoise(requests, answers), noiseLevel);
       // When every hunk is noise, the noise is the change: explain it.
       if (ruleCuts.size === indexedHunks.length) ruleCuts = new Map();
     }
@@ -2825,7 +2830,7 @@ async function runBackgroundGeneration(
 
     const hunkMap = new Map(indexedHunks.map((h) => [h.id, h]));
     // Hunks left out as noise are never placed, in a topic or in "Other changes".
-    const assignedIds = new Set<string>(ruleCuts.keys());
+    const assignedIds = new Set<string>(noise.cut.keys());
 
     // Local-tool mode: when the reviewer opted in on a local review, run the
     // CLI with cwd = repo, stop writing the GitHub-specific MCP config, and
@@ -2868,7 +2873,9 @@ async function runBackgroundGeneration(
       console.log(`[main] Planner produced ${plan.topics.length} topics`);
 
       // The planner's noise list, fail closed: a hunk it neither assigns nor lists still goes to "Other changes".
-      noise = applyNoise(plan.topics, indexedHunks, ruleCuts, plan.noise, noiseLevel);
+      // Only hunks whose whole source the planner saw can be cut from its list.
+      noise = applyNoise(plan.topics, indexedHunks, ruleCuts, plan.noise, noiseLevel, plannerEvidence(planningHunks).complete);
+      assignedIds.clear();
       for (const id of noise.cut.keys()) assignedIds.add(id);
       if (noise.cut.size) console.log(`[main] Reduce noise (${noiseLevel}) left out ${noise.cut.size} hunks`);
 
@@ -4138,12 +4145,11 @@ async function conflictPermissions(client: ReturnType<typeof discussionClient>, 
 }
 // The conflict checks parse with the runtime and grammars the renderer ships: from the source tree in development, and
 // from the renderer build in a package, where vite.renderer.config.ts keeps their names (#445).
-function treeSitterAssets() {
+const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), () => {
   const grammars = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'src/assets/tree-sitter') : path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/assets/tree-sitter`);
   const runtime = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'node_modules/web-tree-sitter/web-tree-sitter.wasm') : path.join(grammars, 'web-tree-sitter.wasm');
   return { grammars, runtime };
-}
-const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), treeSitterAssets);
+});
 app.on('will-quit', () => conflictChecks.dispose());
 const conflicts = createConflictResolutionService({
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.

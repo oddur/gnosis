@@ -1,11 +1,12 @@
 import { changeBlocks, NOISE_MAX_CHARACTERS, patchHunks, type NoiseKind } from './semantic-noise';
 import { syntaxLanguage, type SyntaxLanguage } from './syntax-scope';
+import { importBindings, type ImportNode } from './import-nodes';
 import {
   normalizeExplanationPreferences,
   type ExplanationPreferences,
   type NoiseLevel,
 } from './explanation-options';
-import type { IndexedHunk, ParsedHunk } from './diff-parse';
+import type { ParsedHunk } from './diff-parse';
 import type { TopicPlan } from './types';
 
 /**
@@ -13,12 +14,15 @@ import type { TopicPlan } from './types';
  * explained. Changes still shows every hunk, and the overview lists the ones left out.
  *
  * Two layers, both fail closed (a hunk is cut only when all of it is noise; any doubt keeps it):
- * - Rules, no model: a hunk whose every change block is whitespace, formatting or comments (lib/semantic-noise.ts), or
- *   whose every changed line belongs to an import, `use` or `#include` statement. An import of a package the file
- *   didn't import before is a new dependency: kept at Conservative, cut at Aggressive.
+ * - Rules, no model: a hunk whose every change block is whitespace, formatting or comments (lib/semantic-noise.ts),
+ *   unless a tool reads the comment (a doctest, a fenced example, a JSDoc type); or whose every changed line lies alone
+ *   in an import node of the file's syntax tree (lib/import-nodes.ts). Side-effect imports, re-exports, a name bound
+ *   to something else, and a package's entry file are never import-only, and a file with no grammar never is. An import
+ *   of a package the file didn't import before is a new dependency: kept at Conservative, cut at Aggressive.
  * - The planner, in the same call that plans the topics: it lists the hunks it judges noise in `noise`. Only listed
- *   hunks are cut. A hunk it neither assigns nor lists still goes to "Other changes". A hunk it both assigns and lists
- *   stays in its topic.
+ *   hunks whose whole source was in its evidence are cut. A hunk it neither assigns nor lists still goes to "Other
+ *   changes". A hunk it both assigns and lists stays in its topic.
+ * - When the cuts would leave nothing, nothing is cut: the noise is the change.
  */
 
 /** A hunk left out of the explanation, with where it is in Changes. */
@@ -182,8 +186,9 @@ const PATTERNS: Record<ImportFamily, { pattern: RegExp; pkg: (m: RegExpExecArray
   ],
   css: [
     {
-      pattern: /^[ \t]*@(?:import|use)\s+(?:url\()?\s*(['"]?)([^'")\s;]+)\1\)?[^;\n]*;[ \t]*$/gm,
-      pkg: (m) => [scriptPackage(m[2])],
+      // Bare forms only: `@use 'x' with (…)` and `@import … layer(…)`/media configure what they load.
+      pattern: /^[ \t]*@(?:import\s+url\(\s*(['"]?)([^'")\s;]+)\1\s*\)|use\s+(['"])([^'"\s;]+)\3)\s*;[ \t]*$/gm,
+      pkg: (m) => [scriptPackage((m[2] as string | undefined) ?? m[4])],
     },
   ],
   php: [
@@ -267,37 +272,151 @@ export function hunkLines(hunk: Pick<Hunk, 'hunkHeader' | 'content'>): Row[] {
   return rows;
 }
 
-/**
- * Whether every changed line of `hunk` belongs to an import statement (blank lines aside), and which packages its
- * added imports name that the old file did not import. Undefined when the hunk is not import-only or a side's text is
- * missing.
- */
-export function importOnlyHunk(
+/** The pre-filter: whether every changed line of `hunk` matches an import pattern. The syntax tree decides. */
+export function importCandidate(
   hunk: Hunk,
   before: string | undefined,
   after: string | undefined
-): { newPackages: string[] } | undefined {
-  if (hunk.fileStatus === 'deleted' || !importFamily(hunk.filePath)) return undefined;
+): boolean {
+  if (hunk.fileStatus === 'deleted' || !importFamily(hunk.filePath)) return false;
   const added = hunk.fileStatus === 'added';
-  if (after === undefined || (!added && before === undefined)) return undefined;
+  if (after === undefined || (!added && before === undefined)) return false;
   const oldStatements = added ? [] : importStatements(hunk.filePath, before ?? '');
   const newStatements = importStatements(hunk.filePath, after);
   const holding = (statements: ImportStatement[], line: number) => statements.filter((s) => s.start <= line && line <= s.end);
   const rows = hunkLines(hunk);
   let changed = 0;
-  const touched = new Set<ImportStatement>();
   for (const row of rows) {
     if (row.type === ' ') continue;
     if (!row.text.trim()) continue;
     changed++;
     const statements = row.type === '+' ? holding(newStatements, row.newLine) : holding(oldStatements, row.oldLine);
-    if (!statements.length) return undefined;
-    if (row.type === '+') statements.forEach((s) => touched.add(s));
+    if (!statements.length) return false;
+  }
+  return changed > 0;
+}
+
+
+/** A package's public entry file: its imports are its API. */
+export const isPackageEntry = (path: string) =>
+  /(^|\/)(__init__\.py|index\.(?:[cm]?[jt]sx?)|mod\.rs|lib\.rs)$/i.test(path);
+
+/** The package an import names, or null for a local or built-in module. */
+function packageOf(language: SyntaxLanguage, module: string | null): string | null {
+  if (!module) return null;
+  switch (language) {
+    case 'typescript':
+    case 'tsx':
+    case 'javascript':
+      return scriptPackage(module);
+    case 'python':
+      return module.startsWith('.') ? null : module.split('.')[0];
+    case 'go':
+      return goPackage(module);
+    case 'rust':
+      return RUST_LOCAL.has(module) ? null : module;
+    case 'java':
+      return /^(java|javax|kotlin)\./.test(module) ? null : module.split('.').slice(0, 2).join('.');
+    case 'csharp':
+      return module.startsWith('System') ? null : module.split('.').slice(0, 2).join('.');
+    default:
+      return null;
+  }
+}
+
+/** A file's import nodes on both sides (lib/import-nodes.ts), rows counted from 0. */
+export interface FileImports {
+  before: ImportNode[];
+  after: ImportNode[];
+}
+
+/**
+ * Whether every changed line of `hunk` lies alone in an import node of its side's syntax tree (blank lines aside), and
+ * which packages its added imports name that the old file did not import. Undefined when it is not import-only, and
+ * whenever in doubt: no syntax tree, a side-effect import, a re-export, a name bound to something else, a package's
+ * entry file.
+ */
+export function importOnlyHunk(hunk: Hunk, imports: FileImports | undefined): { newPackages: string[] } | undefined {
+  const language = syntaxLanguage(hunk.filePath);
+  if (!imports || !language || hunk.fileStatus === 'added' || hunk.fileStatus === 'deleted') return undefined;
+  if (isPackageEntry(hunk.filePath)) return undefined;
+  const touched = { before: new Set<ImportNode>(), after: new Set<ImportNode>() };
+  let changed = 0;
+  for (const row of hunkLines(hunk)) {
+    if (row.type === ' ' || !row.text.trim()) continue;
+    changed++;
+    const side = row.type === '+' ? 'after' : 'before';
+    const index = (row.type === '+' ? row.newLine : row.oldLine) - 1;
+    const covering = imports[side].filter((node) => node.startRow <= index && index <= node.endRow);
+    if (!covering.length || covering.some((node) => !node.alone || node.blocked)) return undefined;
+    // The innermost node names the import: a Go spec rather than its declaration.
+    touched[side].add(covering.reduce((a, b) => (b.endRow - b.startRow < a.endRow - a.startRow ? b : a)));
   }
   if (!changed) return undefined;
-  const known = new Set(oldStatements.map((s) => s.pkg).filter((p): p is string => !!p));
-  const newPackages = [...new Set([...touched].map((s) => s.pkg).filter((p): p is string => !!p && !known.has(p)))];
+  const bindings = (nodes: Iterable<ImportNode>) => [...nodes].map((node) => importBindings(language, node.text));
+  const oldBindings = bindings(touched.before),
+    newBindings = bindings(touched.after);
+  // A local name bound to something else, or the same import under another name, changes what the code refers to.
+  const index = (list: ReturnType<typeof bindings>, key: 0 | 1) => {
+    const map = new Map<string, Set<string>>();
+    for (const { pairs } of list)
+      for (const pair of pairs) map.set(pair[key], (map.get(pair[key]) ?? new Set()).add(pair[1 - key]));
+    return map;
+  };
+  const same = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((v) => b.has(v));
+  for (const key of [0, 1] as const) {
+    const before = index(oldBindings, key),
+      after = index(newBindings, key);
+    for (const [name, values] of before) {
+      const now = after.get(name);
+      if (now && !same(values, now)) return undefined;
+    }
+  }
+  const known = new Set(
+    imports.before.map((node) => packageOf(language, importBindings(language, node.text).module)).filter(Boolean)
+  );
+  const newPackages = [
+    ...new Set(
+      newBindings.map((b) => packageOf(language, b.module)).filter((p): p is string => !!p && !known.has(p))
+    ),
+  ];
   return { newPackages };
+}
+
+// ── Rules: comments a tool reads ────────────────────────────────
+
+const COMMENT_LINE = /^\s*(\/\/|\/\*|\*|#|--)/;
+const JSDOC_TYPES =
+  /@(type|typedef|callback|template|satisfies|import|enum|this|extends|augments|implements|overload)\b|@(param|returns?|property|prop|arg|argument)\s*\{/;
+
+/**
+ * Whether the comment or docstring holding `line` (from 1) is read by a tool, so changing it is not comment-only: a
+ * Python docstring with a doctest (`>>>`), a doc comment with a fenced code example (Rust and others run them), or a
+ * JSDoc type annotation in a JavaScript file.
+ */
+export function toolReadComment(path: string, text: string | undefined, line: number): boolean {
+  if (text === undefined) return true;
+  const lines = text.split('\n');
+  const at = line - 1;
+  if (at < 0 || at >= lines.length) return true;
+  if (/\.pyi?$/i.test(path)) {
+    let open: number | undefined;
+    for (let i = 0; i < lines.length; i++) {
+      const quotes = (lines[i].match(/"""|'''/g) ?? []).length;
+      if (open === undefined && quotes % 2 === 1) open = i;
+      else if (open !== undefined && quotes % 2 === 1) {
+        if (open <= at && at <= i && lines.slice(open, i + 1).some((l) => l.includes('>>>'))) return true;
+        open = undefined;
+      } else if (open === undefined && quotes >= 2 && i === at && lines[i].includes('>>>')) return true;
+    }
+  }
+  let start = at,
+    end = at;
+  while (start > 0 && COMMENT_LINE.test(lines[start - 1])) start--;
+  while (end < lines.length - 1 && COMMENT_LINE.test(lines[end + 1])) end++;
+  const block = lines.slice(start, end + 1).join('\n');
+  if (block.includes('```')) return true;
+  return /\.(c|m)?jsx?$/i.test(path) && JSDOC_TYPES.test(block);
 }
 
 // ── Rules: whitespace, formatting and comments (lib/semantic-noise.ts) ──
@@ -309,10 +428,18 @@ export interface NoiseRequest {
   after: string;
   hunks: { oldStart: number; newStart: number; rows: { type: ' ' | '+' | '-'; text: string }[] }[];
   ids: string[];
+  /** Also read both sides' import nodes: a hunk passed the import pre-filter. */
+  imports: boolean;
+}
+/** What the worker answers for a file: its change blocks' kinds, and its import nodes when asked. Null on failure. */
+export interface NoiseAnswer {
+  kinds: NoiseKind[] | null;
+  imports?: FileImports | null;
 }
 /** The files whose hunks the syntax comparison can classify: a grammar, a new side, within the size limit. */
 export function noiseRequests(
   hunks: readonly Hunk[],
+  before: Record<string, string>,
   after: Record<string, string>,
   enabled: (language: SyntaxLanguage) => boolean = () => true
 ): NoiseRequest[] {
@@ -323,22 +450,27 @@ export function noiseRequests(
     list.push(hunk);
     byFile.set(hunk.filePath, list);
   }
+  const text = (files: Record<string, string>, path: string) => (Object.hasOwn(files, path) ? files[path] : undefined);
   const requests: NoiseRequest[] = [];
   for (const [path, list] of byFile) {
     const language = syntaxLanguage(path);
-    const text = Object.hasOwn(after, path) ? after[path] : undefined;
-    if (!language || text === undefined || text.length > NOISE_MAX_CHARACTERS || !enabled(language)) continue;
+    const newText = text(after, path);
+    if (!language || newText === undefined || newText.length > NOISE_MAX_CHARACTERS || !enabled(language)) continue;
     const parsed = list.flatMap((hunk) => patchHunks(`${hunk.hunkHeader}\n${hunk.content}`)?.slice(0, 1) ?? []);
     if (parsed.length !== list.length) continue;
-    requests.push({ path, language, after: text, hunks: parsed, ids: list.map((h) => h.id) });
+    const imports = list.some((hunk) => importCandidate(hunk, text(before, path), newText));
+    requests.push({ path, language, after: newText, hunks: parsed, ids: list.map((h) => h.id), imports });
   }
   return requests;
 }
-/** Each hunk's block kinds from its file's classification; a file whose blocks don't line up gives none. */
-export function hunkNoiseKinds(requests: readonly NoiseRequest[], results: readonly (readonly NoiseKind[] | null | undefined)[]) {
+/** Each hunk's block kinds, and each file's import nodes, from the worker's answers. A mismatch gives none. */
+export function classifiedNoise(requests: readonly NoiseRequest[], answers: readonly (NoiseAnswer | null | undefined)[]) {
   const kinds = new Map<string, NoiseKind[]>();
+  const imports = new Map<string, FileImports>();
   requests.forEach((request, index) => {
-    const blocks = results[index];
+    const answer = answers[index];
+    if (answer?.imports) imports.set(request.path, answer.imports);
+    const blocks = answer?.kinds;
     if (!blocks) return;
     const counts = request.hunks.map((hunk) => changeBlocks([hunk]).length);
     if (counts.reduce((a, b) => a + b, 0) !== blocks.length) return;
@@ -348,8 +480,9 @@ export function hunkNoiseKinds(requests: readonly NoiseRequest[], results: reado
       at += counts[i];
     });
   });
-  return kinds;
+  return { kinds, imports };
 }
+export type ClassifiedNoise = ReturnType<typeof classifiedNoise>;
 /** The reason a hunk is quiet, or undefined when any of its blocks is code. */
 export function quietReason(kinds: readonly NoiseKind[] | undefined): string | undefined {
   if (!kinds?.length || kinds.some((kind) => kind === 'code')) return undefined;
@@ -364,21 +497,36 @@ export function ruleNoise(
   hunks: readonly Hunk[],
   before: Record<string, string>,
   after: Record<string, string>,
-  kinds: ReadonlyMap<string, readonly NoiseKind[]>,
+  classified: ClassifiedNoise,
   level: NoiseLevel
 ): Map<string, string> {
   const cuts = new Map<string, string>();
   if (level === 'off') return cuts;
   const text = (files: Record<string, string>, path: string) => (Object.hasOwn(files, path) ? files[path] : undefined);
   for (const hunk of hunks) {
-    const imports = importOnlyHunk(hunk, text(before, hunk.filePath), text(after, hunk.filePath));
+    const imports = importOnlyHunk(hunk, classified.imports.get(hunk.filePath));
     if (imports) {
       if (imports.newPackages.length && level === 'conservative') continue;
       cuts.set(hunk.id, imports.newPackages.length ? `import only (new dependency: ${imports.newPackages.join(', ')})` : 'import only');
       continue;
     }
-    const quiet = quietReason(kinds.get(hunk.id));
-    if (quiet) cuts.set(hunk.id, quiet);
+    const quiet = quietReason(classified.kinds.get(hunk.id));
+    if (!quiet) continue;
+    // A comment a tool reads is code: a doctest, a fenced example, a JSDoc type.
+    if (
+      quiet.includes('comments') &&
+      hunkLines(hunk).some(
+        (row) =>
+          row.type !== ' ' &&
+          toolReadComment(
+            hunk.filePath,
+            text(row.type === '+' ? after : before, hunk.filePath),
+            row.type === '+' ? row.newLine : row.oldLine
+          )
+      )
+    )
+      continue;
+    cuts.set(hunk.id, quiet);
   }
   return cuts;
 }
@@ -407,7 +555,9 @@ export function applyNoise(
   hunks: readonly Hunk[],
   ruleCuts: ReadonlyMap<string, string>,
   plannerNoise: unknown,
-  level: NoiseLevel
+  level: NoiseLevel,
+  /** Hunks whose whole source was in the planner's evidence: the only ones its list can cut. */
+  evidence: ReadonlySet<string> = new Set()
 ): { topics: TopicPlan[]; cut: Map<string, { reason: string; source: LeftOutHunk['source'] }>; leftOut: LeftOutHunk[] } {
   const cut = new Map<string, { reason: string; source: LeftOutHunk['source'] }>();
   if (level === 'off') return { topics: [...topics], cut, leftOut: [] };
@@ -415,7 +565,10 @@ export function applyNoise(
   for (const [id, reason] of ruleCuts) if (ids.has(id)) cut.set(id, { reason, source: 'rules' });
   const assigned = new Set(topics.flatMap((topic) => topic.hunkIds));
   for (const { hunkId, reason } of normalizePlannerNoise(plannerNoise, ids))
-    if (!assigned.has(hunkId) && !cut.has(hunkId)) cut.set(hunkId, { reason, source: 'planner' });
+    if (evidence.has(hunkId) && !assigned.has(hunkId) && !cut.has(hunkId))
+      cut.set(hunkId, { reason, source: 'planner' });
+  // When everything would go, the noise is the change: explain it.
+  if (hunks.length && cut.size >= hunks.length) return { topics: [...topics], cut: new Map(), leftOut: [] };
   const dropped = new Set<string>();
   const kept = topics.flatMap((topic) => {
     const hunkIds = topic.hunkIds.filter((id) => !cut.has(id));
@@ -506,9 +659,4 @@ export function noiseLevelChanged(noise: NoiseReduction | undefined, current: No
     noise.level === noise.defaultLevel &&
     current !== noise.level
   );
-}
-
-/** The hunks the rules leave out of a single-pass explanation, which has no planner. */
-export function hunksAfterRules<T extends IndexedHunk>(hunks: readonly T[], ruleCuts: ReadonlyMap<string, string>): T[] {
-  return hunks.filter((hunk) => !ruleCuts.has(hunk.id));
 }

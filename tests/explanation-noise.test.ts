@@ -7,7 +7,6 @@ import {
   applyNoise,
   changedRange,
   contextOnlyHunks,
-  importOnlyHunk,
   leftOutLabel,
   noiseLevelChanged,
   noisePlannerDirective,
@@ -16,6 +15,7 @@ import {
   quietReason,
   ruleNoise,
   savedNoiseLevel,
+  toolReadComment,
 } from '../lib/explanation-noise';
 import {
   DEFAULT_EXPLANATION_PREFERENCES,
@@ -35,6 +35,10 @@ import {
   replay,
   ruleCutsFor,
   writeRecorded,
+  writeManifest,
+  plannerInput,
+  fixtureHash,
+  promptHash,
 } from '../scripts/explanation-noise-eval-lib';
 
 /** One modified file's hunk from its two texts' changed lines. */
@@ -43,66 +47,119 @@ function hunk(header: string, rows: string[], filePath = 'src/a.ts', id = 'hunk-
 }
 const text = (...lines: string[]) => lines.join('\n') + '\n';
 
+/** Layer 1's cut reasons for each hunk of one file's change (null: kept), through the worker's comparison. */
+const engine = noiseEngine();
+async function cuts(path: string, before: string | null, after: string | null, level: 'conservative' | 'aggressive' = 'conservative') {
+  const lines = (t: string | null) => (t === null ? null : t.replace(/\n$/, '').split('\n'));
+  const prepared = prepareFixture(
+    { id: 'case', title: 'T', description: 'D', source: '', files: [{ path, before: lines(before), after: lines(after), hunks: [] }] },
+    false
+  );
+  const found = await ruleCutsFor(engine, prepared, level);
+  return prepared.hunks.map((h) => found.get(h.id) ?? null);
+}
+
 void describe('rules: imports', () => {
   const before = text("import { a } from './x';", "import fs from 'node:fs';", '', 'run(a);');
-  void test('an import widened from a module the file already imports is cut at every level', () => {
-    const after = text("import { a, b } from './x';", "import fs from 'node:fs';", '', 'run(a, b);');
-    const h = hunk('@@ -1,1 +1,1 @@', ["-import { a } from './x';", "+import { a, b } from './x';"]);
-    assert.deepEqual(importOnlyHunk(h, before, after), { newPackages: [] });
-    for (const level of ['conservative', 'aggressive'] as const)
-      assert.equal(ruleNoise([h], { 'src/a.ts': before }, { 'src/a.ts': after }, new Map(), level).get('hunk-0'), 'import only');
+  void test('an import widened from a module the file already imports is cut at every level', async () => {
+    const after = text("import { a, b } from './x';", "import fs from 'node:fs';", '', 'run(a);');
+    assert.deepEqual(await cuts('src/a.ts', before, after), ['import only']);
+    assert.deepEqual(await cuts('src/a.ts', before, after, 'aggressive'), ['import only']);
   });
-  void test('an import of a package the file never imported is kept at Conservative and cut at Aggressive', () => {
+  void test('an import of a package the file never imported is kept at Conservative and cut at Aggressive', async () => {
     const after = text("import { a } from './x';", "import pLimit from 'p-limit';", "import fs from 'node:fs';", '', 'run(a);');
-    const h = hunk('@@ -1,2 +1,3 @@', [" import { a } from './x';", "+import pLimit from 'p-limit';", " import fs from 'node:fs';"]);
-    assert.deepEqual(importOnlyHunk(h, before, after), { newPackages: ['p-limit'] });
-    assert.equal(ruleNoise([h], { 'src/a.ts': before }, { 'src/a.ts': after }, new Map(), 'conservative').size, 0);
-    assert.match(
-      ruleNoise([h], { 'src/a.ts': before }, { 'src/a.ts': after }, new Map(), 'aggressive').get('hunk-0') ?? '',
-      /new dependency: p-limit/
-    );
+    assert.deepEqual(await cuts('src/a.ts', before, after), [null]);
+    assert.match((await cuts('src/a.ts', before, after, 'aggressive'))[0] ?? '', /new dependency: p-limit/);
   });
-  void test('multi-line imports, Rust use, Go blocks and Python parentheses are imports', () => {
-    const ts = text('import {', '  a,', '  b,', "} from './x';");
-    assert.ok(importOnlyHunk(hunk('@@ -1,3 +1,4 @@', [' import {', '   a,', '+  b,', " } from './x';"]), text('import {', '  a,', "} from './x';"), ts));
-    const rs = text('use crate::error::{Error, Result};', 'fn f() {}');
+  void test('multi-line imports, Rust use, Go blocks and Python parentheses are imports', async () => {
     assert.deepEqual(
-      importOnlyHunk(hunk('@@ -1,1 +1,1 @@', ['-use crate::error::Result;', '+use crate::error::{Error, Result};'], 'src/a.rs'), text('use crate::error::Result;', 'fn f() {}'), rs),
-      { newPackages: [] }
+      await cuts('src/a.ts', text('import {', '  a,', "} from './x';", '', 'run(a);'), text('import {', '  a,', '  b,', "} from './x';", '', 'run(a);')),
+      ['import only']
     );
-    const go = text('package a', '', 'import (', '\t"fmt"', '\t"strings"', ')');
+    assert.deepEqual(await cuts('src/a.rs', text('use crate::error::Result;', 'fn f() {}'), text('use crate::error::{Error, Result};', 'fn f() {}')), ['import only']);
+    const go = (extra: string) => text('package a', '', 'import (', '\t"fmt"', ...(extra ? [extra] : []), ')', '', 'func F() { fmt.Println() }');
+    assert.deepEqual(await cuts('a.go', go(''), go('\t"strings"')), ['import only'], 'A standard-library package is not a dependency');
+    assert.deepEqual(await cuts('a.go', go(''), go('\t"github.com/acme/x"')), [null], 'A new module is a new dependency');
     assert.deepEqual(
-      importOnlyHunk(hunk('@@ -3,3 +3,4 @@', [' import (', ' \t"fmt"', '+\t"strings"', ' )'], 'a.go'), text('package a', '', 'import (', '\t"fmt"', ')'), go),
-      { newPackages: [] },
-      'A standard-library package is not a dependency'
+      await cuts('a.py', text('from x import (', '    a,', ')', '', 'a()'), text('from x import (', '    a,', '    b,', ')', '', 'a()')),
+      ['import only']
     );
-    const py = text('from x import (', '    a,', '    b,', ')');
-    assert.ok(importOnlyHunk(hunk('@@ -1,3 +1,4 @@', [' from x import (', '     a,', '+    b,', ' )'], 'a.py'), text('from x import (', '    a,', ')'), py));
   });
-  void test('exports and re-exports are public API, never import-only', () => {
-    const h = hunk('@@ -1,1 +1,2 @@', [" export { a } from './a';", "+export { b } from './b';"], 'src/index.ts');
-    assert.equal(importOnlyHunk(h, text("export { a } from './a';"), text("export { a } from './a';", "export { b } from './b';")), undefined);
-    const rs = hunk('@@ -1,1 +1,2 @@', [' pub use a::A;', '+pub use b::B;'], 'src/lib.rs');
-    assert.equal(importOnlyHunk(rs, text('pub use a::A;'), text('pub use a::A;', 'pub use b::B;')), undefined);
+  void test('exports and re-exports are public API, never import-only', async () => {
+    assert.deepEqual(await cuts('src/api.ts', text("export { a } from './a';"), text("export { a } from './a';", "export { b } from './b';")), [null]);
+    assert.deepEqual(await cuts('src/a.rs', text('pub use a::A;', 'fn f() {}'), text('pub use a::A;', 'pub use b::B;', 'fn f() {}')), [null]);
   });
-  void test('a hunk with an import and code is kept; a dynamic import is code', () => {
-    const after = text("import { a } from './x';", 'run(a);');
-    const h = hunk('@@ -1,1 +1,2 @@', [" import { a } from './x';", '+run(a);']);
-    assert.equal(importOnlyHunk(h, text("import { a } from './x';"), after), undefined);
-    const lazy = hunk('@@ -1,0 +1,1 @@', ["+const { default: Zip } = await import('zip-lib');"]);
-    assert.equal(importOnlyHunk(lazy, '', text("const { default: Zip } = await import('zip-lib');")), undefined);
+  void test('side-effect imports are never import-only, added or removed, at any level', async () => {
+    const ts = (extra: string[]) => text("import { a } from './x';", ...extra, '', 'run(a);');
+    assert.deepEqual(await cuts('src/a.ts', ts([]), ts(["import './polyfill';"]), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('src/a.ts', ts(["import './polyfill';"]), ts([]), 'aggressive'), [null]);
+    const go = (extra: string) => text('package a', '', 'import (', '\t"fmt"', ...(extra ? [extra] : []), ')', '', 'func F() { fmt.Println() }');
+    assert.deepEqual(await cuts('a.go', go(''), go('\t_ "embed"'), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('a.go', go(''), go('\t. "strings"'), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('a.py', text('import os', '', 'os.getcwd()'), text('import os', 'import plugins', '', 'os.getcwd()'), 'aggressive'), [null]);
+    assert.deepEqual(
+      await cuts('a.py', text('import os', '', 'os.getcwd()'), text('from __future__ import annotations', 'import os', '', 'os.getcwd()'), 'aggressive'),
+      [null]
+    );
   });
-  void test('MDX header imports are not dependencies, and imports in fenced examples are not imports', () => {
-    const after = text('---', 'title: A', '---', "import Tabs from '@theme/Tabs';", '', '# A');
-    const h = hunk('@@ -3,1 +3,2 @@', [' ---', "+import Tabs from '@theme/Tabs';"], 'docs/a.mdx');
-    assert.deepEqual(importOnlyHunk(h, text('---', 'title: A', '---', '', '# A'), after), { newPackages: [] });
-    const fenced = text('# A', '```ts', "import x from 'y';", '```');
-    const example = hunk('@@ -2,1 +2,2 @@', [' ```ts', "+import x from 'y';"], 'docs/a.md');
-    assert.equal(importOnlyHunk(example, text('# A', '```ts', '```'), fenced), undefined);
+  void test('rebinding a name, or the same import under another name, is never import-only', async () => {
+    const ts = (line: string) => text(line, '', 'parse(input);');
+    assert.deepEqual(await cuts('src/a.ts', ts("import { strictParse as parse } from './p';"), ts("import { looseParse as parse } from './p';"), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('src/a.ts', ts("import { parse as p } from './p';"), ts("import { parse as q } from './p';"), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('src/a.ts', ts("import { parse } from './p';"), ts("import { parse } from './q';"), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('a.py', text('from p import strict as parse', '', 'parse()'), text('from p import loose as parse', '', 'parse()'), 'aggressive'), [null]);
   });
-  void test('a missing old text keeps the hunk', () => {
-    const h = hunk('@@ -1,1 +1,1 @@', ["-import { a } from './x';", "+import { a, b } from './x';"]);
-    assert.equal(importOnlyHunk(h, undefined, text("import { a, b } from './x';")), undefined);
+  void test('imports in a package’s entry file are its API', async () => {
+    const widened = [text("import { a } from './x';", '', 'run(a);'), text("import { a, b } from './x';", '', 'run(a);')] as const;
+    for (const path of ['src/index.ts', 'lib/index.js']) assert.deepEqual(await cuts(path, ...widened), [null], path);
+    assert.deepEqual(await cuts('pkg/__init__.py', text('from .a import A', '', 'x = 1'), text('from .a import A, B', '', 'x = 1')), [null]);
+    for (const path of ['src/lib.rs', 'src/net/mod.rs'])
+      assert.deepEqual(await cuts(path, text('use a::A;', 'fn f() {}'), text('use a::{A, B};', 'fn f() {}')), [null], path);
+  });
+  void test('a statement after an import on the same line keeps the hunk', async () => {
+    assert.deepEqual(await cuts('a.py', text('from x import a', '', 'a()'), text('from x import a, b; setup(debug=True)', '', 'a()'), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('src/a.ts', before, text("import { a, b } from './x'; run(b);", "import fs from 'node:fs';", '', 'run(a);'), 'aggressive'), [null]);
+  });
+  void test('import lines inside a template literal are not imports', async () => {
+    const ts = (extra: string[]) => text('const example = `', "import { a } from './x';", ...extra, '`;', 'show(example);');
+    assert.deepEqual(await cuts('src/a.ts', ts([]), ts(["import { b } from './y';"]), 'aggressive'), [null]);
+  });
+  void test('a hunk with an import and code is kept; a dynamic import is code', async () => {
+    assert.deepEqual(await cuts('src/a.ts', text("import { a } from './x';"), text("import { a } from './x';", 'run(a);'), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('src/a.ts', text('run();'), text("const { default: Zip } = await import('zip-lib');", 'run();'), 'aggressive'), [null]);
+  });
+  void test('no grammar, no import cut: MDX, CSS, and added files', async () => {
+    assert.deepEqual(
+      await cuts('docs/a.mdx', text('---', 'title: A', '---', '', '# A'), text('---', 'title: A', '---', "import Tabs from '@theme/Tabs';", '', '# A'), 'aggressive'),
+      [null]
+    );
+    assert.deepEqual(await cuts('src/a.scss', text('.a { color: red; }'), text("@use 'theme' with ($primary: blue);", '.a { color: red; }'), 'aggressive'), [null]);
+    assert.deepEqual(await cuts('src/new.ts', null, text("import { a } from './x';"), 'aggressive'), [null]);
+  });
+});
+
+void describe('rules: comments a tool reads', () => {
+  void test('a Python docstring with a doctest is code; a plain docstring is a comment', async () => {
+    const py = (doc: string[]) => text('def add(a, b):', '    """Adds two numbers.', ...doc, '    """', '    return a + b');
+    assert.deepEqual(await cuts('m.py', py(['    >>> add(1, 2)', '    3']), py(['    >>> add(1, 2)', '    4'])), [null]);
+    assert.deepEqual(await cuts('m.py', py(['    More words.']), py(['    Other words.'])), ['comments only']);
+  });
+  void test('a Rust doc comment with a fenced example is code', async () => {
+    const rs = (line: string) => text('/// Adds one.', '///', '/// ```', line, '/// ```', 'pub fn inc(x: u32) -> u32 { x + 1 }');
+    assert.deepEqual(await cuts('src/a.rs', rs('/// assert_eq!(inc(1), 2);'), rs('/// assert_eq!(inc(2), 3);')), [null]);
+    assert.deepEqual(
+      await cuts('src/a.rs', text('/// Adds one.', 'pub fn inc(x: u32) -> u32 { x + 1 }'), text('/// Adds 1.', 'pub fn inc(x: u32) -> u32 { x + 1 }')),
+      ['comments only']
+    );
+  });
+  void test('a JSDoc type in a JavaScript file is code', async () => {
+    const js = (type: string) => text('/**', ` * @param {${type}} name`, ' */', 'export function greet(name) { return name; }');
+    assert.deepEqual(await cuts('src/a.js', js('string'), js('number')), [null]);
+  });
+  void test('the comment check reads the block around the line', () => {
+    assert.equal(toolReadComment('a.ts', text('// plain', '// words'), 1), false);
+    assert.equal(toolReadComment('a.ts', text('// ```', '// x()', '// ```'), 2), true);
+    assert.equal(toolReadComment('a.ts', undefined, 1), true, 'No text: treated as read');
   });
 });
 
@@ -118,10 +175,9 @@ void describe('rules: whitespace, formatting and comments', () => {
   });
   void test('Off cuts nothing', () => {
     const h = hunk('@@ -1,1 +1,1 @@', ['-a( 1 );', '+a(1);']);
-    assert.equal(ruleNoise([h], {}, {}, new Map([['hunk-0', ['whitespace']]]), 'off').size, 0);
+    assert.equal(ruleNoise([h], {}, {}, { kinds: new Map([['hunk-0', ['whitespace']]]), imports: new Map() }, 'off').size, 0);
   });
   void test('the syntax comparison classifies real hunks through the same engine as generation', async () => {
-    const engine = noiseEngine();
     const byId = new Map(loadFixtures().map((f) => [f.id, prepareFixture(f)]));
     const reason = async (id: string, file: string, level: 'conservative' | 'aggressive' = 'conservative') => {
       const prepared = byId.get(id);
@@ -201,14 +257,34 @@ void describe('routing', () => {
   );
   const topic = (title: string, hunkIds: string[], dependsOn: string[] = []): TopicPlan =>
     ({ title, hunkIds, dependsOn, order: 1, slideType: 'feature', importance: 'important', narrativeBrief: '' }) as TopicPlan;
+  const seen = new Set(['hunk-0', 'hunk-1', 'hunk-2', 'hunk-3']);
   void test('fail closed: a hunk the planner neither assigns nor lists stays for Other changes', () => {
-    const { topics, cut } = applyNoise([topic('Main', ['hunk-0'])], hunks, new Map(), [{ hunkId: 'hunk-1', reason: 'typo' }], 'conservative');
+    const { topics, cut } = applyNoise([topic('Main', ['hunk-0'])], hunks, new Map(), [{ hunkId: 'hunk-1', reason: 'typo' }], 'conservative', seen);
     assert.deepEqual([...cut.keys()], ['hunk-1']);
     const assigned = new Set([...topics.flatMap((t) => t.hunkIds), ...cut.keys()]);
     assert.deepEqual(hunks.filter((h) => !assigned.has(h.id)).map((h) => h.id), ['hunk-2', 'hunk-3'], 'Unlisted hunks go to Other changes');
   });
+  void test('the planner cuts only hunks whose whole source was in its evidence', () => {
+    const noise = [{ hunkId: 'hunk-1', reason: 'typo' }, { hunkId: 'hunk-2', reason: 'typo' }];
+    const { cut } = applyNoise([topic('Main', ['hunk-0'])], hunks, new Map(), noise, 'aggressive', new Set(['hunk-1']));
+    assert.deepEqual([...cut.keys()], ['hunk-1'], 'hunk-2 was sampled or missing: it stays');
+    assert.equal(applyNoise([topic('Main', ['hunk-0'])], hunks, new Map(), noise, 'aggressive').cut.size, 0, 'No evidence, no planner cuts');
+  });
+  void test('when rules and planner together would cut every hunk, nothing is cut', () => {
+    const { topics, cut, leftOut } = applyNoise(
+      [topic('Main', ['hunk-0'])],
+      hunks.slice(0, 3),
+      new Map([['hunk-0', 'import only']]),
+      [{ hunkId: 'hunk-1', reason: 'typo' }, { hunkId: 'hunk-2', reason: 'typo' }],
+      'aggressive',
+      seen
+    );
+    assert.equal(cut.size, 0);
+    assert.deepEqual(leftOut, []);
+    assert.deepEqual(topics[0].hunkIds, ['hunk-0']);
+  });
   void test('a hunk both assigned and listed stays in its topic', () => {
-    const { topics, cut } = applyNoise([topic('Main', ['hunk-0'])], hunks, new Map(), [{ hunkId: 'hunk-0', reason: 'noise' }], 'aggressive');
+    const { topics, cut } = applyNoise([topic('Main', ['hunk-0'])], hunks, new Map(), [{ hunkId: 'hunk-0', reason: 'noise' }], 'aggressive', seen);
     assert.equal(cut.size, 0);
     assert.deepEqual(topics[0].hunkIds, ['hunk-0']);
   });
@@ -299,17 +375,42 @@ void describe('the eval runner', () => {
   void test('a recorded planner answer that cuts an essential hunk fails the run', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'noise-eval-'));
     try {
-      const fixture = loadFixtures().find((f) => f.id === 'config-value');
+      const fixture = loadFixtures().find((f) => f.id === 'drive-by-edits');
       assert.ok(fixture);
       const prepared = prepareFixture(fixture);
       const essential = prepared.hunks.find((h) => prepared.labels.get(h.id)?.label === 'essential');
       assert.ok(essential);
       writeRecorded('conservative', fixture.id, { summary: '', riskLevel: 'low', riskRationale: '', storyArc: '', topics: [], noise: [{ hunkId: essential.id, reason: 'looks like config churn' }] }, root);
-      const result = await replay([fixture], root);
+      // No manifest: the recording is stale, and the run fails on that alone.
+      let result = await replay([fixture], root);
+      assert.equal(result.failed, true);
+      assert.match(result.stale.join('\n'), /conservative\/drive-by-edits: recorded, but there is no manifest/);
+      // A matching manifest entry: the run fails on the essential hunk the planner cut.
+      const engine = noiseEngine();
+      const input = plannerInput(prepared, await ruleCutsFor(engine, prepared, 'conservative'), 'conservative');
+      writeManifest(
+        {
+          fixtures: {
+            [fixture.id]: {
+              recordedAt: '',
+              provider: 'claude',
+              model: 'claude-opus-5-5',
+              fixtureHash: fixtureHash(fixture),
+              levels: { conservative: { promptHash: promptHash('conservative'), evidenceHash: input.evidenceHash, options: input.options } },
+            },
+          },
+        },
+        root
+      );
+      result = await replay([fixture], root);
+      assert.deepEqual(result.stale, []);
       assert.equal(result.failed, true);
       const wrong = result.scores.find((s) => s.level === 'conservative' && s.layer === 'rules+planner')?.wrong;
-      assert.deepEqual(wrong?.map((w) => [w.fixture, w.hunk, w.failure, w.layer]), [['config-value', essential.id, true, 'planner']]);
-      assert.deepEqual(result.unrecorded, [{ level: 'aggressive', missing: ['config-value'] }]);
+      assert.deepEqual(wrong?.map((w) => [w.fixture, w.hunk, w.failure, w.layer]), [['drive-by-edits', essential.id, true, 'planner']]);
+      assert.deepEqual(result.unrecorded, [{ level: 'aggressive', missing: ['drive-by-edits'] }]);
+      // A changed fixture makes its recording stale.
+      const changed = { ...fixture, description: fixture.description + ' Changed.' };
+      assert.match((await replay([changed], root)).stale.join('\n'), /the fixture changed/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -14,7 +14,8 @@ The fixtures reproduce the shapes of hunks found in merged PRs of oddur/gnosis a
 
 - `cases/<id>.json`: one fixture. `files[].before` and `files[].after` are the file's lines; `null` means that the file is added or deleted. `files[].hunks` has one label per hunk, in order. The runner makes the diff with 3 lines of context, as GitHub does. It stops if the number of labels is not the same as the number of hunks.
 - `recorded/<level>/<id>.json`: the planner's answer for a fixture at Conservative or Aggressive, written by `--live`.
-- `recorded/manifest.json`: the provider, the model ID, the effort, the prompt hash and the options for each level, and a hash of each fixture. Replay reports a recording as stale when the prompt or a fixture changed after the recording.
+- `recorded/manifest.json`: one entry for each fixture. An entry has the provider, the model ID, the effort and a hash of the fixture. For each level, it also has the prompt hash, the options, and an evidence hash. The evidence hash covers the planner context, the evidence and the set of hunks the rules cut. `--live --only <id>` replaces only that fixture's entry.
+- Replay fails when a recording is stale. A recording is stale when its fixture, the prompt or the planner's input changed after the recording, or when the manifest has no entry for it. Replay also fails when there are recordings but no manifest.
 
 ## Running
 
@@ -31,6 +32,8 @@ Scoring for each level and layer:
 - **noise recall**: the share of hunks that should be cut and were cut.
 - **essential precision**: the share of cuts that were correct.
 - **wrong cuts**: each one with its fixture, its hunk, the layer that cut it, and the reason. A cut essential hunk is a failure, and the runner exits with 1.
+
+The planner can cut only a hunk whose whole source was in its evidence. If the rules and the planner together would cut every hunk, nothing is cut.
 
 ## Cases
 

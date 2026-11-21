@@ -12,6 +12,8 @@ import { parseConflicts } from '../lib/conflict-blocks';
 import { blockResolutions, withProposals } from '../lib/conflict-carry';
 import type { ConflictFile } from '../lib/conflict-resolution';
 import { SYNTAX_MAX_CHARACTERS, type createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
+import { comparisonTexts } from '../lib/semantic-noise';
+import type { NoiseAnswer, NoiseRequest } from '../lib/explanation-noise';
 
 /**
  * The conflict checks (lib/conflict-verify.ts) in the main process (#445 item 3), so a session's buckets do not depend
@@ -114,22 +116,51 @@ export interface TreeSitterFiles {
   runtime: string;
   grammars: string;
 }
-export interface CheckRequest {
-  id: number;
-  file: CheckedFile;
-  disabled: SyntaxLanguage[];
-}
-export type CheckResponse = { id: number; verdict?: Verdict } | { id: number; error: string };
+/**
+ * The worker's jobs: a conflict check, or Reduce noise's syntax comparison for an explanation's files
+ * (lib/explanation-noise.ts), which needs the same grammars.
+ */
+export type CheckRequest =
+  | { id: number; kind?: 'check'; file: CheckedFile; disabled: SyntaxLanguage[] }
+  | { id: number; kind: 'noise'; files: NoiseFile[] };
+/** One file for the noise comparison: its new text, its hunks, and whether to read its import nodes. */
+export type NoiseFile = Pick<NoiseRequest, 'language' | 'after' | 'hunks' | 'imports'>;
+export type CheckResponse =
+  | { id: number; verdict?: Verdict }
+  | { id: number; noise: (NoiseAnswer | null)[] }
+  | { id: number; error: string };
 
 interface Job {
   request: CheckRequest;
-  resolve: (verdict: Verdict | undefined) => void;
+  resolve: (response: CheckResponse | undefined) => void;
   timer?: ReturnType<typeof setTimeout>;
+}
+const jobLabel = (request: CheckRequest) =>
+  request.kind === 'noise' ? `${request.files.length} files' noise comparison` : request.file.path;
+
+/** Reduce noise's comparison of one file in the worker: change block kinds, and import nodes when asked. */
+export async function noiseAnswer(
+  engine: Pick<ReturnType<typeof createSyntaxEngine>, 'noise' | 'imports'>,
+  file: NoiseFile
+): Promise<NoiseAnswer | null> {
+  try {
+    const { blocks } = await engine.noise(file.language, file.after, file.hunks);
+    const answer: NoiseAnswer = { kinds: blocks.map((block) => block.kind) };
+    if (file.imports) {
+      const texts = comparisonTexts(file.after, file.hunks);
+      const before = texts && (await engine.imports(file.language, texts.before));
+      const after = texts && (await engine.imports(file.language, texts.after));
+      answer.imports = before && after ? { before, after } : null;
+    }
+    return answer;
+  } catch {
+    return null;
+  }
 }
 /**
  * The worker that runs the checks, started on the first check and stopped after a minute without one, so its grammars
- * leave memory. One file at a time. A file that runs over 30 seconds, counted from when it starts, answers undefined;
- * the worker restarts for the files after it.
+ * leave memory. One job at a time. A job that runs over 30 seconds, counted from when it starts, answers undefined;
+ * the worker restarts for the jobs after it.
  */
 export function createConflictCheckWorker(
   script: string,
@@ -150,11 +181,11 @@ export function createConflictCheckWorker(
     void previous?.terminate();
   };
   /** Answers the running job, then starts the next. `restart`: the worker is stuck or gone, so a new one takes over. */
-  const finish = (job: Job, verdict: Verdict | undefined, restart = false) => {
+  const finish = (job: Job, response: CheckResponse | undefined, restart = false) => {
     if (current !== job) return;
     clearTimeout(job.timer);
     current = undefined;
-    job.resolve(verdict);
+    job.resolve(response);
     if (restart) terminate();
     pump();
   };
@@ -164,7 +195,7 @@ export function createConflictCheckWorker(
     started.on('message', (message: CheckResponse) => {
       if (!current || message.id !== current.request.id) return;
       if ('error' in message) console.warn('[conflicts] A check failed.', message.error);
-      finish(current, 'verdict' in message ? message.verdict : undefined);
+      finish(current, 'error' in message ? undefined : message);
     });
     started.on('error', (error) => {
       console.warn('[conflicts] The check worker failed.', error);
@@ -191,7 +222,7 @@ export function createConflictCheckWorker(
     clearTimeout(idle);
     current = job;
     job.timer = setTimeout(() => {
-      console.warn(`[conflicts] The checks ran out of time on ${job.request.file.path}.`);
+      console.warn(`[conflicts] The checks ran out of time on ${jobLabel(job.request)}.`);
       finish(job, undefined, true);
     }, timeoutMs);
     try {
@@ -201,21 +232,35 @@ export function createConflictCheckWorker(
       finish(job, undefined, true);
     }
   }
+  const run = (request: CheckRequest) =>
+    new Promise<CheckResponse | undefined>((resolve) => {
+      queue.push({ request, resolve });
+      pump();
+    });
   return {
     check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
       if (disposed) return Promise.resolve(undefined);
       const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
-      return new Promise((resolve) => {
-        queue.push({
-          request: {
-            id: ++serial,
-            file: { path, base, ours, theirs, original, proposals, wholeFile, result },
-            disabled,
-          },
-          resolve,
-        });
-        pump();
-      });
+      return run({
+        id: ++serial,
+        file: { path, base, ours, theirs, original, proposals, wholeFile, result },
+        disabled,
+      }).then((response) => (response && 'verdict' in response ? response.verdict : undefined));
+    },
+    /**
+     * Reduce noise's comparison of an explanation's files. Fail closed: an error, a timeout or a stopped worker
+     * answers null for every file, so no hunk is cut by the rules that need a syntax tree.
+     */
+    noise(files: readonly NoiseFile[]): Promise<(NoiseAnswer | null)[]> {
+      const none = () => files.map(() => null);
+      if (disposed || !files.length) return Promise.resolve(none());
+      return run({
+        id: ++serial,
+        kind: 'noise',
+        files: files.map(({ language, after, hunks, imports }) => ({ language, after, hunks, imports })),
+      }).then((response) =>
+        response && 'noise' in response && response.noise.length === files.length ? response.noise : none()
+      );
     },
     dispose() {
       disposed = true;
