@@ -659,6 +659,11 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
   return found;
 }
 
+/**
+ * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
+ * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
+ */
+export const CHECKS_VERSION = 1;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A

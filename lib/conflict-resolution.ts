@@ -13,7 +13,7 @@ export interface ConflictFile {
   unsupported?: string;
   /**
    * What preparation resolved on its own, per conflict block of `original` (null: no safe proposal). `result` starts
-   * with these applied. The renderer checks them (lib/conflict-verify.ts) before it calls one Merged.
+   * with these applied. The main process checks them (`verdict`) before one counts as Merged.
    */
   proposals?: (ConflictProposal | null)[];
   /**
@@ -25,6 +25,11 @@ export interface ConflictFile {
   structuralNote?: string;
   /** Structural merge gave this file a result: proposals, a whole-file proposal, or a note that it couldn't. */
   structuralRan?: boolean;
+  /**
+   * The checks of `proposals` or `wholeFile`, run by the main process (src/conflict-checks.ts), with the proposals'
+   * fingerprint (`proposalKey`). It counts only while that fingerprint matches.
+   */
+  verdict?: { key: string; verdict: import('./conflict-verify').Verdict };
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or as both sides'

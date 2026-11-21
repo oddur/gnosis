@@ -19,12 +19,13 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import * as TreeSitter from 'web-tree-sitter';
 import { createConflictResolutionService } from '../src/conflict-resolution-service.ts';
-import { blockBuckets, blockVerdict, verifyProposals, verifyWholeFile } from '../lib/conflict-verify.ts';
+import { blockBuckets, blockVerdict } from '../lib/conflict-verify.ts';
+import { verdictKey } from '../lib/conflict-verdict-key.ts';
+import { conflictChecker } from '../src/conflict-checks.ts';
 import { blockProposals } from '../lib/conflict-carry.ts';
 import { hasConflictMarkers } from '../lib/conflict-resolution.ts';
 import { parseConflicts } from '../lib/conflict-blocks.ts';
 import { createSyntaxEngine } from '../lib/syntax-scope.ts';
-import { NOISE_MAX_CHARACTERS } from '../lib/semantic-noise.ts';
 import { runConflictProcess } from '../src/conflict-process.ts';
 import { proposedChecks } from './conflict-lab-fixes.mjs';
 import { bare, bareGit, casePlan, commitFiles, loadCases, root, sortedLines, squash } from './conflict-lab-lib.mjs';
@@ -35,33 +36,12 @@ const MERGIRAF = path.join(
   'resources/mergiraf/runtime',
   process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf'
 );
-/** checkSyntax's limit in lib/syntax-scope-client.ts: a longer text is not parsed, so its proposals stay in Check. */
-const SYNTAX_MAX_CHARACTERS = 1_000_000;
 const assets = path.join(root, 'src/assets/tree-sitter');
 const engine = createSyntaxEngine(TreeSitter, {
   runtime: async () => new Uint8Array(await fs.readFile(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))),
   grammar: async (language) => new Uint8Array(await fs.readFile(path.join(assets, `${language}.wasm`))),
   tags: (name) => fs.readFile(path.join(assets, `${name}-tags.scm`), 'utf8'),
 });
-/** The renderer's checkSyntax, in Node: rejects for a language that is off in Settings or a text over the limit. */
-const analyser =
-  (off = []) =>
-  async (language, text, ranges) => {
-    if (off.includes(language)) throw new Error('This language is off in Settings');
-    if (text.length > SYNTAX_MAX_CHARACTERS) throw new Error('This file is too large to parse');
-    const { definitions, errors, errorLines, units } = await engine.definitions(language, text, ranges);
-    return { definitions, errors, errorLines, units };
-  };
-/** The renderer's checkFormatting, in Node, with the same limits. */
-const equivalence =
-  (off = []) =>
-  async (language, before, after) => {
-    if (off.includes(language)) throw new Error('This language is off in Settings');
-    if (Math.max(before.length, after.length) > NOISE_MAX_CHARACTERS)
-      throw new Error('This file is too large to compare');
-    return engine.equivalent(language, before, after);
-  };
-
 /** A stand-in Mergiraf binary for the failure-path cases. */
 async function mergirafFor(mode, dir, caseDir) {
   if (!mode || mode === 'real') return MERGIRAF;
@@ -242,6 +222,9 @@ async function openLab(c, dir) {
     mergeBase: async (_repo, b, h) => (await git(['merge-base', b, h])).stdout,
     mergiraf: () => binary,
     suggest: () => Promise.reject(new Error('No AI in the conflict lab.')),
+    // The service checks proposals as the app's main process does (src/conflict-checks.ts), with the case's settings.
+    verify: (file, disabled) => conflictChecker(engine, disabled)(file),
+    disabledLanguages: () => meta.languagesOff ?? [],
   });
   const run = (request, signal = new AbortController().signal) => service.run(request, signal);
 
@@ -318,19 +301,17 @@ export async function runCase(c, { keep = false } = {}) {
   const labs = [];
   const { meta } = c;
   try {
-    const analyse = analyser(meta.languagesOff);
-    const equivalent = equivalence(meta.languagesOff);
     let active;
     async function score(stepName, session, resolvedTree, expectedSpec) {
       const { dir } = active;
       const files = [];
       const expectedFiles = new Map(Object.entries(expectedSpec ?? {}));
       for (const f of session.files) {
-        const verdict = f.proposals
-          ? await verifyProposals(f, analyse, false, equivalent)
-          : f.wholeFile
-            ? await verifyWholeFile(f, f.wholeFile, analyse)
-            : undefined;
+        // The verdict the service saved with the draft, for these proposals: as the conflict dialog reads it. A check
+        // that failed saves nothing, and fails the case.
+        if ((f.proposals || f.wholeFile) && f.verdict?.key !== verdictKey(f, meta.languagesOff ?? []))
+          throw new Error(`${f.path} has proposals the service did not check.`);
+        const verdict = f.verdict?.verdict;
         const buckets = blockBuckets(f, f.result, verdict);
         // The checks proposed for #444, measured on the side: what the buckets would be with them.
         const fixNote = buckets.includes('merged') ? proposedChecks(f) : undefined;
@@ -345,7 +326,9 @@ export async function runCase(c, { keep = false } = {}) {
           expected,
           note: verdict?.note ?? f.structuralNote,
           // Each conflict's own reason (#445 item 18), and which proposals are unions of both sides' additions.
-          notes: buckets.map((_, i) => (f.proposals?.[i] ? blockVerdict(verdict, i)?.note : undefined) ?? f.structuralNote),
+          notes: buckets.map(
+            (_, i) => (f.proposals?.[i] ? blockVerdict(verdict, i)?.note : undefined) ?? f.structuralNote
+          ),
           sources: buckets.map((_, i) => f.proposals?.[i]?.source),
           unsupported: f.unsupported,
           source: f.source,

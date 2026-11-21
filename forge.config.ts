@@ -69,6 +69,8 @@ const config: ForgeConfig = {
         { entry: 'src/main.ts', config: 'vite.main.config.ts', target: 'main' },
         { entry: 'src/markdown-review-worker.ts', config: 'vite.markdown-worker.config.ts', target: 'main' },
         { entry: 'src/app-data-worker.ts', config: 'vite.main.config.ts', target: 'main' },
+        // Conflict checks with tree-sitter, off the main thread (src/conflict-checks.ts).
+        { entry: 'src/conflict-check-worker.ts', config: 'vite.main.config.ts', target: 'main' },
         { entry: 'src/preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
         // The menu bar panel's own small preload (#308), none of the main window's API.
         { entry: 'src/menubar-preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
