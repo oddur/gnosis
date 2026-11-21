@@ -27,6 +27,7 @@ import {
 } from '../lib/conflict-verify';
 import {
   conflictFileStage,
+  fileHasConflictMarkers,
   hasConflictMarkers,
   type ConflictFile,
   type ConflictProposal,
@@ -623,9 +624,36 @@ void test('the reformatting side’s quotes and spacing must survive: a matching
   );
 });
 
-void test('a stray marker line is named, a heading underline is not a marker, and a reviewed file needs nothing', () => {
-  // A setext heading's underline alone is not a conflict marker.
-  assert.equal(hasConflictMarkers('Title\n=======\n\nText\n'), false);
+void test('a stray marker line is named, only a Markdown heading underline is not a marker, and a reviewed file needs nothing', () => {
+  // Every line of `=======` counts as a marker, except a setext heading in Markdown that one side wrote too.
+  assert.equal(hasConflictMarkers('Title\n=======\n\nText\n'), true);
+  const readme = (heading: string) => `${heading}\n=======\n\nIntro.\n`;
+  const md: ConflictFile = {
+    ...file([]),
+    path: 'README.md',
+    base: readme('Gnosis'),
+    ours: readme('Gnosis'),
+    theirs: `${readme('Gnosis')}More.\n`,
+    original: `${readme('Gnosis')}<<<<<<< feature\nPR line\n||||||| ancestor\n=======\nmain line\n>>>>>>> main\n`,
+    proposals: undefined,
+  };
+  const kept = `${readme('Gnosis')}PR line\nmain line\n`;
+  assert.equal(fileHasConflictMarkers(md, kept), false, 'A setext heading in a README stays clean');
+  assert.equal(conflictFileStage({ ...md, result: kept }, kept), 'resolved');
+  // The conflict's own separator under the PR's line is not a heading either side wrote: it is a marker.
+  assert.equal(fileHasConflictMarkers(md, `${readme('Gnosis')}PR line\n=======\nmain line\n`), true);
+  // A heading underline nobody wrote, a second copy of one, or one under a blank line: markers.
+  assert.equal(fileHasConflictMarkers(md, readme('Other')), true);
+  assert.equal(fileHasConflictMarkers(md, `${readme('Gnosis')}${readme('Gnosis')}`), true);
+  assert.equal(fileHasConflictMarkers(md, `x\n\n=======\n`), true);
+  // The same heading outside Markdown is a marker.
+  assert.equal(fileHasConflictMarkers({ ...md, path: 'notes.txt' }, kept), true);
+  // In a .ts file, a leftover `=======` between both sides blocks Mark reviewed and the push, and is named.
+  const ts = file([merged(imports), merged(three + four)]);
+  const leftover = `${ts.result}export const a = 1;\n=======\nexport const a = 2;\n`;
+  assert.equal(fileHasConflictMarkers(ts, leftover), true);
+  const left = fileStatus(ts, leftover, conflictFileStage(ts, leftover), blockBuckets(ts, leftover, undefined));
+  assert.deepEqual(fileStatusParts(left), [{ tone: 'conflicted', text: 'Conflict marker left' }]);
   assert.equal(hasConflictMarkers('a\n>>>>>>> main\n'), true);
   assert.equal(hasConflictMarkers('a\n||||||| ancestor\n'), true);
   // A marker line outside any whole conflict: no "0 conflicts".

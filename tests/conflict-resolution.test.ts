@@ -601,6 +601,23 @@ void test('rejects malformed IPC, leftover markers and cancelled operations with
     }),
     /remaining conflict markers/
   );
+  // Only the opening and closing markers removed: the lone `=======` between both sides still blocks the push.
+  const leftover = f.session.files[0].original
+    .split('\n')
+    .filter((line) => !/^(<{7}|>{7}|\|{7})/.test(line))
+    .join('\n');
+  assert.match(leftover, /^={7}$/m);
+  await assert.rejects(
+    f.run({
+      kind: 'save',
+      id: f.session.id,
+      version: f.session.version,
+      path: 'sample.ts',
+      contents: leftover,
+      resolved: true,
+    }),
+    /remaining conflict markers/
+  );
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(
