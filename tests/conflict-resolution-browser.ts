@@ -1445,6 +1445,8 @@ void app.whenReady().then(async () => {
     await wait("window.conflictCalls.some(r=>r.kind==='save'&&!r.resolved)");
     await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
     const reviewSentence = '1 file has conflicts. 1 of 2 conflicts are merged and checked. 1 file is ready for review.';
+    // The save re-runs the checks (the draft is in the check key), so the summary reads "Checking…" until they finish.
+    await checksDone();
     assert.equal(await js("document.querySelector('[data-conflict-summary]').textContent"), reviewSentence);
     await key('m');
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");

@@ -60,6 +60,11 @@ export interface ConflictSession {
   /** Why a draft is stale: someone pushed to the PR, or the PR targets another base branch. */
   staleReason?: 'head-moved' | 'retargeted';
   dependents?: string[];
+  /**
+   * Prepared in the background (src/conflict-precompute.ts) at this time (epoch ms), and not opened since. Such a draft
+   * is replaced when the PR moves, and evicted by count and age. Opening it makes it yours.
+   */
+  background?: number;
   restack?: RestackPlan;
   /**
    * Reopened after a push from an earlier session, and GitHub reports no conflicts now. The workspace says there is
