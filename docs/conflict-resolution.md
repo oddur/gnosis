@@ -15,13 +15,13 @@ Each conflict shows two labelled versions side by side: **This PR · branch** an
 
 ### Compare with
 
-The file header has a switch, **Compare with: PR · main · both**. Gnosis remembers the choice until the app quits, for every file and PR.
+The file header has a switch, **Compare with: PR · main · both**. Gnosis remembers the choice for every file and PR while the window stays open.
 
 - **PR** (the default) compares the result with the PR's version: what the author sees change on their branch.
 - **main** compares the result with the base branch's version: what the PR still changes after the merge.
-- **both** shows each conflict as three rows: the PR's side, the base branch's side and the result, each compared with the version before both changes. Only the conflicts show; PR and main show the whole file.
+- **both** shows each conflict as three rows: the PR's side, the base branch's side and the result, each compared with the version before both changes. Only the conflicts show, with every line of each row; PR and main show the whole file. When the draft has no conflicts left, **both** is off and the view shows PR.
 
-The switch never hides a conflict. Each Check and Decide card stays under its conflict's lines in every mode. A conflict you have not decided shows its two sides, never one of them as the result: against main, the PR's lines stand in for it, and in both its result row says "Nothing is chosen yet."
+The switch never hides a conflict. Each Check and Decide card stays under its conflict's lines in every mode. A conflict you have not decided shows its two sides, never one of them as the result: against main, the PR's lines stand in for it, and in both its result row says "Nothing is chosen yet." Lines you reveal in PR stay revealed when you switch to another mode and back.
 
 Structural merge runs on every file while the merge is prepared, so there is no engine to choose. **Ask <model>…** (the Bot icon) asks the selected model about the open file, with optional instructions. Its result is a draft: it never marks a file reviewed. The model gets the three versions, your draft and the PR context, without a checkout or test runner.
 

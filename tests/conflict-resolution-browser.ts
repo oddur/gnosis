@@ -1089,6 +1089,19 @@ void app.whenReady().then(async () => {
       await js(`[...${block(0)}.querySelectorAll('.conflict-diff-legend [data-mark]')].map(s=>s.dataset.mark+' '+s.textContent)`),
       ['removed This PR · feature/retry', 'added main']
     );
+    // Lines revealed in PR survive a round trip through main and both: the PR diff stays mounted while hidden.
+    const prGaps = () =>
+      js<number>("document.querySelectorAll('.conflict-compare-diff[data-compare=pr] .diff-gap-text').length");
+    const gapsBefore = await prGaps();
+    assert.ok(gapsBefore > 0, 'the PR diff has hidden lines to reveal');
+    await js("document.querySelector('.conflict-compare-diff[data-compare=pr] .diff-gap-text').click()");
+    await wait(`document.querySelectorAll('.conflict-compare-diff[data-compare=pr] .diff-gap-text').length<${gapsBefore}`);
+    const gapsRevealed = await prGaps();
+    await compareWith('main');
+    await compareWith('both');
+    await compareWith('pr');
+    assert.equal(await prGaps(), gapsRevealed, 'revealed lines are kept across PR → main → both → PR');
+    assert.equal(await cardUnder(0, ['  return 11;']), true);
     // main: what the PR still changes after the merge. Main's lines are the old side; an open conflict shows the PR's.
     await compareWith('main');
     await wait(`${block(0)}?.checkVisibility() && ${block(1)}?.checkVisibility()`);

@@ -263,3 +263,36 @@ void test('compare with both: each conflict’s two sides and ancestor, and a re
   assert.equal(isCompareWith('theirs'), false);
   assert.equal(isCompareWith(null), false);
 });
+
+void test('compare with both: rows show every line of a 20-line conflict, even between changes far apart', async () => {
+  const { compareRowContext } = await import('../lib/conflict-diff');
+  const { hunksFromDiff } = await import('../lib/diff-gaps');
+  const { parseDiffFromFile } = await import('@pierre/diffs');
+  const base = Array.from({ length: 20 }, (_, i) => `line ${i + 1}\n`);
+  const ours = ['changed 1\n', ...base.slice(1, 19), 'changed 20\n'];
+  const before = base.join(''),
+    after = ours.join('');
+  const context = compareRowContext(before, after);
+  assert.equal(context, 20);
+  const hunks = hunksFromDiff(
+    parseDiffFromFile({ name: 'a.ts', contents: before }, { name: 'a.ts', contents: after }, { context }, true)
+  );
+  // One hunk with every line of both versions: lines 5 to 16 are not hidden between the two changes.
+  assert.equal(hunks.length, 1);
+  const rows = hunks[0].rows;
+  assert.deepEqual(
+    rows.filter((r) => r.type !== '+').map((r) => r.text.replace(/\n$/, '')),
+    base.map((l) => l.replace(/\n$/, ''))
+  );
+  assert.deepEqual(
+    rows.filter((r) => r.type !== '-').map((r) => r.text.replace(/\n$/, '')),
+    ours.map((l) => l.replace(/\n$/, ''))
+  );
+  // With the view's usual three lines of context, the middle would be cut out.
+  const usual = hunksFromDiff(
+    parseDiffFromFile({ name: 'a.ts', contents: before }, { name: 'a.ts', contents: after }, { context: 3 }, true)
+  );
+  assert.equal(usual.length, 2);
+  assert.equal(compareRowContext('', ''), 1);
+  assert.equal(compareRowContext('a\nb', 'a\n'), 2);
+});

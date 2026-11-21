@@ -13,6 +13,7 @@ import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import {
   COMPARE_MODES,
   cardAnchors,
+  compareRowContext,
   conflictCompareRows,
   conflictDiffText,
   isCompareWith,
@@ -20,7 +21,13 @@ import {
   type ConflictCompareRows,
 } from '../lib/conflict-diff';
 import { blockVerdict, type Verdict } from '../lib/conflict-verify';
-import { shortBranch, type BlockChoice, type BlockPicks, type ConflictLabels } from '../lib/conflict-blocks';
+import {
+  shortBranch,
+  type BlockChoice,
+  type BlockPicks,
+  type ConflictLabels,
+  type ConflictModel,
+} from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
@@ -80,7 +87,8 @@ export function ConflictFileDiff<A>({
   const headerRef = useRef<HTMLElement>(null);
   const appearance = useDiffAppearance(preferences?.diffAppearance);
   const layout = useDiffLayout(preferences?.diffLayout);
-  const context = diffContextLines(appearance);
+  // A Compare with: both row hides nothing and cannot expand: context as long as the row puts all its lines in one hunk.
+  const context = bare ? compareRowContext(before, after) : diffContextLines(appearance);
   const codeSettings = useMemo(() => codeIntelligenceSettings(preferences), [preferences?.codeIntelligence]);
   const { hunks, annotations, additions, deletions } = useMemo(() => {
     let base: GapHunk[] = [];
@@ -197,7 +205,7 @@ export function ConflictFileDiff<A>({
 }
 
 const COMPARE_KEY = 'gnosis-conflict-compare';
-/** The last Compare with choice, for this app session: every file and PR opens with it. */
+/** The last Compare with choice, in sessionStorage: every file and PR opens with it while the window stays open. */
 function readCompare(): CompareWith {
   try {
     const saved = sessionStorage.getItem(COMPARE_KEY);
@@ -225,11 +233,14 @@ function CompareSwitch({
   onChange,
   baseName,
   baseLabel,
+  bothDisabled = false,
 }: {
   value: CompareWith;
   onChange: (value: CompareWith) => void;
   baseName: string;
   baseLabel: string;
+  /** No conflicts are left to compare side by side: both is off, and says why. */
+  bothDisabled?: boolean;
 }) {
   const names: Record<CompareWith, string> = { pr: 'PR', main: baseName, both: 'both' };
   const titles: Record<CompareWith, string> = {
@@ -250,7 +261,8 @@ function CompareSwitch({
             size="sm"
             aria-pressed={value === mode}
             data-compare={mode}
-            title={titles[mode]}
+            title={mode === 'both' && bothDisabled ? 'No conflicts left to compare' : titles[mode]}
+            disabled={mode === 'both' && bothDisabled}
             onClick={() => onChange(mode)}
           >
             {names[mode]}
@@ -279,11 +291,6 @@ function CompareRow({
   fileKey: string;
   preferences?: Preferences | null;
 }) {
-  // Every line of the version stays in view, changed or not: the row is the conflict's lines, never a part of them.
-  const pins = useMemo(() => {
-    const count = afterLines(text).length;
-    return count ? [[1, count] as const] : [];
-  }, [text]);
   return (
     <div className="conflict-compare-row" data-side={side}>
       <h4 className="conflict-side-label" data-side={side}>
@@ -296,7 +303,6 @@ function CompareRow({
           before={base}
           after={text}
           fileKey={fileKey}
-          pins={pins}
           preferences={preferences}
         />
       ) : (
@@ -460,33 +466,11 @@ export function ConflictDiff({
   });
   const hideBlocks = !!wholeFile && !wholeFile.shown && (!verdict || !!verdict.passed);
   const [compare, setCompare] = useCompareWith();
-  const rows = useMemo(
-    () => (compare === 'both' ? conflictCompareRows(model, proposals) : []),
-    [compare, model, proposals]
-  );
-  // Both with no conflict left to show (a draft edited past its conflicts) falls back to the PR's diff: never nothing.
-  const against = compare === 'main' ? 'theirs' : 'ours';
-  const showsBoth = compare === 'both' && rows.length > 0;
-  const shown = useMemo(() => conflictDiffText(model, proposals, against), [model, proposals, against]);
-  const pins = useMemo(
-    () => shown.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
-    [shown]
-  );
-  // Annotations only place the cards. The cards read their state from context, so a check result or a busy state
-  // updates them in place: a card that kept its DOM keeps its focus and its open details.
-  const annotate = useCallback(
-    (hunks: readonly GapHunk[]) => {
-      const byPlace = new Map<string, DiffLineAnnotation<{ indexes: number[] }>>();
-      for (const anchor of cardAnchors(shown.blocks, hunks)) {
-        const place = `${anchor.side}:${anchor.line}`;
-        const existing = byPlace.get(place);
-        if (existing) existing.metadata.indexes.push(anchor.index);
-        else byPlace.set(place, { side: anchor.side, lineNumber: anchor.line, metadata: { indexes: [anchor.index] } });
-      }
-      return [...byPlace.values()];
-    },
-    [shown]
-  );
+  // Both with no conflict left to show (a draft edited past its conflicts) is not offered, and the view shows PR: the
+  // switch never names a mode that isn't on screen.
+  const hasConflicts = model.segments.some((s) => s.kind === 'conflict');
+  const mode: CompareWith = compare === 'both' && !hasConflicts ? 'pr' : compare;
+  const rows = useMemo(() => (mode === 'both' ? conflictCompareRows(model, proposals) : []), [mode, model, proposals]);
   const card = (index: number) => {
     const segment = model.segments.find((s) => s.kind === 'conflict' && s.index === index);
     if (segment?.kind !== 'conflict') return null;
@@ -507,14 +491,21 @@ export function ConflictDiff({
         verdict={blockVerdict(verdict, index)}
         note={note}
         onUndo={model.undoable ? () => choose(index, undefined) : undefined}
-        compare={showsBoth ? 'both' : compare === 'main' ? 'main' : 'pr'}
+        compare={mode}
       />
     );
   };
   const baseName = shortBranch(labels.theirs, 16);
   const switcher = (
-    <CompareSwitch value={compare} onChange={setCompare} baseName={baseName} baseLabel={labels.theirs} />
+    <CompareSwitch
+      value={mode}
+      onChange={setCompare}
+      baseName={baseName}
+      baseLabel={labels.theirs}
+      bothDisabled={!hasConflicts}
+    />
   );
+  const diff = { name, model, proposals, fileKey, preferences, labels, card };
   return (
     <div ref={root} className="conflict-view conflict-diff-view" data-undoable={model.undoable || undefined}>
       {wholeFile && <WholeFile name={name} {...wholeFile} verdict={verdict} labels={labels} disabled={disabled} />}
@@ -522,40 +513,112 @@ export function ConflictDiff({
         <button type="button" className="conflict-context-toggle" onClick={wholeFile.onShow}>
           Resolve conflict by conflict instead ({total})
         </button>
-      ) : showsBoth ? (
-        <ConflictCompareBoth
-          name={name}
-          fileKey={fileKey}
-          rows={rows}
-          total={total}
-          labels={labels}
-          preferences={preferences}
-          actions={switcher}
-          card={card}
-        />
       ) : (
         <>
-          {/* A file with no lines left has nowhere to put a card: its cards come first. */}
-          {shown.blocks.filter((b) => b.anchor === undefined).map((b) => card(b.index))}
-          <ConflictCards.Provider value={card}>
-            <ConflictFileDiff
-              // Each mode is its own diff: reveals and shown scopes are line numbers of the version it compares with. PR keeps
-              // the keys it always had.
-              key={against}
+          {mode === 'both' && (
+            <ConflictCompareBoth
               name={name}
-              before={against === 'theirs' ? theirs : ours}
-              after={shown.after}
-              fileKey={against === 'theirs' ? `${fileKey}:main` : fileKey}
-              pins={pins}
-              annotate={annotate}
-              renderAnnotation={renderCards}
+              fileKey={fileKey}
+              rows={rows}
+              total={total}
+              labels={labels}
               preferences={preferences}
-              label={`Against ${against === 'theirs' ? labels.theirs : labels.ours}`}
               actions={switcher}
+              card={card}
             />
-          </ConflictCards.Provider>
+          )}
+          {mode === 'main' && <CompareDiff {...diff} against="theirs" before={theirs} live actions={switcher} />}
+          {/* PR stays mounted, hidden, in the other modes: its revealed lines and shown scopes survive a round trip. */}
+          <CompareDiff
+            {...diff}
+            against="ours"
+            before={ours}
+            live={mode === 'pr'}
+            actions={mode === 'pr' ? switcher : undefined}
+          />
         </>
       )}
+    </div>
+  );
+}
+
+const NO_CARDS = () => null;
+/**
+ * One mode's diff of the draft (#445 items 8 and 9), with each conflict's card under its lines: against the PR's version
+ * (`against` 'ours') or main's ('theirs'). A diff that isn't `live` is hidden and keeps the draft it last showed: it
+ * computes nothing and shows no cards while another mode is on screen.
+ */
+function CompareDiff({
+  name,
+  model,
+  proposals,
+  against,
+  before,
+  live,
+  fileKey,
+  preferences,
+  labels,
+  card,
+  actions,
+}: {
+  name: string;
+  model: ConflictModel;
+  proposals?: readonly (ConflictProposal | null)[];
+  against: 'ours' | 'theirs';
+  before: string;
+  live: boolean;
+  fileKey: string;
+  preferences?: Preferences | null;
+  labels: ConflictLabels;
+  card: (index: number) => ReactNode;
+  actions?: ReactNode;
+}) {
+  const last = useRef({ model, proposals });
+  if (live) last.current = { model, proposals };
+  const draft = last.current;
+  const shown = useMemo(
+    () => conflictDiffText(draft.model, draft.proposals, against),
+    [draft.model, draft.proposals, against]
+  );
+  const pins = useMemo(
+    () => shown.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
+    [shown]
+  );
+  // Annotations only place the cards. The cards read their state from context, so a check result or a busy state
+  // updates them in place: a card that kept its DOM keeps its focus and its open details.
+  const annotate = useCallback(
+    (hunks: readonly GapHunk[]) => {
+      const byPlace = new Map<string, DiffLineAnnotation<{ indexes: number[] }>>();
+      for (const anchor of cardAnchors(shown.blocks, hunks)) {
+        const place = `${anchor.side}:${anchor.line}`;
+        const existing = byPlace.get(place);
+        if (existing) existing.metadata.indexes.push(anchor.index);
+        else byPlace.set(place, { side: anchor.side, lineNumber: anchor.line, metadata: { indexes: [anchor.index] } });
+      }
+      return [...byPlace.values()];
+    },
+    [shown]
+  );
+  return (
+    <div className="conflict-compare-diff" data-compare={against === 'theirs' ? 'main' : 'pr'} hidden={!live}>
+      {/* A file with no lines left has nowhere to put a card: its cards come first. */}
+      {live && shown.blocks.filter((b) => b.anchor === undefined).map((b) => card(b.index))}
+      <ConflictCards.Provider value={live ? card : NO_CARDS}>
+        <ConflictFileDiff
+          name={name}
+          before={before}
+          after={shown.after}
+          // Each mode is its own diff: reveals and shown scopes are line numbers of the version it compares with. PR keeps
+          // the keys it always had.
+          fileKey={against === 'theirs' ? `${fileKey}:main` : fileKey}
+          pins={pins}
+          annotate={annotate}
+          renderAnnotation={renderCards}
+          preferences={preferences}
+          label={`Against ${against === 'theirs' ? labels.theirs : labels.ours}`}
+          actions={actions}
+        />
+      </ConflictCards.Provider>
     </div>
   );
 }

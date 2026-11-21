@@ -120,3 +120,13 @@ export function conflictCompareRows(model: ConflictModel, proposals?: BlockPropo
     return [rows];
   });
 }
+
+/**
+ * The context lines for a Compare with: both row (#445 item 9): as many as its longer version has, so the row's diff is
+ * one hunk with every line of both versions. Pins can't do this: a pin that overlaps a hunk is dropped, and the row
+ * cannot expand, so the unchanged lines between two changes would be hidden.
+ */
+export function compareRowContext(before: string, after: string): number {
+  const count = (text: string) => (text.match(/\n/g)?.length ?? 0) + (text && !text.endsWith('\n') ? 1 : 0);
+  return Math.max(count(before), count(after), 1);
+}
