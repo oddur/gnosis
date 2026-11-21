@@ -704,7 +704,7 @@ function PrSummaryContent({
         {conflictsOpen && (
           <KeptTab value="conflicts" tab={tab} visited={visited} className="pr-changes-tab pr-conflicts-tab">
             <Suspense fallback={<LoadingState title="Opening Resolve conflicts…" />}>
-              <ConflictWorkspace key={first.url} url={first.url} onClose={closeConflicts} />
+              <ConflictWorkspace key={first.url} url={first.url} onClose={closeConflicts} preferences={preferences} />
             </Suspense>
           </KeptTab>
         )}

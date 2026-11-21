@@ -122,7 +122,8 @@ function Side({ name, label, text, side }: { name: string; label: string; text: 
 
 const choiceKeys: Record<BlockChoice, string> = { ours: '1', theirs: '2', both: '3' };
 
-function Block({
+export function Block({
+  inDiff = false,
   name,
   block,
   index,
@@ -137,6 +138,8 @@ function Block({
   verdict,
   note,
 }: {
+  /** In the Conflicts view's diff (components/ConflictDiff.tsx): the diff shows the code, the card the decision. */
+  inDiff?: boolean;
   name: string;
   block: ConflictBlock;
   index: number;
@@ -220,10 +223,14 @@ function Block({
           {undo && <span aria-hidden="true">·</span>}
           {undo}
         </div>
-        <details className="conflict-ancestor conflict-merged-detail">
-          <summary>{note} Show the result</summary>
-          <CodeSnippet name={name} text={proposal.text} />
-        </details>
+        {inDiff ? (
+          <p className="conflict-block-note-line">{note}</p>
+        ) : (
+          <details className="conflict-ancestor conflict-merged-detail">
+            <summary>{note} Show the result</summary>
+            <CodeSnippet name={name} text={proposal.text} />
+          </details>
+        )}
       </section>
     ) : (
       <section
@@ -243,7 +250,7 @@ function Block({
           <span>{note}</span>
           {undo}
         </header>
-        {proposal.text ? (
+        {inDiff ? null : proposal.text ? (
           <CodeSnippet name={name} text={proposal.text} />
         ) : (
           <p className="conflict-side-empty">No lines</p>
@@ -287,7 +294,7 @@ function Block({
             </>
           )}
         </div>
-        {chosenText(block, choice) ? (
+        {inDiff ? null : chosenText(block, choice) ? (
           <CodeSnippet name={name} text={chosenText(block, choice)} />
         ) : (
           <p className="conflict-side-empty">No lines kept</p>
@@ -311,10 +318,19 @@ function Block({
         <span>Line {block.line}</span>
         {note && <span className="conflict-block-note">{note}</span>}
       </header>
-      <div className="conflict-sides">
-        <Side name={name} side="ours" label={labels.ours} text={block.ours} />
-        <Side name={name} side="theirs" label={labels.theirs} text={block.theirs} />
-      </div>
+      {inDiff ? (
+        // The diff above shows the two sides: the PR's lines removed, the base branch's added. Neither is chosen.
+        <p className="conflict-diff-legend">
+          <span className="conflict-side-label" data-side="ours">{labels.ours}</span>
+          <span className="conflict-side-label" data-side="theirs">{labels.theirs}</span>
+          <span>Nothing is chosen yet.</span>
+        </p>
+      ) : (
+        <div className="conflict-sides">
+          <Side name={name} side="ours" label={labels.ours} text={block.ours} />
+          <Side name={name} side="theirs" label={labels.theirs} text={block.theirs} />
+        </div>
+      )}
       {block.base !== undefined && (
         <details className="conflict-ancestor">
           <summary>{labels.base}</summary>
@@ -338,6 +354,184 @@ export interface ConflictViewHandle {
  * Conflicts as labelled versions with Keep actions. A kept block stays visible with Undo, as long
  * as the draft still derives from the original conflict.
  */
+/**
+ * Choices, focus and the J/K handle for a file's conflict cards, shared by ConflictView and the Conflicts view's diff
+ * (components/ConflictDiff.tsx). `root` holds the cards.
+ */
+export function useConflictChoices({
+  original,
+  contents,
+  proposals,
+  picks,
+  onPick,
+  onChange,
+  disabled,
+  handle,
+  onAllResolved,
+  verdict,
+}: {
+  original: string;
+  contents: string;
+  proposals?: readonly (ConflictProposal | null)[];
+  picks?: BlockPicks;
+  onPick?: (index: number, choice: BlockChoice | undefined) => void;
+  onChange: (contents: string) => void;
+  disabled: boolean;
+  handle?: Ref<ConflictViewHandle>;
+  onAllResolved?: () => void;
+  verdict?: Verdict;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const model = useMemo(
+    () => conflictModel(original, contents, proposals, picks),
+    [original, contents, proposals, picks]
+  );
+  const total = model.segments.filter((s) => s.kind === 'conflict').length;
+  const pendingFocus = useRef<{ after?: number; at?: number }>(undefined);
+  // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
+  const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
+  const openBlocks = () => [...(root.current?.querySelectorAll<HTMLElement>(pendingSelector) ?? [])];
+  const indexOf = (element: Element | null) =>
+    Number(element?.closest('[data-conflict-index]')?.getAttribute('data-conflict-index') ?? -1);
+  // The Conflicts view's diff mounts its cards with its hunks, a moment after the draft changes: a focus move waits
+  // until every card is in place (or the whole-file proposal stands in for them).
+  const waiting = useRef<MutationObserver>(undefined);
+  useEffect(() => () => waiting.current?.disconnect(), []);
+  const cardsIn = () =>
+    (root.current?.querySelectorAll('.conflict-block:not([data-conflict-index="-1"])').length ?? 0) >= total ||
+    !!root.current?.querySelector(':scope > .conflict-context-toggle');
+  function whenCards(run: () => void) {
+    waiting.current?.disconnect();
+    const element = root.current;
+    if (!element || cardsIn()) {
+      run();
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      if (!cardsIn()) return;
+      observer.disconnect();
+      run();
+    });
+    observer.observe(element, { childList: true, subtree: true });
+    waiting.current = observer;
+  }
+  // A card can mount again as the diff around it changes (a scope shown whole, a hunk joined): the conflict that had
+  // focus keeps it.
+  useEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    let focused: string | undefined;
+    const onFocusIn = (event: FocusEvent) => {
+      focused = (event.target as Element).closest('.conflict-block')?.getAttribute('data-conflict-index') ?? undefined;
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      if (event.relatedTarget) focused = undefined;
+    };
+    const observer = new MutationObserver(() => {
+      const active = document.activeElement;
+      if (focused === undefined || (active && active !== document.body && !active.contains(element))) return;
+      element.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${focused}"]`)?.focus({ preventScroll: true });
+    });
+    element.addEventListener('focusin', onFocusIn);
+    element.addEventListener('focusout', onFocusOut);
+    observer.observe(element, { childList: true, subtree: true });
+    return () => {
+      element.removeEventListener('focusin', onFocusIn);
+      element.removeEventListener('focusout', onFocusOut);
+      observer.disconnect();
+    };
+  }, []);
+  // A card in the diff shows once its hunk has rendered (ConflictDiff): until then it cannot take focus. Try again each
+  // frame while it is not shown and nothing else has taken focus.
+  function reveal(target: HTMLElement | null | undefined) {
+    let frames = 0;
+    const attempt = () => {
+      if (!target?.isConnected) return;
+      if (target.checkVisibility()) { revealElement(target); return; }
+      const active = document.activeElement;
+      if (++frames < 300 && (!active || active === document.body || (!!root.current && active.contains(root.current))))
+        requestAnimationFrame(attempt);
+    };
+    attempt();
+  }
+  function choose(index: number, choice: BlockPick | undefined) {
+    const next = [...model.choices];
+    next[index] = choice;
+    pendingFocus.current = choice ? { after: index } : { at: index };
+    onPick?.(index, choice === 'proposal' ? undefined : choice);
+    onChange(applyChoices(model.segments, next, proposals));
+  }
+  useEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending) return;
+    pendingFocus.current = undefined;
+    whenCards(() => {
+      if (pending.at !== undefined) {
+        reveal(root.current?.querySelector<HTMLElement>(`[data-conflict-index="${pending.at}"]`));
+        return;
+      }
+      const blocks = openBlocks();
+      const target = blocks.find((block) => indexOf(block) > (pending.after ?? -1)) ?? blocks.at(0);
+      if (target) reveal(target);
+      else onAllResolved?.();
+    });
+  }, [model]);
+  // A proposal is Check while its checks run. If it had focus and turns Merged, focus moves on to the next conflict that
+  // needs you. With none, it stays put: never onto a button that commits a review while you may be pressing keys. J
+  // then goes to the next action.
+  useEffect(() => {
+    const active = document.activeElement?.closest<HTMLElement>('.conflict-block');
+    if (!active || !root.current?.contains(active) || active.matches(pendingSelector)) return;
+    if (active.dataset.state !== 'proposal') return;
+    const target = openBlocks().find((block) => indexOf(block) > indexOf(active)) ?? openBlocks().at(0);
+    if (target) reveal(target);
+  }, [verdict]);
+  useImperativeHandle(
+    handle,
+    () => ({
+      move(direction) {
+        const blocks = openBlocks();
+        if (!blocks.length) return false;
+        const current = indexOf(document.activeElement);
+        const ordered = direction === 1 ? blocks : [...blocks].reverse();
+        const target =
+          ordered.find((block) => (direction === 1 ? indexOf(block) > current : indexOf(block) < current)) ??
+          ordered[0];
+        reveal(target);
+        return true;
+      },
+      choose(choice) {
+        if (disabled) return false;
+        // 1, 2 and 3 choose in a conflict, never in the whole-file proposal.
+        const blocks = openBlocks().filter((block) => indexOf(block) >= 0);
+        const active = document.activeElement?.closest<HTMLElement>(pendingSelector);
+        if (active && indexOf(active) < 0) return false;
+        const target = active && blocks.includes(active) ? active : blocks.at(0);
+        if (!target) return false;
+        choose(indexOf(target), choice);
+        return true;
+      },
+      focusFirst() {
+        if (!cardsIn()) {
+          // Cards still mounting: focus the first that needs you once they are in, else the next action.
+          whenCards(() => {
+            const target = openBlocks().at(0);
+            if (target) reveal(target);
+            else onAllResolved?.();
+          });
+          return true;
+        }
+        const target = openBlocks().at(0);
+        if (!target) return false;
+        reveal(target);
+        return true;
+      },
+    }),
+    [model, disabled]
+  );
+  return { root, model, total, choose };
+}
+
 export function ConflictView({
   name,
   original,
@@ -376,84 +570,20 @@ export function ConflictView({
   picks?: BlockPicks;
   onPick?: (index: number, choice: BlockChoice | undefined) => void;
 }) {
-  const root = useRef<HTMLDivElement>(null);
-  const model = useMemo(
-    () => conflictModel(original, contents, proposals, picks),
-    [original, contents, proposals, picks]
-  );
-  const total = model.segments.filter((s) => s.kind === 'conflict').length;
+  const { root, model, total, choose } = useConflictChoices({
+    original,
+    contents,
+    proposals,
+    picks,
+    onPick,
+    onChange,
+    disabled,
+    handle,
+    onAllResolved,
+    verdict,
+  });
   // A whole-file proposal that passed, or is still being checked, stands in for the conflicts until you ask for them.
   const hideBlocks = !!wholeFile && !wholeFile.shown && (!verdict || !!verdict.passed);
-  const pendingFocus = useRef<{ after?: number; at?: number }>(undefined);
-  // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
-  const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
-  const openBlocks = () => [...(root.current?.querySelectorAll<HTMLElement>(pendingSelector) ?? [])];
-  const indexOf = (element: Element | null) =>
-    Number(element?.closest('[data-conflict-index]')?.getAttribute('data-conflict-index') ?? -1);
-  function choose(index: number, choice: BlockPick | undefined) {
-    const next = [...model.choices];
-    next[index] = choice;
-    pendingFocus.current = choice ? { after: index } : { at: index };
-    onPick?.(index, choice === 'proposal' ? undefined : choice);
-    onChange(applyChoices(model.segments, next, proposals));
-  }
-  useEffect(() => {
-    const pending = pendingFocus.current;
-    if (!pending) return;
-    pendingFocus.current = undefined;
-    if (pending.at !== undefined) {
-      revealElement(root.current?.querySelector<HTMLElement>(`[data-conflict-index="${pending.at}"]`));
-      return;
-    }
-    const blocks = openBlocks();
-    const target = blocks.find((block) => indexOf(block) > (pending.after ?? -1)) ?? blocks.at(0);
-    if (target) revealElement(target);
-    else onAllResolved?.();
-  }, [model]);
-  // A proposal is Check while its checks run. If it had focus and turns Merged, focus moves on to the next conflict that
-  // needs you. With none, it stays put: never onto a button that commits a review while you may be pressing keys. J
-  // then goes to the next action.
-  useEffect(() => {
-    const active = document.activeElement?.closest<HTMLElement>('.conflict-block');
-    if (!active || !root.current?.contains(active) || active.matches(pendingSelector)) return;
-    if (active.dataset.state !== 'proposal') return;
-    const target = openBlocks().find((block) => indexOf(block) > indexOf(active)) ?? openBlocks().at(0);
-    if (target) revealElement(target);
-  }, [verdict]);
-  useImperativeHandle(
-    handle,
-    () => ({
-      move(direction) {
-        const blocks = openBlocks();
-        if (!blocks.length) return false;
-        const current = indexOf(document.activeElement);
-        const ordered = direction === 1 ? blocks : [...blocks].reverse();
-        const target =
-          ordered.find((block) => (direction === 1 ? indexOf(block) > current : indexOf(block) < current)) ??
-          ordered[0];
-        revealElement(target);
-        return true;
-      },
-      choose(choice) {
-        if (disabled) return false;
-        // 1, 2 and 3 choose in a conflict, never in the whole-file proposal.
-        const blocks = openBlocks().filter((block) => indexOf(block) >= 0);
-        const active = document.activeElement?.closest<HTMLElement>(pendingSelector);
-        if (active && indexOf(active) < 0) return false;
-        const target = active && blocks.includes(active) ? active : blocks.at(0);
-        if (!target) return false;
-        choose(indexOf(target), choice);
-        return true;
-      },
-      focusFirst() {
-        const target = openBlocks().at(0);
-        if (!target) return false;
-        revealElement(target);
-        return true;
-      },
-    }),
-    [model, disabled]
-  );
   return (
     <div ref={root} className="conflict-view" data-undoable={model.undoable || undefined}>
       {wholeFile && <WholeFile name={name} {...wholeFile} verdict={verdict} labels={labels} disabled={disabled} />}
@@ -499,7 +629,7 @@ export function ConflictView({
  * Structural merge's result for the whole file. It also changes lines outside the conflicts, so it is never Merged:
  * you read it next to the PR and use it, or choose each conflict below yourself.
  */
-function WholeFile({
+export function WholeFile({
   name,
   proposal,
   ours,

@@ -1,6 +1,8 @@
 import { LoadingIndicator } from './LoadingState';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { CodeView, EditProvider, File } from '@pierre/diffs/react';
+import { CodeView, EditProvider } from '@pierre/diffs/react';
+import { ConflictDiff, ConflictResult } from './ConflictDiff';
+import type { Preferences } from '../lib/types';
 import {
   ArrowRight,
   CheckCheck,
@@ -22,9 +24,7 @@ import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import {
-  ConflictView,
   DiffColumns,
-  ResultDiff,
   ResultEditor,
   createEditor,
   useCodeOptions,
@@ -363,7 +363,16 @@ function PreviewDiff({
   );
 }
 
-export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () => void }) {
+export function ConflictWorkspace({
+  url,
+  onClose,
+  preferences,
+}: {
+  url: string;
+  onClose: () => void;
+  /** The reader's diff appearance, layout, theme and code intelligence: the diffs are Changes' (#445 item 8). */
+  preferences?: Preferences | null;
+}) {
   const options = useCodeOptions();
   const model = useSuggestionModel();
   const restackDrafts = useRef<Record<string, string>>({});
@@ -526,6 +535,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     unsupported: !!file?.unsupported,
     merged: !!selectedState && allMerged(selectedState.buckets),
   });
+  const diffKey = `conflict:${session?.id ?? url}:${selected}`;
   const labels = useMemo(
     () => conflictLabels('merge', { head: session?.headBranch ?? 'PR', base: session?.baseBranch ?? 'base' }),
     [session?.headBranch, session?.baseBranch]
@@ -674,9 +684,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   // The view stays mounted while another PR tab shows (Activity re-runs its effects): it opens the session once.
   const opened = useRef(false);
   useEffect(() => {
-    root.current?.focus({ preventScroll: true });
     if (opened.current) return;
     opened.current = true;
+    root.current?.focus({ preventScroll: true });
     void load();
   }, []);
 
@@ -1499,7 +1509,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                         </div>
                       )}
                     </header>
-                    <div className="conflict-scroll selectable" inert={busy || session.stale}>
+                    <div className="conflict-scroll selectable" data-diff-scroller="" inert={busy || session.stale}>
                       {file.unsupported ? (
                         <LocalMerge session={session} reason={file.unsupported} />
                       ) : (
@@ -1519,10 +1529,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                           )}
                           {mode === 'conflicts' ? (
                             hasConflictMarkers(file.original) || markersRemain ? (
-                              <ConflictView
+                              <ConflictDiff
                                 key={`${selected}:${epoch}`}
                                 handle={view}
                                 name={selected}
+                                ours={file.ours}
+                                fileKey={diffKey}
+                                preferences={preferences}
                                 original={file.original}
                                 contents={contents}
                                 labels={labels}
@@ -1549,7 +1562,15 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                                 }
                               />
                             ) : (
-                              <File file={{ name: selected, contents }} options={options} />
+                              <ConflictResult
+                                name={selected}
+                                before={file.ours}
+                                after={contents}
+                                beforeLabel={labels.ours}
+                                afterLabel="Result after the merge"
+                                fileKey={diffKey}
+                                preferences={preferences}
+                              />
                             )
                           ) : mode === 'edit' ? (
                             <EditProvider createEditor={createEditor}>
@@ -1565,12 +1586,14 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                               Resolve the remaining conflicts first. The result appears here when no conflict is left.
                             </p>
                           ) : (
-                            <ResultDiff
+                            <ConflictResult
                               name={selected}
                               before={file.ours}
                               after={contents}
                               beforeLabel={labels.ours}
                               afterLabel="Result after the merge"
+                              fileKey={diffKey}
+                              preferences={preferences}
                             />
                           )}
                         </>

@@ -97,3 +97,28 @@ void test('labels name the PR and the base branch, never commit IDs', () => {
   assert.equal(shortBranch('abcdefghij', 5), 'ab…ij');
   for (const value of [merge, restack]) assert.doesNotMatch(JSON.stringify(value), /[0-9a-f]{12}/);
 });
+
+void test('the Conflicts view diff shows a decided conflict as its result and an open one as its two sides', async () => {
+  const { conflictDiffText } = await import('../lib/conflict-diff');
+  const original = 'a\n<<<<<<< pr\nours\n=======\ntheirs\n>>>>>>> main\nb\n<<<<<<< pr\nx\n=======\n>>>>>>> main\nc\n';
+  const open = conflictDiffText(conflictModel(original, original));
+  // Open: the base branch's lines stand in, so the diff against the PR's file shows both sides. Never markers.
+  assert.equal(open.after, 'a\ntheirs\nb\nc\n');
+  assert.deepEqual(
+    open.blocks.map(({ index, start, end, anchor }) => [index, start, end, anchor]),
+    [
+      [0, 2, 2, 2],
+      // No lines on main's side: the card sits under the line before.
+      [1, 4, 3, 3],
+    ]
+  );
+  const kept = applyChoices(parseConflicts(original), ['ours', 'ours']);
+  const decided = conflictDiffText(conflictModel(original, kept));
+  assert.equal(decided.after, 'a\nours\nb\nx\nc\n');
+  assert.deepEqual(decided.blocks.map((b) => [b.start, b.end, b.anchor]), [[2, 2, 2], [4, 4, 4]]);
+  // A proposal shows its text.
+  const proposals = [{ text: 'merged\n' }, null];
+  const draft = applyChoices(parseConflicts(original), ['proposal', undefined], proposals);
+  const proposed = conflictDiffText(conflictModel(original, draft, proposals), proposals);
+  assert.match(proposed.after, /^a\nmerged\nb\n/);
+});
