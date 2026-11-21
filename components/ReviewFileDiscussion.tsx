@@ -21,16 +21,45 @@ import {
   type GitHubReviewThreads,
   type ReviewThreadAction,
 } from '../lib/review-threads';
-import type { ReviewGuide } from '../lib/types';
+import type { DiffHunk, ReviewGuide } from '../lib/types';
+import { hunksHoldLine } from '../lib/slide-file-groups';
 
 type Props = ComponentProps<typeof ReviewDiff> & {
   review?: ReviewGuide;
   enabled?: boolean;
   onAsk?: (text: string) => void;
+  /**
+   * When a topic shows this file in more than one block, all of the file's hunks in the topic. A thread shows in the
+   * block that holds its line; the file's thread count, Refresh, and threads with no line show with the first block.
+   */
+  fileHunks?: DiffHunk[];
+  firstBlock?: boolean;
 };
 
+/**
+ * A thread's placement against a file's hunks, kept per hunk list and thread: a topic's blocks of one file share the
+ * list (SlideView's per-file hunks), so each thread is placed once per file, not once per block.
+ */
+const placements = new WeakMap<DiffHunk[], WeakMap<Thread, { key: string; reason: string | null }>>();
+function placement(
+  thread: Thread,
+  data: Parameters<typeof threadPlacementReason>[1],
+  source: { headSha?: string; baseSha?: string },
+  hunks: DiffHunk[],
+  status: Parameters<typeof threadPlacementReason>[4]
+) {
+  const key = `${data.headSha}:${data.baseSha}:${source.headSha}:${source.baseSha}:${status ?? ''}`;
+  let byThread = placements.get(hunks);
+  if (!byThread) placements.set(hunks, (byThread = new WeakMap()));
+  const saved = byThread.get(thread);
+  if (saved?.key === key) return saved.reason;
+  const reason = threadPlacementReason(thread, data, source, hunks, status);
+  byThread.set(thread, { key, reason });
+  return reason;
+}
+
 /** Load only PRs represented by the current topic; the main process coalesces file reads. */
-export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }: Props) {
+export function ReviewFileDiscussion({ review, enabled = true, onAsk, fileHunks, firstBlock = true, ...diff }: Props) {
   const [markdownView, changeMarkdownView] = useMarkdownView();
   const [sourceLocation, setSourceLocation] = useState<MarkdownLocation>();
   const [sourcePinnedLine, setSourcePinnedLine] = useState<number>();
@@ -106,14 +135,17 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
     [prUrl]
   );
   const threads = data?.threads.filter((t) => t.path === source?.path) ?? [];
-  const placed = threads.map((thread) => ({
-    thread,
-    reason:
-      data && source
-        ? threadPlacementReason(thread, data, source, diff.hunks, diff.fileStatus)
-        : 'Revision unavailable.',
-  }));
-  const unplaced = placed.filter((p) => p.reason);
+  // Placed against all of the file's hunks in the topic, once per file: every block of the file shares the result.
+  const placed = threads.map((thread) => {
+    const reason =
+      data && source ? placement(thread, data, source, fileHunks ?? diff.hunks, diff.fileStatus) : 'Revision unavailable.';
+    const elsewhere =
+      !reason && !!fileHunks && thread.line != null && !hunksHoldLine(diff.hunks, thread.line, thread.diffSide);
+    return { thread, reason, elsewhere };
+  });
+  const here = placed.filter((p) => !p.reason && !p.elsewhere).map((p) => p.thread);
+  // Whole-file parts (the count, Refresh, threads without a line) show with the file's first block only.
+  const unplaced = firstBlock ? placed.filter((p) => p.reason) : [];
   const unresolved = threads.filter((thread) => !thread.isResolved).length;
   async function act(thread: Thread, action: ReviewThreadAction['action'], body?: string) {
     if (!prUrl) return;
@@ -144,7 +176,7 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
   );
   return (
     <div ref={root} className="review-file-discussion min-w-0">
-      {prUrl && (
+      {prUrl && firstBlock && (
         <div className="github-discussion-toolbar">
           <span>
             {busy && !threads.length ? <LoadingIndicator>Loading GitHub comments…</LoadingIndicator> : <>
@@ -167,7 +199,14 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
             className="github-discussion-refresh"
             disabled={busy}
             onClick={() => {
-              const draft = root.current?.querySelector('textarea');
+              // A draft in any block of the file: Refresh reloads the threads of all of them.
+              const blocks = [
+                ...(root.current?.closest('.review-code')?.querySelectorAll<HTMLElement>('.review-file-group[data-file-path]') ??
+                  []),
+              ].filter((block) => block.dataset.filePath === diff.filePath);
+              const draft = (blocks.length ? blocks : root.current ? [root.current] : [])
+                .map((block) => block.querySelector('textarea'))
+                .find((textarea) => textarea);
               if (draft) {
                 draft.focus();
                 setNotice('Finish or cancel your comment before refreshing GitHub threads.');
@@ -186,7 +225,7 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
           {notice}
         </p>
       )}
-      {error && (
+      {error && firstBlock && (
         <p className="github-thread-error" role="alert">
           Could not load GitHub comments. {error}
         </p>
@@ -198,7 +237,7 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
             review={review}
             onSource={openSource}
             onAsk={onAsk}
-            threads={placed.filter((p) => !p.reason).map((p) => p.thread)}
+            threads={here}
             renderThread={renderThread}
           />
         </div>
@@ -211,7 +250,7 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
           sourceLocation={sourceLocation}
           onSourceLocationShown={() => setSourceLocation(undefined)}
           pinnedLines={[...(diff.pinnedLines ?? []), ...(sourcePinnedLine !== undefined ? [sourcePinnedLine] : [])]}
-          threads={placed.filter((p) => !p.reason).map((p) => p.thread)}
+          threads={here}
           renderThread={renderThread}
         />
       )}

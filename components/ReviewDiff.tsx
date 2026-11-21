@@ -7,6 +7,8 @@ import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
 import { DEFAULT_DIFF_APPEARANCE, diffContextLines, noiseFilterOf, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
 import { reviewGapHunks, type ReviewPin } from '@/lib/review-gap-hunks';
+import type { ElsewhereChange } from '@/lib/diff-gaps';
+import { resolveBlock } from '@/lib/slide-file-groups';
 import { fileRevisionKey, type PrChangeFile, type PrChanges, type PrFileRequest } from '@/lib/pr-changes';
 import { currentCodeIntelligence } from '@/lib/use-syntax-contents';
 import { LFS_VERSION } from '@/lib/git-lfs';
@@ -40,6 +42,11 @@ interface Props {
   appearance?: DiffAppearance;
   pendingComments?: PendingReviewComment[];
   slideIndex: number;
+  /** Which block of the file this is, when a topic shows one file in more than one block: each has its own open comment. */
+  commentScope?: string;
+  /** Changes other blocks of the file show: gaps over them reveal nothing, and offer a jump to the block. */
+  elsewhere?: readonly ElsewhereChange[];
+  onShowElsewhere?: (run: number, line?: number) => void;
   commentCallbacks?: CommentCallbacks;
   threads?: GitHubReviewThread[];
   inlineExplanations?: InlineExplanation[];
@@ -83,6 +90,9 @@ export function ReviewDiff({
   appearance = DEFAULT_DIFF_APPEARANCE,
   pendingComments = [],
   slideIndex,
+  commentScope,
+  elsewhere,
+  onShowElsewhere,
   commentCallbacks,
   threads = [],
   inlineExplanations = [],
@@ -166,6 +176,7 @@ export function ReviewDiff({
     hunks: saved.hunks,
     known: saved.known,
     partial: true,
+    elsewhere,
     request,
     expandable: fileStatus !== 'added' && fileStatus !== 'deleted' && !lfs,
     active,
@@ -191,7 +202,7 @@ export function ReviewDiff({
     }
     return map;
   }, [model.parts]);
-  const [active_, setActive] = useSessionDraft<Location | null>(`comment-location:${slideIndex}:${filePath}`, null);
+  const [active_, setActive] = useSessionDraft<Location | null>(`comment-location:${slideIndex}:${commentScope ?? filePath}`, null);
   const single = fileStatus === 'added' || fileStatus === 'deleted';
   const unified = single || diffLayout === 'unified';
   const options: FileDiffOptions<Location, undefined> = {
@@ -338,6 +349,7 @@ export function ReviewDiff({
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
           lineCount={model.lineCount}
           plainGaps={plainGaps}
+          onShowElsewhere={onShowElsewhere}
         />
       )}
       {saved.unreadable.map((hunk) => (
@@ -374,6 +386,31 @@ export function findReviewLine(
     }
   }
   return null;
+}
+
+/**
+ * The block of `filePath` that holds `line`, when a topic shows the file in more than one block: the first rendered
+ * block that shows the line, the new side first, then the first whose saved hunks span it (a collapsed block renders
+ * none), else the file's first block. With a thread id, the block that shows that thread, placed or not.
+ */
+export function findReviewBlock(
+  root: ParentNode,
+  filePath: string,
+  { line, side, threadId }: { line?: number; side?: DiffSide; threadId?: string } = {}
+): HTMLElement | undefined {
+  const blocks = [...root.querySelectorAll<HTMLElement>('.review-file-group[data-file-path]')].filter(
+    (block) => block.dataset.filePath === filePath
+  );
+  if (threadId) {
+    const holder = blocks.find((block) => block.querySelector(`[data-thread-id="${CSS.escape(threadId)}"]`));
+    if (holder) return holder;
+  }
+  return resolveBlock(
+    blocks,
+    { line, side },
+    (block, s) => line !== undefined && !!findReviewLine(block, filePath, line, s),
+    (block, s) => (s === 'LEFT' ? block.dataset.oldRanges : block.dataset.newRanges)
+  );
 }
 
 /**
