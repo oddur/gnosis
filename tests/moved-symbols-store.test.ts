@@ -15,7 +15,7 @@ import {
   movesFailureKey,
   movesFilePlan,
 } from '../lib/moved-symbols-plan';
-import { moveEditsLabel, moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
+import { moveEditsLabel, moveNoteLines, moveWords, movedLineKeys } from '../lib/moved-symbols-view';
 import {
   moveEdits,
   patchMayMove,
@@ -284,16 +284,50 @@ const hunk = (oldStart: number, newStart: number, rows: string): GapPart =>
     hunk: { oldStart, newStart, rows: rows.split('').map((type) => ({ type, text: '' })) },
   }) as unknown as GapPart;
 
-void test('A note sits under the line above its symbol only when that is the row right above it', () => {
-  // Unified rows: context (new 10), three deleted rows, then the added symbol at new 11.
+void test('A note sits under the row the diff shows right above its symbol, on either side', () => {
+  // Unified rows: context (new 10), three deleted rows (old 11–13), then the added symbol at new 11.
   const deletedAbove = hunk(10, 10, ' ---++++');
   const into = mark('after', 11, []);
-  assert.equal(moveNoteLines([deletedAbove], [into]).get(into), 11, 'Deleted rows between: under its first line');
+  assert.deepEqual(
+    moveNoteLines([deletedAbove], [into]).get(into),
+    { side: 'before', line: 13 },
+    'Unified: under the last deleted row'
+  );
+  assert.deepEqual(
+    moveNoteLines([deletedAbove], [into], true).get(into),
+    { side: 'after', line: 10 },
+    'Split: under its own side’s row'
+  );
   const contextAbove = hunk(10, 10, ' ++++');
-  assert.equal(moveNoteLines([contextAbove], [into]).get(into), 10, 'Context right above: under it');
+  assert.deepEqual(
+    moveNoteLines([contextAbove], [into]).get(into),
+    { side: 'after', line: 10 },
+    'Context right above: under it'
+  );
   const outOf = mark('before', 11, []);
-  assert.equal(moveNoteLines([hunk(10, 10, ' ----')], [outOf]).get(outOf), 10);
+  assert.deepEqual(moveNoteLines([hunk(10, 10, ' ----')], [outOf]).get(outOf), { side: 'before', line: 10 });
   assert.equal(moveNoteLines([hunk(20, 20, ' ++')], [into]).has(into), false, 'Not shown: no note');
+});
+
+void test('A symbol on its hunk’s first row has its note head the hunk, not under its own first line', () => {
+  const first = mark('after', 1, []);
+  const added = { ...hunk(0, 1, '++++'), key: 'h1' } as GapPart;
+  assert.deepEqual(moveNoteLines([added], [first]).get(first), { hunk: 'h1' });
+  assert.deepEqual(moveNoteLines([added], [first], true).get(first), { hunk: 'h1' });
+  // Split: deleted rows head the hunk, but nothing on the symbol's side is above it.
+  const replaced = { ...hunk(1, 1, '--++'), key: 'h2' } as GapPart;
+  assert.deepEqual(moveNoteLines([replaced], [first], true).get(first), { hunk: 'h2' });
+  assert.deepEqual(moveNoteLines([replaced], [first]).get(first), { side: 'before', line: 2 });
+});
+
+void test('A move within the file says which way it went, by line', () => {
+  const words = (side: 'before' | 'after', start: number, other: number, sameFile = true) =>
+    moveWords({ side, start, sameFile, other: { start: other, path: 'src/a.ts' } as MoveMark['other'] });
+  assert.deepEqual(words('after', 3, 22), { verb: 'Moved up from', place: 'line 22' });
+  assert.deepEqual(words('after', 40, 10), { verb: 'Moved down from', place: 'line 10' });
+  assert.deepEqual(words('before', 22, 3), { verb: 'Moved up to', place: 'line 3' });
+  assert.deepEqual(words('before', 10, 40), { verb: 'Moved down to', place: 'line 40' });
+  assert.deepEqual(words('after', 3, 10, false), { verb: 'Moved from', place: 'src/a.ts:10' });
 });
 
 void test('Only lines the body diff matched dim: a comment line added in the move keeps its colour', () => {

@@ -12,6 +12,8 @@ import { assertPerf } from './perf-budget';
  * - Each moved symbol has a note right above it: "Moved from src/moves/store.ts:35 · 1 line edited", "Moved to …",
  *   "renamed from parseHeader", "unchanged". The lines it carried over unchanged are dimmed; its real edit is not.
  * - The tie shows no note, on either side.
+ * - A note sits right above its symbol's first line in unified and split diffs: after deleted rows, and on a hunk's
+ *   first row, where it heads the hunk's code.
  * - A note's place is a link: to another file (Changes selects it and lands on the line), or within the file (the
  *   line is marked "here").
  * - An Explanation topic of the same files shows the same notes (AGENTS.md, diff parity).
@@ -185,13 +187,71 @@ void app.whenReady().then(async () => {
     assert.deepEqual(
       [...storeNotes].sort(),
       [
-        'Moved from old L3 · unchanged',
-        'Moved to L49 · unchanged',
+        'Moved down from line 3 · unchanged',
+        'Moved down to line 49 · unchanged',
         'Moved to src/moves/headers.ts:3 · renamed to readHeader · body unchanged',
         'Moved to src/moves/queue.ts:16 · 1 line edited',
       ],
       'The old side says where each symbol went, and the move within the file says both'
     );
+
+    // ── A note sits right above its symbol: after deleted rows, and on a hunk's first row (#111) ──
+    /** How far a note's bottom is above its symbol's first line: 0 when right above it, negative when below. */
+    const gap = (path: string, note: string, line: string) =>
+      js<number>(
+        `(()=>{const s=document.querySelector(${JSON.stringify(row(path))});const n=window.deepAll('[data-move-note]',s).find(n=>n.textContent.includes(${JSON.stringify(note)}));const l=window.deepAll('[data-line]',s).find(e=>e.dataset.lineType==='change-addition'&&e.textContent.includes(${JSON.stringify(line)}));if(!n||!l)return NaN;return Math.round(l.getBoundingClientRect().top-n.getBoundingClientRect().bottom)})()`
+      );
+    const layout = async (key: 'u' | 's') => {
+      await js(`document.body.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true}))`);
+      await wait(
+        `document.querySelector(${JSON.stringify(row(MOVE_FILES.lines))})?.closest('[data-diff-layout]')?.dataset.diffLayout===${JSON.stringify(key === 's' ? 'split' : 'unified')}`,
+        200
+      );
+      await settle();
+    };
+    for (const path of [MOVE_FILES.lines, MOVE_FILES.render]) {
+      await openFile(path);
+      await wait(
+        `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(row(path))})).length>0`,
+        300
+      );
+    }
+    await settle();
+    assert.deepEqual(
+      [...(await notes(row(MOVE_FILES.lines)))].sort(),
+      [
+        'Moved to src/moves/render.ts:1 · renamed to renderLine · body unchanged',
+        'Moved up from line 16 · unchanged',
+        'Moved up to line 1 · unchanged',
+      ],
+      'A move up the file says so'
+    );
+    assert.deepEqual(await notes(row(MOVE_FILES.render)), [
+      'Moved from src/moves/lines.ts:22 · renamed from formatLine · body unchanged',
+    ]);
+    for (const key of ['u', 's'] as const) {
+      await layout(key);
+      for (const [name, path] of [
+        ['lines', MOVE_FILES.lines],
+        ['render', MOVE_FILES.render],
+      ]) {
+        if (shots) await openFile(path);
+        await capture(`first-row-note-${key}-${name}`, row(path));
+      }
+      // Right above: under the row before it, or heading the hunk over the diff's top padding.
+      for (const [path, note, line] of [
+        [MOVE_FILES.lines, 'Moved up from line 16', 'export function totalWidth('],
+        [MOVE_FILES.render, 'renamed from formatLine', 'export function renderLine('],
+      ]) {
+        const above = await gap(path, note, line);
+        console.log(`${key} ${path}: note ${above}px above its symbol`);
+        assert.ok(
+          above >= 0 && above <= 10,
+          `${key === 's' ? 'Split' : 'Unified'}, ${path}: the note is right above its symbol (${above}px)`
+        );
+      }
+    }
+    await layout('u');
 
     // ── The tie: two removed copies of closeAll, one added: no note anywhere ──
     for (const path of [MOVE_FILES.base, MOVE_FILES.closeA]) {
@@ -213,7 +273,7 @@ void app.whenReady().then(async () => {
     console.log('Jump to another file: landed on store.ts flushQueue');
     // ── And within the file: formatEntry's new copy goes to its old line, marked "here" ──
     await js(
-      `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(row(MOVE_FILES.store))})).find(n=>n.textContent.includes('old L3')).querySelector('[data-move-jump]').click()`
+      `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(row(MOVE_FILES.store))})).find(n=>n.textContent.includes('from line 3')).querySelector('[data-move-jump]').click()`
     );
     await wait(
       `window.deepAll('[data-here]',document.querySelector(${JSON.stringify(row(MOVE_FILES.store))})).some(e=>e.textContent.includes('export function formatEntry('))`,
@@ -244,10 +304,17 @@ void app.whenReady().then(async () => {
     });
     const topicNotes = await notes(topic);
     console.log('Topic notes:', JSON.stringify(topicNotes));
-    for (const note of [...queueNotes, 'Moved to src/moves/queue.ts:16 · 1 line edited', 'Moved to L49 · unchanged'])
+    for (const note of [
+      ...queueNotes,
+      'Moved to src/moves/queue.ts:16 · 1 line edited',
+      'Moved down to line 49 · unchanged',
+    ])
       assert.ok(topicNotes.includes(note), `The topic shows "${note}" as Changes does`);
     // The topic leaves out store.ts's third hunk: formatEntry's new copy and parseHeader's removal are not shown.
-    assert.ok(!topicNotes.some((note) => /old L3|readHeader/.test(note)), 'Hunks the topic leaves out have no notes');
+    assert.ok(
+      !topicNotes.some((note) => /from line 3|readHeader/.test(note)),
+      'Hunks the topic leaves out have no notes'
+    );
     assert.ok(
       await js<boolean>(
         `window.deepAll('[data-line][data-moved-line]',document.querySelector(${JSON.stringify(topic)})).length>=8`

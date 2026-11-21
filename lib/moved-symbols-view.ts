@@ -1,35 +1,65 @@
 import type { GapPart } from './diff-gaps';
 import type { MoveMark } from './moved-symbols-core';
 
+/** Where a move's note goes: under a line of the diff, or at the top of a hunk, above its first row. */
+export type MoveNoteAt = { side: MoveMark['side']; line: number } | { hunk: string };
+
 /**
- * Where a diff shows a moved symbol's note (#398, ChangesDiff): under the line right above the symbol on its side, so
- * it reads as the symbol's heading, or under the symbol's first line when the row above is another side's (a deleted
- * block right above an added symbol, in a unified diff: the note would sit over unrelated lines) or not shown. A
- * symbol whose first line is not shown has no note. Lines are on the mark's side.
+ * Where a diff shows a moved symbol's note (#398, ChangesDiff): right above the symbol, so it reads as its heading.
+ * Notes sit under a line, so the note goes under the row the diff shows right before the symbol's first line: in a
+ * unified diff, that row on either side (a deleted block right above an added symbol), and in a split diff, the row
+ * before it on its own side. With no such row in its hunk, the note heads the hunk (`{ hunk }`). A symbol whose first
+ * line is not shown has no note.
  */
-export function moveNoteLines(parts: readonly GapPart[], marks: readonly MoveMark[]): Map<MoveMark, number> {
-  // Each line's row, in the order a unified diff shows rows, on each side. Hunks are apart: a row never follows a gap.
+export function moveNoteLines(
+  parts: readonly GapPart[],
+  marks: readonly MoveMark[],
+  split = false
+): Map<MoveMark, MoveNoteAt> {
+  // Each line's row, in the order a unified diff shows rows, on each side; each row's hunk, and its side and line.
   const rowOf = { after: new Map<number, number>(), before: new Map<number, number>() };
-  let index = 0;
+  const rows: { hunk: string; side?: MoveMark['side']; line: number }[] = [];
   for (const part of parts) {
     if (part.kind !== 'hunk') continue;
     let oldLine = part.hunk.oldStart,
       newLine = part.hunk.newStart;
     for (const row of part.hunk.rows) {
-      if (row.type !== '+') rowOf.before.set(oldLine++, index);
-      if (row.type !== '-') rowOf.after.set(newLine++, index);
-      index++;
+      if (row.type !== '+') rowOf.before.set(oldLine, rows.length);
+      if (row.type !== '-') rowOf.after.set(newLine, rows.length);
+      // A context row is on both sides: a note under it is on the mark's.
+      if (row.type === '-') rows.push({ hunk: part.key, side: 'before', line: oldLine });
+      else rows.push({ hunk: part.key, side: row.type === '+' ? 'after' : undefined, line: newLine });
+      if (row.type !== '+') oldLine++;
+      if (row.type !== '-') newLine++;
     }
-    index++;
   }
-  const result = new Map<MoveMark, number>();
+  const result = new Map<MoveMark, MoveNoteAt>();
   for (const mark of marks) {
     const own = rowOf[mark.side];
     const at = own.get(mark.start);
     if (at === undefined) continue;
-    result.set(mark, own.get(mark.start - 1) === at - 1 ? mark.start - 1 : mark.start);
+    const { hunk } = rows[at];
+    const before = split ? own.get(mark.start - 1) : at - 1;
+    const above = before === undefined ? undefined : rows[before];
+    if (above?.hunk !== hunk) result.set(mark, { hunk });
+    else result.set(mark, { side: above.side ?? mark.side, line: above.side ? above.line : mark.start - 1 });
   }
   return result;
+}
+
+/**
+ * A move's verb and place, for its note: "Moved from src/a.ts:12" for another file's, and within the file, which way
+ * it went, by line number on either side: "Moved up from line 22", "Moved down to line 40".
+ */
+export function moveWords(mark: Pick<MoveMark, 'side' | 'start' | 'sameFile' | 'other'>): {
+  verb: string;
+  place: string;
+} {
+  const into = mark.side === 'after';
+  const { other } = mark;
+  if (!mark.sameFile) return { verb: into ? 'Moved from' : 'Moved to', place: `${other.path}:${other.start}` };
+  const up = into ? mark.start < other.start : other.start < mark.start;
+  return { verb: `Moved ${up ? 'up' : 'down'} ${into ? 'from' : 'to'}`, place: `line ${other.start}` };
 }
 
 /**
