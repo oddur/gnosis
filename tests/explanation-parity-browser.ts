@@ -349,9 +349,12 @@ void app.whenReady().then(async () => {
     const first = Number(range[1]);
     const last = range[2] ? Number(range[2]) : first;
     await js("document.querySelector('.explanation-left-out li button').click()");
-    // Changes opens the file and marks the left-out lines, as a review check's jump does.
+    // Changes opens the PR's file (a stack member's, here) and scrolls its left-out lines into view.
+    const leftOutRow = '.commit-stream-row:is([data-file="src/scope.ts"],[data-file$="/src/scope.ts"])';
     await wait(
-      `window.deepAll('[data-line][data-here]',document.querySelector(${JSON.stringify(changesRow)})??document.createElement('div')).some(e=>{const n=Number(e.dataset.line);return n>=${first}&&n<=${last}})`,
+      `(()=>{const s=document.querySelector('.commit-diff-stream')?.getBoundingClientRect();const row=document.querySelector(${JSON.stringify(leftOutRow)});
+        return !!s&&!!row&&window.deepAll('[data-line]',row).some(e=>{const n=Number(e.dataset.line);const r=e.getBoundingClientRect();
+          return n>=${first}&&n<=${last}&&e.dataset.lineType!=='change-deletion'&&r.height>0&&r.top>=s.top&&r.bottom<=s.bottom})})()`,
       500
     );
     assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent"), 'Changes');

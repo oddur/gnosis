@@ -201,6 +201,8 @@ export function CommitDiffStream({
       onClickCapture={(event) => retainDiscussion(event.target as HTMLElement)}
       onFocusCapture={(event) => {
         retainDiscussion(event.target as HTMLElement);
+        // A jump to a line has scrolled it into view: keep it there rather than the file's top.
+        if ((event.target as HTMLElement).dataset.jumpTarget !== undefined) pending.current = undefined;
         const row = (event.target as HTMLElement).closest<HTMLElement>('[data-file]');
         if (row) setFocused(row.dataset.file);
       }}
