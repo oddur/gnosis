@@ -156,10 +156,20 @@ function lostEdit(texts: string[], parsed: ParsedText[]) {
     }
     return bodies;
   });
+  // Definitions that hold others, such as a class: their own text changes whenever a member does.
+  const definitions = parsed[0].definitions;
+  const containers = new Set(
+    definitions
+      .filter((d) => definitions.some((x) => x !== d && x.start >= d.start && x.end <= d.end))
+      .map((d) => symbolKey(definitions, d))
+  );
   for (const [key, [base, ...more]] of b) {
     const [ours, theirs, result] = [o, t, r].map((m) => m.get(key));
     if (more.length || ours?.length !== 1 || theirs?.length !== 1 || result?.length !== 1) continue;
     const name = symbolName(key);
+    // Two edits to one definition can land in the wrong places and still keep every line.
+    if (base !== ours[0] && base !== theirs[0] && !containers.has(key))
+      return `Both sides changed ${name}. Check it yourself.`;
     if (base === ours[0] && base !== theirs[0] && result[0] !== theirs[0])
       return `${name} in the result doesn’t match main’s change to it.`;
     if (base === theirs[0] && base !== ours[0] && result[0] !== ours[0])
@@ -171,7 +181,7 @@ function lostEdit(texts: string[], parsed: ParsedText[]) {
 
 /**
  * Line accounting for a whole file, where one side may have moved code: each line appears as often as the two sides'
- * changes leave it (PR + main − ancestor, or one side's count when both sides changed it alike). Order is not checked.
+ * changes leave it: ancestor + (PR − ancestor) + (main − ancestor). Order is not checked.
  */
 export function accountWholeFile(
   file: { base: string; ours: string; theirs: string },
@@ -189,7 +199,8 @@ export function accountWholeFile(
   let extra: string | undefined;
   for (const line of new Set([...base.keys(), ...ours.keys(), ...theirs.keys(), ...merged.keys()])) {
     const [b, o, t, r] = [base, ours, theirs, merged].map((m) => m.get(line) ?? 0);
-    const expected = o === t ? o : Math.max(0, o + t - b);
+    // Each side's change counts on its own: a `}` both sides added is there twice.
+    const expected = Math.max(0, b + (o - b) + (t - b));
     if (r < expected) missing.push(line);
     else if (r > expected) extra ??= line;
   }
@@ -429,6 +440,16 @@ export function blockBuckets(
     return pick ? 'decided' : 'decide';
   });
 }
+
+/**
+ * The file's conflicts all wait behind a whole-file proposal that passed its checks, or is being checked. The file
+ * list, the file header and the footer use it.
+ */
+export const proposalReady = (
+  f: Pick<ConflictFile, 'wholeFile' | 'original'>,
+  draft: string,
+  buckets: readonly ConflictBucket[]
+) => !!f.wholeFile && draft === f.original && buckets.length > 0 && buckets.every((bucket) => bucket === 'check');
 
 export interface BucketSummary {
   files: number;

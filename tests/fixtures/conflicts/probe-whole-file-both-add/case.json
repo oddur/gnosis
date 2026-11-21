@@ -1,0 +1,8 @@
+{
+  "description": "Review probe for #448: the PR moves alpha and adds gamma; main edits alpha and adds delta above it. Both new functions end in `}`, so the result has one more `}` than either side. Line counts add each side’s change, so Mergiraf’s correct result is a whole-file proposal in Check.",
+  "language": "javascript",
+  "category": "probe/whole-file",
+  "expected": {
+    "src/order.js": "check"
+  }
+}

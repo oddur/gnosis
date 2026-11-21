@@ -1107,6 +1107,13 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js(`!!${block(0)}`), false, 'The conflicts wait behind the proposal');
     assert.equal(await js("!!document.querySelector('[data-bucket=merged]')"), false, 'Never Merged');
+    assert.equal(await js(`${whole}.querySelector('.conflict-block-header').textContent`), 'Whole fileCheck');
+    // The footer speaks of the proposal, and using it is the next step.
+    assert.equal(await primary(), 'use-proposal');
+    assert.match(
+      await js<string>("document.querySelector('.conflict-footer-status').textContent"),
+      /^1 proposal to check · 0 of 2 files reviewed$/
+    );
     // While the conflicts are hidden, the proposal is the file's one stop for J and K.
     await wait("document.activeElement?.closest('.conflict-block')?.dataset.conflictIndex==='-1'");
     await key('j');
@@ -1116,6 +1123,11 @@ void app.whenReady().then(async () => {
     await click('Resolve conflict by conflict instead (1)');
     await wait(`${block(0)}?.dataset.state==='open'`);
     assert.equal(await js(`!!${whole}`), true);
+    assert.equal(await primary(), 'next-conflict');
+    assert.match(
+      await js<string>("document.querySelector('.conflict-footer-status').textContent"),
+      /^1 conflict left in this file/
+    );
     await js(`${whole}.focus()`);
     await key('j');
     assert.equal(await activeBlock(), '0');

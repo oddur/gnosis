@@ -656,6 +656,8 @@ export function createConflictResolutionService(deps: Deps) {
       for (const file of queue) file.structuralNote = 'Structural merge isn’t available in this build.';
       return files;
     }
+    // A note from an earlier try (no binary, out of time) gives way to this one.
+    for (const file of queue) delete file.structuralNote;
     report(`Combining both sides’ changes in ${queue.length} ${queue.length === 1 ? 'file' : 'files'}.`);
     /** Keeps what structural merge proposed for one file. False when it ran out of time. */
     const propose = async (file: ConflictFile, budget: number) => {
@@ -668,6 +670,7 @@ export function createConflictResolutionService(deps: Deps) {
         console.warn(`[conflicts] Structural merge skipped ${file.path}.`, error);
         if (error instanceof Error && error.message.startsWith('The operation timed out')) return false;
         file.structuralNote = 'Structural merge couldn’t combine this file.';
+        file.structuralRan = true;
         return true;
       }
       // Out of time, Mergiraf falls back to Git's line merge and says nothing: whatever it printed is not its merge.
@@ -681,6 +684,7 @@ export function createConflictResolutionService(deps: Deps) {
         }
       } else if (!hasConflictMarkers(output)) file.wholeFile = { source: 'mergiraf', text: output };
       else file.structuralNote = 'Structural merge couldn’t combine this file.';
+      file.structuralRan = true;
       return true;
     };
     const [first, retry, cap] = deps.structuralTimeouts ?? [5000, 10_000, 30_000];
@@ -841,6 +845,7 @@ export function createConflictResolutionService(deps: Deps) {
           file.wholeFile = old.wholeFile;
           file.structuralNote = old.structuralNote;
         }
+        file.structuralRan = old.structuralRan;
         if (old.proposals) {
           file.proposals = old.proposals;
           file.result = withProposals(file.original, old.proposals);
@@ -928,21 +933,30 @@ export function createConflictResolutionService(deps: Deps) {
     if (saved?.status === 'editing' && !restart && saved.files.length > 0) {
       const change = revisionChange(saved, state);
       if (change === 'head-moved' || change === 'retargeted') return { ...saved, stale: true, staleReason: change };
-      // A draft saved before preparation kept whole-file results gets the structural pass once. It never changes the
-      // draft, which may be your own: what it finds is stored beside it.
-      if (!saved.structuralPass) {
+      // Files that structural merge never gave a result (a draft from an older build, no binary, out of time) get the
+      // pass on reopen, while the draft is still Git's conflict. It never changes the draft: what it finds is stored
+      // beside it. A Suggest result or your own edit is left alone.
+      const untried = saved.files.filter(
+        (f) =>
+          !f.structuralRan &&
+          !f.resolved &&
+          f.source === 'manual' &&
+          f.result === f.original &&
+          !f.proposals &&
+          !f.wholeFile
+      );
+      if (untried.length) {
         await mergeStructurally(
           ctx,
           id,
           { head: saved.headBranch, base: saved.baseBranch },
-          saved.files.filter((f) => !f.resolved && !f.proposals && !f.wholeFile),
+          untried,
           signal,
           report,
           true
         );
         signal.throwIfAborted();
         assertAccount(ctx);
-        saved.structuralPass = true;
         saved.version++;
         await persist(saved);
       }
@@ -999,7 +1013,6 @@ export function createConflictResolutionService(deps: Deps) {
       status: 'editing',
       dependents: deps.dependents?.(url) ?? [],
       preparation: await preparation(ctx, id, prepared, files, state, signal),
-      structuralPass: true,
     };
     signal.throwIfAborted();
     assertAccount(ctx);

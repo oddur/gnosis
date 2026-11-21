@@ -350,7 +350,8 @@ export function ConflictView({
   verdict?: Verdict;
   note?: string;
   /** Structural merge's whole-file result, shown first as one thing to check. */
-  wholeFile?: { proposal: ConflictProposal; ours: string; onUse: () => void };
+  /** `shown`: you asked to see the conflicts too. */
+  wholeFile?: { proposal: ConflictProposal; ours: string; onUse: () => void; shown: boolean; onShow: () => void };
   labels: ConflictLabels;
   onChange: (contents: string) => void;
   disabled?: boolean;
@@ -363,8 +364,7 @@ export function ConflictView({
   const model = useMemo(() => conflictModel(original, contents, proposals), [original, contents, proposals]);
   const total = model.segments.filter((s) => s.kind === 'conflict').length;
   // A whole-file proposal that passed, or is still being checked, stands in for the conflicts until you ask for them.
-  const [showBlocks, setShowBlocks] = useState(false);
-  const hideBlocks = !!wholeFile && !showBlocks && (!verdict || !!verdict.passed);
+  const hideBlocks = !!wholeFile && !wholeFile.shown && (!verdict || !!verdict.passed);
   const pendingFocus = useRef<{ after?: number; at?: number }>(undefined);
   // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
   const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
@@ -428,7 +428,7 @@ export function ConflictView({
     <div ref={root} className="conflict-view" data-undoable={model.undoable || undefined}>
       {wholeFile && <WholeFile name={name} {...wholeFile} verdict={verdict} labels={labels} disabled={disabled} />}
       {hideBlocks ? (
-        <button type="button" className="conflict-context-toggle" onClick={() => setShowBlocks(true)}>
+        <button type="button" className="conflict-context-toggle" onClick={wholeFile.onShow}>
           Resolve conflict by conflict instead ({total})
         </button>
       ) : (
@@ -500,7 +500,7 @@ function WholeFile({
         <strong>Whole file</strong>
         <span className="conflict-bucket" data-bucket="check">
           <CircleHelp size={13} aria-hidden="true" />
-          Check · Combined both sides’ changes
+          Check
         </span>
       </header>
       <p>{note}</p>
@@ -510,9 +510,10 @@ function WholeFile({
         after={proposal.text}
         beforeLabel={labels.ours}
         afterLabel="Proposed result"
+        quiet
       />
       <div className="conflict-block-actions">
-        <Button size="sm" variant="outline" disabled={disabled} data-choice="whole-file" onClick={onUse}>
+        <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
           Use this result
         </Button>
       </div>
@@ -541,20 +542,27 @@ export function ResultDiff({
   after,
   beforeLabel,
   afterLabel,
+  quiet = false,
 }: {
   name: string;
   before: string;
   after: string;
   beforeLabel: string;
   afterLabel: string;
+  /** No change icon in the file header, for a diff inside a panel that already says what it is. */
+  quiet?: boolean;
 }) {
   const options = useCodeOptions();
   const root = useRef<HTMLDivElement>(null);
   const width = useElementWidth(root);
   const split = width === 0 || width >= 720;
   const diffOptions = useMemo(
-    () => ({ ...options, diffStyle: split ? ('split' as const) : ('unified' as const) }),
-    [options, split]
+    () => ({
+      ...options,
+      diffStyle: split ? ('split' as const) : ('unified' as const),
+      ...(quiet ? { unsafeCSS: '[data-change-icon]{display:none}' } : {}),
+    }),
+    [options, split, quiet]
   );
   const oldFile = useMemo(() => ({ name, contents: before }), [name, before]);
   const newFile = useMemo(() => ({ name, contents: after }), [name, after]);

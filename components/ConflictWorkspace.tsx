@@ -59,6 +59,7 @@ import {
   blockBuckets,
   bucketSummary,
   proposalKey,
+  proposalReady,
   summarySentence,
   verifyProposals,
   verifyWholeFile,
@@ -392,6 +393,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     return ordered.find((s) => s.stage !== 'reviewed' && !s.file.unsupported)?.file;
   };
   const markersRemain = hasConflictMarkers(contents);
+  const ready = !!file && proposalReady(file, contents, fileStates.find((s) => s.file.path === selected)?.buckets ?? []);
+  // The conflicts behind a whole-file proposal, once you ask for them, until the view changes.
+  const [blocksShown, setBlocksShown] = useState('');
+  const viewKey = `${selected}:${epoch}`;
+  /** The file's one stop is the whole-file proposal. */
+  const proposalOnly = ready && mode === 'conflicts' && blocksShown !== viewKey;
   const resultShown = !!file && shown[file.path] === contents;
   const action = conflictFileAction({
     stage: fileStage,
@@ -795,6 +802,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const primaryButton = (() => {
     if (!session || !file || session.stale) return null;
     const common = { ref: primary, size: 'sm' as const, 'data-conflict-primary': action };
+    if (proposalOnly)
+      return (
+        <Button {...common} data-conflict-primary="use-proposal" disabled={!canEdit} onClick={() => suggest('mergiraf', 'file')}>
+          Use this result
+        </Button>
+      );
     switch (action) {
       case 'next-conflict':
         return (
@@ -864,7 +877,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       outcome ||
       baseNote ||
       (session
-        ? markersRemain && fileStates.find((s) => s.file.path === selected)?.conflicts
+        ? proposalOnly
+          ? `1 proposal to check · ${reviewedCount} of ${session.files.length} files reviewed`
+          : markersRemain && fileStates.find((s) => s.file.path === selected)?.conflicts
           ? `${fileStates.find((s) => s.file.path === selected)?.conflicts} ${
               fileStates.find((s) => s.file.path === selected)?.conflicts === 1 ? 'conflict' : 'conflicts'
             } left in this file · ${reviewedCount} of ${session.files.length} files reviewed`
@@ -1255,7 +1270,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                     <small>
                       {f.unsupported ? (
                         <span className="conflict-file-limitation">Needs a local merge tool</span>
-                      ) : f.wholeFile && draft === f.original && buckets.every((bucket) => bucket === 'check') ? (
+                      ) : proposalReady(f, draft, buckets) ? (
                         <FileStageBadge stage={stage} proposal />
                       ) : stage !== 'reviewed' && buckets.some((bucket) => bucket !== 'decided') ? (
                         <span className="conflict-file-buckets" data-stage={stage}>
@@ -1275,7 +1290,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                       <div className="conflict-file-title">
                         <strong>{file.path}</strong>
                         {fileStage && !file.unsupported && (
-                          <FileStageBadge stage={fileStage} proposal={!!file.wholeFile && contents === file.original} />
+                          <FileStageBadge stage={fileStage} proposal={ready} />
                         )}
                       </div>
                       {!file.unsupported && (
@@ -1407,6 +1422,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                                         ours: file.ours,
                                         // The same step as Suggest a resolution → structural merge.
                                         onUse: () => suggest('mergiraf', 'file'),
+                                        shown: blocksShown === viewKey,
+                                        onShow: () => setBlocksShown(viewKey),
                                       }
                                     : undefined
                                 }

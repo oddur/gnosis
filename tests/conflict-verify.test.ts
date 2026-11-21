@@ -13,6 +13,7 @@ import {
   blockBuckets,
   bucketSummary,
   proposalKey,
+  proposalReady,
   summarySentence,
   verifyProposals,
   verifyWholeFile,
@@ -373,4 +374,38 @@ void test('a whole-file proposal is checked as a whole, accepts a move, and is n
     .map((s) => (s.kind === 'text' ? s.text : s.block.ours))
     .join('');
   assert.deepEqual(blockBuckets(whole, chosen, undefined), ['decided', 'decided']);
+});
+
+void test('a definition both sides changed is never called verified, and lines both sides added count twice', async () => {
+  const fn = (name: string, total = 'value + 1', back = 'total * 2') =>
+    `function ${name}(value) {\n  const total = ${total};\n  return ${back};\n}\n`;
+  // Review probe: the PR moves alpha and edits its return; main edits its first line. The edits can be swapped
+  // between alpha and beta and every line is still there.
+  const sides = {
+    path: 'src/order.js',
+    base: [fn('alpha'), fn('beta')].join('\n'),
+    ours: [fn('beta'), fn('alpha', 'value + 1', 'total * 20')].join('\n'),
+    theirs: [fn('alpha', 'value + 10'), fn('beta')].join('\n'),
+  };
+  const swapped = [fn('beta', 'value + 10'), fn('alpha', 'value + 1', 'total * 20')].join('\n');
+  const verdict = await verifyWholeFile(sides, merged(swapped), analyse);
+  assert.deepEqual(verdict, {
+    merged: false,
+    note: 'Both sides changed alpha. Check it yourself. Read it before you use it, or resolve conflict by conflict.',
+  });
+  const whole = file([], { proposals: undefined, wholeFile: merged(swapped) });
+  assert.deepEqual(blockBuckets(whole, original, verdict), ['decide', 'decide'], 'The conflicts stay in view');
+  assert.equal(proposalReady(whole, original, blockBuckets(whole, original, verdict)), false, 'No Proposal ready');
+  const passed = { merged: false, passed: true, note: '' };
+  assert.equal(proposalReady(whole, original, blockBuckets(whole, original, passed)), true);
+  // Review probe: each side adds a function after a move. Its closing brace is new on both sides, so it is there twice.
+  const added = {
+    path: 'src/order.js',
+    base: [fn('alpha'), fn('beta')].join('\n'),
+    ours: [fn('beta'), fn('alpha'), fn('gamma')].join('\n'),
+    theirs: [fn('alpha', 'value + 10'), fn('beta'), fn('delta')].join('\n'),
+  };
+  const right = [fn('beta'), fn('alpha', 'value + 10'), fn('gamma'), fn('delta')].join('\n');
+  assert.equal(accountWholeFile(added, right, false), undefined);
+  assert.equal((await verifyWholeFile(added, merged(right), analyse)).passed, true);
 });

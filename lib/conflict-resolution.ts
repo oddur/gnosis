@@ -23,6 +23,8 @@ export interface ConflictFile {
   wholeFile?: ConflictProposal;
   /** Why structural merge proposed nothing for this file during preparation, such as a timeout. */
   structuralNote?: string;
+  /** Structural merge gave this file a result: proposals, a whole-file proposal, or a note that it couldn't. */
+  structuralRan?: boolean;
 }
 /** One conflict block resolved during preparation: by your earlier resolution, or by structural merge. */
 export interface ConflictProposal {
@@ -51,8 +53,6 @@ export interface ConflictSession {
   staleReason?: 'head-moved' | 'retargeted';
   dependents?: string[];
   restack?: RestackPlan;
-  /** Preparation ran structural merge and kept whole-file results. Older drafts get the pass once on reopen. */
-  structuralPass?: boolean;
 }
 export interface RestackPlan {
   token: string;
