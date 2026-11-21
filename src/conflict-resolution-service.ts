@@ -29,6 +29,7 @@ import { conflictCount } from '../lib/conflict-blocks';
 import { withUnions } from '../lib/conflict-union';
 import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
+import { withoutUnconfirmed } from './conflict-checks';
 import type { SyntaxLanguage } from '../lib/syntax-scope';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
@@ -689,8 +690,14 @@ export function createConflictResolutionService(deps: Deps) {
     if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
     for (const { file, key } of due) {
       signal.throwIfAborted();
-      const verdict = await deps.verify(file, disabled);
-      if (verdict) file.verdict = { key, verdict };
+      let verdict = await deps.verify(file, disabled);
+      // A same-change proposal the checks didn't confirm is taken back (src/conflict-checks.ts); checked again once.
+      const back = withoutUnconfirmed(file, verdict);
+      if (back) {
+        Object.assign(file, back);
+        verdict = file.proposals ? await deps.verify(file, disabled) : undefined;
+      }
+      if (verdict) file.verdict = { key: back ? verdictKey({ ...file }, disabled) : key, verdict };
       else delete file.verdict;
       changed = true;
     }
