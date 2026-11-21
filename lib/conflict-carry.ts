@@ -160,30 +160,34 @@ export function carryFile(old: ConflictFile | undefined, next: ConflictFile, kee
   const resolutions = blockResolutions(oldSegments, old.result);
   const segments = parseConflicts(next.original);
   if (!resolutions) return { file: next, reused: 0, open: conflictCount(next.original), mapped: false };
-  const available = new Map<string, string[]>();
+  // Each reused block keeps your Keep choice for it (ConflictFile.picks), so a Keep never turns into Merged.
+  const available = new Map<string, { text: string; pick: NonNullable<ConflictFile['picks']>[number] }[]>();
   for (const segment of oldSegments) {
     if (segment.kind !== 'conflict') continue;
     const text = resolutions[segment.index];
     if (text === undefined || hasConflictMarkers(text)) continue;
     const key = blockKey(segment);
-    available.set(key, [...(available.get(key) ?? []), text]);
+    available.set(key, [...(available.get(key) ?? []), { text, pick: old.picks?.[segment.index] ?? null }]);
   }
   let reused = 0;
   let open = 0;
+  const picks: NonNullable<ConflictFile['picks']> = [];
   const result = segments
     .map((segment) => {
       if (segment.kind === 'text') return segment.text;
-      const text = available.get(blockKey(segment))?.shift();
-      if (text === undefined) {
+      const carried = available.get(blockKey(segment))?.shift();
+      picks[segment.index] = carried?.pick ?? null;
+      if (carried === undefined) {
         // Not carried: the fresh merge's proposal for it, if any, as preparation left it. It still needs you.
         open++;
         return next.proposals?.[segment.index]?.text ?? segment.block.raw;
       }
       reused++;
-      return text;
+      return carried.text;
     })
     .join('');
-  return { file: withResult(old, next, result, keepReview && open === 0 && old.resolved), reused, open, mapped: true };
+  const file = withResult(old, next, result, keepReview && open === 0 && old.resolved);
+  return { file: picks.some(Boolean) ? { ...file, picks: Array.from(picks, (pick) => pick ?? null) } : file, reused, open, mapped: true };
 }
 
 /** The fresh merge with an earlier result. Source and explanation stay when the user's result carried over. */

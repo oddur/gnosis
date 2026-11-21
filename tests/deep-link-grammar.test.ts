@@ -188,6 +188,10 @@ void test('Copy Gnosis link formats PR links, and a tab location becomes its tar
   assert.deepEqual(targetFromLocation({ page: 'home', home: home({ item, tab: 'brief' }) }), {
     kind: 'pr', pr: { host: 'github.com', owner: 'oddur', repo: 'gnosis', number: 160 }, tab: 'notes',
   });
+  // Copy link on the Conflicts view names the PR, never conflict resolution.
+  assert.deepEqual(targetFromLocation({ page: 'home', home: home({ item, tab: 'conflicts' }) }), {
+    kind: 'pr', pr: { host: 'github.com', owner: 'oddur', repo: 'gnosis', number: 160 },
+  });
   const checks = targetFromLocation({ page: 'home', home: home({ item, tab: 'checks' }) });
   assert.ok(checks);
   assert.equal(formatDeepLink(checks), 'gnosis://pr/oddur/gnosis/160/checks');

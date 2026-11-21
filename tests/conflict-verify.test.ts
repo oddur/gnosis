@@ -355,6 +355,116 @@ void test('second review probe: a proposal that drops a line both sides kept is 
   );
 });
 
+void test('resolver audit: a result that swaps lines either side put in order is not Merged', () => {
+  // The PR changed the second line and main the first: the two changes are in the ancestor's order.
+  const adjacent = {
+    base: 'for (const item of items) sum += item;\nconst tax = sum * 0.2;\n',
+    ours: 'for (const item of items) sum += item;\nconst tax = Math.round(sum * 0.2);\n',
+    theirs: 'for (const item of items) sum += Math.abs(item);\nconst tax = sum * 0.2;\n',
+  };
+  const both = 'for (const item of items) sum += Math.abs(item);\nconst tax = Math.round(sum * 0.2);\n';
+  assert.equal(accountLines(adjacent, both, false), undefined);
+  assert.equal(
+    accountLines(adjacent, both.split('\n').reverse().join('\n').slice(1) + '\n', false),
+    'The result changes the order of lines from the PR or main.'
+  );
+  // Two lines one side wrote, swapped, with the other side's identical line elsewhere to stand in for one of them.
+  const functions = {
+    base: '',
+    ours: 'function beta() {\n  total = 2;\n  scaled = total * 2;\n}\n',
+    theirs: 'function gamma() {\n  total = 3;\n  scaled = total * 2;\n}\n',
+  };
+  const kept = functions.ours + functions.theirs;
+  assert.equal(accountLines(functions, kept, false), undefined);
+  assert.equal(
+    accountLines(
+      functions,
+      kept.replace('  total = 2;\n  scaled = total * 2;\n', '  scaled = total * 2;\n  total = 2;\n'),
+      false
+    ),
+    'The result changes the order of lines from the PR or main.'
+  );
+  // Both sides inserted at one place: either side first is a merge.
+  assert.equal(accountLines(functions, functions.theirs + functions.ours, false), undefined);
+  const members = { base: 'RED = 1,\n', ours: 'RED = 1,\nBLUE = 3,\n', theirs: 'RED = 1,\nYELLOW = 4,\n' };
+  assert.equal(accountLines(members, 'RED = 1,\nYELLOW = 4,\nBLUE = 3,\n', false), undefined);
+  assert.equal(
+    accountLines(members, 'BLUE = 3,\nRED = 1,\nYELLOW = 4,\n', false),
+    'The result changes the order of lines from the PR or main.'
+  );
+});
+
+void test('resolver audit round 2: one side’s line moved inside the other side’s lines is not Merged', () => {
+  // Both sides inserted at one point: main's `stop();` may come before or after the PR's block, never inside it.
+  const inserted = {
+    base: 'start();\nfinish();\n',
+    ours: 'start();\nif (ready) {\n    go();\n  }\nfinish();\n',
+    theirs: 'start();\nstop();\nfinish();\n',
+  };
+  assert.equal(
+    accountLines(inserted, 'start();\nif (ready) {\n    go();\n  }\nstop();\nfinish();\n', false),
+    undefined
+  );
+  assert.equal(
+    accountLines(inserted, 'start();\nstop();\nif (ready) {\n    go();\n  }\nfinish();\n', false),
+    undefined
+  );
+  assert.equal(
+    accountLines(inserted, 'start();\nif (ready) {\n  stop();\n    go();\n  }\nfinish();\n', false),
+    'The result changes the order of lines from the PR or main.'
+  );
+  // Next to a change: the PR wrapped `go();` in an if, main appended `stop();` after it. Counted with indentation, the
+  // PR's change is one block; `stop();` inside the if is not a merge.
+  const wrapped = {
+    base: 'start();\ngo();\n',
+    ours: 'start();\nif (ready) {\n  go();\n}\n',
+    theirs: 'start();\ngo();\nstop();\n',
+  };
+  assert.equal(accountLines(wrapped, 'start();\nif (ready) {\n  go();\n}\nstop();\n', true), undefined);
+  assert.equal(
+    accountLines(wrapped, 'start();\nif (ready) {\n  go();\nstop();\n}\n', true),
+    'The result changes the order of lines from the PR or main.'
+  );
+});
+
+void test('resolver audit: with a side that does not parse, a result whose error reaches a proposal is not Merged', async () => {
+  // main's side has a stray `= ;` far from the conflict, so the parse check can't clear the file.
+  const sides = {
+    path: 'src/limits.ts',
+    base: 'export const LIMITS = {\n  timeout: 30_000,\n};\n',
+    ours: 'export const LIMITS = {\n  timeout: 60_000,\n};\n',
+    theirs: 'export const LIMITS = {\n  timeout: 45_000,\n};\n\nexport const pending = ;\n',
+    original:
+      'export const LIMITS = {\n<<<<<<< feature\n  timeout: 60_000,\n||||||| ancestor\n  timeout: 30_000,\n=======\n  timeout: 45_000,\n>>>>>>> main\n};\n\nexport const pending = ;\n',
+  };
+  const remembered = (text: string) => verifyProposals({ ...sides, proposals: [{ source: 'rerere', text }] }, analyse);
+  const good = await remembered('  timeout: 60_000,\n');
+  assert.equal(good.merged, true, good.note);
+  const broken = await remembered('  timeout: 60_000 45_000,\n');
+  assert.equal(broken.merged, false);
+  assert.equal(broken.note, 'This result doesn’t parse.');
+});
+
+void test('resolver audit round 2: an error that is the side’s own does not demote a correct earlier resolution', async () => {
+  // main left an unclosed `if (debug) {` around the conflict: the error reaches the proposal, but it is main's.
+  const sides = {
+    path: 'src/run.ts',
+    base: 'export function run() {\n  const limit = 30;\n  return limit;\n}\n',
+    ours: 'export function run() {\n  const limit = 60;\n  return limit;\n}\n',
+    theirs: 'export function run() {\n  if (debug) {\n  const limit = 45;\n  return limit;\n}\n',
+    original:
+      'export function run() {\n  if (debug) {\n<<<<<<< feature\n  const limit = 60;\n||||||| ancestor\n  const limit = 30;\n=======\n  const limit = 45;\n>>>>>>> main\n  return limit;\n}\n',
+  };
+  const remembered = (text: string) => verifyProposals({ ...sides, proposals: [{ source: 'rerere', text }] }, analyse);
+  const good = await remembered('  const limit = 60;\n');
+  assert.equal(good.merged, true, good.note);
+  for (const text of ['  const limit = 60 45;\n', '  const limit = 60;\n)]}\n']) {
+    const broken = await remembered(text);
+    assert.equal(broken.merged, false, text);
+    assert.equal(broken.note, 'This result doesn’t parse.');
+  }
+});
+
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
   const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
   const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');

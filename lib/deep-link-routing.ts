@@ -61,12 +61,12 @@ export function routeDeepLink(
   if (target.kind === 'commit' || target.kind === 'compare')
     // Resolving a commit or comparison to its PR needs a GitHub read (Phase 2b). The nearest parent is the repository.
     return routeDeepLink({ kind: 'queue', filters: { repo: `${target.owner}/${target.repo}` } }, state, queue, nonce);
-  // A conflicts link opens the PR first; the confirmation before conflict resolution comes with Phase 3.
+  // A conflicts target opens the PR's Conflicts view (#445 item 8). Opening it prepares the merge; nothing is pushed.
   const pr: PrLinkTarget = target.kind === 'conflicts' ? { kind: 'pr', pr: target.pr } : target;
   const url = prUrl(pr.pr);
   // Locators the PR page follows: a thread in Feedback, a check in Checks, the first unviewed file or the merge action.
   const open = {
-    tab: workspaceTab(pr.tab),
+    tab: target.kind === 'conflicts' ? ('conflicts' as const) : workspaceTab(pr.tab),
     nonce,
     ...(pr.threadId ? { threadId: pr.threadId } : {}),
     ...(pr.check ? { check: pr.check } : {}),
@@ -154,8 +154,9 @@ export function linkSupport(target: DeepLinkTarget, source: DeepLinkSource): Lin
     };
     return { supported: true, target: plain, ...(notes.length ? { note: { title: `Opened ${prName(target.pr)}`, description: notes.join(' ') } } : {}) };
   }
-  // The menu bar panel's ⌘, and its short menu open Settings; nothing outside Gnosis can yet.
-  if (trusted && (target.kind === 'review' || target.kind === 'queue' || target.kind === 'settings' || target.kind === 'activity'))
+  // The menu bar panel's ⌘, and its short menu open Settings; nothing outside Gnosis can yet. A conflicts row or
+  // notification opens the Conflicts view; a link from outside opens the PR only, as resolving starts work.
+  if (trusted && (target.kind === 'review' || target.kind === 'queue' || target.kind === 'settings' || target.kind === 'activity' || target.kind === 'conflicts'))
     return { supported: true, target };
   const title = 'This link is not supported yet';
   if (target.kind === 'conflicts')

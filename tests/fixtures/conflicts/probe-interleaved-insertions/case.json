@@ -1,0 +1,9 @@
+{
+  "description": "Resolver audit round 2 (#445 item 19): both sides inserted at one place, and the resolver moves main's `stop();` inside the PR's new `if`. Every line is there, the file parses and each side's lines keep their own order; only keeping each side's lines together catches it.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/run.ts": "any-but-merged"
+  }
+}

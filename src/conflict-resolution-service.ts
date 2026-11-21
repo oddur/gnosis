@@ -1577,6 +1577,7 @@ export function createConflictResolutionService(deps: Deps) {
           }
           file.result = request.contents;
           file.resolved = request.resolved;
+          if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -1591,6 +1592,8 @@ export function createConflictResolutionService(deps: Deps) {
               if (result.contents !== undefined) {
                 if (typeof result.contents !== 'string' || Buffer.byteLength(result.contents) > CONFLICT_FILE_LIMIT)
                   throw new Error('The agent returned an invalid file.');
+                // Your Keep choices were for the draft this replaces.
+                if (result.contents !== file.result) file.picks = undefined;
                 file.result = result.contents;
               }
               file.explanation = result.explanation;
@@ -1621,6 +1624,7 @@ export function createConflictResolutionService(deps: Deps) {
                   continue;
                 }
               }
+              if (output !== file.result) file.picks = undefined;
               file.result = output;
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'

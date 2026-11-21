@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
 import { restackWorktreePath } from '../src/conflict-restack';
 import { createConflictMemory } from '../src/conflict-rerere';
-import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
+import { hasConflictMarkers, conflictFileStage, validateConflictRequest, type ConflictFile } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import type { PrActionState } from '../lib/pr-actions';
 import { blockBuckets, CHECKS_VERSION, verifyProposals } from '../lib/conflict-verify';
@@ -121,8 +121,12 @@ void test('real Git conflicts: draft, proposal, preview and guarded publication 
       path: 'sample.ts',
       contents: session.files[0].result,
       resolved: true,
+      picks: ['ours'],
     })
   ).session;
+  // Your Keep choices are saved with the draft (#445 item 8), so a Keep never reads as Merged after a reopen.
+  assert.deepEqual(session.files[0].picks, ['ours']);
+  assert.throws(() => validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['proposal'] }));
   const preview = (await f.run({ kind: 'preview', id: session.id, version: session.version })).preview;
   assert.ok(preview);
   assert.match(preview.patch, /from-main.txt/);
