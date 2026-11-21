@@ -1,0 +1,304 @@
+name: Publish browser extension
+
+# Builds the "Open in Gnosis" extension (extensions/browser) for a release tag and uploads it to the Chrome Web
+# Store, Microsoft Edge Add-ons and Firefox Add-ons (AMO). See docs/store/SUBMITTING.md.
+#
+# Each store job runs only when its secrets are set, and skips with a notice otherwise, so this workflow is
+# green before any store account exists. The stores' APIs only update an existing item: upload the first
+# version of each listing by hand (the build job's artifact has the files).
+#
+# On a release tag the stores get a new version only when extensions/browser changed since the previous
+# release, so an app release does not send an unchanged extension to store review. Run it by hand to publish
+# anyway. Pre-release tags (v1.2.3-beta.1) build but never publish. This workflow never runs on pull requests.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build from (for example v0.41.0)
+        required: true
+        type: string
+      stores:
+        description: Stores to publish to. "none" only builds the packages, for a manual upload.
+        default: all
+        type: choice
+        options:
+          - all
+          - chrome
+          - edge
+          - firefox
+          - none
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build store packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      STORES: ${{ github.event_name == 'workflow_dispatch' && inputs.stores || 'all' }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      chrome: ${{ steps.plan.outputs.chrome }}
+      edge: ${{ steps.plan.outputs.edge }}
+      firefox: ${{ steps.plan.outputs.firefox }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # The release workflow does the same: package.json carries the version of the tag.
+      - name: Set version from tag
+        id: version
+        run: |
+          npm version "${RELEASE_TAG#v}" --no-git-tag-version --allow-same-version
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+      - run: npm run build:extension
+      - name: Lint the Firefox package
+        run: npx --yes web-ext@8 lint --source-dir dist-extension/firefox --warnings-as-errors
+      - name: Decide which stores to publish to
+        id: plan
+        run: |
+          publish=true
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            echo "::notice::$RELEASE_TAG is a pre-release; building only."
+            publish=false
+          elif [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            previous="$(git describe --tags --abbrev=0 --match 'v*.*.*' --exclude '*-*' "${RELEASE_TAG}^" 2>/dev/null || true)"
+            if [[ -n "$previous" ]] && git diff --quiet "$previous" "$RELEASE_TAG" -- extensions/browser; then
+              echo "::notice::extensions/browser has not changed since $previous; not publishing. Run this workflow by hand to publish anyway."
+              publish=false
+            fi
+          fi
+          for store in chrome edge firefox; do
+            if [[ "$publish" == true && ( "$STORES" == all || "$STORES" == "$store" ) ]]; then
+              echo "$store=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$store=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-in-gnosis-${{ steps.version.outputs.version }}
+          path: |
+            dist-extension/open-in-gnosis-chrome-*.zip
+            dist-extension/open-in-gnosis-firefox-*.zip
+            dist-extension/open-in-gnosis-source-*.zip
+          if-no-files-found: error
+          retention-days: 90
+
+  chrome:
+    name: Chrome Web Store
+    needs: build
+    if: needs.build.outputs.chrome == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+      CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
+      CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+      CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+      CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+    steps:
+      - name: Check credentials
+        id: credentials
+        run: |
+          missing=()
+          for name in CHROME_EXTENSION_ID CHROME_PUBLISHER_ID CHROME_CLIENT_ID CHROME_CLIENT_SECRET CHROME_REFRESH_TOKEN; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "::notice::Skipping the Chrome Web Store: secrets not set: ${missing[*]}. See docs/store/SUBMITTING.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          name: open-in-gnosis-${{ needs.build.outputs.version }}
+          path: dist-extension
+      # Chrome Web Store API v2: https://developer.chrome.com/docs/webstore/using-api
+      - name: Upload and submit for review
+        if: steps.credentials.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          package="$(ls dist-extension/open-in-gnosis-chrome-*.zip)"
+          token="$(curl -fsS https://oauth2.googleapis.com/token \
+            --data-urlencode "client_id=$CHROME_CLIENT_ID" \
+            --data-urlencode "client_secret=$CHROME_CLIENT_SECRET" \
+            --data-urlencode "refresh_token=$CHROME_REFRESH_TOKEN" \
+            --data-urlencode grant_type=refresh_token | jq -r .access_token)"
+          echo "::add-mask::$token"
+          item="publishers/$CHROME_PUBLISHER_ID/items/$CHROME_EXTENSION_ID"
+
+          upload="$(curl -sS -X POST -H "Authorization: Bearer $token" -T "$package" \
+            "https://chromewebstore.googleapis.com/upload/v2/$item:upload")"
+          echo "Upload: $upload"
+          state="$(jq -r '.uploadState // empty' <<< "$upload")"
+          for _ in $(seq 1 30); do
+            [[ "$state" == IN_PROGRESS ]] || break
+            sleep 10
+            status="$(curl -fsS -H "Authorization: Bearer $token" "https://chromewebstore.googleapis.com/v2/$item:fetchStatus")"
+            state="$(jq -r '.lastAsyncUploadState // empty' <<< "$status")"
+            echo "Upload state: $state"
+          done
+          if [[ "$state" != SUCCEEDED ]]; then
+            echo "::error::Chrome Web Store upload did not succeed (state: ${state:-none})."
+            exit 1
+          fi
+
+          publish="$(curl -sS -X POST -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d '{}' "https://chromewebstore.googleapis.com/v2/$item:publish")"
+          echo "Publish: $publish"
+          case "$(jq -r '.state // empty' <<< "$publish")" in
+            PENDING_REVIEW | STAGED | PUBLISHED | PUBLISHED_TO_TESTERS)
+              echo "::notice::Chrome Web Store: version $VERSION submitted." ;;
+            *)
+              echo "::error::Chrome Web Store publish failed."
+              exit 1 ;;
+          esac
+
+  edge:
+    name: Microsoft Edge Add-ons
+    needs: build
+    if: needs.build.outputs.edge == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+      EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+      EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+    steps:
+      - name: Check credentials
+        id: credentials
+        run: |
+          missing=()
+          for name in EDGE_PRODUCT_ID EDGE_CLIENT_ID EDGE_API_KEY; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "::notice::Skipping Edge Add-ons: secrets not set: ${missing[*]}. See docs/store/SUBMITTING.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          name: open-in-gnosis-${{ needs.build.outputs.version }}
+          path: dist-extension
+      # Edge Add-ons API v1.1: https://learn.microsoft.com/microsoft-edge/extensions/update/api/using-addons-api
+      - name: Upload and submit for review
+        if: steps.credentials.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          package="$(ls dist-extension/open-in-gnosis-chrome-*.zip)"
+          api="https://api.addons.microsoftedge.microsoft.com/v1/products/$EDGE_PRODUCT_ID"
+          auth=(-H "Authorization: ApiKey $EDGE_API_KEY" -H "X-ClientID: $EDGE_CLIENT_ID")
+
+          # Starts an operation and prints its id, taken from the Location header of the 202 response.
+          start() {
+            local headers
+            headers="$(mktemp)"
+            curl -fsS -D "$headers" -o /dev/null "${auth[@]}" "$@"
+            tr -d '\r' < "$headers" | awk 'tolower($1) == "location:" { print $2 }' | awk -F/ '{ print $NF }'
+          }
+          # Polls an operation until it leaves InProgress; fails unless it Succeeded.
+          wait_for() {
+            local url="$1" result status
+            for _ in $(seq 1 60); do
+              result="$(curl -fsS "${auth[@]}" "$url")"
+              status="$(jq -r '.status // empty' <<< "$result")"
+              [[ "$status" == InProgress ]] || break
+              sleep 10
+            done
+            echo "$result"
+            [[ "$status" == Succeeded ]]
+          }
+
+          upload_id="$(start -X POST -H 'Content-Type: application/zip' --data-binary "@$package" "$api/submissions/draft/package")"
+          wait_for "$api/submissions/draft/package/operations/$upload_id" || {
+            echo "::error::Edge Add-ons package upload failed."
+            exit 1
+          }
+
+          notes="$(jq -n --arg v "$VERSION" \
+            '{notes: ("Version " + $v + ". Release notes: https://github.com/oddur/gnosis/releases/tag/v" + $v + ". Testing steps are in the listing notes for certification.")}')"
+          publish_id="$(start -X POST -H 'Content-Type: application/json' -d "$notes" "$api/submissions")"
+          wait_for "$api/submissions/operations/$publish_id" || {
+            echo "::error::Edge Add-ons submission failed."
+            exit 1
+          }
+          echo "::notice::Edge Add-ons: version $VERSION submitted."
+
+  firefox:
+    name: Firefox Add-ons (AMO)
+    needs: build
+    if: needs.build.outputs.firefox == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+    steps:
+      - name: Check credentials
+        id: credentials
+        run: |
+          if [[ -z "$AMO_JWT_ISSUER" || -z "$AMO_JWT_SECRET" ]]; then
+            echo "::notice::Skipping AMO: AMO_JWT_ISSUER and AMO_JWT_SECRET are not both set. See docs/store/SUBMITTING.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          name: open-in-gnosis-${{ needs.build.outputs.version }}
+          path: dist-extension
+      # web-ext sign submits through the AMO add-on submission API, with the source archive for review.
+      # Listed add-ons are signed after review on AMO, so it does not wait for approval.
+      - name: Submit to AMO
+        if: steps.credentials.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p firefox
+          unzip -q dist-extension/open-in-gnosis-firefox-*.zip -d firefox
+          jq -n --arg v "$VERSION" '{version: {
+            license: "MIT",
+            release_notes: {"en-US": ("See https://github.com/oddur/gnosis/releases/tag/v" + $v)},
+            approval_notes: "The scripts are bundled from TypeScript with esbuild, not minified. The attached source archive has the build steps in SOURCE-BUILD.md: npm install, then npm run build:extension. The output in dist-extension/firefox is byte-identical to this package. To test: open any public pull request, for example https://github.com/oddur/gnosis/pull/380, and click Open in Gnosis next to the title. Without the Gnosis app installed, a hint says Gnosis did not open."
+          }}' > amo-metadata.json
+          npx --yes web-ext@8 sign \
+            --source-dir firefox \
+            --artifacts-dir web-ext-artifacts \
+            --channel listed \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET" \
+            --upload-source-code "$(ls dist-extension/open-in-gnosis-source-*.zip)" \
+            --amo-metadata amo-metadata.json \
+            --approval-timeout 0
+          echo "::notice::AMO: version $VERSION submitted."

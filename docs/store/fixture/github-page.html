@@ -1,0 +1,245 @@
+<!doctype html>
+<!--
+  Synthetic GitHub-like page for the store screenshots (scripts/render-extension-store-assets.mjs).
+  All names, text and code are made up. No GitHub logo or GitHub assets are used. The renderer serves this
+  file at https://github.com/example-org/sample-app/... so the real extension content script runs on it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Add retry with backoff to the sync client · Pull Request #42 · example-org/sample-app</title>
+<style>
+  :root {
+    --fontStack-sansSerif: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+    --fontStack-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --fgColor-default: #1f2328;
+    --fgColor-muted: #59636e;
+    --fgColor-accent: #0969da;
+    --bgColor-default: #ffffff;
+    --bgColor-muted: #f6f8fa;
+    --bgColor-neutral-muted: rgba(129, 139, 152, 0.12);
+    --borderColor-default: #d1d9e0;
+    --borderColor-muted: #d1d9e0b3;
+    --overlay-bgColor: #ffffff;
+    --header-bg: #f6f8fa;
+    --open-bg: #1f883d;
+    --add-bg: #dafbe1;
+    --add-num: #aceebb;
+    --del-bg: #ffebe9;
+    --del-num: #ffcecb;
+    --shadow-floating-small: 0 0 0 1px #d1d9e080, 0 6px 12px -3px #25292e0a, 0 6px 18px 0 #25292e1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fgColor-default: #f0f6fc;
+      --fgColor-muted: #9198a1;
+      --fgColor-accent: #4493f8;
+      --bgColor-default: #0d1117;
+      --bgColor-muted: #151b23;
+      --bgColor-neutral-muted: rgba(101, 108, 118, 0.2);
+      --borderColor-default: #3d444d;
+      --borderColor-muted: #3d444db3;
+      --overlay-bgColor: #151b23;
+      --header-bg: #010409;
+      --open-bg: #238636;
+      --add-bg: rgba(46, 160, 67, 0.15);
+      --add-num: rgba(63, 185, 80, 0.3);
+      --del-bg: rgba(248, 81, 73, 0.1);
+      --del-num: rgba(248, 81, 73, 0.3);
+      --shadow-floating-small: 0 0 0 1px #3d444d, 0 6px 12px -3px #01040966, 0 6px 18px 0 #01040966;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 var(--fontStack-sansSerif); color: var(--fgColor-default); background: var(--bgColor-default); }
+  a { color: var(--fgColor-accent); text-decoration: none; }
+  .topbar { display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 24px; background: var(--header-bg); border-bottom: 1px solid var(--borderColor-default); }
+  .mark { width: 32px; height: 32px; border-radius: 8px; background: var(--fgColor-muted); opacity: 0.35; }
+  .crumb { font-size: 14px; }
+  .crumb b { font-weight: 600; }
+  .search { margin-left: auto; width: 260px; height: 32px; border: 1px solid var(--borderColor-default); border-radius: 6px; color: var(--fgColor-muted); padding: 5px 10px; font-size: 13px; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; display: inline-block; flex: none; }
+  .a1 { background: linear-gradient(135deg, #8250df, #bf3989); }
+  .a2 { background: linear-gradient(135deg, #1a7f37, #0969da); }
+  .a3 { background: linear-gradient(135deg, #bc4c00, #d4a72c); }
+  .repo-tabs { display: flex; gap: 8px; padding: 0 24px; background: var(--header-bg); border-bottom: 1px solid var(--borderColor-default); }
+  .repo-tabs span { padding: 10px 8px; color: var(--fgColor-default); font-size: 14px; }
+  .repo-tabs .on { border-bottom: 2px solid #fd8c73; font-weight: 600; }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 32px; }
+  .ph { display: flex; align-items: flex-start; gap: 16px; }
+  .ph h1 { margin: 0; font-size: 26px; font-weight: 400; line-height: 1.35; flex: 1; }
+  .ph h1 span { color: var(--fgColor-muted); font-weight: 300; }
+  [data-component="PH_Actions"] { display: flex; align-items: center; gap: 8px; padding-top: 4px; }
+  .btn { height: 28px; padding: 0 12px; border: 1px solid var(--borderColor-default); border-radius: 6px; background: var(--bgColor-muted); color: var(--fgColor-default); font: 500 12px/26px var(--fontStack-sansSerif); }
+  .btn.primary { background: var(--open-bg); border-color: transparent; color: #fff; }
+  .meta { display: flex; align-items: center; gap: 8px; margin: 10px 0 16px; color: var(--fgColor-muted); }
+  .state { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--open-bg); color: #fff; font-weight: 500; }
+  code, .mono { font-family: var(--fontStack-mono); font-size: 12px; }
+  .branch { padding: 0 6px; border-radius: 6px; background: rgba(9, 105, 218, 0.12); color: var(--fgColor-accent); }
+  .pr-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--borderColor-default); margin-bottom: 20px; }
+  .pr-tabs span { padding: 8px 16px; color: var(--fgColor-muted); border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; margin-bottom: -1px; }
+  .pr-tabs .on { color: var(--fgColor-default); border-color: var(--borderColor-default); background: var(--bgColor-default); }
+  .count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--bgColor-neutral-muted); font-size: 12px; text-align: center; color: var(--fgColor-default); }
+  .layout { display: grid; grid-template-columns: 1fr 256px; gap: 24px; }
+  .comment { display: flex; gap: 12px; margin-bottom: 16px; }
+  .box { flex: 1; border: 1px solid var(--borderColor-default); border-radius: 6px; overflow: hidden; }
+  .box header { padding: 8px 16px; background: var(--bgColor-muted); border-bottom: 1px solid var(--borderColor-default); color: var(--fgColor-muted); }
+  .box header b { color: var(--fgColor-default); }
+  .box .body { padding: 12px 16px; }
+  .box p { margin: 0 0 8px; }
+  .side h3 { margin: 0 0 6px; font-size: 12px; color: var(--fgColor-muted); font-weight: 600; }
+  .side section { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--borderColor-muted); font-size: 12px; }
+  .label { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+  .event { margin: 0 0 16px 44px; color: var(--fgColor-muted); font-size: 13px; }
+  .file { border: 1px solid var(--borderColor-default); border-radius: 6px; overflow: hidden; margin-bottom: 16px; }
+  .file header { padding: 8px 16px; background: var(--bgColor-muted); border-bottom: 1px solid var(--borderColor-default); font-family: var(--fontStack-mono); font-size: 12px; }
+  .diff { width: 100%; border-collapse: collapse; font-family: var(--fontStack-mono); font-size: 12px; line-height: 20px; }
+  .diff td { padding: 0 10px; white-space: pre; }
+  .diff td.n { width: 1%; color: var(--fgColor-muted); text-align: right; }
+  .diff tr.add td { background: var(--add-bg); }
+  .diff tr.add td.n { background: var(--add-num); }
+  .diff tr.del td { background: var(--del-bg); }
+  .diff tr.del td.n { background: var(--del-num); }
+  .diff tr.hunk td { background: rgba(84, 174, 255, 0.12); color: var(--fgColor-muted); }
+  .commit-msg { border: 1px solid var(--borderColor-default); border-radius: 6px; padding: 16px; margin-bottom: 20px; }
+  .commit-msg h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
+  .compare-bar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--borderColor-default); border-radius: 6px; background: var(--bgColor-muted); margin-bottom: 20px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="mark"></div>
+  <div class="crumb">example-org / <b>sample-app</b></div>
+  <div class="search">Type / to search</div>
+  <span class="avatar a1" style="width:28px;height:28px"></span>
+</div>
+<nav class="repo-tabs">
+  <span>Code</span><span>Issues <span class="count">12</span></span><span class="on" id="tab-pulls">Pull requests <span class="count">5</span></span><span>Actions</span><span>Projects</span><span>Security</span><span>Insights</span>
+</nav>
+
+<main>
+  <!-- Pull request (Conversation and Files changed) -->
+  <section id="view-pull" hidden>
+    <div class="ph">
+      <h1>Add retry with backoff to the sync client <span>#42</span></h1>
+      <div data-component="PH_Actions"><button class="btn">Edit</button><button class="btn primary">Code ▾</button></div>
+    </div>
+    <div class="meta">
+      <span class="state">● Open</span>
+      <span><b style="color:var(--fgColor-default)">sam-lee</b> wants to merge 3 commits into <span class="branch mono">main</span> from <span class="branch mono">sync-retry</span></span>
+    </div>
+    <div class="pr-tabs">
+      <span id="t-conv">Conversation <span class="count">4</span></span><span>Commits <span class="count">3</span></span><span>Checks <span class="count">6</span></span><span id="t-files">Files changed <span class="count">3</span></span>
+    </div>
+
+    <div id="conversation" class="layout">
+      <div>
+        <div class="comment"><span class="avatar a2"></span><div class="box"><header><b>sam-lee</b> commented 2 days ago</header><div class="body">
+          <p>The sync client gave up after the first failed request. This adds a retry with exponential backoff and jitter, capped at five attempts.</p>
+          <p>Requests that are not safe to repeat (POST without an idempotency key) are not retried.</p>
+          <p style="margin:0">Closes #37.</p>
+        </div></div></div>
+        <div class="event">● <b>sam-lee</b> added 3 commits · <span class="mono">a1f93c2</span> Retry failed sync requests</div>
+        <div class="comment"><span class="avatar a3"></span><div class="box"><header><b>alex-kim</b> commented yesterday</header><div class="body">
+          <p style="margin:0">Looks good. Can the cap be a setting? The CI runner sees longer outages than laptops do.</p>
+        </div></div></div>
+        <div class="comment"><span class="avatar a2"></span><div class="box"><header><b>sam-lee</b> commented 5 hours ago</header><div class="body">
+          <p style="margin:0">Done in <span class="mono">c7d0e18</span>. The default stays at five.</p>
+        </div></div></div>
+      </div>
+      <aside class="side">
+        <section><h3>Reviewers</h3><span class="avatar a3" style="width:20px;height:20px;vertical-align:middle"></span> alex-kim ✓</section>
+        <section><h3>Assignees</h3>sam-lee</section>
+        <section><h3>Labels</h3><span class="label" style="background:#a2eeef;color:#0a3069">enhancement</span> <span class="label" style="background:#d8b9ff;color:#3e1f79">sync</span></section>
+        <section><h3>Milestone</h3>v2.4</section>
+      </aside>
+    </div>
+
+    <div id="files" hidden>
+      <div class="file"><header>src/sync/client.ts <span style="color:#1a7f37">+18</span> <span style="color:#cf222e">−3</span></header>
+        <table class="diff">
+          <tr class="hunk"><td class="n"></td><td class="n"></td><td>@@ -40,9 +40,24 @@ export class SyncClient {</td></tr>
+          <tr><td class="n">40</td><td class="n">40</td><td>  async send(request: SyncRequest): Promise&lt;SyncResponse&gt; {</td></tr>
+          <tr class="del"><td class="n">41</td><td class="n"></td><td>-    return this.transport.send(request);</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">41</td><td>+    let attempt = 0;</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">42</td><td>+    for (;;) {</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">43</td><td>+      try {</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">44</td><td>+        return await this.transport.send(request);</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">45</td><td>+      } catch (error) {</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">46</td><td>+        attempt += 1;</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">47</td><td>+        if (!isRetryable(request, error) || attempt &gt;= this.maxAttempts) throw error;</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">48</td><td>+        await sleep(backoff(attempt));</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">49</td><td>+      }</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">50</td><td>+    }</td></tr>
+          <tr><td class="n">42</td><td class="n">51</td><td>  }</td></tr>
+          <tr><td class="n">43</td><td class="n">52</td><td></td></tr>
+        </table>
+      </div>
+      <div class="file"><header>src/sync/backoff.ts <span style="color:#1a7f37">+9</span></header>
+        <table class="diff">
+          <tr class="hunk"><td class="n"></td><td class="n"></td><td>@@ -0,0 +1,9 @@</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">1</td><td>+const BASE_MS = 250;</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">2</td><td>+const MAX_MS = 8_000;</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">3</td><td>+</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">4</td><td>+/** Exponential backoff with full jitter. */</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">5</td><td>+export function backoff(attempt: number): number {</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">6</td><td>+  const ceiling = Math.min(MAX_MS, BASE_MS * 2 ** attempt);</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">7</td><td>+  return Math.random() * ceiling;</td></tr>
+          <tr class="add"><td class="n"></td><td class="n">8</td><td>+}</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Commit -->
+  <section id="view-commit" hidden>
+    <div class="ph">
+      <h1 style="font-size:20px">Commit <span class="mono" style="font-size:16px">c7d0e18</span></h1>
+      <div data-component="PH_Actions"><button class="btn">Browse files</button></div>
+    </div>
+    <div class="commit-msg" style="margin-top:16px">
+      <h1>Make the retry cap a setting</h1>
+      <div style="color:var(--fgColor-muted)"><b style="color:var(--fgColor-default)">sam-lee</b> committed 5 hours ago · 2 files changed</div>
+    </div>
+  </section>
+
+  <!-- Compare (no header actions, so the button floats) -->
+  <section id="view-compare" hidden>
+    <h1 style="font-size:24px;font-weight:400;margin:0 0 6px">Comparing changes</h1>
+    <p style="color:var(--fgColor-muted);margin:0 0 16px">Choose two branches to see what's changed or to start a new pull request.</p>
+    <div class="compare-bar"><span class="branch mono">base: main</span> ← <span class="branch mono">compare: docs-sync</span> <span style="color:#1a7f37;margin-left:8px">✓ Able to merge.</span></div>
+    <div class="file"><header>docs/sync.md <span style="color:#1a7f37">+6</span></header>
+      <table class="diff">
+        <tr class="hunk"><td class="n"></td><td class="n"></td><td>@@ -12,3 +12,9 @@ ## Sync</td></tr>
+        <tr><td class="n">12</td><td class="n">12</td><td> The client sends changes in batches of 100.</td></tr>
+        <tr class="add"><td class="n"></td><td class="n">13</td><td>+</td></tr>
+        <tr class="add"><td class="n"></td><td class="n">14</td><td>+### Retries</td></tr>
+        <tr class="add"><td class="n"></td><td class="n">15</td><td>+</td></tr>
+        <tr class="add"><td class="n"></td><td class="n">16</td><td>+Failed requests are retried with backoff, up to</td></tr>
+        <tr class="add"><td class="n"></td><td class="n">17</td><td>+`sync.maxAttempts` times (default 5).</td></tr>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  // Pick the view from the path, like the GitHub page the screenshot stands for.
+  const parts = location.pathname.split('/').filter(Boolean);
+  const kind = parts[2];
+  if (kind === 'pull') {
+    document.getElementById('view-pull').hidden = false;
+    const files = parts[4] === 'files';
+    document.getElementById('files').hidden = !files;
+    document.getElementById('conversation').hidden = files;
+    document.getElementById(files ? 't-files' : 't-conv').classList.add('on');
+  } else if (kind === 'commit') {
+    document.getElementById('view-commit').hidden = false;
+    document.getElementById('tab-pulls').classList.remove('on');
+    document.title = 'Make the retry cap a setting · example-org/sample-app@c7d0e18';
+  } else if (kind === 'compare') {
+    document.getElementById('view-compare').hidden = false;
+    document.title = 'Comparing main...docs-sync · example-org/sample-app';
+  }
+</script>
+</body>
+</html>

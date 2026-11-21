@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fixture from './fixtures/github-page-urls.json';
 import { buildGnosisLink, isSupportedPage, MAX_LINK_LENGTH } from '../extensions/browser/src/link';
-import { buildManifest, CONTENT_SCRIPT_MATCHES, FIREFOX_ADDON_ID } from '../extensions/browser/manifest';
+import {
+  buildManifest,
+  CONTENT_SCRIPT_MATCHES,
+  extensionVersion,
+  FIREFOX_ADDON_ID,
+} from '../extensions/browser/manifest';
 
 interface FixtureUrl {
   url: string;
@@ -71,16 +76,26 @@ void test('page detection: pull request, commit and compare pages yes, others no
 
 void test('the manifests ask for no more than the GitHub match, storage and activeTab', () => {
   for (const browser of ['chrome', 'firefox'] as const) {
-    const manifest = buildManifest(browser);
+    const manifest = buildManifest(browser, '1.2.3');
     assert.equal(manifest.manifest_version, 3);
     assert.deepEqual(manifest.permissions, ['storage', 'activeTab']);
     assert.equal(manifest.host_permissions, undefined);
     assert.equal(manifest.optional_host_permissions, undefined);
     assert.deepEqual(CONTENT_SCRIPT_MATCHES, ['https://github.com/*']);
   }
-  assert.deepEqual(buildManifest('chrome').background, { service_worker: 'background.js' });
-  const firefox = buildManifest('firefox');
+  assert.deepEqual(buildManifest('chrome', '1.2.3').background, { service_worker: 'background.js' });
+  const firefox = buildManifest('firefox', '1.2.3');
   assert.deepEqual(firefox.background, { scripts: ['background.js'] });
   assert.equal((firefox.browser_specific_settings as { gecko: { id: string } }).gecko.id, FIREFOX_ADDON_ID);
-  assert.equal(buildManifest('chrome').browser_specific_settings, undefined);
+  assert.equal(buildManifest('chrome', '1.2.3').browser_specific_settings, undefined);
+});
+
+void test('the extension version follows package.json, without a pre-release suffix', () => {
+  assert.deepEqual(extensionVersion('0.40.0'), { version: '0.40.0' });
+  assert.deepEqual(extensionVersion('0.41.0-beta.1'), { version: '0.41.0', versionName: '0.41.0-beta.1' });
+  assert.throws(() => extensionVersion('1.2'));
+  assert.throws(() => extensionVersion('70000.0.0'));
+  assert.equal(buildManifest('firefox', '0.40.0').version, '0.40.0');
+  assert.equal(buildManifest('chrome', '0.41.0-beta.1').version_name, '0.41.0-beta.1');
+  assert.equal(buildManifest('firefox', '0.41.0-beta.1').version_name, undefined);
 });

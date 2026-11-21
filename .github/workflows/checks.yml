@@ -166,8 +166,9 @@ jobs:
         run: node scripts/run-browser-suites.mjs --shard ${{ matrix.shard }}/3
 
   extension:
-    # Builds the "Open in Gnosis" browser extension (extensions/browser) and uploads the unsigned packages.
-    # Its unit and DOM tests run in Check with `npm test`. No publishing and no store credentials here.
+    # Builds the "Open in Gnosis" browser extension (extensions/browser) and uploads the unsigned store packages.
+    # Its unit and DOM tests run in Check with `npm test`. No publishing and no store credentials here; the
+    # store upload is .github/workflows/extension-publish.yml.
     name: Browser extension
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -184,6 +185,18 @@ jobs:
       # web-ext is not a dev dependency (it brings a large, older dependency tree); run it on demand.
       - name: Lint the Firefox package
         run: npx --yes web-ext@8 lint --source-dir dist-extension/firefox --warnings-as-errors
+      # AMO reviewers rebuild from the source archive and compare. Do the same here, so a change that breaks
+      # the source build or makes the output differ fails in CI instead of in store review.
+      - name: Rebuild from the source archive and compare
+        run: |
+          rebuild="$RUNNER_TEMP/extension-source"
+          mkdir -p "$rebuild"
+          unzip -q dist-extension/open-in-gnosis-source-*.zip -d "$rebuild"
+          (cd "$rebuild" && npm install --no-audit --no-fund && npm run build:extension)
+          for file in dist-extension/open-in-gnosis-*.zip; do
+            cmp "$file" "$rebuild/$file"
+          done
+          echo "The source archive rebuilds byte-identical packages."
       - name: Upload Chrome and Edge package
         uses: actions/upload-artifact@v4
         with:
@@ -191,11 +204,13 @@ jobs:
           path: dist-extension/open-in-gnosis-chrome-*.zip
           if-no-files-found: error
           retention-days: 14
-      - name: Upload Firefox package
+      - name: Upload Firefox package and source
         uses: actions/upload-artifact@v4
         with:
           name: open-in-gnosis-firefox-${{ github.sha }}
-          path: dist-extension/open-in-gnosis-firefox-*.xpi
+          path: |
+            dist-extension/open-in-gnosis-firefox-*.zip
+            dist-extension/open-in-gnosis-source-*.zip
           if-no-files-found: error
           retention-days: 14
 
