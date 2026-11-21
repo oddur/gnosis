@@ -1,0 +1,9 @@
+{
+  "description": "Follow-up to #476: one side adds an import and the other a function at the same place, and the resolver keeps both. An import and a declaration are two kinds, so they never merge for you.",
+  "language": "go",
+  "category": "review-probe",
+  "expected": {
+    "lab/lab.go": "any-but-merged"
+  },
+  "mergiraf": "canned"
+}

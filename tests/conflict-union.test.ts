@@ -183,6 +183,7 @@ void test('traps stay in Check: a catch-all arm, names both sides added, attribu
 
 const mergiraf = (text: string): ConflictProposal => ({ source: 'mergiraf', text });
 
+// Each side inserted at its own place (before and after mid()), so the line checks can pass on their own.
 void test('each failure stays with its conflict: a proposal that keeps every line stays Merged beside one that lost a line', async () => {
   const f = conflict(
     'src/math.ts',
@@ -190,10 +191,10 @@ void test('each failure stays with its conflict: a proposal that keeps every lin
       "import { a } from './a';\n",
       ["import { b } from './b';\n", '', "import { c } from './c';\n"],
       `\n${fn('alpha')}`,
-      [fn('beta'), '', fn('gamma')],
+      [fn('beta') + fn('mid'), fn('mid'), fn('mid') + fn('gamma')],
       fn('omega'),
     ],
-    [mergiraf("import { b } from './b';\n"), mergiraf(fn('beta') + fn('gamma'))]
+    [mergiraf("import { b } from './b';\n"), mergiraf(fn('beta') + fn('mid') + fn('gamma'))]
   );
   const { verdict, buckets } = await check(f);
   assert.deepEqual(buckets, ['check', 'merged']);
@@ -205,11 +206,14 @@ void test('each failure stays with its conflict: a proposal that keeps every lin
 void test('a failure the checks can’t trace to a conflict keeps every proposal in the file in Check', async () => {
   const parts: (string | [string, string, string])[] = [
     fn('alpha'),
-    [fn('beta'), '', fn('gamma')],
+    [fn('beta') + fn('mid'), fn('mid'), fn('mid') + fn('gamma')],
     fn('delta'),
-    [fn('eps'), '', fn('zeta')],
+    [fn('eps') + fn('mid2'), fn('mid2'), fn('mid2') + fn('zeta')],
   ];
-  const f = conflict('src/math.ts', parts, [mergiraf(fn('beta') + fn('gamma')), mergiraf(fn('eps') + fn('zeta'))]);
+  const f = conflict('src/math.ts', parts, [
+    mergiraf(fn('beta') + fn('mid') + fn('gamma')),
+    mergiraf(fn('eps') + fn('mid2') + fn('zeta')),
+  ]);
   assert.deepEqual((await check(f)).buckets, ['merged', 'merged']);
   // A parse error with no position.
   const blind: Analyse = async (language, text, ranges) => {
@@ -220,8 +224,10 @@ void test('a failure the checks can’t trace to a conflict keeps every proposal
   assert.deepEqual(verdict, { merged: false, note: 'The result doesn’t parse.' });
   assert.deepEqual(blockBuckets(f, f.result, verdict), ['check', 'check']);
   // A parse error in one proposal: that one goes to Check, the other stays Merged once the file parses without it.
-  const unclosed = mergiraf(`${fn('eps')}export function zeta() {\n  return 1;\n\n`);
-  const traced = await check(conflict('src/math.ts', parts, [mergiraf(fn('beta') + fn('gamma')), unclosed]));
+  const unclosed = mergiraf(`${fn('eps')}${fn('mid2')}export function zeta() {\n  return 1;\n\n`);
+  const traced = await check(
+    conflict('src/math.ts', parts, [mergiraf(fn('beta') + fn('mid') + fn('gamma')), unclosed])
+  );
   assert.deepEqual(traced.buckets, ['merged', 'check']);
   assert.equal(traced.verdict.blocks?.[1]?.note, 'This result doesn’t parse.');
   // With a conflict still undecided, a parse error is the whole file's, as before.
@@ -229,7 +235,7 @@ void test('a failure the checks can’t trace to a conflict keeps every proposal
     conflict(
       'src/math.ts',
       [...parts, fn('omega'), [fn('x'), 'x\n', fn('y')]],
-      [mergiraf(fn('beta') + fn('gamma')), unclosed, null]
+      [mergiraf(fn('beta') + fn('mid') + fn('gamma')), unclosed, null]
     )
   );
   assert.deepEqual(open.buckets, ['check', 'check', 'decide']);
@@ -237,8 +243,8 @@ void test('a failure the checks can’t trace to a conflict keeps every proposal
   // A duplicate whose copies are all in lines no proposal wrote.
   const outside = conflict(
     'src/math.ts',
-    [fn('alpha'), fn('alpha'), [fn('beta'), '', fn('gamma')], fn('omega')],
-    [mergiraf(fn('beta') + fn('gamma'))]
+    [fn('alpha'), fn('alpha'), [fn('beta') + fn('mid'), fn('mid'), fn('mid') + fn('gamma')], fn('omega')],
+    [mergiraf(fn('beta') + fn('mid') + fn('gamma'))]
   );
   const once = fn('alpha') + fn('omega');
   const dup = await verifyProposals({ ...outside, base: once, ours: once, theirs: once }, analyse);
@@ -248,13 +254,16 @@ void test('a failure the checks can’t trace to a conflict keeps every proposal
 void test('the checks follow the draft: a conflict you decided is checked as your text, and the check runs again', async () => {
   const parts: (string | [string, string, string])[] = [
     fn('alpha'),
-    [fn('beta'), '', fn('gamma')],
+    [fn('beta') + fn('mid'), fn('mid'), fn('mid') + fn('gamma')],
     fn('delta'),
-    [fn('eps'), '', fn('zeta')],
+    [fn('eps') + fn('mid2'), fn('mid2'), fn('mid2') + fn('zeta')],
   ];
-  const f = conflict('src/math.ts', parts, [mergiraf(fn('beta') + fn('gamma')), mergiraf(fn('eps') + fn('zeta'))]);
+  const f = conflict('src/math.ts', parts, [
+    mergiraf(fn('beta') + fn('mid') + fn('gamma')),
+    mergiraf(fn('eps') + fn('mid2') + fn('zeta')),
+  ]);
   // You keep main's side of the first conflict: the second proposal is checked beside that text, not its proposal.
-  const chosen = { ...f, result: f.result.replace(fn('beta') + fn('gamma'), fn('gamma')) };
+  const chosen = { ...f, result: f.result.replace(fn('beta') + fn('mid') + fn('gamma'), fn('mid') + fn('gamma')) };
   assert.notEqual(proposalKey(chosen), proposalKey(f), 'A new draft is checked again');
   const read: string[] = [];
   const spy: Analyse = (language, text, ranges) => {

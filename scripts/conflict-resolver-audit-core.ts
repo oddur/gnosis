@@ -15,7 +15,7 @@ import { blockProposals, withProposals } from '../lib/conflict-carry';
 import { parseConflicts, type ConflictSegment } from '../lib/conflict-blocks';
 import { hasConflictMarkers, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
 import { withUnions } from '../lib/conflict-union';
-import { blockBuckets, blockVerdict, SAME_CHANGE, type Verdict } from '../lib/conflict-verify';
+import { blockBuckets, blockVerdict, changesOf, SAME_CHANGE, type Verdict } from '../lib/conflict-verify';
 import { createSyntaxEngine, syntaxLanguage, type SyntaxLanguage } from '../lib/syntax-scope';
 import { conflictChecker, withoutUnconfirmed, type CheckedFile } from '../src/conflict-checks';
 import { runConflictProcess } from '../src/conflict-process';
@@ -33,6 +33,8 @@ export type MutationKind =
   | 'drop-main-line'
   | 'swap-order'
   | 'interleave-sides'
+  | 'cross-anchor'
+  | 'definition-into-definition'
   | 'change-number'
   | 'change-string'
   | 'touch-outside';
@@ -44,6 +46,8 @@ export const MUTATIONS: MutationKind[] = [
   'drop-main-line',
   'swap-order',
   'interleave-sides',
+  'cross-anchor',
+  'definition-into-definition',
   'change-number',
   'change-string',
   'touch-outside',
@@ -59,6 +63,7 @@ export const REMEMBERED_OWN: ReadonlySet<MutationKind> = new Set([
   'drop-main-line',
   'swap-order',
   'interleave-sides',
+  'cross-anchor',
   'change-number',
   'change-string',
 ]);
@@ -364,6 +369,69 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
           return { text: replaceLines(lines, i, 2, [withEnding(b, a), withEnding(a, b)]) };
       }
       return { skip: 'no two statements of one function body in the result' };
+    }
+    case 'definition-into-definition': {
+      // One whole definition moved into the middle of the next one's body: every line is still there, and with two
+      // methods both sides added, each side's lines might even look together.
+      const { parsed, first, last } = await definitionsIn(target);
+      const inside = parsed.definitions.filter((d) => d.start >= first && d.end <= last);
+      const leaves = inside
+        .filter((d) => !inside.some((x) => x !== d && x.start >= d.start && x.end <= d.end))
+        .sort((x, y) => x.start - y.start);
+      for (let i = 0; i + 1 < leaves.length; i++) {
+        const [moved, host] = [leaves[i], leaves[i + 1]];
+        if (moved.end >= host.start || host.end - host.signatureEnd < 2) continue;
+        const [a, z] = [moved.start - first, moved.end - first];
+        const into = host.signatureEnd - first + 1;
+        const body = lines.slice(a, z + 1);
+        body[body.length - 1] = withEnding(body[body.length - 1], lines[into - 1]);
+        const rest = [...lines.slice(0, a), ...lines.slice(z + 1)];
+        const at = into - body.length;
+        return { text: [...rest.slice(0, at), ...body, ...rest.slice(at)].join('') };
+      }
+      return { skip: 'no two whole definitions in the result' };
+    }
+    case 'cross-anchor': {
+      // A line one side changed moved past lines the other side inserted next to it. They sit at different places in the
+      // ancestor (an insertion before or after the changed line), so their order is fixed.
+      const base = splitLines(target.sides.base).filter(hasWord).map(norm);
+      // The side's changes as the line checks see them (lib/conflict-verify.ts changesOf).
+      const kinds = (text: string) => {
+        const changed = new Set<string>();
+        const inserted = new Set<string>();
+        for (const c of changesOf(base, splitLines(text).filter(hasWord).map(norm)))
+          for (const line of c.added) (c.end > c.start ? changed : inserted).add(line);
+        return { changed, inserted, all: sideLines(text) };
+      };
+      const [ours, theirs] = [kinds(target.sides.ours), kinds(target.sides.theirs)];
+      const inBase = new Set(base);
+      for (const [x, y] of [
+        [ours, theirs],
+        [theirs, ours],
+      ]) {
+        const changedLine = (line: string) =>
+          hasWord(line) && x.changed.has(norm(line)) && !y.all.has(norm(line)) && !inBase.has(norm(line));
+        const insertedLine = (line: string) =>
+          hasWord(line) && y.inserted.has(norm(line)) && !x.all.has(norm(line)) && !inBase.has(norm(line));
+        for (let i = 0; i < lines.length; i++) {
+          if (!changedLine(lines[i])) continue;
+          let end = i + 1;
+          while (end < lines.length && insertedLine(lines[end])) end++;
+          // The lines from `from` to `to` (exclusive) in a new order, each place keeping its line ending, as swap-order does.
+          const reorder = (from: number, to: number, next: string[]) => ({
+            text: [
+              ...lines.slice(0, from),
+              ...next.map((line, k) => withEnding(line, lines[from + k])),
+              ...lines.slice(to),
+            ].join(''),
+          });
+          if (end > i + 1) return reorder(i, end, [...lines.slice(i + 1, end), lines[i]]);
+          let start = i;
+          while (start > 0 && insertedLine(lines[start - 1])) start--;
+          if (start < i) return reorder(start, i + 1, [lines[i], ...lines.slice(start, i)]);
+        }
+      }
+      return { skip: 'no changed line next to the other side’s insertion' };
     }
     case 'interleave-sides': {
       // One side's line moved inside the other side's lines, or past them: every line is still there, and each side's
@@ -762,13 +830,13 @@ export function summarize(report: AuditReport) {
     row[r.outcome]++;
     table.set(key, row);
   }
-  const lines = ['resolver     mutation              caught  held  own  escaped'];
+  const lines = ['resolver     mutation                    caught  held  own  escaped'];
   for (const resolver of RESOLVERS)
     for (const mutation of MUTATIONS) {
       const row = table.get(`${resolver}\u0000${mutation}`);
       if (!row) continue;
       lines.push(
-        `${resolver.padEnd(12)} ${mutation.padEnd(21)} ${String(row.caught).padStart(6)} ${String(row.held).padStart(5)} ${String(row.own).padStart(4)} ${String(row.escaped).padStart(8)}`
+        `${resolver.padEnd(12)} ${mutation.padEnd(27)} ${String(row.caught).padStart(6)} ${String(row.held).padStart(5)} ${String(row.own).padStart(4)} ${String(row.escaped).padStart(8)}`
       );
     }
   const byCheck = new Map<string, Map<string, number>>();
@@ -780,7 +848,7 @@ export function summarize(report: AuditReport) {
   }
   const checks = MUTATIONS.filter((m) => byCheck.has(m)).map(
     (m) =>
-      `${m.padEnd(21)} ${[...(byCheck.get(m) ?? [])]
+      `${m.padEnd(27)} ${[...(byCheck.get(m) ?? [])]
         .sort((a, b) => b[1] - a[1])
         .map(([check, n]) => `${check} ${n}`)
         .join(', ')}`

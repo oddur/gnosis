@@ -1,0 +1,9 @@
+{
+  "description": "Follow-up to #476: after `run();` inside `if (ok)`, the PR adds `log();` and main adds `} else {` with `skip();`. Both inserted at the same place; the resolver puts main's lines first, so `log();` lands in the else branch. No order of two insertions at one place passes the line checks.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/run.ts": "any-but-merged"
+  }
+}

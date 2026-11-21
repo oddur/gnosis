@@ -1,0 +1,8 @@
+{
+  "description": "Follow-up to #476: both sides add a method right after `@memo`, which decorates the method below. Whichever method comes first takes the decorator, so the order is not free.",
+  "language": "typescript",
+  "category": "review-probe",
+  "expected": {
+    "src/cart.ts": "any-but-merged"
+  }
+}

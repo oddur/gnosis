@@ -549,11 +549,30 @@ export interface RangeUnit {
   parameters?: string;
   /** A decorator runs with it. */
   decorated?: boolean;
+  /** It carries an annotation or attribute (Java `@Override`, C# `[Test]`, Rust `#[...]`), which may run code or matter. */
+  annotated?: boolean;
+  /** The type of its name node: `property_identifier`, or `computed_property_name`, `string` and the like. */
+  nameKind?: string;
+  /** A getter or setter. */
+  accessor?: boolean;
+  /** Its parameter list's text, as written, and whether it declares a return type. */
+  signature?: string;
+  returns?: boolean;
+  /** Its first line, spaces squashed: an import's whole text. */
+  head?: string;
 }
 /** The whole nodes in some lines and the node that holds them. Undefined when a node reaches past the lines. */
 export interface RangeUnits {
   parent: string;
+  /** The node that holds `parent`: a Python method's `block` sits in a `class_definition`. */
+  container?: string;
   units: RangeUnit[];
+  /** Every named child of the parent, the units included, for a JSON object: its keys. */
+  all?: RangeUnit[];
+  /** The node just before the units, comments aside: a decorator or attribute there attaches to what follows it. */
+  before?: string;
+  /** For a JSON object: the keys of the pairs that hold it, from the document's top. */
+  path?: string[];
 }
 /** Lines [start, end] (1-based, inclusive) as whole nodes of one parent (lib/conflict-union.ts). */
 export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): RangeUnits | undefined {
@@ -567,12 +586,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       continue;
     }
     if (!hit.length || hit.some((c) => !inside(c))) return undefined;
-    const units: RangeUnit[] = [];
-    for (const c of hit) {
-      if (!c.isNamed) {
-        if (c.type !== ',' && c.type !== ';') return undefined;
-        continue;
-      }
+    const unitOf = (c: Node): RangeUnit => {
       const inner =
         c.type === 'export_statement' || c.type === 'decorated_definition'
           ? (c.childForFieldName('declaration') ?? c.childForFieldName('definition') ?? undefined)
@@ -582,10 +596,19 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       const parameters = target.childForFieldName('parameters');
       const decorated =
         c.type === 'decorated_definition' || [c, target].some((n) => n.children.some((x) => x.type === 'decorator'));
-      units.push({
+      const marks = (n: Node) => ['annotation', 'marker_annotation', 'attribute_list', 'attribute_item'].includes(n.type);
+      const annotated = [c, target].some((n) =>
+        n.children.some((x) => marks(x) || (x.type === 'modifiers' && x.children.some(marks)))
+      );
+      const accessor = target.children.some((x) => !x.isNamed && (x.type === 'get' || x.type === 'set'));
+      return {
         type: c.type,
         ...(inner ? { inner: inner.type } : {}),
         name: named ? named.text : squash(c.text),
+        ...(named ? { nameKind: named.type } : {}),
+        ...(accessor ? { accessor } : {}),
+        ...(parameters ? { signature: parameters.text } : {}),
+        ...(target.childForFieldName('return_type') ? { returns: true } : {}),
         ...(parameters
           ? {
               parameters: parameters.namedChildren
@@ -594,9 +617,34 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
             }
           : {}),
         ...(decorated ? { decorated } : {}),
-      });
+        ...(annotated ? { annotated } : {}),
+        head: squash(c.text.split('\n')[0]),
+      };
+    };
+    const units: RangeUnit[] = [];
+    for (const c of hit) {
+      if (!c.isNamed) {
+        if (c.type !== ',' && c.type !== ';') return undefined;
+        continue;
+      }
+      units.push(unitOf(c));
     }
-    return { parent: node.type, units };
+    // An object's keys are read whole, and its place in its document.
+    const whole = node.type === 'object';
+    let previous = hit[0].previousNamedSibling;
+    while (previous && /comment/.test(previous.type)) previous = previous.previousNamedSibling;
+    const path: string[] = [];
+    if (node.type === 'object')
+      for (let at: Node | null = node.parent; at; at = at.parent)
+        if (at.type === 'pair') path.unshift(at.childForFieldName('key')?.text ?? '');
+    return {
+      parent: node.type,
+      ...(node.parent ? { container: node.parent.type } : {}),
+      units,
+      ...(whole ? { all: node.namedChildren.map(unitOf) } : {}),
+      ...(previous ? { before: previous.type } : {}),
+      ...(node.type === 'object' ? { path } : {}),
+    };
   }
 }
 /**

@@ -1,0 +1,14 @@
+{
+  "description": "Follow-up to #473: main's side doesn't parse (`const z = ;`), and the resolution remembered from the first PR drops `if (...) {` but keeps its closing brace. The error lands outside the conflict, so no proposal is blamed for it; the file must not be Merged when it comes back.",
+  "language": "typescript",
+  "category": "rerere",
+  "rerere": true,
+  "steps": {
+    "first": {
+      "src/run.ts": "any-but-merged"
+    },
+    "second": {
+      "src/run.ts": "any-but-merged"
+    }
+  }
+}

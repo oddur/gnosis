@@ -49,6 +49,23 @@ export function unionOf(
   return { text, ...place };
 }
 
+/**
+ * unionOf, where both sides also made one identical change just before their insertions: a trailing comma added to the
+ * ancestor's last line there, as appending a key to a JSON object or a member to an enum needs. Undefined unless exactly
+ * one such line makes the union.
+ */
+export function commaUnion(block: Pick<ConflictBlock, 'base' | 'ours' | 'theirs'>) {
+  if (block.base === undefined) return undefined;
+  const base = lines(block.base);
+  const found = base.flatMap((line, k) => {
+    if (/,\s*$/.test(line) || !line.trim()) return [];
+    const comma = line.replace(/(\s*)$/, (end) => `,${end}`);
+    const union = unionOf({ ...block, base: [...base.slice(0, k), comma, ...base.slice(k + 1)].join('') });
+    return union && union.before === k + 1 ? [union] : [];
+  });
+  return found.length === 1 ? found[0] : undefined;
+}
+
 /** Tokens as the layout checks read them: runs of whitespace, words and numbers, and each other character. */
 export const layoutTokens = (text: string) => text.match(/\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
 
@@ -303,4 +320,138 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
   return ordered
     ? `Both sides added different ${what} here. ${kept} Check the order: it can matter here.`
     : `Both sides added different ${what} here. ${kept} Their order shouldn’t matter; check that both belong.`;
+}
+
+/** What an order-free unit is: both sides' units must all be one kind. */
+type OrderKind = 'method' | 'member' | 'import';
+/**
+ * Where order doesn't matter (#476), the provable core only: per language, the parent node that holds the units (and,
+ * where the parent type is ambiguous, the node that holds it), the unit types, and their kind. Plain methods of a class,
+ * impl or interface body (Go: methods with a receiver); TypeScript interface and type-literal members, which are types
+ * only; imports in Go, Rust, Java and C#. Nothing else: no fields, enum members, functions, keys, cases, list items or
+ * statements, no JavaScript, TypeScript or Python imports.
+ */
+const SCRIPT_ORDER_FREE = [
+  { parents: ['class_body'], types: ['method_definition'], kind: 'method' as const },
+  {
+    parents: ['interface_body', 'object_type'],
+    types: ['method_signature', 'property_signature'],
+    kind: 'member' as const,
+  },
+];
+const ORDER_FREE: Partial<
+  Record<SyntaxLanguage, { parents: string[]; containers?: string[]; types: string[]; kind: OrderKind }[]>
+> = {
+  typescript: SCRIPT_ORDER_FREE,
+  tsx: SCRIPT_ORDER_FREE,
+  javascript: [{ parents: ['class_body'], types: ['method_definition'], kind: 'method' }],
+  python: [{ parents: ['block'], containers: ['class_definition'], types: ['function_definition'], kind: 'method' }],
+  java: [
+    { parents: ['class_body', 'interface_body'], types: ['method_declaration'], kind: 'method' },
+    { parents: ['program'], types: ['import_declaration'], kind: 'import' },
+  ],
+  csharp: [
+    { parents: ['declaration_list'], types: ['method_declaration'], kind: 'method' },
+    { parents: ['compilation_unit', 'declaration_list'], types: ['using_directive'], kind: 'import' },
+  ],
+  go: [
+    { parents: ['source_file'], types: ['method_declaration'], kind: 'method' },
+    { parents: ['source_file'], types: ['import_declaration'], kind: 'import' },
+    { parents: ['import_spec_list'], types: ['import_spec'], kind: 'import' },
+  ],
+  rust: [
+    { parents: ['declaration_list'], containers: ['impl_item'], types: ['function_item'], kind: 'method' },
+    { parents: ['source_file'], types: ['use_declaration'], kind: 'import' },
+    { parents: ['declaration_list'], containers: ['mod_item'], types: ['use_declaration'], kind: 'import' },
+  ],
+};
+/** A name that is only a name: no computed `[key]`, string or number key, no private `#name`. */
+const PLAIN_NAMES = new Set(['identifier', 'property_identifier', 'field_identifier']);
+const COMMENTS = new Set(['comment', 'line_comment', 'block_comment']);
+/** Nodes that attach to the next declaration: a decorator, annotation or attribute just before the insertion. */
+const ATTACHING = new Set(['decorator', 'annotation', 'marker_annotation', 'attribute_list', 'attribute_item']);
+/** The units that aren't comments: comments ride along with the side that wrote them. */
+const real = (units: readonly RangeUnit[]) => units.filter((u) => !COMMENTS.has(u.type));
+
+/** What orderFree needs to know of the file: its path. */
+export interface OrderContext {
+  path: string;
+}
+/**
+ * Both sides inserted these whole nodes at one place, and their order can't change what the program does (#476): every
+ * node, on both sides, is one allowed kind of one parent (ORDER_FREE, or a package.json dependency list), none
+ * decorated, annotated or attributed, nothing that attaches to the next declaration just before them, each side adds at
+ * least one, and no name (with its parameter types, for overloads) is added by both. Anything else, or any doubt, is
+ * false.
+ */
+export function orderFree(
+  language: SyntaxLanguage,
+  ours: RangeUnits | undefined,
+  theirs: RangeUnits | undefined,
+  context: OrderContext
+) {
+  if (!ours || !theirs || ours.parent !== theirs.parent || ours.container !== theirs.container) return false;
+  const [a, b] = [real(ours.units), real(theirs.units)];
+  if (!a.length || !b.length) return false;
+  if ([ours.before, theirs.before].some((type) => type !== undefined && ATTACHING.has(type))) return false;
+  if (language === 'json') return dependencies(ours, theirs, context.path);
+  const allowed = (ORDER_FREE[language] ?? []).filter(
+    (k) =>
+      k.parents.includes(ours.parent) && (!k.containers || (ours.container && k.containers.includes(ours.container)))
+  );
+  const kindOf = (u: RangeUnit) => allowed.find((k) => k.types.includes(u.type))?.kind;
+  const kinds = new Set([...a, ...b].map(kindOf));
+  const [kind] = kinds;
+  if (kinds.size !== 1 || !kind) return false;
+  // Python runs default values and annotations when it runs `def`, in order; a `__name` is mangled with its class.
+  const python = (u: RangeUnit) =>
+    language !== 'python' ||
+    (!/[=:]/.test(u.signature ?? '') && !u.returns && !u.name.startsWith('__') && !/^_[\p{L}\p{N}_]*?__/u.test(u.name));
+  // `global using`, `using static` and aliases change what names mean elsewhere.
+  const using = (u: RangeUnit) =>
+    u.type !== 'using_directive' || /^using\s+[\p{L}_][\p{L}\p{N}_.]*\s*;$/u.test(u.head ?? '');
+  const fits = (u: RangeUnit) =>
+    !u.decorated &&
+    !u.annotated &&
+    !u.inner &&
+    !u.accessor &&
+    (kind === 'import' || PLAIN_NAMES.has(u.nameKind ?? '')) &&
+    python(u) &&
+    using(u);
+  if (![...a, ...b].every(fits)) return false;
+  // An import by its line; a method by its name, with its parameter types where overloads differ by them.
+  const key = (u: RangeUnit) =>
+    kind === 'import'
+      ? (u.head ?? u.name)
+      : OVERLOADS.has(language) && u.parameters !== undefined
+        ? `${u.name}(${u.parameters})`
+        : u.name;
+  const mine = new Set(a.map(key));
+  return !b.some((u) => mine.has(key(u)));
+}
+
+/** A JSON string, read as JSON reads it; undefined for anything else. */
+function jsonString(text: string | undefined) {
+  if (text === undefined || !/^"(?:[^"\\]|\\.)*"$/.test(text.trim())) return undefined;
+  try {
+    return JSON.parse(text.trim()) as string;
+  } catch {
+    return undefined;
+  }
+}
+/** The package.json objects whose keys are package names only, at the top of the file. */
+const DEPENDENCIES = new Set(['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']);
+/**
+ * package.json dependency lists (#476): both sides added whole pairs to one of the top-level dependency lists, and
+ * every key in it, old and new, is different. No other JSON object: tools read keys in order (`exports`, `scripts`
+ * globs, `moduleNameMapper`).
+ */
+function dependencies(ours: RangeUnits, theirs: RangeUnits, path: string) {
+  const all = ours.all;
+  if (!/(^|[\\/])package\.json$/.test(path) || ours.parent !== 'object' || !all) return false;
+  if (![...ours.units, ...theirs.units, ...all].every((u) => u.type === 'pair')) return false;
+  const owner = ours.path?.map(jsonString);
+  if (owner?.length !== 1 || !DEPENDENCIES.has(owner[0] ?? '')) return false;
+  const keys = all.flatMap((u) => jsonString(u.name) ?? []);
+  return keys.length === all.length && new Set(keys).size === keys.length;
 }

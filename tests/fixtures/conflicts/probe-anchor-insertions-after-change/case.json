@@ -1,0 +1,9 @@
+{
+  "description": "Follow-up to #473: the PR logs before and after `go(1);`, main changes it to `go(2);`, and the resolver puts both logs before `go(2);`. Every line is there and each side's lines keep their order; only checking order per place in the ancestor catches it.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/run.ts": "any-but-merged"
+  }
+}

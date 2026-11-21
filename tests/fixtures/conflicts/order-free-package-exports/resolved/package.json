@@ -1,0 +1,9 @@
+{
+  "name": "lab",
+  "exports": {
+    ".": "./index.js",
+    "./a": "./a.js",
+    "./*": "./dist/*.js",
+    "./package.json": "./package.json"
+  }
+}

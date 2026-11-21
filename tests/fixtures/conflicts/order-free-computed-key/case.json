@@ -1,0 +1,8 @@
+{
+  "description": "Follow-up to #476: one side adds a method with a computed key (`[key]()`), the other a method whose name the key may equal. Which one wins depends on their order, so a computed key is never order-free.",
+  "language": "typescript",
+  "category": "review-probe",
+  "expected": {
+    "src/bag.ts": "any-but-merged"
+  }
+}
