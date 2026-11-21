@@ -188,6 +188,7 @@ export function SlideChatSheet({
     <ChatPanel
       className={embedded ? 'chat-sheet' : ''}
       contained={!embedded}
+      surface="topic"
       label="Ask about this topic"
       context={slideTitle}
       contextTitle={slideTitle}

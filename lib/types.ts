@@ -435,6 +435,10 @@ export interface Preferences {
   /** Settings › Appearance › Code intelligence. See lib/code-intelligence.ts. */
   codeIntelligence?: import('./code-intelligence').CodeIntelligencePreferences;
   showInlineExplanations?: boolean;
+  /** Width of each chat surface's side panel, in pixels. See lib/chat-preferences.ts. */
+  chatPanelWidths?: import('./chat-preferences').ChatPanelWidths;
+  /** The model each chat surface sends its next question to. See lib/chat-preferences.ts. */
+  chatModels?: import('./chat-preferences').ChatModels;
   includeAllFiles: boolean;
   reviewSignature: boolean;
   firstRunSeen: boolean;

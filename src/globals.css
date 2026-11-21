@@ -2768,7 +2768,17 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-other-threads>h3 { font-weight:600;font-size:var(--type-control); }
 .changes-other-threads>p { font-size:var(--type-caption);color:var(--muted-foreground);margin:6px 0 12px; }
 .chat-panel { min-height:0;display:flex;flex-direction:column;background:var(--background);overflow:hidden; }
-.chat-panel-dock { width:400px;max-width:45%;min-width:280px;flex-shrink:0;border-left:1px solid var(--border);animation:drawer-edge-in 300ms var(--drawer-ease); }
+.chat-panel-dock { position:relative;width:var(--chat-panel-width,400px);max-width:max(45%,calc(100% - 480px));min-width:280px;flex-shrink:0;border-left:1px solid var(--border);animation:drawer-edge-in 300ms var(--drawer-ease); }
+/* The dock's left edge resizes it: a 7px target over the border, which shows a 2px rule while hovered, focused or dragged. */
+.panel-resize-handle { touch-action:none;cursor:col-resize;outline:none; }
+.chat-panel-resize { position:absolute;inset:0 auto 0 0;width:7px;z-index:6; }
+.chat-panel-resize::after { content:'';position:absolute;inset:0 auto 0 0;width:2px;background:transparent;transition:background-color 120ms ease; }
+.chat-panel-resize:hover::after,.chat-panel-resize:active::after { background:var(--ring); }
+.chat-panel-resize:focus-visible::after { background:var(--ring);width:3px; }
+.chat-panel-resize:focus-visible { box-shadow:inset 3px 0 0 var(--ring); }
+:root[data-panel-resizing] { cursor:col-resize; }
+:root[data-panel-resizing] body { user-select:none; }
+:root[data-panel-resizing] .chat-panel-dock { animation:none; }
 .chat-panel-contained { height:100%;width:100%; }
 .review-chat-workspace { position:relative; }
 .review-chat-content,.changes-diff-pane { isolation:isolate; }
@@ -2776,7 +2786,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .chat-panel-context { padding:0 16px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;font-size:var(--type-caption);color:var(--muted-foreground);border-bottom:1px solid var(--border); }
 .chat-panel-context:focus-visible { white-space:normal;overflow-wrap:anywhere;outline:2px solid var(--ring);outline-offset:-2px; }
 @media(max-width:1000px) { .review-chat-workspace.chat-open>[aria-label="Table of contents"] { display:none; } }
-@media(max-width:700px) { .chat-panel-dock { position:absolute;inset:0 0 0 auto;width:min(400px,100%);max-width:100%;min-width:0;z-index:5; } }
+@media(max-width:700px) { .chat-panel-dock { position:absolute;inset:0 0 0 auto;width:min(var(--chat-panel-width,400px),100%);max-width:100%;min-width:0;z-index:5; } }
 .chat-transcript { padding:20px 16px;gap:24px; }
 .chat-empty { display:flex;flex-direction:column;gap:16px;padding:8px 0;color:var(--muted-foreground);font-size:var(--type-control); }
 .chat-suggestions { display:flex;flex-direction:column;align-items:flex-start;gap:12px; }

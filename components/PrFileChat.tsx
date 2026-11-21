@@ -71,6 +71,7 @@ function FileConversation({
   return (
     <ChatPanel
       className="changes-chat"
+      surface="file"
       label="Ask about this file"
       onClose={onClose}
       contextTitle={request.path}
