@@ -1,23 +1,26 @@
 {
   "plan": {
-    "summary": "Startup no longer loads the zip library. `exportAll` in `src/export.ts` now loads `zip-lib` with a dynamic `import()` only when `zip` is true.\n\n- The import happens inside the `if (zip)` branch.\n- The non-zip export path does not load the library.",
+    "summary": "Startup no longer loads the zip library. `zip-lib` now loads with a dynamic `import()` inside `exportAll`, and only when the `zip` argument is true.\n\n- The top-level `import Zip from 'zip-lib'` is removed.\n- The zip branch of `exportAll` awaits `import('zip-lib')` before it calls `Zip.archive`.",
     "riskLevel": "low",
-    "riskRationale": "One-line change that defers a module load. The call site stays the same. The top-level import must be removed for the benefit to apply; the diff shows one added line and one deleted line, but only the added line is in the hunk index.",
-    "storyArc": "The change moves the zip library load from startup to the moment a zip export runs. One topic covers it.",
+    "riskRationale": "A small change with one import moved. The first zip export now waits for the module to load, and a failed load now rejects at export time instead of at startup.",
+    "storyArc": "The change moves a heavy dependency from startup to the point of use. First the static import goes away. Then the zip branch loads the library on demand.",
     "noise": [],
     "topics": [
       {
-        "title": "Load zip-lib lazily inside exportAll",
+        "title": "Load zip-lib lazily in exportAll",
         "slideType": "refactor",
-        "importance": "minor",
+        "importance": "important",
         "hunkIds": [
+          "hunk-0",
           "hunk-1"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does exportAll now get zip-lib, and when is it loaded? Verify in the full source that the static top-level import was removed and that `default` is the right export to use as `Zip`.",
+        "narrativeBrief": "How does removing the static import and adding a dynamic import change when zip-lib loads? Verify that no other code in src/export.ts uses `Zip` outside the zip branch.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

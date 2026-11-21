@@ -1,22 +1,22 @@
 {
   "plan": {
-    "summary": "Lowers the export batch size from 2000 to 500 rows, so exports write at most 500 rows per batch. The PR also holds small cleanups: a variable rename in the avatar code, a removed debug log in the menu code, and a README typo fix.",
+    "summary": "The PR lowers the export batch size from 2000 to 500 rows. It also includes small cleanups: a variable rename, removal of a debug log, and a README typo fix.",
     "riskLevel": "low",
-    "riskRationale": "One constant changes. It lowers batch size, which can slow exports but keeps the batching logic the same. The other edits have no behavior effect, except the removed console.log, which has no effect on returned values.",
-    "storyArc": "The only behavior change is the smaller export batch size. The remaining hunks are cleanup and docs that need no explanation.",
+    "riskRationale": "One constant changes the batch size. This is a small runtime change with a simple effect. The other edits are cleanups with no meaningful runtime effect, except a removed console.log.",
+    "storyArc": "The main change caps export batches at 500 rows. The other hunks are unrelated cleanups and do not need explanation.",
     "noise": [
       {
         "hunkId": "hunk-1",
-        "reason": "Variable rename only. The returned value is the same."
+        "reason": "Local variable rename only. Output is unchanged."
       },
       {
         "hunkId": "hunk-3",
-        "reason": "Typo fix in README text."
+        "reason": "README typo fix. No runtime effect."
       }
     ],
     "topics": [
       {
-        "title": "Export batch size reduced to 500 rows",
+        "title": "Export batches hold at most 500 rows",
         "slideType": "config",
         "importance": "important",
         "hunkIds": [
@@ -24,11 +24,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does lowering BATCH_ROWS from 2000 to 500 change for exports? Verify that batches() uses BATCH_ROWS as the chunk size, so each batch holds at most 500 rows.",
+        "narrativeBrief": "What does BATCH_ROWS change for export batching? Verify that batches() uses BATCH_ROWS to size its chunks.",
         "diagramBrief": null
       },
       {
-        "title": "Remove debug log from openMenu",
+        "title": "Remove debug logging from openMenu",
         "slideType": "refactor",
         "importance": "minor",
         "hunkIds": [
@@ -36,9 +36,11 @@
         ],
         "dependsOn": [],
         "order": 2,
-        "narrativeBrief": "openMenu no longer logs its inputs. Confirm the returned list is unchanged and only the console side effect is gone.",
+        "narrativeBrief": "The console.log call in openMenu is removed. The returned menu items stay the same.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

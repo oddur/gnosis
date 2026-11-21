@@ -1,9 +1,9 @@
 {
   "plan": {
-    "summary": "Webhook payloads are now normalized and signed with a real HMAC.\n\n- `Event` trims whitespace from the event name.\n- `Sign` now returns a hex HMAC of the body using the secret. Before, it returned only the hex of the body, and the secret was not used.",
-    "riskLevel": "high",
-    "riskRationale": "The signing change affects webhook authentication. Receivers that verify old signatures will reject new ones. The trim changes the event name value that is sent.",
-    "storyArc": "Webhook payloads need a stable event name and a signature that proves the sender knows the secret. First the event name is normalized. Then the signature is changed to use the secret.",
+    "summary": "Webhook payloads now use a trimmed event name and a keyed HMAC signature.\n\n- `Event` trims whitespace from the event name.\n- `Sign` calls `hmacx.Sum` with the secret instead of hex-encoding the raw body.\n- `sign.go` adds the `hmacx` import.",
+    "riskLevel": "medium",
+    "riskRationale": "The signing change affects webhook authenticity. The old code did not use the secret. Receivers must now verify a different signature. No tests appear in the diff.",
+    "storyArc": "The PR first fixes the signature, which is the security-relevant change. It then covers the smaller event-name normalization.",
     "noise": [],
     "topics": [
       {
@@ -11,25 +11,28 @@
         "slideType": "bugfix",
         "importance": "critical",
         "hunkIds": [
+          "hunk-2",
           "hunk-3"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does Sign change from an unkeyed encoding to a keyed signature? Verify what hmacx.Sum computes and that the secret is now an input.",
+        "narrativeBrief": "How does Sign now produce its signature, and why is that different from before? Connect the new hmacx import to the changed return line. Verify what hmacx.Sum computes and that receivers can verify the new output.",
         "diagramBrief": null
       },
       {
         "title": "Trim whitespace from event names",
         "slideType": "feature",
-        "importance": "important",
+        "importance": "minor",
         "hunkIds": [
           "hunk-1"
         ],
         "dependsOn": [],
         "order": 2,
-        "narrativeBrief": "What does Event return now? Check that strings is imported and whether callers depend on the old untrimmed value.",
+        "narrativeBrief": "What does Event return now? It trims leading and trailing whitespace from the name. Verify the callers and whether the trimmed name is part of the signed payload.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

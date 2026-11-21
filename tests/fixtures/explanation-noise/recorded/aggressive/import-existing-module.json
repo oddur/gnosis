@@ -1,23 +1,26 @@
 {
   "plan": {
-    "summary": "Retry backoff now adds random jitter so clients that failed together do not retry at the same time.\n\n- `backoff(n)` adds `jitter(exponential / 2)` to the exponential delay.\n- The result is still capped at `MAX_MS`, so jitter cannot push a delay past the maximum.",
+    "summary": "Retry backoff now adds random jitter, so clients that failed together do not retry at the same time. The jitter is added to the exponential delay before the `MAX_MS` cap.\n\n- `backoff` adds `jitter(exponential / 2)` to the exponential delay.\n- `jitter` is imported from `./timing`.",
     "riskLevel": "low",
-    "riskRationale": "One-line change to a delay calculation. The cap at MAX_MS still applies. The change makes retry timing non-deterministic, and no tests are in the diff.",
-    "storyArc": "One change: backoff delay gains random jitter before the cap. This spreads out retries from clients that failed together.",
+    "riskRationale": "Small change to a delay calculation in one file. It affects retry timing only. The tests are not visible in the evidence.",
+    "storyArc": "Retries used a fixed exponential delay, so clients that failed together retried together. The PR imports a jitter helper and applies it inside `backoff`. The result is still capped by `MAX_MS`.",
     "noise": [],
     "topics": [
       {
-        "title": "Jitter added to retry backoff",
+        "title": "Randomize retry backoff with jitter",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
+          "hunk-0",
           "hunk-1"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `backoff` now compute the delay, and why does jitter help? Verify what `jitter` returns (range and units) and that the `MAX_MS` cap still bounds the result.",
+        "narrativeBrief": "How does `backoff` now spread out retries? Connect the new `jitter` import to its use in `backoff`. Verify the `jitter` semantics in `./timing`, and check that adding jitter before `Math.min` still keeps the delay at or below `MAX_MS`.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Cache size can now be set with the `CACHE_MB` environment variable. `cacheConfig` reads it and uses it only when it is a finite number above zero. Otherwise it uses `DEFAULT_MEGABYTES`.",
+    "summary": "The cache size can now be set with the `CACHE_MB` environment variable. `cacheConfig` reads and parses it. It uses the value only when it is a finite number greater than zero. Otherwise it falls back to `DEFAULT_MEGABYTES`.",
     "riskLevel": "low",
-    "riskRationale": "One small change in one function. Invalid values fall back to the old default. No tests appear in the diff.",
-    "storyArc": "One change: `cacheConfig` takes its cache size from `CACHE_MB` and keeps the default for missing or invalid input.",
+    "riskRationale": "Small, local change to config parsing with a safe fallback. Invalid input cannot change behavior from the default.",
+    "storyArc": "One change: `cacheConfig` now takes the cache size from `CACHE_MB` and keeps the old default for missing or invalid values.",
     "noise": [],
     "topics": [
       {
-        "title": "Read cache size from CACHE_MB with a safe fallback",
+        "title": "Read cache size from CACHE_MB with a safe default",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
@@ -15,9 +15,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `cacheConfig` choose the cache size now? Explain the parse of `env.CACHE_MB` and the check that returns the default for unset, non-numeric, zero, or negative values. Verify how `Number` treats an unset or empty value.",
+        "narrativeBrief": "How does `cacheConfig` choose the cache size, and what happens for missing or invalid `CACHE_MB`? Verify in the source that `DEFAULT_MEGABYTES` is the fallback and that no other caller depends on the old fixed value.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

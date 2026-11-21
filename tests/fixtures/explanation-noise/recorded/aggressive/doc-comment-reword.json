@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "This PR changes the text that `statusLabel` returns for a stack member that needs a rebase. The label changes from 'needs rebasing' to 'needs to move'. The check in `needsRebase` and the 'up to date' label stay the same.",
+    "summary": "Changes the stack status label for members that need a rebase. The label `needs rebasing` becomes `needs to move`. The condition `needsRebase(member)` and the `up to date` label stay the same.",
     "riskLevel": "low",
-    "riskRationale": "This is a one-line change to a display string. The condition is unchanged. Any code or test that compares the old string 'needs rebasing' would break, and the evidence does not show such code.",
-    "storyArc": "One string changes in `statusLabel`. The reviewer only needs to check the new wording and look for other users of the old text.",
+    "riskRationale": "One string literal changes in a label function. Any code or test that matches the old string will break, but the diff does not show such code.",
+    "storyArc": "One user-facing label changes wording. The only meaningful review question is whether anything depends on the old string.",
     "noise": [],
     "topics": [
       {
-        "title": "Rename the rebase status label to 'needs to move'",
+        "title": "Stack status label says \"needs to move\"",
         "slideType": "refactor",
         "importance": "minor",
         "hunkIds": [
@@ -15,9 +15,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What text does `statusLabel` return now for a member that needs a rebase? Check that the condition is unchanged, and verify whether other code or tests depend on the old string 'needs rebasing'.",
+        "narrativeBrief": "What text does statusLabel return for a member that needs a rebase? Show the one-line string change. Verify that no caller, test, or UI code compares against 'needs rebasing'.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

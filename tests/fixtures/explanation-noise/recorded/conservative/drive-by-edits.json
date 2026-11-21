@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Lowers the export batch size from 2000 to 500 rows. The PR also removes a debug log, renames a local variable and fixes a README typo. Those three edits do not change behavior.",
+    "summary": "Lowers the export batch size from 2000 to 500 rows. Also removes a debug log, renames a local variable, and fixes a README typo.",
     "riskLevel": "low",
-    "riskRationale": "One constant changes. Smaller batches change how rows are grouped for export, but the logic is not changed. The other edits are cosmetic.",
-    "storyArc": "The only real change is the smaller export batch size. The debug log removal, the variable rename and the typo fix are cleanup and need no explanation.",
+    "riskRationale": "One constant change affects export batching. Smaller batches mean more batches but should not change output. The other edits are cosmetic.",
+    "storyArc": "The only behavioral change is the smaller BATCH_ROWS constant. The remaining hunks are cleanup and are left out as noise.",
     "noise": [
       {
         "hunkId": "hunk-1",
-        "reason": "Local variable rename with the same behavior."
+        "reason": "Local variable rename only. Behavior is unchanged."
       },
       {
         "hunkId": "hunk-2",
@@ -15,12 +15,12 @@
       },
       {
         "hunkId": "hunk-3",
-        "reason": "README typo fix."
+        "reason": "Typo fix in README text."
       }
     ],
     "topics": [
       {
-        "title": "Export batches shrink to 500 rows",
+        "title": "Export batch size cut from 2000 to 500 rows",
         "slideType": "config",
         "importance": "important",
         "hunkIds": [
@@ -28,9 +28,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does lowering BATCH_ROWS from 2000 to 500 change for exports? Verify that batches() uses BATCH_ROWS as its chunk size, and check for other users of the constant.",
+        "narrativeBrief": "What does lowering BATCH_ROWS change for export? Check how batches() uses the constant and whether any caller or test assumes the old size of 2000.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

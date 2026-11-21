@@ -1,23 +1,25 @@
 {
   "plan": {
-    "summary": "The sync no longer visits archived projects.\n\n- `syncAll` skips any project where `project.archived` is true.\n- Skipped projects are not passed to `syncProject`.\n- Skipped projects are not counted in the returned `synced` total.",
+    "summary": "The sync no longer visits archived projects. `syncAll` now skips any project where `project.archived` is true. Skipped projects are not synced and do not count in the returned total.",
     "riskLevel": "low",
-    "riskRationale": "One guard clause in a loop. The change is small and local. No auth, data model, or API shape changes. The evidence shows no test change.",
-    "storyArc": "One change: the sync loop now ignores archived projects, so they are not synced and not counted.",
+    "riskRationale": "One guard condition in a loop. It changes which projects are synced, but the change is small and local.",
+    "storyArc": "One change: `syncAll` skips archived projects before calling `syncProject`. The returned count only includes projects that were synced.",
     "noise": [],
     "topics": [
       {
         "title": "Skip archived projects in syncAll",
-        "slideType": "bugfix",
+        "slideType": "feature",
         "importance": "important",
         "hunkIds": [
           "hunk-1"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does syncAll do differently for archived projects, and how does this change the returned count? Verify that Project has an archived field and that no other caller depends on archived projects being synced.",
+        "narrativeBrief": "What does syncAll do with archived projects now? Check that `continue` runs before `syncProject` and before `synced++`, so skipped projects are not counted. Verify that `Project` has an `archived` field.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

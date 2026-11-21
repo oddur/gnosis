@@ -1,22 +1,22 @@
 {
   "plan": {
-    "summary": "This PR changes `DEFAULT_MODEL` from `model-6-1` to `model-6-2`.\n\n- `src/models.ts` holds the new default value.\n- Two tests change their expected model string to `model-6-2`.\n- The tests pass an explicit model, so they do not read `DEFAULT_MODEL` in the excerpts shown.",
+    "summary": "The PR changes `DEFAULT_MODEL` in `src/models.ts` from `model-6-1` to `model-6-2`. Two tests now use `model-6-2` as the model name they pass in and expect back.",
     "riskLevel": "low",
-    "riskRationale": "One constant changes. The effect is any code that reads DEFAULT_MODEL. The test edits only swap literal strings.",
-    "storyArc": "The PR changes the default model constant. The test edits only update their literal model strings.",
+    "riskRationale": "One constant changes. The tests change in the same way. Where `DEFAULT_MODEL` is consumed is not visible in the supplied hunks.",
+    "storyArc": "The default model constant is the only runtime change. The two test updates use the new model name in their inputs and expectations.",
     "noise": [
       {
         "hunkId": "hunk-1",
-        "reason": "Test data string change. The test passes an explicit model and does not use DEFAULT_MODEL."
+        "reason": "Test data follows the renamed model. The test passes its own model, so it does not use DEFAULT_MODEL."
       },
       {
         "hunkId": "hunk-2",
-        "reason": "Test data string change. The test passes an explicit model and does not use DEFAULT_MODEL."
+        "reason": "Test data follows the renamed model. The test passes its own model, so it does not use DEFAULT_MODEL."
       }
     ],
     "topics": [
       {
-        "title": "Default model moves to model-6-2",
+        "title": "Default model becomes model-6-2",
         "slideType": "config",
         "importance": "important",
         "hunkIds": [
@@ -24,9 +24,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What default model value do callers now get? Verify which code reads DEFAULT_MODEL, because the shown tests pass an explicit model.",
+        "narrativeBrief": "What default value do callers get after this change? Verify in the source where DEFAULT_MODEL is used. The new value takes effect there.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

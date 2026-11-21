@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Ctrl+C no longer quits the app at once. The first press sets a `quit_requested` flag and the footer shows a confirmation prompt. A second Ctrl+C sets `running` to false and quits.\n\n- New `quit_requested` field on `App`, false at start.\n- `on_key` handles Ctrl+C in two steps.\n- `footer` shows \"Press Ctrl+C again to quit\" while the flag is set.",
+    "summary": "Ctrl+C now asks for confirmation before the app quits.\n\n- The first Ctrl+C sets a new `quit_requested` flag on `App`.\n- A second Ctrl+C while the flag is set stops the app.\n- The footer shows \"Press Ctrl+C again to quit\" while the flag is set.",
     "riskLevel": "low",
-    "riskRationale": "Small, local UI behavior change. Only the Ctrl+C key path and the footer text change. The diff has no tests. Nothing in the evidence clears the flag on other keys.",
-    "storyArc": "The change adds confirmation state to App. The key handler uses that state to require two presses. The footer then shows the pending prompt to the user.",
+    "riskRationale": "Small change to key handling and one footer string. No auth, data, or API contract is affected. The hunks show no way to clear the flag, so it stays set after the first Ctrl+C.",
+    "storyArc": "The change adds a two-step quit. First, state and key handling make the second Ctrl+C the one that quits. Then the footer tells the user to press it again.",
     "noise": [],
     "topics": [
       {
-        "title": "Two-step Ctrl+C quit with confirmation state",
+        "title": "Two-step quit on Ctrl+C",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
@@ -17,23 +17,42 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does Ctrl+C now require two presses? Connect the new `quit_requested` field, its default, and the two `on_key` match arms. Verify whether any other key resets the flag.",
-        "diagramBrief": null
+        "narrativeBrief": "How does Ctrl+C now need two presses to quit? Connect the new `quit_requested` field, its default of false, and the two match arms in `on_key`. Verify whether any other key clears the flag.",
+        "diagramBrief": {
+          "question": "How does `quit_requested` change what each Ctrl+C press does?",
+          "takeaway": "The first Ctrl+C sets the flag and the app keeps running. A second Ctrl+C with the flag set sets `running` to false.",
+          "assumedKnowledge": [
+            "Rust match guards",
+            "Basic event loop state"
+          ],
+          "essentialConcepts": [
+            "The flag starts false in `App` default construction.",
+            "The guarded arm runs first and quits only when the flag is set.",
+            "The unguarded Ctrl+C arm sets the flag."
+          ],
+          "omit": [
+            "Down key handling",
+            "Footer text"
+          ],
+          "visualApproach": "A small static state diagram. Two states, 'running, not requested' and 'running, quit requested', and a final 'stopped' state. Label the Ctrl+C transitions. Read left to right. Leave exact code in the hunks."
+        }
       },
       {
-        "title": "Footer shows quit confirmation prompt",
+        "title": "Footer prompt while quit is pending",
         "slideType": "feature",
         "importance": "minor",
         "hunkIds": [
           "hunk-3"
         ],
         "dependsOn": [
-          "Two-step Ctrl+C quit with confirmation state"
+          "Two-step quit on Ctrl+C"
         ],
         "order": 2,
-        "narrativeBrief": "How does the user see that a quit is pending? `footer` returns a prompt string early when `quit_requested` is true. Verify that the footer is rendered on every redraw.",
+        "narrativeBrief": "What does the user see after the first Ctrl+C? `footer` returns a confirmation prompt while `quit_requested` is true, and shows the selected count otherwise.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

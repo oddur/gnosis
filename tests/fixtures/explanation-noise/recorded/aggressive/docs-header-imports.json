@@ -1,9 +1,9 @@
 {
   "plan": {
-    "summary": "This PR documents the new `retries` option in the Requests guide. It adds a Retries section with a per-language example in tabs.\n\n- Imports the `Tabs` and `TabItem` components.\n- Adds a `## Retries` section with a TypeScript and a Python example.",
+    "summary": "Documents the new `retries` option in the requests guide. The page imports Docusaurus `Tabs` and `TabItem` and adds a Retries section. The section shows the TypeScript and Python call forms in tabs.",
     "riskLevel": "low",
-    "riskRationale": "Documentation-only change to one MDX file. No runtime code is touched.",
-    "storyArc": "The guide needs to describe `retries`. The page first imports the tab components. Then it uses them in a new Retries section.",
+    "riskRationale": "Documentation-only change in one MDX file. No runtime code changes. The only risk is that the page fails to render if the Tabs imports are wrong.",
+    "storyArc": "The guide needs a Retries section. The tab components must be imported first. The section then uses them to show each language.",
     "noise": [],
     "topics": [
       {
@@ -16,9 +16,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does the guide present the `retries` option? Connect the Tabs imports to the new section that uses them. Verify the TabItem usage matches the imported components.",
+        "narrativeBrief": "What does the guide now say about `retries`, and how does it show each language? Connect the Tabs imports in hunk-0 to their use in hunk-1. Verify that the import paths match other pages in the docs.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

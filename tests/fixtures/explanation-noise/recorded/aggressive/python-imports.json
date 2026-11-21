@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Health checks now probe over HTTP with a two-second timeout. The change also adds a cache check.\n\n- `probe()` in `service/probe.py` calls `httpx.get(url, timeout=2.0)` and returns the status code in its JSON.\n- `run_checks()` in `service/health.py` now also runs `check_cache()`.\n\nThe PR title and description only mention the timeout. The cache check is an extra change.",
-    "riskLevel": "medium",
-    "riskRationale": "The probe now makes real network calls. The timeout limits slow checks, but timeout errors from httpx.get are not handled in the shown code. The new cache check changes what health checks run.",
-    "storyArc": "The PR makes the probe do real HTTP work with a bounded wait. It also widens the health check set to include the cache. The cache change is not covered by the PR description.",
+    "summary": "This change adds a cache check to the health run and makes the probe send a real HTTP request with a two-second timeout. The probe now reports the HTTP status code.\n\n- `run_checks()` now includes `check_cache()`.\n- `probe(url)` calls `httpx.get(url, timeout=2.0)`.\n- The probe result now has a `status` field.",
+    "riskLevel": "low",
+    "riskRationale": "The change is small. It touches health and probe code only. The new HTTP call can raise errors on timeout, and the source excerpts show no handling for that.",
+    "storyArc": "The PR first changes the probe so that slow endpoints stop after two seconds. It then adds the cache check to the health run.",
     "noise": [],
     "topics": [
       {
-        "title": "Probe uses HTTP with a 2-second timeout",
+        "title": "Probe uses a two-second HTTP timeout",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
@@ -16,21 +16,24 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `probe()` now behave, and what happens when the request is slow? Verify whether `httpx.get` timeout errors are caught by any caller.",
+        "narrativeBrief": "How does `probe` now behave for slow or failing endpoints? Connect the `httpx` import to the new `httpx.get(..., timeout=2.0)` call and the added `status` field. Verify whether timeout exceptions are handled by callers.",
         "diagramBrief": null
       },
       {
         "title": "Health run includes the cache check",
         "slideType": "feature",
-        "importance": "important",
+        "importance": "minor",
         "hunkIds": [
+          "hunk-0",
           "hunk-1"
         ],
         "dependsOn": [],
         "order": 2,
-        "narrativeBrief": "Which checks does `run_checks()` run now? Verify that `check_cache` is defined and whether the PR description covers this addition.",
+        "narrativeBrief": "What does `run_checks` now run? Connect the new `check_cache` import to its use in the returned list. Verify that `check_cache` exists in `service.checks`.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

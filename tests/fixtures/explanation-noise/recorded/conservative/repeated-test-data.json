@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "The PR changes `DEFAULT_MODEL` from `model-6-1` to `model-6-2`. Two tests that hardcode the model name are updated to match.\n\n- `src/models.ts`: new default model constant.\n- `tests/chat.test.ts` and `tests/summary.test.ts`: expected strings changed to `model-6-2`.",
+    "summary": "Changes the default model from `model-6-1` to `model-6-2`.\n\n- `DEFAULT_MODEL` in `src/models.ts` now points to `model-6-2`.\n- Two tests update their hard-coded model name to match.",
     "riskLevel": "low",
-    "riskRationale": "This is a one-line constant change. The tests pass an explicit model, so they do not read the new default. Users of the default model get a different model, which is a small behavior change.",
-    "storyArc": "The default model constant is renamed. The tests then use the new name in their expected values.",
+    "riskRationale": "One constant changes. Two tests change only their expected strings. The tests pass an explicit model, so they do not read DEFAULT_MODEL.",
+    "storyArc": "The default model constant is bumped. The two tests then use the new model name in their inputs and expectations.",
     "noise": [],
     "topics": [
       {
-        "title": "Default model becomes model-6-2",
+        "title": "Default model changes to model-6-2",
         "slideType": "config",
         "importance": "important",
         "hunkIds": [
@@ -17,9 +17,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What default model do callers now get, and how do the tests use the new name? Verify that the tests pass an explicit model and so do not exercise `DEFAULT_MODEL`.",
+        "narrativeBrief": "What is the new default model, and how do the tests follow? Verify whether the tests read DEFAULT_MODEL or pass the model name explicitly. The excerpts show explicit values.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

@@ -1,9 +1,9 @@
 {
   "plan": {
-    "summary": "Upgrades the `undici` HTTP client dependency from 6.19.2 to 7.2.0 for a keep-alive fix.\n\n- `package.json` moves the range from `^6.19.2` to `^7.2.0`.\n- `package-lock.json` pins 7.2.0 with a new integrity hash.\n- The lockfile raises the Node engine requirement from `>=18.17` to `>=20.18.1`.",
+    "summary": "Upgrades the `undici` HTTP client dependency from 6.x to 7.x to get the keep-alive fix.\n\n- `package.json` moves the range from `^6.19.2` to `^7.2.0`.\n- `package-lock.json` pins `undici` 7.2.0 with a new integrity hash.\n- The locked package now requires Node `>=20.18.1` instead of `>=18.17`.",
     "riskLevel": "medium",
-    "riskRationale": "This is a major version bump of a runtime HTTP dependency. It may include breaking API changes. It also raises the minimum Node version, which can break older runtimes.",
-    "storyArc": "The PR upgrades one dependency. The manifest declares the new range. The lockfile pins the exact version and shows that the Node engine floor rises.",
+    "riskRationale": "A major version bump of a runtime HTTP dependency can break callers. The Node engine floor rises from 18.17 to 20.18.1, which can break deployments on older Node. The diff shows no code changes or tests.",
+    "storyArc": "The PR moves the project to undici 7 for the keep-alive fix. The manifest sets the new range. The lockfile pins the exact version and raises the Node requirement, which is the main thing to check.",
     "noise": [],
     "topics": [
       {
@@ -16,9 +16,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What dependency version is now required, and what does the major bump change for runtime compatibility? Connect the manifest range to the locked version and the new Node engine requirement of `>=20.18.1`.",
+        "narrativeBrief": "What does the undici bump change for installs and runtime? Connect the new manifest range to the locked 7.2.0 version, and note the Node engine floor rising to >=20.18.1. Verify that the project's own Node target meets this floor.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

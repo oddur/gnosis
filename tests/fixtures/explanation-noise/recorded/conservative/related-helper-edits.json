@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Ctrl+C now asks for confirmation before the app quits.\n\n- The first Ctrl+C sets a new `quit_requested` flag on `App`.\n- A second Ctrl+C while the flag is set stops the app.\n- The footer shows \"Press Ctrl+C again to quit\" while the flag is set.\n\nNo code in the shown hunks clears the flag.",
+    "summary": "Ctrl+C now asks for confirmation before the app quits.\n\n- `App` gets a `quit_requested` flag, set to false at start.\n- The first Ctrl+C sets the flag. A second Ctrl+C sets `running` to false.\n- The footer shows \"Press Ctrl+C again to quit\" while the flag is set.",
     "riskLevel": "low",
-    "riskRationale": "Small, local change to key handling and footer text. The flag is never reset in the shown code, so any later Ctrl+C quits, but this matches the stated goal.",
-    "storyArc": "First, add the confirmation state and its Ctrl+C handling. Then show that state to the user in the footer.",
+    "riskRationale": "Small, local UI behavior change. No auth, data, or API impact. The hunks show no tests.",
+    "storyArc": "The PR adds a confirmation state to the app. The key handler then uses it for a two-step quit. The footer then shows the prompt to the user.",
     "noise": [],
     "topics": [
       {
-        "title": "Two-step Ctrl+C quit using quit_requested",
+        "title": "Two-step Ctrl+C quit with a confirmation state",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
@@ -17,40 +17,25 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does Ctrl+C now need two presses to quit? Connect the new field and its default to the two `on_key` match arms. Verify that nothing else resets the flag.",
-        "diagramBrief": {
-          "question": "How do repeated Ctrl+C presses change `quit_requested` and `running`?",
-          "takeaway": "The first Ctrl+C sets the flag and the app keeps running. A second Ctrl+C with the flag set stops the app. Other keys do not clear the flag in the shown code.",
-          "assumedKnowledge": [
-            "Rust match guards",
-            "Simple state machines"
-          ],
-          "essentialConcepts": [
-            "`quit_requested` starts false.",
-            "The guarded arm `Ctrl('c') if app.quit_requested` runs first and sets `running` to false.",
-            "The unguarded `Ctrl('c')` arm sets `quit_requested` to true."
-          ],
-          "omit": [
-            "Footer rendering",
-            "Down key handling"
-          ],
-          "visualApproach": "A small static state diagram. Two states: Running, flag clear, and Running, flag set. A Ctrl+C arrow joins them. A second Ctrl+C arrow leads to Stopped. Read left to right. Leave code names to inspection."
-        }
+        "narrativeBrief": "How does Ctrl+C now need two presses to quit? Connect the new `quit_requested` field, its default, and the two match arms in `on_key`. Verify that no other key resets the flag.",
+        "diagramBrief": null
       },
       {
-        "title": "Footer prompts for second Ctrl+C",
+        "title": "Footer prompt while quit is pending",
         "slideType": "feature",
         "importance": "minor",
         "hunkIds": [
           "hunk-3"
         ],
         "dependsOn": [
-          "Two-step Ctrl+C quit using quit_requested"
+          "Two-step Ctrl+C quit with a confirmation state"
         ],
         "order": 2,
-        "narrativeBrief": "How does the user learn that a second Ctrl+C is needed? Show the early return in `footer` that reads `quit_requested`.",
+        "narrativeBrief": "How does the user see that a second Ctrl+C is needed? The footer reads `quit_requested` and returns the prompt text before the normal selection text.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

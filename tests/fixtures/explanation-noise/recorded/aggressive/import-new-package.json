@@ -1,9 +1,9 @@
 {
   "plan": {
-    "summary": "Limits concurrent uploads to four at a time.\n\n- `uploadAll` in `src/upload.ts` now wraps each `putObject` call in a `p-limit` limiter set to 4.\n- `package.json` adds `p-limit` as a dependency.",
+    "summary": "Uploads in `uploadAll` now run at most four at a time. The change adds the `p-limit` dependency and wraps each `putObject` call in a `pLimit(4)` limiter. Before, `Promise.all` started every upload at once.",
     "riskLevel": "low",
-    "riskRationale": "Small change to one function. It adds a well-known dependency and only limits concurrency. The upload results and error handling stay the same, since `Promise.all` is kept.",
-    "storyArc": "Uploads used to start all at once. The change adds a limiter of four, and the dependency makes that limiter available.",
+    "riskRationale": "Small change in one function. It adds one dependency. It lowers concurrency and keeps the same results. The change has no tests in the diff.",
+    "storyArc": "The change adds p-limit, then uses it in uploadAll to cap concurrent uploads at four.",
     "noise": [],
     "topics": [
       {
@@ -11,14 +11,17 @@
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
-          "hunk-2",
-          "hunk-0"
+          "hunk-0",
+          "hunk-1",
+          "hunk-2"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `uploadAll` now bound concurrency, and what dependency does it need? Verify that `Promise.all` still rejects on the first failure and that the `p-limit` version is compatible with the project's module format.",
+        "narrativeBrief": "How does uploadAll now limit concurrency, and what does the new dependency provide? Verify that Promise.all still waits for all uploads and that errors still propagate as before.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

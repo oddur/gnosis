@@ -1,9 +1,9 @@
 {
   "plan": {
-    "summary": "This PR exports the retry policy from both public entry points, so library users can build their own policy.\n\n- `src/index.ts` now re-exports `RetryPolicy` and the `RetryOptions` type from `./retry`.\n- `crates/core/src/lib.rs` now re-exports `RetryPolicy` at the crate root. The `retry` module was already declared `pub`.",
+    "summary": "Export `RetryPolicy` from both public entry points so library users can build their own retry policy.\n\n- The TypeScript entry `src/index.ts` now also exports `RetryPolicy` and the `RetryOptions` type from `./retry`.\n- The Rust crate root `crates/core/src/lib.rs` now re-exports `retry::RetryPolicy`.",
     "riskLevel": "low",
-    "riskRationale": "Two one-line re-exports add public API surface. No logic changes. The exports can only expose existing code.",
-    "storyArc": "The change has one purpose: make the retry policy part of the public API. The TypeScript and Rust entry points each get one re-export.",
+    "riskRationale": "Two one-line export additions. They widen the public API surface but add no new logic.",
+    "storyArc": "The retry module already exists. This change makes it reachable from the package root in TypeScript and in Rust, so users can import it directly.",
     "noise": [],
     "topics": [
       {
@@ -16,9 +16,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What new public API do library users get from the TypeScript and Rust entry points? Verify that `./retry` exports `RetryPolicy` and `RetryOptions`, and that the Rust `retry` module defines `RetryPolicy`.",
+        "narrativeBrief": "What new public API do the two entry points expose? Verify that `./retry` and `retry::RetryPolicy` exist, and note that the TypeScript export also adds the `RetryOptions` type.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

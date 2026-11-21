@@ -1,9 +1,9 @@
 {
   "plan": {
-    "summary": "Export `RetryPolicy` from the public entry points of both packages so library users can build their own retry policy.\n\n- TypeScript: `src/index.ts` now also exports `RetryPolicy` and the `RetryOptions` type from `./retry`.\n- Rust: `crates/core/src/lib.rs` now re-exports `retry::RetryPolicy` at the crate root.",
+    "summary": "Export `RetryPolicy` from the public entry points of both the TypeScript package and the Rust crate, so library users can build their own retry policy.\n\n- `src/index.ts` re-exports `RetryPolicy` and the `RetryOptions` type from `./retry`.\n- `crates/core/src/lib.rs` re-exports `retry::RetryPolicy` at the crate root.",
     "riskLevel": "low",
-    "riskRationale": "Two one-line re-exports. They add public API surface but change no logic. The retry module already exists.",
-    "storyArc": "The retry policy already exists in each package. This change makes it reachable from each package's public entry point. The TypeScript and Rust exports are reviewed together as one API change.",
+    "riskRationale": "Two one-line re-exports of existing items. No logic changes. The public API surface grows, so the names become part of the contract.",
+    "storyArc": "One goal: let library users reach the retry policy. The change adds the public re-export in each language package. One topic covers both, because they are the same API change.",
     "noise": [],
     "topics": [
       {
@@ -16,9 +16,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What new public API do library users get? Check that the TypeScript export (`RetryPolicy`, `RetryOptions`) and the Rust re-export (`RetryPolicy`) name the same concept. Verify that the exported symbols exist in `./retry` and `retry`. The Rust re-export does not include an options type.",
+        "narrativeBrief": "What new names can library users import from each package root? Verify that `./retry` and `retry` already define these items. Note that the TypeScript side also exports `RetryOptions` and the Rust side does not export a matching options type.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

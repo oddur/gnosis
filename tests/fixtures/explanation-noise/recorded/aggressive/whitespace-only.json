@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "The cache size can now be set with the `CACHE_MB` environment variable.\n\n- `cacheConfig` parses `env.CACHE_MB` as a number.\n- It uses the value only when it is finite and greater than 0.\n- Otherwise it uses `DEFAULT_MEGABYTES`, as before.",
+    "summary": "The cache size can now be set with the `CACHE_MB` environment variable.\n\n- `cacheConfig` parses `env.CACHE_MB` as a number.\n- It uses the parsed value only when it is finite and greater than zero.\n- Otherwise it uses `DEFAULT_MEGABYTES`, as before.",
     "riskLevel": "low",
-    "riskRationale": "Small change in one function. Invalid input falls back to the old default.",
-    "storyArc": "One change: `cacheConfig` reads `CACHE_MB` and validates it. It falls back to the default for a bad value.",
+    "riskRationale": "Small, local config change with a safe fallback to the default. No auth, data, or API contract changes.",
+    "storyArc": "One change: the cache size comes from `CACHE_MB` when the value is valid. Invalid or missing values keep the old default.",
     "noise": [],
     "topics": [
       {
-        "title": "Read and validate CACHE_MB in cacheConfig",
+        "title": "Read cache size from CACHE_MB with a safe fallback",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
@@ -15,9 +15,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `cacheConfig` choose the cache size now? Verify that unset, non-numeric, zero, negative, and infinite values all fall back to `DEFAULT_MEGABYTES`.",
+        "narrativeBrief": "How does `cacheConfig` choose the cache size now, and which inputs fall back to the default? Verify in the source that an unset variable gives `Number(undefined)`, which is NaN, so the default is used.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

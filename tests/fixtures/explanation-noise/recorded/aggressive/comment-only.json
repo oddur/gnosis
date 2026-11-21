@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Opening the store now removes a stale lock file left by a crashed process.\n\n- `clear_stale_lock` in `src/store.rs` was a no-op that returned `Ok(())`.\n- It now calls `fs::remove_file` on the path from `lock_path(dir)`.\n- A missing lock file is treated as success. Any other I/O error is returned to the caller.",
-    "riskLevel": "medium",
-    "riskRationale": "The function deletes a file on disk. It does not check whether the lock owner is still alive. A live process's lock could be removed. The diff shows no tests.",
-    "storyArc": "One small fix. A stub that did nothing now deletes the lock file and handles errors in a clear way.",
+    "summary": "Opening the store now removes a stale lock file left by a crashed process. `clear_stale_lock` in `src/store.rs` was a no-op. It now deletes the lock file. It ignores a missing file and returns any other I/O error.",
+    "riskLevel": "low",
+    "riskRationale": "One small function changes. Errors other than NotFound are returned. No tests appear in the diff. The change deletes a file, so the lock check matters.",
+    "storyArc": "One change: `clear_stale_lock` goes from a no-op to a real removal with defined error handling.",
     "noise": [],
     "topics": [
       {
-        "title": "Delete stale lock file and handle errors",
+        "title": "Remove stale lock file, ignoring a missing one",
         "slideType": "bugfix",
         "importance": "important",
         "hunkIds": [
@@ -15,9 +15,11 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does clear_stale_lock do now, and which errors does it ignore or return? Check the match arms: NotFound gives Ok, other errors are returned. Verify where the function is called and whether anything confirms the lock is stale before it deletes the file.",
+        "narrativeBrief": "What does `clear_stale_lock` do now, and which errors does it return? Verify how callers use it and whether `lock_path` is correct. Check that deleting a lock held by a live process is not possible.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }

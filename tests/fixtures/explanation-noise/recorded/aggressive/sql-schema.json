@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Links now store their folder in a new `folder_id` column, so the folder view needs no join.\n\n- A new migration adds the nullable `folder_id` column and an index on it.\n- `move_link` writes `folder_id` together with the `dirty` flag.\n- The `Link` protobuf message gets a `folder_id` field.\n- A comment in the original links migration is reworded.",
+    "summary": "Links now store their folder in a new `folder_id` column, so the folder view needs no join.\n\n- A migration adds the column and an index.\n- `move_link` writes `folder_id` and sets `dirty`.\n- The `Link` proto message gains a `folder_id` field.\n- A comment in an older migration is reworded.",
     "riskLevel": "medium",
-    "riskRationale": "The change adds a schema column and a write path. Existing rows get a NULL folder_id, and the migration has no backfill. No tests are shown.",
-    "storyArc": "The PR caches the folder on each link. First the schema gains the column and index. Then the write path fills it. Last, the API contract exposes it.",
+    "riskRationale": "This change adds a schema column and a public proto field. Existing rows will have a NULL folder_id, and the evidence shows no backfill. The write path change is small.",
+    "storyArc": "The change adds a stored folder reference to links. First the schema gets the column and index. Then the write path fills it. Last, the proto exposes it to clients.",
     "noise": [
       {
         "hunkId": "hunk-1",
-        "reason": "Comment-only rewording of an old migration header. No runtime or schema effect."
+        "reason": "Comment-only rewording in an old migration. No runtime effect."
       }
     ],
     "topics": [
@@ -20,7 +20,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What schema change lets the folder view skip a join? Check that the column is nullable, that the index exists, and that no backfill is present.",
+        "narrativeBrief": "What schema change lets links remember their folder? Check the nullable column, the index, and that no backfill exists for old rows.",
         "diagramBrief": null
       },
       {
@@ -34,12 +34,12 @@
           "Add folder_id column and index to links"
         ],
         "order": 2,
-        "narrativeBrief": "How does `move_link` keep the cached folder current? Verify that `folder_id` and `dirty` are set in one UPDATE, and that the bind order matches the SQL placeholders.",
+        "narrativeBrief": "How does move_link keep the cached folder current? Verify the UPDATE sets folder_id and dirty together, and that other write paths such as link creation are not covered here.",
         "diagramBrief": null
       },
       {
-        "title": "Expose folder_id in the Link message",
-        "slideType": "config",
+        "title": "Expose folder_id on the Link proto message",
+        "slideType": "feature",
         "importance": "important",
         "hunkIds": [
           "hunk-3"
@@ -48,9 +48,11 @@
           "Add folder_id column and index to links"
         ],
         "order": 3,
-        "narrativeBrief": "What does the API contract gain? Verify that field number 3 is new and that an empty string means the root, as the comment says. Check whether any code fills this field.",
+        "narrativeBrief": "What contract change do clients see? Verify the new field 3 is additive, and that an empty string means the root folder.",
         "diagramBrief": null
       }
     ]
-  }
+  },
+  "provider": "claude",
+  "model": "claude-sonnet-5-5"
 }
