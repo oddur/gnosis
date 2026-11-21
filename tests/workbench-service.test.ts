@@ -14,7 +14,10 @@ import type { WorkbenchPreferences } from '../src/workbench-service';
 import { createActivityService } from '../src/activity-service';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 import type { getProvider } from '../lib/provider';
-import './fixture-clock';
+import { useFixtureClock } from './fixture-clock';
+
+// The fixtures use fixed dates; see tests/fixture-clock.ts.
+useFixtureClock('2026-10-27T00:00:00Z');
 
 /** With `saved`, user stores and the queue are saved there, and a new service reads them as after a restart. */
 function setup(generate: () => Promise<string>, auto = true, saved?: Map<string, string>) {
