@@ -89,3 +89,30 @@ Mergiraf receives temporary files that Gnosis deletes after the operation. Upstr
 Preview and publish recheck account, permissions, repository, branch names, and both revisions. A new PR head or base branch blocks publication; a new base commit is merged again as described above. The merge commit has the original PR head as its first parent and the base commit it was merged with as its second. An exact-head Git push lease rejects concurrent PR updates. Protected-branch rules still apply. Publication cannot be cancelled once confirmed; reopening reconciles a successful push if its response or local status write was interrupted.
 
 The preparation reads the live target branch tip (`baseRef.target.oid`), not the PR's historical `baseRefOid` snapshot. If Git can merge it cleanly, Gnosis says **No conflicts to resolve** and offers **Review and push…**. If the PR already contains that tip, Gnosis says that the branch already includes the base and prevents an unnecessary merge commit. Neither state means that Gnosis pushed anything.
+
+## Testing the resolvers
+
+The conflict lab (`tests/fixtures/conflicts`, `npm run conflict-lab`) runs real conflicts through the conflict service and checks the bucket of each conflict. Its README describes the cases and the generated matrix.
+
+The resolver audit checks the checks. Each resolver and rule runs over the lab's cases as the service runs it: Mergiraf, unions of both sides' additions, the PR's version of a change both sides made, the rule for a side that only reformatted, earlier resolutions (each case's known-correct resolution, replayed as rerere would replay it) and whole-file proposals. Each result that passes the checks is then changed in one wrong way at a time:
+
+| Mutation | What changes |
+| --- | --- |
+| `drop-definition` | A whole definition in the result is removed. |
+| `duplicate-definition` | A whole definition is repeated after itself. |
+| `broken-parse` | A line that does not parse is inserted. |
+| `drop-pr-line`, `drop-main-line` | One line from the PR or from main is removed, a line that side added first. |
+| `swap-order` | Two lines of one function body, both from one side, change places. |
+| `interleave-sides` | A line only one side added moves inside the other side's added lines, or past them. |
+| `change-number`, `change-string` | A number or a string in the result changes. |
+| `touch-outside` | A number or a name that is not a keyword changes on a line next to the conflict, outside it, in the resolver's whole output. The output is then mapped onto Git's conflicts again. |
+
+No mutation may end Merged, and a whole-file proposal may not pass its checks. A union is never Merged; the audit still counts a mutation the checks would not catch (`held`). An earlier resolution is your own resolution of the same conflict, so it may drop a side, reorder or edit lines on purpose (`own`). It is held only to parsing, no duplicated definition and no text outside the conflict.
+
+```
+npm run conflict-resolver-audit                 # the fixtures and one matrix case per pattern and language
+npm run conflict-resolver-audit -- --all        # the whole matrix (about 75 s)
+npm run conflict-resolver-audit -- --only ts-   # cases whose name contains "ts-"
+```
+
+It prints a table of resolver × mutation (caught, held, own, escaped), which check caught each mutation, and each escape with its case, file, conflict and mutated text. `npm test` runs the sample (`tests/conflict-resolver-audit.test.ts`, about 10 s), so CI runs it on every push. It needs Mergiraf (`npm run prepare:mergiraf`) and skips without it. When the audit finds an escape, fix the check so that it fails closed, and add the case to the lab.
