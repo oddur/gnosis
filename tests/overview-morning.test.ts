@@ -96,7 +96,7 @@ function fillers(status: Record<string, QueueSignals>) {
 /** The number a row shows for its PRs: "5 PRs · …", "3 running", "17 PRs in 6 stacks", "2 failing checks, 1 conflict". */
 const shown = (group: PersonGroup) =>
   group.kind === 'you'
-    ? [...group.detail.matchAll(/(\d+) (failing checks?|conflicts?|needs? rebasing)/g)].reduce((total, match) => total + Number(match[1]), 0)
+    ? [...group.detail.matchAll(/(\d+) (failing checks?|conflicts?|needs? to move)/g)].reduce((total, match) => total + Number(match[1]), 0)
     : Number(group.detail.match(/^(\d+) (PRs?|running|review requests?)\b/)?.[1] ?? NaN);
 
 /**
@@ -301,7 +301,7 @@ void test('Next up is never empty while there is work, a merge nobody reviewed w
   // A restack: one PR of a stack whose parent merged. The item names that PR, not the stack.
   const parent = minePr('o/r', 6, { merged: true, state: 'closed', headBranch: 'p6', title: 'Wallet balance API' });
   const child = set(minePr('o/r', 7, { baseBranch: 'p6', title: 'Wallet balance in the HUD' }), noReview);
-  assert.deepEqual(page(build([item([parent, child])], status), status).next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.rank]), [['fix', 'Wallet balance in the HUD', 'needs rebasing after #6 merged', 5]]);
+  assert.deepEqual(page(build([item([parent, child])], status), status).next.items.map((entry) => [entry.kind, entry.title, entry.why, entry.rank]), [['fix', 'Wallet balance in the HUD', 'needs to move onto main after #6 merged', 5]]);
   // Nothing in Waiting on you, Fix or Merge: empty, and the page says "Nothing needs you right now."
   const waiting = set(minePr('o/r', 5, { requestedReviewers: ['lena'] }), (m) => signals(m, { checks: 'success' }));
   const idle = page(build([item([waiting])], status), status);
@@ -525,11 +525,11 @@ void test('You: each PR has its own reason, failing first, then conflicts and re
   status[child.url] = noReview(child);
   const result = page(build([...fillers(status), item([broken]), item([conflict]), item([parent, child])], status), status);
   const you = must(result.others.find((group) => group.kind === 'you'));
-  assert.equal(you.detail, '1 failing check, 1 conflict, 1 needs rebasing');
+  assert.equal(you.detail, '1 failing check, 1 conflict, 1 needs to move');
   assert.deepEqual(you.lines.map((line) => [line.member.number, line.reason, line.description, line.check.label]), [
     [7, 'failing', '#7, failing checks', 'failing'],
     [8, 'conflicts', '#8, conflicts', 'passing'],
-    [10, 'restack', '#10, needs rebasing after #9 merged', 'passing'],
+    [10, 'restack', '#10, needs to move onto main after #9 merged', 'passing'],
   ]);
 });
 
@@ -1059,8 +1059,8 @@ void test('the unread dot: only a real state change since the last visit, never 
   assert.deepEqual(dots(build7(fixture.signals, nextOverviewVisit(build7(fixture.signals), at), unread)), []);
 });
 
-void test('rebasing in plain words: Next up, the You group and a stack step say "needs rebasing", never "restack"', async () => {
-  assert.equal(FIX_LABEL.restack, 'Needs rebasing');
+void test('rebasing in plain words: Next up, the You group and a stack step say "needs to move", never "restack"', async () => {
+  assert.equal(FIX_LABEL.restack, 'Needs to move');
   // A PR whose parent merged: its own words name the parent.
   const status: Record<string, QueueSignals> = {};
   const parent = minePr('o/r', 9, { merged: true, state: 'closed', headBranch: 'p9' });
@@ -1069,10 +1069,10 @@ void test('rebasing in plain words: Next up, the You group and a stack step say 
   status[child.url] = noReview(child);
   status[top.url] = noReview(top);
   const alone = page(build([item([parent, child])], status), status);
-  assert.equal(must(alone.next.items[0]).why, 'needs rebasing after #9 merged');
+  assert.equal(must(alone.next.items[0]).why, 'needs to move onto main after #9 merged');
   const filled = page(build([...fillers(status), item([parent, child, top])], status), status);
   const step = must(filled.others.find((group) => group.kind === 'stacks')?.children?.[0]?.step);
-  assert.equal(step.text, '#10 needs rebasing after #9 merged');
+  assert.equal(step.text, '#10 needs to move onto main after #9 merged');
   for (const name of OVERVIEW_FIXTURES) {
     const { page: result } = await fixturePage(name);
     const words = [
@@ -1084,8 +1084,8 @@ void test('rebasing in plain words: Next up, the You group and a stack step say 
     for (const text of words) assert.doesNotMatch(text, /restack/i, `${name}: "${text}"`);
   }
   const { page: real7 } = await fixturePage('real7');
-  assert.ok(real7.next.items.some((entry) => entry.why === 'needs rebasing after #35390 merged'));
-  assert.match(real7.briefing.text, /1 needs rebasing\./);
+  assert.ok(real7.next.items.some((entry) => entry.why === 'needs to move onto main after #35390 merged'));
+  assert.match(real7.briefing.text, /1 needs to move\./);
 });
 
 void test('no "green" where the check state already shows passing', async () => {

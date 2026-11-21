@@ -477,9 +477,9 @@ void test('Starred lines match Next up and the stack step: text, action, target,
   cases.push({ name: 'lone subject, merged parent', check: () => {
     const { line, next, step } = decisions([item([parent, child])], status, star(item([child])), child);
     assert.ok(next);
-    assert.equal(step.text, '#311 needs rebasing after #310 merged');
-    assert.equal(next.why, 'needs rebasing after #310 merged');
-    assert.equal(line.why, 'Needs rebasing after #310 merged');
+    assert.equal(step.text, '#311 needs to move onto main after #310 merged');
+    assert.equal(next.why, 'needs to move onto main after #310 merged');
+    assert.equal(line.why, 'Needs to move onto main after #310 merged');
     assert.equal(line.action, nextAction(next));
   } });
 
