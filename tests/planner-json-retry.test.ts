@@ -24,3 +24,17 @@ void test('a second invalid reply fails with the parse error', async (t) => {
   await assert.rejects(planReview('index', 'meta', 'claude', 'claude-sonnet-5-5' as never), /Planner JSON parse failed/);
   assert.equal(calls, 2);
 });
+
+void test('a cancelled run does not retry', async (t) => {
+  const controller = new AbortController();
+  let calls = 0;
+  t.mock.method(claudeProvider, 'generate', async () => {
+    calls++;
+    controller.abort();
+    return '{"summary": 1 2}';
+  });
+  await assert.rejects(
+    planReview('index', 'meta', 'claude', 'claude-sonnet-5-5' as never, undefined, false, controller.signal)
+  );
+  assert.equal(calls, 1);
+});
