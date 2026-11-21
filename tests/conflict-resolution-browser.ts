@@ -1049,6 +1049,110 @@ void app.whenReady().then(async () => {
     await key('j');
     assert.equal(await activeBlock(), '1');
     await captureAll('buckets-check');
+
+    // Compare with: PR · main · both (#445 item 9). In every mode the Decide and the Check card stay on screen, under
+    // their own lines, and Decide says nothing is chosen. The choice is remembered for the session.
+    const pressed = () => js<string | null>("document.querySelector('.conflict-compare [aria-pressed=true]')?.dataset.compare ?? null");
+    const compareWith = async (mode: string) => {
+      await js(`document.querySelector('.conflict-compare [data-compare=${mode}]').click()`);
+      await wait(`document.querySelector('.conflict-compare [data-compare=${mode}]')?.getAttribute('aria-pressed')==='true'`);
+    };
+    /**
+     * The diff line right above a card is one of its conflict's lines: the card is under its lines, not elsewhere. Lines
+     * are read in the diffs' shadow roots; in split layout both columns' rows at that height count.
+     */
+    const cardUnder = (index: number, lines: string[]) =>
+      js<true | string>(`(()=>{
+        const card=${block(index)};if(!card||!card.checkVisibility())return 'card '+${index}+' is not shown';
+        card.scrollIntoView({block:'center'});
+        const top=card.getBoundingClientRect().top;
+        const rows=[...card.closest('.conflict-diff-view').querySelectorAll('diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]);
+        const above=rows.map(r=>({t:(r.querySelector('[data-column-content]')??r).textContent.replace(/\\n$/,''),b:r.getBoundingClientRect()})).filter(x=>x.b.height>0&&x.b.bottom<=top+1);
+        if(!above.length)return 'no line above card '+${index};
+        const bottom=Math.max(...above.map(x=>x.b.bottom));
+        const nearest=above.filter(x=>x.b.bottom>=bottom-2).map(x=>x.t);
+        const want=${JSON.stringify(lines)};
+        return nearest.some(t=>want.includes(t))||'card '+${index}+' sits under '+JSON.stringify(nearest)+', not '+JSON.stringify(want);
+      })()`);
+    const decideSaysNothing = async () =>
+      assert.match(await js<string>(`${block(0)}.querySelector('.conflict-diff-legend').textContent`), /Nothing is chosen yet\.$/);
+    const threeLines = ['export function three() {', '  return 3;', '}', ''];
+    assert.equal(await pressed(), 'pr', 'PR is the default');
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-compare button')].map(b=>b.textContent)"),
+      ['PR', 'main', 'both']
+    );
+    assert.equal(await cardUnder(0, ['  return 11;']), true);
+    assert.equal(await cardUnder(1, threeLines), true);
+    await decideSaysNothing();
+    assert.deepEqual(
+      await js(`[...${block(0)}.querySelectorAll('.conflict-diff-legend [data-mark]')].map(s=>s.dataset.mark+' '+s.textContent)`),
+      ['removed This PR · feature/retry', 'added main']
+    );
+    // main: what the PR still changes after the merge. Main's lines are the old side; an open conflict shows the PR's.
+    await compareWith('main');
+    await wait(`${block(0)}?.checkVisibility() && ${block(1)}?.checkVisibility()`);
+    assert.match(await js<string>("document.querySelector('.conflict-diff-view .changes-file-counts')?.getAttribute('aria-label') ?? ''"), /^Against main$/);
+    assert.equal(await cardUnder(0, ['  return 10;']), true);
+    assert.equal(await cardUnder(1, threeLines), true);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    assert.equal(await js(`${block(1)}.dataset.bucket`), 'check');
+    await decideSaysNothing();
+    assert.deepEqual(
+      await js(`[...${block(0)}.querySelectorAll('.conflict-diff-legend [data-mark]')].map(s=>s.dataset.mark+' '+s.textContent)`),
+      ['removed main', 'added This PR · feature/retry']
+    );
+    // J and K still visit both.
+    await js(`${block(0)}.focus()`);
+    await key('j');
+    assert.equal(await activeBlock(), '1');
+    await captureAll('compare-main');
+    // both: per conflict the PR side, main's side and the result, with the card under them. Nothing is chosen in the
+    // Decide conflict, so it has no result row that could pass for one.
+    await compareWith('both');
+    await wait("document.querySelectorAll('.conflict-compare-group').length===2");
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-compare-group')].map(g=>[...g.querySelectorAll(':scope > .conflict-compare-row > h4')].map(h=>h.textContent))"),
+      [
+        ['This PR · feature/retry', 'main', 'Result'],
+        ['This PR · feature/retry', 'main', 'Result'],
+      ]
+    );
+    assert.equal(
+      await js("document.querySelector('.conflict-compare-group .conflict-compare-row[data-side=result]').textContent"),
+      'ResultNothing is chosen yet.'
+    );
+    await decideSaysNothing();
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    assert.equal(await js(`${block(1)}.dataset.bucket`), 'check');
+    // Each card is under its own three rows, and each row shows its lines.
+    assert.equal(
+      await js(`[0,1].every(i=>{const card=${block(0)}.ownerDocument.querySelector('.conflict-block[data-conflict-index="'+i+'"]');const group=card.closest('.conflict-compare-group');const result=group?.querySelector('.conflict-compare-row[data-side=result]');return group===document.querySelectorAll('.conflict-compare-group')[i]&&card.checkVisibility()&&card.getBoundingClientRect().top>=result.getBoundingClientRect().bottom-0.5;})`),
+      true
+    );
+    const rowText = (group: number, side: string) =>
+      js<string>(`[...document.querySelectorAll('.conflict-compare-group')[${group}].querySelector('.conflict-compare-row[data-side=${side}]').querySelectorAll('diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).map(r=>(r.querySelector('[data-column-content]')??r).textContent).join('|')`);
+    await wait(`document.querySelectorAll('.conflict-compare-group')[1].querySelector('.conflict-compare-row[data-side=result] diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
+    assert.match(await rowText(0, 'ours'), /return 10;/);
+    assert.match(await rowText(0, 'theirs'), /return 11;/);
+    assert.match(await rowText(1, 'result'), /return 3;/);
+    await js(`${block(0)}.focus()`);
+    await key('j');
+    assert.equal(await activeBlock(), '1', 'J and K visit the cards in both too');
+    await captureAll('compare-both');
+    // The choice is remembered for the session: across files, and when the view closes and opens again.
+    await js("[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span').textContent==='src/imports.ts').click()");
+    await wait("document.querySelector('.conflict-files button[aria-current=true] span')?.textContent==='src/imports.ts' && !!document.querySelector('.conflict-compare-group')");
+    assert.equal(await pressed(), 'both');
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await open();
+    await wait("!!document.querySelector('.conflict-compare-group')");
+    assert.equal(await pressed(), 'both');
+    await compareWith('pr');
+    await wait("document.querySelector('.conflict-files button[aria-current=true] span')?.textContent==='src/retry.ts'");
+    await checksDone();
+    assert.equal(await cardUnder(0, ['  return 11;']), true);
     await js("[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span').textContent==='src/imports.ts').click()");
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /Merged · Combined both sides’ changes/);

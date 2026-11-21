@@ -4227,9 +4227,24 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-block-note-line { padding:4px 12px 6px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-diff-legend { display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:6px 12px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-diff-legend .conflict-side-label { padding:0;border:0;color:var(--foreground); }
-.conflict-diff-legend .conflict-side-label[data-side=ours]::before { content:'− ';color:var(--color-danger); }
-.conflict-diff-legend .conflict-side-label[data-side=theirs]::before { content:'+ ';color:var(--color-success); }
+.conflict-diff-legend .conflict-side-label[data-mark=removed]::before { content:'− ';color:var(--color-danger); }
+.conflict-diff-legend .conflict-side-label[data-mark=added]::before { content:'+ ';color:var(--color-success); }
 .conflict-result-diff > .conflict-diff-file,.conflict-diff-view > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
+/* Compare with: PR · main · both (#445 item 9), in the file header: a pill switch like Markdown's Source · Preview. */
+.conflict-compare { display:inline-flex;align-items:center;gap:8px; }
+.conflict-compare-label { color:var(--file-muted);white-space:nowrap; }
+.conflict-compare-switch { display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--file-control-line);border-radius:6px; }
+.conflict-compare-switch button { height:28px;padding:0 10px; }
+@container file-header (max-width:560px) { .conflict-compare-label { display:none; } }
+/* Both: each conflict's PR side, main's side and result, stacked, with its card under them. */
+.conflict-compare-both { border:1px solid var(--border);background:var(--background); }
+.conflict-compare-group { display:flex;flex-direction:column;gap:6px;padding:12px; }
+.conflict-compare-group + .conflict-compare-group { border-top:1px solid var(--border); }
+.conflict-compare-row { border:1px solid var(--border);border-radius:var(--radius-sm);overflow:clip;background:var(--card); }
+.conflict-compare-row > .conflict-side-label { background:var(--secondary); }
+.conflict-compare-row[data-side=result] { border-color:color-mix(in srgb,var(--ring) 45%,var(--border)); }
+.conflict-compare-row[data-side=result] > .conflict-side-label { color:var(--accent-foreground);background:var(--accent); }
+.conflict-compare-group > .conflict-diff-cards { padding:0; }
 .conflict-diff-columns { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:6px 12px;background:var(--secondary);border-bottom:1px solid var(--border);font-size:var(--type-caption);font-weight:600; }
 .conflict-diff-columns[data-layout=unified] { display:flex;flex-wrap:wrap; }
 

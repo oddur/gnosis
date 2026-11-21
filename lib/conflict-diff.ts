@@ -15,13 +15,25 @@ export interface ConflictDiffBlock {
 }
 
 /**
- * A file's conflicts as the Conflicts view's diff shows them (#445 item 8), against the PR's version of the file. A
- * decided or proposed conflict shows its result. An open conflict shows the base branch's lines in place of the PR's,
- * so the diff reads as its two sides: that is never the result, and its card says Decide.
+ * What the Conflicts view compares the result with (#445 item 9). `pr`: the PR's version, what the author sees change
+ * on their branch. `main`: the base branch's version, what the PR still changes after the merge. `both`: each
+ * conflict's two sides with its result under them.
+ */
+export type CompareWith = 'pr' | 'main' | 'both';
+export const COMPARE_MODES: readonly CompareWith[] = ['pr', 'main', 'both'];
+export const isCompareWith = (value: unknown): value is CompareWith =>
+  value === 'pr' || value === 'main' || value === 'both';
+
+/**
+ * A file's conflicts as the Conflicts view's diff shows them (#445 items 8 and 9), against the PR's version of the file
+ * (`against` 'ours') or the base branch's ('theirs'). A decided or proposed conflict shows its result. An open conflict
+ * shows the other side's lines in place of the compared side's, so the diff reads as its two sides, never as no change:
+ * that is never the result, and its card says Decide.
  */
 export function conflictDiffText(
   model: ConflictModel,
-  proposals?: BlockProposals
+  proposals?: BlockProposals,
+  against: 'ours' | 'theirs' = 'ours'
 ): { after: string; blocks: ConflictDiffBlock[] } {
   let after = '';
   let line = 0;
@@ -39,7 +51,9 @@ export function conflictDiffText(
         ? proposal.text
         : choice && choice !== 'proposal'
           ? chosenText(segment.block, choice)
-          : segment.block.theirs;
+          : against === 'ours'
+            ? segment.block.theirs
+            : segment.block.ours;
     const start = line + 1;
     after += text;
     line += lineCount(text);
@@ -58,9 +72,9 @@ export interface CardAnchor {
   line: number;
 }
 /**
- * Each conflict's card place (#445 item 8): under its last shown line. A conflict that shows no lines sits under the
- * last of the PR's lines it removes, so the card stays with the lines it decides, at the top of a file too. Only when
- * it removes none either does it sit under the line before it.
+ * Each conflict's card place (#445 items 8 and 9): under its last shown line. A conflict that shows no lines sits under
+ * the last of the compared version's lines it removes (the PR's, or main's), so the card stays with the lines it
+ * decides, at the top of a file too. Only when it removes none either does it sit under the line before it.
  */
 export function cardAnchors(blocks: readonly ConflictDiffBlock[], hunks: readonly GapHunk[]): CardAnchor[] {
   return blocks.flatMap((block): CardAnchor[] => {
@@ -77,5 +91,32 @@ export function cardAnchors(blocks: readonly ConflictDiffBlock[], hunks: readonl
     }
     if (removed !== undefined) return [{ index: block.index, side: 'deletions', line: removed }];
     return block.anchor === undefined ? [] : [{ index: block.index, side: 'additions', line: block.anchor }];
+  });
+}
+
+/** One conflict in the "both" comparison: its two sides, the ancestor they changed, and its result. */
+export interface ConflictCompareRows {
+  index: number;
+  /** The common ancestor's lines; empty when Git wrote none. */
+  base: string;
+  ours: string;
+  theirs: string;
+  /** The conflict's lines in the draft; undefined while nothing is chosen, so no row can pass for the result. */
+  result?: string;
+}
+/**
+ * Each conflict's rows for Compare with: both (#445 item 9): the PR's side, main's side and the result, each against
+ * the ancestor. A conflict whose card is open (Decide) has no result row: its card says nothing is chosen.
+ */
+export function conflictCompareRows(model: ConflictModel, proposals?: BlockProposals): ConflictCompareRows[] {
+  return model.segments.flatMap((segment): ConflictCompareRows[] => {
+    if (segment.kind !== 'conflict') return [];
+    const { block, index } = segment;
+    const choice = model.choices[index];
+    const proposal = proposals?.[index];
+    const result = choice === 'proposal' ? proposal?.text : choice ? chosenText(block, choice) : undefined;
+    const rows: ConflictCompareRows = { index, base: block.base ?? '', ours: block.ours, theirs: block.theirs };
+    if (result !== undefined) rows.result = result;
+    return [rows];
   });
 }
