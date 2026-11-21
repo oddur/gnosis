@@ -553,6 +553,10 @@ export interface RangeUnit {
   annotated?: boolean;
   /** Its text holds `=`: a field with an initializer, which runs in order. */
   assigns?: boolean;
+  /** Its `value` field's text: an enum member's explicit value, a JSON pair's value. */
+  value?: string;
+  /** It has a `body` field: a Rust enum variant with fields. */
+  body?: boolean;
 }
 /** The whole nodes in some lines and the node that holds them. Undefined when a node reaches past the lines. */
 export interface RangeUnits {
@@ -560,6 +564,8 @@ export interface RangeUnits {
   /** The node that holds `parent`: a Python method's `block` sits in a `class_definition`. */
   container?: string;
   units: RangeUnit[];
+  /** Every named child of the parent, the units included: an enum's members, an object's keys. */
+  all: RangeUnit[];
 }
 /** Lines [start, end] (1-based, inclusive) as whole nodes of one parent (lib/conflict-union.ts). */
 export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): RangeUnits | undefined {
@@ -573,12 +579,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       continue;
     }
     if (!hit.length || hit.some((c) => !inside(c))) return undefined;
-    const units: RangeUnit[] = [];
-    for (const c of hit) {
-      if (!c.isNamed) {
-        if (c.type !== ',' && c.type !== ';') return undefined;
-        continue;
-      }
+    const unitOf = (c: Node): RangeUnit => {
       const inner =
         c.type === 'export_statement' || c.type === 'decorated_definition'
           ? (c.childForFieldName('declaration') ?? c.childForFieldName('definition') ?? undefined)
@@ -592,7 +593,8 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       const annotated = [c, target].some((n) =>
         n.children.some((x) => marks(x) || (x.type === 'modifiers' && x.children.some(marks)))
       );
-      units.push({
+      const value = target.childForFieldName('value');
+      return {
         type: c.type,
         ...(inner ? { inner: inner.type } : {}),
         name: named ? named.text : squash(c.text),
@@ -606,9 +608,20 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
         ...(decorated ? { decorated } : {}),
         ...(annotated ? { annotated } : {}),
         ...(c.text.includes('=') ? { assigns: true } : {}),
-      });
+        ...(value ? { value: squash(value.text) } : {}),
+        ...(target.childForFieldName('body') ? { body: true } : {}),
+      };
+    };
+    const units: RangeUnit[] = [];
+    for (const c of hit) {
+      if (!c.isNamed) {
+        if (c.type !== ',' && c.type !== ';') return undefined;
+        continue;
+      }
+      units.push(unitOf(c));
     }
-    return { parent: node.type, ...(node.parent ? { container: node.parent.type } : {}), units };
+    const all = node.namedChildren.map(unitOf);
+    return { parent: node.type, ...(node.parent ? { container: node.parent.type } : {}), units, all };
   }
 }
 /**

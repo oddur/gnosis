@@ -14,7 +14,7 @@ import {
   type ConflictFileStage,
   type ConflictProposal,
 } from './conflict-resolution';
-import { layoutTokens, orderFree, unionNote, unionOf } from './conflict-union';
+import { commaUnion, layoutTokens, orderFree, unionNote, unionOf } from './conflict-union';
 import {
   definitionChain,
   syntaxLanguage,
@@ -216,7 +216,12 @@ export async function verifyProposals(
   // nodes may show its order doesn't matter (#476).
   const unions = proposed.flatMap((s) => {
     const proposal = proposals[s.index];
-    const union = proposal?.source === 'union' || proposal?.source === 'mergiraf' ? unionOf(s.block) : undefined;
+    const union =
+      proposal?.source === 'union'
+        ? unionOf(s.block)
+        : proposal?.source === 'mergiraf'
+          ? (unionOf(s.block) ?? commaUnion(s.block))
+          : undefined;
     if (!union || !proposal) return [];
     const { before, ours: o, theirs: t } = union;
     if (proposal.source === 'union')
@@ -242,13 +247,26 @@ export async function verifyProposals(
     const filled = (text: string) => text.trim() !== '';
     const written = proposal.text.split(/(?<=\n)/);
     const at = written.flatMap((line, i) => (filled(line) ? [i] : []));
-    const key = (parts: string[][]) => parts.flat().filter(filled).join('');
-    const first =
-      at.map((i) => written[i]).join('') === key([lead, mine, theirs, rest])
-        ? ('ours' as const)
-        : at.map((i) => written[i]).join('') === key([lead, theirs, mine, rest])
-          ? ('theirs' as const)
-          : undefined;
+    // The result's non-blank lines are the parts' own, exactly. Only the last line of the side placed first may gain a
+    // trailing comma, as a JSON object or an enum needs before the other side's lines; not in Python or YAML, where a
+    // comma can mean something.
+    const commas = language !== 'python' && language !== 'yaml';
+    const matches = (parts: string[][]) => {
+      const expected = parts.flat().filter(filled);
+      const slack = commas ? parts[0].filter(filled).length + parts[1].filter(filled).length - 1 : -1;
+      return (
+        at.length === expected.length &&
+        at.every((i, k) => {
+          const [have, want] = [written[i], expected[k]];
+          return have === want || (k === slack && have === want.replace(/(\s*)$/, (end) => `,${end}`));
+        })
+      );
+    };
+    const first = matches([lead, mine, theirs, rest])
+      ? ('ours' as const)
+      : matches([lead, theirs, mine, rest])
+        ? ('theirs' as const)
+        : undefined;
     if (!first) return [];
     // Where each side's lines landed in the proposal, by their non-blank lines.
     const count = (part: string[]) => part.filter(filled).length;
@@ -960,7 +978,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 7;
+export const CHECKS_VERSION = 8;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A

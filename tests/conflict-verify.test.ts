@@ -695,6 +695,78 @@ void test('#476: both sides adding order-free members or imports at one place ca
   assert.equal(ok.merged, false);
 });
 
+void test('#476: JSON keys and enums with explicit values are order-free, with no key, name or value twice', async () => {
+  // JSON: two keys in the middle of an object, either side first.
+  const json = (ours: string, theirs: string, text: string, head = '{\n  "a": 1,\n', tail = '  "z": 26\n}\n') =>
+    samePlace('package.json', head, tail, ours, theirs, text);
+  const b = '  "b": 2,\n';
+  const c = '  "c": 3,\n';
+  for (const text of [b + c, c + b]) {
+    const verdict = await json(b, c, text);
+    assert.equal(verdict.merged, true, verdict.note);
+  }
+  // The same key on both sides, or a key the object already has: Check.
+  assert.equal((await json(b, '  "b": 3,\n', b + '  "b": 3,\n')).merged, false);
+  assert.equal((await json(b, '  "z": 3,\n', b + '  "z": 3,\n')).merged, false);
+  // Appended at the end: both sides add the comma to the last key, the same change.
+  const end = await verifyProposals(
+    {
+      path: 'package.json',
+      base: '{\n  "a": 1\n}\n',
+      ours: '{\n  "a": 1,\n  "b": 2\n}\n',
+      theirs: '{\n  "a": 1,\n  "c": 3\n}\n',
+      original:
+        '{\n<<<<<<< feature\n  "a": 1,\n  "b": 2\n||||||| ancestor\n  "a": 1\n=======\n  "a": 1,\n  "c": 3\n>>>>>>> main\n}\n',
+      proposals: [{ source: 'mergiraf', text: '  "a": 1,\n  "b": 2,\n  "c": 3\n' }],
+    },
+    analyse
+  );
+  assert.equal(end.merged, true, end.note);
+  // YAML keys: Check.
+  const yaml = await samePlace('ci.yml', 'jobs:\n  a: 1\n', '  z: 26\n', '  b: 2\n', '  c: 3\n', '  b: 2\n  c: 3\n');
+  assert.equal(yaml.merged, false);
+
+  // Enums whose members all carry their value.
+  const head = 'export enum Color {\n  Red = 1,\n';
+  const tail = '}\n';
+  const tsEnum = (ours: string, theirs: string, text: string, h = head) =>
+    samePlace('src/color.ts', h, tail, ours, theirs, text);
+  for (const text of ['  Green = 2,\n  Blue = 3,\n', '  Blue = 3,\n  Green = 2,\n']) {
+    const verdict = await tsEnum('  Green = 2,\n', '  Blue = 3,\n', text);
+    assert.equal(verdict.merged, true, verdict.note);
+  }
+  // A value or a name twice: Check.
+  assert.equal((await tsEnum('  Green = 2,\n', '  Blue = 2,\n', '  Green = 2,\n  Blue = 2,\n')).merged, false);
+  assert.equal((await tsEnum('  Green = 2,\n', '  Green = 3,\n', '  Green = 2,\n  Green = 3,\n')).merged, false);
+  assert.equal((await tsEnum('  Green = 2,\n', '  Blue = 0x1,\n', '  Green = 2,\n  Blue = 0x1,\n')).merged, false);
+  // One implicit member anywhere in the enum: Check.
+  assert.equal((await tsEnum('  Green,\n', '  Blue,\n', '  Green,\n  Blue,\n')).merged, false);
+  assert.equal(
+    (await tsEnum('  Green = 2,\n', '  Blue = 3,\n', '  Green = 2,\n  Blue = 3,\n', 'export enum Color {\n  Red,\n'))
+      .merged,
+    false
+  );
+  // C# and Rust enums with explicit values: Merged.
+  const cs = await samePlace(
+    'Color.cs',
+    'enum Color\n{\n    Red = 1,\n',
+    '}\n',
+    '    Green = 2,\n',
+    '    Blue = 3,\n',
+    '    Green = 2,\n    Blue = 3,\n'
+  );
+  assert.equal(cs.merged, true, cs.note);
+  const rs = await samePlace(
+    'color.rs',
+    'enum Color {\n    Red = 1,\n',
+    '}\n',
+    '    Green = 2,\n',
+    '    Blue = 3,\n',
+    '    Green = 2,\n    Blue = 3,\n'
+  );
+  assert.equal(rs.merged, true, rs.note);
+});
+
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
   const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
   const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');

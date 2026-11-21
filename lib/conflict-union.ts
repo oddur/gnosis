@@ -49,6 +49,23 @@ export function unionOf(
   return { text, ...place };
 }
 
+/**
+ * unionOf, where both sides also made one identical change just before their insertions: a trailing comma added to the
+ * ancestor's last line there, as appending a key to a JSON object or a member to an enum needs. Undefined unless exactly
+ * one such line makes the union.
+ */
+export function commaUnion(block: Pick<ConflictBlock, 'base' | 'ours' | 'theirs'>) {
+  if (block.base === undefined) return undefined;
+  const base = lines(block.base);
+  const found = base.flatMap((line, k) => {
+    if (/,\s*$/.test(line) || !line.trim()) return [];
+    const comma = line.replace(/(\s*)$/, (end) => `,${end}`);
+    const union = unionOf({ ...block, base: [...base.slice(0, k), comma, ...base.slice(k + 1)].join('') });
+    return union && union.before === k + 1 ? [union] : [];
+  });
+  return found.length === 1 ? found[0] : undefined;
+}
+
 /** Tokens as the layout checks read them: runs of whitespace, words and numbers, and each other character. */
 export const layoutTokens = (text: string) => text.match(/\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
 
@@ -362,8 +379,12 @@ const COMMENTS = new Set(['comment', 'line_comment', 'block_comment']);
  * the side that wrote them. Anything else, or any doubt, is false.
  */
 export function orderFree(language: SyntaxLanguage, ours: RangeUnits | undefined, theirs: RangeUnits | undefined) {
+  if (!ours || !theirs || ours.parent !== theirs.parent || ours.container !== theirs.container) return false;
+  if (language === 'json') return jsonKeys(ours, theirs);
+  const members = ENUMS[language];
+  if (members && ours.parent === members.parent) return explicitEnum(members.member, ours, theirs);
   const kinds = ORDER_FREE[language];
-  if (!kinds || !ours || !theirs || ours.parent !== theirs.parent || ours.container !== theirs.container) return false;
+  if (!kinds) return false;
   const allowed = kinds.filter(
     (k) =>
       k.parents.includes(ours.parent) && (!k.containers || (ours.container && k.containers.includes(ours.container)))
@@ -385,4 +406,54 @@ export function orderFree(language: SyntaxLanguage, ours: RangeUnits | undefined
     OVERLOADS.has(language) && u.parameters !== undefined ? `${name(u)}(${u.parameters})` : name(u);
   const mine = new Set(a.map(key));
   return !b.some((u) => mine.has(key(u)));
+}
+
+/** A JSON key or enum value, read as the language reads it; undefined for anything but a plain literal. */
+function literal(text: string | undefined) {
+  if (text === undefined) return undefined;
+  const t = text.trim();
+  const number = /^(-?)(0x[\da-f_]+|0b[01_]+|0o[0-7_]+|\d[\d_]*)$/i.exec(t);
+  if (number) {
+    const n = BigInt(number[2].replace(/_/g, ''));
+    return `n:${number[1] ? -n : n}`;
+  }
+  const quoted = /^(["'])((?:[^"'\\]|\\.)*)\1$/.exec(t);
+  if (!quoted) return undefined;
+  try {
+    return `s:${JSON.parse(`"${quoted[2].replace(/"/g, '\\"')}"`) as string}`;
+  } catch {
+    return undefined;
+  }
+}
+const unique = (values: readonly string[]) => new Set(values).size === values.length;
+
+/**
+ * JSON object keys (#476): both sides added whole pairs to one object, and every key in that object, old and new, is
+ * different. Key order doesn't change what a JSON object means.
+ */
+function jsonKeys(ours: RangeUnits, theirs: RangeUnits) {
+  if (ours.parent !== 'object' || !ours.units.length || !theirs.units.length) return false;
+  if (![...ours.units, ...theirs.units, ...ours.all].every((u) => u.type === 'pair')) return false;
+  const keys = ours.all.flatMap((u) => literal(u.name) ?? []);
+  return keys.length === ours.all.length && unique(keys);
+}
+
+/** Enums whose members each carry their value: the parent node and the member node type, per language. */
+const ENUMS: Partial<Record<SyntaxLanguage, { parent: string; member: string }>> = {
+  typescript: { parent: 'enum_body', member: 'enum_assignment' },
+  tsx: { parent: 'enum_body', member: 'enum_assignment' },
+  csharp: { parent: 'enum_member_declaration_list', member: 'enum_member_declaration' },
+  rust: { parent: 'enum_variant_list', member: 'enum_variant' },
+};
+/**
+ * Enum members (#476): every member of the enum, old and new, has an explicit literal value and no fields or
+ * attributes, and no name or value is there twice. Then the members' order can't change any value. An enum with one
+ * implicit value is not order-free: the values after it follow their place.
+ */
+function explicitEnum(member: string, ours: RangeUnits, theirs: RangeUnits) {
+  const real = (side: readonly RangeUnit[]) => side.filter((u) => !COMMENTS.has(u.type));
+  if (!real(ours.units).length || !real(theirs.units).length) return false;
+  const all = real(ours.all);
+  if (!all.every((u) => u.type === member && !u.annotated && !u.decorated && !u.body && literal(u.value))) return false;
+  return unique(all.map((u) => u.name)) && unique(all.map((u) => literal(u.value) ?? ''));
 }
