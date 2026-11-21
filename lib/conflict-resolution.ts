@@ -105,8 +105,12 @@ export interface ConflictReply {
   baseMoved?: BaseMove;
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
+/** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
+const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
+const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
+/** Any conflict marker line left in a text: the file status, Mark reviewed and every guard before a push use it. */
 export function hasConflictMarkers(text: string) {
-  return /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/m.test(text);
+  return MARKER_LINES.test(text);
 }
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';

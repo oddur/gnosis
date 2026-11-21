@@ -1,5 +1,5 @@
 import type * as TreeSitter from 'web-tree-sitter';
-import { classifyNoise, comparisonTexts, comparisonTrees, type NoiseBlock } from './semantic-noise';
+import { classifyNoise, comparisonTexts, comparisonTrees, formattingEquivalent, type NoiseBlock } from './semantic-noise';
 import {
   MIN_LINES,
   MOVE_GROUPS,
@@ -696,6 +696,13 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       } finally {
         tree.delete();
       }
+    },
+    /** Whether two versions of a file are the same program, formatting aside (lib/semantic-noise.ts). */
+    async equivalent(id: SyntaxLanguage, before: string, after: string): Promise<boolean> {
+      const { language } = await load(id);
+      if (!parser) throw Error('The parser did not start');
+      parser.setLanguage(language);
+      return formattingEquivalent({ parse: (text, previous) => parse(text, previous) }, id, before, after);
     },
     /**
      * Formatting-only and comment-only changes (lib/semantic-noise.ts): each change block of `hunks`, from the new

@@ -24,6 +24,7 @@ import { blockProposals } from '../lib/conflict-carry.ts';
 import { hasConflictMarkers } from '../lib/conflict-resolution.ts';
 import { parseConflicts } from '../lib/conflict-blocks.ts';
 import { createSyntaxEngine } from '../lib/syntax-scope.ts';
+import { NOISE_MAX_CHARACTERS } from '../lib/semantic-noise.ts';
 import { runConflictProcess } from '../src/conflict-process.ts';
 import { proposedChecks } from './conflict-lab-fixes.mjs';
 import { bare, bareGit, casePlan, commitFiles, loadCases, root, sortedLines, squash } from './conflict-lab-lib.mjs';
@@ -50,6 +51,14 @@ const analyser =
     if (text.length > SYNTAX_MAX_CHARACTERS) throw new Error('This file is too large to parse');
     const { definitions, errors } = await engine.definitions(language, text);
     return { definitions, errors };
+  };
+/** The renderer's checkFormatting, in Node, with the same limits. */
+const equivalence =
+  (off = []) =>
+  async (language, before, after) => {
+    if (off.includes(language)) throw new Error('This language is off in Settings');
+    if (Math.max(before.length, after.length) > NOISE_MAX_CHARACTERS) throw new Error('This file is too large to compare');
+    return engine.equivalent(language, before, after);
   };
 
 /** A stand-in Mergiraf binary for the failure-path cases. */
@@ -206,13 +215,14 @@ export async function runCase(c, { keep = false } = {}) {
     const binary = await mergirafFor(meta.mergiraf, dir, c.dir);
     const run = (request) => service.run(request, new AbortController().signal);
     const analyse = analyser(meta.languagesOff);
+    const equivalent = equivalence(meta.languagesOff);
 
     async function score(stepName, session, resolvedTree, expectedSpec) {
       const files = [];
       const expectedFiles = new Map(Object.entries(expectedSpec ?? {}));
       for (const f of session.files) {
         const verdict = f.proposals
-          ? await verifyProposals(f, analyse)
+          ? await verifyProposals(f, analyse, false, equivalent)
           : f.wholeFile
             ? await verifyWholeFile(f, f.wholeFile, analyse)
             : undefined;

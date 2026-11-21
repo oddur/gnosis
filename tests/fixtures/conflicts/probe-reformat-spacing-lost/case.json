@@ -1,0 +1,9 @@
+{
+  "description": "Review probe (#454): the PR only changes the spacing inside a call, on the same one line; main changes an argument. The resolver returns main's line, with the same line count as the PR's: a line count can't tell. It must not be Merged.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/greet.ts": "any-but-merged"
+  }
+}
