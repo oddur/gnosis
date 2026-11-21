@@ -204,7 +204,7 @@ export function menubarRow(item: AttentionItem, login: string): MenubarRow {
   return {
     id: item.id,
     kinds: item.kinds,
-    labels: item.kinds.slice(0, 2).map((kind) => ATTENTION_LABEL[kind]),
+    labels: item.kinds.slice(0, 2).map((kind) => (kind === 'restack' && item.detail) || ATTENTION_LABEL[kind]),
     title: item.title,
     repo: item.repo,
     number: item.number,

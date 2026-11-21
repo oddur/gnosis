@@ -4313,6 +4313,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-member-resolution button:disabled { opacity:.5;cursor:default; }
 .stack-member-resolution :is(button,a):focus-visible,.stack-plan-prs :is(button,a):focus-visible { outline:2px solid var(--ring);outline-offset:3px;border-radius:var(--radius-sm); }
 @media(max-width:760px) { .stack-merge-plan { padding:12px; } }
+/* The stack's next fix: one sentence and one action, above the merge steps. */
+.stack-conflict-plan { display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:12px 16px;margin-bottom:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm); }
+.stack-conflict-plan > svg { color:var(--color-danger);flex-shrink:0; }
+.stack-conflict-plan[data-tone=warning] > svg { color:var(--color-warning); }
+.stack-conflict-plan > p { flex:1 1 240px;margin:0;font-size:var(--type-control);font-weight:500; }
 
 .bulk-check-rerun-list { max-height: 40vh; overflow-y: auto; padding-inline-start: 1.25rem; font-size: var(--type-control); overflow-wrap: anywhere; }
 .bulk-check-rerun-list li + li { margin-top: 0.75rem; }

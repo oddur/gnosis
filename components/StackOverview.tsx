@@ -20,6 +20,7 @@ import { StackMemberDetails } from './StackMergeDetails';
 import { Button } from './ui/button';
 import { stackMergePlan } from '../lib/stack-merge-plan';
 import { StackMergePlan } from './StackMergePlan';
+import { StackConflictPlan } from './StackConflictPlan';
 import { useStatusNow } from '../lib/status-clock';
 
 export function StackOverview({
@@ -116,6 +117,7 @@ export function StackOverview({
   );
   return (
     <section className="stack-overview" aria-label="Stack overview">
+      <StackConflictPlan subject={subject} signals={signals} />
       <StackMergePlan key={subject.id} plan={plan} onOpen={onOpen} account={account} onChanged={onRefresh} refreshing={checking || refreshBusy} />
       <div className="stack-overview-heading">
         <div>
