@@ -1,0 +1,14 @@
+{
+  "description": "Resolver audit (#445 item 19): main's side doesn't parse, so the parse check can't clear the file, and the resolution remembered from the first PR doesn't parse inside the conflict either. When it comes back in a second PR it must not be Merged.",
+  "language": "typescript",
+  "category": "rerere",
+  "rerere": true,
+  "steps": {
+    "first": {
+      "src/limits.ts": "any-but-merged"
+    },
+    "second": {
+      "src/limits.ts": "any-but-merged"
+    }
+  }
+}

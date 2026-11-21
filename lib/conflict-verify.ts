@@ -254,6 +254,13 @@ export async function verifyProposals(
       for (const index of suspects) fail(index, 'This result doesn’t parse.');
       probe = without.probe;
       parsed[3] = without.parsed;
+    } else if (result.errors && (ours.errors || theirs.errors)) {
+      // A side that doesn't parse can't clear the result, but an error that reaches a proposal is still the proposal's:
+      // only the line accounting would see it otherwise, and your own earlier resolutions are not held to that.
+      if (!result.errorLines?.length) return { merged: false, note: 'The result doesn’t parse.' };
+      const lines = result.errorLines;
+      for (const [index, [a, z]] of probe.regions)
+        if (lines.some(([start, end]) => a <= end && z >= start)) fail(index, 'This result doesn’t parse.');
     }
   } catch {
     return { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' };
@@ -534,9 +541,10 @@ function lineAccount(indented: boolean) {
 
 /**
  * One block's line accounting, against the block's own ancestor, PR and main lines. Lines both sides kept must be in
- * the result; lines either side added must be in it; lines a side deleted must be gone; nothing else may appear. Where
- * both sides changed the same ancestor lines differently, the block is a real conflict and nothing is Merged. Blank
- * lines, trailing commas and whitespace are ignored; in Python and YAML, indentation counts.
+ * the result; lines either side added must be in it; lines a side deleted must be gone; nothing else may appear; and
+ * the lines keep the ancestor's order (outOfOrder). Where both sides changed the same ancestor lines differently, the
+ * block is a real conflict and nothing is Merged. Blank lines, trailing commas and whitespace are ignored; in Python and
+ * YAML, indentation counts.
  */
 export function accountLines(
   block: { base?: string; ours: string; theirs: string },
@@ -547,12 +555,10 @@ export function accountLines(
   const { lines, report } = lineAccount(indented);
   const [base, ours, theirs, merged] = [block.base, block.ours, block.theirs, result].map(lines);
   const [mine, other] = [changesOf(base, ours), changesOf(base, theirs)];
-  const same = (a: LineChange, b: LineChange) =>
-    a.start === b.start && a.end === b.end && a.added.join('\n') === b.added.join('\n');
   const inside = (gap: number, c: LineChange) => c.start < gap && gap < c.end;
   for (const a of mine)
     for (const b of other) {
-      if (same(a, b)) continue;
+      if (sameChange(a, b)) continue;
       const overlap = a.start < a.end && b.start < b.end && a.start < b.end && b.start < a.end;
       if (overlap || (a.start === a.end && inside(a.start, b)) || (b.start === b.end && inside(b.start, a)))
         return SAME_LINES;
@@ -563,19 +569,82 @@ export function accountLines(
   const add = (line: string) => expected.set(line, (expected.get(line) ?? 0) + 1);
   base.forEach((line, i) => !removed.has(i) && add(line));
   for (const c of mine) c.added.forEach(add);
-  for (const c of other) if (!mine.some((m) => same(m, c))) c.added.forEach(add);
+  for (const c of other) if (!mine.some((m) => sameChange(m, c))) c.added.forEach(add);
   const found = new Map<string, number>();
   for (const line of merged) found.set(line, (found.get(line) ?? 0) + 1);
   const missing = [...expected].filter(([line, n]) => (found.get(line) ?? 0) < n).map(([line]) => line);
   const extra = [...found].find(([line, n]) => n > (expected.get(line) ?? 0))?.[0];
-  return report(missing, extra, { base, ours, theirs });
+  return report(missing, extra, { base, ours, theirs }) ?? outOfOrder(base, merged, mine, other);
 }
+/**
+ * The result keeps the ancestor's order: the lines both sides kept, and each side's changes in place between them.
+ * Line counts alone miss two statements swapped. Where one side inserted lines at the point where the other side's
+ * change starts or ends, or both inserted at one point, either order is a merge: those lines may interleave, each
+ * side's in its own order. Changes both sides made alike count once.
+ */
+function outOfOrder(base: readonly string[], merged: readonly string[], mine: LineChange[], other: LineChange[]) {
+  const changes = [
+    ...mine.map((change) => ({ change, side: 0 })),
+    ...other.filter((c) => !mine.some((m) => sameChange(m, c))).map((change) => ({ change, side: 1 })),
+  ].sort((x, y) => x.change.start - y.change.start || x.change.end - y.change.end);
+  const removed = new Set<number>();
+  for (const { change } of changes) for (let i = change.start; i < change.end; i++) removed.add(i);
+  /** A line both sides kept, or a run of changes whose lines may interleave. */
+  type Unit = string | { sides: [string[], string[]]; end: number; point: boolean };
+  const units: Unit[] = [];
+  let next = 0;
+  for (let at = 0; at <= base.length; at++) {
+    for (; next < changes.length && changes[next].change.start === at; next++) {
+      const { change, side } = changes[next];
+      const point = change.start === change.end;
+      const last = units.at(-1);
+      // It touches the run before it through an insertion: no line both kept stands between them.
+      if (typeof last === 'object' && last.end === change.start && (point || last.point)) {
+        last.sides[side].push(...change.added);
+        last.end = change.end;
+        last.point = point;
+      } else {
+        const sides: [string[], string[]] = [[], []];
+        sides[side].push(...change.added);
+        units.push({ sides, end: change.end, point });
+      }
+    }
+    if (at < base.length && !removed.has(at)) units.push(base[at]);
+  }
+  let r = 0;
+  for (const unit of units) {
+    if (typeof unit === 'string') {
+      if (merged[r++] !== unit) return ORDER;
+      continue;
+    }
+    const [a, b] = unit.sides;
+    const part = merged.slice(r, r + a.length + b.length);
+    r += a.length + b.length;
+    // reach[i][j]: the first i lines of one side and j of the other make up the start of `part`.
+    const width = b.length + 1;
+    const reach = new Uint8Array((a.length + 1) * width);
+    reach[0] = 1;
+    for (let i = 0; i <= a.length; i++)
+      for (let j = 0; j <= b.length; j++) {
+        if (!reach[i * width + j] || i + j >= part.length) continue;
+        if (a[i] === part[i + j]) reach[(i + 1) * width + j] = 1;
+        if (b[j] === part[i + j]) reach[i * width + j + 1] = 1;
+      }
+    if (part.length !== a.length + b.length || !reach[a.length * width + b.length]) return ORDER;
+  }
+  if (r !== merged.length) return ORDER;
+}
+const ORDER = 'The result changes the order of lines from the PR or main.';
+
 /** A side's edits against the ancestor: each replaces ancestor lines [start, end) with `added`. */
 interface LineChange {
   start: number;
   end: number;
   added: string[];
 }
+/** Both sides made this change alike. */
+const sameChange = (a: LineChange, b: LineChange) =>
+  a.start === b.start && a.end === b.end && a.added.join('\n') === b.added.join('\n');
 function changesOf(base: string[], side: string[]): LineChange[] {
   const changes: LineChange[] = [];
   let at = 0;
@@ -684,7 +753,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 2;
+export const CHECKS_VERSION = 3;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A

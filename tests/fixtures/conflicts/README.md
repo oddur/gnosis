@@ -67,6 +67,9 @@ once whitespace is normalised.
 The "with fixes" column runs the extra checks proposed for #444 (`scripts/conflict-lab-fixes.mjs`) on top of #444's
 own, to show what they would catch and what they would cost.
 
+`npm run conflict-resolver-audit` runs each resolver over these cases and a sample of the matrix, and checks that no
+wrong change to a checked result ends Merged. See [Testing the resolvers](../../../docs/conflict-resolution.md#testing-the-resolvers).
+
 ## See the cases in the conflict workspace
 
 The conflict gallery opens every case in the real conflict workspace, in Electron, and takes screenshots. Use it to

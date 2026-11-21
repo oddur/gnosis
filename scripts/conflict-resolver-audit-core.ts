@@ -1,0 +1,689 @@
+/**
+ * The resolver audit (#445 item 19). Runs each resolver and rule over the conflict lab's cases (tests/fixtures/conflicts
+ * and a sample of the generated matrix), as the conflict service does, then mutates every result the checks pass:
+ * a dropped or duplicated definition, a broken parse, a line dropped from either side, two lines swapped inside a
+ * function, a changed string or number, and text outside the conflict touched. Every mutation must fail the checks:
+ * it must never end Merged (lib/conflict-verify.ts). Pure library code; scripts/conflict-resolver-audit.ts prints it,
+ * and tests/conflict-resolver-audit.test.ts runs it with `npm test`.
+ */
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import * as TreeSitter from 'web-tree-sitter';
+import { blockProposals, withProposals } from '../lib/conflict-carry';
+import { parseConflicts, type ConflictSegment } from '../lib/conflict-blocks';
+import { hasConflictMarkers, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
+import { withUnions } from '../lib/conflict-union';
+import { blockBuckets, blockVerdict, SAME_CHANGE, type Verdict } from '../lib/conflict-verify';
+import { createSyntaxEngine, syntaxLanguage, type SyntaxLanguage } from '../lib/syntax-scope';
+import { conflictChecker, withoutUnconfirmed, type CheckedFile } from '../src/conflict-checks';
+import { runConflictProcess } from '../src/conflict-process';
+import { casePlan, gitRunner, loadCases, root } from './conflict-lab-lib.mjs';
+import { generateMatrix } from './conflict-lab-generate.mjs';
+
+/** Who wrote a result: a resolver, or a rule the checks apply to a structural merge's proposal. */
+export type Resolver = 'mergiraf' | 'reformat' | 'same' | 'union' | 'rerere' | 'whole-file';
+export const RESOLVERS: Resolver[] = ['mergiraf', 'reformat', 'same', 'union', 'rerere', 'whole-file'];
+export type MutationKind =
+  | 'drop-definition'
+  | 'duplicate-definition'
+  | 'broken-parse'
+  | 'drop-pr-line'
+  | 'drop-main-line'
+  | 'swap-order'
+  | 'change-number'
+  | 'change-string'
+  | 'touch-outside';
+export const MUTATIONS: MutationKind[] = [
+  'drop-definition',
+  'duplicate-definition',
+  'broken-parse',
+  'drop-pr-line',
+  'drop-main-line',
+  'swap-order',
+  'change-number',
+  'change-string',
+  'touch-outside',
+];
+/**
+ * Mutations a remembered resolution may make on purpose: it is your own earlier resolution of the same conflict (Git's
+ * rerere matches the conflict's exact text), and you may have dropped a side, reordered or edited it. The checks hold it
+ * only to parsing, no duplicated definition and no text outside the conflict.
+ */
+export const REMEMBERED_OWN: ReadonlySet<MutationKind> = new Set([
+  'drop-definition',
+  'drop-pr-line',
+  'drop-main-line',
+  'swap-order',
+  'change-number',
+  'change-string',
+]);
+
+/**
+ * `caught`: a check failed. `held`: no check failed, but the resolver is never Merged (a union is always in Check). `own`:
+ * a remembered resolution that may do this on purpose (REMEMBERED_OWN). `escaped`: the mutation ended Merged, or a whole-file
+ * proposal passed its checks.
+ */
+export type Outcome = 'caught' | 'held' | 'own' | 'escaped';
+export interface MutationResult {
+  case: string;
+  path: string;
+  block: number;
+  resolver: Resolver;
+  mutation: MutationKind;
+  outcome: Outcome;
+  /** The check's note, or why it escaped. */
+  note: string;
+  /** The mutated result, for an escape. */
+  text?: string;
+}
+export interface Baseline {
+  case: string;
+  path: string;
+  block: number;
+  resolver: Resolver;
+  /** The resolver's own result passed the checks (Merged, a union in Check for its own reason, a whole file `passed`). */
+  passed: boolean;
+  note: string;
+}
+export interface AuditReport {
+  cases: number;
+  files: number;
+  baselines: Baseline[];
+  results: MutationResult[];
+  /** Cases that could not run, with why. */
+  errors: string[];
+  ms: number;
+}
+
+const require = createRequire(import.meta.url);
+const assets = path.join(root, 'src/assets/tree-sitter');
+export const MERGIRAF = path.join(
+  root,
+  'resources/mergiraf/runtime',
+  process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf'
+);
+const engine = createSyntaxEngine(TreeSitter, {
+  runtime: async () => new Uint8Array(await fs.readFile(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))),
+  grammar: async (language) => new Uint8Array(await fs.readFile(path.join(assets, `${language}.wasm`))),
+  tags: (name) => fs.readFile(path.join(assets, `${name}-tags.scm`), 'utf8'),
+});
+
+interface LabCase {
+  name: string;
+  dir?: string;
+  meta: {
+    mergiraf?: string;
+    languagesOff?: SyntaxLanguage[];
+    stack?: string[];
+  };
+  trees: Record<string, Map<string, Buffer> | undefined>;
+}
+/** One merge of a case: three trees and the known-correct resolution, by path. */
+interface Merge {
+  name: string;
+  base: Map<string, Buffer>;
+  ours: Map<string, Buffer>;
+  theirs: Map<string, Buffer>;
+  resolved?: Map<string, Buffer>;
+  canned?: string;
+  disabled: SyntaxLanguage[];
+}
+/** Mergiraf replaced by a script: only `canned` (a wrong output replayed by hand) says anything about the checks. */
+const STAND_INS = new Set(['hang', 'timeout', 'fail', 'missing', 'garbage']);
+function merges(c: LabCase): Merge[] {
+  if (c.meta.mergiraf && STAND_INS.has(c.meta.mergiraf)) return [];
+  const disabled = c.meta.languagesOff ?? [];
+  const canned = c.meta.mergiraf === 'canned' && c.dir ? path.join(c.dir, 'canned') : undefined;
+  const base = c.trees.base ?? new Map<string, Buffer>();
+  const theirs = c.trees.theirs ?? new Map<string, Buffer>();
+  // A stack's lowest PR against main; the PRs above it repeat its conflict.
+  const [first] = casePlan(c) as { step: string; tree?: Map<string, Buffer> }[];
+  const ours = first.tree ?? new Map<string, Buffer>();
+  const resolvedSteps = c.trees.resolvedSteps as unknown as Record<string, Map<string, Buffer>> | undefined;
+  const resolved = c.meta.stack ? resolvedSteps?.[first.step] : c.trees.resolved;
+  const list: Merge[] = [{ name: c.name, base, ours, theirs, resolved, canned, disabled }];
+  const theirs2 = c.trees.theirs2;
+  if (theirs2)
+    list.push({ name: `${c.name} (after-move)`, base, ours, theirs: theirs2, resolved: c.trees.resolved2, disabled });
+  return list;
+}
+
+const utf8 = (data: Buffer | undefined) => {
+  if (!data || data.includes(0)) return undefined;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(data);
+  } catch {
+    return undefined;
+  }
+};
+/** Git's conflict for one file, as `git merge-tree` with diff3 markers writes it; undefined when it merges cleanly. */
+async function gitConflict(dir: string, texts: [string, string, string]) {
+  const names = ['ours', 'base', 'theirs'].map((n) => path.join(dir, n));
+  await Promise.all(names.map((n, i) => fs.writeFile(n, [texts[1], texts[0], texts[2]][i])));
+  const git = gitRunner(dir);
+  const allowed = Array.from({ length: 128 }, (_, i) => i);
+  const { code, stdout } = (await git(
+    ['merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'Common ancestor', '-L', 'theirs', ...names],
+    { allowed, encoding: 'buffer' }
+  )) as { code: number; stdout: Buffer };
+  if (!code) return undefined;
+  return stdout.toString('utf8');
+}
+async function structuralMerge(
+  dir: string,
+  file: { path: string; base: string; ours: string; theirs: string },
+  canned?: string
+) {
+  if (canned) {
+    const text = await fs.readFile(path.join(canned, file.path), 'utf8').catch(() => undefined);
+    if (text !== undefined) return text;
+  }
+  const names = ['base', 'ours', 'theirs'].map((n) => path.join(dir, `m-${n}`));
+  await Promise.all(names.map((n, i) => fs.writeFile(n, [file.base, file.ours, file.theirs][i])));
+  const result = await runConflictProcess(
+    MERGIRAF,
+    [
+      'merge',
+      ...names,
+      `--path-name=${file.path}`,
+      '--timeout',
+      '10000',
+      '--base-name',
+      'Common ancestor',
+      '--left-name=ours',
+      '--right-name=theirs',
+    ],
+    { cwd: dir, timeout: 20_000 }
+  ).catch(() => undefined);
+  if (!result || result.code > 1 || result.code < 0) return undefined;
+  return result.stdout.toString('utf8');
+}
+
+type AuditFile = CheckedFile & { result: string; resolved: boolean; source: ConflictFile['source'] };
+/**
+ * A file as the service would hold it after checking: its proposals, draft and verdict. A 'same' proposal its check
+ * didn't Merge is taken back, and the rest checked again (src/conflict-resolution-service.ts `check`).
+ */
+async function checked(file: AuditFile, disabled: SyntaxLanguage[]) {
+  const check = conflictChecker(engine, disabled);
+  let current = file;
+  let verdict = await check(current);
+  const back = withoutUnconfirmed(current, verdict);
+  if (back) {
+    current = { ...current, ...back } as AuditFile;
+    verdict = verdict && current.proposals ? await check(current) : undefined;
+  }
+  return { file: current, verdict };
+}
+/** The file the service prepares from a resolver's whole output: per-conflict proposals, or one whole-file proposal. */
+function fromOutput(
+  base: Omit<AuditFile, 'proposals' | 'wholeFile' | 'result' | 'source'>,
+  output: string,
+  source: 'mergiraf' | 'rerere'
+): AuditFile | undefined {
+  const mapped = blockProposals(base.original, output, source);
+  if (source === 'rerere') {
+    if (!mapped) return undefined;
+    return { ...base, proposals: mapped, result: withProposals(base.original, mapped), source };
+  }
+  const whole = !mapped && !hasConflictMarkers(output);
+  if (whole)
+    return { ...base, wholeFile: { source: 'mergiraf', text: output }, result: base.original, source: 'manual' };
+  const proposals = withUnions(base.path, base.original, mapped);
+  if (!proposals) return undefined;
+  return { ...base, proposals, result: withProposals(base.original, proposals), source: 'mergiraf' };
+}
+
+/** The resolver behind one block's result: its source, or the rule that Merged a structural merge's proposal. */
+function resolverOf(proposal: ConflictProposal, verdict: Verdict | undefined, index: number): Resolver {
+  const note = blockVerdict(verdict, index)?.note ?? '';
+  if (proposal.source !== 'mergiraf') return proposal.source;
+  if (note.startsWith(SAME_CHANGE)) return 'same';
+  if (/only reformatted these lines/.test(note)) return 'reformat';
+  return 'mergiraf';
+}
+/** The notes a union gets from its own rule (lib/conflict-union.ts unionNote), not from a failed check. */
+const UNION_NOTES = /^Both sides added /;
+
+// ── Mutations ────────────────────────────────────────────────────────────────
+
+const splitLines = (text: string) => text.split(/(?<=\n)/).filter((l) => l !== '');
+const hasWord = (line: string) => /[\p{L}\p{N}_]/u.test(line);
+const norm = (line: string) => line.replace(/\s+/g, '').replace(/,$/, '');
+/** The text before and after conflict `index`, each other conflict as its proposal or the PR's lines. */
+function around(segments: ConflictSegment[], proposals: readonly (ConflictProposal | null)[], index: number) {
+  const part = (s: ConflictSegment) => (s.kind === 'text' ? s.text : (proposals[s.index]?.text ?? s.block.ours));
+  const at = segments.findIndex((s) => s.kind === 'conflict' && s.index === index);
+  return {
+    before: segments.slice(0, at).map(part).join(''),
+    after: segments
+      .slice(at + 1)
+      .map(part)
+      .join(''),
+  };
+}
+interface Target {
+  language: SyntaxLanguage;
+  /** The result being mutated: one conflict's proposal, or a whole file. */
+  text: string;
+  /** The text around it, to parse: `before + text + after`. */
+  before: string;
+  after: string;
+  /** The conflict's three versions, or the file's. */
+  sides: { base: string; ours: string; theirs: string };
+}
+type Mutant = { text: string } | { skip: string };
+const replaceLines = (lines: string[], at: number, remove: number, insert: string[] = []) => {
+  const next = [...lines];
+  next.splice(at, remove, ...insert);
+  return next.join('');
+};
+const withEnding = (line: string, like: string) =>
+  line.replace(/\r?\n$/, '') + (/\r\n$/.test(like) ? '\r\n' : like.endsWith('\n') ? '\n' : '');
+
+async function definitionsIn(target: Target) {
+  const parsed = await engine.definitions(target.language, target.before + target.text + target.after);
+  const first = target.before.split('\n').length; // the 1-based line where `text` starts
+  const last = first + splitLines(target.text).length - 1;
+  return { parsed, first, last };
+}
+/** A definition wholly inside the result: the first one, outermost. */
+async function wholeDefinition(target: Target) {
+  const { parsed, first, last } = await definitionsIn(target);
+  const inside = parsed.definitions.filter((d) => d.start >= first && d.end <= last);
+  const outer = inside.find((d) => !inside.some((x) => x !== d && x.start <= d.start && x.end >= d.end));
+  return outer && { start: outer.start - first, end: outer.end - first };
+}
+const LINE_BREAKERS = [')]}', '= = = ;', '"unterminated'];
+/** Lines the side's own text holds, by normalised text. */
+const sideLines = (text: string) => new Set(splitLines(text).map(norm));
+
+export async function mutate(kind: MutationKind, target: Target): Promise<Mutant> {
+  const lines = splitLines(target.text);
+  switch (kind) {
+    case 'drop-definition':
+    case 'duplicate-definition': {
+      const d = await wholeDefinition(target);
+      if (!d) return { skip: 'no whole definition in the result' };
+      const body = lines.slice(d.start, d.end + 1);
+      if (!body.length) return { skip: 'no whole definition in the result' };
+      const last = body.at(-1) ?? '';
+      if (!/\n$/.test(last)) body[body.length - 1] = withEnding(last, lines[0]);
+      return kind === 'drop-definition'
+        ? { text: replaceLines(lines, d.start, d.end - d.start + 1) }
+        : { text: replaceLines(lines, d.end + 1, 0, body) };
+    }
+    case 'broken-parse': {
+      if (!lines.length) return { skip: 'empty result' };
+      const at = Math.floor(lines.length / 2);
+      const indent = /^\s*/.exec(lines[at])?.[0] ?? '';
+      for (const breaker of LINE_BREAKERS) {
+        const text = replaceLines(lines, at, 0, [withEnding(indent + breaker, lines[at] ?? '\n')]);
+        const read = await engine.definitions(target.language, target.before + text + target.after);
+        if (read.errors) return { text };
+      }
+      return { skip: 'no inserted line breaks the parse' };
+    }
+    case 'drop-pr-line':
+    case 'drop-main-line': {
+      const [mine, other] =
+        kind === 'drop-pr-line' ? [target.sides.ours, target.sides.theirs] : [target.sides.theirs, target.sides.ours];
+      const [own, others, base] = [sideLines(mine), sideLines(other), sideLines(target.sides.base)];
+      const candidates = lines
+        .map((line, i) => ({ line, i }))
+        .filter(({ line }) => hasWord(line) && own.has(norm(line)));
+      // The side's own addition first, then a line only it kept, then any line of its.
+      const pick =
+        candidates.find(({ line }) => !others.has(norm(line)) && !base.has(norm(line))) ??
+        candidates.find(({ line }) => !others.has(norm(line))) ??
+        candidates.at(0);
+      if (!pick) return { skip: 'the result holds no line of this side' };
+      return { text: replaceLines(lines, pick.i, 1) };
+    }
+    case 'swap-order': {
+      // Two neighbouring statements inside one function's body, where order is the program.
+      const { parsed, first } = await definitionsIn(target);
+      const defs = parsed.definitions;
+      const leaf = defs.filter((d) => !defs.some((x) => x !== d && x.start >= d.start && x.end <= d.end));
+      // Both lines from one side, so that side fixed their order. Two lines that only one side each added at the same
+      // place have no order of their own: either is a correct merge.
+      const sides = [sideLines(target.sides.ours), sideLines(target.sides.theirs)];
+      for (let i = 0; i + 1 < lines.length; i++) {
+        const [a, b] = [lines[i], lines[i + 1]];
+        if (!hasWord(a) || !hasWord(b) || norm(a) === norm(b)) continue;
+        if (!sides.some((side) => side.has(norm(a)) && side.has(norm(b)))) continue;
+        const [la, lb] = [first + i, first + i + 1];
+        if (leaf.some((d) => la > d.signatureEnd && lb < d.end))
+          return { text: replaceLines(lines, i, 2, [withEnding(b, a), withEnding(a, b)]) };
+      }
+      return { skip: 'no two statements of one function body in the result' };
+    }
+    case 'change-number':
+    case 'change-string': {
+      const pattern = kind === 'change-number' ? /(?<![\w.$#])\d+(?![\w.])/ : /(["'])([^"'\\\n]*)\1/;
+      // A line a side wrote first: a changed literal there is a wrong merge of that side's change.
+      const base = sideLines(target.sides.base);
+      const order = lines
+        .map((line, i) => ({ line, i }))
+        .sort((x, y) => +base.has(norm(x.line)) - +base.has(norm(y.line)));
+      for (const { line, i } of order) {
+        const match = pattern.exec(line);
+        if (!match) continue;
+        const changed = kind === 'change-number' ? String(Number(match[0]) + 1) : `${match[1]}${match[2]}x${match[1]}`;
+        const next = line.slice(0, match.index) + changed + line.slice(match.index + match[0].length);
+        return { text: replaceLines(lines, i, 1, [next]) };
+      }
+      return { skip: `no ${kind === 'change-number' ? 'number' : 'string'} in the result` };
+    }
+    case 'touch-outside':
+      return { skip: 'handled on the whole output' };
+  }
+}
+/** A line of `text` that holds a word, renamed: `value` becomes `valueX`. */
+function touch(line: string) {
+  return line.replace(/[\p{L}_][\p{L}\p{N}_]*/u, (word) => `${word}X`);
+}
+
+// ── The audit ────────────────────────────────────────────────────────────────
+
+/**
+ * What one mutated file comes to: its block's bucket, or for a whole-file proposal whether it passed. `union` blocks
+ * whose note is still a union note were held by the union rule alone.
+ */
+async function judge(
+  file: AuditFile,
+  disabled: SyntaxLanguage[],
+  index: number | undefined,
+  resolver: Resolver,
+  mutation: MutationKind
+): Promise<{ outcome: Outcome; note: string }> {
+  const { file: after, verdict } = await checked(file, disabled);
+  if (resolver === 'rerere' && REMEMBERED_OWN.has(mutation)) {
+    const merged = index !== undefined && blockBuckets(after, after.result, verdict)[index] === 'merged';
+    return { outcome: merged ? 'own' : 'caught', note: blockVerdict(verdict, index ?? 0)?.note ?? '' };
+  }
+  if (after.wholeFile) {
+    return verdict?.passed
+      ? { outcome: 'escaped', note: 'The whole-file proposal passed its checks.' }
+      : { outcome: 'caught', note: verdict?.note ?? 'The checks did not run.' };
+  }
+  const buckets = blockBuckets(after, after.result, verdict);
+  if (index === undefined) {
+    // Text outside the conflicts: nothing may be Merged with it in the draft.
+    const merged = buckets.findIndex((b) => b === 'merged');
+    return merged >= 0
+      ? { outcome: 'escaped', note: `Conflict ${merged + 1} is Merged with the touched line in the result.` }
+      : { outcome: 'caught', note: verdict?.note ?? 'The resolver output was not used.' };
+  }
+  const note = blockVerdict(verdict, index)?.note ?? 'The checks did not run.';
+  if (buckets[index] === 'merged') return { outcome: 'escaped', note };
+  if (resolver === 'union' && UNION_NOTES.test(note)) return { outcome: 'held', note };
+  return { outcome: 'caught', note };
+}
+
+export interface AuditOptions {
+  /** Every matrix case, not the sample. */
+  all?: boolean;
+  /** Matrix cases per pattern and language (default 1): the deterministic sample. */
+  variants?: number;
+  /** Only cases whose name contains this. */
+  only?: string;
+  concurrency?: number;
+  progress?: (done: number, total: number, name: string) => void;
+}
+export async function labCases(options: AuditOptions = {}) {
+  const fixtures = (await loadCases(
+    options.only ? (n: string) => n.includes(options.only ?? '') : undefined
+  )) as unknown as LabCase[];
+  // The generator's options are JavaScript defaults; `filter` has none, so TypeScript doesn't see it.
+  const generate = generateMatrix as unknown as (options: { variants: number; filter?: string }) => LabCase[];
+  const matrix = generate({ variants: options.all ? 4 : (options.variants ?? 1), filter: options.only });
+  return [...fixtures, ...matrix];
+}
+
+export async function runResolverAudit(options: AuditOptions = {}): Promise<AuditReport> {
+  const started = Date.now();
+  const cases = await labCases(options);
+  const work = cases.flatMap(merges);
+  const report: AuditReport = { cases: cases.length, files: 0, baselines: [], results: [], errors: [], ms: 0 };
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-resolver-audit-'));
+  try {
+    let next = 0;
+    let done = 0;
+    const lanes = Array.from(
+      { length: options.concurrency ?? Math.max(2, Math.min(8, os.cpus().length)) },
+      async (_, lane) => {
+        const dir = path.join(temp, String(lane));
+        await fs.mkdir(dir);
+        for (let i = next++; i < work.length; i = next++) {
+          try {
+            await auditMerge(work[i], dir, report);
+          } catch (error) {
+            report.errors.push(`${work[i].name}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          options.progress?.(++done, work.length, work[i].name);
+        }
+      }
+    );
+    await Promise.all(lanes);
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+  const order = (r: { case: string; path: string; block: number }) => `${r.case}\u0000${r.path}\u0000${r.block}`;
+  report.baselines.sort((a, b) => order(a).localeCompare(order(b)));
+  report.results.sort((a, b) => order(a).localeCompare(order(b)) || a.mutation.localeCompare(b.mutation));
+  report.ms = Date.now() - started;
+  return report;
+}
+
+async function auditMerge(m: Merge, dir: string, report: AuditReport) {
+  const paths = [...new Set([...m.base.keys(), ...m.ours.keys(), ...m.theirs.keys()])].sort();
+  for (const p of paths) {
+    const [base, ours, theirs] = [m.base, m.ours, m.theirs].map((t) => utf8(t.get(p)));
+    // A deletion, an addition on both sides, a binary file: a local merge tool's, not a resolver's.
+    if (base === undefined || ours === undefined || theirs === undefined) continue;
+    const language = syntaxLanguage(p);
+    const original = await gitConflict(dir, [base, ours, theirs]);
+    if (!original) continue;
+    report.files++;
+    const plain = { path: p, base, ours, theirs, original, resolved: false };
+    const subjects: AuditFile[] = [];
+    const output = await structuralMerge(dir, plain, m.canned);
+    // Structural merge's proposals, with the 'same' and union rules on the conflicts it left (none when it failed).
+    const merged = output === undefined ? undefined : fromOutput(plain, output, 'mergiraf');
+    if (merged) subjects.push(merged);
+    // A remembered resolution: the case's known-correct one, as if you had published it before.
+    const resolved = utf8(m.resolved?.get(p));
+    const remembered = resolved === undefined ? undefined : fromOutput(plain, resolved, 'rerere');
+    if (remembered) subjects.push(remembered);
+    for (const subject of subjects) {
+      await auditFile(m, subject, (subject === remembered ? resolved : output) ?? '', language, report);
+    }
+  }
+}
+
+async function auditFile(
+  m: Merge,
+  subject: AuditFile,
+  output: string,
+  language: SyntaxLanguage | undefined,
+  report: AuditReport
+) {
+  const { file, verdict } = await checked(subject, m.disabled);
+  const at = { case: m.name, path: file.path };
+  const record = (r: Omit<MutationResult, 'case' | 'path'>) => report.results.push({ ...at, ...r });
+  if (file.wholeFile) {
+    const passed = !!verdict?.passed;
+    report.baselines.push({ ...at, block: 0, resolver: 'whole-file', passed, note: verdict?.note ?? '' });
+    if (!passed || !language) return;
+    const target: Target = { language, text: file.wholeFile.text, before: '', after: '', sides: file };
+    for (const mutation of MUTATIONS) {
+      let mutant: Mutant;
+      if (mutation === 'touch-outside') {
+        // A line neither side changed, far from the conflicts: the first one with a word that all three share.
+        const shared = [sideLines(file.base), sideLines(file.ours), sideLines(file.theirs)];
+        const lines = splitLines(target.text);
+        const i = lines.findIndex((l) => hasWord(l) && shared.every((s) => s.has(norm(l))));
+        mutant = i < 0 ? { skip: 'no line both sides kept' } : { text: replaceLines(lines, i, 1, [touch(lines[i])]) };
+      } else mutant = await mutate(mutation, target);
+      if ('skip' in mutant || mutant.text === target.text) continue;
+      const result = await judge(
+        { ...file, wholeFile: { source: 'mergiraf', text: mutant.text } },
+        m.disabled,
+        0,
+        'whole-file',
+        mutation
+      );
+      record({
+        block: 0,
+        resolver: 'whole-file',
+        mutation,
+        ...result,
+        text: result.outcome === 'escaped' ? mutant.text : undefined,
+      });
+    }
+    return;
+  }
+  const proposals = file.proposals ?? [];
+  const segments = parseConflicts(file.original);
+  const buckets = blockBuckets(file, file.result, verdict);
+  for (const s of segments) {
+    if (s.kind !== 'conflict') continue;
+    const proposal = proposals[s.index];
+    if (!proposal) continue;
+    const resolver = resolverOf(proposal, verdict, s.index);
+    const note = blockVerdict(verdict, s.index)?.note ?? '';
+    const passed = buckets[s.index] === 'merged' || (resolver === 'union' && UNION_NOTES.test(note));
+    report.baselines.push({ ...at, block: s.index, resolver, passed, note });
+    if (!passed || !language) continue;
+    const target: Target = {
+      language,
+      text: proposal.text,
+      ...around(segments, proposals, s.index),
+      sides: { base: s.block.base ?? '', ours: s.block.ours, theirs: s.block.theirs },
+    };
+    for (const mutation of MUTATIONS) {
+      if (mutation === 'touch-outside') {
+        // Union and 'same' proposals are made from Git's conflict alone; only a whole output can touch other lines.
+        if (resolver === 'union' || proposal.source === 'same') continue;
+        await touchOutside(m, file, s.index, resolver, output, record);
+        continue;
+      }
+      const mutant = await mutate(mutation, target);
+      if ('skip' in mutant || mutant.text === proposal.text) continue;
+      const next = proposals.map((p, i) => (i === s.index && p ? { ...p, text: mutant.text } : p));
+      const result = await judge(
+        { ...file, proposals: next, result: withProposals(file.original, next) },
+        m.disabled,
+        s.index,
+        resolver,
+        mutation
+      );
+      record({
+        block: s.index,
+        resolver,
+        mutation,
+        ...result,
+        text: result.outcome === 'escaped' ? mutant.text : undefined,
+      });
+    }
+  }
+}
+
+/**
+ * The resolver's whole output with one line next to the conflict changed, mapped onto Git's conflicts again as the
+ * service maps it. Lines just before and just after the conflict, where a mapping could take them for the conflict's.
+ */
+async function touchOutside(
+  m: Merge,
+  file: AuditFile,
+  index: number,
+  resolver: Resolver,
+  output: string,
+  record: (r: Omit<MutationResult, 'case' | 'path'>) => void
+) {
+  const segments = parseConflicts(file.original);
+  const at = segments.findIndex((s) => s.kind === 'conflict' && s.index === index);
+  const source = file.proposals?.[index]?.source === 'rerere' ? 'rerere' : 'mergiraf';
+  // The output as the resolver wrote it: each proposal in place, other conflicts as the resolver left them.
+  const full =
+    source === 'rerere'
+      ? output
+      : withProposals(
+          file.original,
+          (file.proposals ?? []).map((p) => (p?.source === 'mergiraf' ? p : null))
+        );
+  for (const side of [-1, 1]) {
+    const neighbour = segments.at(at + side);
+    if (neighbour?.kind !== 'text') continue;
+    const lines = splitLines(neighbour.text);
+    const order = side < 0 ? [...lines.keys()].reverse() : [...lines.keys()];
+    const i = order.find((k) => hasWord(lines[k]));
+    if (i === undefined) continue;
+    const touched = replaceLines(lines, i, 1, [touch(lines[i])]);
+    // The same text before or after, in the resolver's output: the neighbour's text is there exactly once.
+    const count = full.split(neighbour.text).length - 1;
+    if (count !== 1) continue;
+    const mutated = full.replace(neighbour.text, touched);
+    const base = {
+      path: file.path,
+      base: file.base,
+      ours: file.ours,
+      theirs: file.theirs,
+      original: file.original,
+      resolved: false,
+    };
+    const next = fromOutput(base, mutated, source);
+    if (!next) {
+      record({
+        block: index,
+        resolver,
+        mutation: 'touch-outside',
+        outcome: 'caught',
+        note: 'The output no longer maps onto Git’s conflicts.',
+      });
+      continue;
+    }
+    const result = await judge(next, m.disabled, next.wholeFile ? 0 : undefined, resolver, 'touch-outside');
+    // A draft that does not hold the touched line kept Git's text outside the conflicts: nothing was touched.
+    const kept = next.wholeFile || next.result.includes(touch(lines[i]));
+    record({
+      block: index,
+      resolver,
+      mutation: 'touch-outside',
+      ...(kept ? result : { outcome: 'caught', note: 'The touched line did not reach the draft.' }),
+      text: kept && result.outcome === 'escaped' ? mutated : undefined,
+    });
+  }
+}
+
+/** The table: per resolver and mutation, caught / held / own / escaped. */
+export function summarize(report: AuditReport) {
+  const table = new Map<string, Record<Outcome, number>>();
+  for (const r of report.results) {
+    const key = `${r.resolver}\u0000${r.mutation}`;
+    const row = table.get(key) ?? { caught: 0, held: 0, own: 0, escaped: 0 };
+    row[r.outcome]++;
+    table.set(key, row);
+  }
+  const lines = ['resolver     mutation              caught  held  own  escaped'];
+  for (const resolver of RESOLVERS)
+    for (const mutation of MUTATIONS) {
+      const row = table.get(`${resolver}\u0000${mutation}`);
+      if (!row) continue;
+      lines.push(
+        `${resolver.padEnd(12)} ${mutation.padEnd(21)} ${String(row.caught).padStart(6)} ${String(row.held).padStart(5)} ${String(row.own).padStart(4)} ${String(row.escaped).padStart(8)}`
+      );
+    }
+  const base = new Map<Resolver, { passed: number; total: number }>();
+  for (const b of report.baselines) {
+    const row = base.get(b.resolver) ?? { passed: 0, total: 0 };
+    row.total++;
+    if (b.passed) row.passed++;
+    base.set(b.resolver, row);
+  }
+  const baseline = RESOLVERS.filter((r) => base.has(r)).map((r) => `${r} ${base.get(r)?.passed}/${base.get(r)?.total}`);
+  return { lines, baseline: `Results that passed the checks, by resolver: ${baseline.join(', ')}.` };
+}
