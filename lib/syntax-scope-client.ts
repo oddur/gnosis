@@ -110,6 +110,8 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
           symbolTimings.get(response.id)?.(response.timing);
         } else if ('moves' in response) {
           (entry.resolve as (value: MovesResult) => void)(response.moves);
+        } else if ('equivalent' in response) {
+          (entry.resolve as (value: boolean) => void)(response.equivalent);
         } else if ('check' in response) {
           (entry.resolve as (value: { definitions: SyntaxDefinition[]; errors: boolean }) => void)(response.check);
         } else {
@@ -648,6 +650,35 @@ export function checkSyntax(language: SyntaxLanguage, text: string): Promise<{ d
           id,
           language,
           text,
+          runtimeUrl: absolute(runtimeWasm),
+          grammarUrl: absolute(GRAMMARS[language]),
+        } satisfies SyntaxRequest);
+      })
+  );
+}
+
+/**
+ * Whether `after` is `before` with formatting changes only, compared in the worker (lib/semantic-noise.ts). The
+ * conflict checks use it to tell a side that only reformatted the lines it shares with the other side's change.
+ */
+export function checkFormatting(language: SyntaxLanguage, before: string, after: string): Promise<boolean> {
+  if (!languageAllowed(language)) return Promise.reject(Error('This language is off in Settings'));
+  if (Math.max(before.length, after.length) > NOISE_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));
+  return start('front').then(
+    (instance) =>
+      new Promise<boolean>((resolve, reject) => {
+        if (!instance) {
+          reject(Error('The syntax worker is not available'));
+          return;
+        }
+        const id = ++nextId;
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+        instance.postMessage({
+          type: 'equivalent',
+          id,
+          language,
+          before,
+          after,
           runtimeUrl: absolute(runtimeWasm),
           grammarUrl: absolute(GRAMMARS[language]),
         } satisfies SyntaxRequest);

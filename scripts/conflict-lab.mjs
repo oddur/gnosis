@@ -51,6 +51,14 @@ const analyser =
     const { definitions, errors } = await engine.definitions(language, text);
     return { definitions, errors };
   };
+/** The renderer's checkFormatting, in Node, with the same limits. */
+const equivalence =
+  (off = []) =>
+  async (language, before, after) => {
+    if (off.includes(language)) throw new Error('This language is off in Settings');
+    if (Math.max(before.length, after.length) > 400_000) throw new Error('This file is too large to compare');
+    return engine.equivalent(language, before, after);
+  };
 
 /** A stand-in Mergiraf binary for the failure-path cases. */
 async function mergirafFor(mode, dir, caseDir) {
@@ -206,13 +214,14 @@ export async function runCase(c, { keep = false } = {}) {
     const binary = await mergirafFor(meta.mergiraf, dir, c.dir);
     const run = (request) => service.run(request, new AbortController().signal);
     const analyse = analyser(meta.languagesOff);
+    const equivalent = equivalence(meta.languagesOff);
 
     async function score(stepName, session, resolvedTree, expectedSpec) {
       const files = [];
       const expectedFiles = new Map(Object.entries(expectedSpec ?? {}));
       for (const f of session.files) {
         const verdict = f.proposals
-          ? await verifyProposals(f, analyse)
+          ? await verifyProposals(f, analyse, false, equivalent)
           : f.wholeFile
             ? await verifyWholeFile(f, f.wholeFile, analyse)
             : undefined;

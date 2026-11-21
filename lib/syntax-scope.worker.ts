@@ -74,6 +74,8 @@ export type SyntaxRequest =
    * definitions and whether the text parses. Not cached, and not queued: the conflict dialog covers every diff.
    */
   | { type: 'check'; id: number; language: SyntaxLanguage; text: string; runtimeUrl: string; grammarUrl: string }
+  /** Whether `after` is `before` with formatting changes only (lib/semantic-noise.ts), for the conflict checks. */
+  | { type: 'equivalent'; id: number; language: SyntaxLanguage; before: string; after: string; runtimeUrl: string; grammarUrl: string }
   /** A PR's moves, from its files' fingerprints: matched in the queue, below every parse. */
   | { type: 'moves'; id: number; files: MoveFile[] }
   /** The view came nearer a file whose parse waits: it moves up to `priority`. */
@@ -118,6 +120,7 @@ export type SyntaxResponse =
     }
   | { id: number; moves: MovesResult }
   | { id: number; check: { definitions: SyntaxDefinition[]; errors: boolean } }
+  | { id: number; equivalent: boolean }
   | { id: number; error: string }
   | { id: number; taken: boolean };
 
@@ -316,6 +319,15 @@ self.onmessage = (event: MessageEvent<SyntaxRequest>) => {
     grammarUrls.set(message.language, message.grammarUrl);
     engine.definitions(message.language, message.text).then(
       ({ definitions, errors }) => self.postMessage({ id: message.id, check: { definitions, errors } } satisfies SyntaxResponse),
+      (error: unknown) => self.postMessage({ id: message.id, ...failed(error) } satisfies SyntaxResponse)
+    );
+    return;
+  }
+  if (message.type === 'equivalent') {
+    runtimeUrl ||= message.runtimeUrl;
+    grammarUrls.set(message.language, message.grammarUrl);
+    engine.equivalent(message.language, message.before, message.after).then(
+      (equivalent) => self.postMessage({ id: message.id, equivalent } satisfies SyntaxResponse),
       (error: unknown) => self.postMessage({ id: message.id, ...failed(error) } satisfies SyntaxResponse)
     );
     return;

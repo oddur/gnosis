@@ -12,14 +12,19 @@ import {
   accountWholeFile,
   blockBuckets,
   bucketSummary,
+  fileStatus,
+  fileStatusLine,
+  fileStatusParts,
   proposalKey,
   proposalReady,
+  SAME_LINES,
   summarySentence,
   verifyProposals,
   verifyWholeFile,
   type Analyse,
+  type Equivalent,
 } from '../lib/conflict-verify';
-import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
+import { conflictFileStage, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
 
 /** Conflict buckets and their checks (phase 1 of the conflict redesign), with the real tree-sitter grammars. */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
@@ -165,7 +170,10 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
     wholeConflicts: 0,
     wholeFiles: 0,
   });
-  assert.equal(summarySentence(summary), '3 files conflict. 3 of 6 conflicts are merged and checked. 3 need you.');
+  assert.equal(
+    summarySentence(summary),
+    '3 files conflict. 3 of 6 conflicts are merged and checked. 3 need you: 2 to check, 1 to decide.'
+  );
   const reviewed = bucketSummary([{ buckets: blockBuckets(c, c.result, check), verdict: check, reviewed: true }]);
   assert.equal(summarySentence(reviewed), '1 file conflicts. Nothing needs you.');
   const checking = bucketSummary([
@@ -183,7 +191,7 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
       wholeConflicts: 0,
       wholeFiles: 0,
     }),
-    '3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you.'
+    '3 files conflict. 7 of 9 conflicts are merged and checked. 2 to decide.'
   );
   // Whole-file proposals are named as proposals to check.
   const passed = { merged: false, passed: true, note: '' };
@@ -408,4 +416,138 @@ void test('a definition both sides changed is never called verified, and lines b
   const right = [fn('beta'), fn('alpha', 'value + 10'), fn('gamma'), fn('delta')].join('\n');
   assert.equal(accountWholeFile(added, right, false), undefined);
   assert.equal((await verifyWholeFile(added, merged(right), analyse)).passed, true);
+});
+
+void test('one file status for the file list, the header, the footer and the summary', () => {
+  const ok = { merged: true, note: '' };
+  const check = { merged: false, note: 'x' };
+  const passed = { merged: false, passed: true, note: '' };
+  const status = (f: ConflictFile, draft: string, verdict: typeof check | undefined) => {
+    const buckets = blockBuckets(f, draft, verdict);
+    const value = fileStatus(f, draft, conflictFileStage(f, draft), buckets);
+    return { value, parts: fileStatusParts(value).map((p) => `${p.tone}:${p.text}`), line: fileStatusLine(value) };
+  };
+  // Merged only: both conflicts merged and checked, and the file still waits for Mark reviewed.
+  const both = file([merged(imports), merged(three + four)]);
+  assert.deepEqual(status(both, both.result, ok), {
+    value: { kind: 'buckets', decide: 0, check: 0, merged: 2 },
+    parts: ['merged:2 merged'],
+    line: '2 merged in this file',
+  });
+  // Check: no markers are left, but proposals wait to be read. Never "Resolved · needs review" (#99).
+  assert.deepEqual(status(both, both.result, check), {
+    value: { kind: 'buckets', decide: 0, check: 2, merged: 0 },
+    parts: ['check:2 to check'],
+    line: '2 to check in this file',
+  });
+  // Decide beside Check.
+  const one = file([merged(imports), null]);
+  assert.deepEqual(status(one, one.result, check).parts, ['decide:1 to decide', 'check:1 to check']);
+  // Your own choice for every conflict: only now does the file wait for Mark reviewed.
+  const chosen = parseConflicts(original)
+    .map((s) => (s.kind === 'text' ? s.text : s.block.ours))
+    .join('');
+  assert.deepEqual(status(one, chosen, check), {
+    value: { kind: 'resolved' },
+    parts: ['resolved:Resolved · needs review'],
+    line: undefined,
+  });
+  // Reviewed: the saved result is marked resolved, whatever its buckets.
+  assert.deepEqual(status({ ...one, result: chosen, resolved: true }, chosen, check).value, { kind: 'reviewed' });
+  assert.deepEqual(status({ ...both, resolved: true }, both.result, check).value, { kind: 'reviewed' });
+  // A whole-file proposal: Proposal ready, then Resolved once you use it.
+  const whole = file([], { proposals: undefined, wholeFile: merged(ours), result: original });
+  assert.deepEqual(status(whole, original, passed), {
+    value: { kind: 'proposal' },
+    parts: ['proposal:Proposal ready'],
+    line: '1 proposal to check',
+  });
+  assert.deepEqual(status(whole, ours, passed).value, { kind: 'resolved' }, 'After Use this result');
+  // One that failed its checks: its conflicts are to decide.
+  assert.deepEqual(status(whole, original, check).parts, ['decide:2 to decide']);
+  assert.deepEqual(fileStatus({ ...whole, unsupported: 'Binary file' }, original, 'conflicted', ['decide']), {
+    kind: 'unsupported',
+  });
+  // Conflict markers and no bucket to show: the count of conflicts.
+  assert.deepEqual(fileStatusParts(fileStatus(file([]), original, 'conflicted', [])), [
+    { tone: 'conflicted', text: '2 conflicts' },
+  ]);
+  // The summary uses the file list's words.
+  const summary = bucketSummary([{ buckets: blockBuckets(both, both.result, check), verdict: check, reviewed: false }]);
+  assert.equal(summarySentence(summary), '1 file conflicts. 2 to check.');
+});
+
+/** The user's case (oddur/gnosis-conflict-lab #99): the PR reformats a call, main changes one argument. */
+const csharp = (call: string) =>
+  `public static class Lab\n{\n    public static int alpha(int value)\n    {\n        var total = value + 1;\n${call}    }\n}\n`;
+const oneLine = (last: string) => `        return combine(value, total, value * 2, ${last});\n`;
+const split = (last: string, total = 'total') =>
+  `        return combine(\n            value,\n            ${total},\n            value * 2,\n            ${last}\n        );\n`;
+const reformatFile = (oursCall: string, theirsCall: string, proposal: string): ConflictFile => {
+  const [head, tail] = csharp('@').split('@');
+  return {
+    path: 'lab/reformat-vs-edit.cs',
+    mode: '100644',
+    base: csharp(oneLine('4')),
+    ours: csharp(oursCall),
+    theirs: csharp(theirsCall),
+    original: `${head}<<<<<<< feature\n${oursCall}||||||| ancestor\n${oneLine('4')}=======\n${theirsCall}>>>>>>> main\n${tail}`,
+    result: csharp(proposal),
+    resolved: false,
+    source: 'mergiraf',
+    proposals: [merged(proposal)],
+  };
+};
+const equivalent: Equivalent = (language, before, after) => engine.equivalent(language, before, after);
+
+void test('a side that only reformatted the lines the other side changed: Merged only when the tree is right', async () => {
+  // The PR's layout with main's argument: the same program as main's, laid out as the PR's.
+  const right = reformatFile(split('4'), oneLine('5'), split('5'));
+  assert.deepEqual(await verifyProposals(right, analyse, false, equivalent), {
+    merged: true,
+    note: 'The PR only reformatted these lines and main changed them; the result keeps main’s change in the PR’s formatting. The file parses.',
+  });
+  // Main reformatted and the PR changed the argument: the same, the other way round.
+  const mirrored = await verifyProposals(
+    reformatFile(oneLine('5'), split('4'), split('5')),
+    analyse,
+    false,
+    equivalent
+  );
+  assert.equal(mirrored.merged, true);
+  assert.match(
+    mirrored.note,
+    /^Main only reformatted these lines and the PR changed them; the result keeps the PR’s change in main’s formatting\./
+  );
+  // Without the formatting comparison, it stays in Check, with a reason that fits a combined proposal.
+  assert.deepEqual(await verifyProposals(right, analyse), { merged: false, note: SAME_LINES });
+  // Main's change is lost.
+  assert.deepEqual(
+    await verifyProposals(reformatFile(split('4'), oneLine('5'), split('4')), analyse, false, equivalent),
+    {
+      merged: false,
+      note: 'The PR only reformatted these lines and main changed them. The result doesn’t match main’s change. Check it.',
+    }
+  );
+  // The right program in main's layout: not the PR's formatting, so Check.
+  assert.deepEqual(
+    await verifyProposals(reformatFile(split('4'), oneLine('5'), oneLine('5')), analyse, false, equivalent),
+    {
+      merged: false,
+      note: 'The PR only reformatted these lines and main changed them. The result keeps main’s change, but not in the PR’s layout. Check it.',
+    }
+  );
+  // Trap: the "formatting" side also changed a token. Both sides changed the code, so nothing is Merged, whatever the
+  // proposal says.
+  for (const proposal of [split('5', 'total + 1'), split('5'), split('4', 'total + 1')]) {
+    const trap = reformatFile(split('4', 'total + 1'), oneLine('5'), proposal);
+    assert.deepEqual(
+      await verifyProposals(trap, analyse, false, equivalent),
+      { merged: false, note: SAME_LINES },
+      proposal
+    );
+  }
+  // A comparison that fails (the language is off) keeps it in Check.
+  const failing: Equivalent = () => Promise.reject(new Error('This language is off in Settings'));
+  assert.deepEqual(await verifyProposals(right, analyse, false, failing), { merged: false, note: SAME_LINES });
 });

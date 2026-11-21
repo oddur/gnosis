@@ -4045,7 +4045,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-bucket[data-bucket=check] { color:var(--color-warning); }
 .conflict-bucket[data-bucket=merged] { color:var(--color-success); }
 .conflict-file-buckets { display:flex;flex-wrap:wrap;gap:4px; }
-.conflict-files .conflict-bucket { padding:1px 6px;border-radius:var(--radius-sm);background:var(--secondary); }
+:is(.conflict-files,.conflict-file-title) .conflict-bucket { padding:1px 6px;border-radius:var(--radius-sm);background:var(--secondary); }
 .conflict-block[data-bucket=check] { border-color:color-mix(in srgb,var(--color-warning) 45%,var(--border)); }
 .conflict-block-header [data-slot=button] { margin-left:auto; }
 .conflict-whole-file > p { padding:8px 12px;max-width:80ch;font-size:var(--type-control); }
