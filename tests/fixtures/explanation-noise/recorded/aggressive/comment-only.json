@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "Opening the store now removes a stale lock file left by a crashed process.\n\n- `clear_stale_lock` in `src/store.rs` was a no-op that returned `Ok(())`.\n- It now calls `fs::remove_file` on the path from `lock_path(dir)`.\n- A missing lock file is treated as success. Any other I/O error is returned to the caller.",
+    "riskLevel": "medium",
+    "riskRationale": "The function deletes a file on disk. It does not check whether the lock owner is still alive. A live process's lock could be removed. The diff shows no tests.",
+    "storyArc": "One small fix. A stub that did nothing now deletes the lock file and handles errors in a clear way.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Delete stale lock file and handle errors",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does clear_stale_lock do now, and which errors does it ignore or return? Check the match arms: NotFound gives Ok, other errors are returned. Verify where the function is called and whether anything confirms the lock is stale before it deletes the file.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

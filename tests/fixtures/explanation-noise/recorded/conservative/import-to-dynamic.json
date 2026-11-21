@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "Startup no longer loads the zip library. `exportAll` in `src/export.ts` now loads `zip-lib` with a dynamic `import()` only when the `zip` flag is true.",
+    "riskLevel": "low",
+    "riskRationale": "One-line change that moves a module load to call time. Behavior stays the same, but an import failure now shows at export time and not at startup.",
+    "storyArc": "The PR cuts startup cost by moving the zip library load into the one code path that needs it.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Load zip-lib lazily inside exportAll",
+        "slideType": "refactor",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `exportAll` get `Zip` now, and when is the library loaded? Verify that the old top-level static import was removed (the PR shows 1 deletion) and that no other code uses `Zip`.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

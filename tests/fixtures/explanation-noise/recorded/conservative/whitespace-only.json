@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "Cache size can now be set with the `CACHE_MB` environment variable. `cacheConfig` reads it and uses it only when it is a finite number above zero. Otherwise it uses `DEFAULT_MEGABYTES`.",
+    "riskLevel": "low",
+    "riskRationale": "One small change in one function. Invalid values fall back to the old default. No tests appear in the diff.",
+    "storyArc": "One change: `cacheConfig` takes its cache size from `CACHE_MB` and keeps the default for missing or invalid input.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Read cache size from CACHE_MB with a safe fallback",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `cacheConfig` choose the cache size now? Explain the parse of `env.CACHE_MB` and the check that returns the default for unset, non-numeric, zero, or negative values. Verify how `Number` treats an unset or empty value.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

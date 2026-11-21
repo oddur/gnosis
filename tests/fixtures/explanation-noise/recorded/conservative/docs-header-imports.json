@@ -1,0 +1,24 @@
+{
+  "plan": {
+    "summary": "This PR documents the new `retries` option in the Requests guide. It adds a Retries section. The section shows the option for TypeScript and Python in tabs. It also imports the Tabs and TabItem components the tabs need.",
+    "riskLevel": "low",
+    "riskRationale": "Documentation-only change to one MDX file. No runtime code changes.",
+    "storyArc": "The guide gains a Retries section. The tab components are imported first so the per-language examples can render.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Retries section with per-language tabs",
+        "slideType": "docs",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does the guide document `retries`, and which imports make the tabs work? Verify the TabItem entries render without a label prop and that the examples match the option's real API.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

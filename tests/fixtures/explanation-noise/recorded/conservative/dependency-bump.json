@@ -1,0 +1,24 @@
+{
+  "plan": {
+    "summary": "Bumps the `undici` HTTP client dependency from `^6.19.2` to `^7.2.0` to get the keep-alive fix. The lockfile now pins 7.2.0. The new version raises the minimum Node engine from `>=18.17` to `>=20.18.1`.",
+    "riskLevel": "medium",
+    "riskRationale": "A major version bump of an HTTP client can change runtime behavior. The new Node engine floor (>=20.18.1) can break environments on older Node. No code or tests change in this PR.",
+    "storyArc": "The manifest requests undici 7. The lockfile records the resolved version and its stricter Node requirement. The lockfile follows the manifest, so one topic covers both.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Upgrade undici to 7.2.0 and raise the Node engine floor",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does moving undici from 6 to 7 change for consumers? Connect the `package.json` range to the lockfile version and the new `engines.node` of `>=20.18.1`. Verify that the project's own Node target meets that floor.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

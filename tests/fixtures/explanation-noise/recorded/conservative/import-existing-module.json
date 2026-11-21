@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "Retry backoff now adds random jitter. This spreads out retries from clients that failed together.\n\n- `backoff(n)` adds `jitter(exponential / 2)` to the exponential delay.\n- The result is still capped by `MAX_MS`, so jitter cannot exceed the maximum wait.",
+    "riskLevel": "low",
+    "riskRationale": "One-line change to a delay calculation. Delay is still capped by MAX_MS. No tests appear in the diff, and the behavior of jitter() is not shown.",
+    "storyArc": "The PR has one change. Retry delays gain randomness so failed clients do not all retry at the same moment, and the cap still bounds the delay.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Add jitter to exponential retry backoff",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does backoff(n) compute the delay now, and what bounds it? Verify what jitter() returns (range, and whether it can be negative) and that MAX_MS still caps the final value.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

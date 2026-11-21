@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "The cache size can now be set with the `CACHE_MB` environment variable.\n\n- `cacheConfig` parses `env.CACHE_MB` as a number.\n- It uses the value only when it is finite and greater than 0.\n- Otherwise it uses `DEFAULT_MEGABYTES`, as before.",
+    "riskLevel": "low",
+    "riskRationale": "Small change in one function. Invalid input falls back to the old default.",
+    "storyArc": "One change: `cacheConfig` reads `CACHE_MB` and validates it. It falls back to the default for a bad value.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Read and validate CACHE_MB in cacheConfig",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `cacheConfig` choose the cache size now? Verify that unset, non-numeric, zero, negative, and infinite values all fall back to `DEFAULT_MEGABYTES`.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

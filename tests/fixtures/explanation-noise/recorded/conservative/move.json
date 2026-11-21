@@ -1,0 +1,28 @@
+{
+  "plan": {
+    "summary": "Refresh now rejects malformed refresh tokens before calling the server. `maskToken` is moved lower in `src/auth/tokens.ts` without change.\n\n- `refresh` throws `Malformed refresh token` unless the token matches `/^[\\w-]{20,}$/`.\n- `maskToken` is removed from the top of the file and re-added after `refresh`.",
+    "riskLevel": "medium",
+    "riskRationale": "Auth token handling changes behavior: refresh can now throw for tokens that were sent to the server before. Change is small, but the regex could reject valid tokens.",
+    "storyArc": "The only behavior change is a client-side check in `refresh`. The `maskToken` hunks are a move and need no explanation.",
+    "noise": [
+      {
+        "hunkId": "hunk-0",
+        "reason": "Deletes `maskToken` from the file top. It is re-added unchanged after `refresh` in hunk-1."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Refresh rejects malformed tokens before the server call",
+        "slideType": "bugfix",
+        "importance": "critical",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does `refresh` do now with an invalid refresh token, and what tokens does the regex accept? Verify that `maskToken` is moved unchanged from hunk-0, and check callers for handling of the new thrown error.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

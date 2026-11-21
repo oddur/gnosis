@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "Raises the upload retry limit from 3 to 5 attempts in `config/upload.yaml`.\n\n- Only `retry.max_attempts` changes.\n- `backoff_ms` stays at 200, so each retry waits the same time as before.\n- Failed uploads can now take longer before they give up.",
+    "riskLevel": "low",
+    "riskRationale": "One configuration value changes. It affects retry behavior only. The code that reads the value was not changed and was not shown.",
+    "storyArc": "One config value changes so uploads retry up to five times instead of three. There is only one topic.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Raise upload retry limit to five attempts",
+        "slideType": "config",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does the new `retry.max_attempts` value change for uploads? Verify how the setting is read, and whether `max_attempts` counts the first try or only the retries.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

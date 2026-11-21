@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "The sync no longer visits archived projects.\n\n- `syncAll` skips any project where `project.archived` is true.\n- Skipped projects are not passed to `syncProject`.\n- Skipped projects are not counted in the returned `synced` total.",
+    "riskLevel": "low",
+    "riskRationale": "One guard clause in a loop. The change is small and local. No auth, data model, or API shape changes. The evidence shows no test change.",
+    "storyArc": "One change: the sync loop now ignores archived projects, so they are not synced and not counted.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Skip archived projects in syncAll",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does syncAll do differently for archived projects, and how does this change the returned count? Verify that Project has an archived field and that no other caller depends on archived projects being synced.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

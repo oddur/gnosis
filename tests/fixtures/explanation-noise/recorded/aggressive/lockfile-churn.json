@@ -1,0 +1,33 @@
+{
+  "plan": {
+    "summary": "New `Record` IDs now use UUIDv7, which sorts by creation time, instead of random UUIDv4.\n\n- `Cargo.toml` swaps the `uuid` feature `v4` for `v7`.\n- `Record::new` calls `Uuid::now_v7()` instead of `Uuid::new_v4()`.\n- `Cargo.lock` adds `js-sys` to `getrandom` and `rand` to `uuid`.\n\nExisting records keep their old IDs.",
+    "riskLevel": "low",
+    "riskRationale": "Small change with a one-line behavior switch. Only IDs of newly created records change. The feature swap removes `v4`, so any other `new_v4` call would stop compiling.",
+    "storyArc": "The PR switches ID generation to time-ordered UUIDv7. First the dependency feature is changed so the API exists. Then `Record::new` uses it. The lockfile edits are the resolver's result.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Generated lockfile edit, a transitive dependency of the feature change"
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Generated lockfile edit, a transitive dependency of the feature change"
+      }
+    ],
+    "topics": [
+      {
+        "title": "Generate Record IDs as time-ordered UUIDv7",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How do new Record IDs change, and what enables it? Connect the `v7` feature flag in Cargo.toml to the `Uuid::now_v7()` call in `Record::new`. Verify no other `new_v4` caller remains, since the `v4` feature is removed.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

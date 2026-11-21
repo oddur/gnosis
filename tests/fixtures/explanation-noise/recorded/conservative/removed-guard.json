@@ -1,0 +1,35 @@
+{
+  "plan": {
+    "summary": "Fixes a race in `count` by removing the `dir.exists()` pre-check. A missing directory is now handled by `fs::read_dir` returning `NotFound`, which gives `Ok((0, 0))`. The PR also removes the `drop(guard)` call and its comment from `main`.",
+    "riskLevel": "medium",
+    "riskRationale": "The `count` change is small and removes a check-then-act race. The `main` change removes an explicit telemetry guard drop. This may change when telemetry flushes, because `std::process::exit` does not run destructors.",
+    "storyArc": "The PR first removes the race in directory counting. It then shows a separate change to process shutdown, which needs a check that telemetry still flushes before exit.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Handle a missing directory in the read, not by a prior check",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `count` now treat a missing directory without the race between `exists()` and `read_dir`? Verify that the `NotFound` arm returns `Ok((0, 0))` and that other errors still propagate.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Telemetry guard no longer dropped before process exit",
+        "slideType": "refactor",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What happens to the telemetry flush now that `drop(guard)` and its comment are gone? Verify whether `std::process::exit` skips the guard's destructor, which would stop the flush the removed comment required.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

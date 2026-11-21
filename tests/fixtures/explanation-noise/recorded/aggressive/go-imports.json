@@ -1,0 +1,35 @@
+{
+  "plan": {
+    "summary": "Webhook payloads are now normalized and signed with a real HMAC.\n\n- `Event` trims whitespace from the event name.\n- `Sign` now returns a hex HMAC of the body using the secret. Before, it returned only the hex of the body, and the secret was not used.",
+    "riskLevel": "high",
+    "riskRationale": "The signing change affects webhook authentication. Receivers that verify old signatures will reject new ones. The trim changes the event name value that is sent.",
+    "storyArc": "Webhook payloads need a stable event name and a signature that proves the sender knows the secret. First the event name is normalized. Then the signature is changed to use the secret.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Sign webhook bodies with HMAC",
+        "slideType": "bugfix",
+        "importance": "critical",
+        "hunkIds": [
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does Sign change from an unkeyed encoding to a keyed signature? Verify what hmacx.Sum computes and that the secret is now an input.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Trim whitespace from event names",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What does Event return now? Check that strings is imported and whether callers depend on the old untrimmed value.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

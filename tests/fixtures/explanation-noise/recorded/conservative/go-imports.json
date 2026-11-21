@@ -1,0 +1,36 @@
+{
+  "plan": {
+    "summary": "Webhook payloads are now trimmed and signed with a real HMAC.\n\n- `Event` trims whitespace from the event name.\n- `Sign` now computes an HMAC of the body with the secret, using `hmacx.Sum`. Before, it only hex-encoded the body.\n- `webhook/sign.go` imports the new `hmacx` package.",
+    "riskLevel": "high",
+    "riskRationale": "The signing function is security-sensitive. Its output changes from a plain hex encoding of the body to a keyed HMAC, which changes what receivers must verify. The external `hmacx` dependency is new.",
+    "storyArc": "The PR makes webhook output safer in two steps. First, the event name is normalized. Then the signature becomes a keyed HMAC instead of an unkeyed encoding of the body.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Sign webhook bodies with an HMAC",
+        "slideType": "bugfix",
+        "importance": "critical",
+        "hunkIds": [
+          "hunk-2",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `Sign` change from hex-encoding the body to a keyed HMAC? Connect the new `hmacx` import to the `Sign` change. Verify what `hmacx.Sum` computes and which hash it uses.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Trim whitespace from event names",
+        "slideType": "feature",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What does `Event` return now? It applies `strings.TrimSpace` to the name. Verify that the `strings` import exists and check the callers of `Event`.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

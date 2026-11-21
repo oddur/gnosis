@@ -1,0 +1,35 @@
+{
+  "plan": {
+    "summary": "Fixes a race in `count`: it no longer checks `dir.exists()` before reading. A missing directory is now handled by `read_dir` returning `NotFound`, which yields `(0, 0)`. The PR also removes the explicit `drop(guard)` telemetry flush from `main`.",
+    "riskLevel": "medium",
+    "riskRationale": "The count change is small and removes a check-then-read race. The `main.rs` change removes an explicit flush before `std::process::exit`. `exit` does not run destructors, so telemetry may be lost. The PR description does not mention this.",
+    "storyArc": "The stated goal is a race-free file count. The `count` change does that by relying on the read error. The `main` change is unrelated to that goal and may change telemetry behavior at exit, so it gets its own review.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Handle a missing directory in the read, not by a prior check",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `count` now treat a missing directory, and why does that remove the race? Verify that other errors still propagate and that `NotFound` from `read_dir` returns `(0, 0)` as the old check did.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Telemetry guard no longer dropped before exit",
+        "slideType": "bugfix",
+        "importance": "critical",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "What happens to the telemetry flush when `drop(guard)` is removed and `std::process::exit` is called? Verify that `exit` skips destructors and that the guard has no other flush path. Note that the PR description does not explain this change.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

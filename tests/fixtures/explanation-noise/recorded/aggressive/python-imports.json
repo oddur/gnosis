@@ -1,0 +1,36 @@
+{
+  "plan": {
+    "summary": "Health checks now probe over HTTP with a two-second timeout. The change also adds a cache check.\n\n- `probe()` in `service/probe.py` calls `httpx.get(url, timeout=2.0)` and returns the status code in its JSON.\n- `run_checks()` in `service/health.py` now also runs `check_cache()`.\n\nThe PR title and description only mention the timeout. The cache check is an extra change.",
+    "riskLevel": "medium",
+    "riskRationale": "The probe now makes real network calls. The timeout limits slow checks, but timeout errors from httpx.get are not handled in the shown code. The new cache check changes what health checks run.",
+    "storyArc": "The PR makes the probe do real HTTP work with a bounded wait. It also widens the health check set to include the cache. The cache change is not covered by the PR description.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Probe uses HTTP with a 2-second timeout",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-2",
+          "hunk-3"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `probe()` now behave, and what happens when the request is slow? Verify whether `httpx.get` timeout errors are caught by any caller.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Health run includes the cache check",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "Which checks does `run_checks()` run now? Verify that `check_cache` is defined and whether the PR description covers this addition.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

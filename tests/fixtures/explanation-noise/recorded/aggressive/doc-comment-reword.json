@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "This PR changes the text that `statusLabel` returns for a stack member that needs a rebase. The label changes from 'needs rebasing' to 'needs to move'. The check in `needsRebase` and the 'up to date' label stay the same.",
+    "riskLevel": "low",
+    "riskRationale": "This is a one-line change to a display string. The condition is unchanged. Any code or test that compares the old string 'needs rebasing' would break, and the evidence does not show such code.",
+    "storyArc": "One string changes in `statusLabel`. The reviewer only needs to check the new wording and look for other users of the old text.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Rename the rebase status label to 'needs to move'",
+        "slideType": "refactor",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What text does `statusLabel` return now for a member that needs a rebase? Check that the condition is unchanged, and verify whether other code or tests depend on the old string 'needs rebasing'.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

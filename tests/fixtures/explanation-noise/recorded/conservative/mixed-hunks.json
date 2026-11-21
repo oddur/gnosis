@@ -1,0 +1,35 @@
+{
+  "plan": {
+    "summary": "Snapshots are now identified by a `SnapshotKey` (project plus id) instead of a bare UUID.\n\n- `stale` in `src/snapshots.rs` returns `SnapshotKey` values.\n- `stale` now also treats entries that expire exactly at `now` as stale (`<=` instead of `<`).\n- `shouldFlush` in `src/flush.ts` now returns true when `force` is set, even with nothing pending.",
+    "riskLevel": "medium",
+    "riskRationale": "Small changes, but they alter a return type, an expiry boundary, and a flush condition. No tests are shown in the diff.",
+    "storyArc": "The PR changes snapshot identity to a project-scoped key and updates stale selection to match, with a boundary change. A separate small fix makes `shouldFlush` honor `force`.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Project-scoped snapshot keys and stale boundary",
+        "slideType": "refactor",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `stale` change its returned identity type, and what changes at the expiry boundary? Verify that callers accept `SnapshotKey` and that the `<=` change is intended.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Flush when forced",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 2,
+        "narrativeBrief": "When does `shouldFlush` return true now? Show that `force` triggers a flush even when `pending` is empty. Verify that callers pass `force` as intended.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

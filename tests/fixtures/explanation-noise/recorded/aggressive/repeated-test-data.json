@@ -1,0 +1,32 @@
+{
+  "plan": {
+    "summary": "This PR changes `DEFAULT_MODEL` from `model-6-1` to `model-6-2`.\n\n- `src/models.ts` holds the new default value.\n- Two tests change their expected model string to `model-6-2`.\n- The tests pass an explicit model, so they do not read `DEFAULT_MODEL` in the excerpts shown.",
+    "riskLevel": "low",
+    "riskRationale": "One constant changes. The effect is any code that reads DEFAULT_MODEL. The test edits only swap literal strings.",
+    "storyArc": "The PR changes the default model constant. The test edits only update their literal model strings.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Test data string change. The test passes an explicit model and does not use DEFAULT_MODEL."
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Test data string change. The test passes an explicit model and does not use DEFAULT_MODEL."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Default model moves to model-6-2",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What default model value do callers now get? Verify which code reads DEFAULT_MODEL, because the shown tests pass an explicit model.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

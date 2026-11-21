@@ -1,0 +1,56 @@
+{
+  "plan": {
+    "summary": "Links now store their folder in a new `folder_id` column, so the folder view needs no join.\n\n- A new migration adds the nullable `folder_id` column and an index on it.\n- `move_link` writes `folder_id` together with `dirty`.\n- The `Link` proto message gets a `folder_id` field. An empty value means the root.\n- A comment in the older links migration is reworded.",
+    "riskLevel": "medium",
+    "riskRationale": "This change adds a schema column and a write path. Existing rows get a NULL `folder_id`, and the proto uses an empty string for root. Nothing shown backfills old rows or maps NULL to empty.",
+    "storyArc": "The column is added first. Then the write path fills it. Last, the proto exposes it to clients.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Comment-only edit in an older migration. No schema change."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Add folder_id column and index to links",
+        "slideType": "foundation",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What schema change lets links store their folder? Verify the column is nullable, has no default, and that existing rows are not backfilled.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Write folder_id when a link moves",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-2"
+        ],
+        "dependsOn": [
+          "Add folder_id column and index to links"
+        ],
+        "order": 2,
+        "narrativeBrief": "How does `move_link` now keep the cached folder correct? It sets `folder_id` and `dirty` in one UPDATE. Check that other write paths, such as link creation, are not shown here.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Expose folder_id in the Link proto",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-3"
+        ],
+        "dependsOn": [
+          "Write folder_id when a link moves"
+        ],
+        "order": 3,
+        "narrativeBrief": "What does the API contract gain? A `folder_id` field 3 is added, and empty means root. Verify that the NULL column value maps to an empty string wherever the message is built.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

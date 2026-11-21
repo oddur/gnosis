@@ -1,0 +1,28 @@
+{
+  "plan": {
+    "summary": "Refresh now rejects malformed refresh tokens before it calls the server.\n\n- `refresh` throws `Malformed refresh token` unless the token matches `/^[\\w-]{20,}$/`.\n- `maskToken` moves lower in `src/auth/tokens.ts`. Its code is unchanged.",
+    "riskLevel": "medium",
+    "riskRationale": "The change is in auth token handling. It adds a new rejection path. A valid token with a different format would now fail before the server call. The diff shows no tests.",
+    "storyArc": "The main change is the new check in `refresh`. The `maskToken` move only reorders the file, so it is noise.",
+    "noise": [
+      {
+        "hunkId": "hunk-0",
+        "reason": "This hunk only removes `maskToken` from the top of the file. Hunk-1 adds it back with identical code."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Reject malformed refresh tokens before server call",
+        "slideType": "bugfix",
+        "importance": "critical",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does `refresh` now check before it calls `fetchTokens`, and which tokens fail? Verify the regex bounds and the thrown error. Also verify that `maskToken` is byte-identical to the removed code.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

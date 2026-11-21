@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "Uploads in `uploadAll` now run at most four at a time. The PR adds the `p-limit` dependency and wraps each `putObject` call in a limiter created with `pLimit(4)`. Before, `Promise.all` started every upload at once.",
+    "riskLevel": "low",
+    "riskRationale": "Small change with a well-known dependency. The concurrency limit is hardcoded. The evidence shows no tests. The new dependency range `^6.1.0` is a modest supply-chain consideration.",
+    "storyArc": "The PR caps upload concurrency. It first adds the dependency, then applies it in `uploadAll`. The two parts form one behavior, so one topic covers them.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Cap concurrent uploads at four with p-limit",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1",
+          "hunk-2"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `uploadAll` now limit simultaneous uploads? Connect the new `p-limit` dependency and import to the `pLimit(4)` wrapper around each `putObject` call. Verify that the limiter is created per `uploadAll` call, so the limit of four applies per call and not globally.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

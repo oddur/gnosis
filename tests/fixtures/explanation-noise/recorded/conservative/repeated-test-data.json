@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "The PR changes `DEFAULT_MODEL` from `model-6-1` to `model-6-2`. Two tests that hardcode the model name are updated to match.\n\n- `src/models.ts`: new default model constant.\n- `tests/chat.test.ts` and `tests/summary.test.ts`: expected strings changed to `model-6-2`.",
+    "riskLevel": "low",
+    "riskRationale": "This is a one-line constant change. The tests pass an explicit model, so they do not read the new default. Users of the default model get a different model, which is a small behavior change.",
+    "storyArc": "The default model constant is renamed. The tests then use the new name in their expected values.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Default model becomes model-6-2",
+        "slideType": "config",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1",
+          "hunk-2"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What default model do callers now get, and how do the tests use the new name? Verify that the tests pass an explicit model and so do not exercise `DEFAULT_MODEL`.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

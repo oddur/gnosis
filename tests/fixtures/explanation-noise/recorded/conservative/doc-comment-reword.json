@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "Changes the text from `statusLabel` for a stack member that needs a rebase. It now returns 'needs to move' instead of 'needs rebasing'. The condition and the 'up to date' text stay the same.",
+    "riskLevel": "low",
+    "riskRationale": "One user-facing string changes in one function. The logic does not change. Code that matches on the old string, such as tests, may need an update. The diff does not show this.",
+    "storyArc": "One label change: stack members that need a rebase now show 'needs to move'.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Stack status label says 'needs to move'",
+        "slideType": "refactor",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What text does `statusLabel` return for a member that needs a rebase? Show the one-line string change. Check that the `needsRebase` condition did not change.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

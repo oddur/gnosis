@@ -1,0 +1,25 @@
+{
+  "plan": {
+    "summary": "`joinPath` now trims each segment before it drops empty ones. Segments that are only whitespace are removed, and padded segments join the same as unpadded ones.\n\n- `src/paths.ts`: adds `.map((part) => part.trim())` before `filter(Boolean)`.\n- `tests/paths.test.ts`: new test for trimming and for dropping whitespace-only segments.\n- `package.json`: adds the new test file to the `test` script.",
+    "riskLevel": "low",
+    "riskRationale": "One small change to a pure string helper. A new test covers it. The only other change is a test script entry.",
+    "storyArc": "The fix trims path segments in `joinPath`. A new test shows the trim and the dropped blank segment. The test script then includes that test file.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Trim path segments before joining",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1",
+          "hunk-2"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `joinPath` treat padded and blank segments now? Connect the new `trim` step to the test case `[' a ', 'b', '  ']` giving `'a/b'`. Note that `package.json` adds the test file to the test script, so the test runs. Verify the actual source.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

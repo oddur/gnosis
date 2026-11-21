@@ -1,0 +1,46 @@
+{
+  "plan": {
+    "summary": "New `Record` values now get UUIDv7 IDs, which sort by creation time. Before, they got random UUIDv4 IDs.\n\n- `Cargo.toml` swaps the `uuid` feature `v4` for `v7`.\n- `Record::new` calls `Uuid::now_v7()` instead of `Uuid::new_v4()`.\n- `Cargo.lock` adds `js-sys` and `rand` as dependencies of the locked crates; this is churn that follows the manifest change.",
+    "riskLevel": "low",
+    "riskRationale": "The change is small: one feature flag and one call. Only new records are affected. IDs of existing records stay as they are. The `v4` feature is removed, so any other `Uuid::new_v4()` call in the crate would no longer compile. The diff does not show other callers.",
+    "storyArc": "The dependency feature must change first, because `Uuid::now_v7` only exists with the `v7` feature. Then `Record::new` uses it to create time-ordered IDs.",
+    "noise": [
+      {
+        "hunkId": "hunk-1",
+        "reason": "Lockfile churn: new transitive dependency `js-sys` follows the `Cargo.toml` feature change."
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Lockfile churn: new transitive dependency `rand` follows the `Cargo.toml` feature change."
+      }
+    ],
+    "topics": [
+      {
+        "title": "Switch the uuid feature from v4 to v7",
+        "slideType": "config",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "Which `uuid` generator does the crate now compile in? Check that `v7` replaces `v4` and that `serde` stays enabled. Verify that no other code in the crate still needs `new_v4`.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Create new records with time-ordered UUIDv7 IDs",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-3"
+        ],
+        "dependsOn": [
+          "Switch the uuid feature from v4 to v7"
+        ],
+        "order": 2,
+        "narrativeBrief": "How does `Record::new` now produce its ID? It calls `Uuid::now_v7()`, so IDs sort by creation time. Only new records change. Verify that nothing relied on random IDs.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

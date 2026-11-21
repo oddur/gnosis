@@ -1,0 +1,24 @@
+{
+  "plan": {
+    "summary": "Limits concurrent uploads to four at a time.\n\n- `uploadAll` in `src/upload.ts` now wraps each `putObject` call in a `p-limit` limiter set to 4.\n- `package.json` adds `p-limit` as a dependency.",
+    "riskLevel": "low",
+    "riskRationale": "Small change to one function. It adds a well-known dependency and only limits concurrency. The upload results and error handling stay the same, since `Promise.all` is kept.",
+    "storyArc": "Uploads used to start all at once. The change adds a limiter of four, and the dependency makes that limiter available.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Cap concurrent uploads at four with p-limit",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-2",
+          "hunk-0"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does `uploadAll` now bound concurrency, and what dependency does it need? Verify that `Promise.all` still rejects on the first failure and that the `p-limit` version is compatible with the project's module format.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

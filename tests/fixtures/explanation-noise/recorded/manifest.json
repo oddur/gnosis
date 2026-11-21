@@ -1,0 +1,708 @@
+{
+  "fixtures": {
+    "comment-only": {
+      "recordedAt": "2026-11-21T16:34:26.868Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "ff5dc0342c55de40",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "6810ab08aa08b415",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "6810ab08aa08b415",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "config-value": {
+      "recordedAt": "2026-11-21T16:34:43.097Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "99094ee67b6e4a21",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "ba7dd3a54bb6236e",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "ba7dd3a54bb6236e",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "dependency-bump": {
+      "recordedAt": "2026-11-21T16:34:56.828Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "9a0cee4f1ac78c6d",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "67c84062bd1a516f",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "67c84062bd1a516f",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "doc-comment-reword": {
+      "recordedAt": "2026-11-21T16:35:11.718Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "ed7ecf5653723a2a",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "db85471181e2487c",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "db85471181e2487c",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "docs-header-imports": {
+      "recordedAt": "2026-11-21T16:35:26.231Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "79eebf9aff710188",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "592d0e431c798123",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "592d0e431c798123",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "drive-by-edits": {
+      "recordedAt": "2026-11-21T16:35:40.789Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "a95df3d2bc2b2849",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "77a781ba9d0a9313",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "77a781ba9d0a9313",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "formatting-only": {
+      "recordedAt": "2026-11-21T16:35:57.497Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "f0bdef46862b2f0e",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "78958bd4fdcfa069",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "78958bd4fdcfa069",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "go-imports": {
+      "recordedAt": "2026-11-21T16:36:11.997Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "dc1a9687f2488a22",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "cb295583efc9285f",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "6bb6908e6960085e",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "import-existing-module": {
+      "recordedAt": "2026-11-21T16:36:28.507Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "04fa6a2aa7b32ec9",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "30bd3fd68801674f",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "30bd3fd68801674f",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "import-new-package": {
+      "recordedAt": "2026-11-21T16:36:43.484Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "d94e46cb2a838b42",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "1cc6e78a8fa00834",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "e2f7a35bdc703292",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "import-to-dynamic": {
+      "recordedAt": "2026-11-21T16:36:58.334Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "f568f6095e9571ef",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "e6781ae1fcdaebff",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "e6781ae1fcdaebff",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "lockfile-churn": {
+      "recordedAt": "2026-11-21T16:37:14.196Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "f4feceef8948116d",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "0c51005ab96127e9",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "0c51005ab96127e9",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "mixed-hunks": {
+      "recordedAt": "2026-11-21T16:37:32.586Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "ab7f66bd6aec4797",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "a7cc5ded2d079526",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "a7cc5ded2d079526",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "move": {
+      "recordedAt": "2026-11-21T16:37:49.174Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "30f436f9b5a65599",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "1a128d7602a510d1",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "1a128d7602a510d1",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "public-api-export": {
+      "recordedAt": "2026-11-21T16:38:04.507Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "2fd4002c1f11dc68",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "e18cf33b07fbbac1",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "e18cf33b07fbbac1",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "python-imports": {
+      "recordedAt": "2026-11-21T16:38:19.297Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "7a6d63ba7c5eb400",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "acacec460fa75306",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "acacec460fa75306",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "related-helper-edits": {
+      "recordedAt": "2026-11-21T16:38:36.073Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "fae90e33a6d47795",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "fde3cfe1bfdb74b9",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "fde3cfe1bfdb74b9",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "removed-guard": {
+      "recordedAt": "2026-11-21T16:38:54.629Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "c3caf620e354c7ae",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "5b4d6cbefeb4871e",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "5b4d6cbefeb4871e",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "repeated-test-data": {
+      "recordedAt": "2026-11-21T16:39:11.318Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "ef838a63e72479c8",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "84e4601fa2ed9fab",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "84e4601fa2ed9fab",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "sql-schema": {
+      "recordedAt": "2026-11-21T16:39:26.202Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "9a7a32e9153356ba",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "7b8a78091b9977a9",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "7b8a78091b9977a9",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "tests-pin-behavior": {
+      "recordedAt": "2026-11-21T16:39:44.782Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "3741cc84b7e4de33",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "7e818e5239abd037",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "7e818e5239abd037",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    },
+    "whitespace-only": {
+      "recordedAt": "2026-11-21T16:40:01.071Z",
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "fixtureHash": "9d684cd81a48369d",
+      "levels": {
+        "conservative": {
+          "promptHash": "822f5b9737ff7351",
+          "evidenceHash": "4c4b998798210869",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "conservative"
+          }
+        },
+        "aggressive": {
+          "promptHash": "8df3e142a5ebbeac",
+          "evidenceHash": "4c4b998798210869",
+          "options": {
+            "style": "concise",
+            "customInstructions": "",
+            "excludeGenerated": true,
+            "excludeTests": false,
+            "hiddenExtensions": [],
+            "reduceNoise": "aggressive"
+          }
+        }
+      }
+    }
+  }
+}

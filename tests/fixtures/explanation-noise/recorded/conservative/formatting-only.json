@@ -1,0 +1,23 @@
+{
+  "plan": {
+    "summary": "The sync no longer visits archived projects.\n\n- `syncAll` in `src/sync/run.ts` skips any project where `project.archived` is true.\n- Skipped projects do not call `syncProject` and do not add to the `synced` count.",
+    "riskLevel": "low",
+    "riskRationale": "One guard clause in a loop. The change is small and easy to reason about. Only the diff of one of the two changed files was supplied.",
+    "storyArc": "One change: archived projects are skipped in the sync loop, so the returned count includes only projects that were synced.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Skip archived projects in syncAll",
+        "slideType": "bugfix",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-1"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "What does syncAll do with archived projects now, and how does that change the returned count? Verify that `continue` runs before both `syncProject` and `synced++`. Check what the second changed file contains, because it is not in the hunk index.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}

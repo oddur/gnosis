@@ -1,0 +1,39 @@
+{
+  "plan": {
+    "summary": "Ctrl+C no longer quits the app at once. The first press sets a `quit_requested` flag and the footer shows a confirmation prompt. A second Ctrl+C sets `running` to false and quits.\n\n- New `quit_requested` field on `App`, false at start.\n- `on_key` handles Ctrl+C in two steps.\n- `footer` shows \"Press Ctrl+C again to quit\" while the flag is set.",
+    "riskLevel": "low",
+    "riskRationale": "Small, local UI behavior change. Only the Ctrl+C key path and the footer text change. The diff has no tests. Nothing in the evidence clears the flag on other keys.",
+    "storyArc": "The change adds confirmation state to App. The key handler uses that state to require two presses. The footer then shows the pending prompt to the user.",
+    "noise": [],
+    "topics": [
+      {
+        "title": "Two-step Ctrl+C quit with confirmation state",
+        "slideType": "feature",
+        "importance": "important",
+        "hunkIds": [
+          "hunk-0",
+          "hunk-1",
+          "hunk-2"
+        ],
+        "dependsOn": [],
+        "order": 1,
+        "narrativeBrief": "How does Ctrl+C now require two presses? Connect the new `quit_requested` field, its default, and the two `on_key` match arms. Verify whether any other key resets the flag.",
+        "diagramBrief": null
+      },
+      {
+        "title": "Footer shows quit confirmation prompt",
+        "slideType": "feature",
+        "importance": "minor",
+        "hunkIds": [
+          "hunk-3"
+        ],
+        "dependsOn": [
+          "Two-step Ctrl+C quit with confirmation state"
+        ],
+        "order": 2,
+        "narrativeBrief": "How does the user see that a quit is pending? `footer` returns a prompt string early when `quit_requested` is true. Verify that the footer is rendered on every redraw.",
+        "diagramBrief": null
+      }
+    ]
+  }
+}
