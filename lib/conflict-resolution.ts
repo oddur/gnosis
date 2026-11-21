@@ -96,7 +96,7 @@ export type ConflictRequest =
   /** `restart` prepares a fresh merge. With `keep`, resolutions whose conflicts are unchanged carry over. */
   | { kind: 'open'; url: string; restart?: boolean; keep?: boolean }
   | { kind: 'save'; id: string; version: number; path: string; contents: string; resolved: boolean }
-  | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path?: string; instructions?: string }
+  | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path: string; instructions?: string }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -169,7 +169,7 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
   if (
     r.kind === 'resolve' &&
     ['agent', 'mergiraf'].includes(String(r.engine)) &&
-    (r.path === undefined || text('path', 4096)) &&
+    text('path', 4096) &&
     (r.instructions === undefined || text('instructions', 10000))
   )
     return;

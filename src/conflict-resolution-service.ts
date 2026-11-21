@@ -1410,9 +1410,7 @@ export function createConflictResolutionService(deps: Deps) {
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
-          const files = session.files.filter(
-            (f) => !f.unsupported && (request.path ? f.path === request.path : !f.resolved)
-          );
+          const files = session.files.filter((f) => !f.unsupported && f.path === request.path);
           if (!files.length) throw new Error('Select an unresolved text file.');
           for (const file of files) {
             report(`Proposing a resolution for ${file.path}.`);
@@ -1427,18 +1425,41 @@ export function createConflictResolutionService(deps: Deps) {
               }
               file.explanation = result.explanation;
             } else {
-              // Preparation already ran Mergiraf on these three versions and kept its whole-file result.
-              file.result =
-                file.wholeFile?.text ??
-                (await mergiraf(ctx, id, { head: session.headBranch, base: session.baseBranch }, file, signal));
+              // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
+              // runs again on request, with the full budget, not the first try's.
+              let output = file.wholeFile?.text;
+              if (output === undefined) {
+                const budget = Math.max(...(deps.structuralTimeouts ?? [5000, 10_000, 30_000]).slice(1));
+                const started = Date.now();
+                try {
+                  output = await mergiraf(
+                    ctx,
+                    id,
+                    { head: session.headBranch, base: session.baseBranch },
+                    file,
+                    signal,
+                    budget
+                  );
+                } catch (error) {
+                  signal.throwIfAborted();
+                  if (!(error instanceof Error && error.message.startsWith('The operation timed out'))) throw error;
+                }
+                // Out of time, Mergiraf falls back to Git's line merge and says nothing, as in mergeStructurally: that
+                // output is not its merge. The draft stays as it was, and the note says so.
+                if (output === undefined || Date.now() - started >= budget) {
+                  file.structuralNote = 'Structural merge timed out again.';
+                  continue;
+                }
+              }
+              file.result = output;
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'
                 : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
             }
             file.source = request.engine;
-            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals.
+            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals. A
+            // whole-file proposal stays, so Reset file returns to it.
             delete file.proposals;
-            delete file.wholeFile;
             delete file.structuralNote;
             file.resolved = false;
           }

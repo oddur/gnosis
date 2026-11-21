@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { blockProposals, blockResolutions, carryFile, withProposals } from '../lib/conflict-carry';
-import { inferChoices, parseConflicts } from '../lib/conflict-blocks';
+import { conflictModel, inferChoices, parseConflicts } from '../lib/conflict-blocks';
 import { assertPerf, perfBudget } from './perf-budget';
 import {
   accountLines,
@@ -16,6 +16,8 @@ import {
   fileStatusLine,
   fileStatusParts,
   keepsLayout,
+  allMerged,
+  waitsForReview,
   proposalKey,
   proposalReady,
   SAME_LINES,
@@ -176,17 +178,19 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
     wholeConflicts: 0,
     wholeFiles: 0,
     markers: 0,
+    local: 0,
+    review: 0,
   });
   assert.equal(
     summarySentence(summary),
-    '3 files conflict. 3 of 6 conflicts are merged and checked. 3 need you: 2 to check, 1 to decide.'
+    '3 files have conflicts. 3 of 6 conflicts are merged and checked. 3 need you: 2 to check, 1 to decide.'
   );
   const reviewed = bucketSummary([{ buckets: blockBuckets(c, c.result, check), verdict: check, reviewed: true }]);
-  assert.equal(summarySentence(reviewed), '1 file conflicts. Nothing needs you.');
+  assert.equal(summarySentence(reviewed), '1 file has conflicts. Nothing needs you.');
   const checking = bucketSummary([
     { buckets: blockBuckets(b, b.result, undefined), verdict: undefined, reviewed: false },
   ]);
-  assert.equal(summarySentence(checking), '1 file conflicts. Checking 2 results…');
+  assert.equal(summarySentence(checking), '1 file has conflicts. Checking 2 results…');
   assert.equal(
     summarySentence({
       files: 3,
@@ -198,23 +202,28 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
       wholeConflicts: 0,
       wholeFiles: 0,
       markers: 0,
+      local: 0,
+      review: 0,
     }),
-    '3 files conflict. 7 of 9 conflicts are merged and checked. 2 to decide.'
+    '3 files have conflicts. 7 of 9 conflicts are merged and checked. 2 to decide.'
   );
   // Whole-file proposals are named as proposals to check.
   const passed = { merged: false, passed: true, note: '' };
   const whole = { buckets: ['check'] as const, verdict: passed, reviewed: false, whole: true };
-  assert.equal(summarySentence(bucketSummary([whole])), '1 file conflicts. 1 proposal to check.');
+  assert.equal(summarySentence(bucketSummary([whole])), '1 file has conflicts. 1 proposal to check.');
   assert.equal(
     summarySentence(bucketSummary([whole, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
-    '2 files conflict. 2 need you: 1 proposal to check, 1 to decide.'
+    '2 files have conflicts. 2 need you: 1 proposal to check, 1 to decide.'
   );
   // One proposal that covers two conflicts says so, and the totals stay per conflict.
   const covering = { ...whole, buckets: ['check', 'check'] as const };
-  assert.equal(summarySentence(bucketSummary([covering])), '1 file conflicts. 1 proposal to check for 2 conflicts.');
+  assert.equal(
+    summarySentence(bucketSummary([covering])),
+    '1 file has conflicts. 1 proposal to check for 2 conflicts.'
+  );
   assert.equal(
     summarySentence(bucketSummary([covering, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
-    '2 files conflict. 3 need you: 1 proposal to check for 2 conflicts, 1 to decide.'
+    '2 files have conflicts. 3 need you: 1 proposal to check for 2 conflicts, 1 to decide.'
   );
 });
 
@@ -482,7 +491,7 @@ void test('one file status for the file list, the header, the footer and the sum
   ]);
   // The summary uses the file list's words.
   const summary = bucketSummary([{ buckets: blockBuckets(both, both.result, check), verdict: check, reviewed: false }]);
-  assert.equal(summarySentence(summary), '1 file conflicts. 2 to check.');
+  assert.equal(summarySentence(summary), '1 file has conflicts. 2 to check.');
 });
 
 /** The user's case (oddur/gnosis-conflict-lab #99): the PR reformats a call, main changes one argument. */
@@ -664,7 +673,7 @@ void test('a stray marker line is named, every ======= line is a marker, and a r
   assert.equal(markerSummary.needs, 1);
   assert.equal(
     summarySentence(markerSummary),
-    '2 files conflict. 1 of 3 conflicts are merged and checked. 1 file with a conflict marker left.'
+    '2 files have conflicts. 1 of 3 conflicts are merged and checked. 1 file with a conflict marker left.'
   );
   assert.equal(
     summarySentence(
@@ -673,7 +682,7 @@ void test('a stray marker line is named, every ======= line is a marker, and a r
         { buckets: ['decide'], verdict: undefined, reviewed: false },
       ])
     ),
-    '2 files conflict. 2 need you: 1 to decide, 1 file with a conflict marker left.'
+    '2 files have conflicts. 2 need you: 1 to decide, 1 file with a conflict marker left.'
   );
   assert.equal(hasConflictMarkers('a\n>>>>>>> main\n'), true);
   assert.equal(hasConflictMarkers('a\n||||||| ancestor\n'), true);
@@ -693,5 +702,89 @@ void test('a stray marker line is named, every ======= line is a marker, and a r
     { needs: summary.needs, decide: summary.decide, checking: summary.checking, merged: summary.merged },
     { needs: 1, decide: 1, checking: 0, merged: 1 }
   );
-  assert.equal(summarySentence(summary), '2 files conflict. 1 of 4 conflicts are merged and checked. 1 to decide.');
+  assert.equal(
+    summarySentence(summary),
+    '2 files have conflicts. 1 of 4 conflicts are merged and checked. 1 to decide.'
+  );
+});
+
+void test('a Keep choice is yours even when its text equals the proposal', () => {
+  // The imports proposal is both sides; the functions proposal is the PR side, which drops main's function: Check.
+  const f = file([merged(imports), merged(three)]);
+  const check = { merged: false, passed: false, note: 'four is missing' };
+  assert.deepEqual(blockBuckets(f, f.result, check), ['check', 'check']);
+  // Keep both on the first and Keep PR change on the second give the proposals' own text: the draft is unchanged.
+  const picks = ['both', 'ours'] as const;
+  assert.deepEqual(blockBuckets(f, f.result, check, picks), ['decided', 'decided']);
+  assert.deepEqual(conflictModel(f.original, f.result, f.proposals, picks).choices, ['both', 'ours']);
+  // A pick whose text is not the block's text never stands in for the proposal.
+  assert.deepEqual(blockBuckets(f, f.result, check, ['theirs', 'theirs']), ['check', 'check']);
+  // Merged proposals too: Undo, then Keep both, is a choice you made.
+  const both = file([merged(imports), merged(three + four)]);
+  const ok = { merged: true, passed: true, note: '' };
+  assert.deepEqual(blockBuckets(both, both.result, ok), ['merged', 'merged']);
+  assert.deepEqual(blockBuckets(both, both.result, ok, ['both']), ['decided', 'merged']);
+  // Keep both where one side is empty reads as the other side's text; it is still Keep both.
+  const empty = '<<<<<<< feature\n||||||| ancestor\na\n=======\nb\n>>>>>>> main\n';
+  assert.deepEqual(conflictModel(empty, 'b\n').choices, ['theirs']);
+  assert.deepEqual(conflictModel(empty, 'b\n', undefined, ['both']).choices, ['both']);
+  // Git's conflict back in place: picks have nothing to stand in for.
+  assert.deepEqual(blockBuckets(both, both.original, ok, ['both', 'both']), ['decide', 'decide']);
+});
+
+void test('the summary says what is left: review, a local merge tool, or nothing', () => {
+  const f = file([merged(imports), merged(three + four)]);
+  const ok = { merged: true, passed: true, note: '' };
+  const buckets = blockBuckets(f, f.result, ok);
+  const status = fileStatus(f, f.result, conflictFileStage(f), buckets);
+  assert.ok(allMerged(buckets));
+  assert.ok(waitsForReview(status, buckets, true));
+  assert.equal(waitsForReview(status, buckets, false), false, 'Reviewed for you with the setting off');
+  // "Show me every merged conflict" on: the Merged file waits for Mark reviewed, and the summary says so.
+  assert.equal(
+    summarySentence(bucketSummary([{ buckets, verdict: ok, reviewed: false, review: true }])),
+    '1 file has conflicts. 2 of 2 conflicts are merged and checked. 1 file is ready for review.'
+  );
+  assert.equal(
+    summarySentence(bucketSummary([{ buckets, verdict: ok, reviewed: true, review: true }])),
+    '1 file has conflicts. 2 of 2 conflicts are merged and checked. Nothing needs you.'
+  );
+  const local = { buckets: ['decide' as const], verdict: undefined, reviewed: false, unsupported: true };
+  assert.equal(
+    summarySentence(bucketSummary([local, local, local])),
+    '3 files have conflicts. 3 files need a local merge tool.'
+  );
+  assert.equal(
+    summarySentence(bucketSummary([local, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
+    '2 files have conflicts. 2 need you: 1 to decide, 1 file needs a local merge tool.'
+  );
+  // The file list and the file header show the same badge for a file Gnosis can't merge.
+  const unsupported = fileStatus({ ...f, unsupported: 'rename' }, '', 'conflicted', ['decide']);
+  assert.deepEqual(fileStatusParts(unsupported), [{ tone: 'unsupported', text: 'Needs a local merge tool' }]);
+  assert.match(fileStatusLine(unsupported) ?? '', /on your computer/);
+});
+
+void test('a choice or an edit beside a Merged conflict is never all-Merged: it is shown before Mark reviewed', () => {
+  const f = file([merged(imports), merged(three + four)]);
+  const ok = { merged: true, passed: true, note: '' };
+  // Keep PR change on the second conflict, beside the first one Merged.
+  const kept = f.result.replace(three + four, three);
+  const buckets = blockBuckets(f, kept, ok);
+  assert.deepEqual(buckets, ['merged', 'decided']);
+  assert.equal(allMerged(buckets), false);
+  const status = fileStatus(f, kept, conflictFileStage(f, kept), buckets);
+  // On or off, the file waits for your review, and the summary says so instead of "Nothing needs you.".
+  for (const showMerged of [true, false]) {
+    const review = waitsForReview(status, buckets, showMerged);
+    assert.equal(review, true);
+    assert.equal(
+      summarySentence(bucketSummary([{ buckets, verdict: ok, reviewed: false, review }])),
+      '1 file has conflicts. 1 of 2 conflicts are merged and checked. 1 file is ready for review.'
+    );
+  }
+  // A Keep pick equal to the proposal counts as yours too.
+  const picked = blockBuckets(f, f.result, ok, [undefined, undefined]);
+  assert.ok(allMerged(picked));
+  assert.equal(allMerged(blockBuckets(f, f.result, ok, ['both'])), false);
+  assert.equal(allMerged([]), false);
 });
