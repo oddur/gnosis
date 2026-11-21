@@ -215,8 +215,12 @@ void describe('planner', () => {
     assert.match(plannerUserSuffix('conservative'), /Reduce noise: Conservative\. List only clear noise/);
     assert.match(plannerUserSuffix('conservative'), /Keep anything that could change behavior: logic, config values, dependency versions, public API or exports, SQL, and schema/);
     assert.doesNotMatch(plannerUserSuffix('conservative'), /Aggressive/);
-    assert.match(plannerUserSuffix('aggressive'), /Reduce noise: Aggressive\. Also list small related edits/);
-    assert.match(plannerUserSuffix('aggressive'), /Never list a hunk that changes behavior/);
+    const aggressive = plannerUserSuffix('aggressive');
+    assert.match(aggressive, /Reduce noise: Aggressive\. Also list edits with no runtime effect beyond the main change: renames, test data and fixtures that follow the main change, a field threaded through without changing any value, and doc or comment updates\./);
+    assert.match(aggressive, /Never list a hunk that changes what the code does at runtime: any change to a value, condition, call, string handling or data flow is behavior, however small or off-topic\./);
+    assert.match(aggressive, /never list dependency versions, public API or exports, SQL, or schema/);
+    assert.doesNotMatch(aggressive, /small related edits|helper tweak/, 'No longer invites small behavior changes');
+    assert.doesNotMatch(aggressive, /Conservative/);
   });
   void test('the planner output keeps its noise list, and Off drops it', async (t) => {
     const plan = {

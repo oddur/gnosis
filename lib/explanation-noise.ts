@@ -56,7 +56,7 @@ const NOISE_LEVEL_DIRECTIVES: Record<Exclude<NoiseLevel, 'off'>, string> = {
   conservative:
     'Reduce noise: Conservative. List only clear noise: unused or reordered imports, formatting, comment-only edits, unrelated renames, code moved without change, stray debug lines removed, typo fixes, and lockfile churn that follows a manifest change. Keep anything that could change behavior: logic, config values, dependency versions, public API or exports, SQL, and schema.',
   aggressive:
-    'Reduce noise: Aggressive. Also list small related edits that are not part of the main story, such as a helper tweak, a field threaded through, or test data updated to follow the main change. Never list a hunk that changes behavior: logic, config values, dependency versions, public API or exports, SQL, or schema.',
+    'Reduce noise: Aggressive. Also list edits with no runtime effect beyond the main change: renames, test data and fixtures that follow the main change, a field threaded through without changing any value, and doc or comment updates. Never list a hunk that changes what the code does at runtime: any change to a value, condition, call, string handling or data flow is behavior, however small or off-topic. Also never list dependency versions, public API or exports, SQL, or schema.',
 };
 
 /** The planner's noise instructions for a level; empty when the level is Off. */
