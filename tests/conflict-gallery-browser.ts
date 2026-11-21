@@ -352,9 +352,11 @@ void app.whenReady().then(async () => {
           result.files.push({ path: file, expected, actual: blocks, ok });
           if (!ok)
             result.problems.push(`${file}: expected ${expected.join(', ')}, got ${blocks.join(', ') || 'no blocks'}`);
+          // Per conflict where the case says which one must not be Merged; the file's badges when none may be.
+          const unsafe = (i: number) => expected[Math.min(i, expected.length - 1)] === 'any-but-merged';
           if (
-            expected.includes('any-but-merged') &&
-            (blocks.includes('merged') || row.badges.some((b) => b.bucket === 'merged'))
+            blocks.some((b, i) => b === 'merged' && unsafe(i)) ||
+            (expected.every((e) => e === 'any-but-merged') && row.badges.some((b) => b.bucket === 'merged'))
           )
             result.problems.push(`${file}: shows Merged where any-but-Merged is expected`);
           // One status everywhere: the file list and the header show the same, and it counts the blocks on screen.
