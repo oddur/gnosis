@@ -660,7 +660,7 @@ export function WholeFile({
       data-bucket="check"
       data-conflict-index={-1}
       tabIndex={0}
-      aria-label={`Whole file. Check: structural merge combined both sides. ${note}`}
+      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : 'structural merge combined both sides'}. ${note}`}
     >
       <header className="conflict-block-header">
         <strong>Whole file</strong>

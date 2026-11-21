@@ -62,7 +62,10 @@ the resolution; the human also edited elsewhere), `reordered`, `cosmetic` (same 
 When Mergiraf's result also changes lines outside Git's conflicts (a move or a reorder), the file gets one whole-file
 proposal (tier `whole-file`), never Merged. Its conflicts are in Check when the proposal passes its checks, and in
 Decide when it fails them. The report counts these and calls one `correct` when it equals the known-correct resolution
-once whitespace is normalised.
+once whitespace is normalised. Where Mergiraf left a conflict open because one side moved or renamed a function and the
+other edited it, the move rule (`lib/conflict-moved.ts`) may give the file a whole-file proposal (tier `moved`), also
+never Merged. Most `*-move-vs-edit-*` and `*-rename-move-vs-edit` cases replace Mergiraf with a failing stand-in
+(`"mergiraf": "fail"`), so they test the move rule alone.
 
 The "with fixes" column runs the extra checks proposed for #444 (`scripts/conflict-lab-fixes.mjs`) on top of #444's
 own, to show what they would catch and what they would cost.

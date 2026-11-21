@@ -15,6 +15,8 @@ Each conflict shows two labelled versions side by side: **This PR · branch** an
 
 Structural merge runs on every file while the merge is prepared, so there is no engine to choose. **Ask <model>…** (the Bot icon) asks the selected model about the open file, with optional instructions. Its result is a draft: it never marks a file reviewed. The model gets the three versions, your draft and the PR context, without a checkout or test runner.
 
+When one side moved or renamed a function and the other side edited it, and structural merge left the conflict open, Gnosis may propose the moved function with the other side's edit applied at its new place. It proposes this only when the move is unambiguous (one source, one target, the same body apart from the edit), the edit applies to lines the moving side did not change, and the result parses and keeps every line of both sides. The proposal covers the whole file and is always **Check**, never Merged: call sites in other files were not checked. A move into another file is not proposed: that file merged cleanly and is not part of the resolution.
+
 A conflict Gnosis can't write as text, such as a rename on both sides, a deletion or a binary file, shows **Needs a local merge tool** in the file list and the file header. Gnosis pushes only a merge it can resolve completely, so the file says to merge the PR on your computer and gives the commands to start (**Copy commands**).
 
 Each file has one main action in the footer: **Next conflict**, **Review result**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the summary row shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge.
@@ -94,7 +96,7 @@ The preparation reads the live target branch tip (`baseRef.target.oid`), not the
 
 The conflict lab (`tests/fixtures/conflicts`, `npm run conflict-lab`) runs real conflicts through the conflict service and checks the bucket of each conflict. Its README describes the cases and the generated matrix.
 
-The resolver audit checks the checks. Each resolver and rule runs over the lab's cases as the service runs it: Mergiraf, unions of both sides' additions, the PR's version of a change both sides made, the rule for a side that only reformatted, earlier resolutions (each case's known-correct resolution, replayed as rerere would replay it) and whole-file proposals. Each result that passes the checks is then changed in one wrong way at a time:
+The resolver audit checks the checks. Each resolver and rule runs over the lab's cases as the service runs it: Mergiraf, unions of both sides' additions, the PR's version of a change both sides made, the rule for a side that only reformatted, earlier resolutions (each case's known-correct resolution, replayed as rerere would replay it), whole-file proposals and the move rule's proposals (`moved`, also run without structural merge). Each result that passes the checks is then changed in one wrong way at a time:
 
 | Mutation | What changes |
 | --- | --- |

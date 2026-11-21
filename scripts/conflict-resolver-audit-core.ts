@@ -17,14 +17,14 @@ import { hasConflictMarkers, type ConflictFile, type ConflictProposal } from '..
 import { withUnions } from '../lib/conflict-union';
 import { blockBuckets, blockVerdict, changesOf, SAME_CHANGE, type Verdict } from '../lib/conflict-verify';
 import { createSyntaxEngine, syntaxLanguage, type SyntaxLanguage } from '../lib/syntax-scope';
-import { conflictChecker, withoutUnconfirmed, type CheckedFile } from '../src/conflict-checks';
+import { conflictChecker, moveProposer, withoutUnconfirmed, type CheckedFile } from '../src/conflict-checks';
 import { runConflictProcess } from '../src/conflict-process';
 import { casePlan, gitRunner, loadCases, root } from './conflict-lab-lib.mjs';
 import { generateMatrix } from './conflict-lab-generate.mjs';
 
 /** Who wrote a result: a resolver, or a rule the checks apply to a structural merge's proposal. */
-export type Resolver = 'mergiraf' | 'reformat' | 'same' | 'union' | 'rerere' | 'whole-file';
-export const RESOLVERS: Resolver[] = ['mergiraf', 'reformat', 'same', 'union', 'rerere', 'whole-file'];
+export type Resolver = 'mergiraf' | 'reformat' | 'same' | 'union' | 'rerere' | 'whole-file' | 'moved';
+export const RESOLVERS: Resolver[] = ['mergiraf', 'reformat', 'same', 'union', 'rerere', 'whole-file', 'moved'];
 export type MutationKind =
   | 'drop-definition'
   | 'duplicate-definition'
@@ -139,11 +139,13 @@ interface Merge {
   resolved?: Map<string, Buffer>;
   canned?: string;
   disabled: SyntaxLanguage[];
+  /** Mergiraf is replaced by a stand-in: only the move rule, which runs without it, has a result to audit. */
+  standIn?: boolean;
 }
 /** Mergiraf replaced by a script: only `canned` (a wrong output replayed by hand) says anything about the checks. */
 const STAND_INS = new Set(['hang', 'timeout', 'fail', 'missing', 'garbage']);
 function merges(c: LabCase): Merge[] {
-  if (c.meta.mergiraf && STAND_INS.has(c.meta.mergiraf)) return [];
+  const standIn = !!c.meta.mergiraf && STAND_INS.has(c.meta.mergiraf);
   const disabled = c.meta.languagesOff ?? [];
   const canned = c.meta.mergiraf === 'canned' && c.dir ? path.join(c.dir, 'canned') : undefined;
   const base = c.trees.base ?? new Map<string, Buffer>();
@@ -153,7 +155,7 @@ function merges(c: LabCase): Merge[] {
   const ours = first.tree ?? new Map<string, Buffer>();
   const resolvedSteps = c.trees.resolvedSteps as unknown as Record<string, Map<string, Buffer>> | undefined;
   const resolved = c.meta.stack ? resolvedSteps?.[first.step] : c.trees.resolved;
-  const list: Merge[] = [{ name: c.name, base, ours, theirs, resolved, canned, disabled }];
+  const list: Merge[] = [{ name: c.name, base, ours, theirs, resolved, canned, disabled, standIn }];
   const theirs2 = c.trees.theirs2;
   if (theirs2)
     list.push({ name: `${c.name} (after-move)`, base, ours, theirs: theirs2, resolved: c.trees.resolved2, disabled });
@@ -647,14 +649,25 @@ async function auditMerge(m: Merge, dir: string, report: AuditReport) {
     report.files++;
     const plain = { path: p, base, ours, theirs, original, resolved: false };
     const subjects: AuditFile[] = [];
-    const output = await structuralMerge(dir, plain, m.canned);
     // Structural merge's proposals, with the 'same' and union rules on the conflicts it left (none when it failed).
+    const output = m.standIn ? undefined : await structuralMerge(dir, plain, m.canned);
     const merged = output === undefined ? undefined : fromOutput(plain, output, 'mergiraf');
     if (merged) subjects.push(merged);
     // A remembered resolution: the case's known-correct one, as if you had published it before.
-    const resolved = utf8(m.resolved?.get(p));
+    const resolved = m.standIn ? undefined : utf8(m.resolved?.get(p));
     const remembered = resolved === undefined ? undefined : fromOutput(plain, resolved, 'rerere');
     if (remembered) subjects.push(remembered);
+    // The move rule (lib/conflict-moved.ts), on the conflicts structural merge left open, and on Git's conflicts alone,
+    // as when structural merge fails.
+    const moves = moveProposer(engine, m.disabled);
+    const texts = new Set<string>();
+    for (const from of [merged && !merged.wholeFile ? merged : undefined, plain]) {
+      if (!from) continue;
+      const proposal = await moves({ ...plain, proposals: from === plain ? undefined : (from as AuditFile).proposals });
+      if (!proposal || texts.has(proposal.text)) continue;
+      texts.add(proposal.text);
+      subjects.push({ ...plain, wholeFile: proposal, result: original, source: 'manual' });
+    }
     for (const subject of subjects) {
       await auditFile(m, subject, (subject === remembered ? resolved : output) ?? '', language, report);
     }
@@ -674,7 +687,8 @@ async function auditFile(
     report.results.push({ ...at, ...r, check: r.outcome === 'caught' ? (r.check ?? checkOf(r.note)) : undefined });
   if (file.wholeFile) {
     const passed = !!verdict?.passed;
-    report.baselines.push({ ...at, block: 0, resolver: 'whole-file', passed, note: verdict?.note ?? '' });
+    const resolver: Resolver = file.wholeFile.source === 'moved' ? 'moved' : 'whole-file';
+    report.baselines.push({ ...at, block: 0, resolver, passed, note: verdict?.note ?? '' });
     if (!passed || !language) return;
     const target: Target = { language, text: file.wholeFile.text, before: '', after: '', sides: file };
     for (const mutation of MUTATIONS) {
@@ -688,15 +702,15 @@ async function auditFile(
       } else mutant = await mutate(mutation, target);
       if ('skip' in mutant || mutant.text === target.text) continue;
       const result = await judge(
-        { ...file, wholeFile: { source: 'mergiraf', text: mutant.text } },
+        { ...file, wholeFile: { ...file.wholeFile, text: mutant.text } },
         m.disabled,
         0,
-        'whole-file',
+        resolver,
         mutation
       );
       record({
         block: 0,
-        resolver: 'whole-file',
+        resolver,
         mutation,
         ...result,
         text: result.outcome === 'escaped' ? mutant.text : undefined,

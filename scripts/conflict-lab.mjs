@@ -21,7 +21,7 @@ import * as TreeSitter from 'web-tree-sitter';
 import { createConflictResolutionService } from '../src/conflict-resolution-service.ts';
 import { blockBuckets, blockVerdict } from '../lib/conflict-verify.ts';
 import { verdictKey } from '../lib/conflict-verdict-key.ts';
-import { conflictChecker } from '../src/conflict-checks.ts';
+import { conflictChecker, moveProposer } from '../src/conflict-checks.ts';
 import { blockProposals } from '../lib/conflict-carry.ts';
 import { hasConflictMarkers } from '../lib/conflict-resolution.ts';
 import { parseConflicts } from '../lib/conflict-blocks.ts';
@@ -224,6 +224,8 @@ async function openLab(c, dir) {
     suggest: () => Promise.reject(new Error('No AI in the conflict lab.')),
     // The service checks proposals as the app's main process does (src/conflict-checks.ts), with the case's settings.
     verify: (file, disabled) => conflictChecker(engine, disabled)(file),
+    // The move rule (lib/conflict-moved.ts), as the app's check worker runs it.
+    moved: (file, disabled) => moveProposer(engine, disabled)(file),
     disabledLanguages: () => meta.languagesOff ?? [],
   });
   const run = (request, signal = new AbortController().signal) => service.run(request, signal);
@@ -351,7 +353,7 @@ export async function runCase(c, { keep = false } = {}) {
         ];
         // A whole-file proposal is in Check. It is correct when it equals a known-correct resolution, whitespace aside.
         if (f.wholeFile) {
-          entry.tier = 'whole-file';
+          entry.tier = f.wholeFile.source === 'moved' ? 'moved' : 'whole-file';
           if (accepted.length)
             entry.wholeFileProposal = accepted.some((r) => squash(r) === squash(f.wholeFile.text))
               ? 'correct'
@@ -566,7 +568,7 @@ export function fixtureReport(results) {
     '',
     ...lost.map((r) => `- ${r.case} (${r.path}, block ${r.index + 1}): ${r.fixNote}`)
   );
-  const whole = rows.filter((r) => r.tier === 'whole-file');
+  const whole = rows.filter((r) => r.tier === 'whole-file' || r.tier === 'moved');
   out.push(
     '',
     `## Conflicts with a whole-file proposal: ${whole.length}, ${whole.filter((r) => r.wholeFile === 'correct').length} equal the known-correct resolution`,

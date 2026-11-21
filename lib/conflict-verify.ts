@@ -203,6 +203,11 @@ export async function verifyProposals(
       ...(shared ? {} : { blocks }),
     };
   };
+  // A 'moved' proposal (lib/conflict-moved.ts) is a whole file, checked by verifyWholeFile. Per conflict it is never
+  // Merged.
+  for (const s of proposed)
+    if (!whole && proposals[s.index]?.source === 'moved')
+      fail(s.index, 'A moved definition is proposed for the whole file. Read it before you use it.');
   const language = syntaxLanguage(file.path);
   if (!language) {
     // Your own earlier resolutions stay Merged; nothing else can be checked.
@@ -647,6 +652,21 @@ export async function verifyWholeFile(
   analyse: Analyse
 ): Promise<Verdict> {
   const verdict = await verifyProposals({ ...file, original: '', proposals: [proposal] }, analyse, true);
+  if (proposal.source === 'moved') {
+    // One side moved or renamed a function and the other edited it (lib/conflict-moved.ts). Always Check, never Merged,
+    // until its false positives are measured: other files may still call the old name, and nothing here reads them.
+    const renamed = verdict.merged ? await renamedEdit(file, proposal.text, analyse) : undefined;
+    if (!verdict.merged || renamed)
+      return {
+        merged: false,
+        note: `${renamed ?? verdict.note} Read it before you use it, or resolve conflict by conflict.`,
+      };
+    return {
+      merged: false,
+      passed: true,
+      note: `${proposal.note ?? 'One side moved this definition, and the other edited it.'} Gnosis applied the edit at the new place. The result parses and keeps every change from both sides. ${MOVED_UNCHECKED}`,
+    };
+  }
   return verdict.merged
     ? {
         merged: false,
@@ -654,6 +674,70 @@ export async function verifyWholeFile(
         note: 'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.',
       }
     : { merged: false, note: `${verdict.note} Read it before you use it, or resolve conflict by conflict.` };
+}
+
+/** What a 'moved' proposal can't know: the moved or renamed definition's callers in other files. */
+export const MOVED_UNCHECKED = 'Call sites in other files were not checked.';
+
+/**
+ * A definition one side renamed (and moved) and the other side edited comes out once, under the new name, as the
+ * editing side wrote it with the name changed. lostEdit reads definitions by name, so it can't see a rename. A rename
+ * is a definition the moving side lost, and exactly one new one there whose body is the ancestor's with the name
+ * changed. Undefined when it passes, or when no such rename is found.
+ */
+async function renamedEdit(
+  file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs'>,
+  result: string,
+  analyse: Analyse
+): Promise<string | undefined> {
+  const language = syntaxLanguage(file.path);
+  if (!language) return undefined;
+  const texts = [file.base, file.ours, file.theirs, result];
+  let parsed: ParsedText[];
+  try {
+    parsed = await Promise.all(texts.map((text) => analyse(language, text)));
+  } catch {
+    return 'Gnosis couldn’t parse this file to check the result.';
+  }
+  const read = (i: number) => {
+    const lines = texts[i].split('\n');
+    const definitions = parsed[i].definitions;
+    return definitions.map((d) => ({
+      key: symbolKey(definitions, d),
+      name: d.name,
+      kind: d.kind,
+      body: lines
+        .slice(d.start - 1, d.end)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join('\n'),
+    }));
+  };
+  const [base, ours, theirs, merged] = [0, 1, 2, 3].map(read);
+  const rename = (body: string, from: string, to: string) =>
+    body.replace(new RegExp(`(?<![\\p{L}\\p{N}_$])${from.replace(/[$]/g, '\\$')}(?![\\p{L}\\p{N}_$])`, 'gu'), to);
+  for (const [mover, editor, who] of [
+    [ours, theirs, 'main'],
+    [theirs, ours, 'the PR'],
+  ] as const) {
+    for (const old of base) {
+      if (!old.name || base.filter((d) => d.key === old.key).length !== 1 || mover.some((d) => d.key === old.key))
+        continue;
+      const edited = editor.filter((d) => d.key === old.key);
+      if (edited.length !== 1 || edited[0].body === old.body) continue;
+      const known = new Set([...base, ...editor].map((d) => d.key));
+      const targets = mover.filter(
+        (d) => d.kind === old.kind && d.name && !known.has(d.key) && d.body === rename(old.body, old.name, d.name)
+      );
+      if (targets.length !== 1) continue;
+      const [to] = targets;
+      const out = merged.filter((d) => d.key === to.key);
+      if (merged.some((d) => d.key === old.key)) return `${old.name} is still in the result after its rename.`;
+      if (out.length !== 1 || out[0].body !== rename(edited[0].body, old.name, to.name))
+        return `${to.name} in the result doesn’t match ${who}’s change to ${old.name}.`;
+    }
+  }
+  return undefined;
 }
 
 /**

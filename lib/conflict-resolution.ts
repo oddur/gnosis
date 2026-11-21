@@ -39,10 +39,14 @@ export interface ConflictFile {
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
  * merge left it, as both sides' additions or as the PR's version of a change both sides made (lib/conflict-union.ts).
+ * A 'moved' proposal is only ever a whole-file proposal (`wholeFile`): one side moved or renamed a function and the
+ * other edited it, and the edit is applied at the new place (lib/conflict-moved.ts). It is never Merged.
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union' | 'same';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved';
   text: string;
+  /** A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." */
+  note?: string;
 }
 export interface ConflictSession {
   id: string;

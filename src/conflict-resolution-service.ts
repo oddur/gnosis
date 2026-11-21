@@ -7,6 +7,7 @@ import {
   hasConflictMarkers,
   validateConflictRequest,
   type ConflictFile,
+  type ConflictProposal,
   type ConflictSession,
   type ConflictRequest,
   type ConflictReply,
@@ -25,7 +26,7 @@ import {
   withProposals,
   withResult,
 } from '../lib/conflict-carry';
-import { conflictCount } from '../lib/conflict-blocks';
+import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import { withUnions } from '../lib/conflict-union';
 import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
@@ -94,6 +95,11 @@ interface Deps {
    * saved and the next open checks again.
    */
   verify?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<Verdict | undefined>;
+  /**
+   * The 'moved' proposal for a file whose conflicts structural merge left open (lib/conflict-moved.ts), found in the
+   * checks' worker. Undefined: nothing safe to propose, or the worker could not run it.
+   */
+  moved?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<ConflictProposal | undefined>;
   /** The languages that are off in Settings › Code intelligence: a saved verdict counts only for the same ones. */
   disabledLanguages?: () => SyntaxLanguage[];
   /** Background drafts kept (BACKGROUND_DRAFTS). Tests change it. */
@@ -765,6 +771,7 @@ export function createConflictResolutionService(deps: Deps) {
     // A development build without `npm run prepare:mergiraf` has no binary: the conflicts stay as Git wrote them.
     if (!(await exists(deps.mergiraf()))) {
       for (const file of queue) file.structuralNote = 'Structural merge isn’t available in this build.';
+      await proposeMoves(queue, signal);
       return files;
     }
     // A note from an earlier try (no binary, out of time) gives way to this one.
@@ -812,7 +819,8 @@ export function createConflictResolutionService(deps: Deps) {
       await Promise.all([work(), work(), work(), work()]);
     };
     const late: ConflictFile[] = [];
-    await pool(queue, () => first, late);
+    // The pool takes files off the list it is given.
+    await pool([...queue], () => first, late);
     // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening.
     const deadline = Date.now() + cap;
     const failed: ConflictFile[] = [];
@@ -821,7 +829,34 @@ export function createConflictResolutionService(deps: Deps) {
       console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
       file.structuralNote = 'Structural merge timed out.';
     }
+    await proposeMoves(queue, signal);
     return files;
+  }
+  /**
+   * Where structural merge left a conflict open and proposed no whole file, one side may have moved or renamed a
+   * function the other edited (lib/conflict-moved.ts). The proposal is a whole file, never Merged, kept beside the
+   * draft as structural merge's whole-file proposals are: the draft is not changed.
+   */
+  async function proposeMoves(files: ConflictFile[], signal: AbortSignal) {
+    if (!deps.moved) return;
+    const disabled = deps.disabledLanguages?.() ?? [];
+    for (const file of files) {
+      signal.throwIfAborted();
+      if (file.unsupported || file.wholeFile || file.source === 'rerere') continue;
+      const open = parseConflicts(file.original).some((s) => s.kind === 'conflict' && !file.proposals?.[s.index]);
+      if (!open) continue;
+      const proposal = await deps.moved(file, disabled);
+      signal.throwIfAborted();
+      if (proposal?.source !== 'moved' || hasConflictMarkers(proposal.text)) continue;
+      // The whole file replaces the per-conflict proposals: it holds them, and its checks cover the file.
+      if (file.proposals && file.result === withProposals(file.original, file.proposals)) {
+        file.result = file.original;
+        if (file.source === 'mergiraf') file.source = 'manual';
+      }
+      delete file.proposals;
+      delete file.structuralNote;
+      file.wholeFile = proposal;
+    }
   }
   async function preparation(
     ctx: Context,
@@ -1600,7 +1635,7 @@ export function createConflictResolutionService(deps: Deps) {
             } else {
               // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
               // runs again on request, with the full budget, not the first try's.
-              let output = file.wholeFile?.text;
+              let output = file.wholeFile?.source === 'mergiraf' ? file.wholeFile.text : undefined;
               if (output === undefined) {
                 const budget = Math.max(...(deps.structuralTimeouts ?? [5000, 10_000, 30_000]).slice(1));
                 const started = Date.now();

@@ -4,7 +4,13 @@ import { parentPort, workerData } from 'node:worker_threads';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { TAGS } from '../lib/syntax-tags';
-import { conflictChecker, type CheckRequest, type CheckResponse, type TreeSitterFiles } from './conflict-checks';
+import {
+  conflictChecker,
+  moveProposer,
+  type CheckRequest,
+  type CheckResponse,
+  type TreeSitterFiles,
+} from './conflict-checks';
 
 /**
  * The conflict checks' worker thread (src/conflict-checks.ts). It reads the runtime and grammars the renderer ships
@@ -19,9 +25,12 @@ const engine = createSyntaxEngine(TreeSitter, {
   tags: (name) => Promise.resolve(TAGS[name] ?? ''),
 });
 port.on('message', (message: CheckRequest) => {
-  const check = conflictChecker(engine, message.disabled);
-  check(message.file).then(
-    (verdict) => port.postMessage({ id: message.id, verdict } satisfies CheckResponse),
+  const answer: Promise<CheckResponse> =
+    message.task === 'moved'
+      ? moveProposer(engine, message.disabled)(message.file).then((proposal) => ({ id: message.id, proposal }))
+      : conflictChecker(engine, message.disabled)(message.file).then((verdict) => ({ id: message.id, verdict }));
+  answer.then(
+    (response) => port.postMessage(response satisfies CheckResponse),
     (error: unknown) =>
       port.postMessage({
         id: message.id,

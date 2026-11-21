@@ -10,8 +10,16 @@ import {
 } from '../lib/conflict-verify';
 import { parseConflicts } from '../lib/conflict-blocks';
 import { blockResolutions, withProposals } from '../lib/conflict-carry';
-import type { ConflictFile } from '../lib/conflict-resolution';
-import { SYNTAX_MAX_CHARACTERS, type createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
+import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
+import { movedProposal } from '../lib/conflict-moved';
+import { patchHunks } from '../lib/semantic-noise';
+import {
+  SYNTAX_MAX_CHARACTERS,
+  syntaxLanguage,
+  type createSyntaxEngine,
+  type SyntaxLanguage,
+} from '../lib/syntax-scope';
+import { createPatch } from 'diff';
 
 /**
  * The conflict checks (lib/conflict-verify.ts) in the main process (#445 item 3), so a session's buckets do not depend
@@ -109,6 +117,36 @@ export function conflictChecker(engine: Engine, disabled: readonly SyntaxLanguag
   };
 }
 
+/** What the move rule reads of a file (lib/conflict-moved.ts). */
+export type MovedFile = Pick<
+  ConflictFile,
+  'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals' | 'unsupported'
+>;
+/**
+ * The 'moved' proposal for a file (lib/conflict-moved.ts), with each side's moved-symbol candidates read by the syntax
+ * engine as Changes reads them. A language that is off in Settings, or a text over the limits, proposes nothing; so
+ * does a read that fails.
+ */
+export function moveProposer(
+  engine: Pick<ReturnType<typeof createSyntaxEngine>, 'symbols'>,
+  disabled: readonly SyntaxLanguage[] = []
+) {
+  return async (file: MovedFile): Promise<ConflictProposal | undefined> => {
+    const language = syntaxLanguage(file.path);
+    if (!language || disabled.includes(language)) return undefined;
+    if ([file.base, file.ours, file.theirs].some((text) => text.length > SYNTAX_MAX_CHARACTERS)) return undefined;
+    try {
+      return await movedProposal(file, async (id, before, after) => {
+        const hunks = patchHunks(createPatch(file.path, before, after, '', '', { context: 3 })) ?? [];
+        return (await engine.symbols(id, { mode: 'modified', text: after, hunks })).prints;
+      });
+    } catch (error) {
+      console.warn(`[conflicts] The move rule failed on ${file.path}.`, error);
+      return undefined;
+    }
+  };
+}
+
 /** Where the worker finds the tree-sitter runtime and grammars: `src/assets/tree-sitter` in development. */
 export interface TreeSitterFiles {
   runtime: string;
@@ -118,12 +156,18 @@ export interface CheckRequest {
   id: number;
   file: CheckedFile;
   disabled: SyntaxLanguage[];
+  /** `moved`: find the move rule's proposal (moveProposer) instead of checking. */
+  task?: 'check' | 'moved';
 }
-export type CheckResponse = { id: number; verdict?: Verdict } | { id: number; error: string };
+export type CheckResponse =
+  | { id: number; verdict?: Verdict }
+  | { id: number; proposal?: ConflictProposal }
+  | { id: number; error: string };
 
 interface Job {
   request: CheckRequest;
-  resolve: (verdict: Verdict | undefined) => void;
+  /** The worker's answer, or undefined when it failed, ran out of time or stopped. */
+  resolve: (answer: CheckResponse | undefined) => void;
   timer?: ReturnType<typeof setTimeout>;
 }
 /**
@@ -150,11 +194,11 @@ export function createConflictCheckWorker(
     void previous?.terminate();
   };
   /** Answers the running job, then starts the next. `restart`: the worker is stuck or gone, so a new one takes over. */
-  const finish = (job: Job, verdict: Verdict | undefined, restart = false) => {
+  const finish = (job: Job, answer: CheckResponse | undefined, restart = false) => {
     if (current !== job) return;
     clearTimeout(job.timer);
     current = undefined;
-    job.resolve(verdict);
+    job.resolve(answer);
     if (restart) terminate();
     pump();
   };
@@ -164,7 +208,7 @@ export function createConflictCheckWorker(
     started.on('message', (message: CheckResponse) => {
       if (!current || message.id !== current.request.id) return;
       if ('error' in message) console.warn('[conflicts] A check failed.', message.error);
-      finish(current, 'verdict' in message ? message.verdict : undefined);
+      finish(current, 'error' in message ? undefined : message);
     });
     started.on('error', (error) => {
       console.warn('[conflicts] The check worker failed.', error);
@@ -201,21 +245,31 @@ export function createConflictCheckWorker(
       finish(job, undefined, true);
     }
   }
-  return {
-    check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
-      if (disposed) return Promise.resolve(undefined);
-      const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
-      return new Promise((resolve) => {
-        queue.push({
-          request: {
-            id: ++serial,
-            file: { path, base, ours, theirs, original, proposals, wholeFile, result },
-            disabled,
-          },
-          resolve,
-        });
-        pump();
+  const ask = (file: CheckedFile, disabled: SyntaxLanguage[], task: 'check' | 'moved') => {
+    if (disposed) return Promise.resolve(undefined);
+    const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
+    return new Promise<CheckResponse | undefined>((resolve) => {
+      queue.push({
+        request: {
+          id: ++serial,
+          file: { path, base, ours, theirs, original, proposals, wholeFile, result },
+          disabled,
+          ...(task === 'moved' ? { task } : {}),
+        },
+        resolve,
       });
+      pump();
+    });
+  };
+  return {
+    async check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
+      const answer = await ask(file, disabled, 'check');
+      return answer && 'verdict' in answer ? answer.verdict : undefined;
+    },
+    /** The move rule's proposal for a file (moveProposer), in the same worker, one job at a time with the checks. */
+    async moved(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<ConflictProposal | undefined> {
+      const answer = await ask(file, disabled, 'moved');
+      return answer && 'proposal' in answer ? answer.proposal : undefined;
     },
     dispose() {
       disposed = true;
