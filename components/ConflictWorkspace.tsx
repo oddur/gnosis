@@ -1534,10 +1534,20 @@ function LastPush({ session, push }: { session: ConflictSession; push: NonNullab
       <p>
         Last update: merge commit <CommitBadge sha={push.commitSha} repo={session.headRepo} />
       </p>
-      <p>
-        To undo it, reset {session.headBranch} to <CommitBadge sha={push.headSha} repo={session.headRepo} />
-      </p>
-      {push.restackPending && <p>Its dependent PRs were not restacked.</p>}
+      {/* Someone pushed on top: resetting would drop their commits, so no undo hint. */}
+      {(session.status !== 'editing' || session.headSha === push.commitSha) && (
+        <p>
+          To undo it, reset {session.headBranch} to <CommitBadge sha={push.headSha} repo={session.headRepo} />
+        </p>
+      )}
+      {!!push.unrestacked?.length && (
+        <p>
+          Its dependent PRs were not restacked:{' '}
+          {push.unrestacked.map((url) => (
+            <PrBadge key={url} url={url} />
+          ))}
+        </p>
+      )}
     </div>
   );
 }

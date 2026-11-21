@@ -5,7 +5,6 @@ import {
   publishQueueSignals,
   signalAccount,
   signalStamp,
-  noteSignals,
   signalsChanged,
   signalValue,
   signalValues,
@@ -52,10 +51,7 @@ function read(scope: string, request: QueueSignalRequest, options: Pick<QueueSig
             continue;
           }
           const value = result.find((value) => queueSignalKey(value) === id);
-          if (value && (!record.value || value.checkedAt >= record.value.checkedAt)) {
-            record.value = value;
-            noteSignals(value);
-          }
+          if (value && (!record.value || value.checkedAt >= record.value.checkedAt)) record.value = value;
           record.expires = Date.now() + QUEUE_SIGNALS_TTL;
           record.pending = undefined;
           item.resolve(record.value);

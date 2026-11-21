@@ -710,7 +710,55 @@ void test('reopening with dependents left to restack prepares again when GitHub 
   const again = (await f.run({ kind: 'open', url: f.state.url })).session;
   assert.equal(again.status, 'editing');
   assert.equal(again.files.length, 1);
-  assert.deepEqual(again.lastPush, { ...f.push, restackPending: true }, 'The restack left undone stays in the history');
+  assert.deepEqual(
+    again.lastPush,
+    { ...f.push, unrestacked: ['https://github.com/test/repo/pull/2'] },
+    'The restack left undone stays in the history'
+  );
+});
+void test('a restack push recovered on reopen counts as done before GitHub’s new conflicts prepare again', async (t) => {
+  const f = await stackedFixture(t);
+  const { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.ok(session.restack);
+  let fail = true;
+  const service = createConflictResolutionService({
+    ...f.deps,
+    storage: {
+      ...f.deps.storage,
+      write: (key, value) => {
+        if (fail && (value as { restack?: { status: string } }).restack?.status === 'published') {
+          fail = false;
+          throw new Error('Simulated storage failure');
+        }
+        f.deps.storage.write(key, value);
+      },
+    },
+  });
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  await assert.rejects(
+    run({ kind: 'restack-publish', id: session.id, version: session.version, previewToken: session.restack.token, reviewed: f.urls }),
+    /storage failure/
+  );
+  Object.assign(f.state, { mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  const again = (await run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(again.status, 'editing', 'Conflicts again: a fresh preparation');
+  assert.equal(again.lastPush?.commitSha, session.commitSha);
+  assert.equal(again.lastPush?.unrestacked, undefined, 'The recovered restack is not reported as left undone');
+});
+void test('a pending restack stays in the history after someone pushes on top of the resolution', async (t) => {
+  const f = await stackedFixture(t);
+  const { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.equal(session.restack?.status, 'prepared');
+  await f.git('checkout', 'feature');
+  await fs.writeFile(path.join(f.deps.remote(), 'later.txt'), 'pushed by someone else\n');
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'Someone else pushes');
+  await f.git('checkout', 'main');
+  const stale = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(stale.stale, true, 'The restack plan no longer matches the branches');
+  const fresh = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(fresh.status, 'editing');
+  assert.deepEqual(fresh.lastPush, { commitSha: session.commitSha, headSha: session.headSha, unrestacked: f.urls });
 });
 void test('distinguishes a clean local merge from an already incorporated base and refuses an empty update', async (t) => {
   const f = await fixture(t);

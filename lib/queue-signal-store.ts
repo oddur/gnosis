@@ -28,41 +28,20 @@ export function signalsChanged(scope: string) {
   updates.dispatchEvent(new Event(ANY_SIGNALS));
 }
 
-/** Per PR URL: the newest value any account read, and the head the queue last showed. Lookups stay O(1). */
-const newest = new Map<string, QueueSignals>();
-const heads = new Map<string, string>();
-/** Index a stored value. Every write to an entry's `value` goes through here. */
-export function noteSignals(value: QueueSignals) {
-  const known = newest.get(value.url);
-  if (!known || value.checkedAt >= known.checkedAt) newest.set(value.url, value);
-}
-/** The PRs' current heads from the queue snapshot, for icons whose copy has no head (a tab, a breadcrumb). */
-export function notePrHeads(members: readonly QueueSignalRequest[]) {
-  let changed = false;
-  for (const { url, headSha } of members)
-    if (headSha && heads.get(url) !== headSha) {
-      heads.set(url, headSha);
-      changed = true;
-    }
-  if (changed) updates.dispatchEvent(new Event(ANY_SIGNALS));
-}
-
 /**
- * The freshest status any account holds for a PR: for `headSha` when given; else for its current head when the queue
- * showed it (none yet: undefined, never an older head's answer); else for its newest-read revision. Mergeability
- * does not depend on who reads it, so the PR state icon can follow it without knowing the account.
+ * The freshest status any account holds for a PR: for `headSha` when given, else for its newest-read revision (a walk
+ * of the bounded account entries). Mergeability does not depend on who reads it, so the PR state icon can follow it
+ * without knowing the account.
  */
 export function latestPrSignals(url: string, headSha?: string): QueueSignals | undefined {
-  const head = headSha ?? heads.get(url);
-  if (head) {
-    let latest: QueueSignals | undefined;
-    for (const account of accounts.values()) {
-      const value = account.entries.get(queueSignalKey({ url, headSha: head }))?.value;
-      if (value && (!latest || value.checkedAt > latest.checkedAt)) latest = value;
-    }
-    return latest;
+  let latest: QueueSignals | undefined;
+  for (const account of accounts.values()) {
+    const values = headSha
+      ? [account.entries.get(queueSignalKey({ url, headSha }))?.value]
+      : [...account.entries.values()].map((entry) => (entry.value?.url === url ? entry.value : undefined));
+    for (const value of values) if (value && (!latest || value.checkedAt > latest.checkedAt)) latest = value;
   }
-  return newest.get(url);
+  return latest;
 }
 
 export function signalAccount(scope: string): SignalAccount {
@@ -82,7 +61,6 @@ export function publishQueueSignals(scope: string, values: QueueSignals[]) {
     const entry = account.entries.get(key);
     if (entry?.value && entry.value.checkedAt > value.checkedAt) continue;
     account.entries.set(key, { ...entry, value, expires: value.checkedAt + QUEUE_SIGNALS_TTL });
-    noteSignals(value);
   }
   signalsChanged(scope);
 }

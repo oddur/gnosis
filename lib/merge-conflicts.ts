@@ -1,4 +1,4 @@
-import { QUEUE_SIGNALS_TTL, queueSignalKey, type QueueSignalRequest, type QueueSignals } from './queue-signals';
+import { queueSignalKey, type QueueSignalRequest, type QueueSignals } from './queue-signals';
 
 /**
  * Merge conflict state of one PR revision.
@@ -24,16 +24,18 @@ export function mergeConflictState(signals: QueueSignals | undefined): MergeConf
 /** "Resolve conflicts…" is offered unless GitHub says the PR merges cleanly. A PR only behind its base is clean. */
 export const offersConflictResolution = (state: MergeConflictState) => state !== 'clear';
 /**
- * The merge state of each PR's head from the status values on hand, for deciding what to offer. A value past its
- * time-to-live (`checkedAt + QUEUE_SIGNALS_TTL`, the store's `expires`) counts as unchecked: main may have moved since,
- * and a restart, backoff or rate limit can leave an old answer in place.
+ * The merge state to act on, from the status value for a PR's current head: trusted whatever its age, like the
+ * readiness badges. A new head, or GitHub's own change of state, brings a new value. No value: unknown.
  */
-export const conflictStateFrom =
-  (signals: readonly (QueueSignals | undefined)[], now = Date.now()) =>
-  (member: QueueSignalRequest): MergeConflictState => {
-    const value = signals.find((candidate) => candidate && queueSignalKey(candidate) === queueSignalKey(member));
-    return value && value.checkedAt + QUEUE_SIGNALS_TTL > now ? mergeConflictState(value) : 'unchecked';
-  };
+export const conflictStateFor = (value: QueueSignals | undefined): MergeConflictState => mergeConflictState(value);
+/** `conflictStateFor` the freshest of the values on hand (highest `checkedAt`) for the member's head. */
+export const conflictStateFrom = (signals: readonly (QueueSignals | undefined)[]) => (member: QueueSignalRequest) => {
+  let freshest: QueueSignals | undefined;
+  for (const value of signals)
+    if (value && queueSignalKey(value) === queueSignalKey(member) && (!freshest || value.checkedAt > freshest.checkedAt))
+      freshest = value;
+  return conflictStateFor(freshest);
+};
 
 export function memberMergeState(member: QueueSignalRequest, states: MergeStates | undefined): MergeConflictState {
   return states?.get(queueSignalKey(member)) ?? 'unchecked';

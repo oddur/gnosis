@@ -29,8 +29,8 @@ import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort 
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
 import { useCachedQueueSignals, useMergeFilter } from '../../lib/use-queue-signals';
 import { MergeFilterStatus } from '../../components/MergeFilterStatus';
-import { conflictStateFrom, countUnsettled } from '../../lib/merge-conflicts';
-import { notePrHeads, signalValue } from '../../lib/queue-signal-store';
+import { conflictStateFor, countUnsettled } from '../../lib/merge-conflicts';
+import { signalValue } from '../../lib/queue-signal-store';
 import { PrReadContext, type ViewedPr } from '../../lib/pr-read-context';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
@@ -1091,8 +1091,6 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
     void refresh(true);
   };
   const queueItems = useMemo(() => filters.starredOnly ? (queue.starredItems ?? []) : queue.items, [filters.starredOnly, queue.items, queue.starredItems]);
-  // State icons without a head (tabs, breadcrumbs) follow the queue's current head, not an older head's conflicts.
-  useEffect(() => notePrHeads(queue.items.flatMap((item) => item.subject.members)), [queue.items]);
   // The merge filter needs status for every candidate PR. Off, candidates are empty and nothing loads or subscribes.
   const mergeCandidates = useMemo(() => mergeFilterCandidates(queueItems, matchFilters, clock, login), [queueItems, matchFilters, clock, login]);
   const { states: mergeStates, phase: mergePhase } = useMergeFilter(auth?.login ?? null, mergeCandidates, filters.merge === 'conflicts');
@@ -1649,7 +1647,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
     onReview: requestPrReview,
     reviewDisabled: !auth?.authenticated,
     conflictState: (member: QueueItem['subject']['members'][number]) =>
-      conflictStateFrom([statusAccount ? signalValue(statusAccount, member) : undefined])(member),
+      conflictStateFor(statusAccount ? signalValue(statusAccount, member) : undefined),
     onStarChange: changeStars,
     onMute: (members: QueueItem['subject']['members']) => changeMutes({ muted: true, members }),
     onSnooze: snoozeMembers,

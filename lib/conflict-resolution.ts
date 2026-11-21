@@ -50,10 +50,11 @@ export interface ConflictSession {
    */
   reopened?: boolean;
   /**
-   * The push from an earlier session that this fresh preparation follows, while it is still the PR head: its merge
-   * commit, the head to reset to for undo, and whether dependent PRs were left to restack.
+   * The push from an earlier session that this fresh preparation follows, while it is still the PR head (or while
+   * dependent PRs still wait for a restack): its merge commit, the head to reset to for undo, and the dependent PRs it
+   * left to restack.
    */
-  lastPush?: { commitSha: string; headSha: string; restackPending?: boolean };
+  lastPush?: { commitSha: string; headSha: string; unrestacked?: string[] };
 }
 export interface RestackPlan {
   token: string;
