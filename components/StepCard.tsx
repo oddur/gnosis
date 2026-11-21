@@ -136,6 +136,7 @@ export function StepCard({
   autoFocus = false,
   showSteps = true,
   compactSteps = false,
+  continueOnModEnter = false,
 }: {
   title: ReactNode;
   description?: ReactNode;
@@ -166,6 +167,11 @@ export function StepCard({
   showSteps?: boolean;
   /** Show the plan on one wrapping line, for cards that share a screen with other content. */
   compactSteps?: boolean;
+  /**
+   * The Continue button takes only a click, or Cmd+Enter (Ctrl+Enter off macOS) while it has focus: Enter or Space on
+   * it does nothing, so no plain key press can reach the point of no return (a push).
+   */
+  continueOnModEnter?: boolean;
 }) {
   const id = useId();
   const step = steps[current] as ActionStep | undefined;
@@ -199,6 +205,16 @@ export function StepCard({
     onContinue();
   }
   const optional = !!step?.optional && !!onSkip;
+  const mac = window.electronAPI.platform === 'darwin';
+  function onContinueKey(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    // No implicit click from Enter or Space, and the card's Enter never sees the key either.
+    event.preventDefault();
+    event.stopPropagation();
+    const mod = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    if (event.type === 'keydown' && event.key === 'Enter' && mod && !event.repeat && !event.altKey && !event.shiftKey)
+      if (canContinue) onContinue();
+  }
   return (
     <section
       className={`step-card ${className ?? ''}`}
@@ -265,10 +281,19 @@ export function StepCard({
             data-step-continue=""
             disabled={!canContinue}
             onClick={onContinue}
-            aria-keyshortcuts={step?.pointOfNoReturn ? undefined : 'Enter'}
+            onKeyDown={continueOnModEnter ? onContinueKey : undefined}
+            onKeyUp={continueOnModEnter ? onContinueKey : undefined}
+            aria-keyshortcuts={
+              continueOnModEnter ? (mac ? 'Meta+Enter' : 'Control+Enter') : step?.pointOfNoReturn ? undefined : 'Enter'
+            }
           >
             {continueLabel}
-            {!busy && !step?.pointOfNoReturn && <ArrowRight size={14} aria-hidden="true" />}
+            {continueOnModEnter && !busy && (
+              <kbd className="kbd" aria-hidden="true">
+                {mac ? '⌘↵' : 'Ctrl ↵'}
+              </kbd>
+            )}
+            {!busy && !step?.pointOfNoReturn && !continueOnModEnter && <ArrowRight size={14} aria-hidden="true" />}
           </Button>
         )}
       </footer>

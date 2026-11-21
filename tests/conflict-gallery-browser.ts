@@ -423,7 +423,7 @@ void app.whenReady().then(async () => {
           }
         } else result.notes.push(`No conflicted files: ${screen.state ?? screen.title ?? ''}`);
 
-        if (INTERACT.includes(entry.id)) interactions.push(await interact(entry.id));
+        if (INTERACT.includes(entry.id)) interactions.push(await interact(entry.id, all.length));
         await click('Close');
         await until("!document.querySelector('.conflict-workspace')", 'the workspace to close');
       } catch (error) {
@@ -485,15 +485,16 @@ void app.whenReady().then(async () => {
     }
 
     /** Keys, Keep, Undo, the whole-file proposal, review and mark reviewed, up to the push confirmation. */
-    async function interact(id: string) {
+    async function interact(id: string, conflicts: number) {
       const steps: { label: string; shot: string; note?: string }[] = [];
       const problems: string[] = [];
-      const shot = async (label: string, note?: string) => {
+      const shot = async (label: string, note?: string, dark = false) => {
         steps.push({
           label,
           note,
           shot: await shoot(
-            `interactions/${id}-${String(steps.length + 1).padStart(2, '0')}-${label.replace(/\W+/g, '-').toLowerCase()}.png`
+            `interactions/${id}-${String(steps.length + 1).padStart(2, '0')}-${label.replace(/\W+/g, '-').toLowerCase()}.png`,
+            dark
           ),
         });
       };
@@ -626,6 +627,40 @@ void app.whenReady().then(async () => {
           'confirmation',
           `${fold} ${await js<string>("document.querySelector('.conflict-confirm-facts')?.innerText ?? ''")}`
         );
+        await shot('confirmation-dark', undefined, true);
+        // The three groups (#445 item 12): nothing pending, You decided open and the rest collapsed, and the two
+        // conflict counts add up to every conflict.
+        const groups = await js<{ pending: boolean; groups: Partial<Record<string, { count: string; open: string }>> }>(`({
+          pending: !!document.querySelector('[data-confirm-pending]'),
+          groups: Object.fromEntries([...document.querySelectorAll('.conflict-confirm [data-confirm-group]')].map((g) => [g.dataset.confirmGroup, { count: g.querySelector('[data-confirm-count]').textContent, open: g.querySelector('.conflict-disclosure').getAttribute('aria-expanded') }])),
+        })`);
+        const counted = (group: string) => Number(/^(\d+) conflicts? in/.exec(groups.groups[group]?.count ?? '')?.[1] ?? 0);
+        if (groups.pending) problems.push('The confirmation says a file still needs you');
+        if (counted('decided') + counted('merged') !== conflicts)
+          problems.push(
+            `The confirmation counts ${counted('decided')} decided and ${counted('merged')} merged, but the case has ${conflicts} conflicts`
+          );
+        const open = Object.entries(groups.groups).map(([group, g]) => `${group} ${g?.open}`).join(', ');
+        if (open !== 'decided true, merged false, main false') problems.push(`The confirmation opens as: ${open}`);
+        // Every group open, light and dark; then collapsed again.
+        await js(
+          "document.querySelectorAll('.conflict-confirm [data-confirm-group] .conflict-disclosure[aria-expanded=false]').forEach((b) => b.click())"
+        );
+        await until(
+          "[...document.querySelectorAll('.conflict-confirm .conflict-diff-file')].every((f) => f.querySelector('diffs-container')?.shadowRoot?.querySelector('[data-line]'))",
+          'the confirmation diffs'
+        );
+        await settle();
+        const counts = Object.entries(groups.groups).map(([group, g]) => `${group}: ${g?.count}`).join(' · ');
+        await shot('confirmation-groups', counts);
+        await shot('confirmation-groups-dark', counts, true);
+        // The later groups, scrolled into view.
+        await js("document.querySelector('.conflict-confirm [data-confirm-group=merged]')?.scrollIntoView({ block: 'start' })");
+        await shot('confirmation-merged', counts);
+        await shot('confirmation-merged-dark', counts, true);
+        await js("document.querySelector('.conflict-confirm [data-confirm-group=main]')?.scrollIntoView({ block: 'start' })");
+        await shot('confirmation-main', counts);
+        await shot('confirmation-main-dark', counts, true);
         if (!(await js<boolean>(`!!(${button('Push merge commit')})`)))
           problems.push('The confirmation has no Push merge commit button');
         if (await js<boolean>('window.conflictCalls.some((k) => /publish/.test(k))'))

@@ -42,7 +42,15 @@ Opening a file focuses the first conflict that needs you, or the file's next act
 
 ## Confirm and push
 
-The confirmation is the only place that pushes. It shows the final update in two parts: **Your resolutions** (the files you resolved) and **Changes coming from the base branch** (files Git merged cleanly). It names the author's branch and says that approvals may be dismissed if the repository requires it. Enter a commit message and select **Push merge commit**. Enter alone never pushes. The title and **Push merge commit** stay in view; only the diff between them scrolls.
+The confirmation is the only place that pushes. It names the author's branch and says that approvals may be dismissed if the repository requires it. It shows the final update in three groups, in the same diff as the Conflicts view, with Quiet off:
+
+- **You decided** (open): every conflict you resolved. That is a Keep, a file you edited, a whole-file proposal you used, or a proposal in Check in a file you marked reviewed. A note under each conflict says what you chose.
+- **Merged for you** (collapsed): proposals that passed every check and that you didn't change. A Keep whose text is the same as the proposal is yours, and so is every conflict in a file you edited.
+- **Arriving from main** (collapsed): the base branch's changes that didn't conflict. First its lines outside the conflicts in the conflicted files, then the files Git merged on its own.
+
+Each heading counts what it holds, such as "You decided · 2 conflicts in 1 file". The three diffs add up to the update. While any file still needs you, the confirmation shows no counts and Push stays off. A clean merge shows only **Arriving from main**, open.
+
+Enter a commit message and select **Push merge commit**, or press Cmd+Enter (Ctrl+Enter on Windows and Linux) while it has focus. Enter alone never pushes, and Enter or Space on the button does nothing. The title and **Push merge commit** stay in view; only the diff between them scrolls.
 
 After the push, the outcome names the updated branch, the merge commit, the files you resolved, and that checks restart. It also says how to undo: reset the branch to its previous commit. **Done** closes the workspace.
 

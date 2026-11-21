@@ -27,7 +27,7 @@ import type { CompareWith } from '../lib/conflict-diff';
 import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
 /** What the proposal is. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
-const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict) =>
+export const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict) =>
   proposal.source === 'rerere'
     ? 'Same as you resolved before'
     : proposal.source === 'union'
