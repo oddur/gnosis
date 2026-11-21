@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "New `Record` IDs now use UUIDv7, which sort by creation time, instead of random UUIDv4.\n\n- `Cargo.toml` swaps the `uuid` feature `v4` for `v7`.\n- `Record::new` calls `Uuid::now_v7()` instead of `Uuid::new_v4()`.\n- `Cargo.lock` adds the dependencies the `v7` feature needs.\n\nExisting records keep their old IDs.",
+    "summary": "Switch new `Record` IDs from random UUIDv4 to time-ordered UUIDv7, so IDs sort by creation time.\n\n- `Cargo.toml`: the `uuid` crate feature changes from `v4` to `v7`.\n- `Cargo.lock`: records the new transitive dependencies (`js-sys`, `rand`).\n- `Record::new` now calls `Uuid::now_v7()` instead of `Uuid::new_v4()`.",
     "riskLevel": "low",
-    "riskRationale": "Small change to ID generation. Only new records are affected. IDs stay valid UUIDs. Code that assumes random v4 IDs could be affected.",
-    "storyArc": "The PR changes how new record IDs are made. The dependency feature is enabled first. Then `Record::new` uses it. The lockfile only follows the feature change.",
+    "riskRationale": "Small change with one call site. Existing IDs stay valid. New IDs are now ordered by time, which can reveal creation time and may change index or sort behavior.",
+    "storyArc": "The `uuid` feature flag is changed first, because the v7 generator only exists with that feature. `Record::new` then uses the v7 generator to create IDs.",
     "noise": [],
     "topics": [
       {
-        "title": "Generate record IDs with UUIDv7",
+        "title": "Generate record IDs as time-ordered UUIDv7",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
@@ -18,7 +18,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How do new records now get their IDs, and which dependency changes allow it? Connect the `v7` feature switch, the lockfile additions (`js-sys`, `rand`), and the `Uuid::now_v7()` call. Verify the lockfile hunks belong to the `uuid` package.",
+        "narrativeBrief": "How does a new `Record` get its ID now, and what dependency change makes that possible? Connect the `v7` feature flag, the lockfile additions, and the `Uuid::now_v7()` call. Verify that no other code still relies on `v4`.",
         "diagramBrief": null
       }
     ]

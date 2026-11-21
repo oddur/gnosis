@@ -1,26 +1,26 @@
 {
   "plan": {
-    "summary": "Refresh now rejects malformed refresh tokens before calling the server. `maskToken` moves lower in `src/auth/tokens.ts`; the hunks show no change to its body.\n\n- `refresh` throws `Malformed refresh token` unless the token matches `/^[\\w-]{20,}$/`.\n- `maskToken` is deleted at the top of the file and added again after `refresh`.",
+    "summary": "Refresh now rejects malformed refresh tokens before calling the server.\n\n- `refresh` throws `Malformed refresh token` when the token does not match `/^[\\w-]{20,}$/`.\n- `maskToken` moves lower in `src/auth/tokens.ts`. Its body is unchanged.",
     "riskLevel": "medium",
-    "riskRationale": "Auth token handling changes. The new check can reject tokens that were accepted before. The diff shows no tests.",
-    "storyArc": "The main change is the new validation guard in `refresh`. The `maskToken` move is a separate, small supporting change.",
+    "riskRationale": "The change touches the auth token refresh path. A new regex check can reject tokens the server would accept. The change is small.",
+    "storyArc": "The purpose is to fail early on bad refresh tokens, so the server is not called with them. The `maskToken` move is only reordering and needs no review.",
     "noise": [
       {
         "hunkId": "hunk-0",
-        "reason": "This hunk only removes `maskToken` from the top of the file. The same function is added again in hunk-1."
+        "reason": "Removes `maskToken` from the top of the file. hunk-1 adds it back with the same body, so this is code moved without change."
       }
     ],
     "topics": [
       {
-        "title": "Reject malformed refresh tokens before the server call",
-        "slideType": "bugfix",
+        "title": "Reject malformed refresh tokens before server call",
+        "slideType": "feature",
         "importance": "critical",
         "hunkIds": [
           "hunk-1"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does `refresh` do with a token that does not match the pattern? Check that the throw happens before `fetchTokens` and that the regex `^[\\w-]{20,}$` is not stricter than real tokens. Also confirm that `maskToken` is only moved, with its body unchanged.",
+        "narrativeBrief": "What does `refresh` check before it calls `fetchTokens`, and which tokens does it reject? Verify the regex `/^[\\w-]{20,}$/` and that `maskToken` is only moved, with its body unchanged.",
         "diagramBrief": null
       }
     ]

@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Export `RetryPolicy` from the public entry points of both the TypeScript package and the Rust crate, so library users can build their own retry policy.\n\n- `src/index.ts` re-exports `RetryPolicy` and the `RetryOptions` type from `./retry`.\n- `crates/core/src/lib.rs` re-exports `retry::RetryPolicy` at the crate root.",
+    "summary": "Export the retry policy from both the TypeScript package and the Rust core crate. Library users can now import `RetryPolicy` and its options to build their own retry policy.\n\n- `src/index.ts` re-exports `RetryPolicy` and the `RetryOptions` type from `./retry`.\n- `crates/core/src/lib.rs` re-exports `retry::RetryPolicy` at the crate root.",
     "riskLevel": "low",
-    "riskRationale": "Two one-line re-exports of existing items. No logic changes. The public API surface grows, so the names become part of the contract.",
-    "storyArc": "One goal: let library users reach the retry policy. The change adds the public re-export in each language package. One topic covers both, because they are the same API change.",
+    "riskRationale": "Two one-line re-exports widen the public API. They add no new logic. The public surface must stay stable once released.",
+    "storyArc": "One purpose: make the retry policy part of the public API. The TypeScript entry point and the Rust crate root each get one re-export line, so one topic covers both.",
     "noise": [],
     "topics": [
       {
-        "title": "Expose RetryPolicy in the public API of both packages",
+        "title": "Export RetryPolicy from the public entry points",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
@@ -16,7 +16,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What new names can library users import from each package root? Verify that `./retry` and `retry` already define these items. Note that the TypeScript side also exports `RetryOptions` and the Rust side does not export a matching options type.",
+        "narrativeBrief": "What new public API do library users get? Compare the TypeScript re-export (RetryPolicy and RetryOptions type) with the Rust re-export (RetryPolicy only). Verify that the retry modules define these names, and note that the Rust side exports no options type.",
         "diagramBrief": null
       }
     ]

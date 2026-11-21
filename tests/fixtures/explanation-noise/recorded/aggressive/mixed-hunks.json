@@ -1,25 +1,25 @@
 {
   "plan": {
-    "summary": "The PR changes snapshot identity from a bare UUID to a project-scoped `SnapshotKey`. It also changes the flush decision.\n\n- `stale` returns `SnapshotKey` values and now treats entries that expire exactly at `now` as stale.\n- `shouldFlush` now returns true when `force` is set, even with no pending items.",
+    "summary": "Snapshots are now keyed by project, not by a bare UUID. The stale check also becomes inclusive, and the flush check gains a force flag.\n\n- `stale` returns `SnapshotKey` values instead of `Uuid`.\n- `stale` now treats entries as stale when `expires <= now`, not only `expires < now`.\n- `shouldFlush` now returns true when `force` is set.",
     "riskLevel": "medium",
-    "riskRationale": "Changes to a return type and an expiry boundary affect data lifecycle in snapshots. The flush change is small. No tests appear in the diff.",
-    "storyArc": "Two independent changes. First, snapshots are keyed by project and expire at the boundary. Second, flushing can now be forced.",
+    "riskRationale": "The return type of a public function changes, and the expiry boundary changes. Both can affect callers. No tests appear in the evidence.",
+    "storyArc": "The change has two parts. First, snapshot identity moves from UUID to a project-aware key, and the expiry boundary moves with it. Second, a separate fix makes the flush check respect `force`.",
     "noise": [],
     "topics": [
       {
-        "title": "Snapshot keys and expiry boundary in stale()",
-        "slideType": "bugfix",
+        "title": "Snapshot keys and inclusive expiry in stale()",
+        "slideType": "refactor",
         "importance": "important",
         "hunkIds": [
           "hunk-0"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does stale() return now, and when is an entry stale? Verify that callers accept SnapshotKey, and that `<=` is intended, so entries expiring at `now` are included.",
+        "narrativeBrief": "What does stale() return now, and when is an entry stale? Verify that the `<` to `<=` change is intended and that callers accept SnapshotKey.",
         "diagramBrief": null
       },
       {
-        "title": "Forced flush in shouldFlush",
+        "title": "shouldFlush honors force",
         "slideType": "bugfix",
         "importance": "important",
         "hunkIds": [
@@ -27,7 +27,7 @@
         ],
         "dependsOn": [],
         "order": 2,
-        "narrativeBrief": "How does `force` change the flush decision? Verify that the old code ignored `force`, and check callers that pass it.",
+        "narrativeBrief": "When does shouldFlush return true? The old code ignored `force`. The new code returns true when pending is non-empty or `force` is set. Verify callers that pass `force`.",
         "diagramBrief": null
       }
     ]

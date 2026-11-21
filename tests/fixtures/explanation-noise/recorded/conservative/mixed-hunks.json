@@ -1,25 +1,25 @@
 {
   "plan": {
-    "summary": "Snapshots are now identified by a `SnapshotKey` (project-scoped) instead of a bare `Uuid`. The same PR also changes two boundary behaviors.\n\n- `stale` returns `SnapshotKey` values and now treats entries with `expires <= now` as stale (was `<`).\n- `shouldFlush` now returns true when `force` is set, even with no pending items.",
+    "summary": "The PR keys snapshots by project instead of a bare UUID. It also changes snapshot expiry and flush behavior.\n\n- `stale` returns `SnapshotKey` values instead of `Uuid`.\n- `stale` now treats entries with `expires <= now` as stale. Before, only `expires < now` counted.\n- `shouldFlush` now returns true when `force` is set, even with nothing pending.",
     "riskLevel": "medium",
-    "riskRationale": "The stale return type is a contract change. The expiry boundary change and the new force flush path both change behavior. No tests are in the diff.",
-    "storyArc": "The PR title names the key change. The first topic covers that key change and the expiry boundary shift in `stale`. The second topic covers the separate `force` flag in `shouldFlush`. The two topics are independent.",
+    "riskRationale": "The expiry boundary change can remove snapshots that were kept before. The return type change affects callers. The flush change is small. No tests appear in the diff.",
+    "storyArc": "The main change gives snapshots a project-scoped key and fixes how expiry is judged. A separate small fix makes `shouldFlush` honor its `force` argument.",
     "noise": [],
     "topics": [
       {
-        "title": "Key stale snapshots by SnapshotKey and expire at the boundary",
-        "slideType": "refactor",
+        "title": "Project-scoped snapshot keys and expiry boundary",
+        "slideType": "feature",
         "importance": "important",
         "hunkIds": [
           "hunk-0"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does `stale` return now, and which entries count as stale? Verify that callers accept `SnapshotKey`. Note that the `<` to `<=` change is a behavior change beyond the re-keying.",
+        "narrativeBrief": "What does `stale` return now, and which entries count as stale? Verify the `SnapshotKey` type and the `<` to `<=` change. Check that callers still work with the new return type.",
         "diagramBrief": null
       },
       {
-        "title": "Let force flush even with nothing pending",
+        "title": "Honor force in shouldFlush",
         "slideType": "bugfix",
         "importance": "important",
         "hunkIds": [
@@ -27,7 +27,7 @@
         ],
         "dependsOn": [],
         "order": 2,
-        "narrativeBrief": "When does `shouldFlush` return true now? The `force` argument now makes it return true even when `pending` is empty. Check how callers set `force`. The PR description does not mention this change.",
+        "narrativeBrief": "When does `shouldFlush` return true now? It now returns true if `force` is set, even with no pending items. Verify that callers expect this.",
         "diagramBrief": null
       }
     ]

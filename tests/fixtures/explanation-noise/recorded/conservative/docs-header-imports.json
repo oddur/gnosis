@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "This PR documents the new `retries` option in the Requests guide. It adds a Retries section. The section shows the option for TypeScript and Python in tabs.\n- Imports `Tabs` and `TabItem` from `@theme`.\n- Adds a `## Retries` section with a short description and one example per language.",
+    "summary": "Adds a Retries section to the Requests guide. It explains the new `retries` option and shows TypeScript and Python examples in tabs.\n\n- Imports the `Tabs` and `TabItem` theme components.\n- Adds a \"Retries\" section with a `<Tabs>` block, one tab per language.",
     "riskLevel": "low",
-    "riskRationale": "Documentation-only change to one MDX file. No runtime code is touched.",
-    "storyArc": "The PR adds the docs for `retries`. The tab components must be imported first. The new section then uses them to show each language.",
+    "riskRationale": "Documentation-only change to one MDX guide. No runtime code is touched. The only technical risk is that the tab imports must resolve when the docs build.",
+    "storyArc": "The guide needs to show the `retries` option per language. The imports make the tab components available. The new section then uses them.",
     "noise": [],
     "topics": [
       {
-        "title": "Retries section with per-language tabs",
+        "title": "Document the retries option with language tabs",
         "slideType": "docs",
         "importance": "minor",
         "hunkIds": [
@@ -16,7 +16,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does the guide document `retries` per language? Connect the new Tabs imports to their use in the Retries section. Verify that the `@theme/Tabs` and `@theme/TabItem` import paths fit the docs site.",
+        "narrativeBrief": "How does the guide present the `retries` option? Connect the new Tabs imports to the Retries section that uses them. Verify the TabItem values match the intended languages (ts, py).",
         "diagramBrief": null
       }
     ]

@@ -1,17 +1,17 @@
 {
   "plan": {
-    "summary": "New `Record` IDs now use UUIDv7, which sorts by creation time, instead of random UUIDv4.\n\n- `Cargo.toml` swaps the `uuid` feature `v4` for `v7`.\n- `Record::new` calls `Uuid::now_v7()`.\n- `Cargo.lock` adds the transitive dependencies that follow from the feature change.\n\nExisting records keep their old IDs. Only new records get time-ordered IDs.",
+    "summary": "New `Record` IDs use UUIDv7 instead of UUIDv4, so IDs sort by creation time.\n\n- `Cargo.toml` swaps the `uuid` feature `v4` for `v7`.\n- `Record::new` calls `Uuid::now_v7()` instead of `Uuid::new_v4()`.\n- Existing records keep their old IDs.\n- `Cargo.lock` changes follow the manifest change.",
     "riskLevel": "low",
-    "riskRationale": "Small change: one feature flag and one constructor call. The `v4` feature is removed, so any other `Uuid::new_v4()` call in the crate would fail to compile. Existing stored IDs are unchanged.",
-    "storyArc": "The PR enables the `v7` feature of the `uuid` crate. It then uses `Uuid::now_v7()` when a `Record` is created. The lockfile changes follow from the manifest change.",
+    "riskRationale": "Small change to ID generation. Old v4 IDs stay valid. Removing the `v4` feature breaks any other code that calls `new_v4`. The diff does not show such code.",
+    "storyArc": "The feature flag in the manifest enables the v7 generator. The `Record::new` constructor then uses it. The lockfile only records the new transitive dependencies.",
     "noise": [
       {
         "hunkId": "hunk-1",
-        "reason": "Lockfile churn that follows the `uuid` feature change in Cargo.toml (adds `js-sys` to a dependency list)."
+        "reason": "Lockfile churn (`js-sys` added to a dependency) that follows the manifest feature change."
       },
       {
         "hunkId": "hunk-2",
-        "reason": "Lockfile churn that follows the `uuid` feature change in Cargo.toml (adds `rand` to a dependency list)."
+        "reason": "Lockfile churn (`rand` added to `uuid` dependencies) that follows the manifest feature change."
       }
     ],
     "topics": [
@@ -25,7 +25,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How do new records get their IDs, and what must change in the manifest to allow it? Connect the `v4` to `v7` feature swap in `Cargo.toml` to the `Uuid::now_v7()` call in `Record::new`. Verify that no other code in the crate still calls `new_v4`.",
+        "narrativeBrief": "How do new records get their IDs, and what must change in the manifest to allow it? Connect the `uuid` feature switch from `v4` to `v7` with the `Uuid::now_v7()` call in `Record::new`. Verify no other code in the crate still needs `v4`.",
         "diagramBrief": null
       }
     ]

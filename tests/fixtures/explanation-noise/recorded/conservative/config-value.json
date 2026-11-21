@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Raises the upload retry limit from 3 to 5 attempts in `config/upload.yaml`. The `backoff_ms` value stays at 200. A comment-only edit in the same file is left out.",
+    "summary": "Raises the upload retry limit from 3 to 5 attempts in `config/upload.yaml`.\n\n- `retry.max_attempts` changes from 3 to 5.\n- `backoff_ms` stays at 200.\n- A comment-only edit in the same file is left out as noise.",
     "riskLevel": "low",
-    "riskRationale": "One config value changes. More retries can increase load on the upload service during failures, but no logic changes.",
-    "storyArc": "One config change: uploads now retry up to five times instead of three.",
+    "riskRationale": "One config value changes. It allows more retries, which can raise upload load or total retry time on failure. No code or schema changes.",
+    "storyArc": "One config change: uploads may now retry up to five times instead of three.",
     "noise": [],
     "topics": [
       {
-        "title": "Increase upload max_attempts to 5",
+        "title": "Raise upload retry limit to five attempts",
         "slideType": "config",
         "importance": "minor",
         "hunkIds": [
@@ -15,7 +15,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does the retry setting change? `retry.max_attempts` goes from 3 to 5 while `backoff_ms` stays 200. Verify how the uploader reads this value and whether the 200 ms backoff is fixed or grows between attempts.",
+        "narrativeBrief": "What does the retry setting change? `max_attempts` goes from 3 to 5 while `backoff_ms` stays 200. The writer should verify whether the retry count includes the first attempt, and whether the backoff is fixed or grows.",
         "diagramBrief": null
       }
     ]

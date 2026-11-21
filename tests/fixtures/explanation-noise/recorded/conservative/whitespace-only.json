@@ -1,9 +1,9 @@
 {
   "plan": {
-    "summary": "The cache size can now be set with the `CACHE_MB` environment variable. `cacheConfig` reads and parses it. It uses the value only when it is a finite number greater than zero. Otherwise it falls back to `DEFAULT_MEGABYTES`.",
+    "summary": "The cache size can now be set with the `CACHE_MB` environment variable. If the value is missing, not a number, or not above zero, the code uses `DEFAULT_MEGABYTES`.\n\n- `cacheConfig` parses `env.CACHE_MB` with `Number`.\n- It accepts only finite values above zero.\n- `CACHE_DIR` handling is unchanged.",
     "riskLevel": "low",
-    "riskRationale": "Small, local change to config parsing with a safe fallback. Invalid input cannot change behavior from the default.",
-    "storyArc": "One change: `cacheConfig` now takes the cache size from `CACHE_MB` and keeps the old default for missing or invalid values.",
+    "riskRationale": "Small change in one config function with a safe fallback to the default. An invalid or missing value keeps the old behavior. Fractional values are accepted, and no tests are shown.",
+    "storyArc": "One behavior change: the cache size now comes from `CACHE_MB` and falls back to the default when the value is not valid.",
     "noise": [],
     "topics": [
       {
@@ -15,7 +15,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `cacheConfig` choose the cache size, and what happens for missing or invalid `CACHE_MB`? Verify in the source that `DEFAULT_MEGABYTES` is the fallback and that no other caller depends on the old fixed value.",
+        "narrativeBrief": "How does `cacheConfig` choose the cache size now? Verify that a missing, NaN, infinite, zero, or negative `CACHE_MB` gives `DEFAULT_MEGABYTES`, and that fractional values pass.",
         "diagramBrief": null
       }
     ]

@@ -1,13 +1,13 @@
 {
   "fixtures": {
     "comment-only": {
-      "recordedAt": "2026-11-21T17:42:04.375Z",
+      "recordedAt": "2026-11-21T21:16:03.881Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "ff5dc0342c55de40",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "e8fba49005b1df54",
           "options": {
             "style": "concise",
@@ -19,7 +19,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "e8fba49005b1df54",
           "options": {
             "style": "concise",
@@ -33,13 +33,13 @@
       }
     },
     "config-value": {
-      "recordedAt": "2026-11-21T17:42:20.622Z",
+      "recordedAt": "2026-11-21T21:16:18.616Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "99094ee67b6e4a21",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "52d8d130328c8104",
           "options": {
             "style": "concise",
@@ -51,7 +51,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "52d8d130328c8104",
           "options": {
             "style": "concise",
@@ -65,13 +65,13 @@
       }
     },
     "dependency-bump": {
-      "recordedAt": "2026-11-21T17:42:34.603Z",
+      "recordedAt": "2026-11-21T21:16:30.895Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "9a0cee4f1ac78c6d",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "67c84062bd1a516f",
           "options": {
             "style": "concise",
@@ -83,7 +83,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "67c84062bd1a516f",
           "options": {
             "style": "concise",
@@ -97,13 +97,13 @@
       }
     },
     "doc-comment-reword": {
-      "recordedAt": "2026-11-21T17:42:50.298Z",
+      "recordedAt": "2026-11-21T21:16:43.964Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "ed7ecf5653723a2a",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "4f20741514ab94b0",
           "options": {
             "style": "concise",
@@ -115,7 +115,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "4f20741514ab94b0",
           "options": {
             "style": "concise",
@@ -129,13 +129,13 @@
       }
     },
     "docs-header-imports": {
-      "recordedAt": "2026-11-21T17:43:06.132Z",
+      "recordedAt": "2026-11-21T21:16:57.340Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "79eebf9aff710188",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "592d0e431c798123",
           "options": {
             "style": "concise",
@@ -147,7 +147,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "592d0e431c798123",
           "options": {
             "style": "concise",
@@ -161,13 +161,13 @@
       }
     },
     "drive-by-edits": {
-      "recordedAt": "2026-11-21T17:43:20.688Z",
+      "recordedAt": "2026-11-21T21:17:11.616Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "a95df3d2bc2b2849",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "77a781ba9d0a9313",
           "options": {
             "style": "concise",
@@ -179,7 +179,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "77a781ba9d0a9313",
           "options": {
             "style": "concise",
@@ -193,13 +193,13 @@
       }
     },
     "formatting-only": {
-      "recordedAt": "2026-11-21T17:43:36.048Z",
+      "recordedAt": "2026-11-21T21:17:25.198Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "f0bdef46862b2f0e",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "3b9009f38f9e5a4f",
           "options": {
             "style": "concise",
@@ -211,7 +211,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "3b9009f38f9e5a4f",
           "options": {
             "style": "concise",
@@ -225,13 +225,13 @@
       }
     },
     "go-imports": {
-      "recordedAt": "2026-11-21T17:43:49.938Z",
+      "recordedAt": "2026-11-21T21:17:36.998Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "dc1a9687f2488a22",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "fa5b9d2c25cbede6",
           "options": {
             "style": "concise",
@@ -243,7 +243,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "fa5b9d2c25cbede6",
           "options": {
             "style": "concise",
@@ -257,13 +257,13 @@
       }
     },
     "import-existing-module": {
-      "recordedAt": "2026-11-21T17:44:06.030Z",
+      "recordedAt": "2026-11-21T21:17:52.323Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "04fa6a2aa7b32ec9",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "42b430cb402c3fce",
           "options": {
             "style": "concise",
@@ -275,7 +275,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "42b430cb402c3fce",
           "options": {
             "style": "concise",
@@ -289,13 +289,13 @@
       }
     },
     "import-new-package": {
-      "recordedAt": "2026-11-21T17:44:23.318Z",
+      "recordedAt": "2026-11-21T21:18:04.795Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "d94e46cb2a838b42",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "1cc6e78a8fa00834",
           "options": {
             "style": "concise",
@@ -307,7 +307,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "1cc6e78a8fa00834",
           "options": {
             "style": "concise",
@@ -321,13 +321,13 @@
       }
     },
     "import-to-dynamic": {
-      "recordedAt": "2026-11-21T17:44:37.839Z",
+      "recordedAt": "2026-11-21T21:18:16.940Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "f568f6095e9571ef",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "9f9d1ba178144fea",
           "options": {
             "style": "concise",
@@ -339,7 +339,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "9f9d1ba178144fea",
           "options": {
             "style": "concise",
@@ -353,13 +353,13 @@
       }
     },
     "lockfile-churn": {
-      "recordedAt": "2026-11-21T17:44:52.892Z",
+      "recordedAt": "2026-11-21T21:18:30.560Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "f4feceef8948116d",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "0c51005ab96127e9",
           "options": {
             "style": "concise",
@@ -371,7 +371,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "0c51005ab96127e9",
           "options": {
             "style": "concise",
@@ -385,13 +385,13 @@
       }
     },
     "mixed-hunks": {
-      "recordedAt": "2026-11-21T17:45:08.775Z",
+      "recordedAt": "2026-11-21T21:18:44.638Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "ab7f66bd6aec4797",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "a7cc5ded2d079526",
           "options": {
             "style": "concise",
@@ -403,7 +403,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "a7cc5ded2d079526",
           "options": {
             "style": "concise",
@@ -417,13 +417,13 @@
       }
     },
     "move": {
-      "recordedAt": "2026-11-21T17:45:27.420Z",
+      "recordedAt": "2026-11-21T21:18:59.128Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "30f436f9b5a65599",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "1a128d7602a510d1",
           "options": {
             "style": "concise",
@@ -435,7 +435,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "1a128d7602a510d1",
           "options": {
             "style": "concise",
@@ -449,13 +449,13 @@
       }
     },
     "public-api-export": {
-      "recordedAt": "2026-11-21T17:45:42.649Z",
+      "recordedAt": "2026-11-21T21:19:13.804Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "2fd4002c1f11dc68",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "e18cf33b07fbbac1",
           "options": {
             "style": "concise",
@@ -467,7 +467,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "e18cf33b07fbbac1",
           "options": {
             "style": "concise",
@@ -481,13 +481,13 @@
       }
     },
     "python-imports": {
-      "recordedAt": "2026-11-21T17:45:56.410Z",
+      "recordedAt": "2026-11-21T21:19:27.250Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "7a6d63ba7c5eb400",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "795715cb0ae1a99c",
           "options": {
             "style": "concise",
@@ -499,7 +499,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "795715cb0ae1a99c",
           "options": {
             "style": "concise",
@@ -513,13 +513,13 @@
       }
     },
     "related-helper-edits": {
-      "recordedAt": "2026-11-21T17:46:12.521Z",
+      "recordedAt": "2026-11-21T21:19:42.816Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "fae90e33a6d47795",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "fde3cfe1bfdb74b9",
           "options": {
             "style": "concise",
@@ -531,7 +531,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "fde3cfe1bfdb74b9",
           "options": {
             "style": "concise",
@@ -545,13 +545,13 @@
       }
     },
     "removed-guard": {
-      "recordedAt": "2026-11-21T17:46:30.441Z",
+      "recordedAt": "2026-11-21T21:19:57.199Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "c3caf620e354c7ae",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "5b4d6cbefeb4871e",
           "options": {
             "style": "concise",
@@ -563,7 +563,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "5b4d6cbefeb4871e",
           "options": {
             "style": "concise",
@@ -577,13 +577,13 @@
       }
     },
     "repeated-test-data": {
-      "recordedAt": "2026-11-21T17:46:48.076Z",
+      "recordedAt": "2026-11-21T21:20:16.844Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "ef838a63e72479c8",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "84e4601fa2ed9fab",
           "options": {
             "style": "concise",
@@ -595,7 +595,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "84e4601fa2ed9fab",
           "options": {
             "style": "concise",
@@ -609,13 +609,13 @@
       }
     },
     "sql-schema": {
-      "recordedAt": "2026-11-21T17:47:03.571Z",
+      "recordedAt": "2026-11-21T21:20:29.268Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "9a7a32e9153356ba",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "7b8a78091b9977a9",
           "options": {
             "style": "concise",
@@ -627,7 +627,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "7b8a78091b9977a9",
           "options": {
             "style": "concise",
@@ -641,13 +641,13 @@
       }
     },
     "tests-pin-behavior": {
-      "recordedAt": "2026-11-21T17:47:20.023Z",
+      "recordedAt": "2026-11-21T21:20:42.846Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "3741cc84b7e4de33",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "7e818e5239abd037",
           "options": {
             "style": "concise",
@@ -659,7 +659,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "7e818e5239abd037",
           "options": {
             "style": "concise",
@@ -673,13 +673,13 @@
       }
     },
     "whitespace-only": {
-      "recordedAt": "2026-11-21T17:47:35.192Z",
+      "recordedAt": "2026-11-21T21:20:56.538Z",
       "provider": "claude",
       "model": "claude-sonnet-5-5",
       "fixtureHash": "9d684cd81a48369d",
       "levels": {
         "conservative": {
-          "promptHash": "822f5b9737ff7351",
+          "promptHash": "9a8edea6aff12cca",
           "evidenceHash": "72c278030ca4b1b0",
           "options": {
             "style": "concise",
@@ -691,7 +691,7 @@
           }
         },
         "aggressive": {
-          "promptHash": "8df3e142a5ebbeac",
+          "promptHash": "1496e1b6b0aaa657",
           "evidenceHash": "72c278030ca4b1b0",
           "options": {
             "style": "concise",

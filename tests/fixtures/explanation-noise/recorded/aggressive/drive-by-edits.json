@@ -1,22 +1,26 @@
 {
   "plan": {
-    "summary": "The PR lowers the export batch size from 2000 to 500 rows. It also includes small cleanups: a variable rename, removal of a debug log, and a README typo fix.",
+    "summary": "Reduce the export batch size from 2000 to 500 rows.\n\n- `BATCH_ROWS` in `src/export/batch.ts` drops to 500, so `batches()` produces smaller batches.\n- Other hunks are cleanup: a local variable rename, a removed debug log, and a README typo fix.",
     "riskLevel": "low",
-    "riskRationale": "One constant changes the batch size. This is a small runtime change with a simple effect. The other edits are cleanups with no meaningful runtime effect, except a removed console.log.",
-    "storyArc": "The main change caps export batches at 500 rows. The other hunks are unrelated cleanups and do not need explanation.",
+    "riskRationale": "One constant changes. Smaller batches mean more batches per export, which may affect export speed. The other edits are cosmetic or remove a log.",
+    "storyArc": "The only behavior change is the lower batch cap. The remaining hunks are small cleanups that need no explanation.",
     "noise": [
       {
         "hunkId": "hunk-1",
-        "reason": "Local variable rename only. Output is unchanged."
+        "reason": "Local variable rename in initials(). Output is the same."
+      },
+      {
+        "hunkId": "hunk-2",
+        "reason": "Removes a debug console.log. It is unrelated to the export change."
       },
       {
         "hunkId": "hunk-3",
-        "reason": "README typo fix. No runtime effect."
+        "reason": "README typo fix (wirte to write). Docs only."
       }
     ],
     "topics": [
       {
-        "title": "Export batches hold at most 500 rows",
+        "title": "Export batch size drops from 2000 to 500 rows",
         "slideType": "config",
         "importance": "important",
         "hunkIds": [
@@ -24,19 +28,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What does BATCH_ROWS change for export batching? Verify that batches() uses BATCH_ROWS to size its chunks.",
-        "diagramBrief": null
-      },
-      {
-        "title": "Remove debug logging from openMenu",
-        "slideType": "refactor",
-        "importance": "minor",
-        "hunkIds": [
-          "hunk-2"
-        ],
-        "dependsOn": [],
-        "order": 2,
-        "narrativeBrief": "The console.log call in openMenu is removed. The returned menu items stay the same.",
+        "narrativeBrief": "What does the new BATCH_ROWS value change for batches()? Verify how batches() uses the constant and that nothing else depends on the old value.",
         "diagramBrief": null
       }
     ]

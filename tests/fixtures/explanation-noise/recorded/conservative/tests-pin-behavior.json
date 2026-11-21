@@ -1,9 +1,9 @@
 {
   "plan": {
-    "summary": "`joinPath` now trims each path segment before it drops empty segments and joins them with `/`. Segments such as `\" a \"` and `\"a\"` now give the same result, and whitespace-only segments are removed.\n\n- `src/paths.ts`: adds a `trim()` step in `joinPath`.\n- `tests/paths.test.ts`: new test for the trimming rule.\n- `package.json`: adds the new test file to the `test` script.",
+    "summary": "Fixes `joinPath` so each path segment is trimmed before empty segments are dropped and the rest are joined with `/`.\n\n- `src/paths.ts`: `parts.map((part) => part.trim())` runs before `filter(Boolean)`. Whitespace-only parts are now dropped.\n- `tests/paths.test.ts`: new test for `joinPath([' a ', 'b', '  '])` expecting `'a/b'`.\n- `package.json`: the new test file is added to the `test` script.",
     "riskLevel": "low",
-    "riskRationale": "This is a small change to one pure function. A new test covers it. Callers that relied on untrimmed segments with spaces will see different output.",
-    "storyArc": "The fix changes `joinPath` so that it trims segments first. A new test shows the rule. The `test` script change makes the test run in `npm test`.",
+    "riskRationale": "Small change to one pure helper function. A new test covers it. Callers that pass padded segments will now get trimmed output.",
+    "storyArc": "The fix trims segments in `joinPath`. A new test shows the trimming and the dropping of blank segments. The test script change makes the test run.",
     "noise": [],
     "topics": [
       {
@@ -17,7 +17,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `joinPath` treat whitespace in segments now? Connect the new `map` trim step to the test case (`' a '`, `'b'`, `'  '` gives `'a/b'`) and to the `package.json` script entry that runs the test. Check that the trim happens before the `filter(Boolean)` step, so whitespace-only segments are removed.",
+        "narrativeBrief": "What does joinPath return for padded or blank segments? Connect the new trim step before filter(Boolean) to the test that asserts ' a ', 'b', '  ' gives 'a/b', and to the script entry that runs the test.",
         "diagramBrief": null
       }
     ]

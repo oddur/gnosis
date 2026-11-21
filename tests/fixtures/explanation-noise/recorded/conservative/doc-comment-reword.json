@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Changes the status label for stack members that need a rebase. The label text changes from 'needs rebasing' to 'needs to move'. The check `needsRebase(member)` and the 'up to date' label are unchanged.",
+    "summary": "Change the stack status label for members that need a rebase. The text changes from 'needs rebasing' to 'needs to move'.\n\n- Only the string returned by `statusLabel` changes.\n- The `needsRebase` check and the 'up to date' label stay the same.\n- Comment-only edits in the file are not shown.",
     "riskLevel": "low",
-    "riskRationale": "One string literal changes in a label function. Other code may compare against the old text, which the writer should check.",
-    "storyArc": "One user-visible label is renamed in statusLabel. The review checks that the new text is used correctly and that no consumer depends on the old text.",
+    "riskRationale": "One user-facing string changes. The logic does not change. Code that matches the old text exactly could break, but the evidence shows no such code.",
+    "storyArc": "The change has one step. `statusLabel` now returns 'needs to move' when `needsRebase` is true.",
     "noise": [],
     "topics": [
       {
-        "title": "Rename the rebase status label to 'needs to move'",
+        "title": "Stack status label says 'needs to move'",
         "slideType": "refactor",
         "importance": "minor",
         "hunkIds": [
@@ -15,7 +15,7 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "What text does statusLabel return now when a member needs a rebase? Show that the condition is unchanged and only the string differs. Verify that no other code or test compares against 'needs rebasing'.",
+        "narrativeBrief": "What text does `statusLabel` return for a member that needs a rebase? Show the one-line string change. Verify that no other code or test depends on the old 'needs rebasing' text.",
         "diagramBrief": null
       }
     ]

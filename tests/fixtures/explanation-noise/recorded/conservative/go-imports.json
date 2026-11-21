@@ -1,26 +1,30 @@
 {
   "plan": {
-    "summary": "Webhook payloads are now normalized and signed with a real HMAC.\n\n- `Event` trims whitespace from the event name.\n- `Sign` now computes an HMAC of the body with the secret, using `hmacx.Sum`. Before, it only hex-encoded the body.\n- A new dependency, `github.com/acme/hmacx`, is imported for signing.",
-    "riskLevel": "medium",
-    "riskRationale": "The signing function changes from an unkeyed hex encoding to a keyed HMAC. This changes the signature that receivers verify. The change is small, and the evidence shows no tests.",
-    "storyArc": "The PR first fixes the signature, which is the security-relevant change. It then covers the smaller input normalization in `Event`.",
-    "noise": [],
+    "summary": "Webhook payloads are now normalized and signed with a real HMAC.\n\n- `Event` trims whitespace from event names.\n- `Sign` returns an HMAC of the body computed with the secret, using `hmacx.Sum`. Before, it hex-encoded the raw body, so the secret was not used.",
+    "riskLevel": "high",
+    "riskRationale": "Signing is security-sensitive. The old code did not use the secret at all, so signatures were forgeable. Receivers that check old signatures will fail. The `Event` trim changes the output for names with surrounding whitespace.",
+    "storyArc": "The PR makes webhook output trustworthy. First the signing is fixed, since it is the security-critical change. Then event names are normalized so that they are consistent.",
+    "noise": [
+      {
+        "hunkId": "hunk-2",
+        "reason": "Only adds the hmacx import. The use of the import is in hunk-3, which stays in a topic."
+      }
+    ],
     "topics": [
       {
-        "title": "Sign webhook bodies with an HMAC",
+        "title": "Sign webhook bodies with HMAC",
         "slideType": "bugfix",
         "importance": "critical",
         "hunkIds": [
-          "hunk-2",
           "hunk-3"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `Sign` now produce its signature, and what does the new `hmacx` import supply? Verify what `hmacx.Sum` computes, and that callers pass the secret.",
+        "narrativeBrief": "How does `Sign` change from hex-encoding the body to an HMAC keyed by the secret? Verify the `hmacx.Sum` semantics (hash algorithm and argument order) in the source, and the effect on receivers that verify signatures.",
         "diagramBrief": null
       },
       {
-        "title": "Trim whitespace from event names",
+        "title": "Trim whitespace in event names",
         "slideType": "feature",
         "importance": "minor",
         "hunkIds": [
@@ -28,7 +32,7 @@
         ],
         "dependsOn": [],
         "order": 2,
-        "narrativeBrief": "What does `Event` return now? It trims leading and trailing whitespace with `strings.TrimSpace`. Verify the callers, and whether the trimmed name is part of the signed payload.",
+        "narrativeBrief": "What does `Event` now return for names with leading or trailing whitespace? Check the callers to see whether the trimmed name feeds the signed payload.",
         "diagramBrief": null
       }
     ]

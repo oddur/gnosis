@@ -1,22 +1,22 @@
 {
   "plan": {
-    "summary": "Retry backoff now adds random jitter, so clients that failed together do not retry at the same time.\n\n- `backoff(n)` adds `jitter(exponential / 2)` to the exponential delay.\n- The result is still capped at `MAX_MS`.\n- `jitter` is imported from `./timing`.",
+    "summary": "Retries now add random jitter to the exponential backoff delay, so clients that failed together do not retry at the same time.\n\n- `backoff(n)` adds `jitter(exponential / 2)` to the exponential delay.\n- The sum is still capped at `MAX_MS`.\n- `jitter` is imported from `./timing`.",
     "riskLevel": "low",
-    "riskRationale": "Small change to retry delay in one file. It adds randomness but keeps the cap. No tests are in the diff.",
-    "storyArc": "The change adds jitter to retry delays. The import makes the helper available. The backoff formula then uses it.",
+    "riskRationale": "Small change to one retry delay calculation. The cap at MAX_MS still applies. No tests appear in the diff, and the `jitter` implementation is not shown.",
+    "storyArc": "The change has one purpose: spread out retries. The import makes `jitter` available. The backoff formula then uses it. Both hunks are read together as one behavior.",
     "noise": [],
     "topics": [
       {
-        "title": "Backoff delay includes random jitter",
+        "title": "Randomize retry backoff with jitter",
         "slideType": "feature",
         "importance": "important",
         "hunkIds": [
-          "hunk-0",
-          "hunk-1"
+          "hunk-1",
+          "hunk-0"
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `backoff` compute the delay now, and what limits it? Connect the new `jitter` import to its use in the formula. Verify the `jitter` contract in `./timing` and that the cap applies after jitter is added.",
+        "narrativeBrief": "How does `backoff(n)` now compute the delay, and does the cap still hold? Connect the new `jitter` import to the changed return line. Verify what `jitter` in `./timing` returns, such as its range and whether it can be negative.",
         "diagramBrief": null
       }
     ]

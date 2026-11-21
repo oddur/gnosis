@@ -1,13 +1,13 @@
 {
   "plan": {
-    "summary": "Fixes a race in `count`. It no longer checks `dir.exists()` before reading. A missing directory is now handled by treating `NotFound` from `fs::read_dir` as an empty count. The PR also removes the explicit `drop(guard)` and its flush comment from `main`.\n\n- `count.rs`: remove the exists check; map `NotFound` to `Ok((0, 0))`.\n- `main.rs`: remove the explicit telemetry guard drop before `process::exit`.",
+    "summary": "Fixes a race in file counting. `count` no longer checks `dir.exists()` before reading. It treats a `NotFound` error from `fs::read_dir` as an empty result.\n\n- `src/count.rs`: removes the check-then-read gap and maps `NotFound` to `Ok((0, 0))`.\n- `src/main.rs`: removes the explicit `drop(guard)` and its comment, which flushed telemetry before `std::process::exit`. This change is not mentioned in the PR description.",
     "riskLevel": "medium",
-    "riskRationale": "The count change is small and removes a check-then-use race. The `main.rs` change removes the explicit flush. `std::process::exit` does not run destructors, so telemetry may no longer flush. That could lose data. Nothing in the PR description mentions it.",
-    "storyArc": "The stated goal is to remove a race in file counting by letting the read report a missing directory. The `main.rs` change is a separate edit with a possible shutdown side effect. It needs its own review.",
+    "riskRationale": "The count change is small and correct for the race. The `main.rs` change may stop the telemetry flush, because `std::process::exit` does not run destructors. The PR description does not explain it.",
+    "storyArc": "First, the count fix removes the existence check and handles a missing directory in the read itself. Then the `main.rs` change is reviewed on its own. It is unrelated to the race and may change telemetry behavior at exit.",
     "noise": [],
     "topics": [
       {
-        "title": "Handle a missing directory in the read, not by a prior check",
+        "title": "Handle a missing directory in the read, not in a prior check",
         "slideType": "bugfix",
         "importance": "important",
         "hunkIds": [
@@ -15,19 +15,19 @@
         ],
         "dependsOn": [],
         "order": 1,
-        "narrativeBrief": "How does `count` now handle a missing directory without a race? Show that the exists check is gone and `NotFound` from `read_dir` returns `Ok((0, 0))`. Verify that other errors still propagate.",
+        "narrativeBrief": "How does `count` now treat a missing directory without the race? Connect the removed `exists()` check to the new `NotFound` arm on `fs::read_dir`. Verify that other errors still propagate.",
         "diagramBrief": null
       },
       {
-        "title": "Telemetry guard is no longer dropped before exit",
-        "slideType": "bugfix",
-        "importance": "critical",
+        "title": "Telemetry guard no longer dropped before exit",
+        "slideType": "refactor",
+        "importance": "important",
         "hunkIds": [
           "hunk-1"
         ],
         "dependsOn": [],
         "order": 2,
-        "narrativeBrief": "What happens to telemetry flushing at exit now? The explicit `drop(guard)` and its comment are removed, but `std::process::exit` skips destructors. Verify whether the guard still flushes and whether the change matches the PR purpose.",
+        "narrativeBrief": "What happens to telemetry flushing when the explicit `drop(guard)` is removed? Check whether `std::process::exit` skips the guard's destructor, and note that the PR description does not mention this change.",
         "diagramBrief": null
       }
     ]

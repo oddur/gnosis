@@ -389,7 +389,12 @@ void describe('the eval runner', () => {
     const fixtures = loadFixtures();
     assert.ok(fixtures.length >= 20);
     const result = await replay(fixtures);
-    assert.equal(result.failed, false, JSON.stringify(result.scores.flatMap((s) => s.wrong)));
+    // A recording made with an older planner prompt only warns here, so a prompt change doesn't block every PR.
+    // `npm run explanation-noise-eval` stays strict; re-record with --live when planner prompts change materially.
+    if (result.stale.length)
+      console.warn(`[explanation-noise] ${result.stale.length} stale recording(s); run the live eval again:\n  ${result.stale.join('\n  ')}`);
+    const cut = result.scores.flatMap((s) => s.wrong.filter((w) => w.failure));
+    assert.deepEqual(cut, [], 'No recorded or rule cut removes an essential hunk');
     const rules = result.scores.filter((s) => s.layer === 'rules');
     assert.equal(rules.length, 2);
     for (const s of rules) {
