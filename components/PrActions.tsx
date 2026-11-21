@@ -1,4 +1,5 @@
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
+import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { PrStateIcon } from './PrStateIcon';
 import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -388,7 +389,7 @@ export function PrActions({
       ) : (
         <>
           <div className="pr-action-controls">
-            {(hasConflicts || state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY') && (
+            {(hasConflicts || (state && hasMergeConflicts(state))) && (
               <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>
                 <ConflictIcon size={14} aria-hidden="true" />
                 Resolve conflicts…
@@ -505,7 +506,7 @@ export function PrActions({
               <RefreshCw size={14} className={loading ? 'motion-safe:animate-spin' : undefined} />
             </button>
           </div>
-          {!compact && state && (state.mergeable === 'CONFLICTING' || state.mergeState === 'DIRTY') && (
+          {!compact && state && hasMergeConflicts(state) && (
             <p className="pr-action-note">{updateBlocked}</p>
           )}
           {state?.autoMerge && (

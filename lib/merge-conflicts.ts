@@ -21,6 +21,9 @@ export function mergeConflictState(signals: QueueSignals | undefined): MergeConf
   return readiness.mergeable === 'MERGEABLE' ? 'clear' : 'computing';
 }
 
+/** "Resolve conflicts…" is offered unless GitHub says the PR merges cleanly. A PR only behind its base is clean. */
+export const offersConflictResolution = (state: MergeConflictState) => state !== 'clear';
+
 export function memberMergeState(member: QueueSignalRequest, states: MergeStates | undefined): MergeConflictState {
   return states?.get(queueSignalKey(member)) ?? 'unchecked';
 }

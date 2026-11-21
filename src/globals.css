@@ -5308,7 +5308,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 :where(.pr-state-icon.subject-icon) { display:inline-flex; }
 .pr-state-icon.is-open, .queue-pr-icon.is-open { color:var(--color-success); }
 .pr-state-icon.is-merged, .queue-pr-icon.is-merged { color:var(--color-info); }
-.pr-state-icon.is-closed, .queue-pr-icon.is-closed { color:var(--color-danger); }
+.pr-state-icon:is(.is-closed, .is-conflicting), .queue-pr-icon.is-closed { color:var(--color-danger); }
 .pr-state-icon:is(.is-draft, .is-unknown) { color:var(--muted-foreground); }
 /* Slots that sized the old PR icon keep their size and spacing. */
 .feedback-source > .pr-state-icon { width:13px; height:13px; }

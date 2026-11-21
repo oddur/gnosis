@@ -1,6 +1,6 @@
 import { SearchableSelect } from './SearchableSelect';
 import { SubjectIcon } from './SubjectIcon';
-import { PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
+import { conflictStateFrom, PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrDetails, type PrOverviewContent } from './PrDetails';
 import { memberReadiness } from '../lib/merge-readiness';
 import type { ReviewSubject } from '../lib/workbench';
@@ -123,7 +123,8 @@ export function PrSubjectDetails({
           member={member}
           starControl={
             stacked && starredUrls && onStarChange ? (
-              <PrEntryActions {...generationActions?.([member])} onReview={onReview} reviewDisabled={reviewDisabled} members={[member]} starredUrls={starredUrls} busy={starBusy || muteBusy} onStarChange={onStarChange} onMute={onMute} />
+              <PrEntryActions {...generationActions?.([member])} onReview={onReview} reviewDisabled={reviewDisabled} members={[member]} starredUrls={starredUrls} busy={starBusy || muteBusy} onStarChange={onStarChange} onMute={onMute}
+                conflictState={conflictStateFrom([...signals, statuses[member.url]?.signals])} />
             ) : undefined
           }
           showTitle={stacked}

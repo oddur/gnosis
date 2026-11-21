@@ -24,7 +24,7 @@ import { PrActions } from './PrActions';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from './ReviewBreadcrumbs';
 import { Activity, type ComponentProps, type ReactNode, type Ref, type UIEvent } from 'react';
-import { PrEntryActions, PrStarMarker, type PrGenerationActionsFor } from './PrEntryActions';
+import { conflictStateFrom, PrEntryActions, PrStarMarker, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrExplanation } from './PrExplanation';
 import type { ExplanationDestination } from '../lib/explanation-workspace';
 import type { ReviewHistoryEntry } from '../lib/types';
@@ -611,6 +611,7 @@ function PrSummaryContent({
         </div>
         <PrEntryActions {...generationActions?.(item.subject.members)} onReview={onReview} reviewDisabled={!account} members={item.subject.members} starredUrls={starredUrls}
           busy={starBusy || muteBusy || statusRefreshing} onStarChange={onStarChange} onMute={onMute}
+          conflictState={conflictStateFrom([...signals, ...item.subject.members.map((m) => statuses[m.url]?.signals)])}
           onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
           <div className="pr-title-with-star">
             <h1 ref={heading} tabIndex={-1} title={item.subject.title}>

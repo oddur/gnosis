@@ -44,6 +44,11 @@ export interface ConflictSession {
   staleReason?: 'head-moved' | 'retargeted';
   dependents?: string[];
   restack?: RestackPlan;
+  /**
+   * Reopened after a push from an earlier session, and GitHub reports no conflicts now. The workspace says there is
+   * nothing to resolve and keeps the last update (`commitSha`, undo to `headSha`) as history. Never saved.
+   */
+  reopened?: boolean;
 }
 export interface RestackPlan {
   token: string;

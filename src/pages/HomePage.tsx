@@ -29,7 +29,8 @@ import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort 
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
 import { useCachedQueueSignals, useMergeFilter } from '../../lib/use-queue-signals';
 import { MergeFilterStatus } from '../../components/MergeFilterStatus';
-import { countUnsettled } from '../../lib/merge-conflicts';
+import { countUnsettled, mergeConflictState } from '../../lib/merge-conflicts';
+import { signalValue } from '../../lib/queue-signal-store';
 import { PrReadContext, type ViewedPr } from '../../lib/pr-read-context';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
@@ -1645,6 +1646,8 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
     onReadChange: auth?.login && members.some(member => queue.readStates?.[member.url]) ? (read: boolean) => changeRead(members.map(member => member.url), read) : undefined,
     onReview: requestPrReview,
     reviewDisabled: !auth?.authenticated,
+    conflictState: (member: QueueItem['subject']['members'][number]) =>
+      mergeConflictState(statusAccount ? signalValue(statusAccount, member) : undefined),
     onStarChange: changeStars,
     onMute: (members: QueueItem['subject']['members']) => changeMutes({ muted: true, members }),
     onSnooze: snoozeMembers,

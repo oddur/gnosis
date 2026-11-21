@@ -13,6 +13,8 @@ import { EntryActions, type EntryActionGroups } from './EntryActions';
 import type { ComponentProps } from 'react';
 import { isLocalUrl } from '../lib/local-url';
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
+import { mergeConflictState, offersConflictResolution, type MergeConflictState } from '../lib/merge-conflicts';
+import { queueSignalKey, type QueueSignals } from '../lib/queue-signals';
 import { Bell } from 'lucide-react';
 import { useRepositorySettings, type RepositoryContextValue } from '../lib/use-repository-settings';
 import { REPOSITORY_NOTIFICATION_LEVELS, REPOSITORY_NOTIFICATION_SHORT_LABEL } from '../lib/notification-settings';
@@ -65,6 +67,7 @@ export function prEntryActionGroups({
   onOpenTab,
   unread,
   repositories,
+  conflictState,
 }: Partial<PrGenerationActions> & {
   /** Offers "Notifications from org/repo: All / On me / None" (#385). */
   repositories?: RepositoryContextValue;
@@ -81,6 +84,8 @@ export function prEntryActionGroups({
   unread?: boolean;
   onReadChange?: (read: boolean) => unknown;
   onOpenTab?: () => unknown;
+  /** Where GitHub's merge state is known, "Resolve conflicts…" is offered only for conflicts or a pending answer. */
+  conflictState?: (member: ReviewMember) => MergeConflictState;
 }): EntryActionGroups {
   if (!members.length) return [];
   const starred = members.some((m) => starredUrls.has(m.url));
@@ -121,7 +126,8 @@ export function prEntryActionGroups({
       ...(onRefresh
         ? [{ label: 'Refresh GitHub status', icon: <RefreshCw size={15} />, disabled: busy, run: onRefresh }]
         : []),
-      ...(!stack && !isLocalUrl(members[0].url) && !members[0].merged && members[0].state === 'open'
+      ...(!stack && !isLocalUrl(members[0].url) && !members[0].merged && members[0].state === 'open' &&
+      offersConflictResolution(conflictState?.(members[0]) ?? 'unchecked')
         ? [{ label: 'Resolve conflicts…', icon: <ConflictIcon size={15} />, disabled: busy, run: () => openConflictWorkspace(members[0].url) }]
         : []),
     ],
@@ -175,6 +181,9 @@ export function prEntryActionGroups({
       : [],
   ];
 }
+/** `conflictState` from the status values a page already holds. Only a value for the member's head counts. */
+export const conflictStateFrom = (signals: readonly (QueueSignals | undefined)[]) => (member: ReviewMember) =>
+  mergeConflictState(signals.find((value) => value && queueSignalKey(value) === queueSignalKey(member)));
 /** "Notifications from org/repo: All / On me / None", once per repository of the PRs. */
 export function repositoryNotificationActions(members: readonly Pick<ReviewMember, 'repo' | 'url'>[], context: RepositoryContextValue) {
   const { notificationLevel, setNotificationLevel } = context;

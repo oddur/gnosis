@@ -28,6 +28,7 @@ import {
 import { conflictCount } from '../lib/conflict-blocks';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
+import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
 import { prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
@@ -854,9 +855,20 @@ export function createConflictResolutionService(deps: Deps) {
     ) {
       return { ...saved, stale: true };
     }
-    if (!restart && saved?.commitSha === state.headSha) {
+    // A push finished in an earlier session, with nothing left to restack, is history, not a result to show again.
+    const dependents = deps.dependents?.(url) ?? [];
+    const finished =
+      !restart &&
+      saved?.status === 'published' &&
+      saved.commitSha === state.headSha &&
+      (saved.restack ? saved.restack.status === 'published' : !dependents.length);
+    // Clean now: say so, with the last update for reference. Conflicts again (main moved), or GitHub still computing:
+    // prepare afresh below, so Git answers.
+    if (finished && state.mergeable === 'MERGEABLE' && !hasMergeConflicts(state))
+      return { ...saved, dependents, reopened: true };
+    if (!restart && !finished && saved?.commitSha === state.headSha) {
       saved.status = 'published';
-      saved.dependents = deps.dependents?.(url) ?? [];
+      saved.dependents = dependents;
       const restack = saved.restack;
       if (restack?.status === 'prepared') {
         // Recover a successful atomic push whose response or local persistence was interrupted.

@@ -677,7 +677,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       primary.current?.focus();
     });
   }, [session, selected, epoch, confirming, mode]);
-  const upToDateState = session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date';
+  const upToDateState =
+    !!session?.reopened ||
+    (session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date');
   useEffect(() => {
     if ((session?.status === 'published' && !session.dependents?.length) || upToDateState)
       requestAnimationFrame(() => done.current?.focus());
@@ -768,7 +770,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     session?.staleReason === 'retargeted'
       ? 'This PR now targets a different base branch.'
       : `Someone pushed to ${session?.headBranch ?? 'the PR branch'} after you started.`;
-  const showRail = !!steps && !!session && !upToDate && !(session.stale && !session.files.length);
+  const showRail = !!steps && !!session && !upToDateState &&!(session.stale && !session.files.length);
 
   const primaryButton = (() => {
     if (!session || !file || session.stale) return null;
@@ -970,6 +972,32 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
               )}
             </div>
           )
+        ) : session.reopened ? (
+          // An earlier session pushed, and the PR merges cleanly now. Its result is history, not news.
+          <div className="conflict-state" role="status" data-conflict-reopened="">
+            <CircleCheck size={24} aria-hidden="true" className="conflict-state-ok" />
+            <h2>Nothing to resolve</h2>
+            <p>This PR merges cleanly with {session.baseBranch}.</p>
+            {session.commitSha && (
+              <>
+                <p className="conflict-state-muted">
+                  Last update: merge commit <CommitBadge sha={session.commitSha} repo={session.headRepo} />
+                </p>
+                <p className="conflict-state-muted">
+                  To undo it, reset {session.headBranch} to{' '}
+                  <CommitBadge sha={session.headSha} repo={session.headRepo} />
+                </p>
+              </>
+            )}
+            <div className="conflict-state-actions">
+              <Button ref={done} size="sm" onClick={() => void close()}>
+                Done
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
+                Check again
+              </Button>
+            </div>
+          </div>
         ) : session.status === 'published' ? (
           <div
             className="conflict-published"

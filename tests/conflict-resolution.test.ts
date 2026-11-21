@@ -647,6 +647,37 @@ void test('reopen recognizes a successful push when saving the published state f
   assert.equal(reopened.session.status, 'published');
   assert.equal(reopened.session.commitSha, f.state.headSha);
 });
+void test('reopening after an earlier push shows nothing to resolve, or prepares again when main brought new conflicts', async (t) => {
+  const f = await fixture(t);
+  const saved = (
+    await f.run({ kind: 'save', id: f.session.id, version: f.session.version, path: 'sample.ts', contents: 'export const answer = 3;\n', resolved: true })
+  ).session;
+  const { preview } = await f.run({ kind: 'preview', id: saved.id, version: saved.version });
+  assert.ok(preview);
+  const pushed = (await f.run({ kind: 'publish', id: saved.id, version: saved.version, previewToken: preview.token, message: 'Resolve' })).session;
+  assert.equal(pushed.status, 'published');
+  assert.equal(pushed.reopened, undefined, 'The push itself shows its result');
+  Object.assign(f.state, { headSha: await f.git('rev-parse', 'feature'), mergeable: 'MERGEABLE', mergeState: 'CLEAN' });
+  const clean = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(clean.reopened, true);
+  assert.equal(clean.commitSha, f.state.headSha, 'The last update stays reachable as history');
+  assert.equal(clean.headSha, pushed.headSha, 'Undo still names the head before the push');
+  // GitHub has not answered yet: Git decides, and finds main already merged.
+  Object.assign(f.state, { mergeable: 'UNKNOWN', mergeState: 'UNKNOWN' });
+  const computing = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(computing.reopened, undefined);
+  assert.equal(computing.preparation, 'up-to-date');
+  // Main moved and conflicts again: a fresh preparation, not the old result.
+  await fs.writeFile(path.join(f.remote, 'sample.ts'), 'export const answer = 9;\n');
+  await f.git('commit', '-am', 'Main changes the answer again');
+  Object.assign(f.state, { baseSha: await f.git('rev-parse', 'main'), mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  const again = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(again.status, 'editing');
+  assert.equal(again.reopened, undefined);
+  assert.equal(again.headSha, f.state.headSha);
+  assert.equal(again.files.length, 1);
+  assert.match(again.files[0].original, /<<<<<<< /);
+});
 void test('distinguishes a clean local merge from an already incorporated base and refuses an empty update', async (t) => {
   const f = await fixture(t);
   await f.git('checkout', 'feature', '--', 'sample.ts');
