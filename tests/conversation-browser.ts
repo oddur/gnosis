@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 app.disableHardwareAcceleration();
@@ -10,6 +10,9 @@ app.disableHardwareAcceleration();
  * `FISHOT <name> <base64 PNG>` lines.
  */
 const shots = process.env.GNOSIS_FEEDBACK_INLINE_SHOTS;
+/** With GNOSIS_SUMMARY_SHOTS set, the suite only captures a richer Summary page (pushes over several days, reviews, a
+ * bot, comments) at 1440 and 1024px in both themes, printed as `SUMSHOT <name> <base64 PNG>` lines, and exits. */
+const summaryShots = process.env.GNOSIS_SUMMARY_SHOTS;
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1280, height: 800, useContentSize: true, show: true, webPreferences: { backgroundThrottling: false } });
   const errors: string[] = [];
@@ -58,6 +61,19 @@ void app.whenReady().then(async () => {
         comments:[c('tc1','maya',10,'Shutdown can race the reconnect timer. Can the timer check the closed flag first?',{diffHunk:'@@ -10,2 +10,3 @@\n const timer = setTimeout(reconnect, delay);\n const closed = false;\n+if (closed) return;'})]}],
         feedback:{comments:[c('pc1','sam',30,'Can you add the shutdown order to the description?')],reviews:[{...c('r1','maya',12,'One race remains in shutdown.'),state:'CHANGES_REQUESTED',submittedAt:at(12)}],requestedReviewers:['sam'],viewerCanUpdate:true,state:'OPEN',
         events:[{kind:'commit',id:'k1',at:at(-30),sha:'a1b2c3d4e5f6',message:'Guard the reconnect timer',author:'oddur'}]}};
+      if(${JSON.stringify(!!summaryShots)}){
+        const day=d=>-d*1440;
+        data.feedback.events=[
+          {kind:'commit',id:'k0',at:at(day(12)),sha:'9f8e7d6c5b4a',message:'Keep queued messages in the outbox',author:'oddur'},
+          {kind:'commit',id:'k0b',at:at(day(12)+5),sha:'1a2b3c4d5e6f',message:'Replay the outbox after reconnecting',author:'oddur'},
+          {kind:'review-requested',id:'rr1',at:at(day(12)+9),actor:'oddur',reviewer:'maya'},
+          {kind:'commit',id:'k1',at:at(-30),sha:'a1b2c3d4e5f6',message:'Guard the reconnect timer',author:'oddur'},
+          {kind:'commit',id:'k2',at:at(-25),sha:'b2c3d4e5f6a7',message:'test: cover a slow reconnect',author:'oddur'},
+          {kind:'force-push',id:'fp1',at:at(40),actor:'oddur',before:'a1b2c3d4e5f6',after:'c3d4e5f6a7b8'}];
+        data.feedback.comments.push(c('pc0','lena',day(11),'Does the outbox survive an app restart, or only a transport swap? A restart would need the queue on disk.'));
+        data.feedback.comments.push(c('bot1','ci-reporter[bot]',day(11)+30,'Coverage: 84.2% (+0.4%)',{author:{login:'ci-reporter[bot]',avatarUrl:'',__typename:'Bot'}}));
+        data.feedback.reviews.push({...c('r0','lena',day(10),'The approach reads well. Two small notes on naming.'),state:'COMMENTED',submittedAt:at(day(10))});
+      }
       window.electronAPI.getCachedReviewThreads=async url=>url===m.url?structuredClone(data):undefined;
       const read=window.electronAPI.getReviewThreads;
       window.electronAPI.getReviewThreads=async (url,...rest)=>url===m.url?structuredClone(data):read(url,...rest);
@@ -65,6 +81,41 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await wait("!!document.querySelector('.feedback-entry[data-feedback-id=\"t-1\"]') || !!document.querySelector('.feedback-entry[data-entry-type=description]')");
     await wait("[...document.querySelectorAll('.pr-overview-tabs [role=tab] .pr-tab-label')].map(t=>t.dataset.label).join()==='Summary,Changes,Commits,Checks,Explanation,Local notes'");
+    if (summaryShots) {
+      await wait("!!document.querySelector('.conversation-sidebar') && !!document.querySelector('.feedback-entry[data-entry-type=day]')");
+      const settle = async (width: number, height: number) => {
+        win.setContentSize(width, height);
+        await wait(`innerWidth===${width}`);
+        await js('document.fonts.ready');
+        await wait("document.querySelector('img[alt=\"Reconnect flow\"]')?.naturalWidth>0");
+      };
+      const pageScroll = (to: string) => js(`(()=>{const p=document.querySelector('[data-feedback-scroller]');p.scrollTop=0;p.scrollTop=${to}})()`);
+      const timelineTop = "document.querySelector('.feedback-toolbar').getBoundingClientRect().top-document.querySelector('[data-feedback-scroller]').getBoundingClientRect().top-8";
+      // The type in use per region: size, weight and a sample, so a pass can compare tiers in numbers too.
+      const audit = String.raw`(()=>{const regions=[['header','.pr-overview-header, .pr-overview-heading'],['tabs','.pr-overview-tabs'],['band','.conversation-band'],['description','.conversation-description'],['bar','.feedback-toolbar'],['timeline','.feedback-timeline'],['sidebar','.conversation-sidebar']];
+        const out={};for(const el of document.querySelectorAll('body *')){if(!el.checkVisibility())continue;const text=[...el.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent.trim()).join(' ').trim();if(!text)continue;
+          const region=regions.find(([,s])=>el.closest(s));if(!region)continue;const cs=getComputedStyle(el);const key=region[0]+' '+cs.fontSize+' '+cs.fontWeight;(out[key]??=new Set()).add(text.slice(0,28));}
+        return Object.entries(out).map(([k,v])=>k+' :: '+[...v].slice(0,6).join(' | ')).sort().join('\n')})()`;
+      for (const [width, height] of [[1440, 900], [1024, 768]]) {
+        await settle(width, height);
+        if (width === 1440) {
+          await pageScroll(timelineTop);
+          await waitSettled(win.webContents, 'feedback-timeline');
+          console.log(`SUMTYPE\n${await js<string>(audit)}`);
+        }
+        for (const dark of [false, true]) {
+          await js(`document.documentElement.classList.toggle('dark',${dark})`);
+          await wait(`document.documentElement.classList.contains('dark')===${dark}`);
+          for (const [part, to] of [['top', '0'], ['timeline', timelineTop]] as const) {
+            await pageScroll(to);
+            await waitSettled(win.webContents, 'feedback-timeline');
+            console.log(`SUMSHOT ${part}-${width}-${dark ? 'dark' : 'light'} ${(await win.webContents.capturePage()).toPNG().toString('base64')}`);
+          }
+        }
+      }
+      app.exit(errors.filter((e) => !e.includes('favicon')).length ? 1 : 0);
+      return;
+    }
     await wait("!!document.querySelector('.conversation-sidebar') && !!document.querySelector('.feedback-entry[data-feedback-id]')");
     // The description leads, and the first feedback starts above the fold of a 1280×800 laptop.
     const first = await js<{ type: string; feedbackTop: number; height: number; parts: unknown }>(`(()=>{const rows=[...document.querySelectorAll('.feedback-entry')].sort((a,b)=>a.dataset.index-b.dataset.index).filter(e=>e.dataset.entryType!=='day');
@@ -90,6 +141,17 @@ void app.whenReady().then(async () => {
       return {clipped:body.scrollHeight>body.clientHeight+1,toggle:!!document.querySelector('.feedback-description-toggle'),gap:Math.round(bar.getBoundingClientRect().top-sec.getBoundingClientRect().bottom)}})()`);
     assert.ok(!whole.clipped && !whole.toggle && whole.gap >= 0 && whole.gap <= 12, `The whole description, then the timeline: ${JSON.stringify(whole)}`);
     assert.match(await js<string>("document.querySelector('.conversation-sidebar').textContent"), /Reviewers.*maya.*Changes requested.*sam.*Review requested/s);
+    // The type follows the page's structure (DESIGN.md › Address Feedback › Type): comments read at the description's
+    // size; an entry's heading sits above its commit lines; the bar's controls sit below the entries; sidebar titles
+    // sit above their values; the merge verdict above its reasons.
+    const type = await js<Record<string, number | null>>(`(()=>{const px=s=>{const e=document.querySelector(s);return e?parseFloat(getComputedStyle(e).fontSize):null};
+      return {description:px('.conversation-description .pr-markdown p'),comment:px('.feedback-timeline .github-comment-body'),heading:px('.feedback-entry[data-entry-type=commits] .timeline-title'),
+        commit:px('.feedback-commits li'),control:px('.feedback-filters [data-slot=button]'),sideTitle:px('.conversation-sidebar h2'),sideValue:px('.conversation-sidebar dd'),
+        verdict:px('.band-readiness .merge-readiness-badge'),reasons:px('.band-readiness .pr-merge-detail ul')}})()`);
+    assert.ok(Object.values(type).every((v) => typeof v === 'number'), `Every tier renders: ${JSON.stringify(type)}`);
+    const t = type as Record<string, number>;
+    assert.ok(t.comment === t.description, `Comments read at the description's size: ${JSON.stringify(type)}`);
+    assert.ok(t.heading > t.commit && t.control < t.heading && t.sideTitle > t.sideValue && t.verdict > t.reasons, `Headings sit above their bodies, controls below the content: ${JSON.stringify(type)}`);
     await capture('single-pr', all);
     // Scrolled mid-timeline: the bar and the details column stay pinned.
     // Into the timeline, past the whole description, so the bar is pinned.
