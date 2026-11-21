@@ -333,6 +333,28 @@ void app.whenReady().then(async () => {
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
     win.webContents.debugger.detach();
     await js('document.activeElement?.blur()');
+
+    // ── Reduce noise: the overview lists the hunk left out as noise, and its entry opens Changes at its lines ──
+    await js(`window.selectOption('[aria-label="Explanation section"]', '0')`);
+    await wait("!!document.querySelector('.explanation-introduction .explanation-left-out summary')");
+    assert.equal(await js("document.querySelector('.explanation-left-out summary').textContent.trim()"), '1 change left out as noise');
+    await js("document.querySelector('.explanation-left-out summary').click()");
+    await wait("!!document.querySelector('.explanation-left-out li button')");
+    const leftOut = await js<{ location: string; reason: string }>(
+      "(()=>{const b=document.querySelector('.explanation-left-out li button');return {location:b.querySelector('.explanation-left-out-location').textContent,reason:b.querySelector('.explanation-left-out-reason').textContent}})()"
+    );
+    const range = /src\/scope\.ts:(\d+)(?:-(\d+))?$/.exec(leftOut.location);
+    assert.ok(range, `The entry names the file and its lines: ${leftOut.location}`);
+    assert.equal(leftOut.reason, 'import only');
+    const first = Number(range[1]);
+    const last = range[2] ? Number(range[2]) : first;
+    await js("document.querySelector('.explanation-left-out li button').click()");
+    // Changes opens the file and marks the left-out lines, as a review check's jump does.
+    await wait(
+      `window.deepAll('[data-line][data-here]',document.querySelector(${JSON.stringify(changesRow)})??document.createElement('div')).some(e=>{const n=Number(e.dataset.line);return n>=${first}&&n<=${last}})`,
+      500
+    );
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent"), 'Changes');
     assert.deepEqual(errors, []);
     if (shots) await sideBySide();
     console.log('Explanation parity checks passed');

@@ -1,0 +1,138 @@
+{
+  "id": "related-helper-edits",
+  "title": "Ask before quitting with Ctrl+C",
+  "description": "Ctrl+C asks for confirmation before the app quits.",
+  "source": "backtrack #13: the key handler change, a struct field and its initializer threaded through.",
+  "files": [
+    {
+      "path": "src/app.rs",
+      "before": [
+        "pub struct App {",
+        "    pub running: bool,",
+        "    pub selected: usize,",
+        "}",
+        "",
+        "impl Default for Mode {",
+        "    fn default() -> Self {",
+        "        Mode::Normal",
+        "    }",
+        "}",
+        "",
+        "pub fn title() -> &'static str {",
+        "    \"Files\"",
+        "}",
+        "",
+        "impl App {",
+        "    pub fn new() -> Self {",
+        "        App {",
+        "            running: true,",
+        "            selected: 0,",
+        "        }",
+        "    }",
+        "}",
+        "",
+        "impl Default for Theme {",
+        "    fn default() -> Self {",
+        "        Theme::Normal",
+        "    }",
+        "}",
+        "",
+        "pub fn subtitle() -> &'static str {",
+        "    \"Files\"",
+        "}",
+        "",
+        "pub fn on_key(app: &mut App, key: Key) {",
+        "    match key {",
+        "        Key::Ctrl('c') => app.running = false,",
+        "        Key::Down => app.selected += 1,",
+        "        _ => {}",
+        "    }",
+        "}"
+      ],
+      "after": [
+        "pub struct App {",
+        "    pub running: bool,",
+        "    pub selected: usize,",
+        "    pub quit_requested: bool,",
+        "}",
+        "",
+        "impl Default for Mode {",
+        "    fn default() -> Self {",
+        "        Mode::Normal",
+        "    }",
+        "}",
+        "",
+        "pub fn title() -> &'static str {",
+        "    \"Files\"",
+        "}",
+        "",
+        "impl App {",
+        "    pub fn new() -> Self {",
+        "        App {",
+        "            running: true,",
+        "            selected: 0,",
+        "            quit_requested: false,",
+        "        }",
+        "    }",
+        "}",
+        "",
+        "impl Default for Theme {",
+        "    fn default() -> Self {",
+        "        Theme::Normal",
+        "    }",
+        "}",
+        "",
+        "pub fn subtitle() -> &'static str {",
+        "    \"Files\"",
+        "}",
+        "",
+        "pub fn on_key(app: &mut App, key: Key) {",
+        "    match key {",
+        "        Key::Ctrl('c') if app.quit_requested => app.running = false,",
+        "        Key::Ctrl('c') => app.quit_requested = true,",
+        "        Key::Down => app.selected += 1,",
+        "        _ => {}",
+        "    }",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "aggressive-only",
+          "note": "Field threaded through for the main change."
+        },
+        {
+          "label": "aggressive-only",
+          "note": "Initializer for the new field."
+        },
+        {
+          "label": "essential",
+          "note": "Ctrl+C asks first.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "src/status.rs",
+      "before": [
+        "pub fn footer(app: &App) -> String {",
+        "    format!(\"{} selected\", app.selected)",
+        "}"
+      ],
+      "after": [
+        "pub fn footer(app: &App) -> String {",
+        "    if app.quit_requested {",
+        "        return \"Press Ctrl+C again to quit\".to_string();",
+        "    }",
+        "    format!(\"{} selected\", app.selected)",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "The prompt the user sees.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

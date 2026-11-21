@@ -302,7 +302,9 @@ export function buildTopicContext(
   prDescription: string,
   storyArc: string,
   allTopics: TopicPlan[],
-  claudeContext?: ProjectClaudeContext | null
+  claudeContext?: ProjectClaudeContext | null,
+  /** Reduce noise: hunks left out of the explanation in this topic's files, shown as context only. */
+  leftOutHunks: IndexedHunk[] = []
 ): string {
   const relevantHunks = topic.hunkIds.map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
@@ -355,6 +357,13 @@ PR Description: ${prDescription || '(none)'}
     ctx += `${hunk.expandedContent}\n\n`;
   }
   ctx += '</diff_hunks>';
+  if (leftOutHunks.length) {
+    ctx += `\n\n<left_out_hunks>
+Left out of the explanation as noise. Use them only as context, for example an import that explains a call. Do not explain or cite them, and do not anchor notes or checks to them.
+`;
+    for (const hunk of leftOutHunks) ctx += `--- ${hunk.filePath} [${hunk.id}]\n${hunk.hunkHeader}\n${hunk.content}\n\n`;
+    ctx += '</left_out_hunks>';
+  }
 
   // Scoped file contents — only for affected files
   let hasBeforeContent = false;

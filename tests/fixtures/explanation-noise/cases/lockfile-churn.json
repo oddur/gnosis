@@ -1,0 +1,143 @@
+{
+  "id": "lockfile-churn",
+  "title": "Use time-ordered IDs",
+  "description": "New records get UUIDv7 IDs, which sort by creation time.",
+  "source": "backtrack #20 and #12: Cargo.toml feature v4 to v7, Cargo.lock dedupe churn, and the call sites.",
+  "files": [
+    {
+      "path": "Cargo.toml",
+      "before": [
+        "[package]",
+        "name = \"records\"",
+        "version = \"0.3.0\"",
+        "edition = \"2021\"",
+        "",
+        "[dependencies]",
+        "serde = { version = \"1\", features = [\"derive\"] }",
+        "uuid = { version = \"1\", features = [\"v4\", \"serde\"] }"
+      ],
+      "after": [
+        "[package]",
+        "name = \"records\"",
+        "version = \"0.3.0\"",
+        "edition = \"2021\"",
+        "",
+        "[dependencies]",
+        "serde = { version = \"1\", features = [\"derive\"] }",
+        "uuid = { version = \"1\", features = [\"v7\", \"serde\"] }"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Dependency feature change.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "Cargo.lock",
+      "before": [
+        "[[package]]",
+        "name = \"getrandom\"",
+        "version = \"0.2.15\"",
+        "dependencies = [",
+        " \"cfg-if\",",
+        " \"libc\",",
+        " \"wasi\",",
+        "]",
+        "",
+        "[[package]]",
+        "name = \"records\"",
+        "version = \"0.3.0\"",
+        "dependencies = [",
+        " \"serde\",",
+        " \"uuid\",",
+        "]",
+        "",
+        "[[package]]",
+        "name = \"uuid\"",
+        "version = \"1.10.0\"",
+        "dependencies = [",
+        " \"getrandom\",",
+        " \"serde\",",
+        "]"
+      ],
+      "after": [
+        "[[package]]",
+        "name = \"getrandom\"",
+        "version = \"0.2.15\"",
+        "dependencies = [",
+        " \"cfg-if\",",
+        " \"js-sys\",",
+        " \"libc\",",
+        " \"wasi\",",
+        "]",
+        "",
+        "[[package]]",
+        "name = \"records\"",
+        "version = \"0.3.0\"",
+        "dependencies = [",
+        " \"serde\",",
+        " \"uuid\",",
+        "]",
+        "",
+        "[[package]]",
+        "name = \"uuid\"",
+        "version = \"1.10.0\"",
+        "dependencies = [",
+        " \"getrandom\",",
+        " \"rand\",",
+        " \"serde\",",
+        "]"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Lockfile churn following the manifest."
+        },
+        {
+          "label": "noise",
+          "note": "Lockfile churn following the manifest."
+        }
+      ]
+    },
+    {
+      "path": "src/record.rs",
+      "before": [
+        "use uuid::Uuid;",
+        "",
+        "pub struct Record {",
+        "    pub id: Uuid,",
+        "    pub name: String,",
+        "}",
+        "",
+        "impl Record {",
+        "    pub fn new(name: String) -> Self {",
+        "        Record { id: Uuid::new_v4(), name }",
+        "    }",
+        "}"
+      ],
+      "after": [
+        "use uuid::Uuid;",
+        "",
+        "pub struct Record {",
+        "    pub id: Uuid,",
+        "    pub name: String,",
+        "}",
+        "",
+        "impl Record {",
+        "    pub fn new(name: String) -> Self {",
+        "        Record { id: Uuid::now_v7(), name }",
+        "    }",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "IDs become time-ordered.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

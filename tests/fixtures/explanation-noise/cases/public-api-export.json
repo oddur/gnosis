@@ -1,0 +1,50 @@
+{
+  "id": "public-api-export",
+  "title": "Export the retry policy",
+  "description": "Library users can build their own retry policy.",
+  "source": "backtrack #14 (`pub use` re-export) and gnosis #463 (`export { X } from`): one-line hunks that widen the public API.",
+  "files": [
+    {
+      "path": "src/index.ts",
+      "before": [
+        "export { createClient } from './client';",
+        "export type { ClientOptions } from './client';"
+      ],
+      "after": [
+        "export { createClient } from './client';",
+        "export type { ClientOptions } from './client';",
+        "export { RetryPolicy, type RetryOptions } from './retry';"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Public API export.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/lib.rs",
+      "before": [
+        "pub mod client;",
+        "pub mod retry;",
+        "",
+        "pub use client::Client;"
+      ],
+      "after": [
+        "pub mod client;",
+        "pub mod retry;",
+        "",
+        "pub use client::Client;",
+        "pub use retry::RetryPolicy;"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Public re-export.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

@@ -210,6 +210,8 @@ export interface PlannerOutput {
   riskRationale: string;
   storyArc: string; // Overall narrative thread connecting all topics
   topics: TopicPlan[];
+  /** Reduce noise: hunks the planner judged not worth explaining (lib/explanation-noise.ts). Absent when the level is Off. */
+  noise?: { hunkId: string; reason: string }[];
 }
 
 // Writer output for a single slide in two-phase generation
@@ -244,6 +246,8 @@ export interface FileMetadata {
 
 export interface ReviewGuide {
   explanationOptions?: import('./explanation-options').ExplanationOptions;
+  /** Reduce noise: the level and the hunks left out of the explanation, listed in the overview. */
+  noiseReduction?: import('./explanation-noise').NoiseReduction;
   /** Immutable revisions and eligible image paths for on-demand previews. */
   baseSha?: string;
   baseRepo?: string;
@@ -350,6 +354,8 @@ export interface SubmitReviewRequest {
 
 export interface ReviewHistoryEntry {
   explanationOptions?: import('./explanation-options').ExplanationOptions;
+  /** The repository's Reduce noise level when generation started: a later change to it makes this explanation out of date. */
+  noiseDefault?: import('./explanation-options').NoiseLevel;
   snapshot?: ReviewSnapshot;
   id: string;
   prTitle: string;

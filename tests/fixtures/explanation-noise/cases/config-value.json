@@ -1,0 +1,52 @@
+{
+  "id": "config-value",
+  "title": "Allow five upload attempts",
+  "description": "Uploads retry up to five times.",
+  "source": "gnosis #411 and backtrack #2: a config value changed; a comment in the same YAML reworded.",
+  "files": [
+    {
+      "path": "config/upload.yaml",
+      "before": [
+        "# Upload settings. Values apply to every worker.",
+        "upload:",
+        "  bucket: assets",
+        "  region: eu-west-1",
+        "  part_size_mb: 8",
+        "  timeout_s: 60",
+        "  storage_class: standard",
+        "  tags:",
+        "    team: media",
+        "    tier: hot",
+        "retry:",
+        "  max_attempts: 3",
+        "  backoff_ms: 200"
+      ],
+      "after": [
+        "# Upload settings. These values apply to every worker.",
+        "upload:",
+        "  bucket: assets",
+        "  region: eu-west-1",
+        "  part_size_mb: 8",
+        "  timeout_s: 60",
+        "  storage_class: standard",
+        "  tags:",
+        "    team: media",
+        "    tier: hot",
+        "retry:",
+        "  max_attempts: 5",
+        "  backoff_ms: 200"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Comment reworded only."
+        },
+        {
+          "label": "essential",
+          "note": "Config value change.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

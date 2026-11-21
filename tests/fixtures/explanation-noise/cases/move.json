@@ -1,0 +1,67 @@
+{
+  "id": "move",
+  "title": "Validate tokens before refreshing",
+  "description": "Refresh rejects malformed tokens before calling the server.",
+  "source": "gnosis #463: a definition moved without change (a delete and an add), beside the real change.",
+  "files": [
+    {
+      "path": "src/auth/tokens.ts",
+      "before": [
+        "export function maskToken(token: string): string {",
+        "  return token.length <= 8 ? '****' : `${token.slice(0, 4)}…${token.slice(-4)}`;",
+        "}",
+        "",
+        "export interface Tokens {",
+        "  access: string;",
+        "  refresh: string;",
+        "}",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export async function refresh(tokens: Tokens, fetchTokens: (refresh: string) => Promise<Tokens>): Promise<Tokens> {",
+        "  return fetchTokens(tokens.refresh);",
+        "}"
+      ],
+      "after": [
+        "export interface Tokens {",
+        "  access: string;",
+        "  refresh: string;",
+        "}",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export async function refresh(tokens: Tokens, fetchTokens: (refresh: string) => Promise<Tokens>): Promise<Tokens> {",
+        "  if (!/^[\\w-]{20,}$/.test(tokens.refresh)) throw new Error('Malformed refresh token');",
+        "  return fetchTokens(tokens.refresh);",
+        "}",
+        "",
+        "export function maskToken(token: string): string {",
+        "  return token.length <= 8 ? '****' : `${token.slice(0, 4)}…${token.slice(-4)}`;",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "maskToken deleted here (moved without change)."
+        },
+        {
+          "label": "essential",
+          "note": "Rejects malformed tokens (and maskToken arrives in the same hunk).",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

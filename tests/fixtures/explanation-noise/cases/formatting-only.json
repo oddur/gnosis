@@ -1,0 +1,96 @@
+{
+  "id": "formatting-only",
+  "title": "Skip archived projects in the sync",
+  "description": "The sync no longer visits archived projects.",
+  "source": "gnosis #463: a call Prettier split over three lines, with its quotes normalized.",
+  "files": [
+    {
+      "path": "src/sync/report.ts",
+      "before": [
+        "import type { Project } from './types';",
+        "",
+        "export function summary(projects: Project[]): string {",
+        "  const names = projects.map((project) => `${project.owner}/${project.name} (${project.visibility})`).join(\", \");",
+        "  return `Synced ${projects.length} projects: ${names}`;",
+        "}",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export function columns(widths: number[]): string {",
+        "  return widths.map((width) => '-'.repeat(width)).join(' ');",
+        "}"
+      ],
+      "after": [
+        "import type { Project } from './types';",
+        "",
+        "export function summary(projects: Project[]): string {",
+        "  const names = projects",
+        "    .map((project) => `${project.owner}/${project.name} (${project.visibility})`)",
+        "    .join(', ');",
+        "  return `Synced ${projects.length} projects: ${names}`;",
+        "}",
+        "",
+        "export function describe(value: number): string {",
+        "  if (value < 0) return 'negative';",
+        "  if (value === 0) return 'zero';",
+        "  if (value < 10) return 'small';",
+        "  if (value < 100) return 'medium';",
+        "  return 'large';",
+        "}",
+        "",
+        "export function columns(widths: number[]): string {",
+        "  return widths.map((width) => '-'.repeat(width)).join(' ');",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Prettier re-wrap and quote style only."
+        }
+      ]
+    },
+    {
+      "path": "src/sync/run.ts",
+      "before": [
+        "import type { Project } from './types';",
+        "import { syncProject } from './project';",
+        "",
+        "export async function syncAll(projects: Project[]): Promise<number> {",
+        "  let synced = 0;",
+        "  for (const project of projects) {",
+        "    await syncProject(project);",
+        "    synced++;",
+        "  }",
+        "  return synced;",
+        "}"
+      ],
+      "after": [
+        "import type { Project } from './types';",
+        "import { syncProject } from './project';",
+        "",
+        "export async function syncAll(projects: Project[]): Promise<number> {",
+        "  let synced = 0;",
+        "  for (const project of projects) {",
+        "    if (project.archived) continue;",
+        "    await syncProject(project);",
+        "    synced++;",
+        "  }",
+        "  return synced;",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Skips archived projects.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

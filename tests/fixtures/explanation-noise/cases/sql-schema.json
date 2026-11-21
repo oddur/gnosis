@@ -1,0 +1,104 @@
+{
+  "id": "sql-schema",
+  "title": "Cache folder IDs on links",
+  "description": "Links store their folder so the folder view needs no join.",
+  "source": "backtrack #22 and #16: a SQL migration, an inline SQL change, a proto field; plus a comment-only edit in an older migration.",
+  "files": [
+    {
+      "path": "migrations/0007_link_folder.sql",
+      "before": null,
+      "after": [
+        "-- Links remember their folder so the folder view needs no join.",
+        "ALTER TABLE links ADD COLUMN folder_id TEXT;",
+        "CREATE INDEX links_folder ON links (folder_id);"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Schema migration.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "migrations/0003_links.sql",
+      "before": [
+        "-- Links table.",
+        "CREATE TABLE links (",
+        "  id TEXT PRIMARY KEY,",
+        "  url TEXT NOT NULL",
+        ");"
+      ],
+      "after": [
+        "-- Links: one row per saved URL.",
+        "CREATE TABLE links (",
+        "  id TEXT PRIMARY KEY,",
+        "  url TEXT NOT NULL",
+        ");"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Comment-only edit in an old migration."
+        }
+      ]
+    },
+    {
+      "path": "src/links.rs",
+      "before": [
+        "pub async fn move_link(db: &Pool, id: &str, folder: &str) -> Result<()> {",
+        "    sqlx::query(\"UPDATE links SET dirty = 1 WHERE id = ?\")",
+        "        .bind(id)",
+        "        .execute(db)",
+        "        .await?;",
+        "    Ok(())",
+        "}"
+      ],
+      "after": [
+        "pub async fn move_link(db: &Pool, id: &str, folder: &str) -> Result<()> {",
+        "    sqlx::query(\"UPDATE links SET folder_id = ?, dirty = 1 WHERE id = ?\")",
+        "        .bind(folder)",
+        "        .bind(id)",
+        "        .execute(db)",
+        "        .await?;",
+        "    Ok(())",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Inline SQL changes what is written.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "proto/links.proto",
+      "before": [
+        "syntax = \"proto3\";",
+        "",
+        "message Link {",
+        "  string id = 1;",
+        "  string url = 2;",
+        "}"
+      ],
+      "after": [
+        "syntax = \"proto3\";",
+        "",
+        "message Link {",
+        "  string id = 1;",
+        "  string url = 2;",
+        "  // The folder the link is in, empty for the root.",
+        "  string folder_id = 3;",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Wire schema field.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

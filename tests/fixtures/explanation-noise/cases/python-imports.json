@@ -1,0 +1,101 @@
+{
+  "id": "python-imports",
+  "title": "Time out slow health checks",
+  "description": "Health checks give up after two seconds.",
+  "source": "Python `from x import (a, b)` widened (noise) and a third-party module imported for the first time (a new dependency).",
+  "files": [
+    {
+      "path": "service/health.py",
+      "before": [
+        "from service.checks import (",
+        "    check_db,",
+        "    check_queue,",
+        ")",
+        "# 0",
+        "# 1",
+        "# 2",
+        "# 3",
+        "# 4",
+        "# 5",
+        "# 6",
+        "# 7",
+        "",
+        "def run_checks():",
+        "    return [check_db(), check_queue()]"
+      ],
+      "after": [
+        "from service.checks import (",
+        "    check_cache,",
+        "    check_db,",
+        "    check_queue,",
+        ")",
+        "# 0",
+        "# 1",
+        "# 2",
+        "# 3",
+        "# 4",
+        "# 5",
+        "# 6",
+        "# 7",
+        "",
+        "def run_checks():",
+        "    return [check_db(), check_queue(), check_cache()]"
+      ],
+      "hunks": [
+        {
+          "label": "noise",
+          "note": "Import list widened."
+        },
+        {
+          "label": "essential",
+          "note": "Adds the cache check.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "service/probe.py",
+      "before": [
+        "import json",
+        "# 0",
+        "# 1",
+        "# 2",
+        "# 3",
+        "# 4",
+        "# 5",
+        "# 6",
+        "# 7",
+        "",
+        "def probe(url):",
+        "    return json.dumps({\"url\": url})"
+      ],
+      "after": [
+        "import json",
+        "import httpx",
+        "# 0",
+        "# 1",
+        "# 2",
+        "# 3",
+        "# 4",
+        "# 5",
+        "# 6",
+        "# 7",
+        "",
+        "def probe(url):",
+        "    response = httpx.get(url, timeout=2.0)",
+        "    return json.dumps({\"url\": url, \"status\": response.status_code})"
+      ],
+      "hunks": [
+        {
+          "label": "aggressive-only",
+          "note": "First import of a third-party package: a new dependency."
+        },
+        {
+          "label": "essential",
+          "note": "Probes with a two-second timeout.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}

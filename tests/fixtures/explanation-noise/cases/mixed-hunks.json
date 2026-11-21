@@ -1,0 +1,55 @@
+{
+  "id": "mixed-hunks",
+  "title": "Key snapshots by project",
+  "description": "Snapshots are keyed by project, not by a bare UUID.",
+  "source": "backtrack #19 (rustfmt wrap plus a type change) and gnosis #463, #377 (a brace removal or class collapse beside a condition).",
+  "files": [
+    {
+      "path": "src/snapshots.rs",
+      "before": [
+        "pub fn stale(index: &Index, now: u64) -> Vec<Uuid> {",
+        "    let ids: Vec<Uuid> = index.entries().filter(|e| e.expires < now).map(|e| e.id).collect();",
+        "    ids",
+        "}"
+      ],
+      "after": [
+        "pub fn stale(index: &Index, now: u64) -> Vec<SnapshotKey> {",
+        "    let ids: Vec<SnapshotKey> =",
+        "        index.entries().filter(|e| e.expires <= now).map(|e| e.key).collect();",
+        "    ids",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "rustfmt wrap mixed with a type and boundary change.",
+          "behavior": true
+        }
+      ]
+    },
+    {
+      "path": "src/flush.ts",
+      "before": [
+        "export function shouldFlush(pending: string[], force: boolean): boolean {",
+        "  if (pending.length) {",
+        "    return true;",
+        "  }",
+        "  return false;",
+        "}"
+      ],
+      "after": [
+        "export function shouldFlush(pending: string[], force: boolean): boolean {",
+        "  if (pending.length || force) return true;",
+        "  return false;",
+        "}"
+      ],
+      "hunks": [
+        {
+          "label": "essential",
+          "note": "Braces removed and a condition added in one hunk.",
+          "behavior": true
+        }
+      ]
+    }
+  ]
+}
