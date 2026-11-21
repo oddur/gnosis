@@ -1,5 +1,12 @@
 import { chatQuestion } from './chat-context';
-import { appendTraceSteps, slideChatTrace, type ChatTrace, type ChatTraceStep } from './chat-trace';
+import {
+  appendTraceSteps,
+  settleTrace,
+  slideChatTrace,
+  type ChatTiming,
+  type ChatTrace,
+  type ChatTraceStep,
+} from './chat-trace';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ReviewGuide, Provider, ModelId, SendSlideChatRequest } from './types';
 
@@ -10,6 +17,8 @@ export interface ChatMessage {
   isStreaming?: boolean;
   /** What the answer was built from: assembled context, plus any tool calls the AI reported. */
   trace?: ChatTrace;
+  /** When the question was sent, the first words arrived and the answer ended: the trace's timing. */
+  timing?: ChatTiming;
   error?: string;
   stopped?: boolean;
   selection?: string;
@@ -26,11 +35,19 @@ const anyStreaming = () =>
 type Action =
   | { type: 'SEND'; slideIndex: number; userMessage: ChatMessage; assistantMessage: ChatMessage; retryId?: string }
   | { type: 'APPEND_CHUNK'; slideIndex: number; assistantId: string; chunk: string }
-  | { type: 'TRACE'; slideIndex: number; assistantId: string; steps: ChatTraceStep[] }
+  | { type: 'TRACE'; slideIndex: number; assistantId: string; steps: Partial<ChatTraceStep>[] }
   | { type: 'FINALIZE'; slideIndex: number; assistantId: string; content: string }
   | { type: 'ERROR'; slideIndex: number; assistantId: string; error: string }
   | { type: 'STOP'; slideIndex: number; assistantId: string }
   | { type: 'CLEAR'; slideIndex: number };
+
+/** An answer that ends stops its clock and its running tool calls. */
+function ended(message: ChatMessage, status: 'done' | 'error' = 'done'): Partial<ChatMessage> {
+  return {
+    trace: settleTrace(message.trace, status),
+    ...(message.timing && !message.timing.doneAt ? { timing: { ...message.timing, doneAt: Date.now() } } : {}),
+  };
+}
 
 function reducer(state: MessagesMap, action: Action): MessagesMap {
   const next = new Map(state);
@@ -51,7 +68,17 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
       if (!msgs) return state;
       next.set(
         action.slideIndex,
-        msgs.map((m) => (m.id === action.assistantId ? { ...m, content: m.content + action.chunk } : m))
+        msgs.map((m) =>
+          m.id === action.assistantId
+            ? {
+                ...m,
+                content: m.content + action.chunk,
+                ...(m.timing && !m.timing.firstTextAt && action.chunk
+                  ? { timing: { ...m.timing, firstTextAt: Date.now() } }
+                  : {}),
+              }
+            : m
+        )
       );
       return next;
     }
@@ -60,7 +87,14 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
       if (!msgs) return state;
       next.set(
         action.slideIndex,
-        msgs.map((m) => (m.id === action.assistantId ? { ...m, trace: appendTraceSteps(m.trace, action.steps) } : m))
+        msgs.map((m) =>
+          m.id === action.assistantId
+            ? {
+                ...m,
+                trace: appendTraceSteps(m.trace, action.steps, m.timing ? Date.now() - m.timing.sentAt : undefined),
+              }
+            : m
+        )
       );
       return next;
     }
@@ -69,7 +103,9 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
       if (!msgs) return state;
       next.set(
         action.slideIndex,
-        msgs.map((m) => (m.id === action.assistantId ? { ...m, content: action.content, isStreaming: false } : m))
+        msgs.map((m) =>
+          m.id === action.assistantId ? { ...m, ...ended(m), content: action.content, isStreaming: false } : m
+        )
       );
       return next;
     }
@@ -78,7 +114,9 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
       if (!msgs) return state;
       next.set(
         action.slideIndex,
-        msgs.map((m) => (m.id === action.assistantId ? { ...m, error: action.error, isStreaming: false } : m))
+        msgs.map((m) =>
+          m.id === action.assistantId ? { ...m, ...ended(m, 'error'), error: action.error, isStreaming: false } : m
+        )
       );
       return next;
     }
@@ -86,7 +124,7 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
       next.set(
         action.slideIndex,
         (next.get(action.slideIndex) ?? []).map((m) =>
-          m.id === action.assistantId ? { ...m, isStreaming: false, stopped: true } : m
+          m.id === action.assistantId ? { ...m, ...ended(m), isStreaming: false, stopped: true } : m
         )
       );
       return next;
@@ -190,7 +228,8 @@ export function useSlideChat(
         content: '',
         isStreaming: true,
         // This renderer assembles the topic prompt, so its context is known before the model starts.
-        trace: slideChatTrace(req, slide.diffHunks, selection),
+        trace: appendTraceSteps(undefined, slideChatTrace(req, slide.diffHunks, selection).steps, 0),
+        timing: { sentAt: Date.now() },
       };
 
       runs.set(`${key}:${slideIndex}`, run);

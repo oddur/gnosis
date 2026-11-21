@@ -10,7 +10,8 @@ export function createClaudeEventHandler({
   onChunk,
   onToolUse,
   onToolCall,
-}: Pick<GenerateOptions, 'onChunk' | 'onToolUse' | 'onToolCall'>) {
+  onToolResult,
+}: Pick<GenerateOptions, 'onChunk' | 'onToolUse' | 'onToolCall' | 'onToolResult'>) {
   let fullText = '';
   let streamError = '';
   const calls = new Set<string>();
@@ -25,6 +26,29 @@ export function createClaudeEventHandler({
             streamError = outer.result;
           } else if (typeof outer.result === 'string') {
             fullText = outer.result;
+          }
+          return;
+        }
+        // Tool results come back as `user` messages, each block naming the call it answers.
+        if (outer.type === 'user') {
+          const message = outer.message as { content?: unknown } | undefined;
+          for (const block of Array.isArray(message?.content) ? message.content : []) {
+            const b = block as Record<string, unknown> | null;
+            if (b?.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
+            const output =
+              typeof b.content === 'string'
+                ? b.content
+                : Array.isArray(b.content)
+                  ? b.content
+                      .map((part) =>
+                        part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+                          ? (part as { text: string }).text
+                          : ''
+                      )
+                      .filter(Boolean)
+                      .join('\n')
+                  : '';
+            onToolResult?.({ id: b.tool_use_id, output, isError: b.is_error === true });
           }
           return;
         }

@@ -13,7 +13,8 @@ const INSTALL_HINT = 'Install with `npm install -g @openai/codex`, then sign in 
 /** Codex exec emits complete items, rather than Claude's text deltas. */
 export function createCodexEventHandler(
   onChunk?: GenerateOptions['onChunk'],
-  onToolCall?: GenerateOptions['onToolCall']
+  onToolCall?: GenerateOptions['onToolCall'],
+  onToolResult?: GenerateOptions['onToolResult']
 ) {
   let failure: string | undefined;
   let hasAgentMessage = false;
@@ -43,6 +44,12 @@ export function createCodexEventHandler(
         if (call && !(call.id && calls.has(call.id))) {
           if (call.id) calls.add(call.id);
           onToolCall?.(call);
+        }
+        const item = event.item as Record<string, unknown>;
+        if (call?.id && event.type === 'item.completed') {
+          const output = typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
+          const failed = item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
+          onToolResult?.({ id: call.id, output, isError: failed });
         }
       }
       // Top-level error events can be transient retries; turn.failed is terminal.
@@ -80,7 +87,7 @@ async function generate(opts: GenerateOptions): Promise<string> {
       await fs.writeFile(imagePath, Buffer.from(image.base64, 'base64'), { mode: 0o600 });
       imageArgs.push('--image', imagePath);
     }
-    const events = createCodexEventHandler(opts.onChunk, opts.onToolCall);
+    const events = createCodexEventHandler(opts.onChunk, opts.onToolCall, opts.onToolResult);
     await spawnCliStreaming({
       binPath: resolveBinaryPath('codex', [path.join(os.homedir(), '.volta/bin/codex')]),
       cliName: 'Codex',
