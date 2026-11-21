@@ -10,7 +10,7 @@ import csharpWasm from '../src/assets/tree-sitter/csharp.wasm?url';
 import jsonWasm from '../src/assets/tree-sitter/json.wasm?url';
 import yamlWasm from '../src/assets/tree-sitter/yaml.wasm?url';
 import type { SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
-import { blocksSignature, changeBlocks, type NoiseBlock } from './semantic-noise';
+import { blocksSignature, changeBlocks, NOISE_MAX_CHARACTERS, type NoiseBlock } from './semantic-noise';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
@@ -336,11 +336,7 @@ type NoiseTiming = Extract<SyntaxResponse, { noise: unknown }>['timing'];
 const noiseTimings = new Map<number, (timing: NoiseTiming) => void>();
 /** The last comparisons, newest last, for the diagnostics export and the browser checks. */
 export const noiseClassifyTimings: (NoiseTiming & { key: string; language: SyntaxLanguage; characters: number })[] = [];
-/**
- * Files larger than this are not compared: a comparison parses both sides in the one worker, and a long one would hold
- * up the next file's breadcrumbs.
- */
-export const NOISE_MAX_CHARACTERS = 400_000;
+export { NOISE_MAX_CHARACTERS };
 type NoiseHunks = Extract<SyntaxRequest, { type: 'noise' }>['hunks'];
 let symbolsWanted: (fileKey: string) => boolean = () => false;
 /** Which files' whole comparisons fingerprint moved symbols too (lib/moved-symbols-store.ts). */

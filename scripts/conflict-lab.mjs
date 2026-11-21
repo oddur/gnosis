@@ -24,6 +24,7 @@ import { blockProposals } from '../lib/conflict-carry.ts';
 import { hasConflictMarkers } from '../lib/conflict-resolution.ts';
 import { parseConflicts } from '../lib/conflict-blocks.ts';
 import { createSyntaxEngine } from '../lib/syntax-scope.ts';
+import { NOISE_MAX_CHARACTERS } from '../lib/semantic-noise.ts';
 import { runConflictProcess } from '../src/conflict-process.ts';
 import { proposedChecks } from './conflict-lab-fixes.mjs';
 import { bare, bareGit, casePlan, commitFiles, loadCases, root, sortedLines, squash } from './conflict-lab-lib.mjs';
@@ -56,7 +57,7 @@ const equivalence =
   (off = []) =>
   async (language, before, after) => {
     if (off.includes(language)) throw new Error('This language is off in Settings');
-    if (Math.max(before.length, after.length) > 400_000) throw new Error('This file is too large to compare');
+    if (Math.max(before.length, after.length) > NOISE_MAX_CHARACTERS) throw new Error('This file is too large to compare');
     return engine.equivalent(language, before, after);
   };
 

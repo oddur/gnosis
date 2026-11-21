@@ -886,6 +886,12 @@ const commentTexts = (comments: readonly Comment[], row: number, count: number) 
 const JOIN_BLOCKS = 48;
 const JOIN_GAP = 40;
 
+/**
+ * Files larger than this are not compared: a comparison parses both sides in the one worker, and a long one would hold
+ * up the next file's breadcrumbs.
+ */
+export const NOISE_MAX_CHARACTERS = 400_000;
+
 export interface NoiseParser {
   /** Parses `text`, reusing `previous` (already edited to match) where it can, as tree-sitter's incremental parse. */
   parse: (text: string, previous?: TreeSitter.Tree) => TreeSitter.Tree | null;

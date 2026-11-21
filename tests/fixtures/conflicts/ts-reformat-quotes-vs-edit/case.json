@@ -1,0 +1,8 @@
+{
+  "description": "The PR only changes a string's quotes; main changes an argument on the same line. Mergiraf keeps the PR's quotes with main's argument, which the formatting check proves.",
+  "language": "typescript",
+  "category": "structure/format-vs-edit",
+  "expected": {
+    "src/greet.ts": "merged"
+  }
+}

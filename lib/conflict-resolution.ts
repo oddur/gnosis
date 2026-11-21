@@ -106,7 +106,9 @@ export interface ConflictReply {
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 export function hasConflictMarkers(text: string) {
-  return /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/m.test(text);
+  // A line of `=======` is also a Markdown or reStructuredText heading underline: alone, it is not a marker. It
+  // counts beside an opening or closing marker, which this finds anyway.
+  return /^(?:<{7,}|>{7,}|\|{7,})(?:\s|$)/m.test(text);
 }
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';

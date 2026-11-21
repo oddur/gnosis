@@ -116,9 +116,12 @@ export async function verifyProposals(
     for (const s of segments) {
       const proposal = s.kind === 'conflict' ? proposals[s.index] : undefined;
       if (s.kind !== 'conflict' || !proposal) continue;
+      // Spacing inside a line is ignored by the count, so a side whose only change was spacing looks unchanged. Counted
+      // again with spacing, such a block is two changes to the same lines: the formatting check below decides it.
       let note = whole
         ? accountWholeFile(file, proposal.text, indented)
-        : accountLines(s.block, proposal.text, indented);
+        : (accountLines(s.block, proposal.text, indented) ??
+          (indented ? undefined : accountLines(s.block, proposal.text, true)));
       if (note === SAME_LINES && !whole) {
         const formatted = await reformatted(segments, s.index, proposal.text, language, equivalent);
         if (formatted?.merged) {
@@ -141,14 +144,34 @@ export async function verifyProposals(
 
 /** The line check's note when both sides changed the same lines: the proposal combines them, so read it. */
 export const SAME_LINES = 'Both sides changed the same lines. Check that the result keeps both changes.';
-/** Lines that hold code, for comparing a proposal's layout with a side's. */
-const codeLines = (text: string) => text.split(/\r?\n/).filter((line) => line.trim()).length;
+/** Tokens as the layout check reads them: runs of whitespace, words and numbers, and each other character. */
+const layoutTokens = (text: string) => text.match(/\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
+/** The tokens `after` drops from `before` and the ones it adds, in order. */
+function tokenChanges(before: readonly string[], after: readonly string[]) {
+  const removed: string[] = [];
+  const added: string[] = [];
+  for (const part of diffArrays([...before], [...after]))
+    if (part.removed) removed.push(...part.value);
+    else if (part.added) added.push(...part.value);
+  return `${removed.join('\u0000')}\u0001${added.join('\u0000')}`;
+}
+/**
+ * The proposal is the reformatting side's text with exactly the editing side's token changes, spaces in them
+ * included: the same whitespace, quotes and punctuation everywhere else. Any doubt (the two diffs pair tokens
+ * differently) is a difference.
+ */
+export function keepsLayout(block: { base: string; edited: string; formatted: string }, proposal: string) {
+  return (
+    tokenChanges(layoutTokens(block.base), layoutTokens(block.edited)) ===
+    tokenChanges(layoutTokens(block.formatted), layoutTokens(proposal))
+  );
+}
 
 /**
  * A conflict where one side only reformatted the lines the other side changed. Each version of the conflict is read
  * in the file around it (other conflicts as the PR wrote them) and compared with the ancestor's by its syntax tree,
- * formatting aside. The proposal is Merged only when it is the same program as the changing side's version and keeps
- * the reformatting side's layout, line for line. Undefined when neither side, or both, only reformatted.
+ * formatting aside. The proposal is Merged only when it is the same program as the changing side's version and is the
+ * reformatting side's text with only the changing side's tokens changed (keepsLayout). Undefined when neither side, or both, only reformatted.
  */
 async function reformatted(
   segments: ConflictSegment[],
@@ -163,16 +186,20 @@ async function reformatted(
   const fill = (text: string) =>
     segments.map((s) => (s.kind === 'text' ? s.text : s.index === index ? text : s.block.ours)).join('');
   try {
-    const [pr, main] = await Promise.all([
-      equivalent(language, fill(base), fill(ours)),
-      equivalent(language, fill(base), fill(theirs)),
+    // One round of comparisons: which side only reformatted, and whether the result is either side's program.
+    const [baseText, result] = [fill(base), fill(proposal)];
+    const [pr, main, likeMain, likePr] = await Promise.all([
+      equivalent(language, baseText, fill(ours)),
+      equivalent(language, baseText, fill(theirs)),
+      equivalent(language, fill(theirs), result),
+      equivalent(language, fill(ours), result),
     ]);
     if (pr === main) return undefined;
     const [formatter, editor] = pr ? ['the PR', 'main'] : ['main', 'the PR'];
     const lead = `${pr ? 'The PR' : 'Main'} only reformatted these lines and ${editor} changed them`;
-    if (!(await equivalent(language, fill(pr ? theirs : ours), fill(proposal))))
+    if (!(pr ? likeMain : likePr))
       return { merged: false, note: `${lead}. The result doesn’t match ${editor}’s change. Check it.` };
-    if (codeLines(proposal) !== codeLines(pr ? ours : theirs))
+    if (!keepsLayout({ base, edited: pr ? theirs : ours, formatted: pr ? ours : theirs }, proposal))
       return {
         merged: false,
         note: `${lead}. The result keeps ${editor}’s change, but not in ${formatter}’s layout. Check it.`,
@@ -528,6 +555,8 @@ export type FileStatus =
   | { kind: 'proposal' }
   | { kind: 'buckets'; decide: number; check: number; merged: number }
   | { kind: 'conflicted'; conflicts: number }
+  /** A line that looks like a conflict marker, outside any whole conflict: a stray `>>>>>>>` left after an edit. */
+  | { kind: 'marker' }
   | { kind: 'resolved' }
   | { kind: 'reviewed' };
 export function fileStatus(
@@ -539,11 +568,13 @@ export function fileStatus(
   if (file.unsupported) return { kind: 'unsupported' };
   if (proposalReady(file, draft, buckets)) return { kind: 'proposal' };
   if (stage === 'reviewed') return { kind: 'reviewed' };
+  // A marker line with no whole conflict around it blocks Mark reviewed: say so, before any bucket.
+  const conflicts = stage === 'conflicted' ? conflictCount(draft) : 0;
+  if (stage === 'conflicted' && !conflicts) return { kind: 'marker' };
   const counts = { decide: 0, check: 0, merged: 0 };
   for (const bucket of buckets) if (bucket !== 'decided') counts[bucket]++;
   if (counts.decide || counts.check || counts.merged) return { kind: 'buckets', ...counts };
-  if (stage === 'conflicted') return { kind: 'conflicted', conflicts: conflictCount(draft) };
-  return { kind: 'resolved' };
+  return stage === 'conflicted' ? { kind: 'conflicted', conflicts } : { kind: 'resolved' };
 }
 /** The parts a status shows, each with its tone (the icon): "1 to decide", "2 to check", "Resolved · needs review". */
 export function fileStatusParts(
@@ -563,6 +594,8 @@ export function fileStatusParts(
         }));
     case 'conflicted':
       return [{ tone: 'conflicted', text: `${status.conflicts} ${status.conflicts === 1 ? 'conflict' : 'conflicts'}` }];
+    case 'marker':
+      return [{ tone: 'conflicted', text: 'Conflict marker left' }];
     case 'resolved':
       return [{ tone: 'resolved', text: 'Resolved · needs review' }];
     case 'reviewed':
@@ -572,6 +605,7 @@ export function fileStatusParts(
 /** The footer's words for the open file: "1 to check in this file", or nothing once it waits for Mark reviewed. */
 export function fileStatusLine(status: FileStatus): string | undefined {
   if (status.kind === 'proposal') return '1 proposal to check';
+  if (status.kind === 'marker') return 'A conflict marker is left in the file. Check the result';
   if (status.kind === 'conflicted') return `${fileStatusParts(status)[0].text} left in this file`;
   if (status.kind === 'buckets')
     return `${fileStatusParts(status)
@@ -583,7 +617,7 @@ export interface BucketSummary {
   files: number;
   conflicts: number;
   merged: number;
-  /** Decide blocks, and Check blocks in files you have not marked reviewed. */
+  /** Decide and Check blocks in files you have not marked reviewed. */
   needs: number;
   /** Proposals whose checks are still running. */
   checking: number;
@@ -611,9 +645,11 @@ export function bucketSummary(
     for (const bucket of buckets) {
       summary.conflicts++;
       if (bucket === 'merged') summary.merged++;
-      else if (bucket === 'decide' || (bucket === 'check' && !reviewed)) summary.needs++;
+      // A reviewed file needs nothing more, whatever its buckets: its status is Reviewed everywhere.
+      if (reviewed) continue;
+      if (bucket === 'decide' || bucket === 'check') summary.needs++;
       if (bucket === 'decide') summary.decide++;
-      if (bucket === 'check' && whole && !reviewed) summary.wholeConflicts++;
+      if (bucket === 'check' && whole) summary.wholeConflicts++;
       // Only a proposal is in Check: with no verdict yet, its checks are running.
       if (bucket === 'check' && !verdict) summary.checking++;
     }
