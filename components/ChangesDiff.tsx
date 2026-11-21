@@ -1920,12 +1920,13 @@ export function ChangesDiff<A>({
           onGo={mark.sameFile || openMove ? () => goToMove(mark) : undefined}
         />
       );
-      const left = leads.find((mark) => !split || mark.side === 'before');
-      const right = split ? leads.find((mark) => mark.side === 'after') : undefined;
+      // Unified: every lead note, stacked. Split: one per column.
+      const left = split ? leads.filter((mark) => mark.side === 'before') : leads;
+      const right = split ? leads.filter((mark) => mark.side === 'after') : [];
       current.children.push(
         <div key={`move-lead-${block.key}`} className="diff-move-lead" data-split={split || undefined}>
-          {left ? note(left) : <div aria-hidden="true" />}
-          {right && note(right)}
+          {left.length ? <div>{left.map(note)}</div> : <div aria-hidden="true" />}
+          {right.length > 0 && <div>{right.map(note)}</div>}
         </div>
       );
     }
