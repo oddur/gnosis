@@ -123,7 +123,7 @@ void app.whenReady().then(async () => {
   const texts = (name: string) => js<string[]>(`[...document.querySelectorAll('${section(name)} .morning-row')].map(${parts})`);
   const rowText = (id: string) => js<string>(`(()=>{const r=document.querySelector('${P} [data-overview-row-item="${id}"]');return r?(${parts})(r):''})()`);
   // A section heading equals the sum of what its top rows say they hold: "2 PRs · …", "1 running", "4 PRs in 2 stacks", "1 failing check, 1 conflict".
-  const rowSum = (name: string) => js<number>(`[...document.querySelectorAll('${section(name)} .morning-row:not(.is-nested) .morning-detail')].reduce((t,d)=>{const x=d.textContent;const why=[...x.matchAll(/([0-9]+) (failing check|conflict|needs? rebasing)/g)];return t+(why.length?why.reduce((n,m)=>n+Number(m[1]),0):Number(x.match(/^[0-9]+/)?.[0] ?? 1))},0)`);
+  const rowSum = (name: string) => js<number>(`[...document.querySelectorAll('${section(name)} .morning-row:not(.is-nested) .morning-detail')].reduce((t,d)=>{const x=d.textContent;const why=[...x.matchAll(/([0-9]+) (failing check|conflict|needs? to move)/g)];return t+(why.length?why.reduce((n,m)=>n+Number(m[1]),0):Number(x.match(/^[0-9]+/)?.[0] ?? 1))},0)`);
   // Every PR the page lists outside stack chains, from each row's data-overview-prs: no PR twice. A chain shows its
   // whole stack, so its lines are exempt; each is a full line, and one another section lists links there.
   const listed = () => js<string[]>(`[...document.querySelectorAll('${P} [data-overview-prs]')].filter(r=>!r.closest('.morning-chain')).flatMap(r=>r.dataset.overviewPrs.split(' ').filter(Boolean))`);
@@ -610,7 +610,7 @@ void app.whenReady().then(async () => {
       'feat: add the market and create its first listings | seed | 3 PRs · Merge #35392 (no review); 2 PRs wait on it',
       'fix: keep Steam and Epic store orders in step | service-payment-bridge | 4 PRs · Merge #383 (no review); 3 PRs wait on it',
       'Launcher i18n | seed-launcher | 5 PRs · #380 has conflicts',
-      'You | 3 repos | 2 failing checks, 1 conflict, 1 needs rebasing',
+      'You | 3 repos | 2 failing checks, 1 conflict, 1 needs to move',
     ], 'Waiting on others, screenshot 32');
     // A stack header whose base nobody reviewed opens it instead of merging.
     soft(await js(`[...document.querySelectorAll('${P} .morning-stack-head [data-quick-action]')].map(b=>b.textContent)`), ['Open #376', 'Open #35392', 'Open #383', 'Open #380']);
@@ -805,7 +805,7 @@ void app.whenReady().then(async () => {
     soft(await js(`[...document.querySelectorAll('${section('next')} .morning-row')].map(r=>[r.querySelector('.morning-number')?.textContent, r.querySelector('[data-overview-icon]')?.dataset.overviewIcon, r.querySelector('[data-pr-state]')?.dataset.prState ?? null]).sort()`), [
       ['#35391', 'pr', 'draft'], ['#36990', 'pr', 'open'], ['#37286', 'stack', null], ['#377', 'pr', 'open'], ['#385', 'pr', 'conflicting'],
     ], 'Next up icons: state, draft, stack, conflicts');
-    soft(await js(`[...document.querySelectorAll('${section('next')} .morning-detail')].map(e=>e.textContent)[2]`), 'needs rebasing after #35390 merged', 'rebasing in plain words');
+    soft(await js(`[...document.querySelectorAll('${section('next')} .morning-detail')].map(e=>e.textContent)[2]`), 'needs to move onto main after #35390 merged', 'rebasing in plain words');
     // The title takes the row's room at 1440: titles are whole, and a detail that does not fit truncates first.
     soft(await js<string[]>(`[...document.querySelectorAll('${section('next')} .morning-title-text')].filter(e=>e.scrollWidth > e.clientWidth + 1).map(e=>e.textContent)`), [], 'Next up titles are not cut at 1440');
     softOk(await js<boolean>(`[...document.querySelectorAll('${section('next')} .morning-detail')].some(e=>e.textContent.endsWith('then merge #35392'))`), 'the re-review says what follows it');
@@ -876,7 +876,7 @@ void app.whenReady().then(async () => {
     await wait(`getComputedStyle(document.querySelector('${P} .overview')).display === 'none'`);
     await click(sidebar('Overview'));
     await wait(`getComputedStyle(document.querySelector('${P} .overview')).display !== 'none' && !!document.querySelector('${P} [data-overview-row]')`);
-    soft(await briefing(), '7 updated PRs (6 in one stack) are waiting on your review. 10 PRs can merge without review, 14 have failing checks, 4 have conflicts, and 1 needs rebasing. 7 PRs need a decision.');
+    soft(await briefing(), '7 updated PRs (6 in one stack) are waiting on your review. 10 PRs can merge without review, 14 have failing checks, 4 have conflicts, and 1 needs to move. 7 PRs need a decision.');
     soft((await texts('next')).map((text) => text.split(' | ')[0]), ['#377', '#37286', '#35391', '#36100', '#36999'], 'Next up: the re-reviews, then fixes');
     soft(await js(`[...document.querySelectorAll('${section('next')} [data-quick-action]')].map(b=>b.textContent)`), ['Review again', 'Review again', 'Open', 'Rerun', 'Rerun'], 'no merge nobody reviewed is a row');
     soft(await js(`document.querySelector('${section('next')} [data-overview-more-unreviewed]')?.textContent`), '10 ready to merge without review');
