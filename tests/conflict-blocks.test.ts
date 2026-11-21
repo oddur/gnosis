@@ -122,3 +122,25 @@ void test('the Conflicts view diff shows a decided conflict as its result and an
   const proposed = conflictDiffText(conflictModel(original, draft, proposals), proposals);
   assert.match(proposed.after, /^a\nmerged\nb\n/);
 });
+
+void test('a card sits under the lines it decides: under the PR lines removed when its side shows none, at the top too', async () => {
+  const { cardAnchors, conflictDiffText } = await import('../lib/conflict-diff');
+  const { hunksFromDiff } = await import('../lib/diff-gaps');
+  const { parseDiffFromFile } = await import('@pierre/diffs');
+  const anchors = (original: string, ours: string) => {
+    const shown = conflictDiffText(conflictModel(original, original));
+    const hunks = hunksFromDiff(
+      parseDiffFromFile({ name: 'a.ts', contents: ours }, { name: 'a.ts', contents: shown.after }, { context: 3 }, true)
+    );
+    return cardAnchors(shown.blocks, hunks).map(({ index, side, line }) => [index, side, line]);
+  };
+  // Block 1 removes the PR's `x` (old line 4) and main has no lines: its card sits under `x`, not under `b`.
+  const original = 'a\n<<<<<<< pr\nours\n=======\ntheirs\n>>>>>>> main\nb\n<<<<<<< pr\nx\n=======\n>>>>>>> main\nc\n';
+  assert.deepEqual(anchors(original, 'a\nours\nb\nx\nc\n'), [
+    [0, 'additions', 2],
+    [1, 'deletions', 4],
+  ]);
+  // At the top of the file: under the last PR line removed, never under a later line.
+  const top = '<<<<<<< pr\nx\ny\n=======\n>>>>>>> main\nrest\n';
+  assert.deepEqual(anchors(top, 'x\ny\nrest\n'), [[0, 'deletions', 2]]);
+});

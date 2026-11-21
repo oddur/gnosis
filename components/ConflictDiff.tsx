@@ -1,4 +1,4 @@
-import { createContext, useContext, useLayoutEffect, useMemo, useRef, type ReactNode, type Ref } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { parseDiffFromFile, type DiffLineAnnotation, type FileDiffOptions } from '@pierre/diffs';
 import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
 import { diffThemeName } from '../lib/diff-worker-pool';
@@ -9,7 +9,7 @@ import { diffContextLines, noiseFilterOf } from '../lib/review-diff';
 import { quietHeader } from '../lib/quiet-changes-header';
 import { afterLines, hunksFromDiff, withPins, type GapHunk } from '../lib/diff-gaps';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
-import { conflictDiffText } from '../lib/conflict-diff';
+import { cardAnchors, conflictDiffText } from '../lib/conflict-diff';
 import { blockVerdict, type Verdict } from '../lib/conflict-verify';
 import type { BlockChoice, BlockPicks, ConflictLabels } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
@@ -20,12 +20,13 @@ import { DiffFileHeader } from './DiffFileHeader';
 import { useDiffFileModel } from './useDiffFileModel';
 import { Block, DiffColumns, WholeFile, useConflictChoices, type ConflictViewHandle } from './ConflictBlocks';
 
-/** A short, stable fingerprint of a text, so caches keyed by file revision never mix two drafts. */
-function fingerprint(text: string) {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
-  return (hash >>> 0).toString(36);
-}
+/** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
+let mounts = 0;
+/**
+ * Quiet changes never apply here (#445 item 8): a whitespace or formatting difference between the sides, or in a
+ * proposal, is part of the decision and always shows.
+ */
+const NO_QUIET = noiseFilterOf({ hideWhitespace: false, hideFormatting: false, hideComments: false });
 /** Whether a hunk shows a new line. */
 const showsLine = (hunks: readonly GapHunk[], line: number) =>
   hunks.some(
@@ -43,7 +44,7 @@ export function ConflictFileDiff<A>({
   after,
   fileKey,
   pins = [],
-  annotations = [],
+  annotate,
   renderAnnotation = () => null,
   preferences,
   label,
@@ -51,10 +52,11 @@ export function ConflictFileDiff<A>({
   name: string;
   before: string;
   after: string;
-  /** The session and file: the drafts' fingerprints are added, so each draft is its own revision. */
+  /** The session and file: reveals and shown scopes stay under it while the draft changes. */
   fileKey: string;
   pins?: readonly (readonly [number, number])[];
-  annotations?: DiffLineAnnotation<A>[];
+  /** The annotations for the diff's hunks, before pins: an additions-side line no hunk shows is pinned. */
+  annotate?: (hunks: readonly GapHunk[]) => DiffLineAnnotation<A>[];
   renderAnnotation?: (annotation: DiffLineAnnotation<A>) => ReactNode;
   preferences?: Preferences | null;
   /** What the counts compare, for the header: "against this PR". */
@@ -66,13 +68,7 @@ export function ConflictFileDiff<A>({
   const layout = useDiffLayout(preferences?.diffLayout);
   const context = diffContextLines(appearance);
   const codeSettings = useMemo(() => codeIntelligenceSettings(preferences), [preferences?.codeIntelligence]);
-  const noiseFilter = useMemo(
-    () => noiseFilterOf(appearance),
-    [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]
-  );
-  const anchors = annotations.map((annotation) => annotation.lineNumber);
-  const anchorKey = anchors.join(',');
-  const { hunks, additions, deletions } = useMemo(() => {
+  const { hunks, annotations, additions, deletions } = useMemo(() => {
     let base: GapHunk[] = [];
     try {
       base = hunksFromDiff(parseDiffFromFile({ name, contents: before }, { name, contents: after }, { context }, true));
@@ -81,22 +77,30 @@ export function ConflictFileDiff<A>({
     }
     const lines = afterLines(after);
     const pinned = withPins(base, pins, lines);
+    const annotations = annotate?.(base) ?? [];
     // A card's line that no hunk or pin shows yet: pinned on its own.
-    const missing = anchors.filter((line) => !showsLine(pinned, line)).map((line) => [line, line] as const);
+    const missing = annotations
+      .filter((annotation) => annotation.side === 'additions' && !showsLine(pinned, annotation.lineNumber))
+      .map((annotation) => [annotation.lineNumber, annotation.lineNumber] as const);
     const rows = base.flatMap((hunk) => hunk.rows);
     return {
       hunks: missing.length ? withPins(pinned, missing, lines) : pinned,
+      annotations,
       additions: rows.filter((row) => row.type === '+').length,
       deletions: rows.filter((row) => row.type === '-').length,
     };
-  }, [name, before, after, context, pins, anchorKey]);
+  }, [name, before, after, context, pins, annotate]);
   const contents = useMemo(
     (): PrFileContents => ({ before: { kind: 'text', content: before }, after: { kind: 'text', content: after } }),
     [before, after]
   );
-  const key = `${fileKey}:${fingerprint(before)}:${fingerprint(after)}`;
+  // Parsed definitions are cached by revision: each draft this mount shows is one, numbered as it changes.
+  const [mount] = useState(() => ++mounts);
+  const [revision, setRevision] = useState({ before, after, n: 0 });
+  if (revision.before !== before || revision.after !== after) setRevision({ before, after, n: revision.n + 1 });
   const model = useDiffFileModel({
-    fileKey: key,
+    fileKey: `${fileKey}:${mount}.${revision.n}`,
+    revealKey: fileKey,
     path: name,
     hunks,
     contents,
@@ -106,7 +110,7 @@ export function ConflictFileDiff<A>({
     codeSettings,
     sectionRef,
     status: 'modified',
-    noiseFilter,
+    noiseFilter: NO_QUIET,
   });
   const theme = diffThemeName(preferences?.codeTheme);
   // The file header is code-tier: its colours come from the diff's theme (lib/code-palette.ts).
@@ -243,18 +247,19 @@ export function ConflictDiff({
   );
   // Annotations only place the cards. The cards read their state from context, so a check result or a busy state
   // updates them in place: a card that kept its DOM keeps its focus and its open details.
-  const annotations = useMemo(() => {
-    const byLine = new Map<number, number[]>();
-    for (const b of shown.blocks)
-      if (b.anchor !== undefined) byLine.set(b.anchor, [...(byLine.get(b.anchor) ?? []), b.index]);
-    return [...byLine].map(
-      ([lineNumber, indexes]): DiffLineAnnotation<{ indexes: number[] }> => ({
-        side: 'additions',
-        lineNumber,
-        metadata: { indexes },
-      })
-    );
-  }, [shown]);
+  const annotate = useCallback(
+    (hunks: readonly GapHunk[]) => {
+      const byPlace = new Map<string, DiffLineAnnotation<{ indexes: number[] }>>();
+      for (const anchor of cardAnchors(shown.blocks, hunks)) {
+        const place = `${anchor.side}:${anchor.line}`;
+        const existing = byPlace.get(place);
+        if (existing) existing.metadata.indexes.push(anchor.index);
+        else byPlace.set(place, { side: anchor.side, lineNumber: anchor.line, metadata: { indexes: [anchor.index] } });
+      }
+      return [...byPlace.values()];
+    },
+    [shown]
+  );
   const card = (index: number) => {
     const segment = model.segments.find((s) => s.kind === 'conflict' && s.index === index);
     if (segment?.kind !== 'conflict') return null;
@@ -296,7 +301,7 @@ export function ConflictDiff({
               after={shown.after}
               fileKey={fileKey}
               pins={pins}
-              annotations={annotations}
+              annotate={annotate}
               renderAnnotation={renderCards}
               preferences={preferences}
               label={`Against ${labels.ours}`}

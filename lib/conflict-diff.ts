@@ -1,4 +1,5 @@
 import { chosenText, type BlockProposals, type ConflictModel } from './conflict-blocks';
+import type { GapHunk } from './diff-gaps';
 
 /** A text's lines; a final line feed ends the last line rather than starting another. */
 const lineCount = (text: string) => (text ? text.split('\n').length - (text.endsWith('\n') ? 1 : 0) : 0);
@@ -48,4 +49,33 @@ export function conflictDiffText(
   for (const block of blocks)
     block.anchor = block.end >= block.start ? block.end : block.start > 1 ? block.start - 1 : line ? 1 : undefined;
   return { after, blocks };
+}
+
+/** Where a conflict's card sits in the diff: under a new line, or under an old one. */
+export interface CardAnchor {
+  index: number;
+  side: 'additions' | 'deletions';
+  line: number;
+}
+/**
+ * Each conflict's card place (#445 item 8): under its last shown line. A conflict that shows no lines sits under the
+ * last of the PR's lines it removes, so the card stays with the lines it decides, at the top of a file too. Only when
+ * it removes none either does it sit under the line before it.
+ */
+export function cardAnchors(blocks: readonly ConflictDiffBlock[], hunks: readonly GapHunk[]): CardAnchor[] {
+  return blocks.flatMap((block): CardAnchor[] => {
+    if (block.end >= block.start) return [{ index: block.index, side: 'additions', line: block.end }];
+    let removed: number | undefined;
+    for (const hunk of hunks) {
+      let oldLine = hunk.oldStart,
+        newLine = hunk.newStart;
+      for (const row of hunk.rows) {
+        if (row.type === '-' && newLine === block.start) removed = Math.max(removed ?? 0, oldLine);
+        if (row.type !== '+') oldLine++;
+        if (row.type !== '-') newLine++;
+      }
+    }
+    if (removed !== undefined) return [{ index: block.index, side: 'deletions', line: removed }];
+    return block.anchor === undefined ? [] : [{ index: block.index, side: 'additions', line: block.anchor }];
+  });
 }

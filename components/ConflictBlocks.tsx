@@ -420,17 +420,23 @@ export function useConflictChoices({
   useEffect(() => {
     const element = root.current;
     if (!element) return;
-    let focused: string | undefined;
+    let focused: { index: string; card: Element } | undefined;
     const onFocusIn = (event: FocusEvent) => {
-      focused = (event.target as Element).closest('.conflict-block')?.getAttribute('data-conflict-index') ?? undefined;
+      const card = (event.target as Element).closest('.conflict-block');
+      const index = card?.getAttribute('data-conflict-index');
+      focused = card && index ? { index, card } : undefined;
     };
     const onFocusOut = (event: FocusEvent) => {
       if (event.relatedTarget) focused = undefined;
     };
+    // Only when the focused card itself was removed or replaced: focus you moved elsewhere stays where you put it.
     const observer = new MutationObserver(() => {
       const active = document.activeElement;
-      if (focused === undefined || (active && active !== document.body && !active.contains(element))) return;
-      element.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${focused}"]`)?.focus({ preventScroll: true });
+      if (!focused || focused.card.isConnected) return;
+      const index = focused.index;
+      focused = undefined;
+      if (active && active !== document.body && !active.contains(element)) return;
+      element.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${index}"]`)?.focus({ preventScroll: true });
     });
     element.addEventListener('focusin', onFocusIn);
     element.addEventListener('focusout', onFocusOut);
