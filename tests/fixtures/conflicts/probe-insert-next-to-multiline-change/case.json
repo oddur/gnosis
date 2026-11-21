@@ -1,0 +1,9 @@
+{
+  "description": "Follow-up to #476: the PR changes `one();` and opens a new `if (b)` after it; main adds `x();` after `one();`. Which block `x();` belongs in is not something the ancestor says, so the resolver's choice (here the wrong one, inside `if (b)`) goes to Check.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/f.ts": "any-but-merged"
+  }
+}

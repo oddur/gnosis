@@ -414,17 +414,15 @@ void test('resolver audit round 2: one side’s line moved inside the other side
     'The result changes the order of lines from the PR or main.'
   );
   // Next to a change: the PR wrapped `go();` in an if, main appended `stop();` after it. Counted with indentation, the
-  // PR's change is one block; `stop();` inside the if is not a merge.
+  // PR's change is one block of several lines, and main's insertion touches it: whether `stop();` belongs inside the if
+  // or after it is not something the ancestor says, so neither layout is Merged.
   const wrapped = {
     base: 'start();\ngo();\n',
     ours: 'start();\nif (ready) {\n  go();\n}\n',
     theirs: 'start();\ngo();\nstop();\n',
   };
-  assert.equal(accountLines(wrapped, 'start();\nif (ready) {\n  go();\n}\nstop();\n', true), undefined);
-  assert.equal(
-    accountLines(wrapped, 'start();\nif (ready) {\n  go();\nstop();\n}\n', true),
-    'The result changes the order of lines from the PR or main.'
-  );
+  assert.equal(accountLines(wrapped, 'start();\nif (ready) {\n  go();\n}\nstop();\n', true), SAME_LINES);
+  assert.equal(accountLines(wrapped, 'start();\nif (ready) {\n  go();\nstop();\n}\n', true), SAME_LINES);
 });
 
 void test('resolver audit: with a side that does not parse, a result whose error reaches a proposal is not Merged', async () => {
@@ -461,7 +459,7 @@ void test('resolver audit round 2: an error that is the side’s own does not de
   for (const text of ['  const limit = 60 45;\n', '  const limit = 60;\n)]}\n']) {
     const broken = await remembered(text);
     assert.equal(broken.merged, false, text);
-    assert.equal(broken.note, 'This result doesn’t parse.');
+    assert.match(broken.note, /doesn’t parse/);
   }
 });
 
@@ -510,6 +508,53 @@ void test('with a side that does not parse, an error no proposal accounts for fa
   };
   assert.equal((await remember(debug, '  const limit = 60;\n')).merged, true);
   assert.equal((await remember(debug, '  const limit = 60;\n}\n}\n')).merged, false);
+});
+
+void test('a side’s parse error over a proposal leaves it unchecked, unless it is that side’s lines', async () => {
+  // main's `foo(` at the top doesn't parse, and its error covers the whole file: the parser can't vouch for anything.
+  const sides = {
+    path: 'src/limits.ts',
+    base: 'export const LIMITS = {\n  timeout: 30_000,\n  retries: 3,\n};\n',
+    ours: 'export const LIMITS = {\n  timeout: 60_000,\n  retries: 3,\n};\n',
+    theirs: 'foo(\nexport const LIMITS = {\n  timeout: 45_000,\n  retries: 3,\n};\n',
+    original:
+      'foo(\nexport const LIMITS = {\n<<<<<<< feature\n  timeout: 60_000,\n||||||| ancestor\n  timeout: 30_000,\n=======\n  timeout: 45_000,\n>>>>>>> main\n  retries: 3,\n};\n',
+  };
+  const remembered = (text: string) => verifyProposals({ ...sides, proposals: [{ source: 'rerere', text }] }, analyse);
+  const own = await remembered('  timeout: 60_000,\n');
+  assert.equal(own.merged, true, own.note);
+  assert.equal(own.note, 'Main doesn’t parse; the result adds no parse errors of its own.');
+  for (const text of ['  timeout: 60_000 45_000,\n', '  timeout: 50_000,\n', '  timeout: 60_000\n'])
+    assert.equal((await remembered(text)).merged, false, text);
+  // main closes the function early with a stray `}`; a resolution that leaves `if (...) {` open makes the file parse
+  // again. It changed how the file parses, so it is not Merged.
+  const wrap = (pre: string, body: string) =>
+    `export function run(a: boolean) {\n${pre}  const limit = 30;\n${body}  return limit;\n}\n`;
+  const b = '  if (a) {\n    go(1);\n  }\n';
+  const o = '  if (a || b) {\n    go(1);\n  }\n';
+  const t = '  if (a) {\n    go(3);\n  }\n';
+  const stray = {
+    path: 'src/run.ts',
+    base: wrap('', b),
+    ours: wrap('', o),
+    theirs: wrap('  }\n', t),
+    original: wrap('  }\n', `<<<<<<< feature\n${o}||||||| ancestor\n${b}=======\n${t}>>>>>>> main\n`),
+  };
+  const reopened = await verifyProposals(
+    { ...stray, proposals: [{ source: 'rerere', text: '  if (a || b) {\n' }] },
+    analyse
+  );
+  assert.equal(reopened.merged, false, reopened.note);
+});
+
+void test('an insertion next to the other side’s change of several lines is Check, either way round', () => {
+  const block = {
+    base: '    one();\n',
+    ours: '    one(1);\n  }\n  if (b) {\n    two();\n',
+    theirs: '    one();\n    x();\n',
+  };
+  assert.equal(accountLines(block, '    one(1);\n  }\n  if (b) {\n    two();\n    x();\n', false), SAME_LINES);
+  assert.equal(accountLines(block, '    one(1);\n    x();\n  }\n  if (b) {\n    two();\n', false), SAME_LINES);
 });
 
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {

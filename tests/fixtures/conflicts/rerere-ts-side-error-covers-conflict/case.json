@@ -1,0 +1,14 @@
+{
+  "description": "Follow-up to #476: main's `foo(` at the top doesn't parse, and its error covers the whole file, conflict included. The resolution remembered from the first PR drops `if (...) {`, but its error hides inside main's. The parser can't vouch for it, so it must not be Merged when it comes back.",
+  "language": "typescript",
+  "category": "rerere",
+  "rerere": true,
+  "steps": {
+    "first": {
+      "src/run.ts": "any-but-merged"
+    },
+    "second": {
+      "src/run.ts": "any-but-merged"
+    }
+  }
+}

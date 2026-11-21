@@ -7,7 +7,6 @@
  * and tests/conflict-resolver-audit.test.ts runs it with `npm test`.
  */
 import fs from 'node:fs/promises';
-import { diffArrays } from 'diff';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -16,7 +15,7 @@ import { blockProposals, withProposals } from '../lib/conflict-carry';
 import { parseConflicts, type ConflictSegment } from '../lib/conflict-blocks';
 import { hasConflictMarkers, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
 import { withUnions } from '../lib/conflict-union';
-import { blockBuckets, blockVerdict, SAME_CHANGE, type Verdict } from '../lib/conflict-verify';
+import { blockBuckets, blockVerdict, changesOf, SAME_CHANGE, type Verdict } from '../lib/conflict-verify';
 import { createSyntaxEngine, syntaxLanguage, type SyntaxLanguage } from '../lib/syntax-scope';
 import { conflictChecker, withoutUnconfirmed, type CheckedFile } from '../src/conflict-checks';
 import { runConflictProcess } from '../src/conflict-process';
@@ -373,15 +372,12 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
       // A line one side changed moved past lines the other side inserted next to it. They sit at different places in the
       // ancestor (an insertion before or after the changed line), so their order is fixed.
       const base = splitLines(target.sides.base).filter(hasWord).map(norm);
+      // The side's changes as the line checks see them (lib/conflict-verify.ts changesOf).
       const kinds = (text: string) => {
         const changed = new Set<string>();
         const inserted = new Set<string>();
-        let removed = false;
-        for (const part of diffArrays(base, splitLines(text).filter(hasWord).map(norm))) {
-          if (!part.added && !part.removed) removed = false;
-          else if (part.removed) removed = true;
-          else for (const line of part.value) (removed ? changed : inserted).add(line);
-        }
+        for (const c of changesOf(base, splitLines(text).filter(hasWord).map(norm)))
+          for (const line of c.added) (c.end > c.start ? changed : inserted).add(line);
         return { changed, inserted, all: sideLines(text) };
       };
       const [ours, theirs] = [kinds(target.sides.ours), kinds(target.sides.theirs)];

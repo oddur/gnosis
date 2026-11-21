@@ -227,12 +227,55 @@ export async function verifyProposals(
         })
       : undefined;
   let parsed: ParsedText[];
+  /** Which side didn't parse, when the result was checked against that side's own errors instead of parsing. */
+  let sideBroken: 'The PR' | 'Main' | 'Neither side' | undefined;
   try {
     parsed = await Promise.all([
       ...[file.base, file.ours, file.theirs].map((text) => analyse(language, text)),
       analyse(language, probe.text, unionRanges(probe.regions)),
     ]);
     const [, ours, theirs, result] = parsed;
+    /** Every entry of `part` is in `whole`, as often. */
+    const within = (part: readonly string[], whole: readonly string[]) => {
+      const pool = [...whole];
+      return part.every((entry) => {
+        const at = pool.indexOf(entry);
+        if (at >= 0) pool.splice(at, 1);
+        return at >= 0;
+      });
+    };
+    /** The file with every proposal replaced by each side's lines, parsed once, both sides at once. */
+    let filledSides:
+      | Promise<{ side: 'ours' | 'theirs'; filled: ReturnType<typeof fill>; read: ParsedText }[]>
+      | undefined;
+    const sideFills = () =>
+      (filledSides ??= Promise.all(
+        (['ours', 'theirs'] as const).map(async (side) => {
+          const filled = fill(segments, proposals, side, new Set(proposed.map((c) => c.index)));
+          return { side, filled, read: await analyse(language, filled.text) };
+        })
+      ));
+    /**
+     * The file's errors as the text around the conflicts they cover, one entry per error range, so two fillings of the
+     * conflicts compare. Undefined when the parser can't say where they are.
+     */
+    const errorSet = async (filled: ReturnType<typeof fill>, parsedAlready?: ParsedText) => {
+      const read = parsedAlready ?? (await analyse(language, filled.text));
+      if (!read.errors) return [];
+      if (!read.errorLines?.length) return undefined;
+      const lines = filled.text.split('\n');
+      const spans = [...filled.spans.values()];
+      const inConflict = (line: number) => spans.some(([a, z]) => a <= line && line <= z);
+      return read.errorLines
+        .map(([start, end]) =>
+          lines
+            .slice(start - 1, end)
+            .filter((_, i) => !inConflict(start + i))
+            .map((line) => line.trim())
+            .join('\n')
+        )
+        .sort();
+    };
     // The probe fills undecided conflicts with the PR's lines; with main's lines it may parse. Only a result that fails
     // both ways is the proposals' fault. With every conflict proposed, it is the fault of the ones its errors reach, when
     // the file parses with those taken out. With one undecided, the whole file's: a proposal can't be cleared against one
@@ -266,47 +309,24 @@ export async function verifyProposals(
       // accounts for, fail every proposal in the file.
       const ranges = result.errorLines;
       if (!ranges?.length) return { merged: false, note: 'The result doesn’t parse.' };
+      sideBroken = ours.errors ? (theirs.errors ? 'Neither side' : 'The PR') : 'Main';
+      const sides = await sideFills();
       /** Error ranges in a parse; errors the parser can't place count as too many. */
       const errorCount = (read: ParsedText) => (read.errors ? read.errorLines?.length || Infinity : 0);
-      /**
-       * The file's errors as the text around the conflicts they cover, one entry per error range, so two fillings of the
-       * conflicts compare. Undefined when the parser can't say where they are.
-       */
-      const errorSet = async (filled: ReturnType<typeof fill>) => {
-        const read = await analyse(language, filled.text);
-        if (!read.errors) return [];
-        if (!read.errorLines?.length) return undefined;
-        const lines = filled.text.split('\n');
-        const inConflict = (line: number) => [...filled.spans.values()].some(([a, z]) => a <= line && line <= z);
-        return read.errorLines
-          .map(([start, end]) =>
-            lines
-              .slice(start - 1, end)
-              .filter((_, i) => !inConflict(start + i))
-              .map((line) => line.trim())
-              .join('\n')
-          )
-          .sort();
-      };
       /**
        * The errors left with `blamed` replaced by a side's lines are ones that side's own lines give, around the
        * conflicts, with every proposal replaced. Checked against either side.
        */
       const explained = async (blamed: ReadonlySet<number>) => {
-        const all = new Set(proposed.map((c) => c.index));
-        for (const side of ['ours', 'theirs'] as const) {
+        for (const { side, filled, read } of sides) {
+          // With nothing blamed, the PR's filling is the result as parsed above.
           const [left, own] = await Promise.all([
-            errorSet(fill(segments, proposals, side, blamed)),
-            errorSet(fill(segments, proposals, side, all)),
+            !blamed.size && side === 'ours'
+              ? errorSet(probe, parsed[3])
+              : errorSet(fill(segments, proposals, side, blamed)),
+            errorSet(filled, read),
           ]);
-          if (!left || !own) continue;
-          const pool = [...own];
-          const found = (entry: string) => {
-            const at = pool.indexOf(entry);
-            if (at >= 0) pool.splice(at, 1);
-            return at >= 0;
-          };
-          if (left.every(found)) return true;
+          if (left && own && within(left, own)) return true;
         }
         return false;
       };
@@ -329,18 +349,52 @@ export async function verifyProposals(
           fail(index, 'This result doesn’t parse.');
           continue;
         }
-        for (const side of ['ours', 'theirs'] as const) {
-          const count = errorCount(await analyse(language, fill(segments, proposals, side, new Set([index])).text));
-          // Errors the parser can't place can't be compared: the proposal is blamed.
-          if (count < ranges.length || count === Infinity) {
-            fail(index, 'This result doesn’t parse.');
-            break;
-          }
-        }
+        const counts = await Promise.all(
+          (['ours', 'theirs'] as const).map(async (side) =>
+            errorCount(await analyse(language, fill(segments, proposals, side, new Set([index])).text))
+          )
+        );
+        // Errors the parser can't place can't be compared: the proposal is blamed.
+        if (counts.some((count) => count < ranges.length || count === Infinity))
+          fail(index, 'This result doesn’t parse.');
       }
       // An error no proposal accounts for, that the sides' own lines don't give: every proposal in the file is suspect.
       if (!(await explained(new Set(suspects.filter((index) => failed.has(index))))))
         return { merged: false, note: 'The result doesn’t parse.' };
+    }
+    if (ours.errors || theirs.errors) {
+      // A side that doesn't parse, with an error over a proposal: the parser can't vouch for that proposal, whether the
+      // result parses or not, unless the proposal is one side's lines exactly.
+      const who = ours.errors ? (theirs.errors ? undefined : 'The PR') : 'Main';
+      const around = who
+        ? `${who} doesn’t parse around this conflict, so Gnosis couldn’t check it.`
+        : 'Neither side parses around this conflict, so Gnosis couldn’t check it.';
+      const filledBoth = await sideFills();
+      // The result lost an error the sides' own lines give: a proposal changed how the file around it parses (a brace
+      // that closes the side's open block, say). Nothing the parser said can be trusted for the proposals.
+      const resultErrors = await errorSet(probe, parsed[3]);
+      const sideErrors = await Promise.all(filledBoth.map(({ filled, read }) => errorSet(filled, read)));
+      if (!resultErrors || !sideErrors.some((own) => own && within(own, resultErrors)))
+        for (const c of proposed) {
+          const text = proposals[c.index]?.text;
+          if (text !== c.block.ours && text !== c.block.theirs)
+            fail(
+              c.index,
+              who
+                ? `${who} doesn’t parse here, and the result parses differently. Check it.`
+                : 'Neither side parses here, and the result parses differently. Check it.'
+            );
+        }
+      for (const { filled, read } of filledBoth) {
+        if (!read.errors) continue;
+        for (const c of proposed) {
+          const text = proposals[c.index]?.text;
+          if (text === c.block.ours || text === c.block.theirs) continue;
+          const span = filled.spans.get(c.index);
+          if (!read.errorLines?.length || (span && read.errorLines.some(([a, z]) => span[0] <= z && span[1] >= a)))
+            fail(c.index, around);
+        }
+      }
     }
   } catch {
     return { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' };
@@ -402,9 +456,16 @@ export async function verifyProposals(
     ])
       fail(index, note);
   }
+  const accounted = proposals.some((p) => p && p.source !== 'rerere');
+  const parses = !sideBroken
+    ? 'The file parses.'
+    : sideBroken === 'Neither side'
+      ? 'Neither side parses; the result adds no parse errors of its own.'
+      : `${sideBroken} doesn’t parse; the result adds no parse errors of its own.`;
   return verdict((index) => {
     const own = reformats.get(index);
-    return own ? `${own} The file parses.` : 'The file parses. Every line of both sides is accounted for.';
+    if (own) return `${own} ${parses}`;
+    return accounted ? `${parses} Every line of both sides is accounted for.` : parses;
   });
 }
 
@@ -636,11 +697,22 @@ export function accountLines(
   const [base, ours, theirs, merged] = [block.base, block.ours, block.theirs, result].map(lines);
   const [mine, other] = [changesOf(base, ours), changesOf(base, theirs)];
   const inside = (gap: number, c: LineChange) => c.start < gap && gap < c.end;
+  // An insertion right before or after the other side's change of several lines: which of those lines it belongs
+  // next to (inside a block the change opens, or after it) is not something the ancestor says.
+  const several = (c: LineChange) => c.end > c.start && (c.end - c.start > 1 || c.added.length > 1);
+  const touches = (p: LineChange, c: LineChange) =>
+    p.start === p.end && several(c) && (p.start === c.start || p.start === c.end);
   for (const a of mine)
     for (const b of other) {
       if (sameChange(a, b)) continue;
       const overlap = a.start < a.end && b.start < b.end && a.start < b.end && b.start < a.end;
-      if (overlap || (a.start === a.end && inside(a.start, b)) || (b.start === b.end && inside(b.start, a)))
+      if (
+        overlap ||
+        (a.start === a.end && inside(a.start, b)) ||
+        (b.start === b.end && inside(b.start, a)) ||
+        touches(a, b) ||
+        touches(b, a)
+      )
         return SAME_LINES;
     }
   const removed = new Set<number>();
@@ -654,7 +726,7 @@ export function accountLines(
   for (const line of merged) found.set(line, (found.get(line) ?? 0) + 1);
   const missing = [...expected].filter(([line, n]) => (found.get(line) ?? 0) < n).map(([line]) => line);
   const extra = [...found].find(([line, n]) => n > (expected.get(line) ?? 0))?.[0];
-  return report(missing, extra, { base, ours, theirs }) ?? outOfOrder(base, merged, mine, other);
+  return report(missing, extra, { base, ours, theirs }) ?? outOfOrder(base, merged, mine, other, removed);
 }
 /**
  * The result keeps the ancestor's order, anchor by anchor. Each change sits at one place in the ancestor: lines inserted
@@ -664,13 +736,24 @@ export function accountLines(
  * counts alone miss two statements swapped, or a line moved past the other side's change. Changes both sides made alike
  * count once.
  */
-function outOfOrder(base: readonly string[], merged: readonly string[], mine: LineChange[], other: LineChange[]) {
-  const others = other.filter((c) => !mine.some((m) => sameChange(m, c)));
-  const insertedAt = (changes: LineChange[], gap: number) =>
-    changes.find((c) => c.start === gap && c.end === gap)?.added ?? [];
-  const replacing = (changes: LineChange[], line: number) => changes.find((c) => c.start === line && c.end > line);
-  const covered = new Set<number>();
-  for (const c of [...mine, ...others]) for (let i = c.start; i < c.end; i++) covered.add(i);
+function outOfOrder(
+  base: readonly string[],
+  merged: readonly string[],
+  mine: LineChange[],
+  other: LineChange[],
+  /** The ancestor lines either side changed. */
+  removed: ReadonlySet<number>
+) {
+  /** Each side's insertions and replacements, by the ancestor place they start at. */
+  const byStart = (changes: LineChange[]) => {
+    const inserted = new Map<number, string[]>();
+    const replaced = new Map<number, LineChange>();
+    for (const c of changes)
+      if (c.start === c.end) inserted.set(c.start, c.added);
+      else replaced.set(c.start, c);
+    return { inserted, replaced };
+  };
+  const [a, b] = [byStart(mine), byStart(other.filter((c) => !mine.some((m) => sameChange(m, c))))];
   let r = 0;
   /** The next lines of the result are exactly `lines`. */
   const take = (lines: readonly string[]) => {
@@ -678,24 +761,24 @@ function outOfOrder(base: readonly string[], merged: readonly string[], mine: Li
     return true;
   };
   for (let at = 0; at <= base.length; at++) {
-    const [a, b] = [insertedAt(mine, at), insertedAt(others, at)];
+    const [x, y] = [a.inserted.get(at) ?? [], b.inserted.get(at) ?? []];
     const start = r;
-    if (!take([...a, ...b])) {
+    if (!take([...x, ...y])) {
       r = start;
-      if (!take([...b, ...a])) return ORDER;
+      if (!take([...y, ...x])) return ORDER;
     }
     if (at === base.length) break;
-    const change = replacing(mine, at) ?? replacing(others, at);
+    const change = a.replaced.get(at) ?? b.replaced.get(at);
     if (change) {
       if (!take(change.added)) return ORDER;
-    } else if (!covered.has(at) && !take([base[at]])) return ORDER;
+    } else if (!removed.has(at) && !take([base[at]])) return ORDER;
   }
   if (r !== merged.length) return ORDER;
 }
 const ORDER = 'The result changes the order of lines from the PR or main.';
 
 /** A side's edits against the ancestor: each replaces ancestor lines [start, end) with `added`. */
-interface LineChange {
+export interface LineChange {
   start: number;
   end: number;
   added: string[];
@@ -703,11 +786,11 @@ interface LineChange {
 /** Both sides made this change alike. */
 const sameChange = (a: LineChange, b: LineChange) =>
   a.start === b.start && a.end === b.end && a.added.join('\n') === b.added.join('\n');
-function changesOf(base: string[], side: string[]): LineChange[] {
+export function changesOf(base: readonly string[], side: readonly string[]): LineChange[] {
   const changes: LineChange[] = [];
   let at = 0;
   let open: LineChange | undefined;
-  for (const part of diffArrays(base, side)) {
+  for (const part of diffArrays([...base], [...side])) {
     if (!part.added && !part.removed) {
       if (open) changes.push(open);
       open = undefined;
@@ -811,7 +894,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 4;
+export const CHECKS_VERSION = 5;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A
