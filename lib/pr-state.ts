@@ -9,6 +9,8 @@ export interface PrStateSource {
   /** With `url` and `updatedAt`, a newer copy of the same PR shown elsewhere can update this one. */
   url?: string;
   updatedAt?: string;
+  /** The revision whose merge conflicts the state icon shows. Without it, the newest-read revision's. */
+  headSha?: string;
 }
 
 export const PR_STATES: readonly PrState[] = ['open', 'draft', 'merged', 'closed'];

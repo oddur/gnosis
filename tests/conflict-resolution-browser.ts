@@ -134,6 +134,28 @@ void app.whenReady().then(async () => {
       const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');
       publishQueueSignals('oddur',await window.electronAPI.getQueueSignals(stack.subject.members.map(({url,headSha})=>({url,headSha}))));
     })()`);
+    // The row menu offers Resolve conflicts only for conflicts, or while GitHub has not answered.
+    const rowMenuOffers = async (mergeable: string, mergeState: string, checkedAt: number) => {
+      await js(`(async()=>{
+        const pr=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.number===152);
+        const [value]=await window.electronAPI.getQueueSignals([{url:pr.url,headSha:pr.headSha}]);
+        const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');
+        publishQueueSignals('oddur',[{...value,checkedAt:${checkedAt},readiness:{...value.readiness,mergeable:${JSON.stringify(mergeable)},mergeState:${JSON.stringify(mergeState)}}}]);
+      })()`);
+      await js(
+        `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width&&b.getAttribute('aria-label')==='Actions for PR #152');b.focus();b.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))})()`
+      );
+      await wait("[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent==='Copy PR link')");
+      const offered = await js<boolean>("[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent==='Resolve conflicts…')");
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      await wait("!document.querySelector('[role=menu]')");
+      return offered;
+    };
+    const later = Date.now() + 3_600_000;
+    assert.equal(await rowMenuOffers('MERGEABLE', 'CLEAN', later), false, 'A PR ready to merge has nothing to resolve');
+    assert.equal(await rowMenuOffers('MERGEABLE', 'BEHIND', later + 1), false, 'A PR only behind main updates instead');
+    assert.equal(await rowMenuOffers('UNKNOWN', 'UNKNOWN', later + 2), true, 'GitHub is still computing');
+    assert.equal(await rowMenuOffers('CONFLICTING', 'DIRTY', later + 3), true);
     await js(
       "document.querySelector('.queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))"
     );
@@ -467,6 +489,25 @@ void app.whenReady().then(async () => {
     await wait("document.activeElement?.textContent.trim()==='Done'");
     assert.ok(await exists('Open PR on GitHub'));
     await captureAll('published');
+
+    // Reopened later, when the PR merges cleanly: nothing to resolve, and the last update only as history.
+    await click('Done');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js("Object.assign(window.conflictFixture,{reopened:true,lastPush:{commitSha:'d'.repeat(40),headSha:'a'.repeat(40)}})");
+    await open();
+    await wait("document.querySelector('[data-conflict-reopened] h2')?.textContent==='Nothing to resolve'");
+    const reopened = await js<string>("document.querySelector('[data-conflict-reopened]').innerText");
+    assert.match(reopened, /This PR merges cleanly with main\./);
+    assert.match(reopened, /Last update: merge commit\s+ddddddd\s+To undo it, reset feature\/retry to\s+aaaaaaa/);
+    assert.doesNotMatch(reopened, /updated|Checks restarting|resolved by you/, 'The old result is not shown as news');
+    assert.equal(await js("!!document.querySelector('.conflict-outcome, .conflict-workflow')"), false);
+    await wait("document.activeElement?.textContent.trim()==='Done'");
+    await captureAll('reopened-clean');
+    await click('Done');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js('delete window.conflictFixture.reopened; delete window.conflictFixture.lastPush');
+    await open();
+    await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
 
     // Restacking is a separate, explicit preview-and-push flow after the root resolution.
     await js(`(()=>{

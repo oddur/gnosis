@@ -28,6 +28,7 @@ import {
 import { conflictCount } from '../lib/conflict-blocks';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
+import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
 import { prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
@@ -896,36 +897,64 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    // Recover a successful atomic restack push whose response or local persistence was interrupted, before anything
+    // decides what to show, so the history below says truthfully whether dependent PRs were restacked.
+    let recovered = false;
+    const pendingRestack = saved?.status === 'published' ? saved.restack : undefined;
+    if (pendingRestack?.status === 'prepared') {
+      const urls = pendingRestack.branches.map((branch) => branch.url);
+      const states = await settleInOrder(deps.readMany ? deps.readMany(urls) : urls.map((u) => deps.read(u)));
+      assertAccount(ctx);
+      recovered =
+        states.length > 0 &&
+        states.every(
+          (value, index) =>
+            value.account === ctx.account &&
+            value.headRepo === pendingRestack.branches[index].repo &&
+            value.headBranch === pendingRestack.branches[index].branch &&
+            value.headSha === pendingRestack.branches[index].newSha
+        );
+      if (recovered) pendingRestack.status = 'published';
+    }
+    const published = !restart && saved?.status === 'published' ? saved : undefined;
+    // GitHub reports conflicts again (main moved): prepare afresh, whatever state a restack is in. The push stays history.
+    const conflictsAgain = !!published && hasMergeConflicts(state);
+    if (
+      published?.restack &&
+      !conflictsAgain &&
+      published.restack.status !== 'published' &&
+      (published.commitSha !== state.headSha || published.headBranch !== state.headBranch || published.headRepo !== state.headRepo)
+    ) {
+      return { ...published, stale: true };
+    }
+    const dependents = deps.dependents?.(url) ?? [];
+    // Dependent PRs that a push left to restack: the published screen offers that next.
+    const leftToRestack = (pushed: ConflictSession) =>
+      pushed.restack?.status === 'published'
+        ? []
+        : pushed.restack?.branches.length
+          ? pushed.restack.branches.map((branch) => branch.url)
+          : dependents;
+    const restackPending = !!published && (published.restack ? published.restack.status !== 'published' : !!dependents.length);
+    const pushedHead = !!published && !conflictsAgain && published.commitSha === state.headSha;
+    // A push finished in an earlier session is history, not a result to show again: the published record, or the
+    // `lastPush` of a preparation made while GitHub was still computing. Clean now: say so, with the push as history.
+    // Still computing: prepare afresh below so Git answers, keeping the push in `lastPush`.
+    const history: ConflictSession['lastPush'] =
+      pushedHead && !restackPending && !recovered && published?.commitSha
+        ? { commitSha: published.commitSha, headSha: published.headSha }
+        : !restart && saved?.status === 'editing' && !saved.files.length ? saved.lastPush : undefined;
+    if (saved && history?.commitSha === state.headSha && state.mergeable === 'MERGEABLE' && !hasMergeConflicts(state))
+      return { ...saved, dependents, reopened: true, lastPush: history };
+    // The push, or the restack push just recovered, is this session's result: show it.
     if (
       !restart &&
-      saved?.status === 'published' &&
-      saved.restack &&
-      saved.restack.status !== 'published' &&
-      (saved.commitSha !== state.headSha || saved.headBranch !== state.headBranch || saved.headRepo !== state.headRepo)
+      !conflictsAgain &&
+      (!pushedHead || restackPending || recovered) &&
+      saved?.commitSha === state.headSha
     ) {
-      return { ...saved, stale: true };
-    }
-    if (!restart && saved?.commitSha === state.headSha) {
       saved.status = 'published';
-      saved.dependents = deps.dependents?.(url) ?? [];
-      const restack = saved.restack;
-      if (restack?.status === 'prepared') {
-        // Recover a successful atomic push whose response or local persistence was interrupted.
-        const urls = restack.branches.map((branch) => branch.url);
-        const states = await settleInOrder(deps.readMany ? deps.readMany(urls) : urls.map((u) => deps.read(u)));
-        assertAccount(ctx);
-        if (
-          states.length &&
-          states.every(
-            (value, index) =>
-              value.account === ctx.account &&
-              value.headRepo === restack.branches[index].repo &&
-              value.headBranch === restack.branches[index].branch &&
-              value.headSha === restack.branches[index].newSha
-          )
-        )
-          restack.status = 'published';
-      }
+      saved.dependents = dependents;
       await persist(saved);
       return saved;
     }
@@ -1011,9 +1040,17 @@ export function createConflictResolutionService(deps: Deps) {
       files,
       version: (saved?.version ?? 0) + 1,
       status: 'editing',
-      dependents: deps.dependents?.(url) ?? [],
+      dependents,
       preparation: await preparation(ctx, id, prepared, files, state, signal),
     };
+    // The push a fresh preparation replaces, while it is still the PR head: its commit, undo point and restack.
+    const unrestacked = saved?.status === 'published' ? leftToRestack(saved) : [];
+    const lastPush: ConflictSession['lastPush'] =
+      saved?.status === 'published' && saved.commitSha
+        ? { commitSha: saved.commitSha, headSha: saved.headSha, ...(unrestacked.length ? { unrestacked } : {}) }
+        : saved?.lastPush;
+    // Kept while it is the PR head, and after someone pushed on top while dependent PRs still wait for a restack.
+    if (lastPush && (lastPush.commitSha === state.headSha || lastPush.unrestacked?.length)) session.lastPush = lastPush;
     signal.throwIfAborted();
     assertAccount(ctx);
     await persist(session);

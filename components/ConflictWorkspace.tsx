@@ -698,11 +698,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       primary.current?.focus();
     });
   }, [session, selected, epoch, confirming, mode]);
-  const upToDateState = session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date';
+  const upToDate = session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date';
+  const reopened = !!session?.reopened;
   useEffect(() => {
-    if ((session?.status === 'published' && !session.dependents?.length) || upToDateState)
+    if ((session?.status === 'published' && !session.dependents?.length) || upToDate || reopened)
       requestAnimationFrame(() => done.current?.focus());
-  }, [session?.status, upToDateState]);
+  }, [session?.status, upToDate, reopened]);
 
   const pushError = failedKind === 'publish' && error;
   const steps = session
@@ -784,12 +785,11 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         Try again
       </Button>
     ) : undefined;
-  const upToDate = session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date';
   const staleSummary =
     session?.staleReason === 'retargeted'
       ? 'This PR now targets a different base branch.'
       : `Someone pushed to ${session?.headBranch ?? 'the PR branch'} after you started.`;
-  const showRail = !!steps && !!session && !upToDate && !(session.stale && !session.files.length);
+  const showRail = !!steps && !!session && !upToDate && !reopened && !(session.stale && !session.files.length);
 
   const primaryButton = (() => {
     if (!session || !file || session.stale) return null;
@@ -956,6 +956,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             <p role="status" data-conflict-summary="">
               {summarySentence(summary)}
             </p>
+            {session.lastPush && <LastPush session={session} push={session.lastPush} />}
             {session.files.some((f) => f.proposals) && (
               <label>
                 <input
@@ -998,6 +999,22 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
               )}
             </div>
           )
+        ) : session.reopened ? (
+          // An earlier session pushed, and the PR merges cleanly now. Its result is history, not news.
+          <div className="conflict-state" role="status" data-conflict-reopened="">
+            <CircleCheck size={24} aria-hidden="true" className="conflict-state-ok" />
+            <h2>Nothing to resolve</h2>
+            <p>This PR merges cleanly with {session.baseBranch}.</p>
+            {session.lastPush && <LastPush session={session} push={session.lastPush} />}
+            <div className="conflict-state-actions">
+              <Button ref={done} size="sm" onClick={() => void close()}>
+                Done
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
+                Check again
+              </Button>
+            </div>
+          </div>
         ) : session.status === 'published' ? (
           <div
             className="conflict-published"
@@ -1223,6 +1240,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                   {session.headBranch} already includes {session.baseBranch}
                 </h2>
                 <p>There’s nothing to merge. The PR is up to date with its base branch.</p>
+                {session.lastPush && <LastPush session={session} push={session.lastPush} />}
                 <div className="conflict-state-actions">
                   <Button ref={done} size="sm" autoFocus onClick={() => void close()}>
                     Done
@@ -1239,6 +1257,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 <p>
                   Git can bring {session.baseBranch} into {session.headBranch} cleanly. Review the changes, then push.
                 </p>
+                {session.lastPush && <LastPush session={session} push={session.lastPush} />}
                 <Button ref={primary} size="sm" disabled={busy} onClick={confirm}>
                   {busy ? 'Preparing…' : 'Review and push…'}
                 </Button>
@@ -1540,6 +1559,31 @@ function ConfirmDiff({
           <summary>Whitespace warnings</summary>
           <pre>{preview.validation}</pre>
         </details>
+      )}
+    </div>
+  );
+}
+
+/** The push from an earlier session, as history: its merge commit, how to undo it, and a restack it left undone. */
+function LastPush({ session, push }: { session: ConflictSession; push: NonNullable<ConflictSession['lastPush']> }) {
+  return (
+    <div className="conflict-state-muted" data-conflict-last-push="">
+      <p>
+        Last update: merge commit <CommitBadge sha={push.commitSha} repo={session.headRepo} />
+      </p>
+      {/* Someone pushed on top: resetting would drop their commits, so no undo hint. */}
+      {(session.status !== 'editing' || session.headSha === push.commitSha) && (
+        <p>
+          To undo it, reset {session.headBranch} to <CommitBadge sha={push.headSha} repo={session.headRepo} />
+        </p>
+      )}
+      {!!push.unrestacked?.length && (
+        <p>
+          Its dependent PRs were not restacked:{' '}
+          {push.unrestacked.map((url) => (
+            <PrBadge key={url} url={url} />
+          ))}
+        </p>
       )}
     </div>
   );

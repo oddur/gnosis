@@ -800,10 +800,11 @@ void app.whenReady().then(async () => {
     await collapseStacks();
     soft(await count('next'), '5', 'Next up: heading = rows');
     soft((await texts('next')).map((text) => text.split(' | ')[0]), ['#37286', '#377', '#35391', '#36990', '#385'], 'Next up, screenshot 37: re-reviews, then fixes; no merge nobody reviewed');
-    // The draft rebase leads with the draft icon; the re-review of six PRs with the stack icon.
+    // The draft rebase leads with the draft icon; the re-review of six PRs with the stack icon; #385's conflicts with
+    // the conflict icon.
     soft(await js(`[...document.querySelectorAll('${section('next')} .morning-row')].map(r=>[r.querySelector('.morning-number')?.textContent, r.querySelector('[data-overview-icon]')?.dataset.overviewIcon, r.querySelector('[data-pr-state]')?.dataset.prState ?? null]).sort()`), [
-      ['#35391', 'pr', 'draft'], ['#36990', 'pr', 'open'], ['#37286', 'stack', null], ['#377', 'pr', 'open'], ['#385', 'pr', 'open'],
-    ], 'Next up icons: state, draft, stack');
+      ['#35391', 'pr', 'draft'], ['#36990', 'pr', 'open'], ['#37286', 'stack', null], ['#377', 'pr', 'open'], ['#385', 'pr', 'conflicting'],
+    ], 'Next up icons: state, draft, stack, conflicts');
     soft(await js(`[...document.querySelectorAll('${section('next')} .morning-detail')].map(e=>e.textContent)[2]`), 'needs rebasing after #35390 merged', 'rebasing in plain words');
     // The title takes the row's room at 1440: titles are whole, and a detail that does not fit truncates first.
     soft(await js<string[]>(`[...document.querySelectorAll('${section('next')} .morning-title-text')].filter(e=>e.scrollWidth > e.clientWidth + 1).map(e=>e.textContent)`), [], 'Next up titles are not cut at 1440');
