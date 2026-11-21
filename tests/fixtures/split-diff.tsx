@@ -7,6 +7,7 @@ import { DiffAppearanceMenu } from '../../components/DiffAppearanceMenu';
 import { DEFAULT_DIFF_APPEARANCE } from '../../lib/review-diff';
 import { renderDiffHunk } from '../../lib/highlight';
 import type { DiffHunk, PendingReviewComment } from '../../lib/types';
+import { parseChatSelection } from '../../lib/chat-selection';
 import '../../src/globals.css';
 
 const cases = [
@@ -132,7 +133,9 @@ function Fixture() {
           )}
         </section>
       ))}
-      <output id="selected-code">{selectedCode}</output>
+      {/* The code, and where it sits (lib/chat-selection.ts), as chat's prompt input receives them. */}
+      <output id="selected-code">{parseChatSelection(selectedCode).code}</output>
+      <output id="selected-location">{selectedCode.split('\n')[0]}</output>
       <output id="comments">{JSON.stringify(comments)}</output>
     </main>
   );

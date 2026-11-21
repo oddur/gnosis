@@ -14,9 +14,27 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const forbidden = ['@pierre/diffs', 'shiki', 'react-markdown', '@xyflow'];
+const forbidden = ['@pierre/diffs', '@pierre/words', 'shiki', 'react-markdown', '@xyflow'];
 // Libraries that must load after the named lazy screen, with the part of it that uses them.
 const lazyForbidden = { ReviewPage: ['@xyflow'] };
+// App modules that load only when a chat opens (components/chat-lazy.tsx): never at startup, nor with a PR.
+const chatOnly = [
+  'components/ai-elements/',
+  'components/ChatConversation.tsx',
+  'components/ChatComposer.tsx',
+  'components/ChatTrace.tsx',
+  'components/ChatCitation.tsx',
+  'components/ui/dropdown-menu.tsx',
+  'components/ui/hover-card.tsx',
+  'components/ui/collapsible.tsx',
+  'components/ui/trace.tsx',
+  'components/ui/attachment.tsx',
+  // Base UI's preview card, which only the citation card uses. Its menu is not listed: the context menus, which load at
+  // startup, are built on it.
+  'node_modules/@base-ui/react/preview-card/',
+];
+const chatModules = (modules) =>
+  chatOnly.filter((part) => modules.some((id) => id.replaceAll('\\', '/').includes(`/${part}`)));
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-startup-bundle-'));
 let startup;
 let lazyChunks = [];
@@ -85,6 +103,13 @@ if (found.length) {
   process.exit(1);
 }
 console.log(`None of ${forbidden.join(', ')} load at startup.`);
+const chatAtStartup = chatModules(startup.modules);
+if (chatAtStartup.length) {
+  console.error(
+    `The startup bundle must not contain the chat UI: ${chatAtStartup.join(', ')}. Load it through components/chat-lazy.tsx.`
+  );
+  process.exit(1);
+}
 console.log('Lazy app chunks, with the chunks they import statically beyond the startup bundle:');
 for (const chunk of lazyChunks)
   console.log(`  ${chunk.name}: ${(chunk.bytes / 1024).toFixed(0)} KB in ${chunk.chunks.length} chunk(s)`);
@@ -101,3 +126,10 @@ for (const [name, libraries] of Object.entries(lazyForbidden)) {
   }
   console.log(`None of ${libraries.join(', ')} load with ${name}.`);
 }
+const review = lazyChunks.find((chunk) => chunk.name === 'ReviewPage');
+const chatWithPr = review ? chatModules(review.modules) : [];
+if (chatWithPr.length) {
+  console.error(`The ReviewPage chunk must not load the chat UI: ${chatWithPr.join(', ')}. Load it when a chat opens.`);
+  process.exit(1);
+}
+console.log('The chat UI (AI Elements, conversation, prompt input) loads only when a chat opens.');

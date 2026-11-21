@@ -426,11 +426,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('chat-progress');
   },
   onChatTrace: (
-    callback: (event: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }) => void
+    callback: (event: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[]; citable?: Record<string, [number, number][]> }) => void
   ): (() => void) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      value: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[] }
+      value: { requestId?: string; steps: import('../lib/chat-trace').ChatTraceStep[]; citable?: Record<string, [number, number][]> }
     ) => callback(value);
     ipcRenderer.on('chat-trace', listener);
     return () => {
@@ -496,6 +496,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   loadPreferences: (): Promise<Preferences> => ipcRenderer.invoke('load-preferences'),
   savePreferences: (prefs: Preferences): Promise<void> => ipcRenderer.invoke('save-preferences', prefs),
+  /** Chat's panel widths and model choices only, without the settings side effects (lib/chat-preferences.ts). */
+  saveChatPreferences: (patch: Partial<Pick<Preferences, 'chatPanelWidths' | 'chatModels' | 'chatContextTokens'>>): Promise<void> =>
+    ipcRenderer.invoke('save-chat-preferences', patch),
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),

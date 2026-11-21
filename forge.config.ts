@@ -71,6 +71,8 @@ const config: ForgeConfig = {
         { entry: 'src/app-data-worker.ts', config: 'vite.main.config.ts', target: 'main' },
         // Conflict checks with tree-sitter, off the main thread (src/conflict-checks.ts).
         { entry: 'src/conflict-check-worker.ts', config: 'vite.main.config.ts', target: 'main' },
+        // Tree-sitter definitions for chat's PR-wide context (src/chat-context-definitions.ts).
+        { entry: 'src/chat-context-worker.ts', config: 'vite.main.config.ts', target: 'main' },
         { entry: 'src/preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
         // The menu bar panel's own small preload (#308), none of the main window's API.
         { entry: 'src/menubar-preload.ts', config: 'vite.preload.config.ts', target: 'preload' },

@@ -4,7 +4,12 @@ import path from 'node:path';
 import { test } from 'node:test';
 import {
   appendTraceSteps,
+  durationText,
   fileChatTrace,
+  formatToolInput,
+  parseChatTiming,
+  settleTrace,
+  toolResultStep,
   hunkLineRange,
   lineRangeText,
   parseChatTrace,
@@ -169,7 +174,8 @@ void test('traces merge without duplicates and survive a storage round trip', ()
   const first = appendTraceSteps(undefined, [read]);
   assert.equal(appendTraceSteps(first, [read]), first, 'Repeated events do not re-render');
   const stored = JSON.parse(JSON.stringify(first)) as unknown;
-  assert.deepEqual(parseChatTrace(stored), first);
+  // A call still running when its answer was saved ended with the answer.
+  assert.deepEqual(parseChatTrace(stored), { steps: [{ ...first.steps[0], status: 'done' }] });
   assert.deepEqual(
     parseChatTrace({
       steps: [
@@ -181,4 +187,92 @@ void test('traces merge without duplicates and survive a storage round trip', ()
   );
   assert.equal(parseChatTrace({ steps: [] }), undefined);
   assert.equal(parseChatTrace('nope'), undefined);
+});
+
+void test('tool calls carry their input and run until their result arrives', () => {
+  const read = toolCallStep({ id: 'r1', name: 'Read', input: { file_path: 'src/queue.ts', offset: 40, limit: 12 } });
+  assert.equal(read.status, 'running');
+  assert.equal(read.input, 'file_path: src/queue.ts\noffset: 40\nlimit: 12');
+  assert.equal(formatToolInput({ pattern: 'retry', glob: undefined, flags: ['-n'] }), 'pattern: retry\nflags: ["-n"]');
+  assert.equal(formatToolInput({}), undefined);
+  // Context arrives at 0 ms, the call 400 ms after the question, its result 1.6 s after that.
+  let trace = appendTraceSteps(undefined, [read], 400);
+  assert.equal(trace.steps[0].at, 400);
+  trace = appendTraceSteps(
+    trace,
+    [toolResultStep({ id: 'r1', output: '40\texport async function retry()\n\n' })],
+    2000
+  );
+  assert.deepEqual(
+    { output: trace.steps[0].output, status: trace.steps[0].status, duration: trace.steps[0].duration },
+    { output: '40\texport async function retry()', status: 'done', duration: 1600 }
+  );
+  assert.equal(
+    appendTraceSteps(trace, [toolResultStep({ id: 'r1', output: '40\texport async function retry()' })], 3000),
+    trace,
+    'A repeated result changes nothing'
+  );
+  assert.equal(
+    appendTraceSteps(trace, [toolResultStep({ id: 'never-called', output: 'x' })], 3000),
+    trace,
+    'A result for a call never reported is not guessed into a step'
+  );
+  const failed = appendTraceSteps(trace, [toolResultStep({ id: 'r1', output: 'ENOENT', isError: true })], 2500);
+  assert.equal(failed.steps[0].status, 'error');
+  assert.equal(toolResultStep({ id: 'x', output: 'y'.repeat(5000) }).output?.length, 1200, 'Output is clipped');
+});
+
+void test('an answer that ends settles its running calls', () => {
+  const trace = appendTraceSteps(undefined, [toolCallStep({ id: 'b', name: 'Bash', input: { command: 'ls' } })], 10);
+  assert.equal(settleTrace(trace)?.steps[0].status, 'done');
+  assert.equal(settleTrace(trace, 'error')?.steps[0].status, 'error');
+  const settled = settleTrace(trace);
+  assert.equal(settleTrace(settled), settled, 'A settled trace is returned as it is');
+});
+
+void test('trace timing reads as seconds and is validated from storage', () => {
+  assert.equal(durationText(40), '0.1s');
+  assert.equal(durationText(1234), '1.2s');
+  assert.equal(durationText(12400), '12s');
+  assert.equal(durationText(124000), '2m 4s');
+  assert.equal(durationText(-1), '');
+  assert.deepEqual(parseChatTiming({ sentAt: 1000, firstTextAt: 1800, doneAt: 4000 }), {
+    sentAt: 1000,
+    firstTextAt: 1800,
+    doneAt: 4000,
+  });
+  assert.deepEqual(parseChatTiming({ sentAt: 1000, firstTextAt: 500, doneAt: 'later' }), { sentAt: 1000 });
+  assert.equal(parseChatTiming({ firstTextAt: 5 }), undefined);
+});
+
+void test('Claude and Codex streams report tool results for the trace', () => {
+  const results: unknown[] = [];
+  const claude = createClaudeEventHandler({ onToolResult: (r) => results.push(r) });
+  for (const line of lines('claude-tool-stream.jsonl')) claude.processLine(line);
+  assert.deepEqual(results, [
+    { id: 'toolu_01Read', output: '40\texport async function retry(...)', isError: false },
+    { id: 'toolu_02Grep', output: 'src/config.go\nsrc/retry.ts', isError: false },
+  ]);
+  const codexResults: unknown[] = [];
+  const codex = createCodexEventHandler(undefined, undefined, (r) => codexResults.push(r));
+  codex.processLine(
+    JSON.stringify({
+      type: 'item.started',
+      item: { id: 'c1', type: 'command_execution', command: 'ls', status: 'in_progress' },
+    })
+  );
+  codex.processLine(
+    JSON.stringify({
+      type: 'item.completed',
+      item: {
+        id: 'c1',
+        type: 'command_execution',
+        command: 'ls',
+        aggregated_output: 'a.ts',
+        exit_code: 2,
+        status: 'failed',
+      },
+    })
+  );
+  assert.deepEqual(codexResults, [{ id: 'c1', output: 'a.ts', isError: true }]);
 });

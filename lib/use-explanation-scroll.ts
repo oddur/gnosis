@@ -10,6 +10,8 @@ export function explanationPositionKey(id: string, pane: string) {
 export interface ExplanationAnchor {
   section: number;
   filePath?: string;
+  /** Which block of the file, when the section shows it more than once (lib/slide-file-groups.ts). 0 when absent. */
+  fileRun?: number;
   /** Pixels between the anchor's top and the top of the scrollport. */
   offset: number;
 }
@@ -27,7 +29,8 @@ export function readExplanationPosition(saved: unknown): ExplanationPosition {
     top: Math.max(0, number(value.top) ?? 0),
     left: Math.max(0, number(value.left) ?? 0),
   };
-  const anchor = (value.anchor ?? {}) as { section?: unknown; filePath?: unknown; offset?: unknown };
+  const anchor = (value.anchor ?? {}) as { section?: unknown; filePath?: unknown; fileRun?: unknown; offset?: unknown };
+  const fileRun = number(anchor.fileRun);
   const section = number(anchor.section);
   const offset = number(anchor.offset);
   if (section !== undefined && Number.isInteger(section) && section >= 0 && offset !== undefined)
@@ -35,6 +38,7 @@ export function readExplanationPosition(saved: unknown): ExplanationPosition {
       section,
       offset,
       ...(typeof anchor.filePath === 'string' && anchor.filePath ? { filePath: anchor.filePath } : {}),
+      ...(fileRun !== undefined && Number.isInteger(fileRun) && fileRun > 0 ? { fileRun } : {}),
     };
   return position;
 }
@@ -68,8 +72,14 @@ export function captureExplanationAnchor(container: HTMLElement): ExplanationAnc
   if (code && (!text || code.offsetHeight >= text.offsetHeight)) {
     const file = lastAbove(section.querySelectorAll<HTMLElement>(fileSelector), line);
     const bounds = file?.getBoundingClientRect();
+    const fileRun = Number(file?.dataset.fileRun ?? 0);
     if (file && bounds && bounds.bottom > line)
-      return { section: index, filePath: file.dataset.filePath, offset: line - 1 - bounds.top };
+      return {
+        section: index,
+        filePath: file.dataset.filePath,
+        ...(fileRun > 0 ? { fileRun } : {}),
+        offset: line - 1 - bounds.top,
+      };
   }
   return { section: index, offset: line - 1 - section.getBoundingClientRect().top };
 }
@@ -79,7 +89,8 @@ function anchorElement(container: HTMLElement, anchor: ExplanationAnchor) {
   const section = container.querySelector<HTMLElement>(`:scope > [data-explanation-section="${anchor.section}"]`);
   if (!section || !anchor.filePath) return section ?? undefined;
   return [...section.querySelectorAll<HTMLElement>(fileSelector)].find(
-    (element) => element.dataset.filePath === anchor.filePath
+    (element) =>
+      element.dataset.filePath === anchor.filePath && Number(element.dataset.fileRun ?? 0) === (anchor.fileRun ?? 0)
   );
 }
 

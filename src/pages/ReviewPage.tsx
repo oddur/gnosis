@@ -15,7 +15,7 @@ import { useChangesComments } from '../../components/useChangesComments';
 import { useExplanationComments } from '../../lib/use-explanation-comments';
 import { explanationSubject, rememberExplanation } from '../../lib/explanation-workspace';
 import { rememberCommandDestination } from '../../lib/command-recents';
-import { findReviewLine, openReviewLine } from '../../components/ReviewDiff';
+import { findReviewBlock, findReviewLine, openReviewLine } from '../../components/ReviewDiff';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
@@ -45,9 +45,20 @@ import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
-import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId, Slide } from '../../lib/types';
-import { DEFAULT_FAST_CLAUDE_MODEL, PROVIDERS } from '../../lib/models';
+import type { ReviewGuide, FreshnessResult, Preferences, Slide } from '../../lib/types';
+import {
+  rememberChatContextBudget,
+  rememberChatModel,
+  rememberedChatContextBudget,
+  rememberedChatModel,
+  type ChatModelChoice,
+} from '../../lib/chat-preferences';
+import { hunkNewLines, hunkNewRange } from '../../lib/chat-citations';
+import type { ChatCitationSource } from '../../components/ChatCitation';
 import { markHere } from '../../lib/diff-here';
+
+/** A file block that is collapsed: a jump into it opens it first. */
+const COLLAPSED_BLOCK = '.review-file-expand[aria-expanded="false"]';
 
 export interface ChangesFileTarget {
   url: string;
@@ -192,8 +203,9 @@ function ReviewPageContent({
     setChatFocusRequest((request) => request + 1);
   }, [setChatOpen]);
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
-  const [chatProvider, setChatProvider] = useState<Provider>(initialPreferences?.provider ?? 'claude');
-  const [chatModel, setChatModel] = useState<ModelId>(initialPreferences?.model ?? DEFAULT_FAST_CLAUDE_MODEL);
+  // The topic chat's model: its own choice from the prompt input, else the chat model preference.
+  const [chatModel, setChatModel] = useState<ChatModelChoice>(() => rememberedChatModel(initialPreferences, 'topic'));
+  const [pickedContextTokens, setChatContextTokens] = useState<number>();
   const [savedDiffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(
     initialPreferences?.diffLayout ?? 'unified'
   );
@@ -318,12 +330,63 @@ function ReviewPageContent({
       setShowSubmitDialog(false);
     }
   }, [showSubmitDialog, submitUrl]);
-  const slideChat = useSlideChat(review, chatProvider, chatModel, prefs?.effort);
+  const chatContextTokens = pickedContextTokens ?? rememberedChatContextBudget(prefs ?? initialPreferences);
+  const slideChat = useSlideChat(review, chatModel.provider, chatModel.model, prefs?.effort, chatContextTokens);
   const gitFileUrlBase = useMemo(
     () => (review.snapshot?.subject.kind === 'stack' ? undefined : buildFileUrlBase(review.prUrl, review.headSha)),
     [review.prUrl, review.headSha]
   );
   const excludedFilesSet = useMemo(() => new Set(review.excludedFiles ?? []), [review.excludedFiles]);
+  // The topic chat's citations resolve to the PR's files, preview the explanation's hunks, and open in Changes.
+  const chatCitations = useMemo<ChatCitationSource>(() => {
+    const files = new Set<string>(review.changedFiles?.map((file) => file.filename) ?? []);
+    for (const slide of review.slides) for (const hunk of slide.diffHunks) files.add(hunk.filePath);
+    let lines: Map<string, Map<number, string>> | undefined;
+    // A line citation must fit an added file's length, or the new-side ranges of the topics' hunks.
+    const added = new Map(
+      (review.changedFiles ?? []).filter((f) => f.status === 'added').map((f) => [f.filename, f.additions])
+    );
+    const ranges = new Map<string, [number, number][]>();
+    for (const slide of review.slides)
+      for (const hunk of slide.diffHunks) {
+        const range = hunkNewRange(hunk.hunkHeader);
+        if (range) ranges.set(hunk.filePath, [...(ranges.get(hunk.filePath) ?? []), range]);
+      }
+    return {
+      files: [...files],
+      bounds: (path) => ({ max: added.get(path) || undefined, ranges: ranges.get(path) }),
+      preview: (path, startLine, endLine) => {
+        if (!lines) {
+          lines = new Map();
+          for (const slide of review.slides)
+            for (const hunk of slide.diffHunks) {
+              const file = lines.get(hunk.filePath) ?? new Map<number, string>();
+              for (const [n, text] of hunkNewLines(hunk.hunkHeader, hunk.content)) file.set(n, text);
+              lines.set(hunk.filePath, file);
+            }
+        }
+        const file = lines.get(path);
+        const shown: string[] = [];
+        for (let n = startLine; n <= endLine; n++) {
+          const text = file?.get(n);
+          if (text === undefined) return shown.length ? shown.join('\n') : undefined;
+          shown.push(text);
+        }
+        return shown.join('\n');
+      },
+      open: onOpenChangesFile
+        ? (target) =>
+            onOpenChangesFile({
+              url: review.prUrl,
+              headSha: review.headSha,
+              path: target.path,
+              line: target.startLine,
+              endLine: target.endLine,
+              side: 'after',
+            })
+        : undefined,
+    };
+  }, [review.changedFiles, review.slides, review.prUrl, review.headSha, onOpenChangesFile]);
 
   // Build a filename → FileMetadata lookup for diff file headers.
   // Only populated for reviews generated after the metadata feature
@@ -339,8 +402,7 @@ function ReviewPageContent({
   useEffect(() => {
     if (!initialPreferences) return;
     setPrefs(initialPreferences);
-    setChatProvider(initialPreferences.provider);
-    setChatModel(initialPreferences.model);
+    setChatModel(rememberedChatModel(initialPreferences, 'topic'));
     setDiffLayout(initialPreferences.diffLayout);
   }, [initialPreferences]);
   useEffect(() => {
@@ -353,8 +415,7 @@ function ReviewPageContent({
         // in a previous review. Do not let this refresh overwrite a newer edit.
         if (cancelled || writesAtLoad !== preferenceWrites.current) return;
         setPrefs(p);
-        setChatProvider(p.provider);
-        setChatModel(p.model);
+        setChatModel(rememberedChatModel(p, 'topic'));
         setDiffLayout(p.diffLayout);
       })
       .catch(() => {
@@ -479,13 +540,11 @@ function ReviewPageContent({
     if (!codeTarget || inspectedTarget.current === codeTarget.nonce) return;
     let tries = 0;
     const timer = setInterval(() => {
-      const file = activeWorkspaceRoot().querySelector<HTMLElement>(
-        `[data-explanation-section="${codeTarget.section}"] .review-file-group[data-file-path="${CSS.escape(codeTarget.filePath)}"]`
-      );
+      // A section can show a file in more than one block (lib/slide-file-groups.ts): the one that holds the line.
+      const section = activeWorkspaceRoot().querySelector(`[data-explanation-section="${codeTarget.section}"]`);
+      const file = section && findReviewBlock(section, codeTarget.filePath, { line: codeTarget.line });
       if (file) {
-        const collapsed = file.querySelector<HTMLButtonElement>(
-          '.review-file-context[data-collapsed=true] .review-file-expand'
-        );
+        const collapsed = file.querySelector<HTMLButtonElement>(COLLAPSED_BLOCK);
         if (collapsed) {
           collapsed.click();
           return;
@@ -788,15 +847,11 @@ function ReviewPageContent({
     const filePath = target.filePath;
     let tries = 0;
     const timer = setInterval(() => {
-      const file = [
-        ...activeWorkspaceRoot().querySelectorAll<HTMLElement>(
-          `[data-explanation-section="${matchedSection || 1}"] .review-file-group[data-file-path]`
-        ),
-      ].find((el) => el.dataset.filePath === filePath);
+      const section = activeWorkspaceRoot().querySelector(`[data-explanation-section="${matchedSection || 1}"]`);
+      const file =
+        section && findReviewBlock(section, filePath, { line: target.line, side: target.side, threadId: target.threadId });
       if (file) {
-        const collapsed = file.querySelector<HTMLButtonElement>(
-          '.review-file-context[data-collapsed=true] .review-file-expand'
-        );
+        const collapsed = file.querySelector<HTMLButtonElement>(COLLAPSED_BLOCK);
         if (collapsed) {
           collapsed.click();
           return;
@@ -1105,9 +1160,20 @@ function ReviewPageContent({
                   side: step.side,
                 }))
             }
-            modelLabel={PROVIDERS[chatProvider].models.find((model) => model.id === chatModel)?.label ?? chatModel}
+            citations={chatCitations}
+            contextBudget={chatContextTokens}
+            onContextBudgetChange={(tokens) => {
+              setChatContextTokens(tokens);
+              void rememberChatContextBudget(tokens).catch(() => {});
+            }}
+            model={chatModel}
+            onModelChange={(choice) => {
+              setChatModel(choice);
+              void rememberChatModel('topic', choice).catch(() => {});
+            }}
             quotedCode={chatQuotedCode}
             onQuotedCodeConsumed={() => setChatQuotedCode(null)}
+            onQuoteSelection={setChatQuotedCode}
           />
         )}
       </div>

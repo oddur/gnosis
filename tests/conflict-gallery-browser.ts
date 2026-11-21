@@ -383,10 +383,11 @@ void app.whenReady().then(async () => {
         const all = [...seen.values()].flatMap((s) => s.blocks);
         if (seen.size) {
           const s = result.summary ?? '';
-          const files = Number(/^(\d+) files? conflicts?\./.exec(s)?.[1]);
+          const files = Number(/^(\d+) files? (?:has|have) conflicts\./.exec(s)?.[1]);
           const merged = /(\d+) of (\d+) conflicts? (?:is|are) merged and checked/.exec(s);
           // "2 need you: …", "Nothing needs you.", or one part alone: "1 proposal to check for 2 conflicts.", "1 to decide."
-          const needs = /Nothing needs you/.test(s)
+          // "1 file is ready for review.": every conflict is Merged, and the file waits only for your look.
+          const needs = /Nothing needs you|ready for review/.test(s)
             ? 0
             : Number(
                 (/(\d+) needs? you/.exec(s) ??

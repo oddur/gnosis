@@ -22,6 +22,16 @@ export default defineConfig({
       '@pierre/diffs',
       '@pierre/diffs/react',
       '@pierre/diffs/edit',
+      // Chat's Markdown loads lazily (components/ChatConversation.tsx): found late, it would reload the page.
+      '@pierre/words/react',
+      '@pierre/words/highlights',
+      '@pierre/highlights/themes/loader',
+      // The chat's prompt input, trace and citations (components/chat-lazy.tsx) load lazily too.
+      '@base-ui/react/menu',
+      '@base-ui/react/preview-card',
+      '@base-ui/react/collapsible',
+      '@base-ui/react/merge-props',
+      '@base-ui/react/use-render',
       'shiki',
       'shiki/langs',
       'shiki/themes',
@@ -46,8 +56,11 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, '.'),
-    },
+    alias: [
+      // Chat renders no TeX (components/ChatMarkdown.tsx): Words' React and DOM renderers import the bare entry, so
+      // point it at the same API without math, whose WebAssembly is about a third smaller.
+      { find: /^@pierre\/words$/, replacement: '@pierre/words/no-math' },
+      { find: '@', replacement: path.resolve(__dirname, '.') },
+    ],
   },
 });

@@ -84,7 +84,7 @@ HUNK ASSIGNMENT: The <hunk_index> lists all diff hunks with unique IDs. For each
 - Each hunk ID must appear in exactly one slide
 - Every hunk ID must be assigned to some slide
 - If a hunk doesn't fit a specific slide, include it in a final "Other changes" slide
-- Order IDs within each slide by file path (alphabetical), then hunk number (ascending)
+- Order IDs within each slide in reading order, as READING ORDER describes, not by file path
 - Do NOT generate diff content — just reference hunks by ID
 
 You must respond with valid JSON matching the ReviewGuide schema exactly. No explanation outside the JSON.`;
@@ -482,6 +482,8 @@ export async function planReview(
 const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a guided code review. You are given a specific topic with its relevant diff hunks, file contents, and narrative direction from the review planner.
 
 CONTEXT: You are writing ONE slide in a multi-slide review. Answer the chapter's central question by connecting the implementation, its callers, and supporting tests where relevant. Explain what a test asserts without claiming it passed. Keep this explanation scoped to its assigned hunks; do not repeat prerequisite chapters. Distinguish added or removed behavior from unchanged diff context and comment-only edits. Preserve the component boundary, condition, or exception that limits a claim; never turn a local guarantee into a system-wide one. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Use this direction for consistency, but verify it against the actual source. Return a short title naming what these hunks actually establish. Correct a misleading planner title directly; do not spend narrative text explaining the mismatch.
+
+HUNK ORDER: The <diff_hunks> arrive in reading order, and the reviewer sees the code in that order beside your narrative. Follow the same order in the narrative.
 
 ${REVIEW_PROSE_DIRECTIVE}
 

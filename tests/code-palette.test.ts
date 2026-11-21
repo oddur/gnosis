@@ -88,7 +88,7 @@ void test('The palette applies to the bars and file headers of diffs in that the
   };
   assert.equal(
     codePaletteCSS('gnosis-aurora-x', palette),
-    '[data-code-theme="gnosis-aurora-x"] :is(.diff-gap,.diff-move-lead,.changes-file-header,.diff-outline){--diff-code-bg:#0d1117;--diff-code-fg:#e6edf3;--diff-code-header:#272a35;--diff-code-line:#010103;--diff-code-muted:#a2a7ad;--diff-keyword:#ff7b72;--diff-code-added:#85cf99;--diff-code-deleted:#ff9ba5;--diff-file-bg:#393f4c;--diff-file-fg:#ffffff;--diff-file-muted:#b0b2b7;--diff-file-control:#8a8f99;--diff-file-added:#9ad8ab;--diff-file-deleted:#ffb0b8}'
+    '[data-code-theme="gnosis-aurora-x"] :is(.diff-gap,.diff-move-lead,.changes-file-header,.diff-outline,[data-markdown=code-block]){--diff-code-bg:#0d1117;--diff-code-fg:#e6edf3;--diff-code-header:#272a35;--diff-code-line:#010103;--diff-code-muted:#a2a7ad;--diff-keyword:#ff7b72;--diff-code-added:#85cf99;--diff-code-deleted:#ff9ba5;--diff-file-bg:#393f4c;--diff-file-fg:#ffffff;--diff-file-muted:#b0b2b7;--diff-file-control:#8a8f99;--diff-file-added:#9ad8ab;--diff-file-deleted:#ffb0b8}'
   );
 });
 

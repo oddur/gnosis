@@ -804,7 +804,7 @@ export function PrFileInspection({
           )}
           {!showingPreview && (
             <div ref={code} className="changes-code">
-              <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
+              <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} path={entry.file.path} />
               {parts && !unchangedMove && (
                 <ChangesDiff
                   key={activeKey}

@@ -88,7 +88,8 @@ void test('the target for every kind', () => {
   assert.equal(tab('changes-requested'), 'feedback');
   assert.equal(tab('replies'), 'feedback');
   assert.equal(tab('checks-failed'), 'checks');
-  assert.equal(tab('conflicts'), 'summary');
+  assert.equal(tab('conflicts'), 'conflicts', 'A conflicted PR opens its Conflicts view (#445 item 8)');
+  assert.deepEqual(attentionTarget('conflicts', url), { kind: 'conflicts', pr: pr(url) });
   assert.equal(tab('ready-to-merge'), 'summary');
   assert.deepEqual(attentionTarget('explanation-ready', url, { reviewId: 'r1' }), { kind: 'review', reviewId: 'r1' });
   assert.deepEqual(attentionTarget('checks-failed', url), { kind: 'pr', pr: pr(url), tab: 'checks' });
