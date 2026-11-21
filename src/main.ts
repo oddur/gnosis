@@ -4240,6 +4240,7 @@ async function chatPrContext({ key, ...input }: Omit<ChatContextInput, 'definiti
 const conflicts = createConflictResolutionService({
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.
   verify: (file, disabled) => conflictChecks.check(file, disabled),
+  moved: (file, disabled) => conflictChecks.moved(file, disabled),
   disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
   dependents: url => {
     const subject = workbench.cached().items.find(item => item.subject.members.some(member => member.url === url))?.subject;

@@ -27,13 +27,15 @@ export const STRUCTURAL_UNAVAILABLE = 'Structural merge isn’t available in thi
 /**
  * "Try structural merge again": where structural merge timed out or couldn't combine the sides, or an earlier resolution
  * stands in for it. Only on the draft as prepared (`unchanged`), so it never replaces your choices or edits, and never
- * where this build has no Mergiraf or a whole-file proposal already holds its result.
+ * where this build has no Mergiraf or structural merge's whole-file proposal already holds its result.
  */
 export function canRetryStructural(
   file: Pick<ConflictFile, 'wholeFile' | 'structuralNote' | 'source' | 'proposals' | 'unsupported'>,
   unchanged: boolean
 ) {
-  if (!unchanged || file.unsupported || file.wholeFile || file.structuralNote === STRUCTURAL_UNAVAILABLE) return false;
+  // A move rule's whole-file proposal (lib/conflict-moved.ts) is not structural merge's result: it doesn't stop a retry.
+  const merged = file.wholeFile?.source === 'mergiraf';
+  if (!unchanged || file.unsupported || merged || file.structuralNote === STRUCTURAL_UNAVAILABLE) return false;
   // Structural merge already ran and left these conflicts open: running it again would throw the unions away.
   if (file.proposals?.some((p) => p?.source === 'union')) return false;
   return !!file.structuralNote || file.source === 'rerere' || !!file.proposals?.some((p) => p?.source === 'rerere');

@@ -4,7 +4,14 @@ import { parentPort, workerData } from 'node:worker_threads';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { TAGS } from '../lib/syntax-tags';
-import { conflictChecker, noiseAnswer, type CheckRequest, type CheckResponse, type TreeSitterFiles } from './conflict-checks';
+import {
+  conflictChecker,
+  moveProposer,
+  noiseAnswer,
+  type CheckRequest,
+  type CheckResponse,
+  type TreeSitterFiles,
+} from './conflict-checks';
 
 /**
  * The conflict checks' worker thread (src/conflict-checks.ts), which also runs Reduce noise's syntax comparison for
@@ -29,9 +36,13 @@ port.on('message', (message: CheckRequest) => {
     })();
     return;
   }
-  const check = conflictChecker(engine, message.disabled);
-  check(message.file).then(
-    (verdict) => port.postMessage({ id: message.id, verdict } satisfies CheckResponse),
+  // A conflict file: the move rule's proposal (lib/conflict-moved.ts), or its checks.
+  const answer: Promise<CheckResponse> =
+    message.kind === 'moved'
+      ? moveProposer(engine, message.disabled)(message.file).then((proposal) => ({ id: message.id, proposal }))
+      : conflictChecker(engine, message.disabled)(message.file).then((verdict) => ({ id: message.id, verdict }));
+  answer.then(
+    (response) => port.postMessage(response satisfies CheckResponse),
     (error: unknown) =>
       port.postMessage({
         id: message.id,

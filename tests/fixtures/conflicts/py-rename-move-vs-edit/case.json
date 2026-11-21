@@ -1,0 +1,9 @@
+{
+  "description": "The PR renames weighted_mean to weighted_average and moves it to the end of the module; main changes a line inside it. Gnosis proposes the renamed function with main’s change, in Check. Mergiraf fails on this case, so it tests the move rule alone (#445 item 17); with Mergiraf, its own whole-file proposal comes first.",
+  "language": "python",
+  "category": "structure/rename-vs-edit",
+  "mergiraf": "fail",
+  "expected": {
+    "lab/stats.py": "check"
+  }
+}

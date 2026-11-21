@@ -24,6 +24,12 @@ export type BlockPick = BlockChoice | 'proposal';
 /** Proposal texts by block index, as `ConflictFile.proposals` holds them. */
 export type BlockProposals = readonly ({ text: string } | null | undefined)[];
 
+/** A text's lines, each with its line break. */
+export const textLines = (text: string) => text.split(/(?<=\n)/).filter(Boolean);
+/** Every use of the identifier `name` in a text: not part of a longer identifier (letters, digits, `_` or `$`). */
+export const identifierPattern = (name: string) =>
+  new RegExp(`(?<![\\p{L}\\p{N}_$])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_$])`, 'gu');
+
 const marker = (line: string, char: string) => new RegExp(`^\\${char}{7}(?:[ \\t].*)?\\r?\\n?$`).test(line);
 
 /** Split a file into unchanged text and conflict blocks. An unfinished block stays text. */

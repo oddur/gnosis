@@ -1,0 +1,8 @@
+{
+  "description": "The PR moves ParsePairs from pairs.go into parse.go; main changes a line inside it in pairs.go. Main’s change belongs in parse.go, which Git merged cleanly and is not part of the resolution, so Gnosis leaves the conflict to decide.",
+  "language": "go",
+  "category": "structure/move-vs-edit",
+  "expected": {
+    "lab/pairs.go": "any-but-merged"
+  }
+}

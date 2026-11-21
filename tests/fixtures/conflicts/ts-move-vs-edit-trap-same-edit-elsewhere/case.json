@@ -1,0 +1,9 @@
+{
+  "description": "The PR moves orderTotal below lineScale and adds a note to lineScale; main makes the same edit, a * 2 to a * 4, inside both. The line merge reads it as a move of lineScale: main’s edit to orderTotal merges, and the open conflict is at lineScale, with the same line change. That conflict is not at orderTotal, so the move rule proposes nothing. Mergiraf fails on this case, so it tests the move rule alone (#445 item 17); with Mergiraf, its own whole-file proposal comes first.",
+  "language": "typescript",
+  "category": "trap/move-vs-edit",
+  "mergiraf": "fail",
+  "expected": {
+    "src/pricing.ts": "decide"
+  }
+}

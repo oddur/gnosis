@@ -39,10 +39,14 @@ export interface ConflictFile {
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
  * merge left it, as both sides' additions or as the PR's version of a change both sides made (lib/conflict-union.ts).
+ * A 'moved' proposal is only ever a whole-file proposal (`wholeFile`): one side moved or renamed a function and the
+ * other edited it, and the edit is applied at the new place (lib/conflict-moved.ts). It is never Merged.
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union' | 'same';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved';
   text: string;
+  /** A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." */
+  note?: string;
 }
 export interface ConflictSession {
   id: string;
@@ -118,7 +122,15 @@ export type ConflictRequest =
       /** Your Keep choices per block (`ConflictFile.picks`); absent leaves the saved ones. */
       picks?: ('ours' | 'theirs' | 'both' | null)[];
     }
-  | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path: string; instructions?: string }
+  | {
+      kind: 'resolve';
+      id: string;
+      version: number;
+      /** `whole-file`: the file's whole-file proposal (`wholeFile`) as it is, whoever made it. Nothing runs again. */
+      engine: 'mergiraf' | 'agent' | 'whole-file';
+      path: string;
+      instructions?: string;
+    }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -195,7 +207,7 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     return;
   if (
     r.kind === 'resolve' &&
-    ['agent', 'mergiraf'].includes(String(r.engine)) &&
+    ['agent', 'mergiraf', 'whole-file'].includes(String(r.engine)) &&
     text('path', 4096) &&
     (r.instructions === undefined || text('instructions', 10000))
   )

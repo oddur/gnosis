@@ -1,0 +1,9 @@
+{
+  "description": "The PR renames loadUser to findUser, updates its caller and moves it to the end of the file; main edits a line of its body. The right result is findUser at the end with main’s edit. Gnosis proposes it in Check, with a note that call sites in other files were not checked. Mergiraf fails on this case, so it tests the move rule alone (#445 item 17); with Mergiraf, its own whole-file proposal comes first.",
+  "language": "typescript",
+  "category": "structure/rename-vs-edit",
+  "mergiraf": "fail",
+  "expected": {
+    "src/users.ts": "check"
+  }
+}
