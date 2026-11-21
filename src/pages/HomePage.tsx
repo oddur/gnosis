@@ -210,6 +210,9 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   // Every route into a PR tab, including restored sessions, links and notifications, passes here: Feedback opens
   // Conversation (#418).
   const setOverviewTab = useCallback((tab: WorkspaceTab) => setOverviewTabState(conversationTab(tab)), []);
+  // The Conflicts view (#445 item 8) opens only for the PR a Resolve conflicts action or an in-app target named. It never
+  // carries over to another PR, a restored tab or a history entry: those open on Summary, and nothing is prepared.
+  const [conflictsSubject, setConflictsSubject] = useState<string>();
   const [reviewRequest, setReviewRequest] = useState<PrReviewRequest>();
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);
@@ -1281,7 +1284,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
       setTool(restoredTool(next, homeDefault ?? homeTabPreference()));
       setOpenedItem(next.item);
       setSelected(next.selected);
-      setOverviewTab(next.tab);
+      setOverviewTab(next.tab === 'conflicts' ? 'summary' : next.tab);
       queueScrollOffset.current = next.scroll;
       if (queueScrollElement) queueScrollElement.scrollTop = next.scroll;
       // Restore the active saved view through the local store, in the same write queue as filters.
@@ -1310,6 +1313,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
     if (id !== stack.id && !member) return;
     setOpenedItem(id === stack.id ? parent : focusStackPr(parent, member!));
     setSelected(stack.id);
+    setOverviewTabState((tab) => (tab === 'conflicts' ? 'summary' : tab));
   };
   const selectSummary = async (id: string) => {
     const version = ++summaryNavigation.current;
@@ -1326,7 +1330,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
       } catch (e) { if (summaryNavigation.current === version) setError(String(e)); }
     } else {
       const item = orderedItems.find(item => item.subject.id === id);
-      if (item) { setSelected(id); setOpenedItem(item); }
+      if (item) { setSelected(id); setOpenedItem(item); setOverviewTabState((tab) => (tab === 'conflicts' ? 'summary' : tab)); }
     }
   };
   const moveSummary = (direction: number) => {
@@ -1432,6 +1436,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
       setSelected(target.subject.subject.id);
       // A deep link or notification lands on its tab, such as Checks for failing checks, and on its thread,
       // check, first unviewed file or merge action.
+      if (target.open?.tab === 'conflicts') setConflictsSubject(target.subject.subject.id);
       if (target.open?.tab) setOverviewTab(target.open.tab);
       const open = target.open;
       setLanding(open && (open.threadId || open.check || open.focus) ? { ...open, subjectId: target.subject.subject.id } : undefined);
@@ -1891,7 +1896,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
         account={auth?.login ?? null}
         statusRefreshing={statusRefreshing}
         revalidating={!!storeStatus.saved}
-        tab={overviewTab}
+        tab={overviewTab === 'conflicts' && conflictsSubject !== summaryItem.subject.id ? 'summary' : overviewTab}
         onTabChange={setOverviewTab}
         preferences={prefs}
         positions={readingPositions.current}

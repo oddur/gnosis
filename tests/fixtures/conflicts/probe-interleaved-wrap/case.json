@@ -1,0 +1,9 @@
+{
+  "description": "Resolver audit round 2 (#445 item 19): the PR wraps `go();` in an `if` and main appends `stop();` after it. The resolver puts `stop();` inside the `if`, so it runs only when ready. Every line is there and the file parses; only keeping each side's change together catches it.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/run.ts": "any-but-merged"
+  }
+}

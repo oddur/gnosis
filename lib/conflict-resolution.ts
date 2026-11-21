@@ -17,6 +17,11 @@ export interface ConflictFile {
    */
   proposals?: (ConflictProposal | null)[];
   /**
+   * Your Keep choice per block of `original`, saved with the draft, so a Keep whose text equals the proposal still reads
+   * as yours, never as Merged, after the view closes or reopens (#445 item 8).
+   */
+  picks?: ('ours' | 'theirs' | 'both' | null)[];
+  /**
    * Structural merge's result for the whole file, when it also changes lines outside Git's conflicts and so cannot be
    * split into per-block proposals. Always Check, never Merged. Accepting it makes it the draft, like a Suggest result.
    */
@@ -103,7 +108,16 @@ export interface RestackPlan {
 export type ConflictRequest =
   /** `restart` prepares a fresh merge. With `keep`, resolutions whose conflicts are unchanged carry over. */
   | { kind: 'open'; url: string; restart?: boolean; keep?: boolean }
-  | { kind: 'save'; id: string; version: number; path: string; contents: string; resolved: boolean }
+  | {
+      kind: 'save';
+      id: string;
+      version: number;
+      path: string;
+      contents: string;
+      resolved: boolean;
+      /** Your Keep choices per block (`ConflictFile.picks`); absent leaves the saved ones. */
+      picks?: ('ours' | 'theirs' | 'both' | null)[];
+    }
   | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path: string; instructions?: string }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
@@ -171,7 +185,12 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     (r.kind === 'save' || r.kind === 'restack-save') &&
     text('path', 4096) &&
     text('contents', CONFLICT_FILE_LIMIT) &&
-    typeof r.resolved === 'boolean'
+    typeof r.resolved === 'boolean' &&
+    (r.picks === undefined ||
+      (r.kind === 'save' &&
+        Array.isArray(r.picks) &&
+        r.picks.length <= 10_000 &&
+        (r.picks as unknown[]).every((pick) => pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both')))
   )
     return;
   if (

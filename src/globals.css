@@ -2317,7 +2317,7 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .queue-meta>span { overflow-wrap:anywhere; }
 
 /* Notifications stay above Activity and never take keyboard focus on arrival. */
-.app-toasts { max-height:calc(100dvh - var(--app-titlebar-height) - 24px); overflow-y:auto; overscroll-behavior:contain; position:fixed; right:12px; bottom:12px; z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
+.app-toasts { max-height:calc(100dvh - var(--app-titlebar-height) - 12px - var(--conflict-footer-reserve, 12px)); overflow-y:auto; overscroll-behavior:contain; position:fixed; right:12px; bottom:var(--conflict-footer-reserve, 12px); z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
 .app-toast { flex-shrink:0; pointer-events:auto; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; transition:opacity 180ms ease-out,transform 180ms ease-out; }
 .app-toast[data-starting-style],.app-toast[data-ending-style] { opacity:0; transform:translateY(8px); }
 .app-toast[data-limited] { display:none; }
@@ -4119,13 +4119,13 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-workspace { --field-border:color-mix(in srgb,var(--muted-foreground) 80%,var(--background)); }
 .dark .conflict-workspace,.dark .conflict-suggest-menu { --field-border:color-mix(in srgb,var(--muted-foreground) 65%,var(--background)); }
 .conflict-suggest-menu { --field-border:color-mix(in srgb,var(--muted-foreground) 80%,var(--background)); }
-.conflict-workspace[data-slot=dialog-content] { top:4vh;width:96vw;max-width:1600px;height:92vh;max-height:92vh;padding:0;gap:0;display:flex;flex-direction:column;overflow:hidden; }
+/* The Conflicts view (#445 item 8) fills its PR tab, under the PR header and tabs. */
+.conflict-workspace { flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
 .conflict-workspace > * { flex-shrink:0; }
 .conflict-workspace:focus-visible { outline:none; }
-.conflict-heading { display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:16px 24px 14px;border-bottom:1px solid var(--border); }
-.conflict-heading h2 { font-size:var(--type-panel-title);text-wrap:balance; }
-.conflict-heading [data-slot=dialog-description] { display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:var(--type-control); }
-.conflict-heading-title { color:var(--muted-foreground);min-width:0; }
+.conflict-heading { display:flex;align-items:center;justify-content:space-between;gap:24px;padding:10px 16px;border-bottom:1px solid var(--border); }
+.conflict-heading h2 { font-size:var(--type-section-title);font-weight:600;line-height:1.35;text-wrap:balance; }
+.conflict-heading-description { margin-top:4px;color:var(--muted-foreground);font-size:var(--type-control); }
 .conflict-body { flex:1 1 auto;min-height:0;display:grid;grid-template-columns:240px minmax(0,1fr); }
 .conflict-files { overflow:auto;border-right:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:2px; }
 .conflict-files button { display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;padding:9px 10px;text-align:left;font-size:var(--type-control);border-radius:var(--radius-sm); }
@@ -4221,7 +4221,15 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-kept > svg { color:var(--color-success); }
 .conflict-kept > span[aria-hidden] { color:var(--muted-foreground);font-weight:400; }
 
-.conflict-result-diff,.conflict-preview-diff { border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden; }
+.conflict-result-diff,.conflict-preview-diff { border:1px solid var(--border);border-radius:var(--radius-md);overflow:clip; }
+/* The Conflicts view's diff (#445 item 8) is Changes' file: each conflict's card sits under its lines. */
+.conflict-diff-cards { display:flex;flex-direction:column;gap:8px;padding:8px 12px;font-family:var(--font-sans);color:var(--foreground);white-space:normal; }
+.conflict-block-note-line { padding:4px 12px 6px;color:var(--muted-foreground);font-size:var(--type-caption); }
+.conflict-diff-legend { display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:6px 12px;color:var(--muted-foreground);font-size:var(--type-caption); }
+.conflict-diff-legend .conflict-side-label { padding:0;border:0;color:var(--foreground); }
+.conflict-diff-legend .conflict-side-label[data-side=ours]::before { content:'− ';color:var(--color-danger); }
+.conflict-diff-legend .conflict-side-label[data-side=theirs]::before { content:'+ ';color:var(--color-success); }
+.conflict-result-diff > .conflict-diff-file,.conflict-diff-view > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
 .conflict-diff-columns { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:6px 12px;background:var(--secondary);border-bottom:1px solid var(--border);font-size:var(--type-caption);font-weight:600; }
 .conflict-diff-columns[data-layout=unified] { display:flex;flex-wrap:wrap; }
 
@@ -4290,7 +4298,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 @media (max-width:850px) {
   .conflict-body { grid-template-columns:184px minmax(0,1fr); }
-  .conflict-heading { padding:14px 16px 12px;gap:12px; }
+  .conflict-heading { padding:8px 12px;gap:12px; }
 }
 @media (max-width:700px) {
   .conflict-body { display:flex;flex-direction:column; }

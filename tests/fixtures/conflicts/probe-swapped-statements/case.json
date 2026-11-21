@@ -1,0 +1,9 @@
+{
+  "description": "Resolver audit (#445 item 19): the resolver keeps every line of both sides but swaps two statements, so the tax is worked out before the sum. The file parses and the line counts match; only the order check catches it.",
+  "language": "typescript",
+  "category": "review-probe",
+  "mergiraf": "canned",
+  "expected": {
+    "src/total.ts": "any-but-merged"
+  }
+}
