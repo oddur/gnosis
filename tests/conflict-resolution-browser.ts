@@ -1342,6 +1342,11 @@ void app.whenReady().then(async () => {
     await wait(`${block(1)}?.dataset.state==='kept'`);
     assert.match(await js<string>(`${block(1)}.querySelector('.conflict-kept').textContent`), /^Kept PR change/);
     await shot('p1-keep-ours');
+    // Each conflict has its own check result: the imports stay Merged beside the conflict that lost four().
+    assert.equal(await js(`${block(0)}.dataset.bucket`), 'merged');
+    assert.match(await js<string>(`${block(0)}.querySelector('summary').textContent`), /Every line of both sides is accounted for\./);
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
     // Keep both on one whose proposal is both sides: Kept both, never back to the proposal.
     await pick(0, 'both');
     await wait(`${block(0)}?.dataset.state==='kept'`);
