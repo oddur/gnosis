@@ -25,6 +25,8 @@ let requestId = '';
 let kind = '';
 const requests: unknown[] = [];
 const api: Partial<Window['electronAPI']> = {
+  // Chat's Markdown loads lazily, after this API is installed, and reads the saved preferences: none are saved here.
+  loadPreferences: () => Promise.resolve({} as Preferences),
   onChatProgress: (callback) => {
     progress = callback;
   },

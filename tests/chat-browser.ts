@@ -11,6 +11,10 @@ void app.whenReady().then(async () => {
     webPreferences: { backgroundThrottling: false, partition: `chat-fixture-${Date.now()}` },
   });
   const previousClipboard = clipboard.readText();
+  // Renderer errors explain a failure that only shows as a timeout.
+  win.webContents.on('console-message', ({ level, message }) => {
+    if (level === 'error') console.error('[renderer]', message);
+  });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   const wait = async (code: string) => {
     for (let i = 0; i < 200; i++) {
@@ -94,7 +98,10 @@ void app.whenReady().then(async () => {
     // The answer streams in two parts; the second ends past the bottom of the panel.
     const cut = answer.indexOf('await worker');
     await emit(answer.slice(0, cut));
-    await wait(`${body}?.textContent.includes('queue.dispatch(command)')`);
+    // Words renders the message once it has loaded (its plain text shows until then).
+    await wait(
+      `!!${body}?.querySelector('[data-markdown=p]') && ${body}.textContent.includes('queue.dispatch(command)')`
+    );
     const firstLine = `Math.round(${body}.querySelector('[data-markdown=p]').getBoundingClientRect().top)`;
     const startTop = await js<number>(firstLine);
     if (printShots) {
@@ -449,8 +456,8 @@ void app.whenReady().then(async () => {
       );
       for (const theme of ['dark', 'light']) {
         await js(`document.documentElement.classList.toggle('dark',${theme === 'dark'})`);
-        await js('document.fonts.ready');
-        save(`typeset-changes-chat-1440-${theme}`, (await win.webContents.capturePage()).toPNG());
+        // The suite's capture: the whole window here, after fonts and the theme's transitions settle.
+        await capture(`typeset-changes-chat-1440-${theme}`);
       }
       await js("document.documentElement.classList.add('dark')");
     }

@@ -22,6 +22,10 @@ export default defineConfig({
       '@pierre/diffs',
       '@pierre/diffs/react',
       '@pierre/diffs/edit',
+      // Chat's Markdown loads lazily (components/ChatConversation.tsx): found late, it would reload the page.
+      '@pierre/words/react',
+      '@pierre/words/highlights',
+      '@pierre/highlights/themes/loader',
       'shiki',
       'shiki/langs',
       'shiki/themes',
