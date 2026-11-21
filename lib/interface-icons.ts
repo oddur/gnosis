@@ -25,6 +25,8 @@ export const workspaceSections = {
   feedback: { label: 'Summary', icon: LayoutList },
   explanation: { label: 'Explanation', icon: BookOpen },
   brief: { label: 'Local notes', icon: NotebookPen },
+  // Resolve conflicts (#445 item 8): GitMergeConflict, as every Resolve conflicts… action.
+  conflicts: { label: 'Conflicts', icon: GitMergeConflict },
 } satisfies Record<WorkspaceTab, { label: string; icon: LucideIcon }>;
 
 /** Shared choices for features appearing in menus, search and toolbars. */

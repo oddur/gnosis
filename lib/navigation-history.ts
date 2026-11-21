@@ -2,7 +2,8 @@ import type { QueueFilters } from './queue-filters';
 import type { QueueItem } from './workbench';
 
 export type HistoryDirection = -1 | 1;
-export type WorkspaceTab = 'summary' | 'changes' | 'commits' | 'explanation' | 'checks' | 'brief' | 'feedback';
+/** `conflicts` is the Conflicts view (#445 item 8): a PR's tab only while Resolve conflicts is open. */
+export type WorkspaceTab = 'summary' | 'changes' | 'commits' | 'explanation' | 'checks' | 'brief' | 'feedback' | 'conflicts';
 /**
  * Feedback became part of the Conversation page (`summary`, #418). Saved tabs, history, deep links and notifications
  * may still name `feedback`; they open Conversation, with their thread or filter carried separately.
