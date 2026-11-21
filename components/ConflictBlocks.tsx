@@ -18,14 +18,22 @@ import {
   conflictModel,
   type BlockChoice,
   type BlockPick,
+  type BlockPicks,
   type ConflictBlock,
   type ConflictLabels,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
-import type { Verdict } from '../lib/conflict-verify';
+import { blockVerdict, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
 const proposalWhat = (proposal: ConflictProposal) =>
-  proposal.source === 'rerere' ? 'Same as you resolved before' : 'Combined both sides’ changes';
+  proposal.source === 'rerere'
+    ? 'Same as you resolved before'
+    : proposal.source === 'union'
+      ? 'Kept both sides’ additions'
+      : 'Combined both sides’ changes';
+/** A Check label says where the proposal came from only when that is a fact; why to check it is the note beside it. */
+const checkLabel = (proposal: ConflictProposal) =>
+  proposal.source === 'rerere' ? `Check · ${proposalWhat(proposal)}` : 'Check';
 
 const baseOptions = {
   theme: { dark: 'pierre-dark', light: 'pierre-light' },
@@ -137,8 +145,8 @@ function Block({
   onChoose: (choice: BlockPick) => void;
   onUndo?: () => void;
   proposal?: ConflictProposal | null;
-  /** The file's checks; undefined while they run. */
-  verdict?: Verdict;
+  /** This conflict's checks; undefined while they run. */
+  verdict?: BlockVerdict;
   /** Why structural merge proposed nothing for this file, shown on its Decide conflicts. */
   note?: string;
 }) {
@@ -221,13 +229,13 @@ function Block({
         data-bucket="check"
         data-conflict-index={index}
         tabIndex={0}
-        aria-label={`${title}, line ${block.line}. Check: ${what}. ${note}`}
+        aria-label={`${title}, line ${block.line}. ${checkLabel(proposal)}. ${note}`}
       >
         <header className="conflict-block-header">
           <strong>{title}</strong>
           <span className="conflict-bucket" data-bucket="check">
             <CircleHelp size={13} aria-hidden="true" />
-            Check · {what}
+            {checkLabel(proposal)}
           </span>
           <span>{note}</span>
           {undo}
@@ -341,6 +349,8 @@ export function ConflictView({
   verdict,
   note,
   wholeFile,
+  picks,
+  onPick,
 }: {
   name: string;
   original: string;
@@ -359,9 +369,15 @@ export function ConflictView({
   handle?: Ref<ConflictViewHandle>;
   /** Called after the last open conflict is resolved, to move focus to the next action. */
   onAllResolved?: () => void;
+  /** Your Keep choices, so one that equals the proposal still reads as yours (withPicks). */
+  picks?: BlockPicks;
+  onPick?: (index: number, choice: BlockChoice | undefined) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
-  const model = useMemo(() => conflictModel(original, contents, proposals), [original, contents, proposals]);
+  const model = useMemo(
+    () => conflictModel(original, contents, proposals, picks),
+    [original, contents, proposals, picks]
+  );
   const total = model.segments.filter((s) => s.kind === 'conflict').length;
   // A whole-file proposal that passed, or is still being checked, stands in for the conflicts until you ask for them.
   const hideBlocks = !!wholeFile && !wholeFile.shown && (!verdict || !!verdict.passed);
@@ -375,6 +391,7 @@ export function ConflictView({
     const next = [...model.choices];
     next[index] = choice;
     pendingFocus.current = choice ? { after: index } : { at: index };
+    onPick?.(index, choice === 'proposal' ? undefined : choice);
     onChange(applyChoices(model.segments, next, proposals));
   }
   useEffect(() => {
@@ -390,6 +407,16 @@ export function ConflictView({
     if (target) revealElement(target);
     else onAllResolved?.();
   }, [model]);
+  // A proposal is Check while its checks run. If it had focus and turns Merged, focus moves on to the next conflict that
+  // needs you. With none, it stays put: never onto a button that commits a review while you may be pressing keys. J
+  // then goes to the next action.
+  useEffect(() => {
+    const active = document.activeElement?.closest<HTMLElement>('.conflict-block');
+    if (!active || !root.current?.contains(active) || active.matches(pendingSelector)) return;
+    if (active.dataset.state !== 'proposal') return;
+    const target = openBlocks().find((block) => indexOf(block) > indexOf(active)) ?? openBlocks().at(0);
+    if (target) revealElement(target);
+  }, [verdict]);
   useImperativeHandle(
     handle,
     () => ({
@@ -454,7 +481,7 @@ export function ConflictView({
               disabled={disabled}
               onChoose={(choice) => choose(segment.index, choice)}
               proposal={proposals?.[segment.index]}
-              verdict={verdict}
+              verdict={blockVerdict(verdict, segment.index)}
               note={note}
               onUndo={model.undoable ? () => choose(segment.index, undefined) : undefined}
             />

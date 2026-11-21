@@ -13,7 +13,7 @@ export interface ConflictFile {
   unsupported?: string;
   /**
    * What preparation resolved on its own, per conflict block of `original` (null: no safe proposal). `result` starts
-   * with these applied. The renderer checks them (lib/conflict-verify.ts) before it calls one Merged.
+   * with these applied. The main process checks them (`verdict`) before one counts as Merged.
    */
   proposals?: (ConflictProposal | null)[];
   /**
@@ -25,10 +25,18 @@ export interface ConflictFile {
   structuralNote?: string;
   /** Structural merge gave this file a result: proposals, a whole-file proposal, or a note that it couldn't. */
   structuralRan?: boolean;
+  /**
+   * The checks of `proposals` or `wholeFile`, run by the main process (src/conflict-checks.ts), with the proposals'
+   * fingerprint (`proposalKey`). It counts only while that fingerprint matches.
+   */
+  verdict?: { key: string; verdict: import('./conflict-verify').Verdict };
 }
-/** One conflict block resolved during preparation: by your earlier resolution, or by structural merge. */
+/**
+ * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or as both sides'
+ * additions where structural merge left it (lib/conflict-union.ts).
+ */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf';
+  source: 'rerere' | 'mergiraf' | 'union';
   text: string;
 }
 export interface ConflictSession {
@@ -91,7 +99,7 @@ export type ConflictRequest =
   /** `restart` prepares a fresh merge. With `keep`, resolutions whose conflicts are unchanged carry over. */
   | { kind: 'open'; url: string; restart?: boolean; keep?: boolean }
   | { kind: 'save'; id: string; version: number; path: string; contents: string; resolved: boolean }
-  | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path?: string; instructions?: string }
+  | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path: string; instructions?: string }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -164,7 +172,7 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
   if (
     r.kind === 'resolve' &&
     ['agent', 'mergiraf'].includes(String(r.engine)) &&
-    (r.path === undefined || text('path', 4096)) &&
+    text('path', 4096) &&
     (r.instructions === undefined || text('instructions', 10000))
   )
     return;

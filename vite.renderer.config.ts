@@ -29,6 +29,22 @@ export default defineConfig({
       'web-tree-sitter',
     ],
   },
+  build: {
+    // The main process reads the tree-sitter wasm files from the package (src/main.ts): never inline them.
+    assetsInlineLimit: (file) => (file.endsWith('.wasm') ? false : undefined),
+    rollupOptions: {
+      output: {
+        // The tree-sitter runtime and grammars keep their names, so the main process's conflict checks find them in the
+        // package (src/main.ts, src/conflict-check-worker.ts). Everything else keeps Vite's hashed names.
+        assetFileNames: (asset) =>
+          asset.originalFileNames.some((name) =>
+            /(^|\/)(src\/assets\/tree-sitter\/[\w-]+|web-tree-sitter\/web-tree-sitter)\.wasm$/.test(name)
+          )
+            ? 'assets/tree-sitter/[name][extname]'
+            : 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),

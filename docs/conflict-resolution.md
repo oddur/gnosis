@@ -2,22 +2,22 @@
 
 Open **Resolve conflicts…** in the PR actions, in a PR's context menu, or beside a conflicted PR in the stack overview. The workspace brings the base branch into the PR branch with a merge commit. It does not merge the PR.
 
-The heading names the task, such as "Bring main into @ana's feature/retry". One step rail stays the same from start to end: **Resolve N files**, then **Confirm and push to the branch**, and, for a stack, an optional **Restack** step.
+The heading names the task, such as "Bring main into @ana's feature/retry". Below it, one sentence says where you are: "3 files have conflicts. 7 of 9 conflicts are merged and checked. 2 need you." When nothing is left to decide or check, it names the files that wait for **Mark reviewed** ("1 file is ready for review."). The footer counts the files you reviewed. There is no step rail and no guide.
 
 ## Resolve each file
 
 Each conflict shows two labelled versions side by side: **This PR · branch** and the base branch. The common ancestor is under a collapsed **Before both changes**. Git's markers and commit IDs are never shown as labels.
 
-1. Choose **Keep PR change**, **Keep main's change** or **Keep both** for each conflict. The block then shows a short note, such as "Kept PR change · Undo". Undo works per block and survives switching files. Use **Edit result** to write your own result.
+1. Choose **Keep PR change**, **Keep main's change** or **Keep both** for each conflict. The block then shows a short note, such as "Kept PR change · Undo", even when the proposal had the same text: a choice you make is yours. Undo works per block and survives switching files. Use **Edit result** to write your own result.
 2. When no conflict is left, the file is **Resolved · needs review**. Select **Review result** to compare the result with the PR version. The columns are labelled.
-3. **Mark reviewed** is available only after the current result has been shown. It saves the file as **Reviewed** and opens the next file that needs work.
+3. **Mark reviewed** is available only after the current result has been shown. A file whose every conflict is Merged shows its results already, so its next step is **Mark reviewed**. It saves the file as **Reviewed** and opens the next file that needs work.
 4. When every file is reviewed, the confirmation opens directly.
 
-**Suggest a resolution** offers a structural merge (Mergiraf, bundled, runs locally), **Ask <model>…** with optional instructions, and **Suggest for all unreviewed files…**. Suggestions are drafts: they never mark a file reviewed. The selected model gets the three versions, your draft and the PR context, without a checkout or test runner.
+Structural merge runs on every file while the merge is prepared, so there is no engine to choose. **Ask <model>…** (the Bot icon) asks the selected model about the open file, with optional instructions. Its result is a draft: it never marks a file reviewed. The model gets the three versions, your draft and the PR context, without a checkout or test runner.
 
-Each file has one main action in the footer: **Next conflict**, **Review result**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the rail shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge.
+A conflict Gnosis can't write as text, such as a rename on both sides, a deletion or a binary file, shows **Needs a local merge tool** in the file list and the file header. Gnosis pushes only a merge it can resolve completely, so the file says to merge the PR on your computer and gives the commands to start (**Copy commands**).
 
-The guide opens on first use. After it is hidden or the workspace is closed once, it stays collapsed (`gnosis-conflict-guide` in local storage) until you open it with **Guide**.
+Each file has one main action in the footer: **Next conflict**, **Review result**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the summary row shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge.
 
 ### Keyboard
 
@@ -25,14 +25,14 @@ The guide opens on first use. After it is hidden or the workspace is closed once
 | --- | --- |
 | J / K | Next / previous conflict |
 | 1 / 2 / 3 | Keep PR change / base change / both, for the focused conflict |
-| M | Show the result, then mark the file reviewed and open the next file |
+| M | Mark the file reviewed and open the next file. A file with a choice or an edit of yours shows its result first |
 | N / P | Next / previous file |
 
-Opening the workspace focuses the first unresolved conflict. Shortcuts pause in text fields, the result editor and the confirmation. They are also listed in the keyboard shortcut overlay (?).
+Opening a file focuses the first conflict that needs you, or the file's next action when none does. Shortcuts pause in text fields, the result editor and the confirmation. The keyboard button in the summary row lists them on hover or focus, as does the keyboard shortcut overlay (?).
 
 ## Confirm and push
 
-The confirmation is the only place that pushes. It shows the final update in two parts: **Your resolutions** (the files you resolved) and **Changes coming from the base branch** (files Git merged cleanly). It names the author's branch and says that approvals may be dismissed if the repository requires it. Enter a commit message and select **Push merge commit**. Enter alone never pushes.
+The confirmation is the only place that pushes. It shows the final update in two parts: **Your resolutions** (the files you resolved) and **Changes coming from the base branch** (files Git merged cleanly). It names the author's branch and says that approvals may be dismissed if the repository requires it. Enter a commit message and select **Push merge commit**. Enter alone never pushes. The title and **Push merge commit** stay in view; only the diff between them scrolls.
 
 After the push, the outcome names the updated branch, the merge commit, the files you resolved, and that checks restart. It also says how to undo: reset the branch to its previous commit. **Done** closes the workspace.
 
@@ -64,7 +64,7 @@ After the push, a stack can restack the PRs above this one. A paused restack use
 
 This version handles regular UTF-8 text files with a common ancestor and both branch versions. Binary, rename/delete, file-mode and repository-structure conflicts require a local merge tool. The workspace explains unsupported files and prevents publication until all conflicts can be resolved. Limits are 100 conflicted files, 1 MB per file version, and 12 MB of combined conflict text.
 
-Git 2.38 or newer must be installed and available to the app. Git 2.40 or newer prepares conflicts without fetching history. Mergiraf 0.20.0 is bundled. Project tests are **not** run: agents receive the supplied ancestor, branch versions, current draft and PR context, without a checkout or test runner. The confirmation and proposal notes state this limitation.
+Git 2.40 or newer must be installed and available to the app: preparation runs `git merge-tree --merge-base`. With an older Git, Resolve conflicts stops before it starts and says which version it found. Mergiraf 0.20.0 is bundled. Project tests are **not** run: agents receive the supplied ancestor, branch versions, current draft and PR context, without a checkout or test runner. The confirmation and proposal notes state this limitation.
 
 ## Storage and publication
 
@@ -72,7 +72,7 @@ All network, Git, model and disk work runs in Electron's backend. The renderer r
 
 Drafts use the existing SQLite app-data store, scoped by GitHub account and PR URL. They are saved work, so clearing the GitHub cache does not delete them. No user checkout is created or changed.
 
-Preparation asks GitHub for the merge base, then fetches only three commits (head, base and merge base) with `--depth=1 --filter=blob:none`. With Git 2.40 or newer, `git merge-tree --merge-base` merges them without history. The commits go into one bare repository per account and base repository, `userData/conflict-objects/stores/<hash>`, so a second PR in the same repository fetches only its new commits. Each PR keeps a small private repository under `userData/conflict-objects/sessions/<account-and-PR-hash>`. It borrows the store's objects through Git alternates, lists the three commits as shallow, and holds no branch refs. The store keeps one set of refs per session (`refs/gnosis/<session-hash>/…`), so its objects are never pruned while a session uses them. Fetches and ref updates in a store run one at a time. If a repository is linked in **Settings → Local clones**, its object directory is added as a read-only alternate, so commits that are already on disk are not downloaded. Gnosis finds that directory without running Git in the clone and never writes to it. File versions that the merge needs arrive on demand, as before.
+Preparation asks GitHub for the merge base, then fetches only three commits (head, base and merge base) with `--depth=1 --filter=blob:none`. `git merge-tree --merge-base` merges them without history. The commits go into one bare repository per account and base repository, `userData/conflict-objects/stores/<hash>`, so a second PR in the same repository fetches only its new commits. Each PR keeps a small private repository under `userData/conflict-objects/sessions/<account-and-PR-hash>`. It borrows the store's objects through Git alternates, lists the three commits as shallow, and holds no branch refs. The store keeps one set of refs per session (`refs/gnosis/<session-hash>/…`), so its objects are never pruned while a session uses them. Fetches and ref updates in a store run one at a time. If a repository is linked in **Settings → Local clones**, its object directory is added as a read-only alternate, so commits that are already on disk are not downloaded. Gnosis finds that directory without running Git in the clone and never writes to it. File versions that the merge needs arrive on demand, as before.
 
 If GitHub does not return a merge base, or a shallow fetch or merge fails, preparation falls back to the previous path: the whole history of both commits, without blobs, in the session's own repository. When there is one merge base, both paths label the common ancestor in conflict markers with the same 12-character abbreviation, so they write identical results. Restacking dependent PRs needs history. It fetches the full history into the session repository first, which costs what every preparation cost before.
 

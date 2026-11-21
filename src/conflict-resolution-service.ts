@@ -26,6 +26,10 @@ import {
   withResult,
 } from '../lib/conflict-carry';
 import { conflictCount } from '../lib/conflict-blocks';
+import { withUnions } from '../lib/conflict-union';
+import type { Verdict } from '../lib/conflict-verify';
+import { verdictKey } from '../lib/conflict-verdict-key';
+import type { SyntaxLanguage } from '../lib/syntax-scope';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
@@ -76,6 +80,14 @@ interface Deps {
   /** Tests use local bare remotes. Production only constructs github.com URLs. */
   remote?: (repo: string) => string;
   dependents?: (url: string) => string[];
+  /**
+   * Checks one file's proposals (src/conflict-checks.ts). The verdict is saved with the file, so its buckets are known
+   * before any dialog opens. Without it, the renderer checks them. Undefined: the check could not run, so nothing is
+   * saved and the next open checks again.
+   */
+  verify?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<Verdict | undefined>;
+  /** The languages that are off in Settings › Code intelligence: a saved verdict counts only for the same ones. */
+  disabledLanguages?: () => SyntaxLanguage[];
 }
 /** A single scope hash leaves room for Git's internal worktree paths on Windows. */
 export async function conflictSessionDirectory(root: string, account: string, id: string): Promise<string> {
@@ -233,7 +245,7 @@ export function createConflictResolutionService(deps: Deps) {
   function parseMerge(merge: { code: number; stdout: Buffer }) {
     const parts = merge.stdout.toString('utf8').split('\0');
     const tree = (parts.shift() ?? '').trim();
-    if (!oid(tree)) throw new Error('Git 2.38 or newer is required to prepare conflicts.');
+    if (!oid(tree)) throw new Error('Resolve conflicts needs Git 2.40 or newer. Install a newer Git, then try again.');
     return { merge, tree, parts };
   }
   /** Starts a session from an empty directory. A legacy-path directory moves to the current layout. */
@@ -473,6 +485,26 @@ export function createConflictResolutionService(deps: Deps) {
     );
     return { ...prepared, mergeBase };
   }
+  /**
+   * Both preparation paths run `git merge-tree --merge-base`, which needs Git 2.40. Older Git stops with a usage dump,
+   * so say what to do before starting. A failed check runs again next time, after the user updates Git.
+   */
+  let gitVersion: Promise<void> | undefined;
+  function checkGitVersion() {
+    gitVersion ??= runGit(deps.directory(), ['--version'], new AbortController().signal)
+      .then(({ stdout }) => {
+        const match = /(\d+)\.(\d+)(?:\.\d+)?/.exec(stdout.toString('utf8'));
+        if (match && (Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 40)))
+          throw new Error(
+            `Resolve conflicts needs Git 2.40 or newer; you have ${match[0]}. Install a newer Git, then try again.`
+          );
+      })
+      .catch((error: unknown) => {
+        gitVersion = undefined;
+        throw error;
+      });
+    return gitVersion;
+  }
   async function prepare(
     ctx: Context,
     id: string,
@@ -481,6 +513,7 @@ export function createConflictResolutionService(deps: Deps) {
     report: (text: string) => void
   ): Promise<Prepared> {
     await fs.mkdir(deps.directory(), { recursive: true, mode: 0o700 });
+    await checkGitVersion();
     for (const branch of [spec.headBranch, spec.baseBranch])
       await runGit(deps.directory(), ['check-ref-format', `refs/heads/${branch}`], signal);
     try {
@@ -594,6 +627,35 @@ export function createConflictResolutionService(deps: Deps) {
     }
     return files;
   }
+  /**
+   * Checks each file's proposals that have no verdict for their current fingerprint, one file at a time. A file without
+   * proposals drops its verdict. True when any verdict changed.
+   */
+  async function check(files: ConflictFile[], signal: AbortSignal, report: (text: string) => void = () => {}) {
+    if (!deps.verify) return false;
+    let changed = false;
+    const disabled = deps.disabledLanguages?.() ?? [];
+    const due: { file: ConflictFile; key: string }[] = [];
+    for (const file of files) {
+      if (file.unsupported || (!file.proposals && !file.wholeFile)) {
+        if (file.verdict) changed = true;
+        delete file.verdict;
+        continue;
+      }
+      // A copy: proposalKey remembers its answer per object, and these files change in place.
+      const key = verdictKey({ ...file }, disabled);
+      if (file.verdict?.key !== key) due.push({ file, key });
+    }
+    if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
+    for (const { file, key } of due) {
+      signal.throwIfAborted();
+      const verdict = await deps.verify(file, disabled);
+      if (verdict) file.verdict = { key, verdict };
+      else delete file.verdict;
+      changed = true;
+    }
+    return changed;
+  }
   /** Structural merge of one file's three versions. Exit code 1 means some conflicts remain in the output. */
   async function mergiraf(
     ctx: Context,
@@ -676,14 +738,18 @@ export function createConflictResolutionService(deps: Deps) {
       }
       // Out of time, Mergiraf falls back to Git's line merge and says nothing: whatever it printed is not its merge.
       if (Date.now() - started >= budget) return false;
-      const proposals = blockProposals(file.original, output, 'mergiraf');
+      const merged = blockProposals(file.original, output, 'mergiraf');
+      const whole = !merged && !hasConflictMarkers(output);
+      // Where it left a conflict open and both sides only added lines there, both additions (lib/conflict-union.ts).
+      const proposals = whole ? undefined : withUnions(file.path, file.original, merged);
       if (proposals) {
         file.proposals = proposals;
         if (!keepDraft) {
           file.result = withProposals(file.original, proposals);
           file.source = 'mergiraf';
         }
-      } else if (!hasConflictMarkers(output)) file.wholeFile = { source: 'mergiraf', text: output };
+      } else if (whole) file.wholeFile = { source: 'mergiraf', text: output };
+      // Only a file with no proposal at all gets the note: "Try structural merge again" never replaces unions.
       else file.structuralNote = 'Structural merge couldn’t combine this file.';
       file.structuralRan = true;
       return true;
@@ -867,6 +933,7 @@ export function createConflictResolutionService(deps: Deps) {
       session.baseSha = live.baseSha;
       session.tree = prepared.tree;
       session.files = carried.files;
+      await check(session.files, signal, report);
       session.preparation = await preparation(ctx, session.id, prepared, carried.files, session, signal);
       live = (await current(session, ctx)).state;
       if (live.baseSha === session.baseSha)
@@ -974,7 +1041,7 @@ export function createConflictResolutionService(deps: Deps) {
           !f.proposals &&
           !f.wholeFile
       );
-      if (untried.length) {
+      if (untried.length)
         await mergeStructurally(
           ctx,
           id,
@@ -984,6 +1051,8 @@ export function createConflictResolutionService(deps: Deps) {
           report,
           true
         );
+      // A draft saved before the main process checked proposals, or by a build without the checks, gets them now.
+      if ((await check(saved.files, signal, report)) || untried.length) {
         signal.throwIfAborted();
         assertAccount(ctx);
         saved.version++;
@@ -1025,6 +1094,7 @@ export function createConflictResolutionService(deps: Deps) {
           signal
         )
       ).files;
+    await check(files, signal, report);
     const session: ConflictSession = {
       id,
       account: ctx.account,
@@ -1374,9 +1444,7 @@ export function createConflictResolutionService(deps: Deps) {
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
-          const files = session.files.filter(
-            (f) => !f.unsupported && (request.path ? f.path === request.path : !f.resolved)
-          );
+          const files = session.files.filter((f) => !f.unsupported && f.path === request.path);
           if (!files.length) throw new Error('Select an unresolved text file.');
           for (const file of files) {
             report(`Proposing a resolution for ${file.path}.`);
@@ -1391,18 +1459,41 @@ export function createConflictResolutionService(deps: Deps) {
               }
               file.explanation = result.explanation;
             } else {
-              // Preparation already ran Mergiraf on these three versions and kept its whole-file result.
-              file.result =
-                file.wholeFile?.text ??
-                (await mergiraf(ctx, id, { head: session.headBranch, base: session.baseBranch }, file, signal));
+              // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
+              // runs again on request, with the full budget, not the first try's.
+              let output = file.wholeFile?.text;
+              if (output === undefined) {
+                const budget = Math.max(...(deps.structuralTimeouts ?? [5000, 10_000, 30_000]).slice(1));
+                const started = Date.now();
+                try {
+                  output = await mergiraf(
+                    ctx,
+                    id,
+                    { head: session.headBranch, base: session.baseBranch },
+                    file,
+                    signal,
+                    budget
+                  );
+                } catch (error) {
+                  signal.throwIfAborted();
+                  if (!(error instanceof Error && error.message.startsWith('The operation timed out'))) throw error;
+                }
+                // Out of time, Mergiraf falls back to Git's line merge and says nothing, as in mergeStructurally: that
+                // output is not its merge. The draft stays as it was, and the note says so.
+                if (output === undefined || Date.now() - started >= budget) {
+                  file.structuralNote = 'Structural merge timed out again.';
+                  continue;
+                }
+              }
+              file.result = output;
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'
                 : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
             }
             file.source = request.engine;
-            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals.
+            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals. A
+            // whole-file proposal stays, so Reset file returns to it.
             delete file.proposals;
-            delete file.wholeFile;
             delete file.structuralNote;
             file.resolved = false;
           }
@@ -1506,6 +1597,14 @@ export function createConflictResolutionService(deps: Deps) {
           session.commitSha = sha;
         }
         if (session.status !== 'published') {
+          // Only the file a request changed: Suggest drops its proposals, and a save changes the draft the per-conflict
+          // checks read (proposalKey includes it). Checks of an unchanged key are skipped.
+          if (request.kind === 'resolve' || request.kind === 'save')
+            await check(
+              session.files.filter((f) => !request.path || f.path === request.path),
+              signal,
+              report
+            );
           signal.throwIfAborted();
           assertAccount(ctx);
         }

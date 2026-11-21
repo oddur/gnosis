@@ -179,6 +179,31 @@ export function inferChoices(
   return choices;
 }
 
+/** The Keep choices you made in this view, by block index. Undefined: none, or the proposal. */
+export type BlockPicks = readonly (BlockChoice | undefined)[];
+/**
+ * A choice you made is yours, whatever was proposed. The draft alone can't tell "Keep PR change" from a proposal with
+ * the same text, or "Keep both" from one side when the other is empty, so a block takes your pick wherever the pick
+ * gives the text the draft reads as.
+ */
+export function withPicks(
+  segments: ConflictSegment[],
+  choices: (BlockPick | undefined)[],
+  proposals?: BlockProposals,
+  picks?: BlockPicks
+): (BlockPick | undefined)[] {
+  if (!picks?.some(Boolean)) return choices;
+  const next = [...choices];
+  for (const segment of segments) {
+    if (segment.kind !== 'conflict') continue;
+    const pick = picks[segment.index];
+    const read = next[segment.index];
+    if (pick && read && chosenText(segment.block, pick) === pickText(segment, read, proposals))
+      next[segment.index] = pick;
+  }
+  return next;
+}
+
 export interface ConflictModel {
   /** The text the blocks come from: the original conflict when Undo is available, else the draft. */
   source: string;
@@ -188,10 +213,16 @@ export interface ConflictModel {
   undoable: boolean;
 }
 /** Blocks for the displayed draft, with Undo whenever the draft still derives from the original conflict. */
-export function conflictModel(original: string, contents: string, proposals?: BlockProposals): ConflictModel {
+export function conflictModel(
+  original: string,
+  contents: string,
+  proposals?: BlockProposals,
+  picks?: BlockPicks
+): ConflictModel {
   const segments = parseConflicts(original);
   const choices = segments.some((s) => s.kind === 'conflict') ? inferChoices(segments, contents, proposals) : undefined;
-  if (choices) return { source: original, segments, choices, undoable: true };
+  if (choices)
+    return { source: original, segments, choices: withPicks(segments, choices, proposals, picks), undoable: true };
   const own = parseConflicts(contents);
   return { source: contents, segments: own, choices: [], undoable: false };
 }

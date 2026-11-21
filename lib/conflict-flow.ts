@@ -1,4 +1,4 @@
-import type { BaseMove, ConflictFileStage } from './conflict-resolution';
+import type { BaseMove, ConflictFile, ConflictFileStage } from './conflict-resolution';
 import { githubWriteError, WORKFLOW_PERMISSION_LABEL, WORKFLOW_PUSH_WARNING } from './github-access';
 
 /**
@@ -13,12 +13,58 @@ export function conflictFileAction(state: {
   /** Another file still needs resolving or review. */
   otherFilesPending: boolean;
   unsupported?: boolean;
+  /** Every conflict is Merged: its results are on screen, so Mark reviewed needs no separate Review result. */
+  merged?: boolean;
 }): ConflictFileAction {
   if (!state.stage) return 'none';
   if (state.unsupported) return state.otherFilesPending ? 'next-file' : 'none';
   if (state.stage === 'conflicted') return 'next-conflict';
-  if (state.stage === 'resolved') return state.resultShown ? 'mark-reviewed' : 'review-result';
+  if (state.stage === 'resolved') return state.resultShown || state.merged ? 'mark-reviewed' : 'review-result';
   return state.otherFilesPending ? 'next-file' : 'confirm';
+}
+
+export const STRUCTURAL_UNAVAILABLE = 'Structural merge isn’t available in this build.';
+/**
+ * "Try structural merge again": where structural merge timed out or couldn't combine the sides, or an earlier resolution
+ * stands in for it. Only on the draft as prepared (`unchanged`), so it never replaces your choices or edits, and never
+ * where this build has no Mergiraf or a whole-file proposal already holds its result.
+ */
+export function canRetryStructural(
+  file: Pick<ConflictFile, 'wholeFile' | 'structuralNote' | 'source' | 'proposals' | 'unsupported'>,
+  unchanged: boolean
+) {
+  if (!unchanged || file.unsupported || file.wholeFile || file.structuralNote === STRUCTURAL_UNAVAILABLE) return false;
+  // Structural merge already ran and left these conflicts open: running it again would throw the unions away.
+  if (file.proposals?.some((p) => p?.source === 'union')) return false;
+  return !!file.structuralNote || file.source === 'rerere' || !!file.proposals?.some((p) => p?.source === 'rerere');
+}
+
+/** A ref name that is safe to show in a shell command, even quoted: no spaces, quotes, `$`, backticks or `;`. */
+const SAFE_REF = /^[A-Za-z0-9._/-]+$/;
+/** One shell word: single quotes, with an embedded `'` closed, escaped and reopened. */
+export const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+/**
+ * The commands that start a local merge of the base branch into the PR branch, for a conflict Gnosis can't write as
+ * text. Branch and repository names come from the PR's author, so every one is quoted, and a name with any character
+ * outside letters, digits, `.`, `_`, `/` and `-` gets no commands at all (undefined): pasting it must never run code.
+ */
+export function localMergeCommands(session: {
+  headRepo: string;
+  baseRepo: string;
+  headBranch: string;
+  baseBranch: string;
+}): string | undefined {
+  const { headRepo, baseRepo, headBranch, baseBranch } = session;
+  if (![headRepo, baseRepo, headBranch, baseBranch].every((name) => SAFE_REF.test(name))) return undefined;
+  // A fork's clone has no remote for the base repository: fetch the base branch by URL.
+  const base =
+    headRepo === baseRepo
+      ? [`git fetch origin ${shellQuote(baseBranch)}`, `git merge ${shellQuote(`origin/${baseBranch}`)}`]
+      : [
+          `git fetch ${shellQuote(`https://github.com/${baseRepo}.git`)} ${shellQuote(baseBranch)}`,
+          'git merge FETCH_HEAD',
+        ];
+  return [`git switch ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
 }
 
 export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in';

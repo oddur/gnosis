@@ -1,0 +1,8 @@
+{
+  "description": "Both sides append a middleware to the same list. Middleware runs in list order, so which comes first is a decision.",
+  "language": "python",
+  "category": "semantic/order",
+  "expected": {
+    "app/settings.py": "check"
+  }
+}

@@ -12,7 +12,11 @@ import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import type { PrActionState } from '../lib/pr-actions';
-import { blockBuckets } from '../lib/conflict-verify';
+import { blockBuckets, CHECKS_VERSION, verifyProposals } from '../lib/conflict-verify';
+import { verdictKey } from '../lib/conflict-verdict-key';
+import * as TreeSitter from 'web-tree-sitter';
+import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
+import { conflictChecker, createConflictCheckWorker } from '../src/conflict-checks';
 const exec = promisify(execFile);
 async function fixture(
   t: TestContext,
@@ -105,7 +109,7 @@ void test('real Git conflicts: draft, proposal, preview and guarded publication 
   assert.equal(f.session.files.length, 1);
   assert.equal(f.session.files[0].unsupported, undefined);
   assert.match(f.session.files[0].original, /<<<<<<< /);
-  let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version }))
+  let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version, path: f.session.files[0].path }))
     .session;
   assert.equal(session.files[0].resolved, false, 'Automatic suggestions always need review');
   await assert.rejects(f.run({ kind: 'preview', id: session.id, version: session.version }), /every file reviewed/);
@@ -568,7 +572,7 @@ void test('Mergiraf executable returns a saved proposal without auto-approving i
     return;
   }
   const f = await fixture(t);
-  const result = await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf' });
+  const result = await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: f.session.files[0].path });
   assert.equal(result.session.files[0].source, 'mergiraf');
   assert.equal(result.session.files[0].resolved, false);
   assert.ok(hasConflictMarkers(result.session.files[0].result), 'Incompatible changes remain visible for a human');
@@ -622,7 +626,7 @@ void test('rejects malformed IPC, leftover markers and cancelled operations with
   controller.abort();
   await assert.rejects(
     f.service.run(
-      { kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'agent' },
+      { kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'agent', path: f.session.files[0].path },
       controller.signal
     ),
     /abort/i
@@ -819,7 +823,7 @@ void test('Mergiraf structurally combines both JSON edits, persists the proposal
   });
   assert.equal(f.session.files.length, 1);
   assert.ok(hasConflictMarkers(f.session.files[0].original), 'Native Git must first report a real text conflict');
-  let session = (await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf' }))
+  let session = (await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: f.session.files[0].path }))
     .session;
   const proposal = session.files[0];
   assert.equal(hasConflictMarkers(proposal.result), false);
@@ -934,6 +938,29 @@ void test('preparation runs structural merge on every conflicted file and keeps 
   assert.deepEqual(blockBuckets(after, after.result, undefined), ['check', 'decided']);
 });
 
+void test('where structural merge leaves both sides’ new functions open, preparation proposes both, the PR’s first', async (t) => {
+  const binary = path.resolve('resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf');
+  if (!(await fs.stat(binary).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const fn = (name: string, body: string) => `export function ${name}(a: number, b: number) {\n  return ${body};\n}\n\n`;
+  const before = (added: string) => `${fn('add', 'a + b')}${added}${fn('subtract', 'a - b')}`;
+  const f = await fixture(t, false, {
+    name: 'math.ts',
+    base: before(''),
+    ours: before(fn('multiply', 'a * b')),
+    theirs: before(fn('divide', 'a / b')),
+  });
+  const [file] = f.session.files;
+  assert.deepEqual(
+    file.proposals?.map((p) => p && p.source),
+    ['union']
+  );
+  assert.equal(file.result, before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
+  assert.ok(!file.resolved, 'A union is never reviewed for you');
+});
+
 void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {
   const file: ConflictFile = {
     path: 'a.ts',
@@ -998,6 +1025,115 @@ const movingSample = (a: number, b: number, c: number, filler = 'filler') =>
     `export const c = ${c};`,
     '',
   ].join('\n');
+void test('the service checks proposals itself and saves the verdict with the draft (#445)', async (t) => {
+  if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
+    t.skip('Needs the Mergiraf binary: npm run prepare:mergiraf.');
+    return;
+  }
+  const assets = path.resolve('src/assets/tree-sitter');
+  const engine = createSyntaxEngine(TreeSitter, {
+    runtime: async () => new Uint8Array(await fs.readFile(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))),
+    grammar: async (language) => new Uint8Array(await fs.readFile(path.join(assets, `${language}.wasm`))),
+    tags: (name) => fs.readFile(path.join(assets, `${name}-tags.scm`), 'utf8'),
+  });
+  // Opened first by a build without the checks: the draft has proposals and no verdict.
+  const f = await fixture(t, false, jsonSample);
+  const prepared = f.session.files[0];
+  assert.ok(prepared.proposals?.[0], 'Structural merge proposed the conflict');
+  assert.equal(prepared.verdict, undefined);
+  let disabled: SyntaxLanguage[] = [];
+  let failing = false;
+  const checked: string[] = [];
+  Object.assign(f.deps, {
+    verify: (file: ConflictFile, off: SyntaxLanguage[]) => {
+      checked.push(file.path);
+      return failing ? Promise.resolve(undefined) : conflictChecker(engine, off)(file);
+    },
+    disabledLanguages: () => disabled,
+  });
+  // A check that could not run saves nothing, so the next open checks again.
+  failing = true;
+  let file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.equal(file.verdict, undefined);
+  failing = false;
+  checked.length = 0;
+  // Reopening the draft checks it once; the verdict is saved, so the next open does not check again.
+  file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.deepEqual(checked, ['settings.json']);
+  assert.equal(file.verdict?.key, verdictKey(file, []));
+  assert.ok(file.verdict.key.startsWith(`${CHECKS_VERSION}:`), 'The key names the checks’ version');
+  assert.deepEqual(file.verdict.verdict, await verifyProposals(
+      file,
+      (l, x) => engine.definitions(l, x),
+      false,
+      (l, a, b) => engine.equivalent(l, a, b)
+    ));
+  assert.deepEqual(blockBuckets(file, file.result, file.verdict.verdict), [file.verdict.verdict.merged ? 'merged' : 'check']);
+  file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.deepEqual(checked, ['settings.json'], 'A saved verdict for the same proposals is not checked again');
+  // Turning a language off makes the saved verdict stale: it is checked again, and a language that is off is never
+  // parsed.
+  disabled = ['json'];
+  file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.equal(checked.length, 2);
+  assert.deepEqual(file.verdict?.verdict, { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' });
+  // A Suggest result replaces the proposals: the verdict goes with them.
+  const session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  file = (await f.run({ kind: 'resolve', id: session.id, version: session.version, engine: 'agent', path: 'settings.json' }))
+    .session.files[0];
+  assert.equal(file.proposals, undefined);
+  assert.equal(file.verdict, undefined);
+});
+
+void test('an engine that fails answers nothing, so nothing is saved; a file that does not parse still says so (#445)', async () => {
+  const definitions = () => Promise.reject(new Error('The grammar did not load'));
+  const broken = conflictChecker({ definitions, equivalent: () => Promise.resolve(false) });
+  const file = {
+    path: 'src/a.ts',
+    base: 'export const a = 0;\n',
+    ours: 'export const a = 1;\n',
+    theirs: 'export const a = 2;\n',
+    original: '<<<<<<< pr\nexport const a = 1;\n||||||| base\nexport const a = 0;\n=======\nexport const a = 2;\n>>>>>>> main\n',
+    proposals: [{ source: 'mergiraf' as const, text: 'export const a = (;\n' }],
+  };
+  assert.equal(await broken(file), undefined);
+  const assets = path.resolve('src/assets/tree-sitter');
+  const engine = createSyntaxEngine(TreeSitter, {
+    runtime: async () => new Uint8Array(await fs.readFile(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))),
+    grammar: async (language) => new Uint8Array(await fs.readFile(path.join(assets, `${language}.wasm`))),
+    tags: (name) => fs.readFile(path.join(assets, `${name}-tags.scm`), 'utf8'),
+  });
+  assert.deepEqual(await conflictChecker(engine)(file), { merged: false, note: 'The result doesn’t parse.' });
+});
+
+void test('a check that runs out of time answers nothing, and the worker restarts for the files after it (#445)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-check-worker-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  // A stand-in worker: it never answers for `slow.ts` and answers every other file at once.
+  const script = path.join(dir, 'worker.js');
+  await fs.writeFile(
+    script,
+    "const { parentPort } = require('node:worker_threads');\n" +
+      "parentPort.on('message', (m) => { if (m.file.path !== 'slow.ts') parentPort.postMessage({ id: m.id, verdict: { merged: true, note: m.file.path } }); });\n"
+  );
+  // Mocked timers: a file runs out of time only when the test moves the clock, however slowly a worker starts.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const checks = createConflictCheckWorker(script, () => ({ runtime: '', grammars: '' }), 60_000, 300);
+  t.after(() => checks.dispose());
+  const file = (name: string) => ({ path: name, base: '', ours: '', theirs: '', original: '' });
+  // Each file's time starts when it runs: files queued behind two slow ones still get their verdicts.
+  const [slow, a, slowAgain, b] = ['slow.ts', 'a.ts', 'slow.ts', 'b.ts'].map((name) => checks.check(file(name)));
+  t.mock.timers.tick(300);
+  assert.equal(await slow, undefined);
+  assert.deepEqual(await a, { merged: true, note: 'a.ts' });
+  // a.ts answered before its own time ran out; the second slow file has the whole 300 ms from its own start.
+  t.mock.timers.tick(300);
+  assert.equal(await slowAgain, undefined);
+  assert.deepEqual(await b, { merged: true, note: 'b.ts' });
+  checks.dispose();
+  assert.equal(await checks.check(file('a.ts')), undefined, 'After dispose, no worker starts');
+});
+
 async function movingFixture(t: TestContext, edit = (text: string) => text) {
   const f = await fixture(
     t,
@@ -1287,7 +1423,7 @@ void test('a structural merge that also moves lines outside the conflicts is a w
     structural++;
     return nativeMergiraf;
   };
-  // Using it is the Suggest step: the result becomes the draft, unreviewed, with no per-conflict proposals.
+  // Using it is the Suggest step: the result becomes the draft, unreviewed. The proposal stays for Reset file.
   let session = (
     await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: file.path })
   ).session;
@@ -1296,7 +1432,7 @@ void test('a structural merge that also moves lines outside the conflicts is a w
   assert.equal(used.result, expected);
   assert.equal(used.source, 'mergiraf');
   assert.equal(used.resolved, false);
-  assert.equal(used.wholeFile, undefined);
+  assert.equal(used.wholeFile?.text, expected, 'Reset file can return to the proposal');
   assert.ok(blockBuckets(used, used.result, undefined).every((bucket) => bucket === 'decided'));
 
   // Start over, then resolve conflict by conflict instead: the proposal stays beside the draft.
@@ -1537,6 +1673,34 @@ void test('a result that arrives after the budget is Mergiraf’s fallback, not 
   assert.deepEqual(await stub.budgets(), ['100', '10000']);
   assert.equal(file.wholeFile, undefined);
   assert.deepEqual(JSON.parse(file.result), { left: 1, right: 2 });
+});
+
+void test('trying structural merge again keeps the draft when it runs out of time again', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const f = await fixture(t, false, jsonSample);
+  // Always past the budget, then Git's line-merge fallback: no markers, and not Mergiraf's merge.
+  const stub = await stubMergiraf(t, `sleep 0.4\nprintf 'not the merge\\n'\n`);
+  f.deps.mergiraf = () => stub.binary;
+  Object.assign(f.deps, { structuralTimeouts: [100, 300, 300] });
+  const session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(session.files[0].structuralNote, 'Structural merge timed out.');
+  const before = session.files[0];
+  const file = (
+    await f.run({
+      kind: 'resolve',
+      id: session.id,
+      version: session.version,
+      engine: 'mergiraf',
+      path: before.path,
+    })
+  ).session.files[0];
+  assert.equal(file.result, before.result, 'The draft stays as it was');
+  assert.equal(file.source, before.source);
+  assert.equal(file.structuralNote, 'Structural merge timed out again.');
+  assert.ok((await stub.budgets()).includes('300'), 'The full budget');
 });
 
 void test('a file structural merge proposed nothing for says why, and a base move that changes it runs it again', async (t) => {

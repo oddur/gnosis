@@ -1,6 +1,7 @@
 import { QUIET_CHANGES_KEY } from '../lib/quiet-changes';
 import { useRef } from 'react';
 import { DIFF_LAYOUT_KEYS } from '../lib/diff-layout';
+import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 
 interface Props {
@@ -39,15 +40,7 @@ const groups: ShortcutGroup[] = [
       { keys: QUIET_CHANGES_KEY, label: 'Show or hide quiet changes (whitespace, formatting, comments)' },
     ],
   },
-  {
-    heading: 'Resolving conflicts',
-    shortcuts: [
-      { keys: 'j  k', label: 'Next / previous conflict' },
-      { keys: '1  2  3', label: 'Keep PR change / base change / both' },
-      { keys: 'm', label: 'Mark file reviewed and open the next file' },
-      { keys: 'n  p', label: 'Next / previous file' },
-    ],
-  },
+  { heading: 'Resolving conflicts', shortcuts: CONFLICT_SHORTCUTS },
   {
     heading: 'Review controls',
     shortcuts: [
