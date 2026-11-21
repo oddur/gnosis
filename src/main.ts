@@ -88,6 +88,8 @@ import { createPrCommitsService } from './pr-commits-service';
 import type { CommitSelection } from '../lib/pr-commits';
 import { createPrChangesService } from './pr-changes-service';
 import { createLocalCloneStore } from './local-clone-store';
+import { createConflictStatsStore } from './conflict-stats-store';
+import { validChoiceEvents } from '../lib/conflict-stats';
 import { localClones } from '../lib/local-clone';
 import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
@@ -4237,7 +4239,10 @@ async function chatPrContext({ key, ...input }: Omit<ChatContextInput, 'definiti
   console.log(`[chat] PR context: ${context.items.length} items, ${context.tokens} of ${context.budget} tokens, ${context.leftOut.length} left out, ${Math.round(performance.now() - started)} ms`);
   return context;
 }
+// Settings › Diagnostics › Conflict resolution stats: counts only, on this computer (#445 item 2).
+const conflictStats = createConflictStatsStore(appData);
 const conflicts = createConflictResolutionService({
+  stats: conflictStats,
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.
   verify: (file, disabled) => conflictChecks.check(file, disabled),
   disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
@@ -4307,6 +4312,10 @@ void app.whenReady().then(() => {
 });
 app.on('will-quit', () => conflictPrecompute.dispose());
 preferencesSaved.push(() => conflictPrecompute.settingsChanged());
+// Undo and other choices in the workspace. Sent without a reply, so the choice never waits for the count.
+ipcMain.on('conflict-stats-record', (_event, events: unknown) => conflictStats.record(validChoiceEvents(events).map(event => ({ kind: 'bucket' as const, ...event }))));
+ipcMain.handle('conflict-stats', () => conflictStats.get());
+ipcMain.handle('conflict-stats-reset', () => conflictStats.reset());
 // The PR header's conflict line. Asking for it means you opened the PR, so its conflicts are prepared too.
 ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
   if (typeof url !== 'string' || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) return null;

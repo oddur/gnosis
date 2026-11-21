@@ -79,6 +79,7 @@ import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { withProposals } from '../lib/conflict-carry';
+import { useConflictChoiceStats } from '../lib/use-conflict-stats';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
@@ -486,6 +487,8 @@ export function ConflictWorkspace({
     }
   }, [session?.files]);
   const { settings: repositories, setShowMergedConflicts } = useRepositorySettings();
+  // Undo and re-choice counts for Settings › Diagnostics (lib/conflict-stats.ts).
+  const choiceStats = useConflictChoiceStats();
   const repo = session ? repositoryKey(session.baseRepo) : '';
   // Unset means on: Merged conflicts still wait for your review.
   const showMerged = (repositories[repo] as RepositorySettings | undefined)?.showMergedConflicts !== false;
@@ -696,6 +699,7 @@ export function ConflictWorkspace({
       // Load latest changes keeps your resolutions, and your choices on the conflicts that did not change (the service
       // carries them with the draft). Start over drops them.
       if (!keep) setPicks({});
+      if (restart && !keep) choiceStats.clear();
       apply(reply, selectedRef.current);
       setResetPrompt(false);
       setOutcome('');
@@ -1612,6 +1616,7 @@ export function ConflictWorkspace({
                                 note={file.structuralNote}
                                 picks={picksOf(file)}
                                 onPick={(index, choice) => pickFor(file, index, choice)}
+                                onChoice={(index, before, after, bucket) => choiceStats.choice(file, index, before, after, bucket)}
                                 wholeFile={
                                   file.wholeFile && contents === file.original
                                     ? {

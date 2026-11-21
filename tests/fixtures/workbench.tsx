@@ -1,5 +1,6 @@
 import { DEFAULT_EXPLANATION_PREFERENCES, explanationFile, normalizeExplanationOptions } from '../../lib/explanation-options';
 import { changedRange } from '../../lib/explanation-noise';
+import { applyConflictStats, emptyConflictStats, validChoiceEvents } from '../../lib/conflict-stats';
 import type { GenerateReviewRequest } from '../../lib/types';
 import { initializeChecksView } from '../../lib/checks-view';
 import { automaticBriefingBlock } from '../../lib/repository-settings';
@@ -1292,6 +1293,22 @@ if (updateScenario) {
       return Promise.resolve('/tmp/gnosis-diagnostics.json');
     },
     refreshOpenPr: (urls: string[]) => { fixtureWindow.fixtureFocusRefreshes.push(urls); },
+  });
+}
+// Settings › Diagnostics › Conflict resolution stats (#445 item 2): the main process's counting, in memory. Tests read
+// `window.fixtureConflictStats`.
+{
+  const fixtureWindow = window as unknown as { fixtureConflictStats: import('../../lib/conflict-stats').ConflictStats };
+  fixtureWindow.fixtureConflictStats = emptyConflictStats();
+  Object.assign(mocks, {
+    recordConflictChoices: (events: unknown) => {
+      fixtureWindow.fixtureConflictStats = applyConflictStats(
+        fixtureWindow.fixtureConflictStats,
+        validChoiceEvents(events).map((event) => ({ kind: 'bucket' as const, ...event }))
+      );
+    },
+    conflictStats: () => Promise.resolve(structuredClone(fixtureWindow.fixtureConflictStats)),
+    resetConflictStats: () => Promise.resolve((fixtureWindow.fixtureConflictStats = emptyConflictStats())),
   });
 }
 // Settings › Updates (#404). ?app-version=<v> is the running build and ?update-channel=prerelease the saved channel.

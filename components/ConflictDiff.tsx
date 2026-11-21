@@ -25,11 +25,13 @@ import { blockVerdict, type Verdict } from '../lib/conflict-verify';
 import {
   shortBranch,
   type BlockChoice,
+  type BlockPick,
   type BlockPicks,
   type ConflictLabels,
   type ConflictModel,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
+import type { StatsBucket } from '../lib/conflict-stats';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
 import { ChangesDiff } from './ChangesDiff';
@@ -435,6 +437,7 @@ export function ConflictDiff({
   wholeFile,
   picks,
   onPick,
+  onChoice,
 }: {
   name: string;
   /** The PR's version of the file: the diff's old side in Compare with: PR. */
@@ -457,8 +460,14 @@ export function ConflictDiff({
   onAllResolved?: () => void;
   picks?: BlockPicks;
   onPick?: (index: number, choice: BlockChoice | undefined) => void;
+  /** Each choice with the one it replaces and the conflict's bucket on screen, for the local stats. Undefined is Undo. */
+  onChoice?: (index: number, before: BlockPick | undefined, after: BlockPick | undefined, bucket: StatsBucket) => void;
 }) {
   const { root, model, total, choose } = useConflictChoices({
+    onChoice:
+      onChoice &&
+      ((index, before, after) =>
+        onChoice(index, before, after, proposals?.[index] ? (blockVerdict(verdict, index)?.merged ? 'merged' : 'check') : 'decide')),
     original,
     contents,
     proposals,

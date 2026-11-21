@@ -390,6 +390,7 @@ export function useConflictChoices({
   handle,
   onAllResolved,
   verdict,
+  onChoice,
 }: {
   original: string;
   contents: string;
@@ -401,6 +402,8 @@ export function useConflictChoices({
   handle?: Ref<ConflictViewHandle>;
   onAllResolved?: () => void;
   verdict?: Verdict;
+  /** Each choice with the one it replaces, for the local stats (lib/conflict-stats.ts). Undefined is Undo. */
+  onChoice?: (index: number, before: BlockPick | undefined, after: BlockPick | undefined) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const model = useMemo(
@@ -485,6 +488,7 @@ export function useConflictChoices({
     const next = [...model.choices];
     next[index] = choice;
     pendingFocus.current = choice ? { after: index } : { at: index };
+    onChoice?.(index, model.choices[index], choice);
     onPick?.(index, choice === 'proposal' ? undefined : choice);
     onChange(applyChoices(model.segments, next, proposals));
   }
