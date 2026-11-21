@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add a `write` overload with a different parameter type, in the same place. Mergiraf merges these itself; a union would be in Check.",
+  "language": "java",
+  "category": "structure/both-add",
+  "expected": {
+    "src/main/java/lab/Log.java": "merged"
+  }
+}

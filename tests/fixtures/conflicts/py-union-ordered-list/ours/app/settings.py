@@ -1,0 +1,5 @@
+MIDDLEWARE = [
+    "security",
+    "sessions",
+    "auth",
+]

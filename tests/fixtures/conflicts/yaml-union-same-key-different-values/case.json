@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add `timeout-minutes` to the same job, with different values.",
+  "language": "yaml",
+  "category": "semantic/same-constant",
+  "expected": {
+    ".github/workflows/build.yml": "check"
+  }
+}

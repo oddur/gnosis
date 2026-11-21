@@ -85,6 +85,11 @@ void test('Try structural merge again shows only on the prepared draft, where it
   assert.equal(canRetryStructural({ source: 'manual', proposals: [{ source: 'rerere', text: 'a' }] }, true), true);
   assert.equal(canRetryStructural({ source: 'mergiraf', proposals: [{ source: 'mergiraf', text: 'a' }] }, true), false);
   assert.equal(
+    canRetryStructural({ ...timedOut, proposals: [{ source: 'union', text: 'a' }, null] }, true),
+    false,
+    'Never throws unions away'
+  );
+  assert.equal(
     canRetryStructural({ ...timedOut, wholeFile: { source: 'mergiraf', text: 'a' } }, true),
     false,
     'A whole-file proposal already holds the result'

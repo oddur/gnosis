@@ -26,9 +26,12 @@ export interface ConflictFile {
   /** Structural merge gave this file a result: proposals, a whole-file proposal, or a note that it couldn't. */
   structuralRan?: boolean;
 }
-/** One conflict block resolved during preparation: by your earlier resolution, or by structural merge. */
+/**
+ * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or as both sides'
+ * additions where structural merge left it (lib/conflict-union.ts).
+ */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf';
+  source: 'rerere' | 'mergiraf' | 'union';
   text: string;
 }
 export interface ConflictSession {
