@@ -1406,6 +1406,9 @@ void app.whenReady().then(async () => {
     const revealStart = Date.now();
     await clickCrumb('src/far.ts', 'Go to class FarRunner');
     const revealMs = Date.now() - revealStart;
+    // The flash lasts HERE_MS from landing: keep what it marked as soon as it shows, not after the 90 sampled frames,
+    // which take longer than that on a slow runner.
+    await wait(`(window.__farFlash=window.jumped('src/far.ts').map(f=>f.text)).length>0`);
     await wait('window.__samples.length>=90');
     const toFar = await jumpState('src/far.ts');
     const farTop = await js<number>(`window.lineTop('src/far.ts','export class FarRunner {')`);
@@ -1418,7 +1421,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js<number>(`window.shownCount('src/far.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
     assert.ok(steps >= 4, `The scroll eases over several frames: ${JSON.stringify(samples)}`);
     assertPerf('syntax scope: longest task revealing 230 lines and easing there', Math.max(0, ...longTasks.map((t) => Math.round(t.duration))), perfBudget(50), { detail: JSON.stringify(longTasks.map((t) => Math.round(t.duration))) });
-    assert.deepEqual((await js<Flash[]>(`window.jumped('src/far.ts')`)).map((f) => f.text), ['export class FarRunner {'], 'The class line flashes');
+    assert.deepEqual(await js<string[]>('window.__farFlash'), ['export class FarRunner {'], 'The class line flashes');
     // The reader's wheel stops the scroll part way.
     await js(`window.pinAt('src/far.ts','total += 50 * 2;')`);
     await wait(`window.jumpState('src/far.ts').crumbs.length===2`);
