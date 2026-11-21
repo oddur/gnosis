@@ -1275,6 +1275,91 @@ void app.whenReady().then(async () => {
     await captureAll('structural-note');
     assert.equal(await publishes(), 0);
     await click('Close');
+
+    // Review shots: with GNOSIS_CONFLICT_SHOTS set, print `CONFLICTSHOT <name> <base64 PNG>` for the states below.
+    const shot = async (name: string, dark = false) => {
+      if (!process.env.GNOSIS_CONFLICT_SHOTS) return;
+      await js('document.fonts.ready');
+      await new Promise((r) => setTimeout(r, 300));
+      const print = async (suffix: string) =>
+        console.log(`CONFLICTSHOT ${name}${suffix} ${(await win.webContents.capturePage()).toPNG().toString('base64')}`);
+      await print('');
+      if (!dark) return;
+      await js("document.documentElement.classList.add('dark')");
+      await print('-dark');
+      await js("document.documentElement.classList.remove('dark')");
+    };
+    const pick = (index: number, choice: string) =>
+      js(`${block(index)}.querySelector('[data-choice=${choice}]').click()`);
+    // Keep on a Check block whose proposal is that same text; the Check label beside its note.
+    const keep = {
+      path: 'src/Lab.Caching/Providers/Async/AsyncGenericCacheProvider.ts',
+      base: `import { a } from './a';\n\nexport function one() {\n  return 1;\n}\n\n${two}`,
+      ours: `import { a } from './a';\nimport { b } from './b';\n\nexport function one() {\n  return 10;\n}\n\n${three}${two}`,
+      theirs: `import { a } from './a';\nimport { c } from './c';\n\nexport function one() {\n  return 11;\n}\n\n${four}${two}`,
+      original: `import { a } from './a';\n<<<<<<< feature/retry\nimport { b } from './b';\n||||||| ancestor\n=======\nimport { c } from './c';\n>>>>>>> main\n\nexport function one() {\n  return 10;\n}\n\n<<<<<<< feature/retry\n${three}||||||| ancestor\n=======\n${four}>>>>>>> main\n${two}`,
+      proposals: [{ source: 'mergiraf', text: "import { b } from './b';\nimport { c } from './c';\n" }, { source: 'mergiraf', text: three }],
+      source: 'mergiraf',
+    };
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{version:1,baseRepo:'lab/file-delete-vs-modify',files:${JSON.stringify([keep, imports, late].map((f) => withResult({ proposals: [], ...f })))}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait(`${block(1)}?.dataset.bucket==='check'`);
+    await shot('p1-keep-check', true);
+    await js('document.querySelector(".conflict-suggest-trigger")?.click()');
+    await new Promise((r) => setTimeout(r, 300));
+    await shot('p1-suggest-menu');
+    await key('Escape');
+    await pick(1, 'ours');
+    await new Promise((r) => setTimeout(r, 300));
+    await shot('p1-keep-ours');
+    await pick(0, 'both');
+    await new Promise((r) => setTimeout(r, 300));
+    await shot('p1-keep-both', true);
+    // A file whose every conflict is Merged: the summary, the header, the footer and focus.
+    await js("[...document.querySelectorAll('.conflict-files button')][1].click()");
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await new Promise((r) => setTimeout(r, 300));
+    await shot('p1-all-merged', true);
+    await key('j');
+    await shot('p1-all-merged-j');
+    // A file without proposals: no "Start from Git's conflict" in its header.
+    await js("[...document.querySelectorAll('.conflict-files button')][2].click()");
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await shot('p1-header-plain');
+    await js('document.querySelector(".conflict-workspace").style.width="900px"');
+    await shot('p1-header-plain-900');
+    await js("[...document.querySelectorAll('.conflict-files button')][1].click()");
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await shot('p1-header-proposals-900');
+    await js('document.querySelector(".conflict-workspace").style.width=""');
+    await click('Close');
+    // Rename/rename: every file needs a local merge tool.
+    const unsupported = (p: string) => ({ path: p, mode: '', base: '', ours: '', theirs: '', original: '', result: '', resolved: false, source: 'manual', unsupported: 'This conflict needs a local merge tool (rename, deletion, or repository structure).' });
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{version:1,files:${JSON.stringify(['src/left.ts', 'src/old.ts', 'src/right.ts'].map(unsupported))}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait("document.querySelector('.conflict-file-pane .conflict-state')");
+    await shot('p1-unsupported', true);
+    await click('Close');
+    // The confirmation with a long diff.
+    const long = Array.from({ length: 160 }, (_, i) => `export const value${i} = ${i};`);
+    const confirmPatch = `diff --git a/src/retry.ts b/src/retry.ts\n--- a/src/retry.ts\n+++ b/src/retry.ts\n@@ -1,160 +1,160 @@\n${long.map((l) => `-${l}\n+${l.replace(';', ' + 1;')}`).join('\n')}\n`;
+    await js(`(()=>{
+      window.conflictPreview=${JSON.stringify(parsePatchFiles(confirmPatch).flatMap((p) => p.files))};
+      Object.assign(window.conflictFixture,{version:1,baseRepo:'klang/engine',files:[{path:'src/retry.ts',mode:'100644',base:'a\\n',ours:'b\\n',theirs:'c\\n',original:'<<<<<<< feature/retry\\nb\\n=======\\nc\\n>>>>>>> main\\n',result:'b\\nc\\n',resolved:true,source:'manual'}]});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await click('Review and push…');
+    await wait("document.querySelector('.conflict-confirm')");
+    await new Promise((r) => setTimeout(r, 500));
+    await shot('p1-confirm-long', true);
+    await click('Close');
     console.log(
       'Conflict workspace passed: labelled versions, per-block undo, shortcuts, review before mark, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'
     );
