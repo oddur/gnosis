@@ -3,7 +3,9 @@ import { parsePatchFiles } from '@pierre/diffs';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 app.disableHardwareAcceleration();
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -128,7 +130,7 @@ void app.whenReady().then(async () => {
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
         if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;}
-        if(req.kind==='resolve'&&s.files.find(f=>f.path===req.path)?.wholeFile){const f=s.files.find(f=>f.path===req.path);f.result=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source='mergiraf';}
+        if(req.kind==='resolve'&&req.engine==='whole-file'){const f=s.files.find(f=>f.path===req.path);if(!f?.wholeFile)throw Error('This file has no whole-file proposal.');f.result=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source=f.wholeFile.source==='mergiraf'?'mergiraf':'manual';}
         else if(req.kind==='resolve'){s.files[0].result='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
         if(req.kind==='publish'){if(window.failPublish)throw Error("Error invoking remote method 'conflict-resolution': Error: Git could not complete this operation. To github.com:klang/engine.git\\n ! [rejected]        feature/retry (stale info)\\nerror: failed to push some refs");s.status='published';s.commitSha='d'.repeat(40);}
@@ -1250,7 +1252,7 @@ void app.whenReady().then(async () => {
     await click('Reset file');
     await wait(`!!${whole}`);
     await click('Use this result');
-    await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='mergiraf'&&r.path==='lab/reorder.go')");
+    await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='whole-file'&&r.path==='lab/reorder.go')");
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
     assert.equal(await js("!!document.querySelector('.conflict-whole-file')"), false);
     assert.equal(await js('window.conflictFixture.files[0].resolved'), false, 'Using it does not review it');
@@ -1288,6 +1290,65 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Try structural merge again');
     await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='mergiraf'&&r.path==='src/limits.ts')");
+    assert.equal(await publishes(), 0);
+    await click('Close');
+
+    // A move rule's proposal (lib/conflict-moved.ts): the PR moved orderTotal and main edited it. "Use this result"
+    // takes its text as it is: structural merge does not run. Structural merge timed out on this file, and "Try
+    // structural merge again" stays beside the proposal.
+    const movedCase = path.resolve('tests/fixtures/conflicts/ts-move-vs-edit-bottom');
+    const side = (name: string) => fs.readFileSync(path.join(movedCase, name, 'src/pricing.ts'), 'utf8');
+    const [mBase, mOurs, mTheirs, mResolved] = ['base', 'ours', 'theirs', 'resolved'].map(side);
+    const mOriginal = (() => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-moved-'));
+      const names = ['ours', 'base', 'theirs'].map((n) => path.join(tmp, n));
+      names.forEach((n, i) => fs.writeFileSync(n, [mOurs, mBase, mTheirs][i]));
+      try {
+        return execFileSync('git', ['merge-file', '-p', '--diff3', ...names]).toString();
+      } catch (error) {
+        return (error as { stdout: Buffer }).stdout.toString();
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    })();
+    assert.match(mOriginal, /^<<<<<<< /m);
+    const movedFile = {
+      path: 'src/pricing.ts',
+      mode: '100644',
+      base: mBase,
+      ours: mOurs,
+      theirs: mTheirs,
+      original: mOriginal,
+      result: mOriginal,
+      wholeFile: { source: 'moved', text: mResolved, note: 'The PR moved orderTotal, and main edited it.' },
+      structuralNote: 'Structural merge timed out.',
+      resolved: false,
+      source: 'manual',
+    };
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{version:1,files:${JSON.stringify([movedFile])}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait(`${whole}?.querySelector('p')?.textContent.startsWith('The PR moved orderTotal, and main edited it.')`);
+    assert.match(
+      await js<string>(`${whole}.querySelector('p').textContent`),
+      /Gnosis applied the edit at the new place\. .*Call sites in other files were not checked\./
+    );
+    assert.equal(await js(`${whole}.dataset.bucket`), 'check');
+    assert.equal(await js("!!document.querySelector('[data-bucket=merged]')"), false, 'Never Merged');
+    assert.equal(await exists('Try structural merge again'), true, 'The timed-out structural merge can run again');
+    assert.equal(await primary(), 'use-proposal');
+    await click('Use this result');
+    await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='whole-file'&&r.path==='src/pricing.ts')");
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
+    assert.equal(
+      await js("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='mergiraf')"),
+      false,
+      'Using a moved proposal runs no structural merge'
+    );
+    assert.equal(await js('window.conflictFixture.files[0].result'), mResolved);
+    assert.equal(await js('window.conflictFixture.files[0].resolved'), false, 'Using it does not review it');
     assert.equal(await publishes(), 0);
     await click('Close');
 

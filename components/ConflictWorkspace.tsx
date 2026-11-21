@@ -829,8 +829,8 @@ export function ConflictWorkspace({
     const index = files.findIndex((f) => f.path === selected);
     chooseFile(files[(index + direction + files.length) % files.length].path);
   }
-  /** One file's result: the whole-file proposal (`mergiraf`), or the model's, with your instructions. */
-  function suggest(engine: SuggestEngine, instructions?: string) {
+  /** One file's result: the whole-file proposal (`whole-file`), structural merge's, or the model's, with your instructions. */
+  function suggest(engine: SuggestEngine | 'whole-file', instructions?: string) {
     const path = selected;
     void run(
       (s) => ({
@@ -845,9 +845,11 @@ export function ConflictWorkspace({
         const current = reply.session.files.find((f) => f.path === path);
         const who = engine === 'mergiraf' ? 'Structural merge' : model.replace(/^the /, 'The ');
         setOutcome(
-          current && hasConflictMarkers(current.result)
-            ? `${who} couldn’t resolve every conflict. Choose the rest yourself.`
-            : `${who} suggested a result. Review it before you mark the file reviewed.`
+          engine === 'whole-file'
+            ? 'The draft is the whole-file proposal now. Review it before you mark the file reviewed.'
+            : current && hasConflictMarkers(current.result)
+              ? `${who} couldn’t resolve every conflict. Choose the rest yourself.`
+              : `${who} suggested a result. Review it before you mark the file reviewed.`
         );
         // A suggestion that left the draft as it was (a timed-out retry) keeps your choices.
         const before = sessionRef.current?.files.find((f) => f.path === path)?.result;
@@ -1048,7 +1050,7 @@ export function ConflictWorkspace({
           {...common}
           data-conflict-primary="use-proposal"
           disabled={!canEdit}
-          onClick={() => suggest('mergiraf')}
+          onClick={() => suggest('whole-file')}
         >
           Use this result
         </Button>
@@ -1616,8 +1618,8 @@ export function ConflictWorkspace({
                                     ? {
                                         proposal: file.wholeFile,
                                         ours: file.ours,
-                                        // The same step as Suggest a resolution → structural merge.
-                                        onUse: () => suggest('mergiraf'),
+                                        // The proposal as it is, structural merge's or the move rule's: nothing runs again.
+                                        onUse: () => suggest('whole-file'),
                                         shown: blocksShown === viewKey,
                                         onShow: () => setBlocksShown(viewKey),
                                       }

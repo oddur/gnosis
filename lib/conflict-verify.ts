@@ -2,8 +2,10 @@ import { diffArrays } from 'diff';
 import { blockResolutions } from './conflict-carry';
 import {
   conflictCount,
+  identifierPattern,
   inferChoices,
   parseConflicts,
+  textLines,
   withPicks,
   type BlockPicks,
   type ConflictSegment,
@@ -477,8 +479,12 @@ export async function verifyProposals(
       for (const [index] of holders) fail(index, note);
     }
   }
-  const moved = whole ? lostEdit([file.base, file.ours, file.theirs, probe.text], parsed) : undefined;
+  const texts = [file.base, file.ours, file.theirs, probe.text];
+  const moved = whole ? lostEdit(texts, parsed) : undefined;
   if (moved) return { merged: false, note: moved };
+  // A 'moved' proposal (lib/conflict-moved.ts) may rename the definition, which lostEdit can't see.
+  const renamed = whole && proposals[0]?.source === 'moved' ? renamedEdit(texts, parsed) : undefined;
+  if (renamed) return { merged: false, note: renamed };
   // Your own earlier resolutions may drop a side on purpose: only structural merge and unions are held to the line
   // accounting.
   const reformats = new Map<number, string>();
@@ -655,12 +661,8 @@ export async function verifyWholeFile(
   if (proposal.source === 'moved') {
     // One side moved or renamed a function and the other edited it (lib/conflict-moved.ts). Always Check, never Merged,
     // until its false positives are measured: other files may still call the old name, and nothing here reads them.
-    const renamed = verdict.merged ? await renamedEdit(file, proposal.text, analyse) : undefined;
-    if (!verdict.merged || renamed)
-      return {
-        merged: false,
-        note: `${renamed ?? verdict.note} Read it before you use it, or resolve conflict by conflict.`,
-      };
+    if (!verdict.merged)
+      return { merged: false, note: `${verdict.note} Read it before you use it, or resolve conflict by conflict.` };
     return {
       merged: false,
       passed: true,
@@ -683,24 +685,12 @@ export const MOVED_UNCHECKED = 'Call sites in other files were not checked.';
  * A definition one side renamed (and moved) and the other side edited comes out once, under the new name, as the
  * editing side wrote it with the name changed. lostEdit reads definitions by name, so it can't see a rename. A rename
  * is a definition the moving side lost, and exactly one new one there whose body is the ancestor's with the name
- * changed. Undefined when it passes, or when no such rename is found.
+ * changed. Reads the parses of the ancestor, both sides and the result (`texts`, in that order) that the checks already
+ * made. Undefined when it passes, or when no such rename is found.
  */
-async function renamedEdit(
-  file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs'>,
-  result: string,
-  analyse: Analyse
-): Promise<string | undefined> {
-  const language = syntaxLanguage(file.path);
-  if (!language) return undefined;
-  const texts = [file.base, file.ours, file.theirs, result];
-  let parsed: ParsedText[];
-  try {
-    parsed = await Promise.all(texts.map((text) => analyse(language, text)));
-  } catch {
-    return 'Gnosis couldn’t parse this file to check the result.';
-  }
+function renamedEdit(texts: readonly string[], parsed: readonly ParsedText[]): string | undefined {
   const read = (i: number) => {
-    const lines = texts[i].split('\n');
+    const lines = textLines(texts[i]);
     const definitions = parsed[i].definitions;
     return definitions.map((d) => ({
       key: symbolKey(definitions, d),
@@ -714,8 +704,7 @@ async function renamedEdit(
     }));
   };
   const [base, ours, theirs, merged] = [0, 1, 2, 3].map(read);
-  const rename = (body: string, from: string, to: string) =>
-    body.replace(new RegExp(`(?<![\\p{L}\\p{N}_$])${from.replace(/[$]/g, '\\$')}(?![\\p{L}\\p{N}_$])`, 'gu'), to);
+  const rename = (body: string, from: string, to: string) => body.replace(identifierPattern(from), () => to);
   for (const [mover, editor, who] of [
     [ours, theirs, 'main'],
     [theirs, ours, 'the PR'],

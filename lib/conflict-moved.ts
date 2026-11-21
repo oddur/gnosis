@@ -1,5 +1,5 @@
 import { diffArrays } from 'diff';
-import { parseConflicts } from './conflict-blocks';
+import { identifierPattern, parseConflicts, textLines as lines } from './conflict-blocks';
 import type { ConflictFile, ConflictProposal } from './conflict-resolution';
 import { languageFamily, matchMoves, type FilePrints, type SymbolMove } from './moved-symbols';
 import { MOVE_LANGUAGES } from './moved-symbols-plan';
@@ -15,7 +15,8 @@ import { syntaxLanguage, type SyntaxLanguage } from './syntax-scope';
  *   other move in the file takes an edit too: one source, one target;
  * - the other side changed lines inside the definition only, and the moving side changed none of those lines or the
  *   lines next to them (a rename changes only the lines with the name);
- * - each conflict left open holds exactly the other side's edits to the definition, and nothing else of that side's;
+ * - each conflict left open is at the definition, where it was or where it went, and together they hold exactly the
+ *   other side's edits to the definition, and nothing else of that side's;
  * - the moved copy is in the merged text exactly once.
  *
  * The result is a whole-file proposal (`wholeFile`, source 'moved'): it changes lines outside Git's conflicts. The
@@ -27,7 +28,6 @@ import { syntaxLanguage, type SyntaxLanguage } from './syntax-scope';
 /** The fingerprints of the candidates that `after` adds and removes against `before` (lib/syntax-scope.ts symbols). */
 export type ReadPrints = (language: SyntaxLanguage, before: string, after: string) => Promise<FilePrints>;
 
-const lines = (text: string) => text.split(/(?<=\n)/).filter(Boolean);
 const SIDE_NAMES = { ours: 'The PR', theirs: 'Main' } as const;
 const OTHER_NAMES = { ours: 'the PR', theirs: 'main' } as const;
 
@@ -75,8 +75,7 @@ function occurrences(whole: readonly string[], part: readonly string[]) {
     if (part.every((line, k) => whole[i + k] === line)) found.push(i);
   return found;
 }
-const words = (text: string, name: string) =>
-  text.match(new RegExp(`(?<![\\p{L}\\p{N}_$])${name.replace(/[$]/g, '\\$')}(?![\\p{L}\\p{N}_$])`, 'gu'))?.length ?? 0;
+const words = (text: string, name: string) => text.match(identifierPattern(name))?.length ?? 0;
 
 /**
  * The moved definition with the other side's edit: the ancestor's body with both sides' changes, when they change
@@ -138,6 +137,15 @@ function plan(
   const segments = parseConflicts(file.original);
   const open = segments.flatMap((s) => (s.kind === 'conflict' && !file.proposals?.[s.index] ? [s] : []));
   if (!open.length || open.some((s) => s.block.base === undefined || !s.block.base.trim())) return undefined;
+  // Each open conflict is at the definition: its ancestor lines where the definition was, or its moving side's lines
+  // where the definition went, found once. Equal edits elsewhere in the file are not this definition's.
+  const overlaps = (whole: readonly string[], part: readonly string[], from: number, to: number) => {
+    const found = occurrences(whole, part);
+    return found.length === 1 && found[0] < to && found[0] + part.length > from;
+  };
+  const placed = (s: (typeof open)[number]) =>
+    overlaps(base, lines(s.block.base ?? ''), f0, f1) || overlaps(moverLines, lines(s.block[mover]), t0, t1);
+  if (!open.every(placed)) return undefined;
   const edits = changeKey(open.map((s) => [lines(s.block.base ?? ''), lines(s.block[editor])]));
   if (edits !== changeKey([[baseBody, editedBody]])) return undefined;
   // The merged text: the moving side's lines in the open conflicts, the other conflicts' proposals, and Git's text.
@@ -152,6 +160,33 @@ function plan(
   if (from !== to && words(text, from) > words(file[mover], from)) return undefined;
   const what = from === to ? `moved ${from}` : `renamed ${from} to ${to} and moved it`;
   return { text, note: `${SIDE_NAMES[mover]} ${what}, and ${OTHER_NAMES[editor]} edited it.` };
+}
+
+/**
+ * Whether the move rule could find anything, read from the text alone, before the worker parses anything: a language
+ * the matcher reads, on, and an open conflict where one side removed most of the ancestor's lines, as a move does
+ * where the definition was.
+ */
+export function mayHaveMove(
+  file: Pick<ConflictFile, 'path' | 'original' | 'proposals' | 'unsupported'>,
+  disabled: readonly SyntaxLanguage[] = []
+) {
+  const language = syntaxLanguage(file.path);
+  if (!language || !MOVE_LANGUAGES.has(language) || disabled.includes(language) || file.unsupported) return false;
+  return parseConflicts(file.original).some((s) => {
+    if (s.kind !== 'conflict' || file.proposals?.[s.index] || s.block.base === undefined) return false;
+    const base = lines(s.block.base).filter((line) => line.trim());
+    if (!base.length) return false;
+    return (['ours', 'theirs'] as const).some((side) => {
+      const kept = lines(s.block[side]);
+      const removed = base.filter((line) => {
+        const at = kept.indexOf(line);
+        if (at >= 0) kept.splice(at, 1);
+        return at < 0;
+      });
+      return removed.length * 2 > base.length;
+    });
+  });
 }
 
 /**

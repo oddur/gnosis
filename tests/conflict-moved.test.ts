@@ -74,6 +74,8 @@ for (const [name, file] of [
   ['ts-move-vs-edit-trap-both-changed', 'src/pricing.ts'],
   // Two added bodies match the one that left: which one main's edit belongs to is unknown.
   ['ts-move-vs-edit-trap-ambiguous', 'src/pricing.ts'],
+  // The open conflict holds the same line change as main's edit to the moved function, at another function.
+  ['ts-move-vs-edit-trap-same-edit-elsewhere', 'src/pricing.ts'],
   // The function went to a file Git merged cleanly, which the resolution does not hold.
   ['go-move-vs-edit-other-file', 'lab/pairs.go'],
 ] as const)

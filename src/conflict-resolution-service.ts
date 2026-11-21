@@ -26,8 +26,9 @@ import {
   withProposals,
   withResult,
 } from '../lib/conflict-carry';
-import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
+import { conflictCount } from '../lib/conflict-blocks';
 import { withUnions } from '../lib/conflict-union';
+import { mayHaveMove } from '../lib/conflict-moved';
 import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import { withoutUnconfirmed } from './conflict-checks';
@@ -769,6 +770,8 @@ export function createConflictResolutionService(deps: Deps) {
     const queue = files.filter((file) => !file.unsupported && file.source !== 'rerere');
     if (!queue.length) return files;
     // A development build without `npm run prepare:mergiraf` has no binary: the conflicts stay as Git wrote them.
+    // The move rule runs again after structural merge, on what it leaves.
+    for (const file of queue) if (file.wholeFile?.source === 'moved') delete file.wholeFile;
     if (!(await exists(deps.mergiraf()))) {
       for (const file of queue) file.structuralNote = 'Structural merge isn’t available in this build.';
       await proposeMoves(queue, signal);
@@ -833,29 +836,25 @@ export function createConflictResolutionService(deps: Deps) {
     return files;
   }
   /**
-   * Where structural merge left a conflict open and proposed no whole file, one side may have moved or renamed a
-   * function the other edited (lib/conflict-moved.ts). The proposal is a whole file, never Merged, kept beside the
-   * draft as structural merge's whole-file proposals are: the draft is not changed.
+   * Where structural merge proposed nothing for a file, one side may have moved or renamed a function the other edited
+   * (lib/conflict-moved.ts). The proposal is a whole file, never Merged, kept beside the draft as structural merge's
+   * whole-file proposals are. It is only ever an extra: a file with per-conflict proposals, a whole-file proposal or a
+   * changed draft gets none, and nothing of the file is changed but `wholeFile`. Its note ("Structural merge timed
+   * out.") stays, and so does "Try structural merge again".
    */
   async function proposeMoves(files: ConflictFile[], signal: AbortSignal) {
     if (!deps.moved) return;
     const disabled = deps.disabledLanguages?.() ?? [];
+    /** Something else already stands for the file: a proposal, or a draft that is not Git's conflict. */
+    const taken = (file: ConflictFile) => !!file.wholeFile || !!file.proposals || file.result !== file.original;
     for (const file of files) {
       signal.throwIfAborted();
-      if (file.unsupported || file.wholeFile || file.source === 'rerere') continue;
-      const open = parseConflicts(file.original).some((s) => s.kind === 'conflict' && !file.proposals?.[s.index]);
-      if (!open) continue;
+      if (taken(file) || file.source === 'rerere' || !mayHaveMove(file, disabled)) continue;
       const proposal = await deps.moved(file, disabled);
       signal.throwIfAborted();
       if (proposal?.source !== 'moved' || hasConflictMarkers(proposal.text)) continue;
-      // The whole file replaces the per-conflict proposals: it holds them, and its checks cover the file.
-      if (file.proposals && file.result === withProposals(file.original, file.proposals)) {
-        file.result = file.original;
-        if (file.source === 'mergiraf') file.source = 'manual';
-      }
-      delete file.proposals;
-      delete file.structuralNote;
-      file.wholeFile = proposal;
+      // The file may have changed while the worker read it.
+      if (!taken(file)) file.wholeFile = proposal;
     }
   }
   async function preparation(
@@ -1136,7 +1135,8 @@ export function createConflictResolutionService(deps: Deps) {
           f.source === 'manual' &&
           f.result === f.original &&
           !f.proposals &&
-          !f.wholeFile
+          // A move rule's proposal is not structural merge's: structural merge still gets its pass.
+          f.wholeFile?.source !== 'mergiraf'
       );
       if (untried.length)
         await mergeStructurally(
@@ -1614,11 +1614,28 @@ export function createConflictResolutionService(deps: Deps) {
           file.resolved = request.resolved;
           if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
         } else if (request.kind === 'resolve') {
-          if (!['mergiraf', 'agent'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
+          if (!['mergiraf', 'agent', 'whole-file'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
           const files = session.files.filter((f) => !f.unsupported && f.path === request.path);
           if (!files.length) throw new Error('Select an unresolved text file.');
           for (const file of files) {
+            if (request.engine === 'whole-file') {
+              // "Use this result": the whole-file proposal preparation kept, structural merge's or the move rule's.
+              const proposal = file.wholeFile;
+              if (!proposal || hasConflictMarkers(proposal.text)) throw new Error('This file has no whole-file proposal.');
+              if (proposal.text !== file.result) file.picks = undefined;
+              file.result = proposal.text;
+              file.explanation =
+                proposal.source === 'moved'
+                  ? 'Gnosis applied an edit where the other side moved the code. Review it before marking the file reviewed.'
+                  : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
+              file.source = proposal.source === 'mergiraf' ? 'mergiraf' : 'manual';
+              // The draft no longer derives from the per-conflict proposals. The whole-file proposal stays, so Reset
+              // file returns to Git's conflicts and the proposal is offered again; so is "Try structural merge again".
+              delete file.proposals;
+              file.resolved = false;
+              continue;
+            }
             report(`Proposing a resolution for ${file.path}.`);
             if (request.engine === 'agent') {
               if (file.base.length + file.ours.length + file.theirs.length > 220_000)
@@ -1634,7 +1651,8 @@ export function createConflictResolutionService(deps: Deps) {
               file.explanation = result.explanation;
             } else {
               // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
-              // runs again on request, with the full budget, not the first try's.
+              // runs again on request, with the full budget, not the first try's. A move rule's proposal is not
+              // Mergiraf's result: "Try structural merge again" runs Mergiraf.
               let output = file.wholeFile?.source === 'mergiraf' ? file.wholeFile.text : undefined;
               if (output === undefined) {
                 const budget = Math.max(...(deps.structuralTimeouts ?? [5000, 10_000, 30_000]).slice(1));

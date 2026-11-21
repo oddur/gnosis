@@ -657,17 +657,10 @@ async function auditMerge(m: Merge, dir: string, report: AuditReport) {
     const resolved = m.standIn ? undefined : utf8(m.resolved?.get(p));
     const remembered = resolved === undefined ? undefined : fromOutput(plain, resolved, 'rerere');
     if (remembered) subjects.push(remembered);
-    // The move rule (lib/conflict-moved.ts), on the conflicts structural merge left open, and on Git's conflicts alone,
-    // as when structural merge fails.
-    const moves = moveProposer(engine, m.disabled);
-    const texts = new Set<string>();
-    for (const from of [merged && !merged.wholeFile ? merged : undefined, plain]) {
-      if (!from) continue;
-      const proposal = await moves({ ...plain, proposals: from === plain ? undefined : (from as AuditFile).proposals });
-      if (!proposal || texts.has(proposal.text)) continue;
-      texts.add(proposal.text);
-      subjects.push({ ...plain, wholeFile: proposal, result: original, source: 'manual' });
-    }
+    // The move rule (lib/conflict-moved.ts) on Git's conflicts, as when structural merge proposes nothing: the service
+    // runs it only on a file with no other proposal.
+    const moved = await moveProposer(engine, m.disabled)(plain);
+    if (moved) subjects.push({ ...plain, wholeFile: moved, result: original, source: 'manual' });
     for (const subject of subjects) {
       await auditFile(m, subject, (subject === remembered ? resolved : output) ?? '', language, report);
     }
