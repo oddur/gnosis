@@ -4,16 +4,23 @@ import { SlideChatSheet } from '../../components/SlideChatSheet';
 import { PrFileChat } from '../../components/PrFileChat';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { DEFAULT_CLAUDE_MODEL } from '../../lib/models';
+import { rememberChatModel, rememberedChatModel } from '../../lib/chat-preferences';
+import { hunkNewLines } from '../../lib/chat-citations';
+import type { ChatCitationSource } from '../../components/ChatCitation';
 import type { Preferences, ReviewGuide } from '../../lib/types';
 import '../../src/globals.css';
 import { createClaudeEventHandler } from '../../lib/providers/claude-events';
-import { toolCallStep, type ChatTraceStep } from '../../lib/chat-trace';
+import { toolCallStep, toolResultStep, type ChatTraceStep } from '../../lib/chat-trace';
 const opened: ChatTraceStep[] = [];
 let toolCalls = 0;
 const claudeEvents = createClaudeEventHandler({
   onToolCall: (call) =>
     (window as unknown as { chatFixture: { trace: (s: ChatTraceStep[]) => void } }).chatFixture.trace([
       toolCallStep(call, toolCalls++),
+    ]),
+  onToolResult: (result) =>
+    (window as unknown as { chatFixture: { trace: (s: Partial<ChatTraceStep>[]) => void } }).chatFixture.trace([
+      toolResultStep(result),
     ]),
 });
 const traceListeners = new Set<(event: { requestId?: string; steps: ChatTraceStep[] }) => void>();
@@ -24,9 +31,15 @@ let fail: ((error: Error) => void) | undefined;
 let requestId = '';
 let kind = '';
 const requests: unknown[] = [];
+// Preferences the chat writes (model choices, panel widths), kept as the main process would keep them.
+let stored = {} as Preferences;
 const api: Partial<Window['electronAPI']> = {
   // Chat's Markdown loads lazily, after this API is installed, and reads the saved preferences: none are saved here.
-  loadPreferences: () => Promise.resolve({} as Preferences),
+  loadPreferences: () => Promise.resolve(structuredClone(stored)),
+  savePreferences: (next) => {
+    stored = structuredClone(next);
+    return Promise.resolve();
+  },
   onChatProgress: (callback) => {
     progress = callback;
   },
@@ -68,6 +81,7 @@ Object.assign(window, {
   electronAPI: api,
   chatFixture: {
     requests,
+    preferences: () => stored,
     chunk(text: string) {
       if (kind === 'topic') progress?.(text);
       else for (const listener of fileListeners) listener({ requestId, chunk: text });
@@ -76,8 +90,8 @@ Object.assign(window, {
       finish?.(text);
     },
     /** Replays trace steps as the main process sends them for the active request. */
-    trace(steps: ChatTraceStep[]) {
-      for (const listener of traceListeners) listener({ requestId, steps });
+    trace(steps: Partial<ChatTraceStep>[]) {
+      for (const listener of traceListeners) listener({ requestId, steps: steps as ChatTraceStep[] });
     },
     /** Replays a recorded Claude stream-json line through the real parser. */
     claudeLine(line: string) {
@@ -102,7 +116,7 @@ const review = {
         {
           filePath: 'src/queue.ts',
           hunkHeader: '@@ -38,6 +40,81 @@',
-          content: '+await queue.dispatch(command);',
+          content: '+await queue.dispatch(command);\n+await worker.acknowledge(command.id);\n return command.result;',
           language: 'ts',
           renderedHtml: '',
         },
@@ -121,11 +135,24 @@ const review = {
   prDescription: '',
   prTitle: 'Preserve queue order',
 } as unknown as ReviewGuide;
+// Citations resolve to the fixture PR's two files, preview the topic's hunks, and record where a click opens.
+const citedLines = new Map<string, Map<number, string>>();
+for (const hunk of review.slides[0].diffHunks)
+  citedLines.set(hunk.filePath, hunkNewLines(hunk.hunkHeader, hunk.content));
+const citations: ChatCitationSource = {
+  files: ['src/queue.ts', 'src/worker.ts'],
+  preview: (path, start, end) => {
+    const lines = Array.from({ length: end - start + 1 }, (_, i) => citedLines.get(path)?.get(start + i));
+    return lines.every((line) => line === undefined) ? undefined : lines.map((line) => line ?? '').join('\n');
+  },
+  open: (target) => opened.push({ id: 'citation', source: 'context', kind: 'file', label: target.path, ...target }),
+};
 function Fixture() {
   const [mode, setMode] = useState('topic');
   const [file, setFile] = useState('src/queue.ts');
   const [quote, setQuote] = useState<string | null>('await queue.dispatch(command);');
-  const chat = useSlideChat(review, 'claude', DEFAULT_CLAUDE_MODEL);
+  const [topicModel, setTopicModel] = useState(() => rememberedChatModel(stored, 'topic'));
+  const chat = useSlideChat(review, topicModel.provider, topicModel.model);
   return (
     <main style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <nav style={{ display: 'flex', gap: 16, padding: 8, fontSize: 13 }}>
@@ -156,9 +183,15 @@ function Fixture() {
             onRetry={(id) => void chat.retry(1, id)}
             onStop={() => chat.stop(1)}
             onOpenTraceStep={(step) => opened.push(step)}
-            modelLabel="Claude Opus 5.5"
+            model={topicModel}
+            onModelChange={(choice) => {
+              setTopicModel(choice);
+              void rememberChatModel('topic', choice);
+            }}
+            citations={citations}
             quotedCode={quote}
             onQuotedCodeConsumed={() => setQuote(null)}
+            onQuoteSelection={setQuote}
           />
         ) : (
           <PrFileChat
@@ -167,6 +200,7 @@ function Fixture() {
             selection="return command.result;"
             onClose={() => setMode('topic')}
             onOpenTraceStep={(step) => opened.push(step)}
+            citations={citations}
           />
         )}
       </div>

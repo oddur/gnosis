@@ -66,6 +66,31 @@ void app.whenReady().then(async () => {
     save(name, (await win.webContents.capturePage(rect)).toPNG());
   };
   const emit = (text: string) => js(`window.chatFixture.chunk(${JSON.stringify(text)})`);
+  const center = (selector: string) =>
+    js<{ x: number; y: number }>(
+      `(()=>{const r=${selector}.getBoundingClientRect();return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`
+    );
+  const mouse = (type: string, x: number, y: number, extra: Record<string, unknown> = {}) =>
+    win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, x, y, button: 'left', ...extra });
+  /** A real click: press and release where the element is. */
+  const pointerClick = async (selector: string, clickCount = 1) => {
+    const { x, y } = await center(selector);
+    await mouse('mouseMoved', x, y, { button: 'none' });
+    for (let n = 1; n <= clickCount; n++) {
+      await mouse('mousePressed', x, y, { clickCount: n });
+      await mouse('mouseReleased', x, y, { clickCount: n });
+    }
+  };
+  const press = (selector: string, key: string, shiftKey = false) =>
+    js(
+      `${selector}.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},shiftKey:${shiftKey},bubbles:true,cancelable:true}))`
+    );
+  /** Selects a diff row's code inside its shadow root, as a reader's drag would. */
+  const selectDiffRow = (scope: string, row: string) =>
+    js(`(()=>{const host=[...${scope}.querySelectorAll('diffs-container')].find(h=>h.shadowRoot?.querySelector(${JSON.stringify(row)}));
+      const line=host.shadowRoot.querySelector(${JSON.stringify(row)});line.scrollIntoView({block:'center'});
+      const range=document.createRange();range.selectNodeContents(line);const s=getSelection();s.removeAllRanges();s.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));return true})()`);
   const finish = (text: string) => js(`window.chatFixture.finish(${JSON.stringify(text)})`);
   try {
     await loadWorkbenchPage(win, new URL('/tests/fixtures/chat.html', process.env.GNOSIS_WORKBENCH_URL).href);
@@ -74,14 +99,58 @@ void app.whenReady().then(async () => {
     await viewport(900, 760);
     await wait("!!document.querySelector('textarea')");
     await capture('topic-empty-light');
-    assert.ok(
-      (await js<number>("document.querySelector('.chat-composer').getBoundingClientRect().height")) < 120,
-      'Composer including quote stays compact'
+    const composerHeight = await js<number>("document.querySelector('.chat-composer').getBoundingClientRect().height");
+    console.log('Composer height with a selection chip:', composerHeight);
+    assert.ok(composerHeight < 150, 'Composer including the selection chip stays compact');
+    assert.equal(
+      await js("document.querySelector('.chat-selection-chip [data-slot=attachment-title]').textContent"),
+      'Selected code',
+      'A selection without a location is a plain chip'
     );
+    // The model selector lists every model the providers offer; the choice goes with the next question.
+    const modelTrigger = "document.querySelector('.model-selector-trigger')";
+    assert.equal(await js(`${modelTrigger}.getAttribute('aria-label')`), 'Model: Opus 5.5, Claude');
+    await pointerClick(modelTrigger);
+    await wait("document.querySelectorAll('[role=menuitemradio]').length===8");
+    assert.deepEqual(await js("[...document.querySelectorAll('[role=menuitemradio]')].map(i=>i.textContent.trim())"), [
+      'Fable 5.2',
+      'Opus 5.5',
+      'Sonnet 5.5',
+      'Haiku 5.5',
+      'GPT-6.2 Sol',
+      'GPT-6.2 Astra',
+      'GPT-6.1 Terra',
+      'GPT-6 Luna',
+    ]);
+    assert.equal(
+      await js("document.querySelector('[role=menuitemradio][aria-checked=true]').textContent.trim()"),
+      'Opus 5.5',
+      'The current chat model is checked'
+    );
+    await capture('model-selector-open-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('model-selector-open-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await pointerClick(
+      "[...document.querySelectorAll('[role=menuitemradio]')].find(i=>i.textContent.trim()==='Haiku 5.5')"
+    );
+    await wait(`${modelTrigger}.getAttribute('aria-label')==='Model: Haiku 5.5, Claude'`);
+    await wait("!document.querySelector('[role=menuitemradio]')");
+    await wait("window.chatFixture.preferences().chatModels?.topic?.model==='claude-haiku-5-5'");
     await fill('How does the queue preserve order?');
     await click('Send question');
     await wait('!!document.querySelector(\'[aria-label="Stop answer"]\')');
     assert.match(await js<string>('window.chatFixture.requests[0].question'), /await queue.dispatch/);
+    assert.deepEqual(
+      await js('[window.chatFixture.requests[0].provider, window.chatFixture.requests[0].model]'),
+      ['claude', 'claude-haiku-5-5'],
+      'The next question goes to the chosen model'
+    );
+    // Before the first words the trace is live: open, with Thinking running.
+    await wait(
+      "!!document.querySelector('.chat-trace[data-streaming][data-expanded] .chat-trace-thinking [data-status=running]')"
+    );
+    await capture('trace-thinking-light');
     assert.equal(
       await js("document.querySelector('.chat-transcript .chat-quote').open"),
       false,
@@ -93,7 +162,7 @@ void app.whenReady().then(async () => {
     );
     await fill('What happens if a worker stops?');
     const answer =
-      'The queue keeps one command in flight per worker.\n\n- **Before dispatch:** reserve the worker slot.\n- **On acknowledgment:** release the slot, then send the next command.\n- **On failure:** retry the same command before advancing.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```\n\nSee [the queue notes](https://example.com/queue) for the retry rules. The change:\n\n```diff\n--- a/src/queue.ts\n+++ b/src/queue.ts\n@@ -40,2 +40,3 @@\n   await queue.dispatch(command);\n+  await worker.acknowledge(command.id);\n   return command.result;\n```';
+      'The queue keeps one command in flight per worker [src/queue.ts:40-41], unlike the old path [src/legacy.ts:12].\n\n- **Before dispatch:** reserve the worker slot.\n- **On acknowledgment:** release the slot, then send the next command.\n- **On failure:** retry the same command before advancing.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```\n\nSee [the queue notes](https://example.com/queue) for the retry rules. The change:\n\n```diff\n--- a/src/queue.ts\n+++ b/src/queue.ts\n@@ -40,2 +40,3 @@\n   await queue.dispatch(command);\n+  await worker.acknowledge(command.id);\n   return command.result;\n```';
     const body = "document.querySelectorAll('.chat-message-body')[1]";
     // The answer streams in two parts; the second ends past the bottom of the panel.
     const cut = answer.indexOf('await worker');
@@ -112,11 +181,18 @@ void app.whenReady().then(async () => {
     }
     await emit(answer.slice(cut));
     // The trace shows the context Gnosis assembled, live, before the answer settles.
-    await wait("!!document.querySelector('.chat-trace[data-streaming]')");
-    assert.deepEqual(
-      await js("[...document.querySelectorAll('.chat-trace-chips .chat-trace-chip')].map(c=>c.textContent)"),
-      ['Selected code', 'queue.tsL40–120', 'worker.tsL10–14', 'PR description']
-    );
+    await wait("!!document.querySelector('.chat-trace[data-streaming][data-expanded]')");
+    const rows = (trace = 0) =>
+      js<string[]>(
+        `[...document.querySelectorAll('.chat-trace')[${trace}].querySelectorAll('.chat-trace-steps .chat-trace-step')].map(r=>r.querySelector('.chat-trace-title').textContent+(r.querySelector('.chat-trace-range')?.textContent??''))`
+      );
+    assert.deepEqual(await rows(), [
+      'Selected code',
+      'Diff queue.tsL40–120',
+      'Diff worker.tsL10–14',
+      'Pull request PR description',
+    ]);
+    await wait("/^Thought\\d/.test(document.querySelector('.chat-trace-thinking').textContent)");
     await capture('topic-streaming-light');
     // Words renders the answer as it streams: the message is live, and its code is highlighted while it arrives.
     await wait(`${body}?.hasAttribute('data-streaming')`);
@@ -156,7 +232,7 @@ void app.whenReady().then(async () => {
     // A closed diff fence shows as a diff, with Changes' file header and diff (ReviewDiff), not as code.
     await wait(`!!${body}.querySelector('.chat-diff .changes-file-header h2[title="src/queue.ts"]')`);
     await wait(
-      `window.deepAll?.('[data-line-type=change-addition]',${body}.querySelector('.chat-diff')).length===1 || [...${body}.querySelectorAll('.chat-diff diffs-container')].some(h=>h.shadowRoot?.querySelector('[data-line-type=change-addition]'))`
+      `window.deepAll?.('[data-line-type=change-addition]',${body}.querySelector('.chat-diff')).length===1 || [...${body}.querySelectorAll('.chat-diff diffs-container')].some(h=>h.shadowRoot?.querySelector('[data-code] [data-line][data-line-type=change-addition]'))`
     );
     assert.equal(
       await js(`${body}.querySelectorAll('[data-markdown=code-block][data-language=diff]').length`),
@@ -164,45 +240,32 @@ void app.whenReady().then(async () => {
       'The diff is not also shown as code'
     );
     const toggle = "document.querySelector('.chat-trace-toggle')";
-    assert.equal(await js(`${toggle}.getAttribute('aria-expanded')`), 'false', 'Completed traces collapse');
+    await wait(`${toggle}.getAttribute('aria-expanded')==='false'`);
     assert.equal(await js(`${toggle}.getAttribute('aria-label')`), 'Context used, 4 sources');
-    assert.deepEqual(
-      await js("[...document.querySelectorAll('.chat-trace-chips .chat-trace-chip')].map(c=>c.textContent)"),
-      ['queue.tsL40–120', 'worker.tsL10–14'],
-      'The summary favours file chips'
+    assert.match(
+      await js<string>("document.querySelector('.chat-trace-count').textContent"),
+      /^4 sources · \d+(\.\d)?s$/,
+      'The summary counts the steps and times the answer'
     );
-    assert.ok(
-      await js("[...document.querySelectorAll('.chat-trace-chip-label')].every(l=>l.scrollWidth<=l.clientWidth)"),
-      'Collapsed file names are not truncated'
-    );
-    assert.equal(await js("document.querySelector('.chat-trace-more').textContent"), '2 more');
-    assert.ok(
-      (await js<number>("document.querySelector('.chat-trace-row').getBoundingClientRect().height")) < 30,
-      'Collapsed trace is one line'
-    );
+    // The rows fold away (a short height transition); the summary stays one line.
+    await wait("document.querySelector('.chat-trace').getBoundingClientRect().height<30");
     await capture('topic-trace-collapsed-light');
-    await click('Open src/queue.ts lines 40 to 120 in Changes');
-    assert.deepEqual(
-      await js('window.chatFixture.opened.map(s=>[s.path,s.startLine,s.endLine,s.side])'),
-      [['src/queue.ts', 40, 120, 'after']],
-      'File chips open their line range'
-    );
-    assert.equal(
-      await js("document.querySelector('.chat-trace-chips span.chat-trace-chip')?.textContent ?? 'none'"),
-      'none',
-      'The summary shows only chips that open a file here'
-    );
     await click('Context used, 4 sources');
-    assert.equal(await js(`${toggle}.getAttribute('aria-expanded')`), 'true');
-    assert.equal(await js(`document.getElementById(${toggle}.getAttribute('aria-controls')).hidden`), false);
+    await wait(`${toggle}.getAttribute('aria-expanded')==='true'`);
     assert.deepEqual(
       await js("[...document.querySelectorAll('.chat-trace-steps .chat-trace-verb')].map(v=>v.textContent)"),
       ['Selected code', 'Diff', 'Diff', 'Pull request']
     );
     assert.deepEqual(
-      await js("[...document.querySelectorAll('.chat-trace-steps span.chat-trace-chip')].map(c=>c.textContent)"),
-      ['Selected code', 'PR description'],
+      await js("[...document.querySelectorAll('.chat-trace-steps .chat-trace-step')].map(r=>r.tagName)"),
+      ['DIV', 'BUTTON', 'BUTTON', 'DIV'],
       'Steps without a location are labels, not controls'
+    );
+    await click('Open src/queue.ts lines 40 to 120 in Changes');
+    assert.deepEqual(
+      await js('window.chatFixture.opened.map(s=>[s.path,s.startLine,s.endLine,s.side])'),
+      [['src/queue.ts', 40, 120, 'after']],
+      'File steps open their line range'
     );
     await capture('topic-trace-expanded-light');
     await js("document.documentElement.classList.add('dark')");
@@ -210,24 +273,111 @@ void app.whenReady().then(async () => {
     await click('Context used, 4 sources');
     await capture('topic-trace-collapsed-dark');
     await js("document.documentElement.classList.remove('dark')");
+    // Citations: a PR file is an inline citation with a card and a jump; a file outside the PR stays plain text.
+    const cite = `${body}.querySelector('.inline-citation-trigger[data-citation-path="src/queue.ts"]')`;
+    await wait(`!!${cite}`);
+    assert.equal(await js(`${cite}.textContent`), 'queue.ts:40–41');
+    assert.equal(
+      await js(`${body}.querySelector('[data-citation-unresolved]')?.textContent`),
+      '[src/legacy.ts:12]',
+      'A citation of a file outside the PR is plain text'
+    );
+    assert.equal(
+      await js(`${body}.querySelectorAll('.inline-citation-trigger').length`),
+      1,
+      'Only the PR file is cited'
+    );
+    await js(`${cite}.scrollIntoView({block:'center'})`);
+    const citeAt = await center(cite);
+    await mouse('mouseMoved', citeAt.x, citeAt.y, { button: 'none' });
+    await wait("!!document.querySelector('.inline-citation-card')?.checkVisibility()");
+    assert.equal(
+      await js("document.querySelector('.inline-citation-card .inline-citation-path').textContent"),
+      'src/queue.ts'
+    );
+    assert.equal(
+      await js("document.querySelector('.inline-citation-card .inline-citation-detail').textContent"),
+      'Lines 40–41'
+    );
+    assert.equal(
+      await js("document.querySelector('.inline-citation-card .inline-citation-quote').textContent"),
+      'await queue.dispatch(command);\nawait worker.acknowledge(command.id);',
+      'The card previews the cited lines'
+    );
+    await capture('citation-hover-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('citation-hover-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await pointerClick(cite);
+    await wait("window.chatFixture.opened.at(-1)?.id==='citation'");
+    assert.deepEqual(
+      await js(
+        '[window.chatFixture.opened.at(-1).path,window.chatFixture.opened.at(-1).startLine,window.chatFixture.opened.at(-1).endLine]'
+      ),
+      ['src/queue.ts', 40, 41],
+      'A click opens the cited lines in Changes'
+    );
+    await mouse('mouseMoved', 5, 5, { button: 'none' });
+    await wait("!document.querySelector('.inline-citation-card')?.checkVisibility()");
+    // Selecting code in an answer's diff and asking about it puts the selection, with its file and line, in the prompt.
+    await selectDiffRow(`${body}.querySelector('.chat-diff')`, '[data-code] [data-line][data-line-type=change-addition]');
+    await wait("document.querySelector('.review-selection-actions')?.style.visibility==='visible'");
+    await js("document.querySelector('.review-selection-ask').click()");
+    await wait(
+      "document.querySelector('.chat-selection-chip [data-slot=attachment-title]')?.textContent==='queue.ts · L41'"
+    );
+    await wait("document.activeElement===document.querySelector('textarea')");
+    await capture('selection-chip-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('selection-chip-dark');
+    await js("document.documentElement.classList.remove('dark')");
     assert.equal(await js("document.querySelector('textarea').value"), 'What happens if a worker stops?');
     await click('Copy answer');
     await wait('!!document.querySelector(\'[aria-label="Answer copied"]\')');
     // Windows exposes native CRLF line endings through the system clipboard.
     assert.equal(clipboard.readText().replace(/\r\n/g, '\n'), answer);
     await click('Send question');
+    assert.match(
+      await js<string>('window.chatFixture.requests[1].question'),
+      /^Regarding this code in src\/queue\.ts, new line 41:\n```\n\s*await worker\.acknowledge\(command\.id\);\n```/,
+      'The question quotes the selection with its file and line'
+    );
     await emit('The worker slot stays reserved until recovery.');
     // Tool calls replayed from a recorded Claude stream-json run join the trace live.
     for (const line of fs.readFileSync(path.resolve('tests/fixtures/claude-tool-stream.jsonl'), 'utf8').split('\n'))
       await js(`window.chatFixture.claudeLine(${JSON.stringify(line)})`);
     await wait(
-      "document.querySelectorAll('.chat-trace')[1]?.querySelector('.chat-trace-toggle').textContent==='What the AI looked at'"
+      "document.querySelectorAll('.chat-trace')[1]?.querySelectorAll('.chat-trace-steps .chat-trace-step').length===8"
     );
     assert.equal(
-      await js("document.querySelectorAll('.chat-trace')[1].querySelectorAll('.chat-trace-chip').length"),
-      7,
+      await js(
+        "document.querySelectorAll('.chat-trace')[1].querySelector('.chat-trace-toggle').getAttribute('aria-label')"
+      ),
+      'What the AI looked at, 3 tool calls, 5 sources',
       'Context and the three reported tool calls appear while streaming'
     );
+    const readStep = "document.querySelectorAll('.chat-trace')[1].querySelector('[data-step=\"agent:toolu_01Read\"]')";
+    await wait(`${readStep}.querySelector('[data-slot=trace-line]').dataset.status===undefined`);
+    await js(`${readStep}.querySelector('.chat-trace-step-toggle').click()`);
+    await wait(
+      `[...${readStep}.querySelectorAll('.chat-trace-io pre')].map(p=>p.textContent).join('|').includes('export async function retry')`
+    );
+    assert.match(
+      await js<string>(`${readStep}.querySelector('.chat-trace-io pre').textContent`),
+      /^file_path: /,
+      'A tool row shows its input'
+    );
+    assert.ok(
+      await js(
+        "!!document.querySelectorAll('.chat-trace')[1].querySelector('.chat-trace-steps [data-status=running]')"
+      ),
+      'A call without a result yet is still running'
+    );
+    await js(`${readStep}.scrollIntoView({block:'center'})`);
+    await capture('trace-live-tools-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('trace-live-tools-dark');
+    await js("document.documentElement.classList.remove('dark')");
     await wait("document.querySelectorAll('[data-slot=message-scroller-item]').length===4");
     await new Promise((r) => setTimeout(r, 300));
     const anchor = await js<number>(
@@ -324,7 +474,7 @@ void app.whenReady().then(async () => {
         },
       ])})`
     );
-    await wait("document.querySelector('.chat-trace-toggle')?.textContent==='Context used'");
+    await wait("document.querySelector('.chat-trace-toggle')?.getAttribute('aria-label')==='Context used, 1 source'");
     await finish(
       'The caller receives the result only after **acknowledgment**. A failed command stays in the queue for retry.'
     );
@@ -354,7 +504,7 @@ void app.whenReady().then(async () => {
     // Measure the actual review composition, not just a standalone chat panel.
     const fullCapture = async (name: string) => {
       await new Promise((resolve) => setTimeout(resolve, 250));
-      fs.writeFileSync(path.join(shots, name + '.png'), (await win.webContents.capturePage()).toPNG());
+      save(name, (await win.webContents.capturePage()).toPNG());
     };
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await viewport(1280, 720);
@@ -462,6 +612,84 @@ void app.whenReady().then(async () => {
     console.log('Integrated file height:', await transcriptHeight());
     await fullCapture('integrated-file-dark');
     await assertDock();
+    // The dock's edge resizes it, by keyboard and by drag; the file surface remembers its width, the topic keeps its own.
+    const dock = "document.querySelector('.changes-chat')";
+    const handle = `${dock}.querySelector('.chat-panel-resize')`;
+    const dockWidth = `Math.round(${dock}.getBoundingClientRect().width)`;
+    assert.equal(await js(`${handle}.getAttribute('role')`), 'separator');
+    assert.equal(await js(`${handle}.tabIndex`), 0, 'The separator takes focus');
+    await js(`${handle}.focus()`);
+    await press(handle, 'ArrowLeft');
+    await press(handle, 'ArrowLeft');
+    await wait(`${dockWidth}===432 && ${handle}.getAttribute('aria-valuenow')==='432'`);
+    await press(handle, 'ArrowRight');
+    await wait(`${dockWidth}===416`);
+    await wait('window.electronAPI.loadPreferences().then(p=>p.chatPanelWidths?.file===416)');
+    const grip = await center(handle);
+    await mouse('mouseMoved', grip.x, grip.y, { button: 'none' });
+    await mouse('mousePressed', grip.x, grip.y, { clickCount: 1 });
+    for (const dx of [-20, -40, -60]) await mouse('mouseMoved', grip.x + dx, grip.y, { buttons: 1 });
+    await mouse('mouseReleased', grip.x - 60, grip.y, { clickCount: 1 });
+    await wait(`${dockWidth}===476`);
+    await wait(
+      'window.electronAPI.loadPreferences().then(p=>p.chatPanelWidths?.file===476 && p.chatPanelWidths?.topic===undefined)'
+    );
+    await click('Close chat');
+    await wait(`!${dock}`);
+    await js("window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))");
+    await wait(`!!${dock} && ${dockWidth}===476`);
+    console.log('Chat panel resized by keyboard and drag; the width persists across close and reopen.');
+    await js("document.documentElement.classList.remove('dark')");
+    await viewport(1440, 900);
+    await fullCapture('resized-file-1440-light');
+    await js("document.documentElement.classList.add('dark')");
+    await fullCapture('resized-file-1440-dark');
+    await viewport(1024, 768);
+    await fullCapture('resized-file-1024-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await fullCapture('resized-file-1024-light');
+    await js("document.documentElement.classList.add('dark')");
+    await viewport(1280, 720);
+    // Selecting code in Changes and asking about it puts the selection, with its file and lines, in the prompt.
+    const changedPath = await js<string>(
+      `(()=>{const host=[...document.querySelectorAll('.changes-diff-pane diffs-container')].find(h=>h.shadowRoot?.querySelector('[data-code] [data-line][data-line-type=change-addition]'));
+        const row=host?.closest('.commit-stream-row');row?.setAttribute('data-ask-test','');
+        return row?.querySelector('.changes-file-header h2')?.getAttribute('title') ?? ''})()`
+    );
+    assert.ok(changedPath, 'Changes shows a file with an added line');
+    await selectDiffRow(
+      "document.querySelector('.commit-stream-row[data-ask-test]')",
+      '[data-code] [data-line][data-line-type=change-addition]'
+    );
+    await wait("document.querySelector('.review-selection-actions')?.style.visibility==='visible'");
+    await js("document.querySelector('.review-selection-ask').click()");
+    await wait("!!document.querySelector('.changes-chat .chat-selection-chip')");
+    assert.match(
+      await js<string>(
+        "document.querySelector('.changes-chat .chat-selection-chip [data-slot=attachment-title]').textContent"
+      ),
+      new RegExp(`^${(changedPath.split('/').at(-1) ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} · L\\d+`),
+      'The chip names the Changes file and line'
+    );
+    await wait("document.activeElement?.id==='changes-question'");
+    await fullCapture('changes-selection-chip-dark');
+    await js('document.querySelector(\'.changes-chat [aria-label="Remove selected code"]\').click()');
+    await wait("!document.querySelector('.changes-chat .chat-selection-chip')");
+    // Double-click resets the default width and forgets the saved one.
+    // Two presses in quick succession, as a double-click sends them.
+    await pointerClick(handle);
+    await pointerClick(handle);
+    await wait(`${dockWidth}===400`);
+    await wait('window.electronAPI.loadPreferences().then(p=>p.chatPanelWidths?.file===undefined)');
+    // Asking about another file's selection opened that file's conversation; return to the header's for the checks below.
+    await click('Close chat');
+    // The selection scrolled another file into place: bring the header's file back before reopening its chat.
+    await js("window.askOrigin.closest('.commit-stream-row').scrollIntoView({block:'start'})");
+    await wait("!!document.querySelector('.commit-stream-row[data-active=true]')?.contains(window.askOrigin)");
+    await js(
+      "window.askOrigin.focus();window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+    );
+    await wait("document.activeElement?.id==='changes-question'");
     await viewport(600, 720);
     await fullCapture('integrated-file-small-dark');
     await assertDock();
