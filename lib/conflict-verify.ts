@@ -14,7 +14,7 @@ import {
   type ConflictFileStage,
   type ConflictProposal,
 } from './conflict-resolution';
-import { layoutTokens, unionNote, unionOf } from './conflict-union';
+import { layoutTokens, orderFree, unionNote, unionOf } from './conflict-union';
 import {
   definitionChain,
   syntaxLanguage,
@@ -211,19 +211,62 @@ export async function verifyProposals(
         fail(s.index, 'Gnosis can’t parse this file type, so it couldn’t check the result.');
     return verdict(() => 'Same as you resolved before. Gnosis can’t parse this file type.');
   }
-  // Each union's two insertions, as lines of the probe, to read as whole syntax nodes.
+  // Each union's two insertions, as lines of the probe, to read as whole syntax nodes. A structural merge whose result
+  // is both sides' insertions at one place, each side's lines together (either side first), is read the same way: the
+  // nodes may show its order doesn't matter (#476).
   const unions = proposed.flatMap((s) => {
-    const union = proposals[s.index]?.source === 'union' ? unionOf(s.block) : undefined;
-    return union ? [{ index: s.index, union }] : [];
+    const proposal = proposals[s.index];
+    const union = proposal?.source === 'union' || proposal?.source === 'mergiraf' ? unionOf(s.block) : undefined;
+    if (!union || !proposal) return [];
+    const { before, ours: o, theirs: t } = union;
+    if (proposal.source === 'union')
+      return [
+        {
+          index: s.index,
+          own: true,
+          first: 'ours' as const,
+          spans: [
+            [before, before + o - 1],
+            [before + o, before + o + t - 1],
+          ] as [number, number][],
+        },
+      ];
+    // Structural merge may add or drop blank lines between the two sides' insertions; nothing else may differ.
+    const lines = union.text.split(/(?<=\n)/);
+    const [lead, mine, theirs, rest] = [
+      lines.slice(0, before),
+      lines.slice(before, before + o),
+      lines.slice(before + o, before + o + t),
+      lines.slice(before + o + t),
+    ];
+    const filled = (text: string) => text.trim() !== '';
+    const written = proposal.text.split(/(?<=\n)/);
+    const at = written.flatMap((line, i) => (filled(line) ? [i] : []));
+    const key = (parts: string[][]) => parts.flat().filter(filled).join('');
+    const first =
+      at.map((i) => written[i]).join('') === key([lead, mine, theirs, rest])
+        ? ('ours' as const)
+        : at.map((i) => written[i]).join('') === key([lead, theirs, mine, rest])
+          ? ('theirs' as const)
+          : undefined;
+    if (!first) return [];
+    // Where each side's lines landed in the proposal, by their non-blank lines.
+    const count = (part: string[]) => part.filter(filled).length;
+    const [n0, n1, n2] = [
+      count(lead),
+      count(first === 'ours' ? mine : theirs),
+      count(first === 'ours' ? theirs : mine),
+    ];
+    const one: [number, number] = [at[n0], at[n0 + n1 - 1]];
+    const two: [number, number] = [at[n0 + n1], at[n0 + n1 + n2 - 1]];
+    return [{ index: s.index, own: false, first, spans: first === 'ours' ? [one, two] : [two, one] }];
   });
+  /** Each entry's insertions as lines of the probe: the PR's, then main's, wherever each landed. */
   const unionRanges = (regions: ReadonlyMap<number, [number, number]>) =>
     unions.length
-      ? unions.flatMap(({ index, union }) => {
-          const start = (regions.get(index)?.[0] ?? 0) + union.before;
-          return [
-            [start, start + union.ours - 1],
-            [start + union.ours, start + union.ours + union.theirs - 1],
-          ] as [number, number][];
+      ? unions.flatMap(({ index, spans }) => {
+          const start = regions.get(index)?.[0] ?? 0;
+          return spans.map(([a, z]) => [start + a, start + z] as [number, number]);
         })
       : undefined;
   let parsed: ParsedText[];
@@ -427,6 +470,27 @@ export async function verifyProposals(
       // The PR's version of a change both sides may have made (lib/conflict-union.ts) is Merged only on the syntax
       // trees' word, never on the line count, which ignores trailing commas.
       const same = proposal.source === 'same';
+      // Both sides inserted at one place, which the line checks never pass. Merged only when the syntax nodes show the
+      // order can't matter (orderFree) and the result is each side's lines together, as a union is accounted.
+      const k = unions.findIndex((u) => u.index === s.index && !u.own);
+      if (note === SAME_LINES && k >= 0 && !whole && probe.regions.has(s.index)) {
+        const units = result.units;
+        const [mine, theirs] = [units?.[2 * k], units?.[2 * k + 1]];
+        const block = unions[k].first === 'ours' ? s.block : { ...s.block, ours: s.block.theirs, theirs: s.block.ours };
+        const counted =
+          accountLines(block, proposal.text, indented, true) ??
+          (indented ? undefined : accountLines(block, proposal.text, true, true));
+        if (orderFree(language, mine, theirs) && counted === undefined) {
+          const imports = [...(mine?.units ?? []), ...(theirs?.units ?? [])].every((u) =>
+            /import|use_|using|comment/.test(u.type)
+          );
+          reformats.set(
+            s.index,
+            `Both sides added different ${imports ? 'imports' : 'members'} here, and their order doesn’t matter.`
+          );
+          continue;
+        }
+      }
       if ((note === SAME_LINES || same) && !whole) {
         const formatted = await reformatted(segments, s.index, proposal.text, language, equivalent, same);
         if (formatted?.merged) {
@@ -438,7 +502,8 @@ export async function verifyProposals(
       if (note) fail(s.index, note);
     }
     // A union is never Merged. Its note comes from the syntax nodes each side added; an earlier failure on the block wins.
-    unions.forEach(({ index }, k) => {
+    unions.forEach(({ index, own }, k) => {
+      if (!own) return;
       // A union set aside for a parse error was not in the text these units came from.
       const units = probe.regions.has(index) ? result.units : undefined;
       fail(index, unionNote(language, units?.[2 * k], units?.[2 * k + 1]));
@@ -895,7 +960,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 6;
+export const CHECKS_VERSION = 7;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A

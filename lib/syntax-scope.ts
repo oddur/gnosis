@@ -549,10 +549,16 @@ export interface RangeUnit {
   parameters?: string;
   /** A decorator runs with it. */
   decorated?: boolean;
+  /** It carries an annotation or attribute (Java `@Override`, C# `[Test]`, Rust `#[...]`), which may run code or matter. */
+  annotated?: boolean;
+  /** Its text holds `=`: a field with an initializer, which runs in order. */
+  assigns?: boolean;
 }
 /** The whole nodes in some lines and the node that holds them. Undefined when a node reaches past the lines. */
 export interface RangeUnits {
   parent: string;
+  /** The node that holds `parent`: a Python method's `block` sits in a `class_definition`. */
+  container?: string;
   units: RangeUnit[];
 }
 /** Lines [start, end] (1-based, inclusive) as whole nodes of one parent (lib/conflict-union.ts). */
@@ -582,6 +588,10 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       const parameters = target.childForFieldName('parameters');
       const decorated =
         c.type === 'decorated_definition' || [c, target].some((n) => n.children.some((x) => x.type === 'decorator'));
+      const marks = (n: Node) => /annotation|attribute/.test(n.type);
+      const annotated = [c, target].some((n) =>
+        n.children.some((x) => marks(x) || (x.type === 'modifiers' && x.children.some(marks)))
+      );
       units.push({
         type: c.type,
         ...(inner ? { inner: inner.type } : {}),
@@ -594,9 +604,11 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
             }
           : {}),
         ...(decorated ? { decorated } : {}),
+        ...(annotated ? { annotated } : {}),
+        ...(c.text.includes('=') ? { assigns: true } : {}),
       });
     }
-    return { parent: node.type, units };
+    return { parent: node.type, ...(node.parent ? { container: node.parent.type } : {}), units };
   }
 }
 /**

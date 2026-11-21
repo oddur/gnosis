@@ -304,3 +304,85 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
     ? `Both sides added different ${what} here. ${kept} Check the order: it can matter here.`
     : `Both sides added different ${what} here. ${kept} Their order shouldn’t matter; check that both belong.`;
 }
+
+/**
+ * Where order doesn't matter, per language: the parent node that holds the units (and, where the parent type is
+ * ambiguous, the node that holds it), the unit types, and the field types allowed when they have no initializer.
+ * Members of a class, struct, impl or interface body, and imports in Go, Rust, Java and C#. Not fields or properties
+ * with initializers (they run in order), not Python class attributes, not enum members,
+ * cases, list items or statements, not JavaScript, TypeScript or Python imports (they run module code in order), and not
+ * top-level functions where module code runs in order. When unsure, a kind is left out.
+ */
+const ORDER_FREE: Partial<
+  Record<SyntaxLanguage, { parents: string[]; containers?: string[]; types: string[]; fields?: string[] }[]>
+> = {
+  typescript: [
+    { parents: ['class_body'], types: ['method_definition'], fields: ['public_field_definition'] },
+    { parents: ['interface_body', 'object_type'], types: ['method_signature', 'property_signature'] },
+  ],
+  tsx: [
+    { parents: ['class_body'], types: ['method_definition'], fields: ['public_field_definition'] },
+    { parents: ['interface_body', 'object_type'], types: ['method_signature', 'property_signature'] },
+  ],
+  javascript: [{ parents: ['class_body'], types: ['method_definition'], fields: ['field_definition'] }],
+  python: [{ parents: ['block'], containers: ['class_definition'], types: ['function_definition'] }],
+  java: [
+    {
+      parents: ['class_body', 'interface_body'],
+      types: ['method_declaration', 'constructor_declaration'],
+      fields: ['field_declaration'],
+    },
+    { parents: ['program'], types: ['import_declaration'] },
+  ],
+  csharp: [
+    {
+      parents: ['declaration_list'],
+      types: ['method_declaration', 'constructor_declaration'],
+      fields: ['field_declaration', 'property_declaration'],
+    },
+    { parents: ['compilation_unit', 'declaration_list'], types: ['using_directive'] },
+  ],
+  go: [
+    { parents: ['source_file'], types: ['function_declaration', 'method_declaration', 'import_declaration'] },
+    { parents: ['import_spec_list'], types: ['import_spec'] },
+    { parents: ['field_declaration_list'], types: [], fields: ['field_declaration'] },
+  ],
+  rust: [
+    { parents: ['declaration_list'], containers: ['impl_item', 'trait_item', 'mod_item'], types: ['function_item'] },
+    { parents: ['source_file'], types: ['function_item', 'use_declaration'] },
+    { parents: ['declaration_list'], containers: ['mod_item'], types: ['use_declaration'] },
+    { parents: ['field_declaration_list'], types: [], fields: ['field_declaration'] },
+  ],
+};
+const COMMENTS = new Set(['comment', 'line_comment', 'block_comment']);
+/**
+ * Both sides inserted these whole nodes at one place, and their order can't change what the program does (#476): each
+ * side's nodes are order-free members or imports of one parent (ORDER_FREE), none decorated or annotated, each side
+ * adds at least one, and no name (with its parameter types, for overloads) is added by both. Comments ride along with
+ * the side that wrote them. Anything else, or any doubt, is false.
+ */
+export function orderFree(language: SyntaxLanguage, ours: RangeUnits | undefined, theirs: RangeUnits | undefined) {
+  const kinds = ORDER_FREE[language];
+  if (!kinds || !ours || !theirs || ours.parent !== theirs.parent || ours.container !== theirs.container) return false;
+  const allowed = kinds.filter(
+    (k) =>
+      k.parents.includes(ours.parent) && (!k.containers || (ours.container && k.containers.includes(ours.container)))
+  );
+  const real = (side: RangeUnits) => side.units.filter((u) => !COMMENTS.has(u.type));
+  // A field only without an initializer: initializers run in the order they are written.
+  const fits = (u: RangeUnit) =>
+    !u.decorated &&
+    !u.annotated &&
+    !u.inner &&
+    !(language === 'go' && u.name === 'init') &&
+    allowed.some((k) => k.types.includes(u.type) || (!u.assigns && !!k.fields?.includes(u.type)));
+  const [a, b] = [real(ours), real(theirs)];
+  if (!a.length || !b.length || ![...a, ...b].every(fits)) return false;
+  // A field with no name node is named by its text: its last word, as in `int depth;`.
+  const name = (u: RangeUnit) =>
+    /\s/.test(u.name) ? (/([\p{L}_$][\p{L}\p{N}_$]*)\W*$/u.exec(u.name)?.[1] ?? u.name) : u.name;
+  const key = (u: RangeUnit) =>
+    OVERLOADS.has(language) && u.parameters !== undefined ? `${name(u)}(${u.parameters})` : name(u);
+  const mine = new Set(a.map(key));
+  return !b.some((u) => mine.has(key(u)));
+}

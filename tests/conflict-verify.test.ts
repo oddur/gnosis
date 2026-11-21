@@ -610,6 +610,91 @@ void test('with one side broken, a result that loses that side’s error fails e
   });
 });
 
+/** One conflict where both sides inserted at one place, between `head` and `tail`, checked with a structural merge. */
+const samePlace = (path: string, head: string, tail: string, ours: string, theirs: string, text: string) =>
+  verifyProposals(
+    {
+      path,
+      base: head + tail,
+      ours: head + ours + tail,
+      theirs: head + theirs + tail,
+      original: `${head}<<<<<<< feature\n${ours}||||||| ancestor\n=======\n${theirs}>>>>>>> main\n${tail}`,
+      proposals: [{ source: 'mergiraf', text }],
+    },
+    analyse
+  );
+
+void test('#476: both sides adding order-free members or imports at one place can be Merged, on the syntax trees’ word', async () => {
+  const head = 'export class Cart {\n  total() {\n    return 0;\n  }\n';
+  const tail = '}\n';
+  const add = '  add(item: string) {\n    return item;\n  }\n';
+  const remove = '  remove(id: number) {\n    return id;\n  }\n';
+  const cart = (ours: string, theirs: string, text: string) => samePlace('src/cart.ts', head, tail, ours, theirs, text);
+  // Two methods in one class: Merged, either side first.
+  for (const text of [add + remove, remove + add]) {
+    const verdict = await cart(add, remove, text);
+    assert.equal(verdict.merged, true, verdict.note);
+    assert.match(verdict.note, /different members here, and their order doesn’t matter/);
+  }
+  // One side's method inside the other's body: Check.
+  const inside = '  add(item: string) {\n  remove(id: number) {\n    return id;\n  }\n    return item;\n  }\n';
+  assert.equal((await cart(add, remove, inside)).merged, false);
+  // A method beside a field (its initializer runs in order): Check.
+  assert.equal((await cart(add, '  count = 0;\n', add + '  count = 0;\n')).merged, false);
+  // A decorated method: Check.
+  const memo = '  @memo\n  remove(id: number) {\n    return id;\n  }\n';
+  assert.equal((await cart(add, memo, add + memo)).merged, false);
+  // The same method name on both sides: Check.
+  const again = '  add(id: number) {\n    return id;\n  }\n';
+  assert.equal((await cart(add, again, add + again)).merged, false);
+  // Statements in a function body: Check.
+  const body = (text: string) =>
+    samePlace('src/run.ts', 'export function run() {\n  start();\n', '}\n', '  log();\n', '  stop();\n', text);
+  assert.equal((await body('  log();\n  stop();\n')).merged, false);
+  // TypeScript imports run module code in order: Check.
+  const ts = await samePlace(
+    'src/index.ts',
+    "import { a } from './a';\n",
+    '\nexport const x = 1;\n',
+    "import { b } from './b';\n",
+    "import { c } from './c';\n",
+    "import { b } from './b';\nimport { c } from './c';\n"
+  );
+  assert.equal(ts.merged, false);
+  // Go imports: Merged.
+  const go = await samePlace(
+    'main.go',
+    'package main\n\nimport (\n\t"fmt"\n',
+    ')\n\nfunc main() {\n\tfmt.Println(os.Args, strings.ToUpper(""))\n}\n',
+    '\t"os"\n',
+    '\t"strings"\n',
+    '\t"os"\n\t"strings"\n'
+  );
+  assert.equal(go.merged, true, go.note);
+  assert.match(go.note, /different imports here/);
+  // Struct fields with no initializer: Merged. The same field name with another type: Check.
+  const struct = (ours: string, theirs: string) =>
+    samePlace('options.go', 'package lab\n\ntype Options struct {\n\tWidth int\n', '}\n', ours, theirs, ours + theirs);
+  const fields = await struct('\tDepth int\n', '\tWeight int\n');
+  assert.equal(fields.merged, true, fields.note);
+  assert.equal((await struct('\tDepth int\n', '\tDepth float64\n')).merged, false);
+  const java = (ours: string, theirs: string) =>
+    samePlace('Options.java', 'class Options {\n  int width;\n', '}\n', ours, theirs, ours + theirs);
+  assert.equal((await java('  int depth;\n', '  int weight;\n')).merged, true);
+  assert.equal((await java('  int depth;\n', '  long depth;\n')).merged, false);
+  assert.equal((await java('  int depth = 1;\n', '  int weight;\n')).merged, false, 'An initializer runs in order');
+  // The if (ok) / else case: statements, so still Check.
+  const ok = await samePlace(
+    'src/run.ts',
+    'export function run(ok: boolean) {\n  if (ok) {\n    run();\n',
+    '  }\n}\n',
+    '    log();\n',
+    '  } else {\n    skip();\n',
+    '    log();\n  } else {\n    skip();\n'
+  );
+  assert.equal(ok.merged, false);
+});
+
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
   const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
   const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');

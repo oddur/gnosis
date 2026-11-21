@@ -34,6 +34,7 @@ export type MutationKind =
   | 'swap-order'
   | 'interleave-sides'
   | 'cross-anchor'
+  | 'definition-into-definition'
   | 'change-number'
   | 'change-string'
   | 'touch-outside';
@@ -46,6 +47,7 @@ export const MUTATIONS: MutationKind[] = [
   'swap-order',
   'interleave-sides',
   'cross-anchor',
+  'definition-into-definition',
   'change-number',
   'change-string',
   'touch-outside',
@@ -367,6 +369,27 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
           return { text: replaceLines(lines, i, 2, [withEnding(b, a), withEnding(a, b)]) };
       }
       return { skip: 'no two statements of one function body in the result' };
+    }
+    case 'definition-into-definition': {
+      // One whole definition moved into the middle of the next one's body: every line is still there, and with two
+      // methods both sides added, each side's lines might even look together.
+      const { parsed, first, last } = await definitionsIn(target);
+      const inside = parsed.definitions.filter((d) => d.start >= first && d.end <= last);
+      const leaves = inside
+        .filter((d) => !inside.some((x) => x !== d && x.start >= d.start && x.end <= d.end))
+        .sort((x, y) => x.start - y.start);
+      for (let i = 0; i + 1 < leaves.length; i++) {
+        const [moved, host] = [leaves[i], leaves[i + 1]];
+        if (moved.end >= host.start || host.end - host.signatureEnd < 2) continue;
+        const [a, z] = [moved.start - first, moved.end - first];
+        const into = host.signatureEnd - first + 1;
+        const body = lines.slice(a, z + 1);
+        body[body.length - 1] = withEnding(body[body.length - 1], lines[into - 1]);
+        const rest = [...lines.slice(0, a), ...lines.slice(z + 1)];
+        const at = into - body.length;
+        return { text: [...rest.slice(0, at), ...body, ...rest.slice(at)].join('') };
+      }
+      return { skip: 'no two whole definitions in the result' };
     }
     case 'cross-anchor': {
       // A line one side changed moved past lines the other side inserted next to it. They sit at different places in the
@@ -807,13 +830,13 @@ export function summarize(report: AuditReport) {
     row[r.outcome]++;
     table.set(key, row);
   }
-  const lines = ['resolver     mutation              caught  held  own  escaped'];
+  const lines = ['resolver     mutation                    caught  held  own  escaped'];
   for (const resolver of RESOLVERS)
     for (const mutation of MUTATIONS) {
       const row = table.get(`${resolver}\u0000${mutation}`);
       if (!row) continue;
       lines.push(
-        `${resolver.padEnd(12)} ${mutation.padEnd(21)} ${String(row.caught).padStart(6)} ${String(row.held).padStart(5)} ${String(row.own).padStart(4)} ${String(row.escaped).padStart(8)}`
+        `${resolver.padEnd(12)} ${mutation.padEnd(27)} ${String(row.caught).padStart(6)} ${String(row.held).padStart(5)} ${String(row.own).padStart(4)} ${String(row.escaped).padStart(8)}`
       );
     }
   const byCheck = new Map<string, Map<string, number>>();
@@ -825,7 +848,7 @@ export function summarize(report: AuditReport) {
   }
   const checks = MUTATIONS.filter((m) => byCheck.has(m)).map(
     (m) =>
-      `${m.padEnd(21)} ${[...(byCheck.get(m) ?? [])]
+      `${m.padEnd(27)} ${[...(byCheck.get(m) ?? [])]
         .sort((a, b) => b[1] - a[1])
         .map(([check, n]) => `${check} ${n}`)
         .join(', ')}`
